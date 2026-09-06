@@ -839,18 +839,12 @@ impl ClientServices {
         if let PlatformEvent::MouseMotion(pointer) = event
             && pointer.window_id == window_id
         {
-            let scalar = |name: &str, default: f32| {
-                world_ui
-                    .cvar_value(name)
-                    .and_then(|value| value.parse::<f32>().ok())
-                    .filter(|value| value.is_finite())
-                    .unwrap_or(default)
-            };
+            let scalar = |name: &str, default: f32| world_ui.cvar_number(name).unwrap_or(default);
             let settings = super::player_camera::PlayerCameraMouseSettings {
-                yaw_speed: scalar("cameraYawMoveSpeed", 180.),
-                pitch_speed: scalar("cameraPitchMoveSpeed", 90.),
-                invert_yaw: scalar("mouseInvertYaw", 0.) != 0.,
-                invert_pitch: scalar("mouseInvertPitch", 0.) != 0.,
+                yaw_speed: scalar("camerayawmovespeed", 180.),
+                pitch_speed: scalar("camerapitchmovespeed", 90.),
+                invert_yaw: scalar("mouseinvertyaw", 0.) != 0.,
+                invert_pitch: scalar("mouseinvertpitch", 0.) != 0.,
             };
             self.player_movement.push_mouse_motion(
                 [pointer.delta_x, pointer.delta_y],
@@ -1992,6 +1986,16 @@ impl ClientServices {
             solarity_systems::MovementBspCacheMode::Enabled,
         )?;
         profile.mark("game object residency and collision registry");
+        if let Some(ui) = &self.world_ui {
+            let scalar = |name: &str, fallback| ui.cvar_number(name).unwrap_or(fallback);
+            self.player_movement.set_camera_zoom_settings(
+                super::player_camera::PlayerCameraZoomSettings {
+                    speed: scalar("cameradistancemovespeed", 8.33),
+                    maximum: scalar("cameradistancemax", 15.),
+                    maximum_factor: scalar("cameradistancemaxfactor", 1.),
+                },
+            );
+        }
         self.player_movement.service(
             &mut self.gameplay,
             &mut self.terrain,

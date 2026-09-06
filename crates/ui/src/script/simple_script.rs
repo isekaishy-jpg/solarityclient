@@ -754,6 +754,12 @@ impl UiScriptEnvironment {
         self.cvars.get(name)
     }
 
+    /// Returns a finite numeric CVar without copying its retained text.
+    #[must_use]
+    pub fn cvar_number(&self, name: &str) -> Option<f32> {
+        self.cvars.number(name)
+    }
+
     /// Applies stock's numeric truth test to one registered console variable.
     #[must_use]
     pub fn cvar_boolean(&self, name: &str) -> bool {

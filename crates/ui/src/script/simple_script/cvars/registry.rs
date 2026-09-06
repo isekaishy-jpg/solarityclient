@@ -42,6 +42,20 @@ impl UiCVarRegistry {
             .map(|entry| entry.value.clone())
     }
 
+    /// Samples numeric policy without copying its text. Lowercase native names
+    /// use the borrowed key directly and allocate nothing in the frame loop.
+    pub(in crate::script::simple_script) fn number(&self, name: &str) -> Option<f32> {
+        let entries = self.entries.borrow();
+        let entry = entries
+            .get(name)
+            .or_else(|| entries.get(&canonical_name(name)))?;
+        entry
+            .value
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+    }
+
     /// Returns a copy of the native default for one known CVar.
     pub(in crate::script::simple_script) fn default_value(&self, name: &str) -> Option<String> {
         self.entries

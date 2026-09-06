@@ -623,6 +623,12 @@ impl GlueManager {
         self.environment.cvar_value(name)
     }
 
+    /// Returns numeric subsystem policy without copying CVar text.
+    #[must_use]
+    pub fn cvar_number(&self, name: &str) -> Option<f32> {
+        self.environment.cvar_number(name)
+    }
+
     /// Applies stock's numeric truth test to one live console variable.
     #[must_use]
     pub fn cvar_boolean(&self, name: &str) -> bool {

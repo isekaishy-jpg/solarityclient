@@ -154,6 +154,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "FrameXML startup, first updates, Escape menu toggles, and mouse bindings completed without errors"
     );
+    for (binding, inward) in [("CAMERAZOOMIN", true), ("CAMERAZOOMOUT", false)] {
+        manager.invoke_binding(binding, true)?;
+        if manager.take_movement_command()
+            != Some(solarity_ui::UiMovementCommand {
+                action: solarity_ui::UiMovementAction::CameraZoom { inward, amount: 1. },
+                timestamp_ms: 1234,
+            })
+        {
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                "stock wheel binding lost its zoom request",
+            )
+            .into());
+        }
+    }
+    println!("Stock wheel zoom bindings emitted both timed distance requests");
     Ok(())
 }
 

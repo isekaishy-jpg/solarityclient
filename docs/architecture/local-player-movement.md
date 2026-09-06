@@ -171,8 +171,27 @@ including the default Ctrl sticky-camera argument on release. Idle spell/target
 cancellation queries allow the stock Escape chain to reach the menu; active
 cast, channel, targeting, and selected-target owners still require integration.
 
-Camera follow/recentering, zoom, collision, special controlled subjects, and
+Camera follow/recentering, special controlled subjects, and
 full sticky-camera behavior remain incomplete. The release argument is retained
 for the future follow owner. These checks do not establish live camera parity
 or resolve the reported world frame rate. The Testing installer can enable
 `SOLARITY_FRAME_TIMINGS` with `-FrameTimings` to attribute slow world frames.
+
+Ordinary wheel zoom now runs the native timed distance banks rather than an
+instantaneous distance step. `CameraZoomIn` and `CameraZoomOut` retain the input
+timestamp and float amount; absent/nonnumeric arguments default to one. Requests
+extend an active same-direction deadline or mark the opposite direction stopped.
+The frame sample applies the elapsed interval using `cameraDistanceMoveSpeed`
+and clamps against `cameraDistanceMax * cameraDistanceMaxFactor`, capped at 50.
+The stock zero-duration indefinite hold and wrapping timer comparisons are
+preserved. Numeric CVar sampling borrows retained text without allocating in the
+camera update. Existing camera pose, obstruction, and water-collision owners
+consume the resulting requested distance.
+
+`tools/ghidra/camera_zoom_oracle.py` executes original requests `0x005FF950` /
+`0x005FFA60` and the distance sampler at `0x006000E0`. All 480 captured histories
+match the distance float bits and both complete timer banks, including repeated
+scrolls, direction reversal, clamping, and clock wrap. Production service tests
+check zoom publication without changing pitch/yaw; the real FrameXML example
+checks both stock wheel bindings. Special-subject distance scaling and saved-view
+interpolation remain outside this ordinary zoom owner.

@@ -2,7 +2,9 @@
 
 use std::collections::VecDeque;
 
-use super::player_camera::{PlayerCameraInput, PlayerCameraMouseSettings};
+use super::player_camera::{
+    PlayerCameraInput, PlayerCameraMouseSettings, PlayerCameraZoomSettings,
+};
 use super::player_control::PlayerControlEvent;
 use glam::{Vec2, Vec3};
 use solarity_ecs::{
@@ -102,6 +104,7 @@ impl MovementCommand {
 
 #[derive(Default)]
 pub(super) struct RuntimePlayerMovement {
+    camera_zoom_settings: PlayerCameraZoomSettings,
     owner: Option<LocalMovement>,
     input: PlayerInputState,
     commands: VecDeque<MovementCommand>,
@@ -167,6 +170,9 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    pub(super) fn set_camera_zoom_settings(&mut self, settings: PlayerCameraZoomSettings) {
+        self.camera_zoom_settings = settings;
+    }
     pub(super) fn mouse_free_look(&self) -> bool {
         self.owner
             .as_ref()
@@ -305,8 +311,19 @@ impl RuntimePlayerMovement {
             let Some(command) = self.commands.pop_front() else {
                 break;
             };
-            owner.command(command, &mut self.input, world, &mut self.output)?;
+            if let MovementCommand::Input(UiMovementCommand {
+                action: solarity_ui::UiMovementAction::CameraZoom { inward, amount },
+                timestamp_ms,
+            }) = command
+            {
+                owner
+                    .camera
+                    .zoom(inward, amount, timestamp_ms, self.camera_zoom_settings);
+            } else {
+                owner.command(command, &mut self.input, world, &mut self.output)?;
+            }
         }
+        owner.camera.sample_zoom(now_ms, self.camera_zoom_settings);
         let (transform, movement) = owner.snapshot();
         owner.published = (transform, movement);
         world.set_local_player_view(owner.camera.view(owner.orientation))?;

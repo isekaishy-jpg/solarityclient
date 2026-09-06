@@ -351,6 +351,12 @@ impl FrameManager {
         self.owner.cvar_value(name)
     }
 
+    /// Returns numeric subsystem policy without copying CVar text.
+    #[must_use]
+    pub fn cvar_number(&self, name: &str) -> Option<f32> {
+        self.owner.cvar_number(name)
+    }
+
     /// Takes profile-backed CVars changed by built-in FrameXML Lua.
     #[must_use]
     pub fn take_changed_cvars(&self) -> Vec<(String, String)> {

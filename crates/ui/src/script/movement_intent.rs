@@ -34,8 +34,15 @@ pub enum UiMovementControl {
 }
 
 /// InputControl action; unit mode and eligibility are resolved by its owner.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UiMovementAction {
+    /// Requests ordinary timed camera distance input.
+    CameraZoom {
+        /// Whether to move toward the camera subject.
+        inward: bool,
+        /// Native float amount; absent/nonnumeric Lua input defaults to one.
+        amount: f32,
+    },
     /// Releases left-button orbit with the event's sticky-camera modifier.
     CameraOrbitStop {
         /// Preserve native camera flag 0x20 on the final mouse release.
@@ -59,7 +66,7 @@ pub enum UiMovementAction {
 }
 
 /// One ordered command with the source input time captured at the Lua call.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiMovementCommand {
     /// Native command selected by trusted FrameXML.
     pub action: UiMovementAction,
@@ -106,6 +113,17 @@ pub(crate) fn register_globals(
     input: UiMovementInput,
 ) -> mlua::Result<()> {
     use UiMovementControl as Control;
+    for (name, inward) in [("CameraZoomIn", true), ("CameraZoomOut", false)] {
+        let input = input.clone();
+        globals.raw_set(
+            name,
+            lua.create_function(move |lua, value: mlua::Value| {
+                let amount = lua.coerce_number(value)?.unwrap_or(1.) as f32;
+                input.request(UiMovementAction::CameraZoom { inward, amount });
+                Ok(())
+            })?,
+        )?;
+    }
     for (name, control, pressed) in [
         ("MoveForwardStart", Control::Forward, true),
         ("MoveForwardStop", Control::Forward, false),

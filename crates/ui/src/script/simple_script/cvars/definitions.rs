@@ -140,6 +140,13 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     // FUN_0051D9B0 registers the type-5 value at 0x009E1340, whose
     // initialized build-12340 bytes are the exact string "1.0".
     value("cameraDistanceMaxFactor", "1.0"),
+    ranged(
+        "cameraDistanceMoveSpeed",
+        "8.33",
+        (1.0_f32 / 360.0) as f64,
+        50.0,
+    ),
+    ranged("cameraDistanceMax", "15.0", 0.0, 50.0),
     ranged("cameraPitchMoveSpeed", "90", 0.1, 360.0),
     value("cameraPitchSmoothSpeed", "45"),
     value("cameraPivot", "1"),

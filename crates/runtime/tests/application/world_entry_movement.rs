@@ -240,6 +240,30 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         1400,
     )?;
     assert!(!movement.mouse_free_look());
+    let original_view = gameplay.world().ok_or("world")?.local_player_view()?;
+    movement.push(UiMovementCommand {
+        action: UiMovementAction::CameraZoom {
+            inward: true,
+            amount: 1.,
+        },
+        timestamp_ms: 1400,
+    });
+    for now in [1400, 1460, 1520] {
+        movement.service(
+            &mut gameplay,
+            &mut terrain,
+            &objects,
+            Some([0.5, 2., 1.]),
+            now,
+        )?;
+    }
+    let zoomed_view = gameplay.world().ok_or("world")?.local_player_view()?;
+    assert!((original_view.distance() - zoomed_view.distance() - 0.9996).abs() < 0.00001);
+    assert_eq!(zoomed_view.pitch_radians(), original_view.pitch_radians());
+    assert_eq!(
+        zoomed_view.yaw_offset_radians(),
+        original_view.yaw_offset_radians()
+    );
     Ok(())
 }
 

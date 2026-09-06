@@ -64,6 +64,7 @@ impl PlayerInputState {
     ) {
         use UiMovementAction as Action;
         match action {
+            Action::CameraZoom { .. } => {}
             Action::CameraOrbitStop { .. } => {
                 if self.hold(2, false) {
                     self.resolve(admission, emit);
