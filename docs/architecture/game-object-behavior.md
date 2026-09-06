@@ -4,8 +4,9 @@ The shared GameObject scene owns visible resource generations, retained generic
 behavior, and one CPU model timer shared with rendering. Generic transitions
 consume progress in native notification order and complete through that timer's
 scene callbacks, including while GPU placement is pending. The behavior also
-retains the native collision flag and current M2 collision placement. Dynamic
-MCNK/WMO reference registration and movement collection remain to be connected.
+retains the native collision flag and current M2 collision placement. The runtime
+registers those placements in MCNK/WMO lists and resolves the same live behavior
+when the movement collector visits them.
 
 The build-12340 dynamic geometry callback is registered by `0x004FA5F0` through
 `0x0077F2B0` as `0x004F6560` in `DAT_00CE04B0`. It resolves the exact GUID,
@@ -206,7 +207,7 @@ for rendering to consume once. Completion changes the internal state returned
 by `RuntimeGameObjectPresentation::animation_state` and the door's retained
 collision flag. `collision_eligible` checks that flag against the query mask
 and the current ECS type byte for the exact object lifetime. Dynamic collision
-registration is not yet connected to that boundary.
+registration retains the model generation and placement from that boundary.
 
 The generic owner is restricted to the constructor families that enter native
 `0x007124B0`: types 0–3, 5–6, 8–10, 12, 16–19, 22–27, 29–30, and 34. Other
@@ -229,11 +230,13 @@ function fixtures; they do not establish full native scene traversal parity.
 Dynamic references also belong in native MCNK and WMO-group collection order:
 `0x007A5A60` reaches the chunk's dynamic list through `0x007A5240` after its
 terrain faces and MDDF references. Appending every GameObject after all static
-geometry would not preserve candidate order. Reference registration,
-alternate/destructible resources, and the general WMO root registration
-lifecycle remain work for that owner.
+geometry would not preserve candidate order. The runtime now keeps these
+destination lists and visits them at those sites. Admitted replicated WMO roots
+share append order with MODF roots and retain attached default-set doodads.
+Alternative/destructible resources and specialized map-M2 owners remain work
+for their behavior providers.
 
-## Spatial registration evidence still to integrate
+## Spatial registration
 
 GameObject map-owner creation uses flags `0xB` at `0x00781A10`, selecting the
 special registration path `0x007C2E70` through `0x007C2F80`. That path probes

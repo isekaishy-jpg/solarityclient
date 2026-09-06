@@ -1948,6 +1948,11 @@ impl ClientServices {
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
         self.game_objects
             .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
+        self.terrain.synchronize_game_object_movement(
+            self.gameplay.world(),
+            &self.game_objects,
+            solarity_systems::MovementBspCacheMode::Enabled,
+        )?;
         if self.game_objects.scene_revision() != previous_game_object_revision
             && let Some(frame) = self.terrain_frame.as_mut()
         {

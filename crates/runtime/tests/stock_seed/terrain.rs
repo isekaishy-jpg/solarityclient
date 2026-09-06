@@ -1,5 +1,8 @@
 //! External integration tests for active-world terrain residency.
 
+#[path = "terrain/dynamic_movement.rs"]
+mod dynamic_movement;
+
 use std::error::Error;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
@@ -1449,7 +1452,10 @@ fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Erro
         .selection()
         .and_then(|result| result.selected())
         .ok_or("global WMO registration lost the interior floor")?;
-    assert_eq!(selected.owner(), 7);
+    assert_eq!(
+        selected.owner(),
+        solarity_runtime::RuntimeWorldModelMovementOwner::Static { unique_id: 7 }
+    );
     assert!(selected.hit().is_interior());
     assert_eq!(selected.hit().face(), Some(0));
     registered_model.set_transform(glam::Mat4::from_translation(Vec3::new(

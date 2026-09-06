@@ -4,7 +4,7 @@
 #[path = "../../tests/application/game_object_behavior.rs"]
 mod tests;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -79,6 +79,13 @@ impl GameObjectBehavior {
 
     pub(in crate::application) fn state(&self) -> Option<GameObjectAnimationState> {
         self.state.get()
+    }
+
+    pub(in crate::application) fn collision(&self) -> Option<Ref<'_, PlacedM2Collision>> {
+        Ref::filter_map(self.model.borrow(), |model| {
+            model.as_ref()?.collision.as_ref()
+        })
+        .ok()
     }
 
     pub(in crate::application) fn collision_eligible(

@@ -1,11 +1,11 @@
 //! Bounded worker ownership shared by every visible GameObject resource.
 
+use super::world_model::GameObjectWorldModelSource;
 use super::{
     GameObjectResource, ResourceRequest, RuntimeGameObjectError, RuntimeGameObjectResourceKind,
 };
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
-use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelSource;
 use solarity_asset::{ArchiveCatalog, AssetStore, BlpTextureCache, M2ModelCache, WmoModelCache};
 
 pub(super) enum GameObjectWorkerSource {
@@ -44,9 +44,10 @@ impl GameObjectWorkerState {
                 )?))
             }
             RuntimeGameObjectResourceKind::WorldModel => Ok(GameObjectResource::WorldModel(
-                ResidentWorldModelSource::load(
+                GameObjectWorldModelSource::load(
                     &request.path,
                     &mut self.world_models,
+                    &mut self.models,
                     &mut self.textures,
                     &mut self.assets,
                 )?,

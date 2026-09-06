@@ -140,6 +140,12 @@ impl PlacedM2Collision {
         &self.model
     }
 
+    /// Returns the current model-to-world placement used by collision queries.
+    #[must_use]
+    pub const fn transform(&self) -> Mat4 {
+        self.transform
+    }
+
     /// Tests the placed dedicated collision box before visiting its faces.
     ///
     /// `0x007BDB10` prepares this box from M2 header +0xBC; `0x007A50C0`

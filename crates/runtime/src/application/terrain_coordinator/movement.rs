@@ -1,6 +1,13 @@
-//! Ordered static movement geometry over complete resident ADT/WMO generations.
+//! Ordered static and replicated geometry over resident ADT/WMO generations.
 
+mod dynamic;
 mod registration;
+mod world_model;
+
+use dynamic::{DynamicMovementContext, ResidentDynamicMovement};
+pub use dynamic::{RuntimeMovementOwner, RuntimeMovementQuery};
+pub use world_model::RuntimeWorldModelMovementOwner;
+use world_model::{MovementRootReference, ResidentGameObjectWorldModels};
 
 pub use registration::{
     RuntimeMovementReference, RuntimeMovementRegistrationError, RuntimeMovementRegistrationQuery,
@@ -86,7 +93,7 @@ pub enum RuntimeStaticMovementError {
     #[error(transparent)]
     Collection(#[from] MovementCollectionError),
     /// A prepared scene reference no longer resolves to its owning generation.
-    #[error("resident static movement reference is invalid")]
+    #[error("resident movement reference is invalid or out of date")]
     InvalidReference,
 }
 
@@ -99,8 +106,10 @@ pub enum RuntimeStaticMovementError {
 pub struct RuntimeStaticMovementQuery {
     map_id: Option<u32>,
     triangles: Vec<MovementCollisionTriangle>,
-    owners: Vec<RuntimeStaticMovementOwner>,
+    owners: Vec<RuntimeMovementOwner>,
     visited: HashSet<ResidentM2Owner>,
+    visited_dynamic: HashSet<solarity_ecs::WorldObjectIdentity>,
+    visited_dynamic_doodads: HashSet<(solarity_ecs::WorldObjectIdentity, usize)>,
 }
 
 impl RuntimeStaticMovementQuery {
@@ -125,7 +134,10 @@ impl RuntimeStaticMovementQuery {
     /// Resolves a collision solver's selected triangle to its authored owner.
     #[must_use]
     pub fn owner(&self, triangle: usize) -> Option<RuntimeStaticMovementOwner> {
-        self.owners.get(triangle).copied()
+        match self.owners.get(triangle)? {
+            RuntimeMovementOwner::Static(owner) => Some(*owner),
+            _ => None,
+        }
     }
 
     fn clear(&mut self) {
@@ -133,10 +145,13 @@ impl RuntimeStaticMovementQuery {
         self.triangles.clear();
         self.owners.clear();
         self.visited.clear();
+        self.visited_dynamic.clear();
+        self.visited_dynamic_doodads.clear();
     }
 
     fn record(&mut self, owner: RuntimeStaticMovementOwner) {
-        self.owners.resize(self.triangles.len(), owner);
+        self.owners
+            .resize(self.triangles.len(), RuntimeMovementOwner::Static(owner));
     }
 
     fn append_m2(
@@ -181,6 +196,9 @@ struct WorldModelReference {
 #[derive(Default)]
 pub(super) struct ResidentMovementScene {
     world_models: Vec<WorldModelReference>,
+    dynamic: ResidentDynamicMovement,
+    roots: Vec<MovementRootReference>,
+    game_object_world_models: ResidentGameObjectWorldModels,
 }
 
 /// Worker-prepared MCRF/MODR references into the corresponding M2 scene.
@@ -252,6 +270,7 @@ impl ResidentMovementReferences {
 impl ResidentTerrainMap {
     /// Reconciles references only when a complete static generation changes.
     pub(super) fn synchronize_movement_owners(&mut self) {
+        self.movement.dynamic.invalidate();
         let scenes = self
             .global_world_model
             .iter()
@@ -292,6 +311,7 @@ impl ResidentTerrainMap {
                 .into_iter()
                 .filter(|reference| registered.remove(&reference.unique_id).is_some()),
         );
+        self.movement.synchronize_static_roots();
     }
 
     fn collect_static_movement(
@@ -299,6 +319,7 @@ impl ResidentTerrainMap {
         bounds: MovementCollisionBounds,
         cache_mode: MovementBspCacheMode,
         output: &mut RuntimeStaticMovementQuery,
+        dynamic: Option<DynamicMovementContext<'_>>,
     ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
         // 0x007A5A60: a missing WDT declaration is empty space; an unavailable
         // declared owner returns false. Prove completeness before exposing any
@@ -316,7 +337,24 @@ impl ResidentTerrainMap {
         }
         // 0x007A55E0 consumes root geometry, then each group's referenced M2s.
         // 0x007BF1A5 appends roots through 0x006DED60; promotion cannot change it.
-        for reference in &self.movement.world_models {
+        let flags = dynamic.map_or(u32::MAX, |context| context.flags);
+        for root in &self.movement.roots {
+            let reference = match *root {
+                MovementRootReference::Static(reference) => reference,
+                MovementRootReference::GameObject(identity) => {
+                    if let Some(context) = dynamic {
+                        self.movement.game_object_world_models.append(
+                            identity,
+                            context,
+                            bounds,
+                            cache_mode,
+                            &self.movement.dynamic,
+                            output,
+                        )?;
+                    }
+                    continue;
+                }
+            };
             let (m2, collision, models, references) = match reference.scene {
                 SceneAddress::Global => {
                     let global = self
@@ -351,18 +389,33 @@ impl ResidentTerrainMap {
             if !model.movement_intersects(bounds) {
                 continue;
             }
-            model.append_movement(bounds, cache_mode, &mut output.triangles)?;
-            output.record(RuntimeStaticMovementOwner::WorldModel {
-                unique_id: reference.unique_id,
-            });
+            if flags & 0xf0 != 0 {
+                model.append_movement(bounds, cache_mode, &mut output.triangles)?;
+                output.record(RuntimeStaticMovementOwner::WorldModel {
+                    unique_id: reference.unique_id,
+                });
+            }
             let groups = references
                 .world_models
                 .get(reference.placement)
                 .ok_or(RuntimeStaticMovementError::InvalidReference)?;
             for (group, doodads) in groups.iter().enumerate() {
                 if model.movement_group_intersects(group, bounds) {
-                    for &index in doodads {
-                        output.append_m2(m2, collision, index, bounds)?;
+                    if flags & 0xf != 0 {
+                        for &index in doodads {
+                            output.append_m2(m2, collision, index, bounds)?;
+                        }
+                    }
+                    if let Some(context) = dynamic {
+                        self.movement.dynamic.append(
+                            RuntimeMovementReference::WorldModel {
+                                unique_id: reference.unique_id,
+                                group,
+                            },
+                            context,
+                            bounds,
+                            output,
+                        )?;
                     }
                 }
             }
@@ -372,18 +425,33 @@ impl ResidentTerrainMap {
                 let Some(tile) = self.tile_at(tile_index) else {
                     continue;
                 };
-                tile.collision
-                    .append_movement_chunk(chunk, bounds, &mut output.triangles)?;
-                output.record(RuntimeStaticMovementOwner::Terrain {
-                    tile: tile_index,
-                    chunk,
-                });
+                if flags & 0x100 != 0 {
+                    tile.collision
+                        .append_movement_chunk(chunk, bounds, &mut output.triangles)?;
+                    output.record(RuntimeStaticMovementOwner::Terrain {
+                        tile: tile_index,
+                        chunk,
+                    });
+                }
                 let references = &tile.movement_references.chunks
                     [usize::from(chunk.y()) * 16 + usize::from(chunk.x())];
                 // 0x007C6150 appends MDDF references in their authored MCRF
                 // order. 0x007A50C0 stamps each placement once per query.
-                for &index in references {
-                    output.append_m2(&tile.m2_scene, &tile.m2_collision, index, bounds)?;
+                if flags & 0xf != 0 {
+                    for &index in references {
+                        output.append_m2(&tile.m2_scene, &tile.m2_collision, index, bounds)?;
+                    }
+                }
+                if let Some(context) = dynamic {
+                    self.movement.dynamic.append(
+                        RuntimeMovementReference::Terrain {
+                            tile: tile_index,
+                            chunk,
+                        },
+                        context,
+                        bounds,
+                        output,
+                    )?;
                 }
             }
         }
@@ -417,7 +485,7 @@ impl RuntimeTerrainCoordinator {
         else {
             return Ok(RuntimeStaticMovementResidency::PendingMap);
         };
-        let result = active.collect_static_movement(bounds, cache_mode, output);
+        let result = active.collect_static_movement(bounds, cache_mode, output, None);
         if matches!(result, Ok(RuntimeStaticMovementResidency::Ready)) {
             output.map_id = Some(map_id);
         } else {

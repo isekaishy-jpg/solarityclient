@@ -361,7 +361,9 @@ fn adt_placement_transform(
 }
 
 /// Builds the root-local MODD matrix from its on-disk XYZW quaternion.
-fn world_model_doodad_transform(doodad: &WorldModelDoodad) -> Result<Mat4, RuntimeTerrainError> {
+pub(in crate::application) fn world_model_doodad_transform(
+    doodad: &WorldModelDoodad,
+) -> Result<Mat4, RuntimeTerrainError> {
     let orientation = Quat::from_array(doodad.orientation());
     validate_transform(
         Mat4::from_translation(Vec3::from_array(doodad.position()))

@@ -198,7 +198,7 @@ impl WorldModelFrame {
             let source_index = if let Some(index) = sources.get(&Arc::as_ptr(cpu.model())) {
                 *index
             } else {
-                let gpu = prepare_gpu_source(renderer, cpu, self.filtering, self.base_mip)?;
+                let gpu = prepare_gpu_source(renderer, cpu.root(), self.filtering, self.base_mip)?;
                 let index = self.sources.len();
                 sources.insert(Arc::as_ptr(&gpu.model), index);
                 self.sources.push(Some(gpu));

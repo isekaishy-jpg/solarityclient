@@ -121,7 +121,7 @@ the [resident ADT neighborhood](terrain-streaming.md) and global-WMO maps.
 Each selected triangle maps to its authored MCNK, MDDF, MODF, or MODD owner.
 These identities are scoped to the query map; they are not network GUIDs.
 Native static triangle object identifiers are zero. Dynamic object identifiers
-and transport ownership still belong to the movement interval's other providers.
+are retained by the combined query described below.
 
 An unavailable matching map returns `PendingMap`. A query overlapping an
 unavailable WDT-declared ADT returns `PendingTile`; an undeclared WDT tile is
@@ -167,6 +167,48 @@ stock placement-matrix parity, visual parity, or a full-client FPS measurement.
 Wider queries also selected 12,145 WMO and 8,159 MODD faces in Stormwind,
 and 3,126 MDDF faces in Northrend, exercising the recovered group references.
 
+## Retained replicated geometry
+
+`ClientServices` calls `synchronize_game_object_movement` after current CPU model
+and behavior synchronization. Generic M2 owners reuse the collision instance
+already retained by their behavior. The spatial registry keeps model generation,
+display, placement, and world/entity lifetime, plus per-group/per-chunk dynamic
+lists. Changed placements remove their previous references and insert at the
+head of each new destination (`0x007C2F80`, `0x007B5020`). Unchanged frames retain
+list order and allocations. Static generation changes recheck destinations;
+unchanged destinations keep their relative order. Pending registration removes
+old references and prevents a complete combined query from being published.
+
+`collect_movement` uses the same traversal as the static query. Each group's or
+chunk's static M2 list is followed immediately by its dynamic list. Native
+`0x007A5240` requires mask `0xF00000` and stamps an owner even when its callback
+or box rejects it. The runtime stamps exact lifetimes independently of reported
+GUIDs, resolves the current GameObject, and reads its retained behavior flag and
+door query bit `0x8000`. `0x004F6560` reports a nonzero passenger-parent GUID in
+place of the object's own GUID. Multiple children sharing that reported GUID
+still contribute separately. Family masks also gate static M2 (`0xF`), WMO
+faces (`0xF0`), and terrain (`0x100`); face material selection remains ordinary
+movement, rather than a general-purpose native ray-query API.
+
+Admitted replicated WMO roots share append order with MODF roots, matching
+`0x007BF120` / `0x00783500`. Their faces carry the replicated lifetime and GUID.
+The resource worker also completes default-set MODD sources. Those attached
+collision instances follow group MODR order and carry native GUID zero.
+Map-M2 construction at `0x007C21E0` initializes both GUID words to zero;
+MODD construction and root-motion updates do not replace them.
+Root motion updates placed bounds and attached doodads while retaining local
+BSP caches (`0x007B67B0`, `0x007B40F0`, `0x007C1380`). Registration includes
+these roots in the transformed bank, so a generic prop can attach to a moving
+WMO group. `RuntimeMovementRegistrationQuery` reports the selected authored or
+replicated root through `RuntimeWorldModelMovementOwner`.
+
+Portable runtime tests cover multi-chunk deduplication, stable list order,
+matrix and display replacement, missing destinations, parent GUIDs, door and
+family masks, GUID reuse, world replacement, root append order, repeated MODR
+references, and a prop registered inside a moving WMO. Separate placement
+updates compare retained cached/uncached geometry to fresh transformed instances
+and verify that invalid matrix updates preserve the last valid placement.
+
 ## Runtime work remaining
 
 Residency still admits whole ADTs atomically. New roots use first MCRF reference
@@ -176,10 +218,11 @@ retain their order across admission and promotion.
 
 Replicated GameObject quaternion and passenger matrices now have a shared
 native-verified placement provider used by transport M2/WMO presentation; see
-[`game-object-placement.md`](game-object-placement.md). It still needs to be
-joined to dynamic collision residency and animated transport path owners.
+[`game-object-placement.md`](game-object-placement.md). Those current matrices
+now drive admitted collision owners; animated transport paths remain separate.
 
 The owner also needs authored static placement-matrix verification, collision-query
-cache bounds covering step trials, dynamic-object admission, liquid/WDL modes,
+cache bounds covering step trials, specialized map-M2 GameObject owners,
+destructible WMO states and alternative doodad sets, liquid/WDL modes,
 timestamped input, and landing/ground/fall application to ECS state. None of the
 collector tests establishes live player movement or frame-rate parity.

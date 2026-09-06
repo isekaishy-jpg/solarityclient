@@ -42,6 +42,7 @@ pub struct PlacedWorldModelCollision {
     pub(super) root_bounds: [Vec3; 2],
     group_bounds: Vec<[Vec3; 2]>,
     movement_group_bounds: Vec<[Vec3; 2]>,
+    placement_bounds_scratch: Vec<[Vec3; 2]>,
     pub(super) movement_pending: Vec<MovementBspQuery>,
     pub(super) movement_faces: Vec<bool>,
     pub(super) movement_cached_leaves: Vec<Vec<bool>>,
@@ -132,11 +133,67 @@ impl PlacedWorldModelCollision {
             root_bounds,
             group_bounds,
             movement_group_bounds,
+            placement_bounds_scratch: Vec::new(),
             movement_pending: Vec::new(),
             movement_faces: Vec::new(),
             movement_cached_leaves,
             floor_probe: super::world_model_floor::FloorProbeScratch::default(),
         })
+    }
+
+    /// Updates a retained moving root without rebuilding its local BSP caches.
+    ///
+    /// # Errors
+    /// Returns [`WorldModelCollisionError::InvalidPlacement`] for invalid
+    /// transforms or bounds. Failed updates preserve the queryable placement.
+    pub fn set_transform(&mut self, transform: Mat4) -> Result<(), WorldModelCollisionError> {
+        if transform == self.transform {
+            return Ok(());
+        }
+        if !transform.is_finite() || transform.determinant().abs() <= f32::EPSILON {
+            return Err(WorldModelCollisionError::InvalidPlacement);
+        }
+        self.set_transforms(transform, transform.inverse())
+    }
+
+    /// Updates both independently supplied native placement matrices.
+    ///
+    /// # Errors
+    /// Returns [`WorldModelCollisionError::InvalidPlacement`] for invalid
+    /// transforms or bounds. Failed updates preserve the queryable placement.
+    pub fn set_transforms(
+        &mut self,
+        transform: Mat4,
+        inverse_transform: Mat4,
+    ) -> Result<(), WorldModelCollisionError> {
+        if !transform.is_finite()
+            || !inverse_transform.is_finite()
+            || transform.determinant().abs() <= f32::EPSILON
+            || inverse_transform.determinant().abs() <= f32::EPSILON
+        {
+            return Err(WorldModelCollisionError::InvalidPlacement);
+        }
+        let root_bounds = transformed_bounds(self.model.bounds(), transform)?;
+        self.placement_bounds_scratch.clear();
+        for bounds in self
+            .model
+            .group_info()
+            .iter()
+            .map(|group| group.bounds())
+            .chain(self.model.groups().iter().map(|group| group.bounds()))
+        {
+            self.placement_bounds_scratch
+                .push(transformed_bounds(bounds, transform)?);
+        }
+        let groups = self.model.groups().len();
+        self.movement_group_bounds
+            .copy_from_slice(&self.placement_bounds_scratch[..groups]);
+        self.group_bounds
+            .copy_from_slice(&self.placement_bounds_scratch[groups..]);
+        self.root_bounds = root_bounds;
+        self.transform = transform;
+        self.inverse_transform = inverse_transform;
+        Ok(())
     }
 
     /// Returns the canonical shared WMO root path.

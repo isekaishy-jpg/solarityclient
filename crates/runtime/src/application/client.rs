@@ -71,6 +71,9 @@ pub enum ApplicationError {
     /// Active-map or player-tile terrain residency failed.
     #[error(transparent)]
     Terrain(#[from] RuntimeTerrainError),
+    /// Current GameObject spatial registration failed.
+    #[error(transparent)]
+    MovementRegistration(#[from] super::terrain_coordinator::RuntimeMovementRegistrationError),
     /// Final player camera composition against the resident scene failed.
     #[error(transparent)]
     Camera(#[from] RuntimeCameraError),

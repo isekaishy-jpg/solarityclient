@@ -1,6 +1,7 @@
 //! Shared visible-GameObject generations and loading-card transport readiness.
 
 mod worker;
+mod world_model;
 
 #[cfg(test)]
 #[path = "../../tests/application/game_object_jobs.rs"]
@@ -27,12 +28,12 @@ use thiserror::Error;
 use crate::application::game_object_behavior::{GameObjectBehavior, GameObjectNotification};
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
-use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelSource;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 use worker::{
     GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState, prepare_on_worker,
 };
+pub(in crate::application) use world_model::GameObjectWorldModelSource;
 
 /// Failure while admitting the exact display resource owned by a GameObject.
 #[derive(Debug, Error)]
@@ -105,7 +106,7 @@ pub enum RuntimeTransportPoll {
 /// Immutable CPU preparation shared independently of GUID and object lifetime.
 pub(in crate::application) enum GameObjectResource {
     M2(ResidentM2Source),
-    WorldModel(ResidentWorldModelSource),
+    WorldModel(GameObjectWorldModelSource),
 }
 
 impl GameObjectResource {
@@ -230,6 +231,18 @@ pub struct RuntimeGameObjectPresentation {
 }
 
 impl RuntimeGameObjectPresentation {
+    pub(in crate::application) fn movement_instances(&self) -> &[GameObjectInstance] {
+        &self.instances
+    }
+
+    pub(in crate::application) fn movement_instance(
+        &self,
+        identity: WorldObjectIdentity,
+    ) -> Option<&GameObjectInstance> {
+        self.indices
+            .get(&identity)
+            .and_then(|&index| self.instances.get(index))
+    }
     /// Creates a shared object owner over the process archive stack.
     #[must_use]
     pub fn new(
@@ -332,9 +345,10 @@ impl RuntimeGameObjectPresentation {
                     &mut self.assets.borrow_mut(),
                 )
                 .map(GameObjectResource::M2),
-                RuntimeGameObjectResourceKind::WorldModel => ResidentWorldModelSource::load(
+                RuntimeGameObjectResourceKind::WorldModel => GameObjectWorldModelSource::load(
                     &request.path,
                     &mut self.world_models,
+                    &mut self.models,
                     &mut self.textures,
                     &mut self.assets.borrow_mut(),
                 )
@@ -501,7 +515,13 @@ impl RuntimeGameObjectPresentation {
         Ok(())
     }
 
-    pub(in crate::application) fn synchronize_animations(
+    /// Attaches admitted CPU models to retained behavior and refreshes collision
+    /// placements. Call after resource synchronization and before movement
+    /// registration or rendering; unchanged models retain their playback state.
+    ///
+    /// # Errors
+    /// Returns an error for invalid animation inputs or collision placements.
+    pub fn synchronize_animations(
         &self,
         world: Option<&ActiveWorld>,
         random: &mut CrtRand,

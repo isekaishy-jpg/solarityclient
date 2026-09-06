@@ -4,7 +4,7 @@ GameObject movement now retains the packed local quaternion and non-living
 passenger offset that the object-update decoder previously skipped. Transport
 M2 and WMO presentation use one resolved matrix instead of reconstructing yaw
 from the ordinary facing word. The same placement type is available to the
-pending dynamic collision owner.
+retained dynamic collision owner.
 
 ## Ownership and admission
 
@@ -120,11 +120,14 @@ They also cover ordinary models with only a Stand animation.
 This implements replicated base placement, not animated transport trajectories.
 GameObject type 7/11 animation/path clocks, other parent categories, destructible
 owners and alternative WMO doodad sets still require their domain providers.
-Ordinary visible GameObjects now share presentation resources; dynamic collision
-registration and retained behavior-driven eligibility still require integration.
+Ordinary visible GameObjects share presentation resources and retain dynamic
+collision references. The production scene update synchronizes those references
+after CPU model/behavior placement, and the combined movement collector reads
+the same live behavior state.
 The native dynamic collector calls `0x004F6560` through `DAT_00CE04B0`, tests the
 object's collision eligibility (`0x0070F550` for GameObjects), uses its full matrix,
 and can replace provenance with its transport GUID before `0x007A4B80` emits
-faces. Those eligibility and dynamic-reference paths are not implemented by
-this placement change. Local input/ground/fall application and full-client FPS
+faces. Admitted WMO roots and default-set doodads also participate in movement
+collection and spatial registration. Specialized map-M2 owners, local
+input/ground/fall application, and full-client FPS
 remain unverified; see [movement geometry](movement-world-geometry.md).

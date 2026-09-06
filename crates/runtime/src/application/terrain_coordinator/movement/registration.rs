@@ -11,8 +11,8 @@ use solarity_systems::{
 use thiserror::Error;
 
 use super::{
-    ResidentTerrainMap, RuntimeStaticMovementResidency, RuntimeTerrainCoordinator, SceneAddress,
-    WorldModelReference,
+    MovementRootReference, ResidentTerrainMap, RuntimeStaticMovementResidency,
+    RuntimeTerrainCoordinator, RuntimeWorldModelMovementOwner, SceneAddress,
 };
 
 /// One native list destination, scoped to the registration query's map.
@@ -32,11 +32,21 @@ pub enum RuntimeMovementReference {
         /// Root MOGI/group index.
         group: usize,
     },
+    /// A group list owned by an admitted replicated WMO root.
+    GameObjectWorldModel {
+        /// Exact replicated lifetime of the root.
+        identity: solarity_ecs::WorldObjectIdentity,
+        /// Root MOGI/group index.
+        group: usize,
+    },
 }
 
 /// Invalid geometry or an unresolved reference in an admitted generation.
 #[derive(Debug, Error)]
 pub enum RuntimeMovementRegistrationError {
+    /// An attached MODD could not form its current placement.
+    #[error(transparent)]
+    M2(#[from] solarity_systems::M2CollisionError),
     /// Terrain point or height selection failed.
     #[error(transparent)]
     Terrain(#[from] TerrainCollisionError),
@@ -60,7 +70,7 @@ pub enum RuntimeMovementRegistrationError {
 pub struct RuntimeMovementRegistrationQuery {
     map_id: Option<u32>,
     references: Vec<RuntimeMovementReference>,
-    selection: Option<WorldModelRegistrationSelection<u32>>,
+    selection: Option<WorldModelRegistrationSelection<RuntimeWorldModelMovementOwner>>,
     groups: Vec<usize>,
 }
 
@@ -85,11 +95,13 @@ impl RuntimeMovementRegistrationQuery {
 
     /// Retains native floor/fallback channels for interior and support state.
     #[must_use]
-    pub const fn selection(&self) -> Option<WorldModelRegistrationSelection<u32>> {
+    pub const fn selection(
+        &self,
+    ) -> Option<WorldModelRegistrationSelection<RuntimeWorldModelMovementOwner>> {
         self.selection
     }
 
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.map_id = None;
         self.references.clear();
         self.selection = None;
@@ -100,8 +112,18 @@ impl RuntimeMovementRegistrationQuery {
 impl ResidentTerrainMap {
     fn registration_root_mut(
         &mut self,
-        reference: WorldModelReference,
+        root: MovementRootReference,
     ) -> Result<&mut PlacedWorldModelCollision, RuntimeMovementRegistrationError> {
+        let reference = match root {
+            MovementRootReference::Static(reference) => reference,
+            MovementRootReference::GameObject(identity) => {
+                return self
+                    .movement
+                    .game_object_world_models
+                    .collision_mut(identity)
+                    .ok_or(RuntimeMovementRegistrationError::InvalidReference);
+            }
+        };
         let models = match reference.scene {
             SceneAddress::Global => {
                 &mut self
@@ -131,13 +153,19 @@ impl ResidentTerrainMap {
         end: Vec3,
         point: Vec3,
         cache: MovementBspCacheMode,
-    ) -> Result<WorldModelRegistrationSelection<u32>, RuntimeMovementRegistrationError> {
+    ) -> Result<
+        WorldModelRegistrationSelection<RuntimeWorldModelMovementOwner>,
+        RuntimeMovementRegistrationError,
+    > {
         let mut query = WorldModelRegistrationQuery::new(start, end, point)?;
-        for index in 0..self.movement.world_models.len() {
-            let reference = self.movement.world_models[index];
+        for index in 0..self.movement.roots.len() {
+            let reference = self.movement.roots[index];
             query.probe_root(
-                reference.unique_id,
-                WorldModelRegistrationKind::Static,
+                reference.owner(),
+                match reference {
+                    MovementRootReference::Static(_) => WorldModelRegistrationKind::Static,
+                    MovementRootReference::GameObject(_) => WorldModelRegistrationKind::Transformed,
+                },
                 self.registration_root_mut(reference)?,
                 cache,
             )?;
@@ -147,7 +175,7 @@ impl ResidentTerrainMap {
 
     fn append_registration_root(
         &mut self,
-        reference: WorldModelReference,
+        reference: MovementRootReference,
         render_bounds: MovementCollisionBounds,
         interior: Option<usize>,
         output: &mut RuntimeMovementRegistrationQuery,
@@ -155,16 +183,16 @@ impl ResidentTerrainMap {
         output.groups.clear();
         self.registration_root_mut(reference)?
             .append_registration_groups(render_bounds, interior, &mut output.groups)?;
-        output.references.extend(output.groups.iter().map(|&group| {
-            RuntimeMovementReference::WorldModel {
-                unique_id: reference.unique_id,
-                group,
-            }
-        }));
+        output.references.extend(
+            output
+                .groups
+                .iter()
+                .map(|&group| reference.destination(group)),
+        );
         Ok(())
     }
 
-    fn register_game_object_movement(
+    pub(super) fn register_game_object_movement(
         &mut self,
         model: &PlacedM2Collision,
         cache: MovementBspCacheMode,
@@ -222,9 +250,9 @@ impl ResidentTerrainMap {
         {
             let reference = self
                 .movement
-                .world_models
+                .roots
                 .iter()
-                .find(|reference| reference.unique_id == candidate.owner())
+                .find(|reference| reference.owner() == candidate.owner())
                 .copied()
                 .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
             self.append_registration_root(
@@ -243,8 +271,8 @@ impl ResidentTerrainMap {
                     }
                 }
             }
-            for index in 0..self.movement.world_models.len() {
-                let reference = self.movement.world_models[index];
+            for index in 0..self.movement.roots.len() {
+                let reference = self.movement.roots[index];
                 self.append_registration_root(reference, render_bounds, None, output)?;
             }
             if self.terrain.global_world_model().is_none() {
@@ -267,12 +295,11 @@ impl ResidentTerrainMap {
 }
 
 impl RuntimeTerrainCoordinator {
-    /// Resolves GameObject M2 destinations against the complete static map scene.
+    /// Resolves GameObject M2 destinations against the admitted map scene.
     ///
     /// Uses native floor/portal banks, upward retry, terrain occlusion, interior
-    /// group selection, and direct chunk rounding. A dynamic scene must consume
-    /// these destinations and include dynamic WMO roots before committing a
-    /// complete ordinary movement query.
+    /// group selection, and direct chunk rounding. Replicated WMO roots enter
+    /// native transformed-root banks after GameObject movement synchronization.
     ///
     /// # Errors
     /// Returns [`RuntimeMovementRegistrationError`] for invalid geometry or an
