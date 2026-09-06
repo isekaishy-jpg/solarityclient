@@ -1,13 +1,16 @@
 //! Scene-owned minimap zoom, shared by every Minimap frame.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+
+use solarity_asset::AssetPath;
 
 #[derive(Debug)]
 struct MinimapState {
     zoom: Cell<[u32; 2]>,
     indoors: Cell<bool>,
     revision: Cell<u64>,
+    mask: RefCell<Option<AssetPath>>,
 }
 
 /// Native minimap scene controls, independent of any particular Lua widget.
@@ -20,6 +23,7 @@ impl Default for UiMinimapState {
             zoom: Cell::new([3, 3]),
             indoors: Cell::new(false),
             revision: Cell::new(0),
+            mask: RefCell::new(None),
         }))
     }
 }
@@ -40,10 +44,24 @@ impl UiMinimapState {
         self.0.indoors.get()
     }
 
-    /// Changes only when the scene's zoom or selected mode changes.
+    /// Changes when the scene's zoom, selected mode, or mask changes.
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.0.revision.get()
+    }
+
+    /// Shared custom mask; absence selects stock Textures/MinimapMask.blp.
+    #[must_use]
+    pub fn mask(&self) -> Option<AssetPath> {
+        self.0.mask.borrow().clone()
+    }
+
+    pub(crate) fn set_mask(&self, path: AssetPath) {
+        let mut mask = self.0.mask.borrow_mut();
+        if mask.as_ref() != Some(&path) {
+            *mask = Some(path);
+            self.bump_revision();
+        }
     }
 
     /// Returns the visible radius in world yards at the selected zoom.

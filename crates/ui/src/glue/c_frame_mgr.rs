@@ -193,6 +193,15 @@ impl FrameManager {
         self.owner.presentation()
     }
 
+    /// Returns one minimap's current widget settings and resolved viewport.
+    #[must_use]
+    pub fn minimap_presentation(
+        &self,
+        object_index: usize,
+    ) -> Option<crate::UiMinimapPresentation> {
+        self.owner.minimap_presentation(object_index)
+    }
+
     /// Returns effective visibility of a named region, including its parents.
     /// Missing names or regions have no visibility result.
     #[must_use]

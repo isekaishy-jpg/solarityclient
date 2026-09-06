@@ -265,6 +265,10 @@ impl RuntimeUiFrame {
     pub(super) fn draws(&self) -> &[solarity_rendering::UiPreparedDraw] {
         self.frame.draws()
     }
+
+    pub(super) fn draw_insertion_index(&self, batch_index: usize) -> usize {
+        self.frame.draw_insertion_index(batch_index)
+    }
 }
 
 /// Renderer-facing subset shared by retained GlueXML and FrameXML owners.

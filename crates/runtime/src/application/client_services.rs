@@ -119,6 +119,7 @@ pub(crate) struct ClientServices {
     glue_gpu_texture_prewarm_pending: bool,
     pending_glue_texture_prewarm: Option<ConfiguredGlueTexturePrewarmJob>,
     world_ui: Option<RuntimeWorldUi>,
+    world_ui_catalog: ArchiveCatalog,
     glue_model: RuntimeGlueModelScene,
     cinematic: RuntimeCinematicCoordinator,
     sound: RuntimeSoundCoordinator,
@@ -189,6 +190,7 @@ impl ClientServices {
         let player_catalog = catalog.clone();
         let transport_catalog = catalog.clone();
         let terrain_catalog = catalog.clone();
+        let world_ui_catalog = catalog.clone();
         let mut assets = AssetStore::mount(catalog)?;
         let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
@@ -444,6 +446,7 @@ impl ClientServices {
                 input,
                 glue,
                 assets: assets.clone(),
+                world_ui_catalog,
                 startup_profile,
                 cpu,
                 network: Some(network),
@@ -1026,6 +1029,14 @@ impl ClientServices {
                     world_ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
                 }
                 world_ui.refresh(&mut self.renderer)?;
+                world_ui.synchronize_minimap(
+                    &mut self.renderer,
+                    &self.cpu,
+                    self.terrain.active_map(),
+                    self.player
+                        .resident_frame_input()
+                        .map(|player| player.world_transform()),
+                )?;
                 self.platform
                     .set_text_input_active(world_ui.has_focused_edit_box());
             } else {
@@ -2254,6 +2265,12 @@ impl ClientServices {
         {
             ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
             ui.refresh(&mut self.renderer)?;
+            ui.synchronize_minimap(
+                &mut self.renderer,
+                &self.cpu,
+                self.terrain.active_map(),
+                Some(player.world_transform()),
+            )?;
         }
         if let Some(loading) = self.loading_screen.as_mut() {
             let readiness = RuntimeLoadingReadiness {
@@ -2263,7 +2280,10 @@ impl ClientServices {
                 player_ready: self.player.resident_frame_input().is_some(),
                 scene_ready: self.terrain_frame.is_some()
                     && !self.world_transfer.holds_loading_card(),
-                ui_ready: self.world_ui.is_some(),
+                ui_ready: self
+                    .world_ui
+                    .as_ref()
+                    .is_some_and(RuntimeWorldUi::minimap_ready),
                 transport_resource_ready: self.game_objects.is_ready(),
             };
             loading.advance(readiness);
@@ -2298,6 +2318,7 @@ impl ClientServices {
             &mut self.renderer,
             self.platform.window_id(),
             self.assets.clone(),
+            self.world_ui_catalog.clone(),
             self.platform.logical_extent(),
             self.startup_profile.cvar_values(),
             &self.addon_catalog,

@@ -23,6 +23,50 @@ pub enum UiTextureSource {
     SolidColor([f32; 4]),
     /// A frozen model portrait requested by stock `SetPortraitTexture`.
     UnitPortrait(String),
+    /// Ordered native composition owned by one live Minimap frame.
+    Minimap(usize),
+}
+
+/// Live native minimap settings in the logical UI coordinate system.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiMinimapPresentation {
+    object_index: usize,
+    bounds: UiScreenRect,
+    opacity: f32,
+    player_texture: AssetPath,
+    player_size: [f32; 2],
+}
+
+impl UiMinimapPresentation {
+    /// Returns the stable Minimap object identity.
+    #[must_use]
+    pub const fn object_index(&self) -> usize {
+        self.object_index
+    }
+
+    /// Returns the map viewport after inherited UI scaling.
+    #[must_use]
+    pub const fn bounds(&self) -> UiScreenRect {
+        self.bounds
+    }
+
+    /// Returns inherited visibility and alpha.
+    #[must_use]
+    pub const fn opacity(&self) -> f32 {
+        self.opacity
+    }
+
+    /// Returns the authored or Lua-selected player arrow.
+    #[must_use]
+    pub const fn player_texture(&self) -> &AssetPath {
+        &self.player_texture
+    }
+
+    /// Returns the arrow's width and height after inherited UI scaling.
+    #[must_use]
+    pub const fn player_size(&self) -> [f32; 2] {
+        self.player_size
+    }
 }
 
 /// Exact back-to-front packet ordering recovered from stock presentation state.
@@ -447,6 +491,25 @@ pub struct UiPresentationPlan {
 }
 
 impl UiPresentationPlan {
+    pub(crate) fn configured_minimap(
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        object_index: usize,
+    ) -> Option<UiMinimapPresentation> {
+        let object = live.objects().get(object_index)?;
+        let minimap = object.minimap.as_ref()?;
+        let region = geometry.region(object_index)?;
+        Some(UiMinimapPresentation {
+            object_index,
+            bounds: region.presentation_bounds(),
+            opacity: region.effective_alpha() as f32 * f32::from(region.effectively_shown()),
+            player_texture: minimap.player_texture.clone(),
+            player_size: minimap
+                .player_size
+                .map(|value| value * region.effective_scale() as f32),
+        })
+    }
+
     /// Rebuilds one retained frame backdrop without walking unrelated objects.
     ///
     /// Dynamic tooltips resize their frame and text on every new owner. The
@@ -770,6 +833,44 @@ impl UiPresentationPlan {
                     geometry.region(object_index).is_some_and(|region| {
                         region.effectively_shown() && region.effective_alpha() > 0.0
                     }),
+                ));
+            }
+            if let Some(minimap) = Self::configured_minimap(live, geometry, object_index)
+                && let (Some(strata), Some(frame_level)) = (object.frame_strata, object.frame_level)
+                && geometry.region(object_index).is_some_and(|region| {
+                    region.effectively_shown()
+                        && (region.effective_alpha() > 0.0 || region.animation_active())
+                })
+            {
+                // FUN_0057DCA0 registers the ARTWORK callback and creates its
+                // player texture before XML children. The texture constructor's
+                // final argument is visibility, not a draw sublevel.
+                let key = UiPresentationPacketKey {
+                    strata,
+                    frame_level,
+                    frame_sequence: object_index,
+                    draw_rank: draw_rank(UiDrawLayer::Artwork, UiObjectRole::Object),
+                    draw_sub_level: 0,
+                };
+                keyed.push((
+                    key,
+                    UiTexturePresentation {
+                        key,
+                        object_index,
+                        owner_index: object_index,
+                        clip_object: nearest_owning_scroll_frame(live, object_index),
+                        slider_object: None,
+                        source: UiTextureSource::Minimap(object_index),
+                        blend_mode: UiBlendMode::Blend,
+                        bounds: minimap.bounds,
+                        tex_coords: [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0],
+                        vertex_colors: [[1.0; 4]; 4],
+                        opacity: minimap.opacity,
+                        horizontal_tiling: false,
+                        vertical_tiling: false,
+                        non_blocking: true,
+                        desaturated: false,
+                    },
                 ));
             }
             let Some(texture) = &object.texture else {

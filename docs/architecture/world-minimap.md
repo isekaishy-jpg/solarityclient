@@ -89,8 +89,48 @@ viewport spill, and no interior seams. An additional offline render of the local
 Orgrimmar archives at `(1562, -4405)` resolves the four terrain images, stock mask,
 and arrow, and visually confirms their composition in both minimap modes.
 
-The live minimap is still incomplete. The retained Minimap widget snapshot,
-runtime tile residency, draw ordering, and player/map updates still need to be
-joined to this projection. Indoor group selection, native tinting, tracking,
-and pings also need integration. Runtime geometry must drive the retained
-indoor/outdoor selection.
+The live outdoor minimap now joins that projection through a native
+`UiRenderSource::Minimap` composition slot. The stock constructor (`0x0057DCA0`)
+registers ARTWORK and creates the player texture before XML children. The texture
+constructor's final argument is a visibility flag (`0x00487ED0`), not a draw
+sublevel. The slot therefore places terrain and the player arrow before authored
+textures in the same ARTWORK band, while retaining the owning frame's order,
+visibility, alpha, inherited scale, and ScrollFrame clipping.
+
+Per-widget arrow paths and dimensions enter the retained Lua snapshot, including
+XML inheritance and `CreateFrame` templates. Lua setters dirty that widget when
+its state changes. `SetMaskTexture` selects the native scene's shared mask and
+increments its revision. The runtime reads these typed settings and the resident
+player's world transform; it does not run Lua or rebuild FrameXML for player
+motion. `rotateMinimap` selects a map heading following player facing and keeps
+the arrow upright.
+
+`RuntimeMinimapScene` requests only the current neighborhood, mask, and arrow.
+MPQ reads and BLP decoding run on the bounded CPU executor, with an independently
+mounted archive stack retained between jobs. Queue saturation defers admission.
+The renderer uploads completed sources once and retains their handles. Absent
+images are remembered, and unresolved or unmapped locations never reuse stale
+tiles. Initial requests participate in loading-screen readiness. Movement and
+material changes reuse each minimap's GPU mesh; steady state does no geometry
+work. The compositor retains the complete UI draw list and patches only minimap
+draw ranges when their counts and surrounding UI remain unchanged.
+
+An archive-backed runtime GPU test covers deferred admission, asynchronous
+publication, native layer ordering, circular masking, player placement, movement
+and map rotation, hide/show mesh reuse, unmapped locations, and missing images.
+UI tests cover authored dimensions and paths, inherited scale, setter updates,
+initially hidden widgets, template creation, and the scene's shared mask.
+
+An actual Orgrimmar FrameXML capture confirms the outdoor map and player arrow
+inside the stock circular mask. Unrelated UI revisions retain the minimap mesh
+without uploading it again. An uncaptured 1,800-frame-per-phase 2560-by-1440
+offline run measured 7.44 ms stationary, 7.00 ms orbiting, and 7.81 ms with pointer
+activity. These measurements do not establish live-server performance or the
+1,200 FPS target. The capture also exposed the missing default parent anchors
+for file-only XML textures, including `MinimapBorder`; that layout work remains.
+
+Indoor group selection, compass-ring rotation, native tinting, tracking, and
+network pings still need integration. Runtime geometry must drive the retained
+indoor/outdoor selection; the current production composition selects terrain tiles.
+Texture handles remain
+resident for the world UI lifetime, matching the existing UI residency policy.

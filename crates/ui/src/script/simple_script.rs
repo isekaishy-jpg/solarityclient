@@ -5,7 +5,7 @@ mod buttons;
 mod cvars;
 mod globals;
 mod messages;
-mod minimap;
+pub(super) mod minimap;
 pub(super) mod status_bars;
 mod tooltips;
 
@@ -3220,7 +3220,7 @@ impl UiScriptRuntime {
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if object.kind() == UiObjectKind::Minimap {
-            crate::feature::initialize_minimap_state(&table)
+            minimap::initialize(lua, &table, object)
                 .map_err(|error| execution_error("object registration", error))?;
         }
         if is_model_object(object.kind()) {
@@ -3925,6 +3925,15 @@ fn create_dynamic_object(
             .unwrap_or_default();
         status_bars::initialize(lua, &object, config)?;
     }
+    if kind == "Minimap" {
+        minimap::initialize_path(
+            lua,
+            &object,
+            record
+                .raw_get::<Option<String>>("minimap_player_texture")?
+                .as_deref(),
+        )?;
+    }
     if kind == "GameTooltip" {
         object.raw_set(tooltip_owner_key(), Option::<usize>::None)?;
         object.raw_set(tooltip_anchor_key(), "ANCHOR_NONE")?;
@@ -4580,7 +4589,6 @@ fn create_object_metatable(
         tooltips::register_game_tooltip_methods(lua, &methods)?;
     }
     if kind == UiObjectKind::Minimap {
-        crate::feature::register_minimap_methods(lua, &methods)?;
         minimap::register(lua, &methods, minimap.0, minimap.1)?;
     }
     if kind == UiObjectKind::QuestPoiFrame {

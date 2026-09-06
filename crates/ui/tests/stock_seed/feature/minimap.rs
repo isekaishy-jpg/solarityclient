@@ -217,8 +217,17 @@ fn minimap_scene_restores_settings_and_dispatches_mode_changes() -> Result<(), B
         },
         FixtureFile {
             path: "Interface/FrameXML/Minimap.xml",
-            bytes: br#"<Ui><Minimap name="Minimap"><Scripts>
+            bytes: br#"<Ui>
+<Minimap name="MapTemplate" virtual="true" minimapPlayerTexture="Interface/Minimap/TemplateArrow"/>
+<Minimap name="InitiallyHidden" hidden="true"><Size x="40" y="40"/><Anchors><Anchor point="CENTER"/></Anchors></Minimap>
+<Minimap name="Minimap" scale="0.5" alpha="0.8" minimapPlayerTexture="Interface/Minimap/AuthoredArrow">
+<Size x="160" y="120"/><Anchors><Anchor point="BOTTOMLEFT" x="20" y="30"/></Anchors>
+<Layers><Layer level="BACKGROUND"><Texture name="MapBackground" setAllPoints="true"><Color r="1" g="0" b="0"/></Texture></Layer>
+<Layer level="ARTWORK"><Texture name="MapChrome" setAllPoints="true"><Color r="0" g="1" b="0"/></Texture></Layer></Layers>
+<Scripts>
 <OnLoad>
+ self:SetPlayerTextureWidth(40)
+ self:SetPlayerTextureHeight(36)
 assert(self:GetZoom() == 2)
 assert(GetCVar("minimapZoom") == "2" and GetCVar("minimapInsideZoom") == "5")
 self:RegisterEvent("MINIMAP_UPDATE_ZOOM")
@@ -232,7 +241,12 @@ EVENT_ZOOM = tostring(self:GetZoom())
         },
         FixtureFile {
             path: "Interface/FrameXML/Bindings.xml",
-            bytes: br#"<Bindings><Binding name="ZOOM">Minimap:SetZoom(4)</Binding></Bindings>"#,
+            bytes: br#"<Bindings><Binding name="ZOOM">Minimap:SetZoom(4)</Binding>
+<Binding name="CONFIG">Minimap:SetPlayerTextureWidth(48); Minimap:SetPlayerTexture("Interface/Minimap/ChangedArrow"); Minimap:SetMaskTexture("Interface/Minimap/ChangedMask")</Binding>
+<Binding name="HIDE">Minimap:Hide()</Binding><Binding name="SHOW">Minimap:Show()</Binding>
+<Binding name="REVEAL">InitiallyHidden:Show()</Binding>
+<Binding name="CREATE">DynamicMap = CreateFrame("Minimap", "DynamicMap", nil, "MapTemplate"); DynamicMap:SetWidth(100); DynamicMap:SetHeight(100); DynamicMap:SetPoint("CENTER"); DynamicMap:SetPlayerTextureWidth(24); DynamicMap:SetPlayerTextureHeight(24)</Binding>
+</Bindings>"#,
         },
         FixtureFile {
             path: "WTF/DefaultBindings.wtf",
@@ -250,6 +264,46 @@ EVENT_ZOOM = tostring(self:GetZoom())
     )?;
     assert!(manager.take_changed_cvars().is_empty());
     assert_eq!(manager.minimap_state().zoom(), 2);
+    let map_index = manager
+        .render_plan()
+        .mesh()
+        .batches()
+        .iter()
+        .find_map(|batch| {
+            if let solarity_rendering::UiRenderSource::Minimap(index) = batch.source() {
+                Some(*index)
+            } else {
+                None
+            }
+        })
+        .ok_or("missing native minimap slot")?;
+    let minimap = manager
+        .minimap_presentation(map_index)
+        .ok_or("missing minimap presentation")?;
+    assert_eq!(minimap.player_size(), [20.0, 18.0]);
+    assert_eq!(
+        minimap.player_texture().as_str(),
+        r"INTERFACE\MINIMAP\AUTHOREDARROW.BLP"
+    );
+    assert_eq!(minimap.bounds().width(), 80.0);
+    assert_eq!(minimap.bounds().height(), 60.0);
+    assert!((minimap.opacity() - 0.8).abs() < 0.001);
+    let sources = manager
+        .render_plan()
+        .mesh()
+        .batches()
+        .iter()
+        .map(|batch| batch.source().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sources,
+        [
+            solarity_rendering::UiRenderSource::VertexColor,
+            solarity_rendering::UiRenderSource::Minimap(map_index),
+            solarity_rendering::UiRenderSource::VertexColor
+        ]
+    );
+    assert!(manager.render_plan().texture_assets().requests().is_empty());
     manager.set_minimap_indoors(true)?;
     assert_eq!(manager.localized_text("EVENT_ZOOM")?.as_deref(), Some("5"));
     assert_eq!(
@@ -278,5 +332,67 @@ EVENT_ZOOM = tostring(self:GetZoom())
         Some("2")
     );
     assert!(manager.take_changed_cvars().is_empty());
+    let revision = manager.minimap_state().revision();
+    manager.invoke_binding("CONFIG", true)?;
+    let minimap = manager
+        .minimap_presentation(map_index)
+        .ok_or("lost minimap after Lua update")?;
+    assert_eq!(minimap.player_size(), [24.0, 18.0]);
+    assert_eq!(
+        minimap.player_texture().as_str(),
+        r"INTERFACE\MINIMAP\CHANGEDARROW.BLP"
+    );
+    assert_eq!(
+        manager
+            .minimap_state()
+            .mask()
+            .map(|path| path.as_str().to_owned())
+            .as_deref(),
+        Some(r"INTERFACE\MINIMAP\CHANGEDMASK.BLP")
+    );
+    assert_eq!(manager.minimap_state().revision(), revision + 1);
+    manager.invoke_binding("HIDE", true)?;
+    assert_eq!(
+        manager
+            .minimap_presentation(map_index)
+            .ok_or("lost hidden map")?
+            .opacity(),
+        0.0
+    );
+    manager.invoke_binding("SHOW", true)?;
+    assert!(manager.render_plan().mesh().batches().iter().any(|batch| matches!(batch.source(), solarity_rendering::UiRenderSource::Minimap(index) if *index == map_index) && batch.opacity() > 0.0));
+    manager.invoke_binding("REVEAL", true)?;
+    assert_eq!(
+        manager
+            .render_plan()
+            .mesh()
+            .batches()
+            .iter()
+            .filter(|batch| matches!(
+                batch.source(),
+                solarity_rendering::UiRenderSource::Minimap(_)
+            ) && batch.opacity() > 0.0)
+            .count(),
+        2
+    );
+    manager.invoke_binding("CREATE", true)?;
+    let dynamic = manager
+        .render_plan()
+        .mesh()
+        .batches()
+        .iter()
+        .find_map(|batch| {
+            let solarity_rendering::UiRenderSource::Minimap(index) = batch.source() else {
+                return None;
+            };
+            manager
+                .minimap_presentation(*index)
+                .filter(|widget| widget.player_size() == [24.0; 2])
+        })
+        .ok_or("dynamic minimap did not enter the renderer")?;
+    assert_eq!(
+        dynamic.player_texture().as_str(),
+        r"INTERFACE\MINIMAP\TEMPLATEARROW.BLP"
+    );
     Ok(())
 }

@@ -19,9 +19,15 @@ use super::player_coordinator::{ResidentPlayerFrameInput, UnitPresentationGenera
 use super::terrain_frame::TerrainFrame;
 use crate::time::RealmClock;
 
+mod minimap;
+use minimap::RuntimeMinimapScene;
+
 /// A world UI could not be formed from authoritative entry state.
 #[derive(Debug, Error)]
 pub enum RuntimeWorldUiError {
+    /// The live minimap cannot form a finite world-to-UI projection.
+    #[error(transparent)]
+    Minimap(#[from] solarity_rendering::MinimapViewError),
     /// Packed server calendar state could not enter the FrameXML date type.
     #[error(transparent)]
     RealmDate(#[from] UiRealmDateError),
@@ -41,6 +47,8 @@ pub(super) struct RuntimeWorldUi {
     manager: FrameManager,
     bindings: crate::InputBindingRouter,
     frame: RuntimeUiFrame,
+    minimap: RuntimeMinimapScene,
+    presentation_revision: u64,
     texture_cache: BlpTextureCache,
     texture_residency: RuntimeUiResidency,
     assets: AssetStoreHandle,
@@ -165,6 +173,7 @@ impl RuntimeWorldUi {
         renderer: &mut VulkanRenderer,
         window_id: crate::WindowId,
         assets: AssetStoreHandle,
+        archive_catalog: solarity_asset::ArchiveCatalog,
         logical_extent: (u32, u32),
         cvar_values: &[(String, String)],
         addon_catalog: &AddonCatalog,
@@ -233,11 +242,14 @@ impl RuntimeWorldUi {
             &mut texture_residency,
         )?;
         let player_portrait_requested = requests_player_portrait(&manager);
+        let minimap = RuntimeMinimapScene::new(&mut assets.borrow_mut(), archive_catalog)?;
         Ok((
             Self {
                 manager,
                 bindings: crate::InputBindingRouter::new(window_id),
                 frame,
+                minimap,
+                presentation_revision: 0,
                 texture_cache,
                 texture_residency,
                 assets,
@@ -399,8 +411,31 @@ impl RuntimeWorldUi {
                 &mut self.texture_residency,
             )?;
             self.dirty = false;
+            self.presentation_revision = self.presentation_revision.wrapping_add(1);
         }
         Ok(())
+    }
+
+    pub(super) fn synchronize_minimap(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        cpu: &solarity_cpu::CpuExecutor,
+        map: Option<&solarity_asset::TerrainMap>,
+        player: Option<solarity_ecs::WorldTransform>,
+    ) -> Result<(), ApplicationError> {
+        self.minimap.synchronize(
+            renderer,
+            cpu,
+            &self.manager,
+            &self.frame,
+            self.presentation_revision,
+            map,
+            player,
+        )
+    }
+
+    pub(super) fn minimap_ready(&self) -> bool {
+        self.minimap.ready()
     }
 
     /// Executes unclaimed bindings and preserves release delivery across UI capture.
@@ -514,7 +549,7 @@ impl RuntimeWorldUi {
 
     /// Returns renderer-validated FrameXML draws in stock order.
     pub(super) fn draws(&self) -> &[UiPreparedDraw] {
-        self.frame.draws()
+        self.minimap.draws(&self.frame)
     }
 }
 

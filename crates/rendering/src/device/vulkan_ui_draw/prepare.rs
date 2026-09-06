@@ -62,6 +62,7 @@ pub(in crate::device) fn prepare_draw(
             | UiRenderSource::GlyphAtlas(_)
             | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
             UiRenderSource::VertexColor => UiShaderSource::VertexColor,
+            UiRenderSource::Minimap(_) => return Err(VulkanError::UiDrawTextureMismatch),
         }
     };
     if pipeline_info.source() != expected_source || pipeline_info.blend() != batch.blend() {

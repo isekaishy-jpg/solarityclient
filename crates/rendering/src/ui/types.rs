@@ -57,6 +57,8 @@ pub enum UiRenderSource {
     GlyphAtlas(u64),
     /// A renderer-owned offscreen portrait for one canonical unit token.
     UnitPortrait(String),
+    /// Native minimap composition slot, expanded by the world UI owner.
+    Minimap(usize),
     /// No sampled image; the interpolated vertex color is the final source.
     VertexColor,
 }

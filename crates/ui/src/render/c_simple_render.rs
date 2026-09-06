@@ -343,6 +343,7 @@ impl UiRenderPlan {
                     let source = match member.source() {
                         UiTextureSource::Asset(path) => UiRenderSource::Texture(path.clone()),
                         UiTextureSource::SolidColor(_) => UiRenderSource::VertexColor,
+                        UiTextureSource::Minimap(index) => UiRenderSource::Minimap(*index),
                         UiTextureSource::UnitPortrait(unit) => {
                             UiRenderSource::UnitPortrait(unit.clone())
                         }
@@ -631,6 +632,7 @@ fn render_quad_parts(
         UiTextureSource::Asset(path) => (UiRenderSource::Texture(path.clone()), None),
         UiTextureSource::SolidColor(color) => (UiRenderSource::VertexColor, Some(*color)),
         UiTextureSource::UnitPortrait(unit) => (UiRenderSource::UnitPortrait(unit.clone()), None),
+        UiTextureSource::Minimap(index) => (UiRenderSource::Minimap(*index), None),
     };
     let colors = colors.map(|color| {
         solid_color.map_or(color, |solid| {

@@ -10,7 +10,7 @@ use super::{CrtRand, M2Frame, M2GpuPlacementOwner, M2Playback, ResidentM2Scene};
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 use crate::configuration::{WindowConfiguration, WindowMode};
 use crate::platform::SdlPlatform;
-use crate::test_support::{ClientFixture, game_object_models as models};
+use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models as models};
 use glam::Vec3;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStore, AssetStoreHandle, ClientDataRoot,
@@ -23,9 +23,6 @@ use solarity_ecs::{
 use solarity_rendering::{M2ParticleTwinkleTable, VulkanBootstrap, VulkanRenderer};
 use std::error::Error;
 use std::sync::Arc;
-
-// SDL owns one process-wide main thread and event pump until its context drops.
-static SDL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn game_object_fallback_timers_preserve_state_and_random_order() -> Result<(), Box<dyn Error>> {

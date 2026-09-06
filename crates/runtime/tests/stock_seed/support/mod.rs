@@ -15,6 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use wow_mpq::{ArchiveBuilder, ListfileOption};
 
+// SDL owns one process-wide main thread and event pump until its context drops.
+#[allow(dead_code)]
+pub(crate) static SDL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const REQUIRED_ARCHIVES: [&str; 10] = [
     "expansion.MPQ",
     "lichking.MPQ",

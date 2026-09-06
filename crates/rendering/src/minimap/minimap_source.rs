@@ -96,9 +96,8 @@ impl MinimapView {
         );
         let x = first.x().min(62);
         let y = first.y().min(62);
-        [(0, 0), (1, 0), (1, 1), (0, 1)].map(|(dx, dy)| {
-            TerrainTileIndex::clamped(i32::from(x + dx), i32::from(y + dy))
-        })
+        [(0, 0), (1, 0), (1, 1), (0, 1)]
+            .map(|(dx, dy)| TerrainTileIndex::clamped(i32::from(x + dx), i32::from(y + dy)))
     }
 
     /// Projects one archive-resolved terrain tile. Each tile retains its own

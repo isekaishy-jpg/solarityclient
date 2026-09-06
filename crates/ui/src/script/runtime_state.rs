@@ -65,6 +65,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) text: Option<UiRuntimeText>,
     pub(crate) simple_html_text: Option<String>,
     pub(crate) model: Option<UiRuntimeModel>,
+    pub(crate) minimap: Option<crate::feature::MinimapWidgetState>,
     pub(crate) backdrop_color: Option<[f64; 4]>,
     pub(crate) backdrop_border_color: Option<[f64; 4]>,
     pub(crate) frame_level: Option<i32>,
@@ -597,6 +598,10 @@ pub(super) fn snapshot_runtime_objects(
                 })?
                 .flatten(),
             model,
+            minimap: (kind == UiObjectKind::Minimap)
+                .then(|| super::simple_script::minimap::snapshot(&table))
+                .transpose()
+                .map_err(|error| snapshot_error(format!("object {lua_index} minimap"), error))?,
             backdrop_color: is_frame
                 .then(|| {
                     snapshot_optional_color(
@@ -920,6 +925,13 @@ pub(super) fn refresh_runtime_dirty_objects(
             )?;
         }
         if flags & DIRTY_WIDGET != 0 {
+            if kind == UiObjectKind::Minimap {
+                live.objects[object_index].minimap = Some(
+                    super::simple_script::minimap::snapshot(&table).map_err(|error| {
+                        snapshot_error(format!("object {lua_index} minimap"), error)
+                    })?,
+                );
+            }
             let is_button = matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton);
             if kind == UiObjectKind::ScrollFrame {
                 let offset = (

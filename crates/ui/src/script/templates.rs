@@ -95,6 +95,7 @@ pub struct UiRuntimeTemplateNode {
     font_max_lines: u32,
     message_config: Option<crate::widget::MessageConfig>,
     status_bar_config: Option<crate::widget::StatusBarConfig>,
+    minimap_player_texture: Option<String>,
     edit_max_letters: u32,
     edit_password: bool,
     edit_multiline: bool,
@@ -324,6 +325,9 @@ impl UiRuntimeTemplatePlan {
                     font_max_lines: font.max_lines,
                     status_bar_config: (object.kind() == UiObjectKind::StatusBar)
                         .then(|| crate::widget::StatusBarConfig::from_node(object)),
+                    minimap_player_texture: super::simple_script::minimap::xml_player_texture(
+                        object,
+                    ),
                     message_config: (object.kind() == UiObjectKind::ScrollingMessageFrame)
                         .then(|| crate::widget::MessageConfig::from_node(object)),
                     edit_max_letters: font.edit_max_letters,
@@ -543,6 +547,10 @@ impl UiRuntimeTemplatePlan {
                 if let Some(config) = &node.status_bar_config {
                     record.raw_set("status_bar_config", lua.create_userdata(config.clone())?)?;
                 }
+                record.raw_set(
+                    "minimap_player_texture",
+                    node.minimap_player_texture.as_deref(),
+                )?;
                 if let Some(config) = &node.message_config {
                     record.raw_set("message_maximum", config.maximum)?;
                     record.raw_set("message_display_duration", config.display_duration)?;

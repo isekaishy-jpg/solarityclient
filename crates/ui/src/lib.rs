@@ -76,8 +76,8 @@ pub use region::{
     UiRegionStatePlan, UiScreenRect,
 };
 pub use render::{
-    UiModelFog, UiModelLight, UiModelLightSets, UiModelPresentation, UiPresentationPacket,
-    UiPresentationPacketKey, UiPresentationPlan, UiRenderError, UiRenderPlan,
+    UiMinimapPresentation, UiModelFog, UiModelLight, UiModelLightSets, UiModelPresentation,
+    UiPresentationPacket, UiPresentationPacketKey, UiPresentationPlan, UiRenderError, UiRenderPlan,
     UiTextureAssetBindings, UiTextureAssetPlan, UiTextureAssetRequest, UiTexturePresentation,
     UiTextureSource,
 };

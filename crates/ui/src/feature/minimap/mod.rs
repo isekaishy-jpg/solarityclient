@@ -4,7 +4,7 @@ mod minimap_frame;
 mod state;
 mod tracking;
 
-pub(crate) use minimap_frame::{initialize_state, register_methods};
+pub(crate) use minimap_frame::MinimapWidgetState;
 pub use state::UiMinimapState;
 pub(crate) use tracking::register_globals;
 pub use tracking::{UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, UiTrackingType};

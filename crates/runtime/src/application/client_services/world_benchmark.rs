@@ -144,6 +144,7 @@ impl ClientServices {
             &mut self.renderer,
             self.platform.window_id(),
             self.assets.clone(),
+            self.world_ui_catalog.clone(),
             self.platform.logical_extent(),
             self.startup_profile.cvar_values(),
             &self.addon_catalog,
@@ -284,6 +285,14 @@ impl ClientServices {
             ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
         }
         ui.refresh(&mut self.renderer)?;
+        ui.synchronize_minimap(
+            &mut self.renderer,
+            &self.cpu,
+            self.terrain.active_map(),
+            self.player
+                .resident_frame_input()
+                .map(|player| player.world_transform()),
+        )?;
         let ui_duration = start.elapsed();
         let start = Instant::now();
         let camera = self

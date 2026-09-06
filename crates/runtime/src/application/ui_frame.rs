@@ -20,6 +20,8 @@ pub(crate) struct PreparedUiFrame {
     resident_draws: Vec<UiPreparedDraw>,
     /// Visible packets submitted for the current live state.
     draws: Vec<UiPreparedDraw>,
+    /// Source batch indices parallel to visible draws, for native insertion.
+    visible_draw_batches: Vec<usize>,
     /// Source batch index parallel to each resident renderer draw.
     draw_batches: Vec<usize>,
     /// Complete material topology, including non-blocking unresolved sources.
@@ -73,6 +75,7 @@ impl PreparedUiFrame {
                     | UiRenderSource::GlyphAtlas(_)
                     | UiRenderSource::UnitPortrait(_) => UiShaderSource::Texture,
                     UiRenderSource::VertexColor => UiShaderSource::VertexColor,
+                    UiRenderSource::Minimap(_) => continue,
                 }
             };
             let pipeline = renderer.prepare_ui_pipeline(source, batch.blend())?;
@@ -119,6 +122,7 @@ impl PreparedUiFrame {
                     Some(index)
                 }
                 UiRenderSource::VertexColor => None,
+                UiRenderSource::Minimap(_) => continue,
             };
             let mask_index = if let Some(mask) = batch.mask() {
                 let Some(texture) = textures.get(mask.path()).copied() else {
@@ -140,7 +144,7 @@ impl PreparedUiFrame {
             batch_resources.push((batch_index, pipeline, sampled_index, mask_index));
         }
         let texture_sets = renderer.prepare_ui_texture_sets(&sampled_textures)?;
-        let draw_batches = batch_resources
+        let draw_batches: Vec<usize> = batch_resources
             .iter()
             .map(|(batch_index, _pipeline, _sampled, _mask)| *batch_index)
             .collect();
@@ -166,12 +170,20 @@ impl PreparedUiFrame {
             .copied()
             .filter(|draw| draw.opacity() > 0.0 && draw.index_count() > 0)
             .collect();
+        let visible_draw_batches = resident_draws
+            .iter()
+            .zip(&draw_batches)
+            .filter_map(|(draw, &batch)| {
+                (draw.opacity() > 0.0 && draw.index_count() > 0).then_some(batch)
+            })
+            .collect();
         Ok(Self {
             mesh,
             mesh_identity: plan.geometry_identity(),
             logical_extent: plan.logical_extent(),
             resident_draws,
             draws,
+            visible_draw_batches,
             draw_batches,
             materials: plan.batches().to_vec(),
         })
@@ -292,12 +304,19 @@ impl PreparedUiFrame {
 
     fn refresh_visible_draws(&mut self) {
         self.draws.clear();
-        self.draws.extend(
-            self.resident_draws
-                .iter()
-                .copied()
-                .filter(|draw| draw.opacity() > 0.0 && draw.index_count() > 0),
-        );
+        self.visible_draw_batches.clear();
+        for (&draw, &batch) in self.resident_draws.iter().zip(&self.draw_batches) {
+            if draw.opacity() > 0.0 && draw.index_count() > 0 {
+                self.draws.push(draw);
+                self.visible_draw_batches.push(batch);
+            }
+        }
+    }
+
+    /// Locates a native composition slot among currently visible UI draws.
+    pub(crate) fn draw_insertion_index(&self, batch_index: usize) -> usize {
+        self.visible_draw_batches
+            .partition_point(|&index| index < batch_index)
     }
 
     fn can_replace_mesh(&self, plan: &UiMeshPlan) -> bool {

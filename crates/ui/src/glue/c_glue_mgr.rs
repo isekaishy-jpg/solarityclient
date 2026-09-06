@@ -481,6 +481,15 @@ impl GlueManager {
         &self.presentation
     }
 
+    /// Returns one minimap's current widget settings and resolved viewport.
+    #[must_use]
+    pub fn minimap_presentation(
+        &self,
+        object_index: usize,
+    ) -> Option<crate::UiMinimapPresentation> {
+        UiPresentationPlan::configured_minimap(&self.live, &self.geometry, object_index)
+    }
+
     /// Returns the upload-ready mesh rebuilt after each delivered Glue event.
     #[must_use]
     pub const fn render_plan(&self) -> &UiRenderPlan {
@@ -2112,7 +2121,7 @@ impl GlueManager {
             if !presented {
                 return true;
             }
-            let owns_quad = object.texture.as_ref().is_some_and(|texture| {
+            let owns_quad = object.minimap.is_some() || object.texture.as_ref().is_some_and(|texture| {
                 texture.file.is_some() || texture.solid_color.is_some()
             })
                 || object
