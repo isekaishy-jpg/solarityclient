@@ -983,6 +983,7 @@ impl ClientServices {
                 self.platform.set_text_input_active(false);
             }
             self.persist_active_cvars()?;
+            profile.mark("world FrameXML update and upload");
         }
         let Some(environment) = self.environment.current() else {
             return self.present_glue_frame();
@@ -990,6 +991,7 @@ impl ClientServices {
         let Some(camera) = self.resolved_world_camera()? else {
             return self.present_glue_frame();
         };
+        profile.mark("world camera");
         if let Some(clock) = self.gameplay.realm_clock() {
             self.sound.update(
                 &self.glue,
@@ -1018,6 +1020,7 @@ impl ClientServices {
             .world_ui
             .as_ref()
             .map_or(&[][..], RuntimeWorldUi::draws);
+        profile.mark("world sound and render inputs");
         frame.present(
             &mut self.renderer,
             plan,
@@ -1034,6 +1037,7 @@ impl ClientServices {
             frame_draws,
             &self.runtime_overlay_draws,
         )?;
+        profile.mark("world animation and Vulkan present");
         let mount_camera_sample = frame.take_mount_camera_sample();
         let camera_time_ms = mount_camera_sample
             .map_or_else(|| frame.m2_animation_time_ms(), |sample| sample.time_ms());
@@ -1050,6 +1054,7 @@ impl ClientServices {
             tracing::error!(error = %message, "contained recoverable M2 presentation error");
             self.developer_console.record_error(&message);
         }
+        profile.mark("world animation events");
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }
@@ -1292,6 +1297,7 @@ impl ClientServices {
 
     /// Applies ordered Glue actions and polls one asynchronous login result.
     pub(crate) fn service_login(&mut self) -> Result<(), ApplicationError> {
+        let mut profile = RuntimeFrameProfile::new("session and world service");
         let Some(network) = self.network.as_ref() else {
             return Ok(());
         };
@@ -1886,12 +1892,14 @@ impl ClientServices {
         }
         self.service_loading_screen_prewarm()?;
         self.service_world_transfers()?;
+        profile.mark("session actions and transfers");
         // Stock continues world/UI initialization while the loading card owns
         // presentation. Start immutable terrain generation first so FrameXML,
         // character, and transport preparation overlap its worker execution.
         let terrain_poll = self
             .terrain
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
+        profile.mark("terrain residency");
         self.prepare_world_ui_if_ready()?;
         if let (Some(world_ui), Some(clock)) = (self.world_ui.as_mut(), self.gameplay.realm_clock())
         {
@@ -1905,6 +1913,7 @@ impl ClientServices {
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         self.synchronize_component_texture_level();
+        profile.mark("world UI and environment");
         if let Some(ui) = &self.world_ui {
             while let Some(command) = ui.take_movement_command() {
                 self.player_movement.push(command);
@@ -1921,6 +1930,20 @@ impl ClientServices {
                 }
             }
         }
+        // Publish current map/object collision references before the movement
+        // owner queries them, including the first admitted terrain generation.
+        let previous_game_object_revision = self.game_objects.scene_revision();
+        let transport_poll = self
+            .game_objects
+            .synchronize_async(self.gameplay.world(), &self.cpu)?;
+        self.game_objects
+            .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
+        self.terrain.synchronize_game_object_movement(
+            self.gameplay.world(),
+            &self.game_objects,
+            solarity_systems::MovementBspCacheMode::Enabled,
+        )?;
+        profile.mark("game object residency and collision registry");
         self.player_movement.service(
             &mut self.gameplay,
             &mut self.terrain,
@@ -1928,6 +1951,7 @@ impl ClientServices {
             self.player.movement_dimensions(),
             crate::platform::client_milliseconds(),
         )?;
+        profile.mark("player movement");
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (
@@ -1956,6 +1980,7 @@ impl ClientServices {
             }
             RuntimePlayerPoll::Current => {}
         }
+        profile.mark("local player residency");
         match self.player.synchronize_creatures(self.gameplay.world())? {
             RuntimeCreaturePoll::ModelsChanged => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
@@ -1991,17 +2016,7 @@ impl ClientServices {
             }
             RuntimeRemotePlayerPoll::Current => {}
         }
-        let previous_game_object_revision = self.game_objects.scene_revision();
-        let transport_poll = self
-            .game_objects
-            .synchronize_async(self.gameplay.world(), &self.cpu)?;
-        self.game_objects
-            .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
-        self.terrain.synchronize_game_object_movement(
-            self.gameplay.world(),
-            &self.game_objects,
-            solarity_systems::MovementBspCacheMode::Enabled,
-        )?;
+        profile.mark("creature and remote player residency");
         if self.game_objects.scene_revision() != previous_game_object_revision
             && let Some(frame) = self.terrain_frame.as_mut()
         {
@@ -2160,7 +2175,9 @@ impl ClientServices {
                 }
             }
         }
+        profile.mark("scene GPU publication");
         self.service_terrain_streaming()?;
+        profile.mark("terrain streaming");
         self.synchronize_world_ui_zone()?;
         self.complete_world_transfer_map()?;
         if self.player.resident_frame_input().is_some()

@@ -1,5 +1,9 @@
 //! Persistent active-world packet pump and main-thread ECS dispatch.
 
+#[cfg(test)]
+#[path = "../../tests/application/world_entry_movement.rs"]
+mod movement_entry_tests;
+
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -10,7 +14,6 @@ use solarity_network::{
     WorldLocation, WorldMovementMessage, WorldPacketReader, WorldPacketWriter, WorldServerPacket,
     WorldSessionError, WorldTimePacketError, WorldTransfer,
 };
-use solarity_systems::{WorldEntryGroundContact, WorldEntryGroundContactError};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -55,9 +58,6 @@ pub enum RuntimeGameplayError {
     /// The active world lost a required controlled-player invariant.
     #[error(transparent)]
     World(#[from] WorldStateError),
-    /// The first movement-owned resident ground contact was invalid.
-    #[error(transparent)]
-    GroundContact(#[from] WorldEntryGroundContactError),
     /// An object-update packet was malformed.
     #[error(transparent)]
     ObjectUpdate(#[from] solarity_network::ObjectUpdateError),
@@ -99,7 +99,6 @@ pub struct RuntimeGameplayCoordinator {
     action_buttons: Option<WorldActionButtons>,
     player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
-    world_entry_grounded: bool,
     /// Packet dispatch yields to the composition root at each transfer packet.
     transfer: Option<WorldTransfer>,
 }
@@ -115,7 +114,6 @@ impl RuntimeGameplayCoordinator {
             action_buttons: None,
             player_control: None,
             unhandled_packets: VecDeque::new(),
-            world_entry_grounded: false,
             transfer: None,
         }
     }
@@ -186,7 +184,6 @@ impl RuntimeGameplayCoordinator {
         self.action_buttons = action_buttons;
         self.player_control = Some(player_control);
         self.unhandled_packets = retained;
-        self.world_entry_grounded = false;
         tracing::info!(
             map_id,
             setup_packet_count,
@@ -327,7 +324,6 @@ impl RuntimeGameplayCoordinator {
                 .object_identity(replacement.local_player_guid()?)
                 .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?,
         ));
-        self.world_entry_grounded = false;
         Ok(())
     }
 
@@ -454,36 +450,6 @@ impl RuntimeGameplayCoordinator {
         }
     }
 
-    /// Returns whether initial resident-world support still needs resolution.
-    #[must_use]
-    pub const fn world_entry_ground_contact_pending(&self) -> bool {
-        self.world.is_some() && !self.world_entry_grounded
-    }
-
-    /// Applies the movement-owned first terrain contact to the local player.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeGameplayError`] if ECS invariants or the resolved
-    /// surface are invalid.
-    pub fn apply_world_entry_ground_contact(
-        &mut self,
-        surface_height: f32,
-    ) -> Result<(), RuntimeGameplayError> {
-        let Some(world) = self.world.as_mut() else {
-            return Ok(());
-        };
-        if self.world_entry_grounded {
-            return Ok(());
-        }
-        let guid = world.local_player_guid()?;
-        let transform = world.local_player_transform()?;
-        let contact = WorldEntryGroundContact::resolve(transform, surface_height)?;
-        world.update_transform(guid, contact.transform(transform.orientation()))?;
-        self.world_entry_grounded = true;
-        Ok(())
-    }
-
     /// Returns the running authoritative realm clock, when received.
     #[must_use]
     pub const fn realm_clock(&self) -> Option<&RealmClock> {
@@ -518,7 +484,6 @@ impl RuntimeGameplayCoordinator {
         self.realm_clock = None;
         self.action_buttons = None;
         self.unhandled_packets.clear();
-        self.world_entry_grounded = false;
         self.transfer = None;
     }
 }

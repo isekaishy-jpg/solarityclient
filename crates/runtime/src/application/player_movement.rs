@@ -198,14 +198,16 @@ impl RuntimePlayerMovement {
         let Some(dimensions) = dimensions else {
             return Ok(());
         };
-        if gameplay.world_entry_ground_contact_pending() {
-            return Ok(());
-        }
         let transform = world.local_player_transform()?;
         if self.owner.is_none() {
-            self.owner = Some(LocalMovement::new(identity, transform, movement, now_ms)?);
+            let mut owner = LocalMovement::new(identity, transform, movement, now_ms)?;
             self.output
                 .push_back(PlayerMovementOutput::ActiveMover(guid));
+            // Initial selection uses the same acquire response as later
+            // control recovery. Its zero-launch fall resolves resident support;
+            // waiting for a separate pre-grounding callback deadlocks entry.
+            owner.acquire_mover(&mut self.output)?;
+            self.owner = Some(owner);
         } else if self
             .owner
             .as_ref()

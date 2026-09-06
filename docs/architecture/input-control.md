@@ -135,6 +135,21 @@ server corrections and control changes, timed camera input, and complete unit
 animation side effects. Successful binding dispatch or world transfer does not
 establish those remaining capabilities.
 
+World entry selects the local mover and runs the same zero-launch fall admission
+used on later control recovery. The production service must not wait for an
+external ground-ready callback: collision continuation itself determines support
+as terrain becomes resident. Map and game-object collision references are
+published before this first movement query. A regression drives the production
+service through missing geometry, terrain admission, landing, forward movement,
+and ordered writer notifications; transfer tests retain camera state without the
+removed ground-ready flag.
+
+`SOLARITY_FRAME_TIMINGS` attributes slow in-world frames across session service,
+terrain residency, UI/environment updates, collision registration, movement,
+unit residency, GPU publication, streaming, camera resolution, and presentation.
+These opt-in timings complement the Vulkan queue profiler; Glue replay throughput
+does not establish in-world frame time.
+
 ### Retained movement snapshot
 
 Living object updates now retain the full conditional `MovementInfo` context

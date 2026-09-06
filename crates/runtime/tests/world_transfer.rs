@@ -101,7 +101,6 @@ fn repeated_new_world_replaces_objects_and_acknowledges_each_completed_map() -> 
                 assert_eq!(world.local_player_identity().ok_or("missing player name")?.name(), "Transferfixture");
                 assert!(world.entity_by_guid(9).is_none());
                 assert!(world.local_player_presentation().is_none());
-                assert!(gameplay.world_entry_ground_contact_pending());
                 assert!(!transfer.complete_player());
                 assert!(matches!(responses.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
                 assert!(gameplay.acknowledge_world_transfer()?);
