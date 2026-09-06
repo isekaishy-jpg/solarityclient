@@ -396,6 +396,23 @@ impl FrameManager {
         self.owner.cvar_revision()
     }
 
+    /// Returns the shared minimap scene controls consumed by world rendering.
+    #[must_use]
+    pub fn minimap_state(&self) -> crate::UiMinimapState {
+        self.owner.minimap_state()
+    }
+
+    /// Publishes an indoor/outdoor minimap transition before notifying FrameXML.
+    ///
+    /// # Errors
+    /// Returns an event error when a `MINIMAP_UPDATE_ZOOM` handler fails.
+    pub fn set_minimap_indoors(&mut self, indoors: bool) -> Result<(), UiEventError> {
+        if self.minimap_state().set_indoors(indoors) {
+            self.dispatch_event("MINIMAP_UPDATE_ZOOM", &UiEventPayload::default())?;
+        }
+        Ok(())
+    }
+
     /// Takes profile-backed CVars changed by built-in FrameXML Lua.
     #[must_use]
     pub fn take_changed_cvars(&self) -> Vec<(String, String)> {

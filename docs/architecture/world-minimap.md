@@ -34,10 +34,23 @@ The native XML loader (`0x0057BEA0`) reads `minimapPlayerTexture`, defaults to
 setters (`0x0057E280`, `0x0057E1C0`) resize that region; the executable does not
 register corresponding width/height getters.
 
-The shared zoom setter also writes the selected `minimapZoom` or
-`minimapInsideZoom` CVar through `0x00766940`. The Lua wrapper (`0x0057BFD0`)
-truncates its numeric argument toward zero before passing the low unsigned
-32-bit word to the clamping setter.
+`UiMinimapState` now owns both zoom indices and the indoor/outdoor selection,
+shared by every Minimap widget and exposed to the world renderer. Both saved
+CVars (`minimapZoom`, `minimapInsideZoom`) default to `3`: registration at
+`0x0051D9B0` uses integer type 4, saved flag `0x20`, no bounds, and no callback.
+Scene startup (`0x007F6730`) copies their values. Direct `SetCVar` calls therefore
+do not alter the active zoom. Changed `Minimap:SetZoom` calls write the selected
+CVar through the existing profile persistence path, matching `0x00766940`;
+setting the existing zoom does not rewrite it. The Lua wrapper (`0x0057BFD0`)
+truncates to an x87 signed 64-bit integer, passes its low unsigned 32-bit word,
+and clamps to five. Invalid conversion inputs produce a low word of zero.
+
+`FrameManager::set_minimap_indoors` selects the retained mode before dispatching
+`MINIMAP_UPDATE_ZOOM`, once per mode transition. The renderer can sample a
+revision and the native world radius without querying Lua. Integration tests
+cover shared widgets, fractional/negative/overflow inputs, saved settings before
+OnLoad, independent zoom modes, change-only persistence, and event ordering.
+The fabricated player-width/height Lua getters have been removed.
 
 The renderer also accepts an independent archive alpha mask on ordinary UI
 texture quads. `UiRenderMask` retains the image identity and its logical rectangle;
@@ -53,5 +66,5 @@ UI draw. Validation rejects missing/mismatched masks and degenerate rectangles.
 
 The visible minimap is still incomplete. The retained Minimap widget snapshot,
 runtime tile residency and projection, indoor group selection, player arrow,
-rotation, tracking, and pings still need integration. The existing Lua zoom setter
-also needs to be joined to the recovered shared zoom state.
+rotation, tracking, and pings still need integration. Runtime geometry also needs
+to drive the retained indoor/outdoor selection.

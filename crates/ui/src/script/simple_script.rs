@@ -5,6 +5,7 @@ mod buttons;
 mod cvars;
 mod globals;
 mod messages;
+mod minimap;
 pub(super) mod status_bars;
 mod tooltips;
 
@@ -612,6 +613,7 @@ pub struct UiScriptEnvironment {
     loot: crate::UiLootState,
     mail: crate::UiMailComposeState,
     minimap_tracking: crate::UiMinimapTrackingState,
+    minimap: crate::UiMinimapState,
     group_finder: crate::UiGroupFinderState,
     group_roster: crate::UiGroupRosterState,
     guild: crate::UiGuildState,
@@ -693,6 +695,7 @@ impl UiScriptEnvironment {
             loot: crate::UiLootState::new(),
             mail: crate::UiMailComposeState::new(),
             minimap_tracking: crate::UiMinimapTrackingState::new(),
+            minimap: crate::UiMinimapState::default(),
             group_finder: crate::UiGroupFinderState::new(),
             group_roster: crate::UiGroupRosterState::new(),
             guild: crate::UiGuildState::new(),
@@ -784,7 +787,19 @@ impl UiScriptEnvironment {
         for (name, value) in values {
             self.cvars.load(name, value.clone());
         }
+        self.minimap.restore_zoom(
+            minimap::native_zoom_index(f64::from(self.cvars.number("minimapzoom").unwrap_or(3.0))),
+            minimap::native_zoom_index(f64::from(
+                self.cvars.number("minimapinsidezoom").unwrap_or(3.0),
+            )),
+        );
         self
+    }
+
+    /// Returns shared scene zoom and indoor/outdoor selection.
+    #[must_use]
+    pub fn minimap_state(&self) -> crate::UiMinimapState {
+        self.minimap.clone()
     }
 
     /// Takes CVars changed by native script calls since the previous poll.
@@ -1179,6 +1194,7 @@ impl UiScriptRuntime {
                     Rc::clone(&environment.model_intent),
                     Some(text_measurement.clone()),
                     dynamic_arena.clone(),
+                    (environment.minimap_state(), environment.cvars()),
                 )
                 .map_err(|error| execution_error("object metatable", error))?;
                 metatables
@@ -4463,6 +4479,7 @@ fn create_object_metatable(
     model_intent: Rc<RefCell<UiModelBridge>>,
     text_measurement: Option<buttons::TextMeasurement>,
     dynamic_arena: DynamicArenaState,
+    minimap: (crate::UiMinimapState, UiCVarRegistry),
 ) -> mlua::Result<Table> {
     let methods = lua.create_table()?;
     methods.raw_set(
@@ -4564,6 +4581,7 @@ fn create_object_metatable(
     }
     if kind == UiObjectKind::Minimap {
         crate::feature::register_minimap_methods(lua, &methods)?;
+        minimap::register(lua, &methods, minimap.0, minimap.1)?;
     }
     if kind == UiObjectKind::QuestPoiFrame {
         crate::feature::register_quest_poi_methods(lua, &methods)?;

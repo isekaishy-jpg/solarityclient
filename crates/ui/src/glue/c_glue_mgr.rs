@@ -635,6 +635,12 @@ impl GlueManager {
         self.environment.cvar_revision()
     }
 
+    /// Returns the shared minimap scene controls consumed by world rendering.
+    #[must_use]
+    pub fn minimap_state(&self) -> crate::UiMinimapState {
+        self.environment.minimap_state()
+    }
+
     /// Applies stock's numeric truth test to one live console variable.
     #[must_use]
     pub fn cvar_boolean(&self, name: &str) -> bool {

@@ -361,6 +361,9 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("playerStatRightDropdown", ""),
     ranged("profanityFilter", "1", 0.0, 1.0),
     ranged("rotateMinimap", "0", 0.0, 1.0),
+    // FUN_0051D9B0: type 4, saved flag 0x20, default "3", no callback or bounds.
+    value("minimapZoom", "3"),
+    value("minimapInsideZoom", "3"),
     ranged("screenEdgeFlash", "1", 0.0, 1.0),
     // FUN_0051D9B0 registers built-in Lua error dialogs against the stock
     // false scalar at 0x009E14A0.

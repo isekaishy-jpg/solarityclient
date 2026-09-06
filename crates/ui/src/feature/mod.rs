@@ -74,7 +74,9 @@ pub(crate) use loot::register_globals as register_loot_globals;
 pub(crate) use mail::register_globals as register_mail_globals;
 pub use mail::{UI_BASE_SEND_MAIL_PRICE, UiMailComposeState};
 pub(crate) use minimap::register_globals as register_minimap_globals;
-pub use minimap::{UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, UiTrackingType};
+pub use minimap::{
+    UiMinimapState, UiMinimapTrackingState, UiTrackingCategory, UiTrackingError, UiTrackingType,
+};
 pub(crate) use minimap::{
     initialize_state as initialize_minimap_state, register_methods as register_minimap_methods,
 };
