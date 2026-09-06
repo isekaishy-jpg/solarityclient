@@ -2687,6 +2687,16 @@ impl UiScriptRuntime {
         for child in children {
             self.execute_object(lua, tree, scripts, batch, *child, visited)?;
         }
+        if tree.nodes()[node_index].kind() == UiObjectKind::GameTooltip {
+            let objects: Table = lua
+                .named_registry_value(OBJECT_REGISTRY)
+                .map_err(|error| execution_error("tooltip XML registration", error))?;
+            let tooltip = objects
+                .raw_get::<Table>(node_index + 1)
+                .map_err(|error| execution_error("tooltip XML registration", error))?;
+            tooltips::load_xml(lua, &tooltip)
+                .map_err(|error| execution_error("tooltip XML registration", error))?;
+        }
         self.execute_load_handler(lua, tree, node_index)
     }
 
@@ -3552,7 +3562,7 @@ fn create_dynamic_frame(
         objects.push(object);
     }
     apply_dynamic_anchors(lua, &records, &objects)?;
-    run_dynamic_load(lua, &records, &objects, root_local)?;
+    run_dynamic_load(lua, &records, &objects, root_local, descriptor.is_some())?;
     objects
         .get(root_local - 1)
         .cloned()
@@ -4003,16 +4013,20 @@ fn run_dynamic_load(
     records: &Table,
     objects: &[Table],
     local: usize,
+    from_xml: bool,
 ) -> mlua::Result<()> {
     let record: Table = records.raw_get(local)?;
     let children: Table = record.raw_get("children")?;
     for child in children.sequence_values::<usize>() {
-        run_dynamic_load(lua, records, objects, child?)?;
+        run_dynamic_load(lua, records, objects, child?, from_xml)?;
     }
     let object = objects
         .get(local - 1)
         .cloned()
         .ok_or_else(|| mlua::Error::runtime("dynamic OnLoad object is outside its template"))?;
+    if from_xml && object.raw_get::<String>(type_key())? == "GameTooltip" {
+        tooltips::load_xml(lua, &object)?;
+    }
     if let Some(function) = object_script_function(lua, &object, UiScriptHandler::Load)? {
         call_object_handler(lua, &function, object)?;
     }

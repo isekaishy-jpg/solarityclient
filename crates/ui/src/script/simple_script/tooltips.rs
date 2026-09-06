@@ -1,15 +1,22 @@
 //! Retained stock game-tooltip ownership methods.
 
-use mlua::{Lua, Table, Value};
+mod content;
+
+use mlua::{Lua, ObjectLike, Table, Value};
 
 use super::{
-    OBJECT_REGISTRY, index_key, shown_key, tooltip_anchor_key, tooltip_offset_x_key,
-    tooltip_offset_y_key, tooltip_owner_key, tooltip_padding_key,
+    OBJECT_REGISTRY, index_key, is_object_type, tooltip_anchor_key, tooltip_offset_x_key,
+    tooltip_offset_y_key, tooltip_owner_key, tooltip_padding_key, type_key,
 };
+
+pub(super) fn load_xml(lua: &Lua, tooltip: &Table) -> mlua::Result<()> {
+    content::load_xml(lua, tooltip)
+}
 
 /// Registers the ownership relationship that stock tooltips keep separately
 /// from their structural frame parent.
 pub(super) fn register_game_tooltip_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {
+    content::register(lua, methods)?;
     methods.raw_set(
         "SetPadding",
         lua.create_function(|_, (tooltip, padding): (Table, f64)| {
@@ -17,26 +24,55 @@ pub(super) fn register_game_tooltip_methods(lua: &Lua, methods: &Table) -> mlua:
         })?,
     )?;
     methods.raw_set(
+        "GetPadding",
+        lua.create_function(|_, tooltip: Table| tooltip.raw_get::<f64>(tooltip_padding_key()))?,
+    )?;
+    methods.raw_set(
+        "GetAnchorType",
+        lua.create_function(|_, tooltip: Table| tooltip.raw_get::<String>(tooltip_anchor_key()))?,
+    )?;
+    methods.raw_set(
         "SetOwner",
         lua.create_function(
-            |_,
+            |lua,
              (tooltip, owner, anchor, offset_x, offset_y): (
                 Table,
-                Table,
-                String,
+                Value,
+                Option<String>,
                 Option<f64>,
                 Option<f64>,
             )| {
-                let anchor = canonical_anchor(&anchor).ok_or_else(|| {
-                    mlua::Error::runtime(format!(
-                        "GameTooltip:SetOwner(): invalid anchor '{anchor}'"
-                    ))
-                })?;
-                tooltip.raw_set(shown_key(), false)?;
+                content::hide(lua, &tooltip)?;
+                let Value::Table(owner) = owner else {
+                    return Err(mlua::Error::runtime(
+                        "GameTooltip:SetOwner(): frame required",
+                    ));
+                };
+                if !is_object_type(&owner.raw_get::<String>(type_key())?, "Frame")
+                    || owner == tooltip
+                {
+                    return Err(mlua::Error::runtime(
+                        "GameTooltip:SetOwner(): another frame required",
+                    ));
+                }
+                let anchor = anchor
+                    .as_deref()
+                    .and_then(canonical_anchor)
+                    .unwrap_or("ANCHOR_LEFT");
                 tooltip.raw_set(tooltip_owner_key(), owner.raw_get::<usize>(index_key())?)?;
                 tooltip.raw_set(tooltip_anchor_key(), anchor)?;
                 tooltip.raw_set(tooltip_offset_x_key(), offset_x.unwrap_or(0.0))?;
-                tooltip.raw_set(tooltip_offset_y_key(), offset_y.unwrap_or(0.0))
+                tooltip.raw_set(tooltip_offset_y_key(), offset_y.unwrap_or(0.0))?;
+                if anchor == "ANCHOR_NONE" {
+                    tooltip.call_method::<()>("ClearAllPoints", ())?;
+                }
+                content::anchor(
+                    &tooltip,
+                    &owner,
+                    anchor,
+                    offset_x.unwrap_or(0.0),
+                    offset_y.unwrap_or(0.0),
+                )
             },
         )?,
     )?;
@@ -62,10 +98,7 @@ pub(super) fn register_game_tooltip_methods(lua: &Lua, methods: &Table) -> mlua:
     // replaces the generic Region method installed earlier in the metatable.
     methods.raw_set(
         "Hide",
-        lua.create_function(|_, tooltip: Table| {
-            tooltip.raw_set(shown_key(), false)?;
-            tooltip.raw_set(tooltip_owner_key(), Option::<usize>::None)
-        })?,
+        lua.create_function(|lua, tooltip: Table| content::hide(lua, &tooltip))?,
     )
 }
 

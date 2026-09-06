@@ -463,3 +463,30 @@ interpolated at the cropped edges. Directly parented scrollbar and button
 chrome is not part of the assigned child and therefore remains stationary and
 unclipped. FontString and SimpleHTML presentation uses the same ownership test,
 preventing an ancestor-only approximation from moving sibling labels.
+
+## GameTooltip text lifetime
+
+The native GameTooltip text methods now own retained left/right FontString pairs.
+XML and runtime-template construction enroll consecutive `TextLeftN`/`TextRightN`
+pairs after child construction, matching `0x0061FB30`. Creating similarly named
+regions in Lua does not enroll them; `AddFontStrings` supplies that relationship.
+Appending through `0x0061FEC0` keeps a spare pair with the last pair's font objects.
+Empty additions and tooltips without registered font strings add no lines.
+
+`SetText` replaces content and enters Show, while `AddLine` and `AddDoubleLine`
+append without showing. Show requires both an owner and content. It measures
+through the existing archive-backed text boundary, composes column widths and
+line spacing, applies the native border and padding constants, then anchors and
+clamps the tooltip. `ClearLines` hides and empties active pairs before dispatching
+`OnTooltipCleared`, and resets a nonpersistent minimum width. Hide releases the
+owner and invokes ordinary frame visibility callbacks. These boundaries come
+from `0x006204E0`, `0x00620340`, `0x006203F0`, `0x0061C620`, `0x0061CAF0`,
+`0x0061CFF0`, and `0x0061EB20` in build 12340.
+
+The external tooltip regression covers XML and dynamic registration, retained
+pair reuse, clearing callbacks, owner validation, and show/hide lifetime. It uses
+a font without a face to isolate those state transitions; the offline World
+replay exercises real FrameXML hover and stock font measurement. This text slice
+does not supply item/unit/spell tooltip data, native texture insertion, cursor
+tracking, or timed fading. The native 30-entry intermediate wrapping buffer and
+packed-color precision still need dedicated text-layout parity coverage.
