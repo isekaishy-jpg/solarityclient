@@ -1,9 +1,10 @@
 //! Vertical surface following and horizontal wall response.
 
 use super::{GroundQuery, MINIMUM_PROGRESS, MovementGroundSnapshot, SLOPE, VECTOR_EPSILON};
+use crate::movement::MovementGeometry;
 use glam::Vec3;
 
-impl GroundQuery<'_> {
+impl<G: MovementGeometry + ?Sized> GroundQuery<'_, G> {
     pub(super) fn follow_surface(
         &self,
         state: &MovementGroundSnapshot,

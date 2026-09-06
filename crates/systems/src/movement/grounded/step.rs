@@ -6,7 +6,7 @@ use super::{
 };
 use crate::movement::{
     MovementFallAdvancePolicy, MovementFallContinuation, MovementFallInterval,
-    MovementFallTrajectory,
+    MovementFallTrajectory, MovementGeometry,
 };
 use glam::{Vec2, Vec3};
 
@@ -14,13 +14,13 @@ const CONTACT_TOLERANCE: f32 = f32::from_bits(0x3ab6_0b61);
 const STEP_PROBE_PER_HEIGHT: f32 = f32::from_bits(0x3f98_8b62);
 const TRIAL_DIRECTION_COSINE: f32 = f32::from_bits(0x3f7c_1c5c);
 
-impl GroundQuery<'_> {
+impl<G: MovementGeometry + ?Sized> GroundQuery<'_, G> {
     pub(super) fn step(
-        &self,
+        &mut self,
         state: &mut MovementGroundSnapshot,
         incoming: Vec2,
         normal: Vec3,
-    ) -> Result<(), MovementGroundAdvanceError> {
+    ) -> Result<bool, MovementGroundAdvanceError> {
         let original = state.position;
         let probe_distance = f64::from(self.interval.radius + CONTACT_TOLERANCE)
             .max(f64::from(self.interval.profile.step_height()) * f64::from(STEP_PROBE_PER_HEIGHT))
@@ -29,25 +29,35 @@ impl GroundQuery<'_> {
         if normal.z >= 0.0 && normal.z <= SLOPE {
             let reciprocal = 1.0 / normal.truncate().as_dvec2().length();
             let proposed = (-normal.truncate().as_dvec2() * reciprocal).as_vec2();
-            let probe = self.sweep(state.position, proposed.extend(0.0), probe_distance)?;
+            let Some(probe) = self.sweep(state.position, proposed.extend(0.0), probe_distance)?
+            else {
+                return Ok(false);
+            };
             if probe
                 .last_triangle()
-                .is_some_and(|index| self.triangles[index].surface_normal() == normal)
+                .is_some_and(|index| self.geometry.triangles()[index].surface_normal() == normal)
             {
                 heading = proposed;
             }
         }
-        let upward = self.sweep(state.position, Vec3::Z, self.remaining_step(state) as f32)?;
+        let Some(upward) =
+            self.sweep(state.position, Vec3::Z, self.remaining_step(state) as f32)?
+        else {
+            return Ok(false);
+        };
         let mut up_distance = upward.distance();
         let rise = state.step_anchor.map_or(f64::from(up_distance), |anchor| {
             f64::from(state.position.z) - f64::from(anchor) + f64::from(up_distance)
         });
         if rise.abs() < f64::from(VECTOR_EPSILON) {
             state.step_anchor = None;
-            return Ok(());
+            return Ok(true);
         }
         state.position.z += up_distance;
-        let mut forward = self.sweep(state.position, heading.extend(0.0), probe_distance)?;
+        let Some(mut forward) = self.sweep(state.position, heading.extend(0.0), probe_distance)?
+        else {
+            return Ok(false);
+        };
         let mut horizontal_distance = forward.distance();
         state.position = (state.position.as_dvec3()
             + heading.extend(0.0).as_dvec3() * f64::from(horizontal_distance))
@@ -61,7 +71,7 @@ impl GroundQuery<'_> {
                 state,
                 heading.extend(0.0),
                 &mut remaining,
-                self.triangles[index].surface_normal(),
+                self.geometry.triangles()[index].surface_normal(),
                 forward.combined_foot_normal(),
             );
             let mut delta = (heading.extend(0.0).as_dvec3() * f64::from(remaining)
@@ -70,7 +80,10 @@ impl GroundQuery<'_> {
             let length = delta.as_dvec3().length() as f32;
             if length.abs() >= VECTOR_EPSILON {
                 delta = (delta.as_dvec3() / f64::from(length)).as_vec3();
-                forward = self.sweep(state.position, delta, length)?;
+                let Some(next) = self.sweep(state.position, delta, length)? else {
+                    return Ok(false);
+                };
+                forward = next;
                 delta *= forward.distance();
                 horizontal_distance =
                     (f64::from(horizontal_distance) + delta.truncate().as_dvec2().length()) as f32;
@@ -80,11 +93,13 @@ impl GroundQuery<'_> {
         }
         let accepted =
             if forward.last_triangle().is_none() || horizontal_distance > self.interval.radius {
-                let downward = self.sweep(state.position, Vec3::NEG_Z, up_distance)?;
+                let Some(downward) = self.sweep(state.position, Vec3::NEG_Z, up_distance)? else {
+                    return Ok(false);
+                };
                 state.position.z -= downward.distance();
                 if downward
                     .last_triangle()
-                    .is_none_or(|index| self.triangles[index].surface_normal().z > SLOPE)
+                    .is_none_or(|index| self.geometry.triangles()[index].surface_normal().z > SLOPE)
                 {
                     true
                 } else {
@@ -99,11 +114,11 @@ impl GroundQuery<'_> {
         } else {
             state.step_anchor = None;
         }
-        Ok(())
+        Ok(true)
     }
 
     fn fall_trial(
-        &self,
+        &mut self,
         state: &mut MovementGroundSnapshot,
         original: Vec3,
         heading: Vec2,
@@ -120,7 +135,7 @@ impl GroundQuery<'_> {
             );
             let mut elapsed = 0_u32;
             while elapsed < duration_ms {
-                let result = fall.advance(
+                let result = fall.advance_with_geometry(
                     MovementFallInterval {
                         duration_ms: duration_ms - elapsed,
                         displacement,
@@ -129,8 +144,10 @@ impl GroundQuery<'_> {
                         support_profile: self.interval.profile.support(),
                         policy: MovementFallAdvancePolicy::Trial,
                     },
-                    self.triangles,
+                    self.geometry,
                 )?;
+                self.unavailable |= result.geometry_unavailable;
+                self.skipped_time_ms = self.skipped_time_ms.wrapping_add(result.skipped_time_ms);
                 elapsed = elapsed.wrapping_add(result.consumed_ms);
                 match result.continuation {
                     MovementFallContinuation::Airborne(next) => {

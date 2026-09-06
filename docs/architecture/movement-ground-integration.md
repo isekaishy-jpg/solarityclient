@@ -111,6 +111,32 @@ Positions, active step anchors, launch fields, and resolved bases/speed compare
 within 0.0001 world units. Admission tests reject poisoned state, negative
 generated travel/step height, and invalid body dimensions.
 
+## Mutable geometry and provider failure
+
+`advance_with_geometry` refreshes `MovementGeometry` before every non-tiny
+ground/step sweep and delegates speculative falls through the same provider.
+The original fixed-slice `advance` remains an always-ready compatibility path.
+Candidate owners are copied as soon as a main/downward sweep selects them.
+After private probes, stock still checks the saved index against the current
+candidate count; notification uses the earlier copied identity. Reordering and
+truncation tests cover both parts of that behavior.
+
+A failed ground or step probe returns the original interval duration with
+`geometry_unavailable`, retaining position and step fields already written.
+It skips the final reanchor/contact actions on that exit. A failed private fall
+trial consumes its remaining trial duration, preserves the native partial
+save/restore behavior, and propagates `skipped_time_ms` for the controlled
+subject's `0x006E9B20` skipped-time notification and heartbeat postponement.
+Provider failure is separate from invalid
+math/state, which still returns an error.
+
+`movement-ground-geometry-native.txt` adds 813 original-response captures with
+baseline or one controlled false return at `0x0075F0A0`; 17 failures occur inside
+private fall trials. All response/step/clock callees execute original code.
+The provider stub leaves prior candidates untouched, isolating response from
+collection internals. Tests compare the same complete state/actions as the
+original fixture and require exact skipped time.
+
 ## Runtime work remaining
 
 The ground and fall interval cores are ready for a local movement owner.

@@ -8,6 +8,7 @@ mod animation;
 mod clock;
 mod contact;
 mod fall;
+mod geometry;
 mod grounded;
 mod interval_bounds;
 mod movement_shared;
@@ -23,6 +24,7 @@ pub use airborne::{
 pub use animation::{UnitModelAnimation, resolve_unit_model_animation};
 pub use contact::{MovementFallContact, MovementFallContactError, MovementFallContactQuery};
 pub use fall::{MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory};
+pub use geometry::MovementGeometry;
 pub use grounded::{
     MovementFallAdmission, MovementGroundAdvance, MovementGroundAdvanceError,
     MovementGroundContinuation, MovementGroundInterval, MovementGroundProfile,

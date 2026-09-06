@@ -30,10 +30,10 @@ pub(in crate::application) mod world_model_residency;
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
 use movement::{ResidentMovementReferences, ResidentMovementScene};
 pub use movement::{
-    RuntimeMovementGeometry, RuntimeMovementOwner, RuntimeMovementQuery, RuntimeMovementReference,
-    RuntimeMovementRegistrationError, RuntimeMovementRegistrationQuery, RuntimeStaticMovementError,
-    RuntimeStaticMovementOwner, RuntimeStaticMovementQuery, RuntimeStaticMovementResidency,
-    RuntimeWorldModelMovementOwner,
+    RuntimeMovementGeometry, RuntimeMovementGeometryFailure, RuntimeMovementOwner,
+    RuntimeMovementQuery, RuntimeMovementReference, RuntimeMovementRegistrationError,
+    RuntimeMovementRegistrationQuery, RuntimeStaticMovementError, RuntimeStaticMovementOwner,
+    RuntimeStaticMovementQuery, RuntimeStaticMovementResidency, RuntimeWorldModelMovementOwner,
 };
 pub use streaming::RuntimeTerrainStreamPoll;
 use streaming::TerrainStreamingDemand;

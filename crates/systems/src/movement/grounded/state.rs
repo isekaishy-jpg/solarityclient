@@ -152,15 +152,23 @@ pub enum MovementGroundContinuation {
 
 /// Native consumed time and actions for the outer movement/notification owner.
 #[derive(Clone, Copy, Debug)]
-pub struct MovementGroundAdvance {
+pub struct MovementGroundAdvance<Identity = usize> {
     /// Original duration, except successful start-fall with an empty candidate set.
     pub consumed_ms: u32,
     /// State that owns the next interval.
     pub continuation: MovementGroundContinuation,
     /// Rebase position/facing/pitch and clear the analytic elapsed clock.
     pub reset_motion_anchor: bool,
-    /// Selected candidate for the resource/transport notification owner.
-    pub contact_triangle: Option<usize>,
+    /// Selected candidate identity, copied before later probes replace geometry.
+    /// Fixed-slice advancement retains the original index API.
+    pub contact_triangle: Option<Identity>,
+    /// At least one ground/step/fall probe could not obtain complete geometry.
+    /// The continuation preserves native writes made before that failure.
+    pub geometry_unavailable: bool,
+    /// Skipped-time notification and heartbeat postponement for the controlled
+    /// subject after failed private fall trials (`0x006E9B20`). Their own motion
+    /// clock changes are restored by the trial owner.
+    pub skipped_time_ms: u32,
 }
 
 /// Admission or arithmetic failure at the pure grounded interval boundary.

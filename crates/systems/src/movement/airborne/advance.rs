@@ -12,6 +12,7 @@ use crate::collision::{
 };
 use crate::movement::{
     MovementFallContactError, MovementFallContactQuery, MovementFallMode, MovementFallTrajectory,
+    MovementGeometry, geometry::FixedMovementGeometry,
 };
 
 // Exact native fields at 0x009F1224, 0x00A25098, 0x00A37F84, 0x00A1EA9C,
@@ -37,6 +38,25 @@ impl MovementFallState {
         interval: MovementFallInterval,
         triangles: &[MovementCollisionTriangle],
     ) -> Result<MovementFallAdvance, MovementFallAdvanceError> {
+        self.advance_with_geometry(interval, &mut FixedMovementGeometry(triangles))
+    }
+
+    /// Advances through a provider that refreshes geometry before every sweep.
+    ///
+    /// The provider must have complete initial interval coverage. Collection
+    /// failure retains prior motion, reports full consumed time, and excludes
+    /// the unavailable remainder from the fall clock. The outer owner applies
+    /// `skipped_time_ms` to its analytic clock and skipped-time/heartbeat owner.
+    /// Copied contact identity survives a later failed or reordered candidate query.
+    ///
+    /// # Errors
+    /// Returns an error for invalid state, geometry, or unrepresentable arithmetic.
+    /// Unavailable collection is reported with the native partial continuation.
+    pub fn advance_with_geometry<G: MovementGeometry + ?Sized>(
+        self,
+        interval: MovementFallInterval,
+        geometry: &mut G,
+    ) -> Result<MovementFallAdvance<G::TriangleIdentity>, MovementFallAdvanceError> {
         let mut state = self.snapshot;
         let original = state;
         let mut volume =
@@ -64,8 +84,19 @@ impl MovementFallState {
         let mut ceiling = false;
         let mut reset_motion_anchor = false;
         let mut contact_triangle = None;
+        let mut geometry_unavailable = false;
+        let mut skipped_time_ms = 0;
         while distance.abs() >= DEGENERATE_TOLERANCE {
             let direction = (delta.as_dvec3() / f64::from(distance)).as_vec3();
+            // The contact helper's sweep divides the stored delta by the stored
+            // length. Its cache must cover that same extrusion, not a re-created
+            // product from the response loop's wider direction calculation.
+            if !geometry.prepare_sweep(&volume, delta / distance, distance) {
+                geometry_unavailable = true;
+                skipped_time_ms = millis_from_seconds(total_seconds - f64::from(elapsed));
+                state.fall_time_ms = state.fall_time_ms.wrapping_sub(skipped_time_ms);
+                break;
+            }
             let trajectory = MovementFallTrajectory::new(state.mode, state.initial_downward_speed)
                 .map_err(MovementFallContactError::from)?;
             let (contact, contact_seconds) = MovementFallContactQuery {
@@ -76,14 +107,16 @@ impl MovementFallState {
                 horizontal_speed: state.horizontal_speed,
                 support_profile: interval.support_profile,
             }
-            .resolve_extended(&volume, delta, triangles)?;
+            .resolve_extended(&volume, delta, geometry.triangles())?;
             contact_triangle = if matches!(
                 contact.kind,
                 MovementFallContactKind::Clear | MovementFallContactKind::Ceiling
             ) {
                 None
             } else {
-                contact.last_triangle
+                contact
+                    .last_triangle
+                    .and_then(|index| geometry.triangle_identity(index))
             };
             let progress = if contact.kind == MovementFallContactKind::Clear {
                 total_seconds - f64::from(elapsed)
@@ -217,6 +250,8 @@ impl MovementFallState {
             continuation,
             reset_motion_anchor,
             notify_ceiling_reset: ceiling && interval.policy != MovementFallAdvancePolicy::Trial,
+            geometry_unavailable,
+            skipped_time_ms,
             contact_triangle: if interval.policy == MovementFallAdvancePolicy::Trial {
                 None
             } else {

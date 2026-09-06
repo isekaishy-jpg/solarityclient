@@ -114,9 +114,37 @@ fall-owned vectors/speeds within 0.0001 world units and launch-speed float bits
 exactly. Ground direction/speed rebuilt after native end-fall belong to the
 ground continuation owner and are not claimed as implemented by these tests.
 
+## Mutable geometry and provider failure
+
+`advance_with_geometry` prepares `MovementGeometry` before each contact sweep
+and copies its selected owner before another query can replace candidates.
+The fixed-slice `advance` wraps an always-ready provider. A failed later query
+retains the last successful contact identity even when the provider has cleared
+its arrays; a separate test verifies that case.
+
+On provider failure, `0x007612B0` reports the full interval as consumed and
+subtracts the rounded unavailable remainder from motion/fall clocks before
+the ordinary end-of-interval clock addition. `skipped_time_ms` exposes that
+remainder for the outer analytic clock owner; the returned fall snapshot
+already has the native corrected fall time. Earlier displacement, phase
+decisions, basis changes, and reanchor requirements survive. A first-probe
+failure therefore consumes the interval while retaining the original position
+and fall clock. `0x006E9B20` also requests `0x00717D90`'s opcode `0x02CE` packet
+(packed subject GUID followed by skipped milliseconds) and postpones the
+controlled subject's heartbeat deadline at `+0x13C`. Those external actions
+retain their ordinary subject/admission gates. Notification/basis policy still
+follows the native live/trial branches. Failure is marked by
+`geometry_unavailable` rather than replacing
+the continuation with an error or a rollback.
+
+`movement-fall-geometry-native.txt` adds 204 baseline/failure captures from
+original response code with a controlled `0x0075F0A0` false return. State,
+notifications, consumed time, and deferred time are checked against those
+outputs. These captures test response to failure, not collection internals.
+
 The interval is ready for the local movement owner. It does not yet update an
 ECS living transform or send a movement packet from keyboard input. Runtime
 `collect_movement_interval` now generates candidates over the native expanded
 fall region and rejects incomplete residency. An archive-backed integration
-test feeds those candidates into this interval and verifies terrain landing
+test advances directly through `RuntimeMovementGeometry` and verifies terrain landing
 and selected terrain provenance; see [world geometry](movement-world-geometry.md).

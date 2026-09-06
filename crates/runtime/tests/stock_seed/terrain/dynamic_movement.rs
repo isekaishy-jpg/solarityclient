@@ -1,5 +1,7 @@
 //! Current replicated collision uses the same resident traversal as static geometry.
 
+#[path = "movement_geometry.rs"]
+mod geometry;
 #[path = "movement_interval.rs"]
 mod interval;
 

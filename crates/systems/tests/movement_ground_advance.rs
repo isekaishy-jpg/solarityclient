@@ -7,14 +7,26 @@ use solarity_systems::{
 };
 use std::{error::Error, str::SplitWhitespace};
 
+#[path = "support/movement_geometry.rs"]
+mod geometry;
+
 #[test]
 fn ground_intervals_match_original_x86_state() -> Result<(), Box<dyn Error>> {
-    for line in include_str!("fixtures/movement-ground-advance-native.txt")
-        .lines()
-        .filter(|line| !line.starts_with('#') && !line.is_empty())
+    for line in [
+        include_str!("fixtures/movement-ground-advance-native.txt"),
+        include_str!("fixtures/movement-ground-geometry-native.txt"),
+    ]
+    .into_iter()
+    .flat_map(str::lines)
+    .filter(|line| !line.starts_with('#') && !line.is_empty())
     {
         let mut f = line.split_whitespace();
         let name = f.next().ok_or("missing name")?;
+        let (failure, deferred) = if name.starts_with("fault:") {
+            (integer(&mut f)?, integer(&mut f)?)
+        } else {
+            (0, 0)
+        };
         let position = vector(&mut f)?;
         let radius = scalar(&mut f)?;
         let height = scalar(&mut f)?;
@@ -57,7 +69,7 @@ fn ground_intervals_match_original_x86_state() -> Result<(), Box<dyn Error>> {
         let expected_direction = vector(&mut f)?;
         let expected_speed = scalar(&mut f)?;
         assert!(f.next().is_none(), "{name}: trailing fields");
-        let result = MovementGroundState::new(MovementGroundSnapshot {
+        let state = MovementGroundState::new(MovementGroundSnapshot {
             position,
             step_anchor: step.then_some(initial_step_anchor),
             fall_time_ms: initial_fall_ms,
@@ -76,23 +88,31 @@ fn ground_intervals_match_original_x86_state() -> Result<(), Box<dyn Error>> {
             } else {
                 MovementFallAdmission::Allowed
             },
-        })?
-        .advance(
-            MovementGroundInterval {
-                duration_ms,
-                distance,
-                direction: heading,
-                radius,
-                height,
-                profile: if player {
-                    MovementGroundProfile::PlayerControlled { step_height }
-                } else {
-                    MovementGroundProfile::Other
-                },
+        })?;
+        let interval = MovementGroundInterval {
+            duration_ms,
+            distance,
+            direction: heading,
+            radius,
+            height,
+            profile: if player {
+                MovementGroundProfile::PlayerControlled { step_height }
+            } else {
+                MovementGroundProfile::Other
             },
-            &triangles,
-        )
+        };
+        let result = if name.starts_with("fault:") {
+            state.advance_with_geometry(interval, &mut geometry::Geometry::new(&triangles, failure))
+        } else {
+            state.advance(interval, &triangles)
+        }
         .map_err(|err| format!("{name}: {err}"))?;
+        assert_eq!(
+            result.geometry_unavailable,
+            failure != 0,
+            "{name}: provider failure"
+        );
+        assert_eq!(result.skipped_time_ms, deferred, "{name}: skipped time");
         assert_eq!(result.consumed_ms, expected_consumed, "{name}: consumed");
         assert_eq!(result.reset_motion_anchor, reanchor, "{name}: reanchor");
         assert_eq!(

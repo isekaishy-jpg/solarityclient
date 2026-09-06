@@ -4,7 +4,7 @@ use glam::Vec3;
 use solarity_ecs::ActiveWorld;
 use solarity_systems::{
     MovementBspCacheMode, MovementCollisionBounds, MovementCollisionTriangle,
-    MovementCollisionVolume, MovementIntervalRequest,
+    MovementCollisionVolume, MovementGeometry, MovementIntervalRequest,
 };
 
 use super::{
@@ -29,6 +29,16 @@ pub struct RuntimeMovementGeometry<'a> {
     cache: MovementBspCacheMode,
     output: &'a mut RuntimeMovementQuery,
     bounds: Option<MovementCollisionBounds>,
+    failure: Option<RuntimeMovementGeometryFailure>,
+}
+
+/// Retained cause of an unavailable probe reported by the movement solver.
+#[derive(Debug)]
+pub enum RuntimeMovementGeometryFailure {
+    /// Required world geometry has not completed residency.
+    Pending(RuntimeStaticMovementResidency),
+    /// Invalid input, geometry, or a stale admitted reference prevented collection.
+    Invalid(RuntimeStaticMovementError),
 }
 
 impl<'a> RuntimeMovementGeometry<'a> {
@@ -50,6 +60,7 @@ impl<'a> RuntimeMovementGeometry<'a> {
             cache,
             output,
             bounds: None,
+            failure: None,
         }
     }
 
@@ -62,6 +73,7 @@ impl<'a> RuntimeMovementGeometry<'a> {
         request: MovementIntervalRequest,
     ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
         self.bounds = None;
+        self.failure = None;
         let residency = self.terrain.collect_movement_interval(
             self.world,
             self.objects,
@@ -134,5 +146,47 @@ impl<'a> RuntimeMovementGeometry<'a> {
     #[must_use]
     pub fn owner(&self, triangle: usize) -> Option<RuntimeMovementOwner> {
         self.output.owner(triangle)
+    }
+
+    /// Returns the first unavailable probe's cause from `MovementGeometry` use.
+    /// A new interval collection clears it. Direct `prepare_sweep` calls return
+    /// their result to the caller instead of retaining it here.
+    #[must_use]
+    pub const fn failure(&self) -> Option<&RuntimeMovementGeometryFailure> {
+        self.failure.as_ref()
+    }
+}
+
+impl MovementGeometry for RuntimeMovementGeometry<'_> {
+    type TriangleIdentity = RuntimeMovementOwner;
+
+    fn prepare_sweep(
+        &mut self,
+        volume: &MovementCollisionVolume,
+        direction: Vec3,
+        distance: f32,
+    ) -> bool {
+        if self.failure.is_some() {
+            return false;
+        }
+        match self.prepare_sweep(volume, direction, distance) {
+            Ok(RuntimeStaticMovementResidency::Ready) => true,
+            Ok(pending) => {
+                self.failure = Some(RuntimeMovementGeometryFailure::Pending(pending));
+                false
+            }
+            Err(error) => {
+                self.failure = Some(RuntimeMovementGeometryFailure::Invalid(error));
+                false
+            }
+        }
+    }
+
+    fn triangles(&self) -> &[MovementCollisionTriangle] {
+        self.triangles()
+    }
+
+    fn triangle_identity(&self, triangle: usize) -> Option<Self::TriangleIdentity> {
+        self.owner(triangle)
     }
 }

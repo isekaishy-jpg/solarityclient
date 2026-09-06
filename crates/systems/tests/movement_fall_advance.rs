@@ -2,6 +2,9 @@
 
 use std::{error::Error, str::SplitWhitespace};
 
+#[path = "support/movement_geometry.rs"]
+mod geometry;
+
 use glam::{Vec2, Vec3};
 use solarity_systems::{
     MovementCollisionTriangle, MovementFallAdvanceError, MovementFallAdvancePolicy,
@@ -13,12 +16,23 @@ use solarity_systems::{
 /// Original x86 execution is independent of the interval implementation.
 #[test]
 fn fall_intervals_match_original_x86_state() -> Result<(), Box<dyn Error>> {
-    for line in include_str!("fixtures/movement-fall-advance-native.txt").lines() {
+    for line in [
+        include_str!("fixtures/movement-fall-advance-native.txt"),
+        include_str!("fixtures/movement-fall-geometry-native.txt"),
+    ]
+    .into_iter()
+    .flat_map(str::lines)
+    {
         if line.starts_with('#') || line.is_empty() {
             continue;
         }
         let mut fields = line.split_whitespace();
         let name = fields.next().ok_or("missing name")?;
+        let (failure, deferred) = if name.starts_with("fault:") {
+            (integer(&mut fields)?, integer(&mut fields)?)
+        } else {
+            (0, 0)
+        };
         let position = vector(&mut fields)?;
         let radius = scalar(&mut fields)?;
         let height = scalar(&mut fields)?;
@@ -78,27 +92,35 @@ fn fall_intervals_match_original_x86_state() -> Result<(), Box<dyn Error>> {
                 MovementFallPhase::Falling
             },
         })?;
-        let result = state.advance(
-            MovementFallInterval {
-                duration_ms,
-                displacement,
-                radius,
-                height,
-                support_profile: if player {
-                    MovementSupportProfile::PlayerControlled
-                } else {
-                    MovementSupportProfile::Other
-                },
-                policy: if !live {
-                    MovementFallAdvancePolicy::Trial
-                } else if moving {
-                    MovementFallAdvancePolicy::LiveTranslating
-                } else {
-                    MovementFallAdvancePolicy::Live
-                },
+        let interval = MovementFallInterval {
+            duration_ms,
+            displacement,
+            radius,
+            height,
+            support_profile: if player {
+                MovementSupportProfile::PlayerControlled
+            } else {
+                MovementSupportProfile::Other
             },
-            &triangles,
-        )?;
+            policy: if !live {
+                MovementFallAdvancePolicy::Trial
+            } else if moving {
+                MovementFallAdvancePolicy::LiveTranslating
+            } else {
+                MovementFallAdvancePolicy::Live
+            },
+        };
+        let result = if name.starts_with("fault:") {
+            state.advance_with_geometry(interval, &mut geometry::Geometry::new(&triangles, failure))
+        } else {
+            state.advance(interval, &triangles)
+        }?;
+        assert_eq!(
+            result.geometry_unavailable,
+            failure != 0,
+            "{name}: provider failure"
+        );
+        assert_eq!(result.skipped_time_ms, deferred, "{name}: deferred clock");
         assert_eq!(
             result.consumed_ms, expected_consumed,
             "{name}: consumed time"

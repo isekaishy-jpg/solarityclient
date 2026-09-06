@@ -7,6 +7,7 @@ use super::{
     MovementGroundState, SLOPE, VECTOR_EPSILON,
 };
 use crate::collision::MovementCollisionTriangle;
+use crate::movement::{MovementGeometry, geometry::FixedMovementGeometry};
 use glam::Vec3;
 
 const DOWN_PROBE_PER_DISTANCE: f32 = f32::from_bits(0x3fec_b91b);
@@ -27,9 +28,29 @@ impl MovementGroundState {
         interval: MovementGroundInterval,
         triangles: &[MovementCollisionTriangle],
     ) -> Result<MovementGroundAdvance, MovementGroundAdvanceError> {
-        let query = GroundQuery {
+        self.advance_with_geometry(interval, &mut FixedMovementGeometry(triangles))
+    }
+
+    /// Advances against mutable geometry, refreshing coverage before each probe.
+    ///
+    /// The provider must start with a complete interval query. Collection
+    /// failure returns the native partial continuation and full consumed time,
+    /// without final reanchoring or contact notification on that exit path.
+    /// Contact identities are copied before private probes can replace arrays.
+    ///
+    /// # Errors
+    /// Returns an error for invalid state, geometry, or unrepresentable arithmetic.
+    /// Provider unavailability is reported in the successful partial result.
+    pub fn advance_with_geometry<G: MovementGeometry + ?Sized>(
+        self,
+        interval: MovementGroundInterval,
+        geometry: &mut G,
+    ) -> Result<MovementGroundAdvance<G::TriangleIdentity>, MovementGroundAdvanceError> {
+        let mut query = GroundQuery {
             interval,
-            triangles,
+            geometry,
+            unavailable: false,
+            skipped_time_ms: 0,
         };
         let mut state = self.snapshot;
         query.volume(state.position)?;
@@ -46,11 +67,13 @@ impl MovementGroundState {
             continuation: MovementGroundContinuation::Grounded(self),
             reset_motion_anchor: false,
             contact_triangle: None,
+            geometry_unavailable: false,
+            skipped_time_ms: 0,
         };
         if interval.distance.abs() < DISTANCE_EPSILON {
             return Ok(result);
         }
-        if triangles.is_empty() {
+        if query.geometry.triangles().is_empty() {
             if let Some(fall) = state.start_fall()? {
                 result.continuation = MovementGroundContinuation::Falling(fall);
                 result.reset_motion_anchor = true;
@@ -70,9 +93,13 @@ impl MovementGroundState {
         let mut force_fall = false;
         let mut reanchor = false;
         let mut contact;
+        let mut contact_identity;
         loop {
-            let sweep = query.sweep(state.position, direction, distance)?;
+            let Some(sweep) = query.sweep(state.position, direction, distance)? else {
+                return query.interrupted(state);
+            };
             contact = sweep.last_triangle();
+            contact_identity = contact.and_then(|index| query.geometry.triangle_identity(index));
             let mut allowed = f64::from(sweep.distance());
             // Native FSTs expose float delta fields for horizontal accounting
             // while retaining wider products through position and progress.
@@ -92,15 +119,20 @@ impl MovementGroundState {
                 elapsed += remaining_ms;
                 let remaining = total - elapsed;
                 if remaining < 1.0 {
-                    let down = query.sweep(
+                    let Some(down) = query.sweep(
                         state.position,
                         Vec3::NEG_Z,
                         (f64::from(interval.distance) * f64::from(DOWN_PROBE_PER_DISTANCE)) as f32,
-                    )?;
+                    )?
+                    else {
+                        return query.interrupted(state);
+                    };
                     state.position.z -= down.distance();
                     contact = down.last_triangle();
+                    contact_identity =
+                        contact.and_then(|index| query.geometry.triangle_identity(index));
                     if let Some(index) = contact {
-                        let normal = triangles[index].surface_normal();
+                        let normal = query.geometry.triangles()[index].surface_normal();
                         if normal.z > SLOPE {
                             state.step_anchor = None;
                         } else if state.step_anchor.is_none()
@@ -140,7 +172,7 @@ impl MovementGroundState {
                 reanchor |= (total - elapsed).abs() >= DISTANCE_EPSILON;
                 break;
             }
-            let normal = triangles[index].surface_normal();
+            let normal = query.geometry.triangles()[index].surface_normal();
             let (follow, start_fall) = query.classify(&mut state, index)?;
             force_fall = start_fall;
             let foot = sweep.combined_foot_normal();
@@ -157,7 +189,9 @@ impl MovementGroundState {
                 }
                 reanchor = true;
                 let was_step = state.step_anchor.is_some();
-                query.step(&mut state, heading, normal)?;
+                if !query.step(&mut state, heading, normal)? {
+                    return query.interrupted(state);
+                }
                 if state.step_anchor.is_some() {
                     let original_distance = distance;
                     let correction =
@@ -208,15 +242,20 @@ impl MovementGroundState {
                 }
             }
         }
-        if force_fall || (contact.is_none() && state.step_anchor.is_none()) {
+        result.geometry_unavailable = query.unavailable;
+        result.skipped_time_ms = query.skipped_time_ms;
+        // Native rechecks the saved index against the possibly replaced array,
+        // while notification uses the owner copied before the private probes.
+        let contact_valid = contact.is_some_and(|index| index < query.geometry.triangles().len());
+        if force_fall || (!contact_valid && state.step_anchor.is_none()) {
             if let Some(fall) = state.start_fall()? {
                 result.continuation = MovementGroundContinuation::Falling(fall);
                 result.reset_motion_anchor = true;
                 return Ok(result);
             }
-        } else if contact.is_some() {
+        } else if contact_valid {
             result.reset_motion_anchor = reanchor;
-            result.contact_triangle = contact;
+            result.contact_triangle = contact_identity;
         }
         result.continuation = MovementGroundContinuation::Grounded(Self::new(state)?);
         Ok(result)

@@ -58,12 +58,12 @@ pub use player_coordinator::{
 pub use run::{ApplicationExitReason, ApplicationRunReport};
 pub use sound_coordinator::RuntimeSoundError;
 pub use terrain_coordinator::{
-    RuntimeCameraError, RuntimeCameraSceneError, RuntimeMovementGeometry, RuntimeMovementOwner,
-    RuntimeMovementQuery, RuntimeMovementReference, RuntimeMovementRegistrationError,
-    RuntimeMovementRegistrationQuery, RuntimeStaticMovementError, RuntimeStaticMovementOwner,
-    RuntimeStaticMovementQuery, RuntimeStaticMovementResidency, RuntimeTerrainCoordinator,
-    RuntimeTerrainError, RuntimeTerrainPoll, RuntimeTerrainStreamPoll,
-    RuntimeWorldModelMovementOwner,
+    RuntimeCameraError, RuntimeCameraSceneError, RuntimeMovementGeometry,
+    RuntimeMovementGeometryFailure, RuntimeMovementOwner, RuntimeMovementQuery,
+    RuntimeMovementReference, RuntimeMovementRegistrationError, RuntimeMovementRegistrationQuery,
+    RuntimeStaticMovementError, RuntimeStaticMovementOwner, RuntimeStaticMovementQuery,
+    RuntimeStaticMovementResidency, RuntimeTerrainCoordinator, RuntimeTerrainError,
+    RuntimeTerrainPoll, RuntimeTerrainStreamPoll, RuntimeWorldModelMovementOwner,
 };
 pub use terrain_frame::RuntimeTerrainFrameError;
 pub use world_coordinator::{

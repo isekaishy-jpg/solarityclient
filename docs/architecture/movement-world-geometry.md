@@ -273,10 +273,28 @@ bit. Runtime fixtures verify discovery of a previously uncollected floor,
 retention of the old region across successive misses, hit reuse, and complete
 invalidation when a sweep reaches an unloaded declared tile or has invalid input.
 
-The pure ground/fall cores still take a fixed candidate slice. Wiring the scoped
-adapter into every response probe requires native partial-state handling on
-collection failure and copying contact provenance before later cache changes.
-The adapter alone does not establish arbitrary live movement parity.
+Ground and fall `advance_with_geometry` now consume the scoped adapter through
+`MovementGeometry`, including every step probe and speculative fall. Legacy
+`advance` wraps its fixed slice in an always-ready provider. Runtime contact
+results contain copied `RuntimeMovementOwner` values, so later recollection
+cannot change their meaning. The adapter retains the first unavailable probe's
+pending/error cause until a new interval collection; subsequent probes in that
+invalidated context remain unavailable.
+
+The solvers preserve native partial state on unavailable probes. Ground exits
+retain earlier position/step writes without final reanchoring or contact
+notification. Fall exits retain prior movement/contact and report full consumed
+time, but exclude the unavailable portion from the motion/fall clocks. Private
+fall trials restore their own motion/fall clocks while propagating the native
+controlled-subject skipped-time notification and heartbeat postponement.
+These result fields still require application
+by the outer movement owner.
+
+Runtime fixtures now advance ground and fall directly through the provider,
+including a first-sweep refresh that discovers a lower floor and a sweep into
+an unavailable neighbor that preserves the original fall state and pending
+tile cause. This establishes response/provider integration, not live keyboard
+movement, transport conversion, or arbitrary world movement parity.
 
 ## Runtime work remaining
 

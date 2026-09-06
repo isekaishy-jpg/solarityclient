@@ -5,7 +5,7 @@ mod dynamic;
 mod registration;
 mod world_model;
 
-pub use cache::RuntimeMovementGeometry;
+pub use cache::{RuntimeMovementGeometry, RuntimeMovementGeometryFailure};
 use dynamic::{DynamicMovementContext, ResidentDynamicMovement};
 pub use dynamic::{RuntimeMovementOwner, RuntimeMovementQuery};
 pub use world_model::RuntimeWorldModelMovementOwner;

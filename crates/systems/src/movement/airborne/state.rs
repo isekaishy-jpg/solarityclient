@@ -120,7 +120,7 @@ pub enum MovementFallContinuation {
 
 /// Completed collision interval and the actions its movement owner must apply.
 #[derive(Clone, Copy, Debug)]
-pub struct MovementFallAdvance {
+pub struct MovementFallAdvance<Identity = usize> {
     /// Native elapsed-time result, including its float-to-integer conversion.
     pub consumed_ms: u32,
     /// Active fall state or the ground transition's position and fall clock.
@@ -131,9 +131,17 @@ pub struct MovementFallAdvance {
     /// Live ceiling notification at interval start plus `consumed_ms`. The unit
     /// notification owner still applies its ordinary subject/admission gates.
     pub notify_ceiling_reset: bool,
-    /// Live contact's triangle for the resource/transport notification owner.
+    /// Live contact identity copied before later probes replace candidates.
+    /// Fixed-slice advancement retains the original triangle-index API.
     /// Trials suppress this request; clear travel and ceiling resets clear it.
-    pub contact_triangle: Option<usize>,
+    pub contact_triangle: Option<Identity>,
+    /// A probe could not obtain complete geometry. Prior movement is retained.
+    pub geometry_unavailable: bool,
+    /// Subtract this from the analytic motion clock, request the controlled
+    /// subject's skipped-time notification, and postpone its heartbeat deadline
+    /// (`0x006E9B20`). The returned fall state already excludes this
+    /// unavailable portion; `consumed_ms` still reports the full interval.
+    pub skipped_time_ms: u32,
 }
 
 /// Invalid snapshot, geometry, or arithmetic at the fall interval boundary.
