@@ -13,16 +13,70 @@ const POSES: &[u16] = &[
 ];
 
 fn input(stand: u8) -> UnitAnimationInput {
-    UnitAnimationInput {
-        stand,
-        locomotion: UnitLocomotionAnimation::STAND,
-        tier: UnitAnimationTier::Ground,
-        movement_flags: 0,
-        movement_speed: 0.0,
-        secondary_flags: 0,
-        airborne: false,
-        mounted: false,
-    }
+    UnitAnimationInput::new(stand, UnitAnimationTier::Ground, false, None)
+}
+
+#[test]
+fn mouse_twist_retains_random_state_then_release_selects_procedural_turn()
+-> Result<(), Box<dyn Error>> {
+    let owner = owner(POSES, 0)?;
+    let mut random = CrtRand::new();
+    owner.advance_scene(1000., 1000., &mut random)?;
+    let initial_random = random;
+    let mut facing = input(0);
+    facing.controlled = true;
+    facing.mouse_turning = true;
+    facing.facing = 0.5;
+    owner.set_input(facing);
+    owner.advance_scene(1001., 1001., &mut random)?;
+    let twist = owner.body_pose();
+    assert_eq!(twist.placement_rotation, body_rotation(-0.5));
+    assert_eq!(twist.bone_transforms(), &[(4, body_rotation(0.5))]);
+    assert_eq!(owner.playback.borrow().animation_id, 0);
+    owner.advance_scene(1016., 1016., &mut random)?;
+    assert_eq!(
+        random, initial_random,
+        "mouse twist does not select a variation"
+    );
+    facing.mouse_turning = false;
+    owner.set_input(facing);
+    owner.advance_scene(1017., 1017., &mut random)?;
+    assert_eq!(
+        owner.playback.borrow().animation_id,
+        0,
+        "release resets the facing tick"
+    );
+    owner.advance_scene(1018., 1018., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 11);
+    assert_eq!(owner.body_pose().procedural_turn, 0x800);
+    let caught_up = owner.body_pose();
+    let turn_random = random;
+    owner.advance_scene(1018., 1018., &mut random)?;
+    assert_eq!(
+        owner.body_pose().placement_rotation,
+        caught_up.placement_rotation,
+        "the same scene cannot advance body smoothing twice"
+    );
+    assert_eq!(random, turn_random);
+    owner.advance_scene(1118., 1118., &mut random)?;
+    assert!(owner.body_pose().bone_transforms().is_empty());
+    owner.advance_scene(1119., 1119., &mut random)?;
+    assert_eq!(
+        owner.playback.borrow().animation_id,
+        11,
+        "native turn admission retains the current clip after procedural flags clear"
+    );
+    assert_eq!(owner.body_pose().placement_rotation, Mat4::IDENTITY);
+    let end = owner
+        .playback
+        .borrow()
+        .script_timer
+        .ok_or("turn timer")?
+        .end_time_ms() as f32
+        + 1.;
+    owner.advance_scene(end, end, &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 0);
+    Ok(())
 }
 
 fn owner(ids: &[u16], stand: u8) -> Result<UnitAnimationBehavior, Box<dyn Error>> {
@@ -42,6 +96,12 @@ fn owner_with_sequence_metadata(
     configure: impl Fn(usize, u16, &mut [u8]),
 ) -> Result<UnitAnimationBehavior, Box<dyn Error>> {
     let mut bytes = models::model_with_animations(ids)?;
+    let key_bones = bytes.len() as u32;
+    for index in [-1_i16, -1, -1, -1, 0] {
+        bytes.extend_from_slice(&index.to_le_bytes());
+    }
+    bytes[0x34..0x38].copy_from_slice(&5_u32.to_le_bytes());
+    bytes[0x38..0x3c].copy_from_slice(&key_bones.to_le_bytes());
     let offset = u32::from_le_bytes(bytes[0x20..0x24].try_into()?) as usize;
     for (index, id) in ids.iter().enumerate() {
         let sequence = offset + index * 64;
@@ -586,10 +646,58 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                 );
             }
             count += 1;
+            assert!(
+                owner.model.animations().key_bone(4).is_some(),
+                "{path} spine"
+            );
+            assert!(
+                owner.model.animations().key_bone(6).is_some(),
+                "{path} head"
+            );
+            let mut pose = solarity_rendering::M2BonePose::default();
+            for flags in [1, 5, 4, 6, 2, 10, 8, 9] {
+                let mut moving = input(0).with_movement(movement(flags, None));
+                moving.controlled = true;
+                moving.facing = 0.7;
+                owner.set_input(moving);
+                for _ in 0..24 {
+                    time += 1000. / 1200.;
+                    owner.advance_scene(time, time, &mut random)?;
+                    let sample = owner
+                        .take_scene_sample()
+                        .ok_or("directional scene sample")?;
+                    let body = owner.body_pose();
+                    pose.recompose_with_overrides(
+                        owner.model.animations(),
+                        sample.advance.clock,
+                        body.placement_rotation,
+                        solarity_rendering::M2BonePoseOverrides {
+                            bone_transforms: body.bone_transforms(),
+                            ..Default::default()
+                        },
+                    )?;
+                    assert!(
+                        pose.transforms().iter().all(|matrix| matrix.is_finite()),
+                        "{path} direction {flags}"
+                    );
+                    for attachment in owner.model.attachments() {
+                        let transform = pose.attachment_transform(
+                            owner.model.animations(),
+                            attachment,
+                            sample.advance.clock,
+                            body.placement_rotation,
+                        )?;
+                        assert!(
+                            transform.is_none_or(|matrix| matrix.is_finite()),
+                            "{path} attachment"
+                        );
+                    }
+                }
+            }
         }
     }
     println!(
-        "Validated jump, land, turns, speed changes and blended bone poses on {count} installed character models"
+        "Validated jump, land, turns, speed changes, eight-direction poses and attachments on {count} installed character models"
     );
     Ok(())
 }

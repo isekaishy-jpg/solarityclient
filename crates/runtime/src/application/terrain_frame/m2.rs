@@ -26,10 +26,10 @@ use solarity_asset::{
 use solarity_ecs::{WorldObjectIdentity, WorldTransform};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
-    CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2CameraEffectScale,
-    M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow, M2FingerPoseHands,
-    M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform, M2MeshHandle,
-    M2MeshPlan, M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan,
+    CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2BonePoseOverrides,
+    M2CameraEffectScale, M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow,
+    M2FingerPoseHands, M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform,
+    M2MeshHandle, M2MeshPlan, M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan,
     M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw,
     M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram,
     M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint,
@@ -1877,9 +1877,11 @@ impl M2Frame {
         // Primary unit completion belongs to the scene update, including
         // bodies subsequently rejected by the camera's visibility test.
         for &index in self.placement_visibility.dynamic_indices() {
-            let placement = &self.placements[index];
+            let placement = &mut self.placements[index];
             if let Some(animation) = &placement.unit_animation {
                 animation.advance_scene(animation_time_ms, global_time_ms, random)?;
+                placement.transform =
+                    placement.local_transform * animation.body_pose().placement_rotation;
             }
         }
         self.rider_transforms.clear();
@@ -2061,14 +2063,24 @@ impl M2Frame {
                 };
                 (advance, None)
             };
+            let body_pose = placement
+                .unit_animation
+                .as_ref()
+                .map(|animation| animation.body_pose());
+            let bone_transforms = body_pose
+                .as_ref()
+                .map_or(&[][..], |pose| pose.bone_transforms());
             for expired in advance.expired_variations {
-                self.bone_pose_scratch
-                    .recompose_with_model_view_and_orientation_mask(
-                        source.model.animations(),
-                        expired.clock,
-                        camera.view() * placement.transform,
-                        &source.model_oriented_billboard_bones,
-                    )?;
+                self.bone_pose_scratch.recompose_with_overrides(
+                    source.model.animations(),
+                    expired.clock,
+                    camera.view() * placement.transform,
+                    M2BonePoseOverrides {
+                        model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+                        bone_transforms,
+                        ..Default::default()
+                    },
+                )?;
                 append_triggered_events(
                     &mut self.triggered_events,
                     &source.model,
@@ -2093,14 +2105,16 @@ impl M2Frame {
             let model_view = camera.view() * placement.transform;
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             let instance_distance = m2_model_distance_key(model_view);
-            self.bone_pose_scratch
-                .recompose_with_model_view_orientation_and_finger_pose(
-                    source.model.animations(),
-                    clock,
-                    model_view,
-                    &source.model_oriented_billboard_bones,
+            self.bone_pose_scratch.recompose_with_overrides(
+                source.model.animations(),
+                clock,
+                model_view,
+                M2BonePoseOverrides {
+                    model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                     finger_pose,
-                )?;
+                    bone_transforms,
+                },
+            )?;
             let bone_pose = &self.bone_pose_scratch;
             append_triggered_events(
                 &mut self.triggered_events,

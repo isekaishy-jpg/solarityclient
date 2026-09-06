@@ -2172,6 +2172,10 @@ impl ClientServices {
         }
         self.platform
             .set_mouse_free_look(self.player_movement.mouse_free_look())?;
+        self.player.set_animation_mouse_turning(
+            self.player_movement
+                .animation_mouse_turning(self.gameplay.world()),
+        );
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (

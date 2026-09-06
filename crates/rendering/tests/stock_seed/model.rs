@@ -1,5 +1,7 @@
 //! External stock-compatibility tests for character-model render preparation.
 
+#[path = "model/body_pose.rs"]
+mod body_pose;
 #[path = "model/mesh_transfer.rs"]
 mod mesh_transfer;
 #[path = "model/particle_fog.rs"]

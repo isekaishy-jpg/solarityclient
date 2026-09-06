@@ -40,6 +40,18 @@ pub struct M2BonePose {
     states: Vec<u8>,
 }
 
+/// Instance-owned modifications applied while composing the authored pose.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct M2BonePoseOverrides<'a> {
+    /// Billboard exceptions selected by the character compositor.
+    pub model_oriented_billboard_bones: &'a [bool],
+    /// An authored held-item pose restricted to the selected finger trees.
+    pub finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
+    /// Additional local transforms indexed by the model's semantic key bones.
+    /// Missing key bones are ignored, as in the native model setter.
+    pub bone_transforms: &'a [(u16, Mat4)],
+}
+
 /// Precomputed camera transforms shared by every billboard bone in a pose.
 #[derive(Clone, Copy)]
 struct BillboardView {
@@ -140,6 +152,7 @@ impl M2BonePose {
             }),
             model_oriented_billboard_bones,
             None,
+            &[],
         )
     }
 
@@ -157,6 +170,28 @@ impl M2BonePose {
         model_oriented_billboard_bones: &[bool],
         finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
     ) -> Result<(), M2BonePoseError> {
+        self.recompose_with_overrides(
+            animations,
+            clock,
+            model_view,
+            M2BonePoseOverrides {
+                model_oriented_billboard_bones,
+                finger_pose,
+                bone_transforms: &[],
+            },
+        )
+    }
+
+    /// Composes instance bone transforms with the authored tracks and hierarchy.
+    /// Native `82FD25` applies the extra matrix after authored rotation/scale
+    /// in row-vector space, before pivot/translation and parent composition.
+    pub fn recompose_with_overrides(
+        &mut self,
+        animations: &M2AnimationSet,
+        clock: M2AnimationClock,
+        model_view: Mat4,
+        overrides: M2BonePoseOverrides<'_>,
+    ) -> Result<(), M2BonePoseError> {
         if !finite_matrix(model_view) {
             return Err(M2BonePoseError::InvalidModelView);
         }
@@ -171,8 +206,9 @@ impl M2BonePose {
                 model_view,
                 inverse_model_view: model_view.inverse(),
             }),
-            model_oriented_billboard_bones,
-            finger_pose,
+            overrides.model_oriented_billboard_bones,
+            overrides.finger_pose,
+            overrides.bone_transforms,
         )
     }
 
@@ -190,11 +226,13 @@ impl M2BonePose {
             model_view,
             model_oriented_billboard_bones,
             None,
+            &[],
         )?;
         Ok(pose)
     }
 
     /// Shares animation selection and hierarchy work while retaining vectors.
+    #[allow(clippy::too_many_arguments)]
     fn recompose_inner(
         &mut self,
         animations: &M2AnimationSet,
@@ -202,8 +240,16 @@ impl M2BonePose {
         model_view: Option<BillboardView>,
         model_oriented_billboard_bones: &[bool],
         finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
+        bone_transforms: &[(u16, Mat4)],
     ) -> Result<(), M2BonePoseError> {
         let clock = clock.resolve(animations)?;
+        for (key_bone, transform) in bone_transforms {
+            if !finite_matrix(*transform) {
+                return Err(M2BonePoseError::InvalidBoneTransform {
+                    key_bone: *key_bone,
+                });
+            }
+        }
         let finger_pose = finger_pose
             .map(|(finger_clock, hands)| {
                 Ok::<ResolvedFingerPose, M2BonePoseError>(ResolvedFingerPose {
@@ -243,10 +289,20 @@ impl M2BonePose {
                 track_clock(bone.scale(), clock, finger_pose),
                 Vec3::ONE,
             );
+            let mut rotation_scale = quaternion_matrix(rotation) * Mat4::from_scale(scale);
+            if let Some((_, transform)) = bone_transforms.iter().rev().find(|(key, _)| {
+                animations
+                    .key_bone_lookup()
+                    .get(usize::from(*key))
+                    .copied()
+                    .flatten()
+                    .is_some_and(|bone| usize::from(bone) == index)
+            }) {
+                rotation_scale = *transform * rotation_scale;
+            }
             self.local[index] = Mat4::from_translation(bone.pivot())
                 * Mat4::from_translation(translation)
-                * quaternion_matrix(rotation)
-                * Mat4::from_scale(scale)
+                * rotation_scale
                 * Mat4::from_translation(-bone.pivot());
         }
 

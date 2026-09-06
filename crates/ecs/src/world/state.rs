@@ -230,6 +230,16 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns current and maximum health and power for a loaded unit.
+    #[must_use]
+    pub fn unit_vitals(&self, guid: u64) -> Option<UnitVitals> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&UnitVitals>(entity)
+            .map(|vitals| **vitals)
+            .ok()
+    }
+
     /// Returns the common presentation fields for any visible object.
     #[must_use]
     pub fn object_presentation(&self, guid: u64) -> Option<ObjectPresentation> {

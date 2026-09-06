@@ -9,12 +9,14 @@ use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use glam::Mat4;
 use solarity_asset::{AnimationDataCatalog, DecodedM2Model, M2ModelAnimationMode};
 use solarity_ecs::{ActiveWorld, UnitAnimationTier, WorldMovementState, WorldObjectIdentity};
 use solarity_rendering::{M2EventTimeWindow, M2SequenceStartPhase};
 use solarity_systems::{
-    UnitLocomotionAnimation, UnitMovementAnimationDecision, UnitPrimaryAnimationCompletion,
-    UnitStandAnimationDecision, resolve_unit_airborne_animation, resolve_unit_landing_animation,
+    UnitBodyOrientation, UnitBodyOrientationInput, UnitLocomotionAnimation,
+    UnitMovementAnimationDecision, UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
+    resolve_unit_airborne_animation, resolve_unit_landing_animation,
     resolve_unit_locomotion_animation, resolve_unit_model_animation,
     resolve_unit_movement_animation_completion, resolve_unit_movement_speed,
     resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
@@ -35,6 +37,11 @@ pub(super) struct UnitAnimationInput {
     pub secondary_flags: u16,
     pub airborne: bool,
     pub mounted: bool,
+    pub facing: f32,
+    pub turn_rate: f32,
+    pub alive: bool,
+    pub controlled: bool,
+    pub mouse_turning: bool,
 }
 
 impl UnitAnimationInput {
@@ -53,6 +60,11 @@ impl UnitAnimationInput {
             movement_speed: 0.0,
             secondary_flags: 0,
             airborne: false,
+            facing: 0.0,
+            turn_rate: std::f32::consts::PI,
+            alive: stand != 7,
+            controlled: false,
+            mouse_turning: false,
         };
         movement.map_or(input, |movement| input.with_movement(movement))
     }
@@ -62,6 +74,7 @@ impl UnitAnimationInput {
         self.movement_flags = movement.flags() as u32;
         self.movement_speed = resolve_unit_movement_speed(movement);
         self.secondary_flags = (movement.flags() >> 32) as u16;
+        self.turn_rate = movement.speeds().turn_rate();
         self.airborne = unit_movement_is_airborne(
             self.movement_flags,
             movement
@@ -70,6 +83,39 @@ impl UnitAnimationInput {
                 .map_or(0.0, |fall| fall.vertical_speed),
         );
         self
+    }
+
+    pub fn with_orientation(
+        mut self,
+        world: &ActiveWorld,
+        guid: u64,
+        controlled: bool,
+        mouse_turning: bool,
+    ) -> Self {
+        self.facing = world
+            .object_transform(guid)
+            .map_or(0.0, |value| value.orientation());
+        self.alive = world
+            .unit_vitals(guid)
+            .is_some_and(|value| value.health() > 0);
+        self.controlled = controlled;
+        self.mouse_turning = mouse_turning;
+        self
+    }
+
+    fn direct_facing(self) -> bool {
+        self.movement_flags & 0x30 != 0 || self.mouse_turning
+    }
+
+    fn same_primary_request(self, other: Self) -> bool {
+        self.stand == other.stand
+            && self.locomotion == other.locomotion
+            && self.tier == other.tier
+            && self.movement_flags == other.movement_flags
+            && self.movement_speed == other.movement_speed
+            && self.secondary_flags == other.secondary_flags
+            && self.airborne == other.airborne
+            && self.mounted == other.mounted
     }
 }
 
@@ -185,6 +231,42 @@ pub(super) struct UnitAnimationBehavior {
     landing: Cell<bool>,
     playback: Rc<RefCell<M2Playback>>,
     scene_sample: RefCell<Option<UnitAnimationSceneSample>>,
+    body: RefCell<UnitBodyPose>,
+}
+
+/// Instance state survives GPU rebuilds alongside the primary sequence owner.
+struct UnitBodyPose {
+    controller: UnitBodyOrientation,
+    last_scene_time: Option<f32>,
+    facing_changed: bool,
+    facing_tick: u32,
+    sample: UnitBodyPoseSample,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct UnitBodyPoseSample {
+    pub placement_rotation: Mat4,
+    transforms: [(u16, Mat4); 2],
+    transform_count: usize,
+    procedural_turn: u32,
+}
+
+impl UnitBodyPoseSample {
+    pub fn bone_transforms(&self) -> &[(u16, Mat4)] {
+        &self.transforms[..self.transform_count]
+    }
+}
+
+fn body_rotation(angle: f32) -> Mat4 {
+    if angle == 0.0 {
+        return Mat4::IDENTITY;
+    }
+    // 4C3460 uses x87 FSIN/FCOS before storing the matrix's float elements.
+    let (sin, cos) = f64::from(angle).sin_cos();
+    let (sin, cos) = (sin as f32, cos as f32);
+    Mat4::from_cols_array(&[
+        cos, sin, 0.0, 0.0, -sin, cos, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ])
 }
 
 impl UnitAnimationBehavior {
@@ -207,6 +289,18 @@ impl UnitAnimationBehavior {
             landing: Cell::new(false),
             playback: Rc::new(RefCell::new(M2Playback::unstarted(0))),
             scene_sample: RefCell::new(None),
+            body: RefCell::new(UnitBodyPose {
+                controller: UnitBodyOrientation::new(input.facing),
+                last_scene_time: None,
+                facing_changed: true,
+                facing_tick: 0,
+                sample: UnitBodyPoseSample {
+                    placement_rotation: Mat4::IDENTITY,
+                    transforms: [(4, Mat4::IDENTITY), (6, Mat4::IDENTITY)],
+                    transform_count: 0,
+                    procedural_turn: 0,
+                },
+            }),
         }
     }
 
@@ -215,7 +309,11 @@ impl UnitAnimationBehavior {
     }
 
     pub fn set_input(&self, input: UnitAnimationInput) {
-        if self.input.replace(input) != input {
+        let previous = self.input.replace(input);
+        if previous.facing != input.facing || previous.direct_facing() != input.direct_facing() {
+            self.body.borrow_mut().facing_changed = true;
+        }
+        if !previous.same_primary_request(input) {
             self.pending.borrow_mut().push_back(PendingUnitAnimation {
                 input,
                 event: UnitMovementAnimationEventKind::Changed,
@@ -226,6 +324,9 @@ impl UnitAnimationBehavior {
     fn notify_movement(&self, event: UnitMovementAnimationEvent) {
         let mut input = self.input.get().with_movement(event.movement);
         input.stand = event.stand;
+        if self.input.get().direct_facing() != input.direct_facing() {
+            self.body.borrow_mut().facing_changed = true;
+        }
         self.input.set(input);
         self.pending.borrow_mut().push_back(PendingUnitAnimation {
             input,
@@ -239,6 +340,52 @@ impl UnitAnimationBehavior {
 
     pub fn take_scene_sample(&self) -> Option<UnitAnimationSceneSample> {
         self.scene_sample.borrow_mut().take()
+    }
+
+    pub fn body_pose(&self) -> UnitBodyPoseSample {
+        self.body.borrow().sample
+    }
+
+    fn advance_body(&self, scene_time_ms: f32) -> bool {
+        let input = self.input.get();
+        let mut body = self.body.borrow_mut();
+        if body.last_scene_time == Some(scene_time_ms) {
+            return false;
+        }
+        let frame_seconds = body.last_scene_time.map_or(0.0, |previous| {
+            ((scene_time_ms - previous) * 0.001).max(0.0)
+        });
+        body.last_scene_time = Some(scene_time_ms);
+        if body.facing_changed {
+            body.facing_tick = scene_time_ms as u32;
+            body.facing_changed = false;
+        }
+        let facing_elapsed_ms = (scene_time_ms as u32).wrapping_sub(body.facing_tick);
+        let sample = body.controller.advance(UnitBodyOrientationInput {
+            facing: input.facing,
+            movement_flags: input.movement_flags,
+            turn_rate: input.turn_rate,
+            facing_elapsed_ms,
+            frame_seconds,
+            direct_facing: input.direct_facing(),
+            full_spine_turn: input.controlled,
+            has_spine: self.model.animations().key_bone(4).is_some(),
+            has_head: self.model.animations().key_bone(6).is_some(),
+            mounted: input.mounted,
+            body_yaw_allowed: input.alive,
+        });
+        let changed = body.sample.procedural_turn != sample.procedural_turn;
+        body.sample.procedural_turn = sample.procedural_turn;
+        body.sample.placement_rotation = body_rotation(sample.yaw - input.facing);
+        body.sample.transform_count = 0;
+        for (key, angle) in [(4, sample.spine), (6, sample.head)] {
+            if let Some(angle) = angle {
+                let index = body.sample.transform_count;
+                body.sample.transforms[index] = (key, body_rotation(angle));
+                body.sample.transform_count += 1;
+            }
+        }
+        changed
     }
 
     fn behavior(&self, playback: &M2Playback) -> u16 {
@@ -284,7 +431,7 @@ impl UnitAnimationBehavior {
         if let Some(turn) = resolve_unit_turn_animation(
             input.movement_flags,
             input.secondary_flags,
-            0,
+            self.body.borrow().sample.procedural_turn,
             self.landing.get(),
         ) {
             return Some(turn);
@@ -486,7 +633,32 @@ impl UnitAnimationBehavior {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.synchronize(scene_time_ms as u32, random)?;
+        let turn_changed = self.advance_body(scene_time_ms);
         let mut playback = self.playback.borrow_mut();
+        if turn_changed {
+            let input = self.input.get();
+            // 73E3C2 rechecks 71DE90 even when catch-up has just stopped.
+            // With no turn flags left it retains the turn clip until its
+            // primary completion callback resolves the ordinary idle pose.
+            if resolve_unit_turn_animation(
+                input.movement_flags,
+                input.secondary_flags,
+                self.body.borrow().sample.procedural_turn,
+                self.landing.get(),
+            )
+            .is_some()
+                && let Some(request) = self.request(input, &playback)
+            {
+                self.select(
+                    &mut playback,
+                    request.into(),
+                    input,
+                    scene_time_ms as u32,
+                    M2SequenceStartPhase::BeforeSceneUpdate,
+                    random,
+                )?;
+            }
+        }
         let mut completed = |playback: &mut M2Playback, random: &mut CrtRand| {
             let input = self.input.get();
             let behavior = self.behavior(playback);

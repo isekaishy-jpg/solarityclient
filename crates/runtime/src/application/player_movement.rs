@@ -210,6 +210,17 @@ impl RuntimePlayerMovement {
             .is_some_and(|owner| owner.camera.free_look())
     }
 
+    pub(super) fn animation_mouse_turning(&self, world: Option<&ActiveWorld>) -> bool {
+        self.input.mouse_turning()
+            && self
+                .owner
+                .as_ref()
+                .zip(world)
+                .is_some_and(|(owner, world)| {
+                    owner.camera.free_look() && owner.admission(world).turning
+                })
+    }
+
     pub(super) fn push_mouse_motion(
         &mut self,
         delta: [f32; 2],

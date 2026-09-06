@@ -12,7 +12,6 @@ use crate::application::unit_animation::{UnitAnimationBehavior, UnitAnimationInp
 use glam::Mat4;
 use solarity_ecs::UnitAnimationTier;
 use solarity_rendering::{M2CameraEffectScale, WorldCamera, WorldFrustum, WorldScreenWindow};
-use solarity_systems::UnitLocomotionAnimation;
 use std::rc::Rc;
 
 #[test]
@@ -605,6 +604,12 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
 -> Result<(), Box<dyn Error>> {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
     let mut bytes = models::model_with_animations(&[0, 96, 97])?;
+    let lookup = bytes.len() as u32;
+    for bone in [-1_i16, -1, -1, -1, 0] {
+        bytes.extend_from_slice(&bone.to_le_bytes());
+    }
+    bytes[0x34..0x38].copy_from_slice(&5_u32.to_le_bytes());
+    bytes[0x38..0x3c].copy_from_slice(&lookup.to_le_bytes());
     let sequences = u32::from_le_bytes(bytes[0x20..0x24].try_into()?) as usize;
     bytes[sequences + 64 + 12..sequences + 64 + 16].copy_from_slice(&0x21_u32.to_le_bytes());
     let mut dbc = b"WDBC".to_vec();
@@ -669,18 +674,14 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
         world.object_identity(7).ok_or("local identity")?,
         Arc::clone(&model),
         animations,
-        UnitAnimationInput {
-            stand: 1,
-            locomotion: UnitLocomotionAnimation::STAND,
-            tier: UnitAnimationTier::Ground,
-            movement_flags: 0,
-            movement_speed: 0.0,
-            secondary_flags: 0,
-            airborne: false,
-            mounted: false,
-        },
+        UnitAnimationInput::new(1, UnitAnimationTier::Ground, false, None),
     ));
     owner.synchronize(100, &mut random)?;
+    let mut turned = UnitAnimationInput::new(1, UnitAnimationTier::Ground, false, None);
+    turned.facing = 0.8;
+    turned.mouse_turning = true;
+    turned.controlled = true;
+    owner.set_input(turned);
     let playback = owner.playback();
     frame.placements.clear();
     let camera = WorldCamera::orthographic(
@@ -725,6 +726,13 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
             None,
         )?;
         assert_eq!(!draws.draws.is_empty(), visible);
+        let expected_rotation = Mat4::from_rotation_z(-0.8);
+        let actual = frame.placements[0].transform;
+        assert!(
+            actual.abs_diff_eq(transform * expected_rotation, 1e-6),
+            "retained body yaw reaches placement across culling and GPU replacement"
+        );
+        assert!(!owner.body_pose().bone_transforms().is_empty());
         assert_eq!(playback.borrow().animation_id, 97);
         assert_eq!(
             playback

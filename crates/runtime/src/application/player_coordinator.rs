@@ -380,6 +380,7 @@ pub struct RuntimePlayerPresentation {
     component_texture_level: CharacterComponentTextureLevel,
     resident: Option<ResidentPlayerModel>,
     unit_animations: UnitAnimationScene,
+    animation_mouse_turning: bool,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
@@ -418,6 +419,7 @@ impl RuntimePlayerPresentation {
             component_texture_level: CharacterComponentTextureLevel::DEFAULT,
             resident: None,
             unit_animations: UnitAnimationScene::default(),
+            animation_mouse_turning: false,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
             glue_character: None,
@@ -1376,6 +1378,11 @@ impl RuntimePlayerPresentation {
         self.unit_animations.notify_movement(event);
     }
 
+    /// Supplies admitted mouse-facing ownership to the retained body controller.
+    pub fn set_animation_mouse_turning(&mut self, turning: bool) {
+        self.animation_mouse_turning = turning;
+    }
+
     fn synchronize_local_animation(
         &mut self,
         world: &ActiveWorld,
@@ -1396,7 +1403,8 @@ impl RuntimePlayerPresentation {
                 }),
             resident.mount.is_some(),
             world.movement_state(resident.guid),
-        );
+        )
+        .with_orientation(world, resident.guid, true, self.animation_mouse_turning);
         self.unit_animations.retain_world(world);
         self.unit_animations
             .bind(identity, &resident.model, &self.animations, input);
@@ -1431,7 +1439,8 @@ impl RuntimePlayerPresentation {
                     presentation.animation_tier(),
                     mounted,
                     movement,
-                ),
+                )
+                .with_orientation(world, guid, false, false),
             );
         }
     }
@@ -2160,6 +2169,7 @@ fn prepare_glue_character_on_worker(
     let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
         unit_animations: UnitAnimationScene::default(),
+        animation_mouse_turning: false,
         assets: AssetStoreHandle::new(store),
         animations: catalogs.animations,
         creatures: catalogs.creatures,

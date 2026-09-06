@@ -5,6 +5,7 @@
 
 mod airborne;
 mod animation;
+mod body_orientation;
 mod clock;
 mod contact;
 mod fall;
@@ -25,6 +26,9 @@ pub use airborne::{
     MovementFallState,
 };
 pub use animation::{UnitModelAnimation, resolve_unit_model_animation};
+pub use body_orientation::{
+    UnitBodyOrientation, UnitBodyOrientationInput, UnitBodyOrientationSample,
+};
 pub use contact::{MovementFallContact, MovementFallContactError, MovementFallContactQuery};
 pub use fall::{MovementFallCrossing, MovementFallError, MovementFallMode, MovementFallTrajectory};
 pub use geometry::MovementGeometry;

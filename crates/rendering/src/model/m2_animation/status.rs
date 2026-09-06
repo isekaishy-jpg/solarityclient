@@ -34,6 +34,12 @@ pub enum M2BonePoseError {
     /// The model-to-view transform cannot be inverted for billboard recovery.
     #[error("M2 billboard pose requires a finite, invertible model-view transform")]
     InvalidModelView,
+    /// An instance supplied a non-finite semantic bone transform.
+    #[error("M2 key bone {key_bone} has a non-finite instance transform")]
+    InvalidBoneTransform {
+        /// Semantic key-bone index supplied to the model setter.
+        key_bone: u16,
+    },
     /// An attachment from another model references a missing palette entry.
     #[error("M2 attachment bone {requested} is unavailable; pose has {available} bones")]
     AttachmentBoneIndex {

@@ -92,6 +92,30 @@ Captured native decisions cover 2,144 admitted selection, changed-stand, and
 completion cases. Archive-decoded runtime tests cover interruptions, missing
 poses, callback timing, variation rolls, and retained playback.
 
+Movement notifications retain jump takeoff, airborne loops, and landing requests
+independently of network-writer backpressure. The primary timer scales ordinary
+locomotion by the resolved sequence's authored movement speed and preserves stride
+phase across speed changes. These paths continue to use the shared stock CRT
+random stream for admitted sequence variations.
+
+The same retained owner now advances the ordinary nonspline body controller at
+`0x0073DAB0`. Strafe and diagonal movement smooth body yaw independently of facing;
+keyboard/admitted mouse turns twist semantic spine/head bones and release into
+procedural idle-turn requests. Model placement uses the resulting body yaw. Local
+bone overrides precede authored rotation/scale inside the pivot and parent chain,
+so held items, attachment effects, and descendant bones inherit the composed pose.
+Facing-only updates do not enqueue a primary sequence request. Neither body state
+nor playback is recreated by GPU or texture replacement.
+
+The checked-in orientation oracle captures 1,176 independent native transitions
+and 1,680 consecutive frames, including 1,200 Hz stepping. Fifteen original matrix
+compositions cover noncommuting rotations, nonuniform scale, pivots, translation,
+and inherited spine/head overrides. Runtime checks cover mouse release, unchanged
+random state during twist, and body placement through culling/resource replacement.
+The installed-archive test exercises all eight directions and attachment poses on
+the twenty playable race/gender models. These checks establish animation behavior;
+they do not measure end-to-end frame rate.
+
 The same owner drives remote players and creatures from their replicated
 stand fields. Their world-object lifetimes retain playback across material
 changes; neighbor arrivals no longer recreate existing CPU/GPU representations.
@@ -99,6 +123,8 @@ Health/flag/effect-based death admission beyond stand state 7, vehicle and
 cast/emote layering, the water-height death probe, and cast/cinematic stance
 eligibility still require integration. Offscreen animation-event/effect
 dispatch remains separate from the primary completion prepass.
+Spline orientation, vehicle body overrides, remote combat-facing targets, and
+the native camera-mode-13 spine policy remain outside the ordinary body path.
 
 ## Evidence and limits
 
