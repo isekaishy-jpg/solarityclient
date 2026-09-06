@@ -189,7 +189,7 @@ The component boundary follows `0x004F2640`: helmet reuse at `0x004EF020`
 compares the model path; shoulder reuse at `0x004EF710` requires both matching
 paths when the equipped entry changes. An unchanged entry, including a
 one-sided shoulder, survives an unrelated body material update. These native
-reuse branches keep the old component's textures, flags, and attached visual
+reuse branches keep the old component's textures and attached visual
 even if another item display names different values at the same model path.
 Weapon entry or attachment-point changes create a new component through
 `0x004EACD0`/`0x004EAA70`. An enchantment change follows `0x006D6BA0` and
@@ -203,8 +203,28 @@ and failed preparation after a retention plan has formed. It checks real
 Vulkan source identities, event clocks, live effect histories, and that
 continuing components consume no initialization rolls. Disabling component
 retention fails the material-update case. Glue previews, mount instances,
-native component sequence initialization, and secondary-timer synchronization
-remain outside this world-component lifetime change.
+and native component sequence initialization remain outside this
+world-component lifetime change.
+
+Equipment models retain independent sequence playback and authored orientation.
+The build-12340 component factory `0x004EAA70` passes the model path, replacement
+texture, item visual, and particle-color ID into the new child. It never reads
+`ItemDisplayInfo.flags` at record offset `0x28`; `0x004EA9E0` handles the particle
+colors at offset `0x60`. The generic attachment operation `0x00831630` links the
+parent and attachment ID without any item display record. Helmet and shoulder
+creation (`0x004EF0D0`, `0x004EF840`), held-item creation (`0x004EACD0`), and the
+component setter (`0x004F2640`) add no animation or reflection behavior for bits
+`0x40`, `0x80`, or `0x100`. The character-component function range
+`0x004E7300` through `0x004F2900` was also inspected for deferred flag handling against
+the fingerprinted executable documented in `tools/ghidra/README.md`.
+
+The previous interpretation of these bits as character sequence inheritance,
+opposite-shoulder synchronization, and local-X reflection came from SolCL and
+has been removed. It could overwrite an item's animation with the body's
+posture and reflect both its geometry and effects. The Vulkan equipment test
+uses displays containing all three bits, verifies independent item/effect
+animation while a remote character sits, and checks authored orientation.
+Generic renderer support for reflected model transforms remains available.
 
 Changed stand state follows `0x0073F060`, including death entry through
 `0x0073AF80`, submerged entry 201, and return from submerged through 127 or 224.

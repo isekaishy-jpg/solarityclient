@@ -9,7 +9,7 @@ use crate::application::terrain_coordinator::m2_residency::{ResidentM2Placement,
 use crate::random::CrtRand;
 
 use super::{
-    M2AnimationBinding, M2Frame, M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, M2Playback,
+    M2Frame, M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, M2Playback,
     RuntimeTerrainFrameError, prepare_source, stock_particle_simulations,
 };
 
@@ -137,7 +137,6 @@ pub(super) fn static_gpu_placement(
         local_transform: placement.transform(),
         transform: placement.transform(),
         orientation: M2ModelOrientation::Authored,
-        animation_binding: M2AnimationBinding::Independent,
         glue_parent_attachment: None,
         owner: M2GpuPlacementOwner::Static(placement.owner()),
         flags: placement.flags(),

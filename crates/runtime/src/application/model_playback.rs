@@ -52,16 +52,6 @@ pub(in crate::application) struct M2ExpiredVariation {
     pub(in crate::application) event_window: M2EventTimeWindow,
 }
 
-/// Cross-model animation identity copied by stock equipment components.
-#[derive(Clone, Copy)]
-pub(in crate::application) struct M2PlaybackSynchronization {
-    animation_id: u16,
-    variation_index: u16,
-    cycle_count: u32,
-    cycle_started_ms: f32,
-    previous_global_event_elapsed_ms: f32,
-}
-
 impl M2Playback {
     /// Keeps static geometry and effects alive before a primary sequence exists.
     pub(in crate::application) fn unstarted(animation_id: u16) -> Self {
@@ -604,62 +594,6 @@ impl M2Playback {
         self.previous_global_event_elapsed_ms = global_time_ms;
         self.event_timeline_started = true;
         window
-    }
-
-    /// Captures the stock sequence identity shared with an equipment model.
-    pub(in crate::application) fn synchronization(
-        &self,
-        model: &DecodedM2Model,
-    ) -> M2PlaybackSynchronization {
-        let variation_index = model
-            .animations()
-            .sequences()
-            .get(self.sequence)
-            .map_or(0, |sequence| sequence.variation_index());
-        M2PlaybackSynchronization {
-            animation_id: self.animation_id,
-            variation_index,
-            cycle_count: self.cycle_count,
-            cycle_started_ms: self.cycle_started_ms,
-            previous_global_event_elapsed_ms: self.previous_global_event_elapsed_ms,
-        }
-    }
-
-    /// Maps another model's active sequence identity onto this model's table.
-    pub(in crate::application) fn synchronize_from(
-        &mut self,
-        model: &DecodedM2Model,
-        source: M2PlaybackSynchronization,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        let sequence = model
-            .animations()
-            .select_sequence(source.animation_id, Some(source.variation_index), 0)
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id: source.animation_id,
-            })?;
-        let identity_changed = self.animation_id != source.animation_id
-            || self.sequence != sequence
-            || self.cycle_started_ms != source.cycle_started_ms;
-        self.animation_id = source.animation_id;
-        self.sequence = sequence;
-        self.sequence_duration_ms = resolved_sequence_duration(model, sequence)?;
-        self.cycle_count = source.cycle_count;
-        self.cycle_started_ms = source.cycle_started_ms;
-        self.has_variations = model
-            .animations()
-            .available_variation_count(source.animation_id)
-            .ok_or_else(|| RuntimeTerrainFrameError::M2AnimationSelection {
-                model: model.path().clone(),
-                animation_id: source.animation_id,
-            })?
-            > 1;
-        if identity_changed {
-            self.previous_event_elapsed_ms = 0.0;
-            self.previous_global_event_elapsed_ms = source.previous_global_event_elapsed_ms;
-            self.event_timeline_started = false;
-        }
-        Ok(())
     }
 }
 

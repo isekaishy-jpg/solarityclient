@@ -4000,9 +4000,6 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
                 attachment.point(),
                 attachment.model().as_str(),
                 attachment.texture().map(AssetPath::as_str),
-                attachment.inherits_character_animation(),
-                attachment.mirrors_opposite_shoulder_animation(),
-                attachment.is_model_mirrored(),
             )
         })
         .collect::<Vec<_>>();
@@ -4013,25 +4010,16 @@ fn armor_attachment_plan_preserves_stock_component_models() -> Result<(), Box<dy
                 CharacterAttachmentPoint::Helmet,
                 "ITEM\\OBJECTCOMPONENTS\\HEAD\\HELM_TEST_HUF.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\HEAD\\HELMTEXTURE.BLP"),
-                true,
-                false,
-                true,
             ),
             (
                 CharacterAttachmentPoint::ShoulderRight,
                 "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZERO.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERZEROBLUE.BLP"),
-                true,
-                true,
-                true,
             ),
             (
                 CharacterAttachmentPoint::ShoulderLeft,
                 "ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONE.MDX",
                 Some("ITEM\\OBJECTCOMPONENTS\\SHOULDER\\SHOULDERONEBLUE.BLP"),
-                true,
-                false,
-                true,
             ),
         ]
     );
@@ -4127,9 +4115,6 @@ fn held_item_plan_preserves_stock_attachment_behavior() -> Result<(), Box<dyn Er
             ),
         ]
     );
-    assert!(melee.attachments()[0].inherits_character_animation());
-    assert!(!melee.attachments()[0].is_model_mirrored());
-    assert!(melee.attachments()[1].is_model_mirrored());
 
     let unarmed = CharacterAttachmentPlan::held_items(
         equipment,

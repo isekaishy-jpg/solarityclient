@@ -210,11 +210,7 @@ fn glue_character_cpu_models(
         M2ModelOrientation::Authored,
     );
     for attachment in input.attachments() {
-        let orientation = if attachment.is_model_mirrored() {
-            M2ModelOrientation::Mirrored
-        } else {
-            M2ModelOrientation::Authored
-        };
+        let orientation = M2ModelOrientation::Authored;
         push(attachment.model(), character_light_count, orientation);
         for effect in attachment.visual_effects() {
             push(effect.model(), character_light_count, orientation);

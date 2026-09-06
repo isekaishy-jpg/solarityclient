@@ -1,6 +1,7 @@
 //! Transactional character publication with retained component instances.
 
 use super::*;
+use crate::application::player_coordinator::ResidentPlayerAttachment;
 use solarity_ecs::{PlayerEquipmentSlot, VisibleEquipmentItem};
 
 #[derive(Clone, Copy)]
@@ -288,11 +289,7 @@ pub(super) fn prepare_character_gpu(
                 continue;
             }
         }
-        let orientation = if attachment.is_model_mirrored() {
-            M2ModelOrientation::Mirrored
-        } else {
-            M2ModelOrientation::Authored
-        };
+        let orientation = M2ModelOrientation::Authored;
         if retained.is_none() {
             let resolved = attachment
                 .textures()
@@ -330,7 +327,6 @@ pub(super) fn prepare_character_gpu(
                 random,
             )?;
             placement.orientation = orientation;
-            placement.animation_binding = equipment_animation_binding(attachment);
             placement.item_identity = identity;
             prepared.push(source, placement);
         }

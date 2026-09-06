@@ -16,9 +16,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::application::model_playback::{
-    M2Playback, M2PlaybackAdvance, M2PlaybackSynchronization,
-};
+use crate::application::model_playback::{M2Playback, M2PlaybackAdvance};
 use glam::Mat4;
 use solarity_asset::{
     AnimationDataCatalog, AssetPath, BlpTextureSource, DecodedM2Model, M2ParticleEmitter,
@@ -47,8 +45,8 @@ use crate::application::game_object_coordinator::{
 };
 use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentCreatureGeosets, ResidentCreatureTexture,
-    ResidentGlueCharacterFrameInput, ResidentPlayerAttachment, ResidentPlayerFrameInput,
-    ResidentPlayerTexture, UnitPresentationGeneration,
+    ResidentGlueCharacterFrameInput, ResidentPlayerFrameInput, ResidentPlayerTexture,
+    UnitPresentationGeneration,
 };
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Scene, ResidentM2Source, ResidentM2Texture,
@@ -150,8 +148,6 @@ struct M2GpuPlacement {
     transform: Mat4,
     /// Local reflection paired with the source's Vulkan front-face state.
     orientation: M2ModelOrientation,
-    /// Stock item-display sequence relationship to another placed model.
-    animation_binding: M2AnimationBinding,
     /// Stock parent attachment used by Glue character preview models.
     glue_parent_attachment: Option<u32>,
     owner: M2GpuPlacementOwner,
@@ -165,20 +161,6 @@ struct M2GpuPlacement {
     item_identity: Option<M2PlayerItemIdentity>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
-}
-
-/// Sequence source selected by build-12340 item-display component flags.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum M2AnimationBinding {
-    /// Advance the model's own animation selection.
-    #[default]
-    Independent,
-    /// Follow the owning character's active animation and variation.
-    Character,
-    /// Attachment six follows the sibling installed at attachment five.
-    OppositeShoulder,
-    /// Follow attachment five, or the character when that sibling is absent.
-    OppositeShoulderOrCharacter,
 }
 
 /// One placement-local simulation plus an unsupported-path containment latch.
@@ -668,8 +650,6 @@ pub(in crate::application) struct M2Frame {
     visual_transforms: Vec<(u64, CharacterAttachmentPoint, u32, Option<Mat4>)>,
     glue_attachment_ids: Vec<u32>,
     glue_attachment_transforms: Vec<(u32, Option<Mat4>)>,
-    character_animation_sync: Vec<(u64, M2PlaybackSynchronization)>,
-    shoulder_animation_sync: Vec<(u64, M2PlaybackSynchronization)>,
     recoverable_errors: Vec<String>,
     last_effect_time_ms: Option<f32>,
     pending_glue_playback_advance: Option<M2PlaybackAdvance>,
@@ -749,8 +729,6 @@ impl M2Frame {
             visual_transforms: Vec::new(),
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
-            character_animation_sync: Vec::new(),
-            shoulder_animation_sync: Vec::new(),
             recoverable_errors: Vec::new(),
             last_effect_time_ms: None,
             pending_glue_playback_advance: None,
@@ -828,7 +806,6 @@ impl M2Frame {
                 local_transform: transform,
                 transform,
                 orientation: M2ModelOrientation::Authored,
-                animation_binding: M2AnimationBinding::Independent,
                 glue_parent_attachment: None,
                 owner: M2GpuPlacementOwner::GlueModel { object_index },
                 flags: 0,
@@ -868,8 +845,6 @@ impl M2Frame {
             visual_transforms: Vec::new(),
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
-            character_animation_sync: Vec::new(),
-            shoulder_animation_sync: Vec::new(),
             recoverable_errors: Vec::new(),
             last_effect_time_ms: None,
             pending_glue_playback_advance: None,
@@ -956,11 +931,7 @@ impl M2Frame {
                     ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
                 })
                 .collect::<Vec<_>>();
-            let orientation = if attachment.is_model_mirrored() {
-                M2ModelOrientation::Mirrored
-            } else {
-                M2ModelOrientation::Authored
-            };
+            let orientation = M2ModelOrientation::Authored;
             let source = prepare_glue_character_gpu_source(
                 renderer,
                 attachment.model(),
@@ -983,7 +954,6 @@ impl M2Frame {
                 random,
             )?;
             placement.orientation = orientation;
-            placement.animation_binding = equipment_animation_binding(attachment);
             prepared.push((source, placement));
             for effect in attachment.visual_effects() {
                 let resolved = effect
@@ -1934,30 +1904,6 @@ impl M2Frame {
                 .len()
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
-        self.character_animation_sync.clear();
-        self.shoulder_animation_sync.clear();
-        // Stock installs attachment six before attachment five, so the former
-        // observes the latter's retained identity from the preceding frame.
-        for placement in &self.placements {
-            let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner else {
-                continue;
-            };
-            if point != CharacterAttachmentPoint::ShoulderLeft {
-                continue;
-            }
-            let Some(source) = self
-                .sources
-                .get(placement.source_index)
-                .and_then(Option::as_ref)
-            else {
-                continue;
-            };
-            let Some(playback) = placement.playback.as_ref().map(M2PlaybackStorage::borrow) else {
-                continue;
-            };
-            self.shoulder_animation_sync
-                .push((guid, playback.synchronization(&source.model)));
-        }
         for (placement_index, placement) in self.placements.iter_mut().enumerate() {
             if !placement.placement_valid {
                 continue;
@@ -2069,27 +2015,6 @@ impl M2Frame {
                     continue;
                 }
             }
-            let animation_binding = placement.animation_binding;
-            let character_source = || {
-                let guid = placement_owner_guid(owner)?;
-                self.character_animation_sync
-                    .iter()
-                    .find_map(|(owner, state)| (*owner == guid).then_some(*state))
-            };
-            let shoulder_source = || {
-                let guid = placement_owner_guid(owner)?;
-                self.shoulder_animation_sync
-                    .iter()
-                    .find_map(|(owner, state)| (*owner == guid).then_some(*state))
-            };
-            let synchronization = match animation_binding {
-                M2AnimationBinding::Independent => None,
-                M2AnimationBinding::Character => character_source(),
-                M2AnimationBinding::OppositeShoulder => shoulder_source(),
-                M2AnimationBinding::OppositeShoulderOrCharacter => {
-                    shoulder_source().or_else(character_source)
-                }
-            };
             let Some(mut playback) = placement
                 .playback
                 .as_mut()
@@ -2097,9 +2022,6 @@ impl M2Frame {
             else {
                 continue;
             };
-            if let Some(synchronization) = synchronization {
-                playback.synchronize_from(&source.model, synchronization)?;
-            }
             let scene_sample = if let M2GpuPlacementOwner::GameObject { identity, .. } = owner
                 && let Some(game_objects) = game_objects
                 && let Some(instance) = game_objects.get(identity)
@@ -2130,12 +2052,6 @@ impl M2Frame {
                 };
                 (advance, None)
             };
-            if let M2GpuPlacementOwner::PlayerBody { guid }
-            | M2GpuPlacementOwner::RemotePlayerBody { guid } = owner
-            {
-                self.character_animation_sync
-                    .push((guid, playback.synchronization(&source.model)));
-            }
             for expired in advance.expired_variations {
                 self.bone_pose_scratch
                     .recompose_with_model_view_and_orientation_mask(
@@ -2988,7 +2904,6 @@ fn m2_gpu_placement(
         local_transform: transform,
         transform,
         orientation: M2ModelOrientation::Authored,
-        animation_binding: M2AnimationBinding::Independent,
         glue_parent_attachment: None,
         owner,
         flags: 0,
@@ -3002,21 +2917,6 @@ fn m2_gpu_placement(
         particles,
         ribbons,
     })
-}
-
-/// Resolves stock's ordered ItemDisplayInfo animation-flag overrides.
-fn equipment_animation_binding(attachment: &ResidentPlayerAttachment) -> M2AnimationBinding {
-    if attachment.mirrors_opposite_shoulder_animation() {
-        if attachment.inherits_character_animation() {
-            M2AnimationBinding::OppositeShoulderOrCharacter
-        } else {
-            M2AnimationBinding::OppositeShoulder
-        }
-    } else if attachment.inherits_character_animation() {
-        M2AnimationBinding::Character
-    } else {
-        M2AnimationBinding::Independent
-    }
 }
 
 /// Constructs every placement-local emitter with stock's fixed PRNG seed.

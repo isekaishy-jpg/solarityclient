@@ -150,13 +150,13 @@ fn append_equipment_files(
     let mut strings = vec![0];
     let mut displays = Vec::new();
     for (id, right, left, visual, flags) in [
-        (500, "Helm", "", 700, 0),
-        (501, "Helm", "", 701, 0x100),
-        (600, "Right.m2", "Left.m2", 700, 0),
-        (601, "Right.m2", "Left.m2", 701, 0x100),
+        (500, "Helm", "", 700, 0x1c0),
+        (501, "Helm", "", 701, 0),
+        (600, "Right.m2", "Left.m2", 700, 0x1c0),
+        (601, "Right.m2", "Left.m2", 701, 0),
         (602, "Right2.m2", "Left.m2", 700, 0),
         (603, "Right2.m2", "", 700, 0),
-        (800, "Weapon.m2", "", 0, 0),
+        (800, "Weapon.m2", "", 0, 0x1c0),
     ] {
         let mut row = [0; 25];
         row[0] = id;

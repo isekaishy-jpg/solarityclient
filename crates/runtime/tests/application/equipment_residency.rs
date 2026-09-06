@@ -20,7 +20,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
         0.0,
     ));
     for guid in [7, 20] {
-        add_unit(&mut world, guid, ObjectKind::Player, 0)?;
+        add_unit(&mut world, guid, ObjectKind::Player, u8::from(guid == 20))?;
         fields(
             &mut world,
             guid,
@@ -55,6 +55,34 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     )?;
     for time in [100.0, 300.0] {
         advance(&mut frame, &renderer, camera, time, &mut random)?;
+    }
+    // 4EAA70 passes model, texture, visual, and particle-color inputs to the
+    // child. ItemDisplayInfo flags 0x40/0x80/0x100 do not replace its animation
+    // or reflect its authored transform in this build.
+    for placement in &frame.placements {
+        let expected_animation = match placement.owner {
+            M2GpuPlacementOwner::RemotePlayerBody { guid: 20 } => 96,
+            M2GpuPlacementOwner::PlayerItem { .. }
+            | M2GpuPlacementOwner::PlayerItemVisual { .. } => {
+                assert_eq!(
+                    placement.orientation,
+                    solarity_rendering::M2ModelOrientation::Authored
+                );
+                0
+            }
+            _ => continue,
+        };
+        assert_eq!(
+            placement
+                .playback
+                .as_ref()
+                .ok_or("playback")?
+                .borrow()
+                .animation_id,
+            expected_animation,
+            "{:?}",
+            placement.owner
+        );
     }
     let before = snapshots(&frame)?;
     assert_eq!(
@@ -149,7 +177,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     })?;
 
     // 4EF020/4EF710 reuse matching helmet/shoulder model names even when
-    // the new displays declare different mirroring flags and item visuals.
+    // the new displays declare different display flags and item visuals.
     let before = snapshots(&frame)?;
     fields(&mut world, 7, &[(283, 1001), (287, 2001)])?;
     let expected = random;
