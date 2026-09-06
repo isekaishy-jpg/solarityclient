@@ -177,7 +177,7 @@ pub(super) fn prepare_character_gpu(
             _ => unreachable!("character preparation requires a player body owner"),
         };
         let placement = unit_gpu_placement(
-            0,
+            scene_time_ms,
             world_transform,
             owner,
             mount.model(),
@@ -217,12 +217,13 @@ pub(super) fn prepare_character_gpu(
             input.model(),
             Some(M2PlaybackStorage::Shared(animation.playback())),
             input.particle_colors().cloned(),
+            scene_time_ms as u32,
         )?;
         body.unit_animation = Some(Rc::clone(animation));
         body
     } else {
         unit_gpu_placement(
-            0,
+            scene_time_ms,
             world_transform,
             body_owner,
             input.model(),
@@ -315,7 +316,7 @@ pub(super) fn prepare_character_gpu(
                 orientation,
             )?;
             let mut placement = unit_gpu_placement(
-                0,
+                scene_time_ms,
                 world_transform,
                 M2GpuPlacementOwner::PlayerItem {
                     guid: input.guid(),
@@ -355,7 +356,7 @@ pub(super) fn prepare_character_gpu(
                 orientation,
             )?;
             let placement = unit_gpu_placement(
-                0,
+                scene_time_ms,
                 world_transform,
                 M2GpuPlacementOwner::PlayerItemVisual {
                     guid: input.guid(),

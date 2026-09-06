@@ -12,6 +12,36 @@ The same isolation covers build-12340 attachments, their lookup, events,
 lights, cameras, and the camera lookup. Later record shapes may not be used as
 an implicit conversion or fallback.
 
+## Per-model effect time
+
+The model constructor `0x00834810` initializes `CM2Model +0x8C` from its owning
+scene's current millisecond tick. `0x00828A00` subtracts that saved tick with
+unsigned wrapping arithmetic, converts milliseconds to seconds, stores the new
+tick, and sends the delta to both ribbons and particles. A model that has not
+run this update retains its previous timestamp. The zero written by the bare
+object allocator is overwritten during scene construction; it is not a rule
+that every new effect should catch up from scene entry.
+
+Each runtime M2 placement now owns that timestamp alongside its particles and
+ribbons. Static placements, game objects and their WMO doodads, creatures,
+characters, equipment, enchantments, and Glue children initialize it at their
+scene admission. A backdrop uses zero because its widget owner starts a fresh
+local clock at model creation. Retained components keep the entire placement;
+body material replacement transfers the timestamp together with its effect
+histories. Culled placements do not consume the next effect interval. The
+emitter's existing lifetime cap still bounds accumulated simulation work.
+
+`tools/ghidra/model_effect_clock_oracle.py` executes the original constructor
+and update arithmetic. Its hooks supply scene/resource dependencies and capture
+particle dispatch; it does not simulate particles or establish culling policy.
+The eight native probes cover a nonzero creation tick, repeated tick, deferred
+update, and 32-bit wraparound. The Vulkan equipment test adds an item 20 seconds
+into a scene and expects only 100ms of initial emission, then verifies complete
+particle and ribbon aging after an offscreen interval. Material residency
+snapshots also include the effect timestamp. Full frame-retirement retention
+and the wider runtime's floating-point scene-clock precision remain separate
+ownership and clock work.
+
 ## Model attachments
 
 One build-12340 attachment is exactly 40 bytes. It retains the identifier,

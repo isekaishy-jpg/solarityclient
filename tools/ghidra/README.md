@@ -109,3 +109,16 @@ Unicorn or the executable. They cover portal sides and edges, plane proximity,
 primary/fallback face flags, equal-distance replacement, float-spill precision,
 BSP clipping/order, cache outcodes, the 8,192-face selection limit, group flags,
 point containment, and floor-versus-portal precedence.
+
+## Isolated model effect clock oracle
+
+`model_effect_clock_oracle.py` executes model scene construction at `0x00834810`
+and effect update at `0x00828A00`. Hooks replace resource/scene registration and
+capture particle dispatch; timestamp initialization, unsigned subtraction, and
+millisecond conversion execute original instructions. The eight probes cover
+creation at a nonzero tick, repeated ticks, a skipped update, and wraparound.
+They do not test the particle simulator or model visibility admission.
+
+```text
+python tools/ghidra/model_effect_clock_oracle.py <path-to-Wow.exe> target/model-effect-clock-native.txt
+```

@@ -145,6 +145,7 @@ impl M2Frame {
                         cpu.model(),
                         Some(playback),
                         None,
+                        scene_time_ms as u32,
                     )?);
                 }
                 GameObjectResource::WorldModel(cpu) => {
@@ -182,6 +183,7 @@ impl M2Frame {
                             model,
                             state.playback(doodad.index).map(M2PlaybackStorage::Shared),
                             None,
+                            scene_time_ms as u32,
                         )?;
                         let authored = &cpu.model().doodads()[doodad.index];
                         placement.flags = u16::from(authored.flags());

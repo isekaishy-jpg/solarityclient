@@ -161,6 +161,8 @@ struct M2GpuPlacement {
     item_identity: Option<M2PlayerItemIdentity>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
+    /// `CM2Model +0x8c` belongs to this model lifetime, including unsampled intervals.
+    last_effect_time_ms: u32,
 }
 
 /// One placement-local simulation plus an unsupported-path containment latch.
@@ -651,7 +653,6 @@ pub(in crate::application) struct M2Frame {
     glue_attachment_ids: Vec<u32>,
     glue_attachment_transforms: Vec<(u32, Option<Mat4>)>,
     recoverable_errors: Vec<String>,
-    last_effect_time_ms: Option<f32>,
     pending_glue_playback_advance: Option<M2PlaybackAdvance>,
 }
 
@@ -730,7 +731,6 @@ impl M2Frame {
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
             recoverable_errors: Vec::new(),
-            last_effect_time_ms: None,
             pending_glue_playback_advance: None,
         })
     }
@@ -818,6 +818,8 @@ impl M2Frame {
                 item_identity: None,
                 particles,
                 ribbons,
+                // This widget model was created at its local clock origin.
+                last_effect_time_ms: 0,
             }],
             particle_twinkle,
             animation_started_at,
@@ -846,7 +848,6 @@ impl M2Frame {
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
             recoverable_errors: Vec::new(),
-            last_effect_time_ms: None,
             pending_glue_playback_advance: None,
         })
     }
@@ -894,7 +895,7 @@ impl M2Frame {
         )?;
         let transform = stock_glue_character_local_transform(input.facing_radians());
         let mut placement = unit_gpu_placement(
-            0,
+            self.animation_time_ms(),
             transform,
             M2GpuPlacementOwner::PlayerBody { guid: 0 },
             input.model(),
@@ -942,7 +943,7 @@ impl M2Frame {
                 orientation,
             )?;
             let mut placement = unit_gpu_placement(
-                0,
+                self.animation_time_ms(),
                 transform,
                 M2GpuPlacementOwner::PlayerItem {
                     guid: 0,
@@ -983,7 +984,7 @@ impl M2Frame {
                     orientation,
                 )?;
                 let placement = unit_gpu_placement(
-                    0,
+                    self.animation_time_ms(),
                     transform,
                     M2GpuPlacementOwner::PlayerItemVisual {
                         guid: 0,
@@ -1027,7 +1028,7 @@ impl M2Frame {
             )?;
             let transform = Mat4::from_scale(glam::Vec3::splat(pet.model_scale()));
             let mut placement = unit_gpu_placement(
-                0,
+                self.animation_time_ms(),
                 transform,
                 M2GpuPlacementOwner::GluePet,
                 pet.model(),
@@ -1212,12 +1213,13 @@ impl M2Frame {
                     input.model(),
                     Some(M2PlaybackStorage::Shared(animation.playback())),
                     input.particle_colors().cloned(),
+                    self.animation_time_ms() as u32,
                 )?;
                 placement.unit_animation = Some(Rc::clone(animation));
                 placement
             } else {
                 unit_gpu_placement(
-                    0,
+                    self.animation_time_ms(),
                     transform,
                     M2GpuPlacementOwner::CreatureBody { guid: input.guid() },
                     input.model(),
@@ -1303,6 +1305,7 @@ impl M2Frame {
             };
             std::mem::swap(&mut previous.particles, &mut replacement.particles);
             std::mem::swap(&mut previous.ribbons, &mut replacement.ribbons);
+            replacement.last_effect_time_ms = previous.last_effect_time_ms;
         }
     }
 
@@ -1798,15 +1801,6 @@ impl M2Frame {
         self.mount_camera_sample = None;
         self.glue_directional_lights.clear();
         self.glue_point_lights.clear();
-        // Stock model instances initialize their effect timestamp to zero, so
-        // the first render receives the elapsed local scene clock. The emitter
-        // update itself caps that history to one lifetime.
-        let elapsed_effect_seconds = self.last_effect_time_ms.map_or_else(
-            || animation_time_ms.max(0.0) * 0.001,
-            |previous| (animation_time_ms - previous).max(0.0) * 0.001,
-        );
-        self.last_effect_time_ms = Some(animation_time_ms);
-        let effect_delta_seconds = elapsed_effect_seconds;
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
         if self.placement_topology_dirty {
@@ -2206,6 +2200,13 @@ impl M2Frame {
                     continue;
                 }
             }
+
+            // 0x00828A00 advances a model from its own previous effect update.
+            // The scene clock and subtraction wrap as unsigned milliseconds.
+            let effect_time_ms = animation_time_ms as u32;
+            let effect_delta_seconds =
+                effect_time_ms.wrapping_sub(placement.last_effect_time_ms) as f32 * 0.001;
+            placement.last_effect_time_ms = effect_time_ms;
 
             let bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
@@ -2862,7 +2863,7 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
 
 /// Creates placement-local animation and effect histories for one living M2.
 fn unit_gpu_placement(
-    source_index: usize,
+    scene_time_ms: f32,
     transform: Mat4,
     owner: M2GpuPlacementOwner,
     model: &DecodedM2Model,
@@ -2872,12 +2873,13 @@ fn unit_gpu_placement(
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
     let playback = M2Playback::new(model, animation_id, random)?;
     m2_gpu_placement(
-        source_index,
+        0,
         transform,
         owner,
         model,
         playback.map(M2PlaybackStorage::Local),
         particle_colors,
+        scene_time_ms as u32,
     )
 }
 
@@ -2889,6 +2891,7 @@ fn m2_gpu_placement(
     model: &DecodedM2Model,
     playback: Option<M2PlaybackStorage>,
     particle_colors: Option<M2ParticleColorReplacement>,
+    scene_time_ms: u32,
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
     let particles = stock_particle_simulations(model);
     let ribbons = model
@@ -2916,6 +2919,7 @@ fn m2_gpu_placement(
         item_identity: None,
         particles,
         ribbons,
+        last_effect_time_ms: scene_time_ms,
     })
 }
 

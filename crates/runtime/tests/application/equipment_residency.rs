@@ -260,6 +260,73 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
                 | M2GpuPlacementOwner::PlayerItemVisual { guid: 20, .. }
         )
     })?;
+
+    // A component created long after world entry begins with its own creation
+    // timestamp, not the frame's last sampled tick. The fixture emits 20/s.
+    frame.animation_started_at = std::time::Instant::now() - std::time::Duration::from_secs(20);
+    fields(&mut world, 20, &[(313, 3000)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    let owner = M2GpuPlacementOwner::PlayerItem {
+        guid: 20,
+        point: CharacterAttachmentPoint::HandRight,
+    };
+    let created = effects(&frame, owner)?.last_update_ms;
+    assert!(created >= 20_000);
+    advance(
+        &mut frame,
+        &renderer,
+        camera,
+        (created + 100) as f32,
+        &mut random,
+    )?;
+    let before = effects(&frame, owner)?;
+    assert_eq!(
+        before.particles.len(),
+        2,
+        "only 100ms of emission since creation"
+    );
+
+    // Skipping the model's effect update leaves its timestamp and history
+    // untouched. Returning to view includes the complete skipped interval.
+    let hidden_camera = WorldCamera::orthographic(
+        Vec3::new(8.0, 1000.0, 0.0),
+        Vec3::Y * 1000.0,
+        Vec3::Z,
+        [-4.0, 4.0],
+        [-2.0, 2.0],
+        0.1,
+        100.0,
+    )
+    .frame(1.0)?;
+    advance(
+        &mut frame,
+        &renderer,
+        hidden_camera,
+        (created + 1000) as f32,
+        &mut random,
+    )?;
+    assert_eq!(effects(&frame, owner)?, before);
+    advance(
+        &mut frame,
+        &renderer,
+        camera,
+        (created + 1600) as f32,
+        &mut random,
+    )?;
+    let after = effects(&frame, owner)?;
+    assert!(
+        (after.particles[0].age_seconds() - before.particles[0].age_seconds() - 1.5).abs()
+            < 0.00001
+    );
+    assert!(
+        (after.ribbons[0].age_seconds() - before.ribbons[0].age_seconds() - 1.5).abs() < 0.00001
+    );
     Ok(())
 }
 

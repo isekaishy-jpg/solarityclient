@@ -394,6 +394,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
 
 #[derive(Debug, PartialEq)]
 struct UnitEffectsSnapshot {
+    last_update_ms: u32,
     particles: Vec<solarity_rendering::M2ParticleState>,
     particle_allocation: usize,
     ribbons: Vec<solarity_rendering::M2RibbonSection>,
@@ -410,6 +411,7 @@ fn effects(
         .ok_or("unit placement")?;
     let particles = placement.particles[0].simulation.particles();
     Ok(UnitEffectsSnapshot {
+        last_update_ms: placement.last_effect_time_ms,
         particles: particles.to_vec(),
         particle_allocation: particles.as_ptr().addr(),
         ribbons: placement.ribbons[0].sections().copied().collect(),
@@ -599,6 +601,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
             &model,
             Some(M2PlaybackStorage::Shared(owner.playback())),
             None,
+            0,
         )?;
         placement.unit_animation = Some(Rc::clone(&owner));
         frame.placements.push(placement);
