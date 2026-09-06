@@ -243,10 +243,40 @@ These captures use no passenger parent. Transport conversion, native query-mask
 selection, and relaxed residency policy for mask `0x80000000` still require
 their outer movement providers. The ordinary collector requires every declared
 generation intersecting the expanded region to be resident.
-The initial region also does not replace native per-sweep cache-miss recollection
-at `0x0075F0A0`. The pure ground/fall cores currently take a fixed candidate
-slice; exposing refresh and its failure through the outer interval owner remains
-work before claiming arbitrary live movement parity.
+The initial region does not replace native per-sweep cache-miss recollection.
+
+## Per-sweep cache refresh
+
+`MovementCollisionVolume::sweep_refresh_bounds` implements the world-space
+`0x0075F0A0` fallback. It tests both translated body corners against the previous
+box inclusively. A miss pads the endpoint body by native float `0x3E2AAAAB`
+(approximately 1/6 unit), then joins that box to the entire previous region.
+It neither shrinks the old region nor expands only along the traveled axis.
+The shared narrow-phase extrusion helper preserves `0x0075F9D0`'s minimum
+extrusion and bypass below `2^-20` travel.
+
+`RuntimeMovementGeometry` borrows one terrain/world/object context with fixed
+query flags and cache policy. `collect_interval` establishes initial coverage;
+`prepare_sweep` reuses candidates on hits and recollects the complete union on
+misses. Coverage is published only after success. Pending or failed queries
+invalidate coverage, candidates, and provenance and require a new interval
+collection. Creating a new context clears previous output, so a ready region
+cannot cross world/object/flag changes. Selected owners can be copied before
+subsequent probes reorder or invalidate the candidate array.
+
+`movement-sweep-cache-native.txt` records 1,576 decisions and query float images
+from original `0x0075F9D0` and `0x0075F0A0` execution. The capture passes no
+origin override (which would bypass refresh) and no transport parent. It stops
+before query-mask resolution on a miss, or at the original return on a hit;
+no instruction or callee is replaced. Tests compare every decision and bound
+bit. Runtime fixtures verify discovery of a previously uncollected floor,
+retention of the old region across successive misses, hit reuse, and complete
+invalidation when a sweep reaches an unloaded declared tile or has invalid input.
+
+The pure ground/fall cores still take a fixed candidate slice. Wiring the scoped
+adapter into every response probe requires native partial-state handling on
+collection failure and copying contact provenance before later cache changes.
+The adapter alone does not establish arbitrary live movement parity.
 
 ## Runtime work remaining
 

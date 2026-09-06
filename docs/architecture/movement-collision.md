@@ -185,3 +185,7 @@ The [analytic fall curves](movement-trajectories.md) used by collision response
 and step trials are now implemented and checked against native x86 execution.
 The fall interval now owns repeated collisions and fall-specific state updates;
 the ground interval now owns surface response and the surrounding step trials.
+The [runtime geometry cache](movement-world-geometry.md#per-sweep-cache-refresh)
+now implements native endpoint coverage and union recollection within one
+borrowed world context. Ground/fall response still needs its refresh/failure
+interface before replacing the fixed candidate slices used by those cores.

@@ -1,5 +1,6 @@
 //! Player-volume contact queries recovered from build-12340 `Collide.cpp`.
 
+mod cache;
 mod face;
 mod fall;
 mod ground;

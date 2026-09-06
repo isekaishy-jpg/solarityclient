@@ -87,7 +87,7 @@ impl RuntimeMovementQuery {
         self.interval_bounds
     }
 
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.inner.clear();
         self.interval_bounds = None;
     }

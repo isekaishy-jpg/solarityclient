@@ -100,6 +100,9 @@ pub enum MovementSweepError {
     /// A landing/support foot point is NaN or infinite.
     #[error("movement support point is not finite")]
     NonFiniteSupportPoint,
+    /// A sweep endpoint or its expanded collection region is not finite.
+    #[error("movement sweep collection bounds are invalid")]
+    InvalidCollectionBounds,
 }
 
 /// Travel allowed by the native narrow phase and its simultaneous body contacts.
@@ -187,20 +190,17 @@ impl MovementCollisionVolume {
         distance: f32,
         triangles: &[MovementCollisionTriangle],
     ) -> Result<MovementSweep, MovementSweepError> {
-        if !direction.is_finite() || !distance.is_finite() {
-            return Err(MovementSweepError::InvalidDisplacement);
-        }
+        let extrusion = sweep_extrusion(direction, distance)?;
         let mut result = MovementSweep {
             distance,
             planes: [MovementCollisionPlane::ZERO; 9],
             count: 0,
             last_triangle: None,
         };
-        if distance.abs() < DEGENERATE_TOLERANCE {
+        let Some(extrusion) = extrusion else {
             result.distance = 0.0;
             return Ok(result);
-        }
-        let extrusion = direction * distance.max(MINIMUM_SWEEP_LENGTH);
+        };
         let query = FaceSweep {
             direction,
             extrusion,
@@ -317,4 +317,22 @@ impl MovementCollisionVolume {
         }
         (nearest < f64::from(f32::MAX)).then_some(nearest as f32)
     }
+}
+
+/// Shared by cache admission and the narrow phase, including tiny-sweep bypass.
+pub(super) fn sweep_extrusion(
+    direction: Vec3,
+    distance: f32,
+) -> Result<Option<Vec3>, MovementSweepError> {
+    if !direction.is_finite() || !distance.is_finite() {
+        return Err(MovementSweepError::InvalidDisplacement);
+    }
+    if distance.abs() < DEGENERATE_TOLERANCE {
+        return Ok(None);
+    }
+    let extrusion = direction * distance.max(MINIMUM_SWEEP_LENGTH);
+    if !extrusion.is_finite() {
+        return Err(MovementSweepError::InvalidDisplacement);
+    }
+    Ok(Some(extrusion))
 }

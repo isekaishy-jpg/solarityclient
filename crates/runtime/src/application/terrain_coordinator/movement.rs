@@ -1,9 +1,11 @@
 //! Ordered static and replicated geometry over resident ADT/WMO generations.
 
+mod cache;
 mod dynamic;
 mod registration;
 mod world_model;
 
+pub use cache::RuntimeMovementGeometry;
 use dynamic::{DynamicMovementContext, ResidentDynamicMovement};
 pub use dynamic::{RuntimeMovementOwner, RuntimeMovementQuery};
 pub use world_model::RuntimeWorldModelMovementOwner;
@@ -89,6 +91,9 @@ pub enum RuntimeStaticMovementResidency {
 /// Invalid geometry or a broken reference in an admitted static generation.
 #[derive(Debug, Error)]
 pub enum RuntimeStaticMovementError {
+    /// A sweep cannot produce valid world collection bounds.
+    #[error(transparent)]
+    Sweep(#[from] solarity_systems::MovementSweepError),
     /// The movement owner supplied an invalid interval or generated query bounds.
     #[error(transparent)]
     IntervalBounds(#[from] solarity_systems::MovementIntervalBoundsError),
