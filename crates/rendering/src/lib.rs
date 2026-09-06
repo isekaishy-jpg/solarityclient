@@ -49,6 +49,7 @@ pub use lighting::{
     M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, glue_character_sunlight,
     glue_ghost_sunlight, merge_wotlk_directional_lights,
 };
+pub use minimap::{MinimapView, MinimapViewError};
 pub use model::{
     CharacterAtlasLayer, CharacterAtlasLayerKind, CharacterAtlasMip, CharacterAtlasRect,
     CharacterAtlasRegion, CharacterAtlasTexture, CharacterAttachmentPlan,

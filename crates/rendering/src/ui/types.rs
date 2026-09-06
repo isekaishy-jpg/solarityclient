@@ -89,6 +89,13 @@ impl UiRenderMask {
     }
 }
 
+/// Rectangular UI regions and native transformed four-corner geometry.
+#[derive(Clone, Debug, PartialEq)]
+enum UiQuadGeometry {
+    Rectangle([f32; 4]),
+    Corners([[f32; 2]; 4]),
+}
+
 /// One post-layout quad supplied to renderer-side mesh preparation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderQuad {
@@ -100,7 +107,7 @@ pub struct UiRenderQuad {
     vertical_address: UiTextureAddressMode,
     residency: UiTextureResidency,
     desaturated: bool,
-    bounds: [f32; 4],
+    geometry: UiQuadGeometry,
     texture_coordinates: [[f32; 2]; 4],
     colors: [[f32; 4]; 4],
     opacity: f32,
@@ -135,7 +142,7 @@ impl UiRenderQuad {
             vertical_address,
             residency,
             desaturated,
-            bounds,
+            geometry: UiQuadGeometry::Rectangle(bounds),
             texture_coordinates,
             colors,
             opacity: 1.0,
@@ -157,6 +164,21 @@ impl UiRenderQuad {
     #[must_use]
     pub const fn mask(&self) -> Option<&UiRenderMask> {
         self.mask.as_ref()
+    }
+
+    /// Supplies upper-left, lower-left, upper-right, and lower-right corners
+    /// after a native 2D transform, retaining the usual quad indices and UVs.
+    #[must_use]
+    pub const fn with_positions(mut self, positions: [[f32; 2]; 4]) -> Self {
+        self.geometry = UiQuadGeometry::Corners(positions);
+        self
+    }
+
+    /// Clips this packet to a fixed logical rectangle without a scroll transform.
+    #[must_use]
+    pub const fn with_clip(mut self, bounds: [f32; 4]) -> Self {
+        self.clip = Some(bounds);
+        self
     }
 
     /// Applies inherited region alpha as retained draw state.
@@ -200,8 +222,43 @@ impl UiRenderQuad {
 
     /// Returns left, bottom, right, and top logical screen edges.
     #[must_use]
-    pub const fn bounds(&self) -> [f32; 4] {
-        self.bounds
+    pub fn bounds(&self) -> [f32; 4] {
+        match self.geometry {
+            UiQuadGeometry::Rectangle(bounds) => bounds,
+            UiQuadGeometry::Corners(positions) => {
+                let mut bounds = [
+                    f32::INFINITY,
+                    f32::INFINITY,
+                    f32::NEG_INFINITY,
+                    f32::NEG_INFINITY,
+                ];
+                for [x, y] in positions {
+                    bounds[0] = bounds[0].min(x);
+                    bounds[1] = bounds[1].min(y);
+                    bounds[2] = bounds[2].max(x);
+                    bounds[3] = bounds[3].max(y);
+                }
+                bounds
+            }
+        }
+    }
+
+    /// Returns transformed positions parallel to texture coordinates and colors.
+    #[must_use]
+    pub const fn positions(&self) -> [[f32; 2]; 4] {
+        match self.geometry {
+            UiQuadGeometry::Rectangle([left, bottom, right, top]) => {
+                [[left, top], [left, bottom], [right, top], [right, bottom]]
+            }
+            UiQuadGeometry::Corners(positions) => positions,
+        }
+    }
+
+    pub(super) const fn custom_positions(&self) -> Option<&[[f32; 2]; 4]> {
+        match &self.geometry {
+            UiQuadGeometry::Rectangle(_) => None,
+            UiQuadGeometry::Corners(positions) => Some(positions),
+        }
     }
 
     /// Returns upper-left, lower-left, upper-right, and lower-right UV pairs.

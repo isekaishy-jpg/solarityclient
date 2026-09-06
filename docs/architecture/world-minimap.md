@@ -64,7 +64,33 @@ GPU capture tests verify adjacent tiles sharing an asymmetric mask, transparent
 and half-alpha regions, unchanged source RGB, movement, and a subsequent ordinary
 UI draw. Validation rejects missing/mismatched masks and degenerate rectangles.
 
-The visible minimap is still incomplete. The retained Minimap widget snapshot,
-runtime tile residency and projection, indoor group selection, player arrow,
-rotation, tracking, and pings still need integration. Runtime geometry also needs
-to drive the retained indoor/outdoor selection.
+`MinimapView` supplies the outdoor neighborhood and world-to-UI projection.
+World +X is north/up and +Y is west/left; a positive map heading rotates terrain
+clockwise beneath the fixed mask. The four tiles follow the native half-tile
+neighborhood and corner order, including map-edge handling. Both sides of a tile
+seam derive their common world coordinate from the same integer grid edge.
+Archive-resolved terrain quads retain full image UVs, independent mask coordinates,
+and the viewport scissor. The same projection accepts world-space corners for
+future runtime-resolved WMO tiles.
+
+UI quads can now retain transformed corners as well as ordinary rectangles.
+Initial mesh preparation and both retained replacement paths preserve those
+positions with the existing vertex and index ABI. Bounds/scissor culling considers
+all four corners; validation rejects non-finite replacements before mutation.
+The player marker uses a fixed rectangle and native `0x00483120` sampling:
+unit-radius UV corners around `(0.5, 0.5)`, offset by facing minus map heading
+minus pi/4. Its dimensions do not expand with rotation. Stock `Minimap.lua`
+sets both dimensions to 40; the archive arrow itself is 32 by 32.
+
+Projection tests cover cardinal directions, center/scale changes, exact shared
+edges, marker UVs, and retained corner updates. GPU captures verify four differently
+colored tiles at zero, pi/4, and pi/2 headings, with a fixed circular mask, no
+viewport spill, and no interior seams. An additional offline render of the local
+Orgrimmar archives at `(1562, -4405)` resolves the four terrain images, stock mask,
+and arrow, and visually confirms their composition in both minimap modes.
+
+The live minimap is still incomplete. The retained Minimap widget snapshot,
+runtime tile residency, draw ordering, and player/map updates still need to be
+joined to this projection. Indoor group selection, native tinting, tracking,
+and pings also need integration. Runtime geometry must drive the retained
+indoor/outdoor selection.

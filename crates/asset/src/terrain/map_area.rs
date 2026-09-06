@@ -21,7 +21,9 @@ impl TerrainTileIndex {
         }
     }
 
-    pub(super) fn clamped(x: i32, y: i32) -> Self {
+    /// Creates an index with each coordinate clamped to the stock map boundary.
+    #[must_use]
+    pub fn clamped(x: i32, y: i32) -> Self {
         Self {
             x: x.clamp(0, 63) as u8,
             y: y.clamp(0, 63) as u8,

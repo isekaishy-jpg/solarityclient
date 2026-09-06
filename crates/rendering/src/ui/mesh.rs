@@ -499,8 +499,7 @@ impl UiMeshPlan {
             } else {
                 replacements.push(UiRenderBatch::from_quad(quad, 0, (start + offset) as u32));
             }
-            let [left, bottom, right, top] = quad.bounds();
-            let positions = [[left, top], [left, bottom], [right, top], [right, bottom]];
+            let positions = quad.positions();
             let coordinates = quad.texture_coordinates();
             let colors = quad.colors();
             for corner in 0..4 {
@@ -625,8 +624,7 @@ impl UiMeshPlan {
         }
         let mut changed_vertices: Option<(usize, usize)> = None;
         for (slot, quad) in slots.iter().copied().zip(quads) {
-            let [left, bottom, right, top] = quad.bounds();
-            let positions = [[left, top], [left, bottom], [right, top], [right, bottom]];
+            let positions = quad.positions();
             let coordinates = quad.texture_coordinates();
             let colors = quad.colors();
             for corner in 0..4 {
@@ -759,8 +757,7 @@ impl UiMeshPlan {
         validate_quad(&quad)?;
         let first_quad = u32::try_from(self.object_indices.len())
             .map_err(|_source| UiMeshPlanError::Capacity { domain: "quad" })?;
-        let [left, bottom, right, top] = quad.bounds();
-        let positions = [[left, top], [left, bottom], [right, top], [right, bottom]];
+        let positions = quad.positions();
         let texture_coordinates = quad.texture_coordinates();
         let colors = quad.colors();
         for corner in 0..4 {
@@ -874,6 +871,12 @@ fn validate_quad(quad: &UiRenderQuad) -> Result<(), UiMeshPlanError> {
     }
     let bounds = quad.bounds();
     validate_components(quad.object_index(), "bounds", &bounds)?;
+    if let Some(positions) = quad.custom_positions() {
+        for (corner, position) in positions.iter().enumerate() {
+            validate_components(quad.object_index(), "position", position)
+                .map_err(|error| offset_component(error, corner * 2))?;
+        }
+    }
     validate_components(quad.object_index(), "translation", &quad.translation())?;
     let opacity = quad.opacity();
     if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
