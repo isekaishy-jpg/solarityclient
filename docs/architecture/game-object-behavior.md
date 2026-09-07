@@ -132,6 +132,15 @@ applies raw creates/values first, then the packet cursor is restored and
 `0x004D7100` dispatches post-initialization and field notifications. This is not
 an immediate callback after each individual raw word or update block.
 
+Construction is earlier: `0x004D3FF0` calls `0x00714250` during each new
+GameObject's raw create block. The constructor captures GO+204, packed movement
+rotation, and the object clock before selecting its behavior. Runtime invokes
+`Initialize` at this boundary, after admitting that block's movement and typed
+fields. Later blocks in the same packet cannot replace the constructor's input.
+Existing GUID refreshes receive only the deferred field notifications. An
+encrypted create-plus-values regression checks both paths and confirms the
+constructor can publish runtime geometry immediately.
+
 `0x004D53C0` saves watched old values in the mirror and applies the raw update.
 The notification pass (`0x004D5550`) walks update words in ascending order and
 calls `0x004D5150` for touched words. That function compares the watched byte

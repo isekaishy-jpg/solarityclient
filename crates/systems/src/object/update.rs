@@ -14,6 +14,8 @@ const OBJECT_FIELD_ENTRY: u16 = 3;
 const OBJECT_FIELD_SCALE_X: u16 = 4;
 const GAME_OBJECT_DISPLAY_ID: u16 = 8;
 const GAME_OBJECT_FLAGS: u16 = 9;
+const GAME_OBJECT_PARENT_ROTATION_START: u16 = 10;
+const GAME_OBJECT_PARENT_ROTATION_END: u16 = 13;
 const GAME_OBJECT_DYNAMIC: u16 = 14;
 const GAME_OBJECT_LEVEL: u16 = 16;
 const GAME_OBJECT_BYTES_1: u16 = 17;
@@ -140,6 +142,7 @@ where
     let mut game_object_flags = game_object_state.flags();
     let mut game_object_dynamic = game_object_state.dynamic_word();
     let mut game_object_transport_period_ms = game_object_state.transport_period_ms();
+    let mut game_object_parent_rotation_bits = game_object_state.parent_rotation_bits();
 
     let unit_identity = world
         .storage()
@@ -259,6 +262,13 @@ where
             }
             GAME_OBJECT_FLAGS if kind == ObjectKind::GameObject => {
                 game_object_flags = value;
+                game_object_presentation_changed = true;
+            }
+            GAME_OBJECT_PARENT_ROTATION_START..=GAME_OBJECT_PARENT_ROTATION_END
+                if kind == ObjectKind::GameObject =>
+            {
+                game_object_parent_rotation_bits
+                    [usize::from(index - GAME_OBJECT_PARENT_ROTATION_START)] = value;
                 game_object_presentation_changed = true;
             }
             GAME_OBJECT_DYNAMIC if kind == ObjectKind::GameObject => {
@@ -398,7 +408,8 @@ where
                 game_object_bytes_1,
             )
             .with_dynamic_word(game_object_dynamic)
-            .with_transport_period_ms(game_object_transport_period_ms),),
+            .with_transport_period_ms(game_object_transport_period_ms)
+            .with_parent_rotation_bits(game_object_parent_rotation_bits),),
         );
     }
     if is_unit(kind) {

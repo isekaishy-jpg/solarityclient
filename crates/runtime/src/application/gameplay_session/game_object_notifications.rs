@@ -40,10 +40,10 @@ impl GameObjectUpdateMirrors {
 
     pub(super) fn dispatch<E>(
         mut self,
-        world: &ActiveWorld,
+        world: &mut ActiveWorld,
         batch: &WorldObjectUpdateBatch,
         notify: &mut impl FnMut(
-            &ActiveWorld,
+            &mut ActiveWorld,
             WorldObjectIdentity,
             GameObjectNotification,
         ) -> Result<(), E>,
@@ -61,7 +61,7 @@ impl GameObjectUpdateMirrors {
                 continue;
             };
             if create && self.created.remove(&identity) {
-                notify(world, identity, GameObjectNotification::Initialize)?;
+                // 714250 already constructed this lifetime during its raw block.
                 continue;
             }
             // Existing creates use native 4D5550's full-refresh notification arm.

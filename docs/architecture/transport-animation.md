@@ -4,6 +4,10 @@ The type-11 transport family uses TransportAnimation and TransportRotation rows
 selected by GameObject entry. It does not use the type-15 TaxiPathNode route.
 This document covers the systems clock and geometry implementation; runtime
 construction, model admission, and frame publication remain to be connected.
+Packet admission now exposes the immediate native constructor boundary, and
+the typed presentation retains GAMEOBJECT_PARENTROTATION words 10..=13 across
+sparse updates. The raw quaternion bits default to zero, as the field table
+does; projection does not synthesize or normalize a rotation.
 
 Evidence is the pinned build-12340 Wow.exe with SHA-256
 `aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8`.

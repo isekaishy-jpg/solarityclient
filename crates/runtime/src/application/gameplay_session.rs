@@ -172,108 +172,118 @@ pub(crate) fn apply_object_updates(
     )
 }
 
-/// Native packet processing applies all raw blocks before any field callback.
+/// Native 4D3FF0 constructs each new behavior immediately; mirror callbacks
+/// run only after all raw blocks have been applied.
 pub(crate) fn apply_object_updates_with<E: From<GameplayUpdateError>>(
     world: &mut ActiveWorld,
     batch: &WorldObjectUpdateBatch,
     receipt_ms: u32,
     notify: &mut impl FnMut(
-        &ActiveWorld,
+        &mut ActiveWorld,
         solarity_ecs::WorldObjectIdentity,
         GameObjectNotification,
     ) -> Result<(), E>,
 ) -> Result<(), E> {
-    let mirrors = apply_object_updates_raw(world, batch, receipt_ms).map_err(E::from)?;
+    let mut mirrors = GameObjectUpdateMirrors::default();
+    for update in batch.updates() {
+        if let Some(identity) =
+            apply_object_update_raw(world, update, receipt_ms, &mut mirrors).map_err(E::from)?
+        {
+            notify(world, identity, GameObjectNotification::Initialize)?;
+        }
+    }
     mirrors.dispatch(world, batch, notify)
 }
 
-fn apply_object_updates_raw(
+/// Admit one raw block and identify a new GameObject requiring its constructor.
+fn apply_object_update_raw(
     world: &mut ActiveWorld,
-    batch: &WorldObjectUpdateBatch,
+    update: &WorldObjectUpdate,
     receipt_ms: u32,
-) -> Result<GameObjectUpdateMirrors, GameplayUpdateError> {
-    let mut mirrors = GameObjectUpdateMirrors::default();
-    for update in batch.updates() {
-        match update {
-            WorldObjectUpdate::Values { guid, fields } => {
-                let previous = world.game_object_presentation(*guid);
-                world.update_fields(
-                    *guid,
-                    fields.iter().map(|field| (field.index(), field.value())),
-                )?;
-                project_object_fields(
-                    world,
-                    *guid,
-                    fields.iter().map(|field| (field.index(), field.value())),
-                )?;
-                mirrors.record(world, *guid, previous, false);
+    mirrors: &mut GameObjectUpdateMirrors,
+) -> Result<Option<solarity_ecs::WorldObjectIdentity>, GameplayUpdateError> {
+    match update {
+        WorldObjectUpdate::Values { guid, fields } => {
+            let previous = world.game_object_presentation(*guid);
+            world.update_fields(
+                *guid,
+                fields.iter().map(|field| (field.index(), field.value())),
+            )?;
+            project_object_fields(
+                world,
+                *guid,
+                fields.iter().map(|field| (field.index(), field.value())),
+            )?;
+            mirrors.record(world, *guid, previous, false);
+        }
+        WorldObjectUpdate::Movement { guid, movement } => {
+            // 0x004D6DA0 consumes the block but skips the local player's
+            // echo. Remote blocks enter Unit_C's movement owner directly;
+            // they carry neither GameObject rotation nor create flags.
+            if *guid == world.local_player_guid()? {
+                return Ok(None);
             }
-            WorldObjectUpdate::Movement { guid, movement } => {
-                // 0x004D6DA0 consumes the block but skips the local player's
-                // echo. Remote blocks enter Unit_C's movement owner directly;
-                // they carry neither GameObject rotation nor create flags.
-                if *guid == world.local_player_guid()? {
-                    continue;
+            match world.object_kind(*guid) {
+                Some(ObjectKind::Unit | ObjectKind::Player) => {}
+                Some(kind) => {
+                    return Err(GameplayUpdateError::NonLivingMovement { guid: *guid, kind });
                 }
-                match world.object_kind(*guid) {
-                    Some(ObjectKind::Unit | ObjectKind::Player) => {}
-                    Some(kind) => {
-                        return Err(GameplayUpdateError::NonLivingMovement { guid: *guid, kind });
-                    }
-                    None => {
-                        return Err(WorldStateError::UnknownObject { guid: *guid }.into());
-                    }
+                None => {
+                    return Err(WorldStateError::UnknownObject { guid: *guid }.into());
                 }
-                if let Some(transform) = movement_transform(movement) {
-                    world.update_transform(*guid, transform)?;
-                }
+            }
+            if let Some(transform) = movement_transform(movement) {
+                world.update_transform(*guid, transform)?;
+            }
+            movement::install(world, *guid, movement, receipt_ms)?;
+        }
+        WorldObjectUpdate::Create {
+            guid,
+            kind,
+            movement,
+            fields,
+            ..
+        } => {
+            let existing = world.entity_by_guid(*guid);
+            let previous = world.game_object_presentation(*guid);
+            world.create_object(
+                *guid,
+                object_kind(*kind),
+                movement_transform(movement),
+                fields.iter().map(|field| (field.index(), field.value())),
+            )?;
+            // Stock skips the create movement block when the GUID already
+            // resolves to a non-local object, retaining its live movement
+            // state while refreshing the sparse field data.
+            if existing.is_none() || existing == Some(world.local_player()) {
                 movement::install(world, *guid, movement, receipt_ms)?;
             }
-            WorldObjectUpdate::Create {
-                guid,
-                kind,
-                movement,
-                fields,
-                ..
-            } => {
-                let existing = world.entity_by_guid(*guid);
-                let previous = world.game_object_presentation(*guid);
-                world.create_object(
+            if (existing.is_none() || existing == Some(world.local_player()))
+                && *kind == WorldObjectKind::GameObject
+            {
+                world.update_game_object_movement(
                     *guid,
-                    object_kind(*kind),
-                    movement_transform(movement),
-                    fields.iter().map(|field| (field.index(), field.value())),
+                    game_object_movement(movement, receipt_ms),
                 )?;
-                // Stock skips the create movement block when the GUID already
-                // resolves to a non-local object, retaining its live movement
-                // state while refreshing the sparse field data.
-                if existing.is_none() || existing == Some(world.local_player()) {
-                    movement::install(world, *guid, movement, receipt_ms)?;
-                }
-                if (existing.is_none() || existing == Some(world.local_player()))
-                    && *kind == WorldObjectKind::GameObject
-                {
-                    world.update_game_object_movement(
-                        *guid,
-                        game_object_movement(movement, receipt_ms),
-                    )?;
-                }
-                project_object_fields(
-                    world,
-                    *guid,
-                    fields.iter().map(|field| (field.index(), field.value())),
-                )?;
-                mirrors.record(world, *guid, previous, existing.is_none());
             }
-            WorldObjectUpdate::OutOfRange(guids) => {
-                for guid in guids {
-                    world.remove_object(*guid)?;
-                }
+            project_object_fields(
+                world,
+                *guid,
+                fields.iter().map(|field| (field.index(), field.value())),
+            )?;
+            mirrors.record(world, *guid, previous, existing.is_none());
+            if existing.is_none() && *kind == WorldObjectKind::GameObject {
+                return Ok(world.object_identity(*guid));
             }
-            WorldObjectUpdate::Near(_) => {}
         }
+        WorldObjectUpdate::OutOfRange(guids) => {
+            for guid in guids {
+                world.remove_object(*guid)?;
+            }
+        }
+        WorldObjectUpdate::Near(_) => {}
     }
-    Ok(mirrors)
+    Ok(None)
 }
 
 /// Preserves the complete admitted living context at the network-to-ECS boundary.

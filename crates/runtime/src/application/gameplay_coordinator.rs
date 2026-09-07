@@ -108,7 +108,7 @@ pub enum RuntimeGameplayError {
 }
 
 type GameObjectObserver<'a> = dyn FnMut(
-        &ActiveWorld,
+        &mut ActiveWorld,
         solarity_ecs::WorldObjectIdentity,
         GameObjectNotification,
     ) -> Result<(), RuntimeGameplayError>

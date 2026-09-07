@@ -11,6 +11,54 @@ use solarity_ecs::{
 };
 use solarity_systems::{ObjectProjectionError, project_object_fields};
 
+/// 70DAA0/70DC10 read all four parent quaternion words; sparse changes must
+/// preserve their exact bits independently of packed movement rotation.
+#[test]
+fn game_object_parent_rotation_retains_sparse_quaternion_words() -> Result<(), Box<dyn Error>> {
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    world.create_object(9, ObjectKind::GameObject, None, [])?;
+    project_object_fields(&mut world, 9, [(8, 42), (17, 0x0b01)])?;
+    assert_eq!(
+        world
+            .game_object_presentation(9)
+            .ok_or("presentation")?
+            .parent_rotation_bits(),
+        [0; 4]
+    );
+    let initial = [
+        (-0_f32).to_bits(),
+        0.25_f32.to_bits(),
+        (-0.5_f32).to_bits(),
+        1_f32.to_bits(),
+    ];
+    let words = initial
+        .into_iter()
+        .enumerate()
+        .map(|(index, bits)| (10 + index as u16, bits));
+    world.update_fields(9, words.clone())?;
+    project_object_fields(&mut world, 9, words)?;
+    for (word, bits) in [(11, 0.75_f32.to_bits()), (9, 0x80), (17, 0x0b00)] {
+        world.update_fields(9, [(word, bits)])?;
+        project_object_fields(&mut world, 9, [(word, bits)])?;
+        let fields = world.game_object_presentation(9).ok_or("presentation")?;
+        assert_eq!(
+            fields.parent_rotation_bits(),
+            [initial[0], 0.75_f32.to_bits(), initial[2], initial[3]]
+        );
+        assert_eq!(
+            fields.parent_rotation().map(f32::to_bits),
+            fields.parent_rotation_bits()
+        );
+    }
+    Ok(())
+}
+
 /// Build-12340 player words project into typed views and preserve sparse state.
 #[test]
 fn player_update_fields_project_without_losing_sparse_values() -> Result<(), Box<dyn Error>> {

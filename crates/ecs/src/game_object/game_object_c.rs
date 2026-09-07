@@ -10,6 +10,7 @@ pub struct GameObjectPresentation {
     bytes_1: u32,
     dynamic: u32,
     transport_period_ms: u32,
+    parent_rotation_bits: [u32; 4],
 }
 
 impl GameObjectPresentation {
@@ -28,6 +29,7 @@ impl GameObjectPresentation {
             bytes_1,
             dynamic: 0,
             transport_period_ms: 0,
+            parent_rotation_bits: [0; 4],
         }
     }
 
@@ -86,7 +88,7 @@ impl GameObjectPresentation {
         self.dynamic
     }
 
-    /// Supplies absolute GAMEOBJECT_LEVEL word 16, used as the MO route period.
+    /// Supplies absolute GAMEOBJECT_LEVEL word 16: MO period or animation split.
     #[must_use]
     pub const fn with_transport_period_ms(mut self, period_ms: u32) -> Self {
         self.transport_period_ms = period_ms;
@@ -97,6 +99,25 @@ impl GameObjectPresentation {
     #[must_use]
     pub const fn transport_period_ms(self) -> u32 {
         self.transport_period_ms
+    }
+
+    /// Supplies GAMEOBJECT_PARENTROTATION words 10..=13 without changing their bits.
+    #[must_use]
+    pub const fn with_parent_rotation_bits(mut self, bits: [u32; 4]) -> Self {
+        self.parent_rotation_bits = bits;
+        self
+    }
+
+    /// Retains every quaternion word across sparse updates, including signed zero.
+    #[must_use]
+    pub const fn parent_rotation_bits(self) -> [u32; 4] {
+        self.parent_rotation_bits
+    }
+
+    /// Returns the authored XYZW quaternion used by animation-driven transports.
+    #[must_use]
+    pub fn parent_rotation(self) -> [f32; 4] {
+        self.parent_rotation_bits.map(f32::from_bits)
     }
 
     /// Returns the supplied sequence fraction; `0xFFFF` means no supplied seek.

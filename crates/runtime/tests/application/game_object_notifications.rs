@@ -118,3 +118,98 @@ fn values_packet(blocks: &[Vec<(u16, u32)>]) -> Vec<u8> {
     }
     packet
 }
+
+/// 4D3FF0 calls 714250 before the next raw block, while field notifications
+/// still see the completed packet. An existing GUID gets no new constructor.
+#[test]
+fn creation_initializes_from_its_own_fields_before_later_raw_updates() -> Result<(), TestError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let (server, mut session) = WorldServer::connect().await?;
+            let mut body = 2_u32.to_le_bytes().to_vec();
+            body.extend([2, 1, 9, 5]); // create, packed GUID, GameObject
+            body.extend(0x242_u16.to_le_bytes());
+            for value in [1_f32, 2., 3., 0.] {
+                body.extend(value.to_le_bytes());
+            }
+            body.extend(123_u32.to_le_bytes());
+            body.extend(0_u64.to_le_bytes());
+            body.push(1);
+            body.extend(((1_u32 << 8) | (1 << 14) | (1 << 17)).to_le_bytes());
+            for value in [42_u32, 0x1234_0000, 0x0b01] {
+                body.extend(value.to_le_bytes());
+            }
+            body.extend_from_slice(&values_packet(&[vec![(14, 0x5678_0000), (17, 0x0b00)]])[4..]);
+            let mut world = ActiveWorld::enter(WorldBootstrap::new(
+                WorldMapId::new(0),
+                7,
+                "Local",
+                Vec3::ZERO,
+                0.,
+            ));
+            // Replay the create against an existing lifetime as a full refresh.
+            for expected in [
+                vec![
+                    (GameObjectNotification::Initialize, 1, Some(0x1234)),
+                    (GameObjectNotification::Progress, 0, Some(0x5678)),
+                    (GameObjectNotification::State, 0, Some(0x5678)),
+                ],
+                vec![
+                    (GameObjectNotification::Progress, 0, Some(0x5678)),
+                    (GameObjectNotification::State, 0, Some(0x5678)),
+                    (GameObjectNotification::Progress, 0, Some(0x5678)),
+                    (GameObjectNotification::State, 0, Some(0x5678)),
+                ],
+            ] {
+                server
+                    .exchange(vec![(0xa9, body.clone())], 0)
+                    .await?
+                    .await??;
+                let packet = session.receive_packet().await?;
+                let batch = packet.object_updates()?.ok_or("missing create batch")?;
+                let mut observed = Vec::new();
+                apply_object_updates_with::<TestError>(
+                    &mut world,
+                    &batch,
+                    1000,
+                    &mut |world, identity, event| {
+                        let fields = world
+                            .game_object_presentation(identity.guid())
+                            .ok_or("missing presentation")?;
+                        observed.push((event, fields.state(), fields.sequence_progress()));
+                        if event == GameObjectNotification::Initialize {
+                            assert_eq!(
+                                world
+                                    .game_object_movement(9)
+                                    .ok_or("missing movement")?
+                                    .transport_clock_ms(1000),
+                                123
+                            );
+                            // A constructor can publish runtime geometry before later blocks.
+                            world.update_game_object_animated_pose(
+                                9,
+                                solarity_systems::game_object_transport_pose(
+                                    Vec3::new(4., 5., 6.),
+                                    0.,
+                                    0.,
+                                    0.,
+                                )?,
+                            )?;
+                        }
+                        Ok(())
+                    },
+                )?;
+                assert_eq!(observed, expected);
+                assert_eq!(
+                    world
+                        .game_object_movement(9)
+                        .ok_or("missing retained movement")?
+                        .transport_clock_ms(1001),
+                    124
+                );
+            }
+            Ok(())
+        })
+}
