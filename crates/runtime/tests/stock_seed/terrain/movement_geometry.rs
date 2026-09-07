@@ -26,9 +26,11 @@ fn falling(position: Vec3) -> Result<MovementFallState, Box<dyn Error>> {
 }
 
 #[test]
-fn response_uses_refreshed_resident_geometry_and_preserves_pending_cause()
--> Result<(), Box<dyn Error>> {
+fn distant_unloaded_object_does_not_freeze_walking_or_falling() -> Result<(), Box<dyn Error>> {
     let mut scene = Scene::new(false)?;
+    // A known object outside the resident ADT must not gate the player's ready
+    // floor. Build 27 promoted this registration miss to a map-wide blocker.
+    scene.add(90, 42, 5, Vec3::new(999., 5299., 50.))?;
     scene.synchronize()?;
     let position = Vec3::new(1000., 5800., 11.);
     let request = MovementIntervalRequest {

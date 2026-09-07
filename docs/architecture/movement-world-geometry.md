@@ -176,8 +176,15 @@ display, placement, and world/entity lifetime, plus per-group/per-chunk dynamic
 lists. Changed placements remove their previous references and insert at the
 head of each new destination (`0x007C2F80`, `0x007B5020`). Unchanged frames retain
 list order and allocations. Static generation changes recheck destinations;
-unchanged destinations keep their relative order. Pending registration removes
-old references and prevents a complete combined query from being published.
+unchanged destinations keep their relative order. `0x007C1660` treats an
+unavailable ADT as no registration floor, and `0x007C2040` links the available
+chunks while skipping missing/loading ADTs. An object can therefore have an
+empty or partially resident destination list without blocking unrelated
+movement. Terrain publication invalidates these lists for re-registration.
+`0x007A5A60` still rejects an unavailable declared tile touched by the movement
+query itself. Build 27 incorrectly promoted a distant object's missing
+destination to a map-wide gate, freezing both walking and falling; the runtime
+regression exercises both responses beside a distant unloaded object.
 
 `collect_movement` uses the same traversal as the static query. Each group's or
 chunk's static M2 list is followed immediately by its dynamic list. Native

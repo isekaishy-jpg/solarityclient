@@ -48,7 +48,7 @@ use wow_wdt::{WdtFile, WdtWriter};
 use crate::support::{ClientFixture, bootstrap_texture_blp};
 
 #[test]
-fn game_object_registration_retains_only_complete_current_terrain_destinations()
+fn game_object_registration_links_resident_destinations_and_skips_missing_tiles()
 -> Result<(), Box<dyn Error>> {
     let first = TerrainTileIndex::new(21, 30).ok_or("bad tile")?;
     let second = TerrainTileIndex::new(22, 30).ok_or("bad tile")?;
@@ -134,11 +134,26 @@ fn game_object_registration_retains_only_complete_current_terrain_destinations()
             MovementBspCacheMode::Enabled,
             &mut query
         )?,
-        RuntimeStaticMovementResidency::PendingTile { tile: second }
+        RuntimeStaticMovementResidency::Ready
     );
-    assert_eq!(query.map_id(), None);
+    assert_eq!(query.map_id(), Some(571));
     assert!(query.references().is_empty());
-    assert!(query.selection().is_none());
+    assert!(query.selection().is_some());
+    // 7C2040 links resident chunks even when the render bounds also cover an
+    // unloaded tile. The query's own terrain admission remains independent.
+    placed.set_transform(glam::Mat4::from_translation(Vec3::new(999., 5333.5, 50.)))?;
+    assert_eq!(
+        terrain.register_game_object_movement(
+            571,
+            &placed,
+            MovementBspCacheMode::Enabled,
+            &mut query
+        )?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert!(!query.references().is_empty());
+    assert!(query.references().iter().all(|reference|
+        matches!(reference, RuntimeMovementReference::Terrain { tile, .. } if *tile == first)));
     placed.set_transform(glam::Mat4::from_translation(Vec3::new(999., 5799., -20.)))?;
     assert_eq!(
         terrain.register_game_object_movement(

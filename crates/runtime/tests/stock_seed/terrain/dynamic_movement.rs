@@ -294,13 +294,17 @@ fn generic_lists_retain_order_replace_placements_and_reject_stale_lifetimes()
     scene
         .world
         .update_transform(90, WorldTransform::new(Vec3::new(999., 5299., 50.), 0.))?;
-    let pending = RuntimeStaticMovementResidency::PendingTile {
-        tile: TerrainTileIndex::new(22, 30).ok_or("tile")?,
-    };
-    assert_eq!(scene.synchronize()?, pending);
-    assert_eq!(scene.collect(center, 0xf00000, &mut query)?, pending);
-    assert!(query.triangles().is_empty());
-    assert_eq!(query.map_id(), None);
+    assert_eq!(scene.synchronize()?, RuntimeStaticMovementResidency::Ready);
+    assert_eq!(
+        scene.collect(center, 0xf00000, &mut query)?,
+        RuntimeStaticMovementResidency::Ready
+    );
+    assert_eq!(
+        generic_guids(&query),
+        [10],
+        "distant missing destinations do not gate current lists"
+    );
+    assert_eq!(query.map_id(), Some(571));
     scene.world.update_game_object_movement(
         90,
         GameObjectMovement::new(

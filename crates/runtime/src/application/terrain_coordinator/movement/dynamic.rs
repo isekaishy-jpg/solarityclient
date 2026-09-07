@@ -444,7 +444,6 @@ impl RuntimeTerrainCoordinator {
         else {
             return Ok(RuntimeStaticMovementResidency::PendingMap);
         };
-        let residency = map.movement.dynamic.residency();
         if map.movement.dynamic.invalidated
             || map.movement.dynamic.world_identity
                 != world
@@ -454,9 +453,8 @@ impl RuntimeTerrainCoordinator {
         {
             return Err(RuntimeStaticMovementError::InvalidReference);
         }
-        if residency != RuntimeStaticMovementResidency::Ready {
-            return Ok(residency);
-        }
+        // 7A5A60 admits only tiles touched by this query. A distant object's
+        // incomplete registration cannot stop local walking or freeze a fall.
         let result = map.collect_static_movement(
             bounds,
             cache,

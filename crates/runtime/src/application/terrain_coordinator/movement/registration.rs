@@ -255,11 +255,9 @@ impl ResidentTerrainMap {
             let address = TerrainRegistrationPoint::new(start.x, start.y)?;
             if let Some(tile) = self.tile_at(address.tile()) {
                 tile.collision.registration_height_at(address)?
-            } else if self.terrain.tile(address.tile()).exists() {
-                return Ok(RuntimeStaticMovementResidency::PendingTile {
-                    tile: address.tile(),
-                });
             } else {
+                // 7C1660 returns no floor for an absent/loading ADT. This is
+                // object registration, not 7A5A60's movement-query admission.
                 None
             }
         };
@@ -300,15 +298,9 @@ impl ResidentTerrainMap {
                 output,
             )?;
         } else {
-            // Prove every destination before publishing even the earlier WMO
-            // references. Undeclared WDT tiles remain empty space.
-            if self.terrain.global_world_model().is_none() {
-                for (tile, _) in render_bounds.registration_terrain_chunks()? {
-                    if self.terrain.tile(tile).exists() && self.tile_at(tile).is_none() {
-                        return Ok(RuntimeStaticMovementResidency::PendingTile { tile });
-                    }
-                }
-            }
+            // 7C2040/7C2139 links only resident chunks and skips missing ADTs.
+            // Keep the available destinations even when the box straddles an
+            // unloaded tile; scene publication invalidates and rebinds them.
             for index in 0..self.movement.roots.len() {
                 let reference = self.movement.roots[index];
                 self.append_registration_root(reference, render_bounds, None, output)?;
