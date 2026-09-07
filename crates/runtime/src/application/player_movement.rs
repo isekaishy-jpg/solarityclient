@@ -1,6 +1,9 @@
 //! Timestamped local movement, collision continuation, and frozen notifications.
 
+mod passenger;
 pub(super) mod remote;
+
+use passenger::{PassengerClock, PassengerParent};
 
 use std::collections::VecDeque;
 
@@ -71,6 +74,9 @@ pub enum RuntimePlayerMovementError {
     /// Required controlled-player state is absent.
     #[error(transparent)]
     World(#[from] solarity_ecs::WorldStateError),
+    /// A resident passenger parent has an invalid placement.
+    #[error(transparent)]
+    PassengerPlacement(#[from] solarity_systems::GameObjectPlacementError),
     /// This mode still requires its native movement response owner.
     #[error("local movement mode is not implemented: flags={flags:#x}")]
     UnsupportedMode {
@@ -132,6 +138,9 @@ pub(super) struct RuntimePlayerMovement {
 }
 
 struct LocalMovement {
+    passenger: Option<PassengerParent>,
+    passenger_seat: i8,
+    passenger_clock: PassengerClock,
     remote: bool,
     remote_profile: Option<MovementGroundProfile>,
     blend: Option<solarity_systems::RemoteMovementBlend>,
@@ -167,6 +176,28 @@ enum MovementPhase {
 }
 
 trait LocalMovementGeometry: solarity_systems::MovementGeometry {
+    /// Static geometry reports zero; dynamic collectors preserve the native owner GUID.
+    fn contact_guid(&self, _contact: Option<Self::TriangleIdentity>) -> u64 {
+        0
+    }
+
+    /// Resolves a parent through the currently borrowed world generation.
+    fn passenger(&self, _guid: u64) -> Result<Option<PassengerParent>, RuntimePlayerMovementError> {
+        Ok(None)
+    }
+
+    /// Virtual +0xF0 may retain an old parent after a zero-GUID contact.
+    fn retains_passenger(
+        &self,
+        _identity: WorldObjectIdentity,
+        _position: Vec3,
+    ) -> Result<bool, RuntimePlayerMovementError> {
+        Ok(false)
+    }
+
+    /// A coordinate change invalidates every cached world face and bound.
+    fn set_passenger_frame(&mut self, _frame: Option<solarity_systems::MovementTransportFrame>) {}
+
     fn check_failure(&mut self) -> Result<(), RuntimePlayerMovementError> {
         Ok(())
     }
@@ -178,6 +209,41 @@ trait LocalMovementGeometry: solarity_systems::MovementGeometry {
 }
 
 impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
+    fn contact_guid(&self, contact: Option<Self::TriangleIdentity>) -> u64 {
+        use super::RuntimeMovementOwner;
+        match contact {
+            Some(RuntimeMovementOwner::GameObject { reported_guid, .. }) => reported_guid,
+            Some(
+                RuntimeMovementOwner::GameObjectWorldModel { identity }
+                | RuntimeMovementOwner::GameObjectMapModel { identity },
+            ) => identity.guid(),
+            Some(
+                RuntimeMovementOwner::Static(_)
+                | RuntimeMovementOwner::GameObjectWorldModelDoodad { .. },
+            )
+            | None => 0,
+        }
+    }
+
+    fn passenger(&self, guid: u64) -> Result<Option<PassengerParent>, RuntimePlayerMovementError> {
+        PassengerParent::resolve(self, guid)
+    }
+
+    fn retains_passenger(
+        &self,
+        identity: WorldObjectIdentity,
+        position: Vec3,
+    ) -> Result<bool, RuntimePlayerMovementError> {
+        Ok(
+            RuntimeMovementGeometry::retains_passenger(self, identity, position)
+                .map_err(super::RuntimeStaticMovementError::from)?,
+        )
+    }
+
+    fn set_passenger_frame(&mut self, frame: Option<solarity_systems::MovementTransportFrame>) {
+        self.set_transport_frame(frame);
+    }
+
     fn check_failure(&mut self) -> Result<(), RuntimePlayerMovementError> {
         if let Some(super::RuntimeMovementGeometryFailure::Invalid(error)) = self.take_failure() {
             return Err(error.into());
@@ -198,7 +264,7 @@ impl RuntimePlayerMovement {
     pub(super) fn camera_view(&self) -> Option<solarity_ecs::PlayerViewState> {
         self.owner
             .as_ref()
-            .map(|owner| owner.camera.view(owner.orientation))
+            .map(|owner| owner.camera.view(owner.world_orientation()))
     }
 
     /// Orders an entry notification after all earlier local movement writes.
@@ -318,8 +384,21 @@ impl RuntimePlayerMovement {
             return Ok(());
         };
         let transform = world.local_player_transform()?;
+        let mut geometry = RuntimeMovementGeometry::new(
+            terrain,
+            world,
+            objects,
+            // 71C930 sets client control on entry; 75E3D0 includes the high bit.
+            0x8010_8111,
+            MovementBspCacheMode::Enabled,
+            &mut self.geometry,
+        );
         if self.owner.is_none() {
-            let mut owner = LocalMovement::new(identity, transform, movement, now_ms)?;
+            let Some(mut owner) =
+                LocalMovement::new_in_geometry(identity, transform, movement, now_ms, &geometry)?
+            else {
+                return Ok(());
+            };
             owner.camera =
                 PlayerCameraInput::new(world.local_player_view()?, transform.orientation());
             self.output
@@ -344,11 +423,19 @@ impl RuntimePlayerMovement {
                     owner.client_control,
                     owner.stand_state,
                     owner.camera,
+                    owner.passenger_clock,
                 )
             });
-            self.owner = Some(LocalMovement::new(identity, transform, movement, now_ms)?);
-            if let (Some(owner), Some((active, client_control, stand_state, camera))) =
-                (self.owner.as_mut(), retained_control)
+            let Some(owner) =
+                LocalMovement::new_in_geometry(identity, transform, movement, now_ms, &geometry)?
+            else {
+                return Ok(());
+            };
+            self.owner = Some(owner);
+            if let (
+                Some(owner),
+                Some((active, client_control, stand_state, camera, passenger_clock)),
+            ) = (self.owner.as_mut(), retained_control)
             {
                 // Control and stance updates have their own ordered commands.
                 // Reading the final packet-pump state here would apply them
@@ -357,21 +444,13 @@ impl RuntimePlayerMovement {
                 owner.client_control = client_control;
                 owner.stand_state = stand_state;
                 owner.camera = camera;
+                owner.passenger_clock = passenger_clock;
             }
         }
         let Some(owner) = self.owner.as_mut() else {
             return Ok(());
         };
-        let mut geometry = RuntimeMovementGeometry::new(
-            terrain,
-            world,
-            objects,
-            // 71C930 sets client control on the entering local player;
-            // 75E3D0 then includes the high query bit through 714AC0.
-            0x8010_8111,
-            MovementBspCacheMode::Enabled,
-            &mut self.geometry,
-        );
+        owner.refresh_passenger(&mut geometry)?;
         let delta = now_ms.wrapping_sub(owner.time_ms);
         if delta > 250 {
             let skipped = delta - 250;
@@ -423,7 +502,7 @@ impl RuntimePlayerMovement {
         owner.camera.sample_follow(now_ms);
         let (transform, movement) = owner.snapshot();
         owner.published = (transform, movement);
-        world.set_local_player_view(owner.camera.view(owner.orientation))?;
+        world.set_local_player_view(owner.camera.view(owner.world_orientation()))?;
         gameplay.apply_local_movement(owner.identity, transform, movement, owner.stand_state)?;
         self.flush_output(gameplay)
     }
@@ -519,7 +598,7 @@ impl LocalMovement {
             ));
         }
         self.camera
-            .set_free_look(input.mouse_free_look(), self.orientation);
+            .set_free_look(input.mouse_free_look(), self.world_orientation());
         if !was_paired && input.paired_mouse_buttons() && admission.turning {
             self.set_mouse_facing(input, output)?;
         }
@@ -536,8 +615,11 @@ impl LocalMovement {
     ) -> Result<(), RuntimePlayerMovementError> {
         // 6EE3A0 event 19 -> 989B70 -> MSG_MOVE_SET_FACING. The fall
         // snapshot retains its launch direction when the body turns in air.
-        if (self.orientation - self.camera.yaw()).abs() >= 0.000_000_953_674_3 {
-            self.orientation = self.camera.yaw();
+        let facing = self.passenger.map_or(self.camera.yaw(), |parent| {
+            parent.frame.local_orientation(self.camera.yaw())
+        });
+        if (self.orientation - facing).abs() >= 0.000_000_953_674_3 {
+            self.orientation = facing;
         }
         self.flags &= !0x30;
         input.clear_active_turn();
@@ -588,6 +670,9 @@ impl LocalMovement {
             }
         };
         Ok(Self {
+            passenger: None,
+            passenger_seat: -1,
+            passenger_clock: PassengerClock::default(),
             remote: false,
             remote_profile: None,
             blend: None,
@@ -688,6 +773,10 @@ impl LocalMovement {
         &mut self,
         output: &mut VecDeque<PlayerMovementOutput>,
     ) -> Result<(), RuntimePlayerMovementError> {
+        // 6EE870 reads virtual +0xA8 before admitting the acquire response.
+        if let Some(time) = self.passenger.and_then(|parent| parent.time_ms) {
+            self.passenger_clock.publish(time);
+        }
         // 6EE870 queues event 9. Its 6EF860 admission and 98B710 ->
         // 988370 response start a zero-launch fall, even on level ground.
         // The next collision interval determines support beneath the mover.
@@ -770,16 +859,35 @@ impl LocalMovement {
             return Ok(());
         }
         let (transform, movement) = self.snapshot();
-        let context = movement.context();
+        let mut context = movement.context();
+        if kind == WorldMovementKind::ChangeTransport && context.transport.is_none() {
+            context.transport = Some(self.passenger_snapshot());
+        }
+        let mut flags = movement.flags();
+        if let Some(transport) = context.transport {
+            flags |= 0x200;
+            if transport.interpolated_time_ms.is_some() {
+                flags |= 0x400_u64 << 32;
+            }
+        }
         let packet = WorldMovementMessage::new(
             kind,
             self.identity.guid(),
-            movement.flags(),
+            flags,
             transform.position().to_array(),
             transform.orientation(),
             ObjectMovementContext {
                 timestamp_ms: context.timestamp_ms,
-                transport: None,
+                transport: context.transport.map(|transport| {
+                    solarity_network::ObjectMovementTransport {
+                        guid: transport.guid,
+                        position: transport.position.to_array(),
+                        orientation: transport.orientation,
+                        time_ms: transport.time_ms,
+                        seat: transport.seat,
+                        interpolated_time_ms: transport.interpolated_time_ms,
+                    }
+                }),
                 pitch_radians: context.pitch_radians,
                 fall_time_ms: context.fall_time_ms,
                 falling: context.falling.map(|fall| ObjectMovementFall {
@@ -791,6 +899,9 @@ impl LocalMovement {
                 spline_elevation: context.spline_elevation,
             },
         )?;
+        if context.transport.is_some() {
+            self.passenger_clock.serialized();
+        }
         // Unit_C::73ED10 only resolves animation for these notifications.
         // Heartbeats and facing/pitch packets must not interrupt a landing.
         use WorldMovementKind as Kind;
@@ -835,7 +946,7 @@ impl LocalMovement {
     fn snapshot(&self) -> (WorldTransform, WorldMovementState) {
         let mut context = self.context;
         context.timestamp_ms = self.time_ms;
-        context.transport = None;
+        context.transport = self.passenger.map(|_| self.passenger_snapshot());
         context.spline_elevation = match self.phase {
             MovementPhase::Ground { step_anchor } => step_anchor,
             MovementPhase::Fall(_) => None,
@@ -854,9 +965,23 @@ impl LocalMovement {
             MovementPhase::Ground { .. } => None,
         };
         (
-            WorldTransform::new(self.position, self.orientation),
+            WorldTransform::new(self.world_position(), self.world_orientation()),
             WorldMovementState::new(
-                u64::from(self.flags & 0x77ff_fdff) | (u64::from(self.secondary) << 32),
+                u64::from(self.flags & 0x77ff_fdff)
+                    | (u64::from(self.secondary & !0x400) << 32)
+                    | if context.transport.is_some() {
+                        0x200
+                    } else {
+                        0
+                    }
+                    | if context
+                        .transport
+                        .is_some_and(|transport| transport.interpolated_time_ms.is_some())
+                    {
+                        0x400_u64 << 32
+                    } else {
+                        0
+                    },
                 self.speeds,
                 context,
             ),
@@ -993,7 +1118,22 @@ impl LocalMovement {
                 self.skip(remaining, output);
                 return Ok(());
             }
-            let (consumed, reset, skipped) = match self.phase {
+            // 7618B0 checks an existing parent's retention before airborne motion.
+            // A leave consumes no collision time and terminates this interval.
+            if matches!(self.phase, MovementPhase::Fall(_))
+                && self.passenger.is_some()
+                && self.contact_passenger(0, geometry)?
+            {
+                self.elapsed_ms = self.elapsed_ms.saturating_sub(remaining);
+                let saved = self.time_ms;
+                self.time_ms = saved.wrapping_add(duration - remaining);
+                self.emit(WorldMovementKind::ChangeTransport, output)?;
+                self.time_ms = saved;
+                return Ok(());
+            }
+            let was_airborne = matches!(self.phase, MovementPhase::Fall(_));
+            let mut landing = None;
+            let (consumed, reset, skipped, contact) = match self.phase {
                 MovementPhase::Ground { step_anchor } => {
                     let current_basis = MovementGroundTrajectory::new(
                         self.flags,
@@ -1056,6 +1196,7 @@ impl LocalMovement {
                         result.consumed_ms,
                         result.reset_motion_anchor,
                         result.skipped_time_ms,
+                        result.contact_triangle,
                     )
                 }
                 MovementPhase::Fall(fall) => {
@@ -1114,33 +1255,53 @@ impl LocalMovement {
                             self.flags &= !0x3000;
                             self.apply_deferred();
                             self.reanchor()?;
-                            let saved = self.time_ms;
-                            self.time_ms =
-                                saved.wrapping_add(duration - remaining + result.consumed_ms);
-                            self.notify_animation(UnitMovementAnimationEventKind::Land {
+                            landing = Some(UnitMovementAnimationEventKind::Land {
                                 previous_flags,
                                 forced: state.initial_downward_speed != 0.0,
                                 slow: self.ground.speed() <= self.speeds.walk() * 2.0,
                             });
-                            self.emit(WorldMovementKind::FallLand, output)?;
-                            self.time_ms = saved;
                         }
                     }
                     (
                         result.consumed_ms,
                         result.reset_motion_anchor,
                         result.skipped_time_ms,
+                        result.contact_triangle,
                     )
                 }
             };
             geometry.check_failure()?;
-            if reset || blended_position {
+            if !was_airborne && (reset || blended_position) {
                 self.reanchor()?;
-            } else {
+            }
+            let contact_guid = geometry.contact_guid(contact);
+            // 7620F0 reports even a static zero GUID; 7612B0 only reports a
+            // nonzero parent after its airborne contact response.
+            let changed = contact.is_some()
+                && (!was_airborne || contact_guid != 0)
+                && self.contact_passenger(contact_guid, geometry)?;
+            if was_airborne && (reset || blended_position) {
+                self.reanchor()?;
+            }
+            if !(reset || blended_position) {
                 self.elapsed_ms = self.elapsed_ms.wrapping_sub(skipped);
             }
+            let saved = self.time_ms;
+            self.time_ms = saved.wrapping_add(duration - remaining + consumed);
+            // 6EB0B0 gives the landing packet precedence over ChangeTransport.
+            if let Some(landing) = landing {
+                self.notify_animation(landing);
+                self.emit(WorldMovementKind::FallLand, output)?;
+            } else if changed {
+                self.emit(WorldMovementKind::ChangeTransport, output)?;
+            }
+            self.time_ms = saved;
             self.skip(skipped, output);
             remaining = remaining.saturating_sub(consumed);
+            if changed || landing.is_some() {
+                self.elapsed_ms = self.elapsed_ms.saturating_sub(remaining);
+                return Ok(());
+            }
         }
         Ok(())
     }

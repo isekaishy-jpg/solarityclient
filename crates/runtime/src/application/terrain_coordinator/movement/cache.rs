@@ -1,7 +1,7 @@
 //! One borrowed movement context and its per-sweep world collection cache.
 
 use glam::Vec3;
-use solarity_ecs::ActiveWorld;
+use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_systems::{
     MovementBspCacheMode, MovementCollisionBounds, MovementCollisionTriangle,
     MovementCollisionVolume, MovementGeometry, MovementIntervalRequest, MovementTransportFrame,
@@ -43,6 +43,44 @@ pub enum RuntimeMovementGeometryFailure {
 }
 
 impl<'a> RuntimeMovementGeometry<'a> {
+    /// Resolves the current world generation before a passenger link is admitted.
+    pub(in crate::application) fn passenger_identity(
+        &self,
+        guid: u64,
+    ) -> Option<WorldObjectIdentity> {
+        self.world.object_identity(guid)
+    }
+
+    /// Reads the exact parent's matrix; a retired generation cannot be reused.
+    pub(in crate::application) fn passenger_frame(
+        &self,
+        identity: WorldObjectIdentity,
+    ) -> Result<Option<MovementTransportFrame>, solarity_systems::GameObjectPlacementError> {
+        self.objects.object_movement_frame(identity)
+    }
+
+    /// Reads virtual +0xEC independently of an already attached parent's retention.
+    pub(in crate::application) fn can_board(&self, identity: WorldObjectIdentity) -> bool {
+        self.objects.object_can_board(identity)
+    }
+
+    /// Reads the behavior's published phase rather than substituting the client clock.
+    pub(in crate::application) fn passenger_time_ms(
+        &self,
+        identity: WorldObjectIdentity,
+    ) -> Option<u32> {
+        self.objects.object_passenger_time_ms(identity)
+    }
+
+    /// Evaluates virtual +0xF0 only for a zero reported contact GUID.
+    pub(in crate::application) fn retains_passenger(
+        &self,
+        identity: WorldObjectIdentity,
+        position: Vec3,
+    ) -> Result<bool, solarity_systems::MovementCollectionError> {
+        self.objects.object_retains_passenger(identity, position)
+    }
+
     /// Borrows one fixed context and invalidates any prior query's candidates.
     pub fn new(
         terrain: &'a mut RuntimeTerrainCoordinator,

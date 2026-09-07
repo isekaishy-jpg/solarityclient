@@ -1,7 +1,7 @@
 //! Real template decoding, native route clocks, and ECS placement integration.
 
 #[path = "game_object_transports/collision.rs"]
-mod collision;
+pub(in crate::application) mod collision;
 
 use std::error::Error;
 use std::rc::Rc;

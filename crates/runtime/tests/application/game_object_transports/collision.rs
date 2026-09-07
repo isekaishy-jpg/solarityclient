@@ -63,15 +63,55 @@ pub(super) fn model() -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 /// One resident ADT surrounds the station without loading unrelated map data.
-struct Scene {
-    world: ActiveWorld,
-    objects: RuntimeGameObjectPresentation,
-    terrain: RuntimeTerrainCoordinator,
+pub(in crate::application) struct Scene {
+    pub(in crate::application) world: ActiveWorld,
+    pub(in crate::application) objects: RuntimeGameObjectPresentation,
+    pub(in crate::application) terrain: RuntimeTerrainCoordinator,
     cache: GameObjectTemplateCache,
     random: CrtRand,
 }
 
 impl Scene {
+    /// The live passenger test uses the same real template and resident deck.
+    pub(in crate::application) fn passenger_deck() -> Result<Self, Box<dyn Error>> {
+        let mut scene = Self::new()?;
+        scene.world.update_fields(9, [(9, 8)])?;
+        project_object_fields(&mut scene.world, 9, [(9, 8)])?;
+        scene.objects.synchronize(Some(&scene.world))?;
+        scene.cache.receive(template(0)?);
+        scene.synchronize(3462)?;
+        Ok(scene)
+    }
+
+    /// A second independent phase exercises the active mover's optional wire clock.
+    pub(in crate::application) fn add_passenger_deck(
+        &mut self,
+        guid: u64,
+    ) -> Result<(), Box<dyn Error>> {
+        self.world.create_object(
+            guid,
+            ObjectKind::GameObject,
+            Some(WorldTransform::new(Vec3::new(20., 5., 0.), 0.)),
+            [],
+        )?;
+        self.world.update_game_object_movement(
+            guid,
+            GameObjectMovement::default().with_transport_clock(500, 100),
+        )?;
+        let fields = [
+            (3, 42),
+            (4, 1_f32.to_bits()),
+            (8, 42),
+            (9, 8),
+            (16, 8724),
+            (17, 15 << 8),
+        ];
+        self.world.update_fields(guid, fields)?;
+        project_object_fields(&mut self.world, guid, fields)?;
+        self.objects.synchronize(Some(&self.world))?;
+        self.objects.synchronize_templates(&mut self.cache);
+        self.synchronize(3462)
+    }
     fn new() -> Result<Self, Box<dyn Error>> {
         Self::with_files(Vec::new())
     }
@@ -104,7 +144,10 @@ impl Scene {
         })
     }
 
-    fn synchronize(&mut self, time_ms: u32) -> Result<(), Box<dyn Error>> {
+    pub(in crate::application) fn synchronize(
+        &mut self,
+        time_ms: u32,
+    ) -> Result<(), Box<dyn Error>> {
         self.objects
             .advance_transports(Some(&mut self.world), time_ms)?;
         self.objects

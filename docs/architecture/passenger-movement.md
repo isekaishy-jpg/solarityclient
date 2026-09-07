@@ -51,7 +51,7 @@ the GameObject passenger placement separately from the initial map-model pose;
 656 cases, and runtime coverage distinguishes a scale-three passenger matrix
 from the same transport's scale-one initial collision model, including removal.
 
-Live attachment and transport wire snapshots still require integration into the
+Live local attachment and transport wire snapshots are integrated into the
 movement owner. Native contact handling at `0x006EC7B0` is restricted to the active
 mover. Admission at `0x0074B3F0` calls the candidate's virtual `+0xEC`; a GameObject
 checks GAMEOBJECT_FLAGS bit 8 at `0x00712F20`. Leaving a contact can retain the old
@@ -77,4 +77,50 @@ MO behavior retains both raw route time (`+0x30`) and the converted passenger
 clock (`+0x3C`, virtual `+0xA8`). The latter is the sampled phase, including
 station holds and period wrapping, and remains unchanged on a next-map sample.
 Runtime tests distinguish these clocks. The movement-context current/previous
-clock and the optional second wire clock remain part of the attachment work.
+clock and the optional second wire clock are retained separately by the local
+movement owner. `0x006E8F70` moves current to previous before publishing the new
+phase. Boarding calls this immediately through `0x0098BA20` -> `0x0074B340` ->
+`0x00711AB0`; it does not wait for the next scene update. `0x006EC400` marks the
+optional clock only when replacing a nonzero old parent. Leaving retains the
+clock. Ordinary scene refreshes publish the attached behavior's phase, including
+an unchanged phase during a stop or a sample on another map.
+
+The local movement owner now retains its position, facing, analytic anchor,
+ground basis, launch height, step height, and fall direction in passenger
+coordinates. A parent switch applies the old exit conversion and then the new
+entry conversion without restarting analytic time. An idle scene refresh changes
+the world projection while preserving the local state. ECS and ordinary packet
+fields receive the projected world transform; the transport block receives the
+local transform. Camera view and free-look admission use world facing, while a
+mouse-facing command converts the camera's world yaw to passenger coordinates.
+Authoritative attached entry uses the transmitted local coordinates once its
+parent matrix is available.
+
+Ground contact reports static GUID zero as well as dynamic parents. The airborne
+wrapper `0x007618B0` first checks the existing parent's retention volume; a leave
+returns before consuming collision time. Its inner response `0x007612B0` reports
+only a nonzero contact GUID. `0x00762E00` stops the interval on a parent GUID
+change or landing, subtracting the unconsumed portion from the analytic clock.
+Seat-only changes do not count as a new coordinate system. `0x006EB0B0` gives a
+landing notification precedence over ChangeTransport, so landing onto a deck
+emits one FallLand packet that already contains the new parent.
+
+`0x00987140` synthesizes wire flag `0x200`; that flag is not retained in the
+internal input flags. The optional second clock adds secondary flag `0x400` and
+is consumed when a transport packet is frozen. Presentation snapshots do not
+consume it. ChangeTransport on leaving still contains a transport block with
+GUID zero, world-as-local coordinates, seat -1, and the retained clock. Later
+ordinary packets have no transport block. The existing immutable writer queue
+preserves all these fields under backpressure.
+
+Runtime tests land on an actual resident M2 deck over ADT terrain, follow a moving
+parent while idle, walk in passenger coordinates, test retention and rejected
+contacts, switch between two independently clocked parents, and exercise an
+airborne volume exit. Packets pass through the encrypted loopback writer and
+reader before field assertions. Tests also cover authoritative local-coordinate
+admission, world-facing mouse input, and the prohibition on remote auto-boarding.
+
+Remaining integration includes type-11 animation paths, remote passenger travel,
+and the transport destruction callback before object retirement. An unexpectedly
+missing parent follows `0x006EC400`'s GUID-clear path without applying a stale
+matrix; normal `0x0070FFD0` destruction requires its earlier detach sequence.

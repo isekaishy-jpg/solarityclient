@@ -12,7 +12,7 @@ mod tests;
 
 #[cfg(test)]
 #[path = "../../tests/application/game_object_transports.rs"]
-mod transport_tests;
+pub(in crate::application) mod transport_tests;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
