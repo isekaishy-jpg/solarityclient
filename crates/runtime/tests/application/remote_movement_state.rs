@@ -35,7 +35,8 @@ fn remote_walk_run_stop_and_wrap_use_contact_simulation() -> TestResult {
             assert!(remote.receive(
                 command(WorldMovementKind::StartForward, flags, 0, 0.0),
                 origin,
-                origin
+                origin,
+                &mut Floor::new()?
             )?);
             let mut floor = Floor::new()?;
             for elapsed in [250, 500, 750, 1000] {
@@ -52,7 +53,8 @@ fn remote_walk_run_stop_and_wrap_use_contact_simulation() -> TestResult {
             assert!(remote.receive(
                 command(WorldMovementKind::Stop, 0, 1000, speed),
                 origin.wrapping_add(1000),
-                origin.wrapping_add(1000)
+                origin.wrapping_add(1000),
+                &mut Floor::new()?
             )?);
             remote.advance(
                 origin.wrapping_add(1250),
@@ -72,8 +74,18 @@ fn future_commands_wait_for_their_adjusted_clock() -> TestResult {
     let (_, motion) = owner()?;
     let (transform, movement) = motion.snapshot();
     let mut remote = RemoteUnit::new(motion.identity, transform, movement, 0);
-    remote.receive(command(WorldMovementKind::StartForward, 1, 0, 0.0), 0, 0)?;
-    assert!(!remote.receive(command(WorldMovementKind::Stop, 0, 1000, 7.0), 200, 200)?);
+    remote.receive(
+        command(WorldMovementKind::StartForward, 1, 0, 0.0),
+        0,
+        0,
+        &mut Floor::new()?,
+    )?;
+    assert!(!remote.receive(
+        command(WorldMovementKind::Stop, 0, 1000, 7.0),
+        200,
+        200,
+        &mut Floor::new()?
+    )?);
     assert_eq!(remote.commands.front().ok_or("queued stop")?.time_ms, 1000);
     let mut floor = Floor::new()?;
     for time in [250, 500, 750] {
@@ -104,7 +116,12 @@ fn unavailable_geometry_freezes_travel_until_residency_is_ready() -> TestResult 
     let (_, motion) = owner()?;
     let (transform, movement) = motion.snapshot();
     let mut remote = RemoteUnit::new(motion.identity, transform, movement, 0);
-    remote.receive(command(WorldMovementKind::StartForward, 1, 0, 0.0), 0, 0)?;
+    remote.receive(
+        command(WorldMovementKind::StartForward, 1, 0, 0.0),
+        0,
+        0,
+        &mut Floor::new()?,
+    )?;
     let mut floor = Floor::new()?;
     floor.ready = false;
     remote.advance(
@@ -139,7 +156,7 @@ fn queued_heartbeat_retains_launch_and_secondary_flags() -> TestResult {
         direction_sin: 0.0,
         horizontal_speed: 7.0,
     });
-    remote.receive(launch, 0, 0)?;
+    remote.receive(launch, 0, 0, &mut Floor::new()?)?;
     let retained = remote.snapshot().1.context().falling;
     let mut heartbeat = launch;
     heartbeat.kind = WorldMovementKind::Heartbeat;
@@ -231,7 +248,12 @@ fn path_replacement_flushes_future_snapshots_before_preparing_its_start() -> Tes
     assert!(remote.snapshot().0.position().x < 7.3);
     // An ordinary correction releases the path, so the next frame cannot
     // publish the old spline's position over the new snapshot.
-    remote.receive(command(WorldMovementKind::Stop, 0, 1250, 8.0), 450, 450)?;
+    remote.receive(
+        command(WorldMovementKind::Stop, 0, 1250, 8.0),
+        450,
+        450,
+        &mut Floor::new()?,
+    )?;
     assert!(remote.path.is_none());
     remote.advance(
         700,
@@ -292,8 +314,13 @@ fn heartbeat_ending_a_fall_emits_the_native_landing_notification() -> TestResult
         direction_sin: 0.0,
         horizontal_speed: 7.0,
     });
-    remote.receive(jump, 0, 0)?;
-    remote.receive(command(WorldMovementKind::Heartbeat, 0, 10, 0.0), 10, 10)?;
+    remote.receive(jump, 0, 0, &mut Floor::new()?)?;
+    remote.receive(
+        command(WorldMovementKind::Heartbeat, 0, 10, 0.0),
+        10,
+        10,
+        &mut Floor::new()?,
+    )?;
     remote.advance(
         10,
         [0.5, 2.0, 1.0],

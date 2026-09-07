@@ -187,7 +187,7 @@ impl LocalMovement {
     }
 
     /// Shares authoritative local-pose admission with the pre-retirement callback.
-    fn new_on_parent(
+    pub(super) fn new_on_parent(
         identity: WorldObjectIdentity,
         transform: WorldTransform,
         movement: WorldMovementState,
@@ -225,6 +225,7 @@ impl LocalMovement {
                 self.passenger_seat = -1;
             }
             if self.active
+                && !self.remote
                 && let Some(time) = self.passenger.and_then(|parent| parent.time_ms)
             {
                 self.passenger_clock.publish(time);
@@ -336,16 +337,22 @@ impl LocalMovement {
 
     /// Also represents 987140's explicit GUID-zero ChangeTransport leave block.
     pub(super) fn passenger_snapshot(&self) -> WorldMovementTransport {
+        // Remote owners retain the received metadata. Only the active mover
+        // publishes the TLS transport clock through 6E8F70/987140.
+        let received = self.remote.then_some(self.context.transport).flatten();
         WorldMovementTransport {
             guid: self.passenger.map_or(0, |parent| parent.identity.guid()),
             position: self.position,
             orientation: self.orientation,
-            time_ms: self.passenger_clock.current,
+            time_ms: received.map_or(self.passenger_clock.current, |parent| parent.time_ms),
             seat: self.passenger_seat,
-            interpolated_time_ms: self
-                .passenger_clock
-                .pending
-                .then_some(self.passenger_clock.previous),
+            interpolated_time_ms: if let Some(received) = received {
+                received.interpolated_time_ms
+            } else {
+                self.passenger_clock
+                    .pending
+                    .then_some(self.passenger_clock.previous)
+            },
         }
     }
 }

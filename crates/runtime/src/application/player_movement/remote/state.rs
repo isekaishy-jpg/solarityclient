@@ -3,16 +3,18 @@
 use std::collections::VecDeque;
 
 use solarity_ecs::{
-    WorldMovementContext, WorldMovementFall, WorldMovementState, WorldObjectIdentity,
-    WorldTransform,
+    WorldMovementContext, WorldMovementFall, WorldMovementState, WorldMovementTransport,
+    WorldObjectIdentity, WorldTransform,
 };
 use solarity_network::{RemoteMovement, WorldMovementKind};
 use solarity_systems::{
-    MovementGroundProfile, MovementSpline, RemoteMovementBlend, RemoteMovementClock,
-    RemoteMovementPose, RemoteMovementReceipt,
+    MovementFallState, MovementGroundProfile, MovementSpline, MovementTransportChange,
+    RemoteMovementBlend, RemoteMovementClock, RemoteMovementPose, RemoteMovementReceipt,
 };
 
-use super::super::{LocalMovement, LocalMovementGeometry, RuntimePlayerMovementError};
+use super::super::{
+    LocalMovement, LocalMovementGeometry, MovementPhase, RuntimePlayerMovementError,
+};
 use super::inbox::RemoteMovementInput;
 use crate::application::unit_animation::{
     UnitMovementAnimationEvent, UnitMovementAnimationEventKind,
@@ -21,6 +23,10 @@ use crate::application::unit_animation::{
 #[cfg(test)]
 #[path = "../../../../tests/application/remote_movement_state.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../../tests/application/remote_passenger.rs"]
+mod passenger_tests;
 
 /// A stable, wrapping-clock queue entry after native delay admission.
 struct Scheduled {
@@ -94,8 +100,8 @@ impl RemoteUnit {
                     message,
                     receipt_ms,
                 } => {
-                    self.initialize_motion()?;
-                    if self.receive(message, receipt_ms, now_ms)? {
+                    self.initialize_motion(geometry)?;
+                    if self.receive(message, receipt_ms, now_ms, geometry)? {
                         // 006EA550 catches up an immediate snapshot in full
                         // 250 ms chunks; the ordinary frame cap is separate.
                         while (now_ms.wrapping_sub(self.time_ms) as i32) > 250 {
@@ -115,7 +121,7 @@ impl RemoteUnit {
                     receipt_ms,
                     stop_distance_tolerance,
                 } => {
-                    self.flush()?;
+                    self.flush(geometry)?;
                     // 0073C8E0 uses the current placement after 006ED7E0;
                     // no path sample may overwrite a just-flushed snapshot.
                     let (current, movement) = self.snapshot();
@@ -158,30 +164,66 @@ impl RemoteUnit {
             .map_or(self.published, LocalMovement::snapshot)
     }
 
-    /// Constructs the shared ground/fall engine when no path or parent owns travel.
-    pub fn initialize_motion(&mut self) -> Result<(), RuntimePlayerMovementError> {
+    /// Constructs the shared ground/fall engine in the admitted parent's coordinates.
+    pub fn initialize_motion<G: LocalMovementGeometry>(
+        &mut self,
+        geometry: &mut G,
+    ) -> Result<(), RuntimePlayerMovementError> {
         let (transform, movement) = self.published;
-        // Liquid, flight, passenger, and pitch-arc travel require the separate
+        // Liquid, flight, and pitch-arc travel require the separate
         // three-dimensional trajectory owner. 00987950 integrates a pitch arc
         // even with a ground launch basis; the horizontal solver cannot stand in.
         if self.motion.is_none()
             && self.path.is_none()
-            && movement.transport_guid().is_none()
             && movement.flags() as u32 & 0x4ae0_00c0 == 0
         {
-            let mut motion = LocalMovement::new(self.identity, transform, movement, self.time_ms)?;
+            let mut context = movement.context();
+            let transport = context.transport.filter(|parent| parent.guid != 0);
+            let parent = match transport {
+                Some(transport) => geometry.passenger(transport.guid)?,
+                None => None,
+            };
+            let mut motion = if let (Some(parent), Some(transport)) = (parent, transport) {
+                LocalMovement::new_on_parent(
+                    self.identity,
+                    transform,
+                    movement,
+                    self.time_ms,
+                    parent,
+                    transport,
+                )?
+            } else {
+                // 988920 stores the world pose first. 9872C0 returns GUID zero
+                // when the transmitted parent cannot be resolved.
+                context.transport = None;
+                LocalMovement::new(
+                    self.identity,
+                    transform,
+                    WorldMovementState::new(
+                        movement.flags() & !(0x400_u64 << 32),
+                        movement.speeds(),
+                        context,
+                    ),
+                    self.time_ms,
+                )?
+            };
             motion.remote = true;
+            motion.context.transport = transport.filter(|_| parent.is_some());
             self.motion = Some(motion);
+        }
+        if let Some(motion) = &mut self.motion {
+            motion.refresh_passenger(geometry)?;
         }
         Ok(())
     }
 
     /// Applies immediate corrections or inserts a future command in native order.
-    pub fn receive(
+    pub fn receive<G: LocalMovementGeometry>(
         &mut self,
         message: RemoteMovement,
         receipt_ms: u32,
         frame_ms: u32,
+        geometry: &mut G,
     ) -> Result<bool, RuntimePlayerMovementError> {
         let current = self.snapshot();
         let admission = self.clock.admit(RemoteMovementReceipt {
@@ -200,6 +242,7 @@ impl RemoteUnit {
                 message,
                 admission.timeline_ms,
                 SnapshotApplication::Immediate,
+                geometry,
             )?;
         } else {
             let was_empty = self.commands.is_empty();
@@ -233,15 +276,66 @@ impl RemoteUnit {
     }
 
     /// Reanchors the authoritative snapshot with the correct launch/flag policy.
-    fn apply(
+    fn apply<G: LocalMovementGeometry>(
         &mut self,
         message: RemoteMovement,
         time_ms: u32,
         application: SnapshotApplication,
+        geometry: &mut G,
     ) -> Result<(), RuntimePlayerMovementError> {
         let queued = application != SnapshotApplication::Immediate;
         let previous = self.snapshot().1;
         let mut context = context(message);
+        let next_parent = match context.transport {
+            Some(parent) => geometry.passenger(parent.guid)?,
+            None => None,
+        };
+        // Queued snapshots retain the full launch basis. 6EA1D0 rotates it
+        // through the old and new parent frames when their GUIDs differ.
+        let retained_direction = if queued {
+            self.motion.as_ref().map(|motion| {
+                let mut direction = match motion.phase {
+                    MovementPhase::Fall(fall) => fall.snapshot().direction,
+                    MovementPhase::Ground { .. } => motion.ground.travel_direction(),
+                };
+                if motion.passenger.map(|parent| parent.identity)
+                    != next_parent.map(|parent| parent.identity)
+                {
+                    if let Some(parent) = motion.passenger {
+                        direction = parent.frame.exit_change().direction(direction);
+                    }
+                    if let Some(parent) = next_parent {
+                        direction = parent.frame.entry_change().direction(direction);
+                    }
+                }
+                direction
+            })
+        } else {
+            None
+        };
+        // 6EA9B0 asks 6EA1D0 to change links before copying its local pose.
+        // A failed new admission has already unlinked the old parent; unlike
+        // 9872C0's immediate path, it does not then copy the packet's world pose.
+        if queued && context.transport.is_some() && next_parent.is_none() {
+            if let Some(motion) = &mut self.motion {
+                if motion.passenger.is_some() {
+                    motion.flags &= !0x0800_0000;
+                }
+                motion.passenger = None;
+                motion.passenger_seat = context.transport.map_or(-1, |parent| parent.seat);
+                if let (MovementPhase::Fall(fall), Some(direction)) =
+                    (motion.phase, retained_direction)
+                {
+                    let mut fall = fall.snapshot();
+                    fall.direction = direction;
+                    fall.horizontal_direction =
+                        MovementTransportChange::horizontal_direction(direction);
+                    motion.phase = MovementPhase::Fall(MovementFallState::new(fall)?);
+                }
+                motion.refresh_passenger(geometry)?;
+            }
+            return Ok(());
+        }
         // 006EA9B0 changes the fall clock/height but keeps the launch bases
         // and secondary flags. Event 10 first runs 009883F0's jump admission.
         if queued
@@ -271,6 +365,11 @@ impl RemoteUnit {
                     retained
                 },
             );
+            if let (Some(fall), Some(direction)) = (&mut context.falling, retained_direction) {
+                let horizontal = MovementTransportChange::horizontal_direction(direction);
+                fall.direction_cos = horizontal.x;
+                fall.direction_sin = horizontal.y;
+            }
         }
         let secondary = if queued {
             previous.flags()
@@ -278,7 +377,10 @@ impl RemoteUnit {
             message.flags
         } & 0xffff_0000_0000;
         let mut flags =
-            (previous.flags() & 0x8800_0200) | (message.flags & 0x77ff_fdff) | secondary;
+            (previous.flags() & 0x8800_0000) | (message.flags & 0x77ff_fdff) | secondary;
+        if context.transport.is_some() {
+            flags |= 0x200;
+        }
         if application != SnapshotApplication::Flush && message.flags & 0x0800_0000 == 0 {
             flags &= !0x0080_0800_0000;
             self.path = None;
@@ -301,7 +403,14 @@ impl RemoteUnit {
         }
         self.motion = None;
         self.time_ms = time_ms;
-        self.initialize_motion()?;
+        self.initialize_motion(geometry)?;
+        if let (Some(motion), Some(direction)) = (&mut self.motion, retained_direction)
+            && let MovementPhase::Fall(fall) = motion.phase
+        {
+            let mut fall = fall.snapshot();
+            fall.direction = direction;
+            motion.phase = MovementPhase::Fall(MovementFallState::new(fall)?);
+        }
         if application != SnapshotApplication::Flush
             && let Some(motion) = &mut self.motion
         {
@@ -335,9 +444,17 @@ impl RemoteUnit {
 
     /// 006ED7E0 -> 006ED0F0 applies every retained snapshot, including future
     /// timestamps, without replaying jump/axis actions or advancing physics.
-    pub fn flush(&mut self) -> Result<(), RuntimePlayerMovementError> {
+    pub fn flush<G: LocalMovementGeometry>(
+        &mut self,
+        geometry: &mut G,
+    ) -> Result<(), RuntimePlayerMovementError> {
         while let Some(command) = self.commands.pop_front() {
-            self.apply(command.message, self.time_ms, SnapshotApplication::Flush)?;
+            self.apply(
+                command.message,
+                self.time_ms,
+                SnapshotApplication::Flush,
+                geometry,
+            )?;
         }
         if let Some(motion) = &mut self.motion {
             motion.blend = None;
@@ -355,7 +472,7 @@ impl RemoteUnit {
                 RemoteMovementPose {
                     transform: WorldTransform::new(motion.position, motion.orientation),
                     pitch: motion.context.pitch_radians.unwrap_or(0.0),
-                    transport_guid: 0,
+                    transport_guid: motion.passenger.map_or(0, |parent| parent.identity.guid()),
                 },
                 pose(next.message),
                 now_ms,
@@ -374,7 +491,7 @@ impl RemoteUnit {
         geometry: &mut G,
         target_position: impl Fn(u64) -> Option<glam::Vec3>,
     ) -> Result<(), RuntimePlayerMovementError> {
-        self.initialize_motion()?;
+        self.initialize_motion(geometry)?;
         let delta = end_ms.wrapping_sub(self.time_ms) as i32;
         if delta <= 0 {
             return Ok(());
@@ -398,8 +515,13 @@ impl RemoteUnit {
                 .unwrap_or(end_ms);
             let duration = next_ms.wrapping_sub(self.time_ms);
             let (transform, movement) = self.snapshot();
-            let can_advance =
-                movement.flags() & 0x40c0_10ff != 0 && in_map_bounds(transform.position());
+            // 6EAC40 checks the movement owner's coordinate lane, which is
+            // parent-local for passengers, before evaluating its interval.
+            let position = self
+                .motion
+                .as_ref()
+                .map_or(transform.position(), |motion| motion.position);
+            let can_advance = movement.flags() & 0x40c0_10ff != 0 && in_map_bounds(position);
             if can_advance && let Some(path) = &mut self.path {
                 self.published = path.advance_movement(
                     next_ms,
@@ -422,7 +544,10 @@ impl RemoteUnit {
             let Some(command) = self.commands.pop_front() else {
                 break;
             };
-            if blocked_command(self.snapshot().1.flags() as u32, command.message.kind) {
+            if blocked_command(
+                self.snapshot().1.flags() as u32 & !0x200,
+                command.message.kind,
+            ) {
                 if let Some(motion) = &mut self.motion {
                     match (&mut motion.blend, self.commands.front()) {
                         (Some(blend), Some(next)) => {
@@ -434,7 +559,12 @@ impl RemoteUnit {
                 }
                 continue;
             }
-            self.apply(command.message, next_ms, SnapshotApplication::Queued)?;
+            self.apply(
+                command.message,
+                next_ms,
+                SnapshotApplication::Queued,
+                geometry,
+            )?;
             self.seed_blend(next_ms);
         }
         self.published = self.snapshot();
@@ -450,7 +580,8 @@ fn in_map_bounds(position: glam::Vec3) -> bool {
 }
 
 /// 006EF860 discards these queued commands, including their snapshots, while
-/// attached, rooted, or waiting to restore a root after path completion.
+/// internally immobilized, rooted, or waiting to restore a root after path completion.
+/// The caller removes the wire transport bit; native internal 0x200 is unrelated.
 fn blocked_command(flags: u32, kind: WorldMovementKind) -> bool {
     match kind {
         WorldMovementKind::StartForward
@@ -467,21 +598,44 @@ fn blocked_command(flags: u32, kind: WorldMovementKind) -> bool {
 
 /// Supplies the next snapshot's position and angles to native interpolation.
 fn pose(message: RemoteMovement) -> RemoteMovementPose {
+    let transform = message
+        .context
+        .transport
+        .filter(|parent| parent.guid != 0)
+        .map_or_else(
+            || {
+                WorldTransform::new(
+                    glam::Vec3::from_array(message.position),
+                    message.orientation,
+                )
+            },
+            |parent| {
+                WorldTransform::new(glam::Vec3::from_array(parent.position), parent.orientation)
+            },
+        );
     RemoteMovementPose {
-        transform: WorldTransform::new(
-            glam::Vec3::from_array(message.position),
-            message.orientation,
-        ),
+        transform,
         pitch: message.context.pitch_radians.unwrap_or(0.0),
         transport_guid: message.context.transport.map_or(0, |parent| parent.guid),
     }
 }
 
-/// Converts supported world-space conditional fields without changing wire clocks.
+/// Retains conditional fields; passenger points remain explicitly parent-local.
 fn context(message: RemoteMovement) -> WorldMovementContext {
     WorldMovementContext {
         timestamp_ms: message.context.timestamp_ms,
-        transport: None,
+        transport: message
+            .context
+            .transport
+            .filter(|parent| parent.guid != 0)
+            .map(|parent| WorldMovementTransport {
+                guid: parent.guid,
+                position: glam::Vec3::from_array(parent.position),
+                orientation: parent.orientation,
+                time_ms: parent.time_ms,
+                seat: parent.seat,
+                interpolated_time_ms: parent.interpolated_time_ms,
+            }),
         pitch_radians: message.context.pitch_radians,
         fall_time_ms: message.context.fall_time_ms,
         falling: message.context.falling.map(|fall| WorldMovementFall {

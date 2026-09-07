@@ -1081,7 +1081,7 @@ impl LocalMovement {
                 let mut analytic = solarity_systems::RemoteMovementPose {
                     transform: WorldTransform::new(self.position + delta, self.orientation),
                     pitch: self.context.pitch_radians.unwrap_or(0.0),
-                    transport_guid: 0,
+                    transport_guid: self.passenger.map_or(0, |parent| parent.identity.guid()),
                 };
                 blended_position = blend.sample(
                     self.position,

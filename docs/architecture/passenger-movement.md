@@ -132,5 +132,34 @@ old link's notification. Tests release the actual parent resource between the
 leave packet and support recheck and inspect both encrypted notifications.
 
 An unexpectedly missing parent still follows `0x006EC400`'s GUID-clear path
-without applying a stale matrix. Remaining integration includes type-11
-animation paths and remote passenger travel.
+without applying a stale matrix.
+
+## Ordinary remote passengers
+
+The remote timeline admits ordinary ground/fall passengers into the same local
+coordinate integrator. `0x006EB730` first installs the ordinary world snapshot
+through `0x00988920`; `0x009872C0` then substitutes the transmitted local position
+and orientation only if the nonzero parent resolves. An unresolved immediate
+parent therefore leaves the world pose with GUID zero. Parent frames refresh
+even when no time elapsed or the unit has no movement axes, so a stationary
+passenger follows its deck without probing the ground.
+
+Queued snapshots use the local position/orientation selected by `0x006E9050`.
+`0x006EA6A0` allows interpolation only between matching parent GUIDs, and both
+lookahead endpoints and analytic predictions remain in that parent's coordinate
+space. The wire `0x200` transport flag is excluded from `0x006EF860`'s internal
+immobilization gate, allowing queued starts and stops on deck. `0x006EAC40` also
+tests map bounds against the movement owner's local coordinate lane.
+
+Before applying a queued pose, `0x006EA9B0` calls `0x006EA1D0` to change the link.
+That change rotates a retained airborne direction through the old and new parent
+frames without replacing launch speed. Failed new admission unlinks the old
+parent and leaves the previous local pose and flags untouched; it does not take
+the immediate path's world-pose branch. Remote projection retains received
+transport clock metadata; it never publishes the active mover's TLS clock.
+
+Tests use the real resident route and collision deck to cover idle frame changes,
+interpolated walking/stopping, both missing-parent policies, and a queued airborne
+switch between independently clocked transports. Remaining transport integration
+includes remote destruction callbacks, transport-authored unit paths, and type-11
+animation paths.

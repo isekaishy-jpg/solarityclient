@@ -800,13 +800,6 @@ fn dispatch_setup_packet<S>(
 ) -> Result<(), RuntimeGameplayError> {
     let timestamp_ms = crate::platform::client_milliseconds();
     if let Some(message) = packet.remote_movement()? {
-        if message
-            .context
-            .transport
-            .is_some_and(|parent| parent.guid != 0)
-        {
-            return retain_unhandled(unhandled, packet);
-        }
         crate::application::player_movement::remote::receive(
             gameplay.world_mut(),
             message,
@@ -883,14 +876,6 @@ fn dispatch_world_packet(
     timestamp_ms: u32,
 ) -> Result<bool, RuntimeGameplayError> {
     if let Some(message) = packet.remote_movement()? {
-        if message
-            .context
-            .transport
-            .is_some_and(|parent| parent.guid != 0)
-        {
-            retain_unhandled(unhandled, packet)?;
-            return Ok(false);
-        }
         return Ok(crate::application::player_movement::remote::receive(
             world,
             message,

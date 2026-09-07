@@ -250,8 +250,92 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                     .spline()
                     .is_some()
             );
+            // The live dispatcher must admit transport-bearing snapshots. An
+            // unresolved immediate parent follows 9872C0's GUID-zero world pose.
+            let sent = server.exchange(vec![(0xee, passenger(9))], 0).await?;
+            assert!(dispatch_world_packet(
+                gameplay.world.as_mut().ok_or("world")?,
+                network.receive_packet().await?,
+                &mut None,
+                &mut None,
+                &mut control,
+                &mut unhandled,
+                1.0,
+                &mut |_, _, _| Ok(()),
+                1750,
+            )?);
+            sent.await??;
+            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1750)?;
+            let world = gameplay.world().ok_or("world")?;
+            assert_eq!(
+                world
+                    .object_transform(9)
+                    .ok_or("corrected remote")?
+                    .position(),
+                Vec3::new(1000., 5800., 10.)
+            );
+            assert!(
+                world
+                    .movement_state(9)
+                    .ok_or("movement")?
+                    .transport_guid()
+                    .is_none()
+            );
+            assert!(unhandled.is_empty());
             Ok(())
         })
+}
+
+#[test]
+fn setup_dispatch_admits_encrypted_remote_passenger_snapshots() -> Result<(), TestError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let (server, network) = WorldServer::connect().await?;
+            let mut gameplay = crate::application::GameplaySession::enter(network);
+            gameplay.world_mut().create_object(
+                9,
+                ObjectKind::Unit,
+                Some(WorldTransform::new(Vec3::ZERO, 0.)),
+                [],
+            )?;
+            let identity = gameplay
+                .world()
+                .object_identity(gameplay.world().local_player_guid()?)
+                .ok_or("local identity")?;
+            let mut control = RuntimePlayerControl::new(identity);
+            let mut unhandled = VecDeque::new();
+            let sent = server.exchange(vec![(0xee, passenger(9))], 0).await?;
+            let packet = gameplay.network_mut().receive_packet().await?;
+            super::dispatch_setup_packet(
+                &mut gameplay,
+                packet,
+                &mut None,
+                &mut None,
+                &mut control,
+                &mut unhandled,
+                1.,
+                &mut |_, _, _| Ok(()),
+            )?;
+            sent.await??;
+            assert!(unhandled.is_empty());
+            Ok(())
+        })
+}
+
+/// Native MovementInfo transport block lies between world pose and fall time.
+fn passenger(guid: u8) -> Vec<u8> {
+    let mut body = ordinary(guid, 0x200, 1750, 1000.);
+    body.truncate(body.len() - 4);
+    body.extend([1, 99]);
+    for value in [0.25_f32, -0.5, 0., 0.] {
+        body.extend(value.to_le_bytes());
+    }
+    body.extend(8888_u32.to_le_bytes());
+    body.push(0xff);
+    body.extend(0_u32.to_le_bytes());
+    body
 }
 
 /// One full linear destination with no packed intermediate offsets.
