@@ -1,11 +1,12 @@
 //! Primary CM2Model timer owned by a transport's separate map-object handle.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use solarity_asset::{AnimationDataCatalog, DecodedM2Model};
 use solarity_rendering::M2SequenceStartPhase;
+use solarity_systems::{GameObjectPlacement, PlacedM2Collision};
 
 use crate::application::game_object_behavior::GameObjectSceneSample;
 use crate::application::model_playback::M2Playback;
@@ -18,6 +19,7 @@ pub(in crate::application) struct TransportMapModel {
     model: RefCell<Option<ModelState>>,
     requested_phase: Cell<Option<u32>>,
     scene_sample: RefCell<Option<GameObjectSceneSample>>,
+    placement_revision: Cell<u64>,
 }
 
 /// One CPU resource lifetime and the timer borrowed by its GPU placement.
@@ -25,6 +27,7 @@ struct ModelState {
     display_id: u32,
     model: Arc<DecodedM2Model>,
     playback: Rc<RefCell<M2Playback>>,
+    collision: Option<PlacedM2Collision>,
 }
 
 impl TransportMapModel {
@@ -34,6 +37,7 @@ impl TransportMapModel {
             model: RefCell::new(None),
             requested_phase: Cell::new(None),
             scene_sample: RefCell::new(None),
+            placement_revision: Cell::new(0),
         }
     }
 
@@ -53,6 +57,7 @@ impl TransportMapModel {
             *current = Some(ModelState {
                 display_id,
                 model: Arc::clone(model),
+                collision: None,
                 playback: Rc::new(RefCell::new(M2Playback::default_sequence(
                     model,
                     &self.animations,
@@ -86,6 +91,44 @@ impl TransportMapModel {
         self.model.borrow_mut().take();
         self.scene_sample.borrow_mut().take();
         self.requested_phase.set(None);
+    }
+
+    /// 783500 owns collision only after template admission creates the map handle.
+    pub(super) fn synchronize_collision(
+        &self,
+        placement: Option<GameObjectPlacement>,
+        revision: u64,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let mut current = self.model.borrow_mut();
+        let Some(current) = current.as_mut() else {
+            return Ok(());
+        };
+        let Some(placement) = placement else {
+            current.collision.take();
+            return Ok(());
+        };
+        if let Some(collision) = &mut current.collision {
+            collision.set_transform(placement.matrix())?;
+        } else {
+            current.collision = Some(PlacedM2Collision::prepare_transform(
+                Arc::clone(&current.model),
+                placement.matrix(),
+            )?);
+        }
+        self.placement_revision.set(revision);
+        Ok(())
+    }
+
+    pub(in crate::application) fn collision(&self) -> Option<Ref<'_, PlacedM2Collision>> {
+        Ref::filter_map(self.model.borrow(), |current| {
+            current.as_ref()?.collision.as_ref()
+        })
+        .ok()
+    }
+
+    /// Changes on native map-matrix writes, even when a station's pose is identical.
+    pub(in crate::application) fn placement_revision(&self) -> u64 {
+        self.placement_revision.get()
     }
 
     pub(in crate::application) fn playback(&self) -> Option<Rc<RefCell<M2Playback>>> {

@@ -626,12 +626,27 @@ impl RuntimeGameObjectPresentation {
                     .as_ref()
                     .and_then(|binding| binding.template())
             {
-                transport.advance(world, catalog, &template, client_time_ms)?;
+                if transport.needs_map_placement() {
+                    transport.set_map_placement(Some(
+                        self.placement_resolver
+                            .resolve_map_model_initial(world, instance.guid())?,
+                    ));
+                }
+                if transport.advance(world, catalog, &template, client_time_ms)? {
+                    transport.set_map_placement(Some(
+                        self.placement_resolver.resolve(world, instance.guid())?,
+                    ));
+                }
             }
         }
         // Resolve after all parents have moved, regardless of packet/object order.
         for instance in &mut self.instances {
-            let placement = self.placement_resolver.resolve(world, instance.guid());
+            let mut placement = self.placement_resolver.resolve(world, instance.guid());
+            if let Some(transport) = &instance.transport
+                && let Some(current) = transport.map_placement()
+            {
+                placement = Ok(current);
+            }
             if instance.placement.is_ok() != placement.is_ok() {
                 self.scene_revision = self.scene_revision.wrapping_add(1);
             }
@@ -694,6 +709,9 @@ impl RuntimeGameObjectPresentation {
                     self.scene_time_ms.get(),
                     random,
                 )?;
+                transport
+                    .model
+                    .synchronize_collision(transport.map_placement(), transport.map_revision())?;
             }
         }
         Ok(())

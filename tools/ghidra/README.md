@@ -135,3 +135,15 @@ load completion and gameplay request ordering are outside this probe.
 ```text
 python tools/ghidra/model_default_sequence_oracle.py <path-to-Wow.exe> target/model-default-sequence-native.txt
 ```
+
+## Initial transport map-model facing oracle
+
+`transport_initial_oracle.py` executes `0x0070C310`, `0x004F4630`, quaternion
+decoding/composition, and `0x004F42A0` for 656 synthetic packed rotations. The
+parent quaternion and facing lookup providers return controlled resident data.
+The fixture covers unparented and parented initial map handles; allocation,
+resource admission, and map registration are outside this probe.
+
+```text
+python tools/ghidra/transport_initial_oracle.py <path-to-Wow.exe> crates/systems/tests/fixtures/transport-pose-native.txt target/transport-initial-native.txt
+```

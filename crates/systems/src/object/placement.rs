@@ -6,6 +6,8 @@ use glam::{Mat4, Vec3};
 use solarity_ecs::{ActiveWorld, GameObjectAnimatedPose, ObjectKind, WorldObjectIdentity};
 use thiserror::Error;
 
+use super::game_object_transport_pose;
+
 /// Decodes build 12340's signed 22/21/21-bit local quaternion (`0x00982340`).
 ///
 /// The positive W hemisphere is implicit. Stock emits zero W when the squared
@@ -168,6 +170,62 @@ impl GameObjectPlacementResolver {
         world: &ActiveWorld,
         guid: u64,
     ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
+        self.resolve_with_scale(world, guid, None)
+    }
+
+    /// Constructs 7110B0/783500's initial map handle from world position and yaw.
+    /// The constructor ignores the object's scale and quaternion tilt. Later
+    /// route samples replace this matrix directly through 77FDD0.
+    ///
+    /// # Errors
+    /// Returns the same dependency and transform errors as [`Self::resolve`].
+    pub fn resolve_map_model_initial(
+        &mut self,
+        world: &ActiveWorld,
+        guid: u64,
+    ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
+        let placement = self.resolve_with_scale(world, guid, Some(1.0))?;
+        let mut yaw = None;
+        // 70C310 first extracts the 4F45B0 composed quaternion's angle, then
+        // 4F42A0 separately adds the parent's virtual facing and wraps it.
+        for &owner in self.chain.iter().rev() {
+            let identity = world
+                .object_identity(owner)
+                .ok_or(GameObjectPlacementError::MissingObject { guid: owner })?;
+            let rotation = self
+                .placements
+                .get(&identity)
+                .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
+                .placement
+                .rotation();
+            let local = quaternion_facing(rotation);
+            yaw = Some(yaw.map_or(local, |parent: f32| {
+                let sum = f64::from((f64::from(parent) + f64::from(local)) as f32);
+                let period = f64::from(std::f32::consts::TAU);
+                let remainder = sum % period;
+                (if remainder < 0.0 {
+                    remainder + period
+                } else {
+                    remainder
+                }) as f32
+            }));
+        }
+        GameObjectPlacement::animated(game_object_transport_pose(
+            placement.matrix.w_axis.truncate(),
+            yaw.ok_or(GameObjectPlacementError::MissingPlacement { guid })?,
+            0.0,
+            0.0,
+        )?)
+    }
+
+    /// Initial map handles replace only the requested owner's scale; parent
+    /// matrices retain their native scale when transforming the local position.
+    fn resolve_with_scale(
+        &mut self,
+        world: &ActiveWorld,
+        guid: u64,
+        owner_scale: Option<f32>,
+    ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
         self.chain.clear();
         let mut current = guid;
         loop {
@@ -211,6 +269,8 @@ impl GameObjectPlacementResolver {
             };
             let scale = if animated.is_some() {
                 1.0
+            } else if let Some(scale) = owner_scale.filter(|_| owner == guid) {
+                scale
             } else {
                 world
                     .object_presentation(owner)
@@ -274,6 +334,22 @@ impl GameObjectPlacementResolver {
         self.chain.clear();
         self.placements.clear();
     }
+}
+
+/// 4F4630's epsilon branches preserve positive 3pi/2 at the negative Y axis.
+fn quaternion_facing(rotation: [f32; 4]) -> f32 {
+    let [x, y, z, w] = rotation.map(f64::from);
+    let cosine = 1.0 - (y * y + z * z) * 2.0;
+    let sine = (y * x + w * z) * 2.0;
+    let epsilon = 1.0 / 4_194_304.0;
+    let pi = f64::from(std::f32::consts::PI);
+    if cosine.abs() < epsilon {
+        return (if sine < 0.0 { 1.5 * pi } else { 0.5 * pi }) as f32;
+    }
+    if sine.abs() >= epsilon {
+        return sine.atan2(cosine) as f32;
+    }
+    if cosine <= 0.0 { pi as f32 } else { 0.0 }
 }
 
 /// Native 0x004C1C40 preserves three spilled f32 products before later sums.

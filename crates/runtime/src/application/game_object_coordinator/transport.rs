@@ -8,8 +8,8 @@ use solarity_asset::{AnimationDataCatalog, TransportCatalog};
 use solarity_ecs::{ActiveWorld, GameObjectPresentation, WorldObjectIdentity};
 use solarity_network::GameObjectTemplate;
 use solarity_systems::{
-    TransportRoute, TransportRouteClock, TransportRouteMotion, TransportRouteNode,
-    TransportRoutePhysics, TransportRouteSample, game_object_transport_pose,
+    GameObjectPlacement, TransportRoute, TransportRouteClock, TransportRouteMotion,
+    TransportRouteNode, TransportRoutePhysics, TransportRouteSample, game_object_transport_pose,
 };
 
 use super::RuntimeGameObjectError;
@@ -22,6 +22,8 @@ pub(super) struct GameObjectTransportBehavior {
     cached_state: Cell<u8>,
     route: RefCell<Option<TransportState>>,
     needs_admission: Cell<bool>,
+    map_placement: Cell<Option<GameObjectPlacement>>,
+    map_revision: Cell<u64>,
     pub(super) model: TransportMapModel,
 }
 
@@ -48,6 +50,8 @@ impl GameObjectTransportBehavior {
             cached_state: Cell::new(fields.state()),
             route: RefCell::new(None),
             needs_admission: Cell::new(true),
+            map_placement: Cell::new(None),
+            map_revision: Cell::new(0),
             model: TransportMapModel::new(animations),
         }
     }
@@ -85,9 +89,28 @@ impl GameObjectTransportBehavior {
     pub(super) fn detach_model(&self) {
         self.needs_admission.set(true);
         self.model.detach();
+        self.map_placement.set(None);
         if let Some(state) = self.route.borrow_mut().as_mut() {
             state.sample = None;
         }
+    }
+
+    pub(super) fn needs_map_placement(&self) -> bool {
+        self.needs_admission.get()
+    }
+
+    pub(super) fn set_map_placement(&self, placement: Option<GameObjectPlacement>) {
+        self.map_placement.set(placement);
+        self.map_revision
+            .set(self.map_revision.get().wrapping_add(1));
+    }
+
+    pub(super) fn map_placement(&self) -> Option<GameObjectPlacement> {
+        self.map_placement.get()
+    }
+
+    pub(super) fn map_revision(&self) -> u64 {
+        self.map_revision.get()
     }
 
     pub(super) fn animation_phase(&self) -> Option<u32> {
@@ -100,22 +123,23 @@ impl GameObjectTransportBehavior {
 
     /// 711B50 builds one route from the exact template and stored DBC controls.
     /// Neither later LEVEL updates nor ordinary sequence notifications rebuild it.
+    /// Returns whether 7134A0 wrote a current-map pose, including station samples.
     pub(super) fn advance(
         &self,
         world: &mut ActiveWorld,
         catalog: &TransportCatalog,
         template: &GameObjectTemplate,
         client_time_ms: u32,
-    ) -> Result<(), RuntimeGameObjectError> {
+    ) -> Result<bool, RuntimeGameObjectError> {
         let guid = self.identity.guid();
         if world.object_identity(guid) != Some(self.identity) {
-            return Ok(());
+            return Ok(false);
         }
         let Some(fields) = world.game_object_presentation(guid) else {
-            return Ok(());
+            return Ok(false);
         };
         let Some(movement) = world.game_object_movement(guid) else {
-            return Ok(());
+            return Ok(false);
         };
         let raw_time_ms = movement.transport_clock_ms(client_time_ms);
         let mut state = self.route.borrow_mut();
@@ -128,7 +152,7 @@ impl GameObjectTransportBehavior {
             )?);
         }
         let Some(state) = state.as_mut() else {
-            return Ok(());
+            return Ok(false);
         };
         let elapsed_ms = if self.needs_admission.replace(false) {
             state.admit(fields, raw_time_ms);
@@ -139,20 +163,20 @@ impl GameObjectTransportBehavior {
         state.last_client_time_ms = client_time_ms;
         let clock_ms = state.clock.clock_ms(&state.route, raw_time_ms, elapsed_ms);
         let Some(sample) = state.route.sample(clock_ms) else {
-            return Ok(());
+            return Ok(false);
         };
         // 7134A0 returns before changing the pose, phase, or published raw time
         // when the next route section belongs to another map. The server owns
         // world transfer; sampling the route cannot synthesize that protocol.
         if sample.map_id != world.map_id().value() {
-            return Ok(());
+            return Ok(false);
         }
         let pose =
             game_object_transport_pose(sample.position, sample.yaw, sample.pitch, sample.roll)?;
         world.update_game_object_animated_pose(guid, pose)?;
         state.published_time_ms = raw_time_ms;
         state.sample = Some(sample);
-        Ok(())
+        Ok(true)
     }
 }
 

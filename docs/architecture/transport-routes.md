@@ -113,5 +113,35 @@ Runtime regression coverage exercises encrypted template decoding, delayed
 admission, parent-local children, retained replication, ignored live LEVEL and
 progress updates, repeated state requests across two stations, zero periods,
 GUID reuse, next-map suppression, and model completion without GPU residency.
-Transport map-model collision registration and local-player attachment remain
-the next integration boundaries.
+
+Transport M2 collision uses a separate map-object registry. `0x00783500` sets
+owner+0x7C bits 0x2010 and copies the transport GUID; `0x007B5740` re-registers
+the transformed model on each matrix write, including repeated station samples.
+Empty/next-map routes retain their reference order until a valid pose update.
+The 0x2000 bit selects
+the same `0x007C2E70` registration probes as generic GameObjects. Native
+`0x006DED60` appends these M2 references after authored M2 references, before
+`0x007A5240`'s separate generic callbacks. `0x007A50C0` chooses mask 0xF00000
+for a nonzero model GUID, bypassing the generic GameObject eligibility flag.
+The runtime retains destination allocations while rebuilding transport tail
+order, stamps each lifetime once per query, and reports the transport's own
+GUID. It rejects a model or matrix changed since registration and drops
+references on removal, map replacement, and resource retirement.
+
+The initial map handle exists only after template admission (`0x00711B50` to
+`0x00711A10`/`0x007110B0`). `0x007BEB40` starts it at scale 1 with world position
+and yaw. The yaw virtual (`0x00712DB0`/`0x0070C310`) uses `0x004F4630`'s composed
+quaternion angle, then `0x004F42A0` adds the parent's facing and wraps it.
+The initial render/collision placement remains separate from the replicated
+GameObject quaternion and scale. Zero-period and next-map routes retain that
+initial matrix until a valid current-map sample publishes the full route pose.
+`tools/ghidra/transport_initial_oracle.py` verifies 656 native facing results,
+including parented and tilted cases, with only parent-GUID providers controlled.
+
+Runtime collision tests cover pre-template exclusion, the upper family mask,
+shared render/collision matrices, moved geometry, stale registration, removal,
+GUID reuse, initial scale 1, and map-model ordering before generic callbacks.
+They also distinguish retained empty routes from repeated station samples when
+rebuilding destination order.
+Local-player attachment and transport-relative movement remain the next
+integration boundaries.

@@ -11,6 +11,7 @@ use solarity_systems::{
     MovementIntervalBounds, MovementIntervalRequest,
 };
 
+use super::map_models::ResidentMapModels;
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 
 use super::{
@@ -36,6 +37,11 @@ pub enum RuntimeMovementOwner {
         /// Exact replicated lifetime owning the root.
         identity: WorldObjectIdentity,
     },
+    /// A transport CM2MapObject; its native reported GUID is this owner's GUID.
+    GameObjectMapModel {
+        /// Exact replicated lifetime owning the map model.
+        identity: WorldObjectIdentity,
+    },
     /// An authored MODD attached to a replicated root; native reported GUID is zero.
     GameObjectWorldModelDoodad {
         /// Exact replicated lifetime owning the root.
@@ -45,7 +51,7 @@ pub enum RuntimeMovementOwner {
     },
 }
 
-/// Retained static, replicated WMO, and generic GameObject movement geometry.
+/// Retained static, replicated WMO, transport M2, and generic GameObject geometry.
 ///
 /// Specialized GameObject behavior, transport-relative motion, and liquid/WDL
 /// mode must also be resolved before committing ordinary player movement.
@@ -111,6 +117,7 @@ pub(super) struct DynamicMovementContext<'a> {
 /// Destination lists retain their order across frames without rebuilding them.
 #[derive(Default)]
 pub(super) struct ResidentDynamicMovement {
+    map_models: ResidentMapModels,
     world_identity: Option<WorldObjectIdentity>,
     owners: HashMap<WorldObjectIdentity, DynamicOwner>,
     lists: HashMap<RuntimeMovementReference, VecDeque<WorldObjectIdentity>>,
@@ -224,6 +231,8 @@ impl ResidentDynamicMovement {
         }
         self.order.retain(|identity| self.live.contains(identity));
         self.lists.retain(|_, list| !list.is_empty());
+        self.map_models
+            .synchronize(map, world, objects, cache, self.invalidated)?;
         self.invalidated = false;
         self.world_identity = world
             .local_player_guid()
@@ -241,7 +250,7 @@ impl ResidentDynamicMovement {
                     .map(|owner| owner.residency)
                     .filter(|&residency| residency != RuntimeStaticMovementResidency::Ready)
             })
-            .unwrap_or(RuntimeStaticMovementResidency::Ready)
+            .unwrap_or_else(|| self.map_models.residency())
     }
 
     pub(super) fn append(
@@ -251,6 +260,7 @@ impl ResidentDynamicMovement {
         bounds: MovementCollisionBounds,
         output: &mut RuntimeStaticMovementQuery,
     ) -> Result<(), RuntimeStaticMovementError> {
+        self.map_models.append(reference, context, bounds, output)?;
         let DynamicMovementContext {
             world,
             objects,
@@ -342,8 +352,8 @@ impl RuntimeTerrainCoordinator {
         Ok(residency)
     }
 
-    /// Updates persistent generic GameObject references after CPU model and
-    /// behavior synchronization. Unchanged frames retain their allocations.
+    /// Updates generic GameObject and transport map-model references after CPU
+    /// model and behavior synchronization. Destination allocations are retained.
     ///
     /// # Errors
     /// Invalid registration geometry clears all dynamic references before
@@ -379,8 +389,8 @@ impl RuntimeTerrainCoordinator {
     ///
     /// Call after synchronizing current object models and movement references.
     /// Query flags go to the live native eligibility gate, including door bit
-    /// 0x8000. Family gates are M2 0xF, WMO 0xF0, terrain 0x100, and generic
-    /// GameObjects 0xF00000. Faces use ordinary movement material selection;
+    /// 0x8000. Family gates are authored M2 0xF, WMO 0xF0, terrain 0x100, and
+    /// GameObjects/transport M2 0xF00000. Faces use ordinary material selection;
     /// liquid/WDL collection and specialized GameObject behavior are separate.
     ///
     /// # Errors

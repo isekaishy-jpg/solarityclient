@@ -1,5 +1,8 @@
 //! Real template decoding, native route clocks, and ECS placement integration.
 
+#[path = "game_object_transports/collision.rs"]
+mod collision;
+
 use std::error::Error;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -32,7 +35,12 @@ fn presentation() -> Result<RuntimeGameObjectPresentation, Box<dyn Error>> {
 fn presentation_with_stations(
     stations: &[usize],
 ) -> Result<RuntimeGameObjectPresentation, Box<dyn Error>> {
-    let nodes: Vec<_> = [
+    presentation_for_route(&route_nodes(stations))
+}
+
+/// Stock oracle controls reused by placement and live collision fixtures.
+fn route_nodes(stations: &[usize]) -> Vec<Vec<u32>> {
+    [
         [0., 0., 0.],
         [10., 0., 0.],
         [20., 5., 0.],
@@ -56,21 +64,28 @@ fn presentation_with_stations(
             0,
         ]
     })
-    .collect();
-    presentation_for_route(&nodes)
+    .collect()
 }
 
 /// Mounts exact synthetic transport tables alongside a CPU-readable model.
 fn presentation_for_route(
     nodes: &[Vec<u32>],
 ) -> Result<RuntimeGameObjectPresentation, Box<dyn Error>> {
+    presentation_for_route_with_files(nodes, &[])
+}
+
+/// Extra map files exercise the same presentation owner against real residency.
+fn presentation_for_route_with_files(
+    nodes: &[Vec<u32>],
+    files: &[(&str, &[u8])],
+) -> Result<RuntimeGameObjectPresentation, Box<dyn Error>> {
     let paths = table(11, nodes);
     let physics = table(11, &[]);
     let keys = table(7, &[]);
-    let model = models::model_with_animations(&[0, 162, 163, 164])?;
+    let model = collision::model()?;
     let skin = models::skin()?;
     let displays = models::displays();
-    let fixture = ClientFixture::with_common_files(&[
+    let mut sources: Vec<(&str, &[u8])> = vec![
         ("DBFilesClient\\TaxiPathNode.dbc", &paths),
         ("DBFilesClient\\TransportPhysics.dbc", &physics),
         ("DBFilesClient\\TransportAnimation.dbc", &keys),
@@ -78,7 +93,9 @@ fn presentation_for_route(
         ("DBFilesClient\\GameObjectDisplayInfo.dbc", &displays),
         ("World\\GameObject.m2", &model),
         ("World\\GameObject00.skin", &skin),
-    ])?;
+    ];
+    sources.extend_from_slice(files);
+    let fixture = ClientFixture::with_common_files(&sources)?;
     let archive =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(archive)?;

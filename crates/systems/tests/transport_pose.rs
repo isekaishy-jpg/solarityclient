@@ -13,6 +13,65 @@ use solarity_systems::{
 };
 
 #[test]
+fn initial_map_handle_uses_native_facing_and_ignores_own_scale() -> Result<(), Box<dyn Error>> {
+    let mut count = 0;
+    for line in include_str!("fixtures/transport-initial-native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let words: Vec<_> = line.split_whitespace().collect();
+        let packed = u64::from_str_radix(words[0], 16)?;
+        let parent = (words[1] != "-")
+            .then(|| u64::from_str_radix(words[1], 16))
+            .transpose()?;
+        let facing = f32::from_bits(u32::from_str_radix(words[2], 16)?);
+        let mut world = ActiveWorld::enter(WorldBootstrap::new(
+            WorldMapId::new(0),
+            1,
+            "Initial",
+            Vec3::ZERO,
+            0.,
+        ));
+        for (guid, rotation, scale) in [(2, parent.unwrap_or_default(), 2.), (3, packed, 3.)] {
+            let entity = world.create_object(
+                guid,
+                ObjectKind::GameObject,
+                Some(WorldTransform::new(Vec3::new(10., 20., 30.), 2.5)),
+                [],
+            )?;
+            world
+                .storage_mut()
+                .add_component(entity, (ObjectPresentation::new(1, scale),));
+            world.update_game_object_movement(
+                guid,
+                GameObjectMovement::new(
+                    rotation,
+                    (guid == 3 && parent.is_some()).then_some(GameObjectTransport {
+                        guid: 2,
+                        position: Vec3::new(1., 2., 3.),
+                        orientation: 2.5,
+                    }),
+                ),
+            )?;
+        }
+        let mut resolver = GameObjectPlacementResolver::default();
+        let replicated = resolver.resolve(&world, 3)?;
+        let initial = resolver.resolve_map_model_initial(&world, 3)?;
+        let expected =
+            game_object_transport_pose(replicated.matrix().w_axis.truncate(), facing, 0., 0.)?;
+        assert!(
+            initial.matrix().abs_diff_eq(expected.matrix(), 0.000001),
+            "case {count}: {line}"
+        );
+        // Cache entries from initial admission must not erase the replicated scale.
+        assert_eq!(resolver.resolve(&world, 3)?, replicated);
+        count += 1;
+    }
+    assert_eq!(count, 656);
+    Ok(())
+}
+
+#[test]
 fn transport_poses_match_original_matrix_and_quaternion_code() -> Result<(), Box<dyn Error>> {
     let mut count = 0;
     for line in include_str!("fixtures/transport-pose-native.txt")

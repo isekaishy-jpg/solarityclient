@@ -3,6 +3,7 @@
 mod cache;
 mod dynamic;
 mod liquid;
+mod map_models;
 mod registration;
 mod world_model;
 
