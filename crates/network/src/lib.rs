@@ -42,6 +42,7 @@ pub use protocol::{
     WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError,
     WorldTimeSpeed, WorldTransfer, WorldTransferPacketError, WorldTransferTransport,
 };
+pub use protocol::{GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate};
 pub use protocol::{WorldClientControlUpdate, WorldPlayerControlPacketError};
 pub use protocol::{WorldStatePacketError, WorldStateUpdate};
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};

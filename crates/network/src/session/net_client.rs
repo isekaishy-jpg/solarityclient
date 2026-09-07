@@ -5,9 +5,9 @@ use wow_srp::wrath_header::WrathServerAttempt;
 use wow_world_messages::Guid;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
 use wow_world_messages::wrath::{
-    CMSG_AREATRIGGER, CMSG_CHAR_CREATE, CMSG_CHAR_DELETE, CMSG_CHAR_RENAME, CMSG_PING,
-    CMSG_PLAYER_LOGIN, CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT, CMSG_TIME_SYNC_RESP,
-    MSG_MOVE_WORLDPORT_ACK,
+    CMSG_AREATRIGGER, CMSG_CHAR_CREATE, CMSG_CHAR_DELETE, CMSG_CHAR_RENAME, CMSG_GAMEOBJECT_QUERY,
+    CMSG_PING, CMSG_PLAYER_LOGIN, CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT,
+    CMSG_TIME_SYNC_RESP, MSG_MOVE_WORLDPORT_ACK,
 };
 
 use crate::connection::{
@@ -297,6 +297,27 @@ impl<W> WorldPacketWriter<W>
 where
     W: AsyncWrite + Unpin + Send,
 {
+    /// Queries one template using its entry and the requesting instance's full GUID.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_game_object_query(
+        &mut self,
+        entry: u32,
+        guid: u64,
+    ) -> Result<(), WorldSessionError> {
+        ClientOpcodeMessage::from(CMSG_GAMEOBJECT_QUERY {
+            entry_id: entry,
+            guid: Guid::new(guid),
+        })
+        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+        .await
+        .map_err(|error| WorldSessionError::Io {
+            stage: WorldSessionStage::Send,
+            message: error.to_string(),
+        })
+    }
+
     /// Sends native `0x00717D90`'s packed mover and unsigned skipped interval.
     ///
     /// # Errors

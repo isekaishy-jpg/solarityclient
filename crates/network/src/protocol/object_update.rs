@@ -91,6 +91,7 @@ pub struct ObjectMovementUpdate {
     orientation: Option<f32>,
     position_transport: Option<ObjectPositionTransport>,
     packed_rotation: Option<u64>,
+    transport_progress_ms: Option<u32>,
 }
 
 /// Non-living passenger position carried by `UPDATEFLAG_POSITION`.
@@ -105,6 +106,12 @@ pub struct ObjectPositionTransport {
 }
 
 impl ObjectMovementUpdate {
+    /// Returns the path clock carried by `UPDATEFLAG_TRANSPORT`, including zero.
+    #[must_use]
+    pub const fn transport_progress_ms(&self) -> Option<u32> {
+        self.transport_progress_ms
+    }
+
     /// Returns creation `UpdateFlag` bits, or zero for a movement-only operation.
     #[must_use]
     pub const fn update_flags(&self) -> u16 {
@@ -506,6 +513,7 @@ impl<'a> UpdateCursor<'a> {
                 orientation: None,
                 position_transport: None,
                 packed_rotation: None,
+                transport_progress_ms: None,
             }
         };
         movement.update_flags = update_flags;
@@ -536,7 +544,8 @@ impl<'a> UpdateCursor<'a> {
             self.read_packed_guid("attacking-target GUID is truncated")?;
         }
         if update_flags & UPDATE_FLAG_TRANSPORT != 0 {
-            self.skip(4, "transport progress is truncated")?;
+            movement.transport_progress_ms =
+                Some(self.read_u32("transport progress is truncated")?);
         }
         if update_flags & UPDATE_FLAG_VEHICLE != 0 {
             self.skip(8, "vehicle movement is truncated")?;
@@ -628,6 +637,7 @@ impl<'a> UpdateCursor<'a> {
             orientation: Some(orientation),
             position_transport: None,
             packed_rotation: None,
+            transport_progress_ms: None,
         })
     }
 

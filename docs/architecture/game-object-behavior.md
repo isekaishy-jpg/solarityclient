@@ -152,7 +152,7 @@ this behavior or its random-number consumption.
 `0x00710460` is a separate behavior controlling a WMO handle and passenger
 detachment. It selects Close/Open (146/148), changes the retained collision flag,
 and updates the WMO collision state. It is not evidence for a generic M2
-stable-state selector. Animated transport types 7/11 additionally require their
+stable-state selector. Animated transport types 11/15 additionally require their
 path/animation clocks; the generic table cannot substitute for those providers.
 
 ## Runtime integration and remaining work

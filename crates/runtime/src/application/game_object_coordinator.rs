@@ -26,6 +26,9 @@ use solarity_systems::{
 use thiserror::Error;
 
 use crate::application::game_object_behavior::{GameObjectBehavior, GameObjectNotification};
+use crate::application::gameplay_coordinator::{
+    GameObjectTemplateBinding, GameObjectTemplateCache,
+};
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
@@ -129,6 +132,8 @@ impl GameObjectResource {
 
 /// Current inputs and optional resource for one admitted GameObject lifetime.
 pub(in crate::application) struct GameObjectInstance {
+    entry: u32,
+    template: Option<GameObjectTemplateBinding>,
     identity: WorldObjectIdentity,
     presentation: GameObjectPresentation,
     transform: Option<WorldTransform>,
@@ -418,8 +423,9 @@ impl RuntimeGameObjectPresentation {
             let transform = world
                 .object_transform(identity.guid())
                 .filter(valid_transform);
-            let scale = world
-                .object_presentation(identity.guid())
+            let object = world.object_presentation(identity.guid());
+            let entry = object.map_or(0, solarity_ecs::ObjectPresentation::entry_id);
+            let scale = object
                 .map(solarity_ecs::ObjectPresentation::scale)
                 .filter(|scale| scale.is_finite() && *scale > 0.0);
             if let Some(index) = index {
@@ -441,6 +447,7 @@ impl RuntimeGameObjectPresentation {
                     self.scene_revision = self.scene_revision.wrapping_add(1);
                 }
                 instance.presentation = presentation;
+                instance.entry = entry;
                 instance.placement = placement;
                 instance.transform = transform;
                 instance.scale = scale;
@@ -452,6 +459,8 @@ impl RuntimeGameObjectPresentation {
                     .cloned();
                 self.indices.insert(identity, self.instances.len());
                 self.instances.push(GameObjectInstance {
+                    entry,
+                    template: None,
                     identity,
                     presentation,
                     transform,
@@ -571,6 +580,35 @@ impl RuntimeGameObjectPresentation {
             }
         }
         Ok(())
+    }
+
+    /// Native 0x712F30/0x713130 request the template after model admission.
+    /// Keep this registration across display changes, and drop it with the
+    /// instance so late network replies cannot target a reused GUID.
+    pub(in crate::application) fn synchronize_templates(
+        &mut self,
+        cache: &mut GameObjectTemplateCache,
+    ) {
+        for instance in &mut self.instances {
+            if instance.resource.is_some() && instance.template.is_none() {
+                instance.template = Some(cache.bind(instance.entry, instance.guid()));
+            }
+        }
+    }
+
+    /// Shares the admitted object's server template, once its query completes.
+    /// Pending and missing templates return `None` without issuing another query.
+    #[must_use]
+    pub fn game_object_template(
+        &self,
+        guid: u64,
+    ) -> Option<Rc<solarity_network::GameObjectTemplate>> {
+        self.instances
+            .iter()
+            .find(|instance| instance.guid() == guid)?
+            .template
+            .as_ref()?
+            .template()
     }
 
     fn request_for(

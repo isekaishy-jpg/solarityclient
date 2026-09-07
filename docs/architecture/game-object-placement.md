@@ -139,7 +139,7 @@ It checks repeated MODR references and an unreferenced missing model, CPU timer
 startup before GPU placement, random consumption, GUID reuse, and disconnect.
 
 This implements replicated base placement, not animated transport trajectories.
-GameObject type 7/11 animation/path clocks, other parent categories, destructible
+GameObject type 11/15 animation/path clocks, other parent categories, destructible
 owners and alternative WMO doodad sets still require their domain providers.
 Ordinary visible GameObjects share presentation resources and retain dynamic
 collision references. The production scene update synchronizes those references

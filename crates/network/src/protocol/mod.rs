@@ -11,6 +11,7 @@ mod character_creation;
 mod character_deletion;
 mod character_directory;
 mod character_rename;
+mod game_object_query;
 mod liveness;
 mod movement;
 mod movement_message;
@@ -44,6 +45,9 @@ pub use character_directory::{
 };
 pub use character_rename::{
     CharacterNameResult, CharacterRename, CharacterRenameError, CharacterRenameResult,
+};
+pub use game_object_query::{
+    GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate,
 };
 pub use liveness::WorldLivenessPacketError;
 pub use movement::{ObjectMovementContext, ObjectMovementFall, ObjectMovementTransport};

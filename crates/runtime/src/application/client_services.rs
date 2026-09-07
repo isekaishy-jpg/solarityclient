@@ -2280,6 +2280,9 @@ impl ClientServices {
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
         self.game_objects
             .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
+        self.game_objects
+            .synchronize_templates(self.gameplay.game_object_templates_mut());
+        self.gameplay.send_game_object_queries()?;
         self.terrain.synchronize_game_object_movement(
             self.gameplay.world(),
             &self.game_objects,

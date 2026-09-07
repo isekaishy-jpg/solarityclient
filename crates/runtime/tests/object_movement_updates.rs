@@ -14,6 +14,75 @@ use transfer_world_server::{TestError, WorldServer};
 const SPEEDS: [f32; 9] = [2.5, 7.0, 4.5, 4.75, 2.5, 7.25, 4.75, 3.125, 3.25];
 const CONDITIONAL_FLAGS: u64 = 0x0420_0E20_1200;
 
+/// The transport clock survives encrypted create decoding and wraps with the
+/// local receipt clock; a repeated create must not re-anchor an existing boat.
+#[test]
+fn game_object_transport_clock_is_retained_across_receipt_and_guid_refresh() -> Result<(), TestError>
+{
+    run(async {
+        let (server, session) = WorldServer::connect().await?;
+        let mut gameplay = GameplaySession::enter(session);
+        let sent = server
+            .exchange(
+                vec![
+                    (0xA9, transport_create_body(9, 0)),
+                    (0xA9, transport_create_body(10, u32::MAX - 5)),
+                    (0xA9, transport_create_body(9, 999)),
+                ],
+                0,
+            )
+            .await?;
+        for (guid, progress, receipt, expected_later) in
+            [(9, 0, u32::MAX - 15, 30), (10, u32::MAX - 5, 100, 24)]
+        {
+            let packet = gameplay.network_mut().receive_packet().await?;
+            let batch = packet.object_updates()?.ok_or("missing transport create")?;
+            let WorldObjectUpdate::Create { movement, .. } = &batch.updates()[0] else {
+                return Err("wrong transport operation".into());
+            };
+            assert_eq!(movement.transport_progress_ms(), Some(progress));
+            gameplay.apply_object_updates_at(&batch, receipt)?;
+            let movement = gameplay
+                .world()
+                .game_object_movement(guid)
+                .ok_or("lost transport clock")?;
+            assert_eq!(movement.transport_clock_ms(receipt), progress);
+            assert_eq!(
+                movement.transport_clock_ms(receipt.wrapping_add(30)),
+                expected_later
+            );
+        }
+        let original = gameplay
+            .world()
+            .game_object_movement(9)
+            .ok_or("lost original boat")?;
+        let packet = gameplay.network_mut().receive_packet().await?;
+        gameplay.apply_object_updates_at(
+            &packet.object_updates()?.ok_or("missing repeated create")?,
+            1000,
+        )?;
+        assert_eq!(gameplay.world().game_object_movement(9), Some(original));
+        sent.await??;
+        Ok(())
+    })
+}
+
+/// Minimal native create layout with the independent transport clock and rotation.
+fn transport_create_body(guid: u8, progress_ms: u32) -> Vec<u8> {
+    let mut body = 1_u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&[2, 1, guid, 5]);
+    body.extend_from_slice(&0x242_u16.to_le_bytes());
+    floats(&mut body, &[1., 2., 3., 0.]);
+    body.extend_from_slice(&progress_ms.to_le_bytes());
+    body.extend_from_slice(&0_u64.to_le_bytes());
+    body.push(1);
+    body.extend_from_slice(&((1_u32 << 3) | (1 << 8) | (1 << 17)).to_le_bytes());
+    for value in [1001_u32, 33, 0x0f00] {
+        body.extend_from_slice(&value.to_le_bytes());
+    }
+    body
+}
+
 /// Encrypted movement updates retain the server clock and drive both ECS
 /// position and the stock walk/run speed threshold between received packets.
 #[test]

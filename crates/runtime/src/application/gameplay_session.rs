@@ -251,7 +251,10 @@ fn apply_object_updates_raw(
                 if (existing.is_none() || existing == Some(world.local_player()))
                     && *kind == WorldObjectKind::GameObject
                 {
-                    world.update_game_object_movement(*guid, game_object_movement(movement))?;
+                    world.update_game_object_movement(
+                        *guid,
+                        game_object_movement(movement, receipt_ms),
+                    )?;
                 }
                 project_object_fields(
                     world,
@@ -308,8 +311,8 @@ fn movement_transform(movement: &ObjectMovementUpdate) -> Option<WorldTransform>
     ))
 }
 
-fn game_object_movement(movement: &ObjectMovementUpdate) -> GameObjectMovement {
-    GameObjectMovement::new(
+fn game_object_movement(movement: &ObjectMovementUpdate, receipt_ms: u32) -> GameObjectMovement {
+    let state = GameObjectMovement::new(
         movement.packed_rotation().unwrap_or(0),
         movement
             .position_transport()
@@ -319,7 +322,12 @@ fn game_object_movement(movement: &ObjectMovementUpdate) -> GameObjectMovement {
                 position: Vec3::from_array(transport.position),
                 orientation: transport.orientation,
             }),
-    )
+    );
+    movement
+        .transport_progress_ms()
+        .map_or(state, |progress_ms| {
+            state.with_transport_clock(progress_ms, receipt_ms)
+        })
 }
 
 const fn object_kind(kind: WorldObjectKind) -> ObjectKind {

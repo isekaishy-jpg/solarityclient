@@ -1,5 +1,8 @@
 //! External stock-compatibility tests for encrypted world-session I/O.
 
+#[path = "session/game_object_query.rs"]
+mod game_object_query;
+
 use std::error::Error;
 use std::io::Write;
 
@@ -393,6 +396,12 @@ fn encrypted_session_retains_addon_info_and_decodes_characters()
         writer.send_ping(7, 41).await?;
         writer.send_worldport_acknowledgement().await?;
         writer.send_worldport_acknowledgement().await?;
+        writer
+            .send_game_object_query(42, 0xf120_0000_0000_0042)
+            .await?;
+        writer
+            .send_game_object_query(43, 0xf120_0000_0000_0043)
+            .await?;
         let pong = reader.receive_packet().await?;
         assert_eq!(pong.name(), Some("SMSG_PONG"));
         assert_eq!(pong.pong_sequence()?, Some(7));
@@ -661,6 +670,18 @@ async fn emulate_character_screen(
             acknowledgement,
             ClientOpcodeMessage::MSG_MOVE_WORLDPORT_ACK
         ));
+    }
+    for entry in [42, 43] {
+        let query =
+            ClientOpcodeMessage::tokio_read_encrypted(&mut stream, crypto.decrypter()).await?;
+        let ClientOpcodeMessage::CMSG_GAMEOBJECT_QUERY(query) = query else {
+            return Err("missing game-object query".into());
+        };
+        assert_eq!(query.entry_id, entry);
+        assert_eq!(
+            query.guid.guid(),
+            0xf120_0000_0000_0042 + u64::from(entry - 42)
+        );
     }
     Ok(())
 }

@@ -11,6 +11,8 @@ use shipyard::Component;
 pub struct GameObjectMovement {
     packed_rotation: u64,
     transport: Option<GameObjectTransport>,
+    /// Native GameObject+0x200 difference from the local wrapping client clock.
+    transport_clock_offset_ms: u32,
 }
 
 impl GameObjectMovement {
@@ -20,6 +22,7 @@ impl GameObjectMovement {
         Self {
             packed_rotation,
             transport,
+            transport_clock_offset_ms: 0,
         }
     }
 
@@ -33,6 +36,19 @@ impl GameObjectMovement {
     #[must_use]
     pub const fn transport(self) -> Option<GameObjectTransport> {
         self.transport
+    }
+
+    /// Anchors the received path clock at object creation (native 714250).
+    #[must_use]
+    pub const fn with_transport_clock(mut self, progress_ms: u32, receipt_ms: u32) -> Self {
+        self.transport_clock_offset_ms = progress_ms.wrapping_sub(receipt_ms);
+        self
+    }
+
+    /// Returns the running transport path clock used by 7134A0/711F20.
+    #[must_use]
+    pub const fn transport_clock_ms(self, client_time_ms: u32) -> u32 {
+        client_time_ms.wrapping_add(self.transport_clock_offset_ms)
     }
 }
 

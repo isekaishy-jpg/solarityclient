@@ -49,6 +49,7 @@ impl WorldServerPacket {
             SMSG_CHAR_CREATE => Some("SMSG_CHAR_CREATE"),
             SMSG_CHAR_ENUM => Some("SMSG_CHAR_ENUM"),
             SMSG_CHAR_DELETE => Some("SMSG_CHAR_DELETE"),
+            0x005F => Some("SMSG_GAMEOBJECT_QUERY_RESPONSE"),
             0x003E => Some("SMSG_NEW_WORLD"),
             0x003F => Some("SMSG_TRANSFER_PENDING"),
             0x0040 => Some("SMSG_TRANSFER_ABORTED"),
@@ -77,6 +78,19 @@ impl WorldServerPacket {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// Decodes the complete native game-object template or missing-entry reply.
+    ///
+    /// # Errors
+    /// Rejects truncated fields, overlong strings, and trailing bytes.
+    pub fn game_object_query(
+        &self,
+    ) -> Result<Option<super::GameObjectQueryResponse>, super::GameObjectQueryPacketError> {
+        if self.opcode != 0x005F {
+            return Ok(None);
+        }
+        super::GameObjectQueryResponse::decode(&self.payload).map(Some)
     }
 
     /// Decodes the ordinary and transport monster path packet forms.
