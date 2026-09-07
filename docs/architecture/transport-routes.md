@@ -87,6 +87,31 @@ instructions for 528 synthetic poses. Tests compare every packed value exactly
 and matrix components within 1e-7, then verify pose publication through an ECS
 parent/passenger chain, cache invalidation, and removal.
 
-Runtime transport clock advancement, collision registration, and player
-attachment still require integration; these providers alone do not make live
-transports move.
+The runtime now admits type-15 route owners after the shared template reply and
+samples them before collision registration and player movement. GAMEOBJECT_LEVEL
+is projected from absolute word 16 and always replaces the period, including
+zero. Later LEVEL updates do not rebuild the admitted route. A section on another
+map retains the current pose and last published raw clock (`0x007134A0`); the
+server still owns world transfer.
+
+`0x007100D0` applies progress and dynamic flag 0x10 during template/model admission
+only. Its ushort fraction includes FFFF. The ordinary flags and progress callbacks
+are no-ops for this behavior. `0x007101C0` uses the last successful raw route clock
+for state notifications; repeated states first request the opposite motion and
+then the supplied motion. These callbacks have a separate owner from generic
+GameObject behavior, whose virtual collision gate is false for type 15.
+
+The transport's CPU map-model timer is shared with its GPU placement. Route phase
+changes request 0/162/163/164 through `0x0077FEC0`. Primary completions at
+`0x0070B2B0` map Close to Closed, Open to Opened, ShipStart to ShipMoving, and
+ShipStop to Stand. Completion does not change the retained route phase, so the
+next frame cannot restart an unchanged transition. `0x007B5870` consumes the
+published matrix directly; OBJECT_FIELD_SCALE_X does not rescale it. Passenger
+positions use this same matrix.
+
+Runtime regression coverage exercises encrypted template decoding, delayed
+admission, parent-local children, retained replication, ignored live LEVEL and
+progress updates, repeated state requests across two stations, zero periods,
+GUID reuse, next-map suppression, and model completion without GPU residency.
+Transport map-model collision registration and local-player attachment remain
+the next integration boundaries.

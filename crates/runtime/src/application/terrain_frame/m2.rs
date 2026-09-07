@@ -2073,10 +2073,15 @@ impl M2Frame {
             let scene_sample = if let M2GpuPlacementOwner::GameObject { identity, .. } = owner
                 && let Some(game_objects) = game_objects
                 && let Some(instance) = game_objects.get(identity)
-                && let Some(behavior) = instance.behavior()
             {
-                behavior
-                    .take_scene_sample()
+                instance
+                    .behavior()
+                    .and_then(|behavior| behavior.take_scene_sample())
+                    .or_else(|| {
+                        instance
+                            .transport_model()
+                            .and_then(|model| model.take_scene_sample())
+                    })
                     .map(|sample| (sample.advance, sample.event_window))
             } else {
                 placement

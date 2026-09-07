@@ -496,6 +496,11 @@ impl RuntimeGameplayCoordinator {
         self.world.as_ref()
     }
 
+    /// Allows the composition root to publish derived poses before movement queries.
+    pub(in crate::application) fn world_mut(&mut self) -> Option<&mut ActiveWorld> {
+        self.world.as_mut()
+    }
+
     /// Refreshes native `pathDistTol` before draining the packet queue.
     pub(super) fn set_path_distance_tolerance(&mut self, tolerance: f32) {
         self.path_distance_tolerance = tolerance;

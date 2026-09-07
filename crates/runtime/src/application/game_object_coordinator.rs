@@ -1,11 +1,17 @@
 //! Shared visible-GameObject generations and loading-card transport readiness.
 
+mod transport;
+mod transport_model;
 mod worker;
 mod world_model;
 
 #[cfg(test)]
 #[path = "../../tests/application/game_object_jobs.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/application/game_object_transports.rs"]
+mod transport_tests;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -14,7 +20,7 @@ use std::sync::{Arc, Weak};
 
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStoreHandle, BlpTextureCache,
-    GameObjectDisplayCatalog, M2ModelCache, WmoModelCache, canonical_model_path,
+    GameObjectDisplayCatalog, M2ModelCache, TransportCatalog, WmoModelCache, canonical_model_path,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{
@@ -33,6 +39,7 @@ use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
+use transport::GameObjectTransportBehavior;
 use worker::{
     GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState, prepare_on_worker,
 };
@@ -43,6 +50,18 @@ pub(in crate::application) use world_model::{
 /// Failure while admitting the exact display resource owned by a GameObject.
 #[derive(Debug, Error)]
 pub enum RuntimeGameObjectError {
+    /// A template route or its exact DBC controls cannot be admitted.
+    #[error(transparent)]
+    TransportRoute(#[from] solarity_systems::TransportRouteError),
+    /// The referenced transport physics row violates its finite input contract.
+    #[error(transparent)]
+    TransportPhysics(#[from] solarity_systems::TransportRoutePhysicsError),
+    /// A sampled route cannot form a valid native object transform.
+    #[error(transparent)]
+    TransportPose(#[from] GameObjectPlacementError),
+    /// The sampled object lifetime could not publish its animated pose.
+    #[error(transparent)]
+    World(#[from] solarity_ecs::WorldStateError),
     /// The bounded CPU executor rejected or lost GameObject preparation work.
     #[error(transparent)]
     Cpu(#[from] CpuError),
@@ -143,6 +162,7 @@ pub(in crate::application) struct GameObjectInstance {
     resource: Option<Arc<GameObjectResource>>,
     failed: bool,
     behavior: Option<Rc<GameObjectBehavior>>,
+    transport: Option<Rc<GameObjectTransportBehavior>>,
     world_model_state: RefCell<Option<Rc<GameObjectWorldModelState>>>,
 }
 
@@ -169,6 +189,9 @@ impl<'a> GameObjectFrameInput<'a> {
                 if let Some(behavior) = instance.behavior() {
                     behavior.advance_scene(world, scene_time_ms, global_time_ms, random)?;
                 }
+                if let Some(model) = instance.transport_model() {
+                    model.advance_scene(scene_time_ms, global_time_ms, random)?;
+                }
             }
         }
         Ok(())
@@ -190,6 +213,11 @@ impl<'a> GameObjectFrameInput<'a> {
 }
 
 impl GameObjectInstance {
+    pub(in crate::application) fn transport_model(
+        &self,
+    ) -> Option<&transport_model::TransportMapModel> {
+        self.transport.as_ref().map(|transport| &transport.model)
+    }
     pub(in crate::application) fn world_model_state(
         &self,
     ) -> Option<Rc<GameObjectWorldModelState>> {
@@ -240,6 +268,8 @@ pub struct RuntimeGameObjectPresentation {
     worker: Option<GameObjectWorkerState>,
     pending: Option<PendingGeneration>,
     behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectBehavior>>,
+    transport_behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectTransportBehavior>>,
+    transport_catalog: Option<TransportCatalog>,
     scene_time_ms: Cell<u32>,
 }
 
@@ -284,6 +314,8 @@ impl RuntimeGameObjectPresentation {
             worker: None,
             pending: None,
             behaviors: HashMap::new(),
+            transport_behaviors: HashMap::new(),
+            transport_catalog: None,
             scene_time_ms: Cell::new(0),
         }
     }
@@ -292,6 +324,13 @@ impl RuntimeGameObjectPresentation {
     #[must_use]
     pub fn with_worker_catalog(mut self, catalog: ArchiveCatalog) -> Self {
         self.worker_catalog = Some(catalog);
+        self
+    }
+
+    /// Supplies the native DBC route and motion tables for transport behaviors.
+    #[must_use]
+    pub fn with_transport_catalog(mut self, catalog: TransportCatalog) -> Self {
+        self.transport_catalog = Some(catalog);
         self
     }
 
@@ -383,6 +422,8 @@ impl RuntimeGameObjectPresentation {
         };
         self.behaviors
             .retain(|identity, _| world.object_identity(identity.guid()) == Some(*identity));
+        self.transport_behaviors
+            .retain(|identity, _| world.object_identity(identity.guid()) == Some(*identity));
         self.transport_guid = world.local_player_transport_guid();
         self.transport_identity = self
             .transport_guid
@@ -410,6 +451,7 @@ impl RuntimeGameObjectPresentation {
                 .game_object_presentation(identity.guid())
                 .unwrap_or_default();
             let behavior = self.behavior_for(identity, presentation);
+            let transport = self.transport_for(identity, presentation);
             let index = self.indices.get(&identity).copied();
             let display_changed = index.is_none_or(|index| {
                 self.instances[index].display_id() != presentation.display_id()
@@ -435,6 +477,9 @@ impl RuntimeGameObjectPresentation {
                     if let Some(behavior) = instance.behavior() {
                         behavior.detach_model();
                     }
+                    if let Some(transport) = &instance.transport {
+                        transport.detach_model();
+                    }
                     instance.resource = request
                         .as_ref()
                         .and_then(|request| self.resources.get(request))
@@ -452,6 +497,7 @@ impl RuntimeGameObjectPresentation {
                 instance.transform = transform;
                 instance.scale = scale;
                 instance.behavior = behavior;
+                instance.transport = transport;
             } else {
                 let resource = request
                     .as_ref()
@@ -470,6 +516,7 @@ impl RuntimeGameObjectPresentation {
                     resource,
                     failed: false,
                     behavior,
+                    transport,
                     world_model_state: RefCell::new(None),
                 });
                 self.scene_revision = self.scene_revision.wrapping_add(1);
@@ -527,9 +574,68 @@ impl RuntimeGameObjectPresentation {
         self.admit_world(Some(world));
         if let Some(fields) = world.game_object_presentation(identity.guid())
             && world.object_identity(identity.guid()) == Some(identity)
-            && let Some(behavior) = self.behavior_for(identity, fields)
         {
-            behavior.notify(world, notification, self.scene_time_ms.get(), random)?;
+            if let Some(behavior) = self.behavior_for(identity, fields) {
+                behavior.notify(world, notification, self.scene_time_ms.get(), random)?;
+            }
+            if let Some(transport) = self.transport_for(identity, fields) {
+                transport.notify(fields, notification);
+            }
+        }
+        Ok(())
+    }
+
+    /// Type 15 has a separate native owner; it never enters generic GO collision.
+    fn transport_for(
+        &mut self,
+        identity: WorldObjectIdentity,
+        fields: GameObjectPresentation,
+    ) -> Option<Rc<GameObjectTransportBehavior>> {
+        if fields.object_type() != 15 {
+            return None;
+        }
+        Some(Rc::clone(
+            self.transport_behaviors.entry(identity).or_insert_with(|| {
+                Rc::new(GameObjectTransportBehavior::new(
+                    identity,
+                    fields,
+                    Arc::clone(&self.animations),
+                ))
+            }),
+        ))
+    }
+
+    /// Samples admitted native transport routes and refreshes every dependent placement.
+    /// Call before collision synchronization and local/remote passenger movement.
+    ///
+    /// # Errors
+    /// Returns invalid route, physics, pose, or ECS publication failures.
+    pub fn advance_transports(
+        &mut self,
+        world: Option<&mut ActiveWorld>,
+        client_time_ms: u32,
+    ) -> Result<(), RuntimeGameObjectError> {
+        let (Some(world), Some(catalog)) = (world, self.transport_catalog.as_ref()) else {
+            return Ok(());
+        };
+        for instance in &self.instances {
+            if instance.resource.is_some()
+                && let Some(transport) = &instance.transport
+                && let Some(template) = instance
+                    .template
+                    .as_ref()
+                    .and_then(|binding| binding.template())
+            {
+                transport.advance(world, catalog, &template, client_time_ms)?;
+            }
+        }
+        // Resolve after all parents have moved, regardless of packet/object order.
+        for instance in &mut self.instances {
+            let placement = self.placement_resolver.resolve(world, instance.guid());
+            if instance.placement.is_ok() != placement.is_ok() {
+                self.scene_revision = self.scene_revision.wrapping_add(1);
+            }
+            instance.placement = placement;
         }
         Ok(())
     }
@@ -574,6 +680,17 @@ impl RuntimeGameObjectPresentation {
                     instance.display_id(),
                     source.model(),
                     instance.placement(),
+                    self.scene_time_ms.get(),
+                    random,
+                )?;
+            }
+            if let (Some(transport), Some(GameObjectResource::M2(source))) =
+                (&instance.transport, instance.resource())
+            {
+                transport.model.attach(
+                    instance.display_id(),
+                    source.model(),
+                    transport.animation_phase(),
                     self.scene_time_ms.get(),
                     random,
                 )?;
@@ -938,6 +1055,7 @@ impl RuntimeGameObjectPresentation {
         }
         self.instances.clear();
         self.behaviors.clear();
+        self.transport_behaviors.clear();
         self.scene_time_ms.set(0);
         self.placement_resolver.clear();
         self.indices.clear();

@@ -81,21 +81,14 @@ impl GameObjectPlacement {
     }
 
     /// Admits the transport's full matrix, retaining its separately packed rotation.
-    fn animated(
-        pose: GameObjectAnimatedPose,
-        scale: f32,
-    ) -> Result<Self, GameObjectPlacementError> {
-        let mut matrix = pose.matrix().to_cols_array();
+    fn animated(pose: GameObjectAnimatedPose) -> Result<Self, GameObjectPlacementError> {
+        // 7134A0 sends this matrix directly to 77FDD0. The map-model placement
+        // does not apply OBJECT_FIELD_SCALE_X a second time (7B5870/7B67B0).
+        let matrix = pose.matrix();
         let rotation = unpack_game_object_rotation(pose.packed_rotation());
-        if !scale.is_finite() || scale <= 0.0 || !rotation.into_iter().all(f32::is_finite) {
+        if !rotation.into_iter().all(f32::is_finite) {
             return Err(GameObjectPlacementError::InvalidTransform);
         }
-        for column in 0..3 {
-            for row in 0..3 {
-                matrix[column * 4 + row] *= scale;
-            }
-        }
-        let matrix = Mat4::from_cols_array(&matrix);
         let determinant = matrix.determinant();
         if !matrix.is_finite() || !determinant.is_finite() || determinant == 0.0 {
             return Err(GameObjectPlacementError::InvalidTransform);
@@ -216,10 +209,14 @@ impl GameObjectPlacementResolver {
                     .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
                     .position()
             };
-            let scale = world
-                .object_presentation(owner)
-                .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
-                .scale();
+            let scale = if animated.is_some() {
+                1.0
+            } else {
+                world
+                    .object_presentation(owner)
+                    .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
+                    .scale()
+            };
             let identity = world
                 .object_identity(owner)
                 .ok_or(GameObjectPlacementError::MissingObject { guid: owner })?;
@@ -255,7 +252,7 @@ impl GameObjectPlacementResolver {
                 (local_position, local)
             };
             let placement = if let Some(pose) = animated {
-                GameObjectPlacement::animated(pose, scale)?
+                GameObjectPlacement::animated(pose)?
             } else {
                 GameObjectPlacement::new(position, rotation, scale)?
             };

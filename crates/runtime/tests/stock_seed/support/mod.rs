@@ -121,6 +121,10 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(20), "DBFilesClient\\FactionGroup.dbc");
         builder = builder.add_file_data(empty_wdbc(36), "DBFilesClient\\AreaTable.dbc");
         builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\AreaTrigger.dbc");
+        builder = builder.add_file_data(empty_wdbc(11), "DBFilesClient\\TaxiPathNode.dbc");
+        builder = builder.add_file_data(empty_wdbc(11), "DBFilesClient\\TransportPhysics.dbc");
+        builder = builder.add_file_data(empty_wdbc(7), "DBFilesClient\\TransportAnimation.dbc");
+        builder = builder.add_file_data(empty_wdbc(7), "DBFilesClient\\TransportRotation.dbc");
         builder = builder.add_file_data(empty_wdbc(28), "DBFilesClient\\WMOAreaTable.dbc");
         builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\ZoneMusic.dbc");
         builder = builder.add_file_data(empty_wdbc(5), "DBFilesClient\\ZoneIntroMusicTable.dbc");

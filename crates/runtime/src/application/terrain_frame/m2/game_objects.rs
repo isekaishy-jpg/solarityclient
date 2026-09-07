@@ -121,6 +121,11 @@ impl M2Frame {
                             continue;
                         };
                         M2PlaybackStorage::Shared(playback)
+                    } else if let Some(model) = instance.transport_model() {
+                        let Some(playback) = model.playback() else {
+                            continue;
+                        };
+                        M2PlaybackStorage::Shared(playback)
                     } else {
                         let mut playback = M2Playback::unstarted(0);
                         playback.scene_time_ms = scene_time_ms as u32;
@@ -230,6 +235,7 @@ impl M2Frame {
             }
             if !doodad
                 && instance.behavior().is_none()
+                && instance.transport_model().is_none()
                 && let Some(source) = self.sources[placement.source_index].as_ref()
                 && let Some(mut playback) = placement
                     .playback

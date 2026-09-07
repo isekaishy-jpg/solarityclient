@@ -9,6 +9,7 @@ pub struct GameObjectPresentation {
     flags: u32,
     bytes_1: u32,
     dynamic: u32,
+    transport_period_ms: u32,
 }
 
 impl GameObjectPresentation {
@@ -26,6 +27,7 @@ impl GameObjectPresentation {
             flags,
             bytes_1,
             dynamic: 0,
+            transport_period_ms: 0,
         }
     }
 
@@ -82,6 +84,19 @@ impl GameObjectPresentation {
     #[must_use]
     pub const fn dynamic_word(self) -> u32 {
         self.dynamic
+    }
+
+    /// Supplies absolute GAMEOBJECT_LEVEL word 16, used as the MO route period.
+    #[must_use]
+    pub const fn with_transport_period_ms(mut self, period_ms: u32) -> Self {
+        self.transport_period_ms = period_ms;
+        self
+    }
+
+    /// Returns the server's route period, including an explicitly supplied zero.
+    #[must_use]
+    pub const fn transport_period_ms(self) -> u32 {
+        self.transport_period_ms
     }
 
     /// Returns the supplied sequence fraction; `0xFFFF` means no supplied seek.

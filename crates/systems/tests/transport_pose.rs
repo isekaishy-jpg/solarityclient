@@ -65,9 +65,13 @@ fn animated_parent_drives_passenger_and_invalidates_cache_without_changing_repli
             Some(WorldTransform::new(Vec3::splat(-999.0), 0.0)),
             [],
         )?;
-        world
-            .storage_mut()
-            .add_component(entity, (ObjectPresentation::new(1, 1.0),));
+        world.storage_mut().add_component(
+            entity,
+            (ObjectPresentation::new(
+                1,
+                if guid == 2 { 2.0 } else { 1.0 },
+            ),),
+        );
     }
     world.update_game_object_movement(2, GameObjectMovement::new(0, None))?;
     world.update_game_object_movement(

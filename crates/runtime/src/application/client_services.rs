@@ -216,6 +216,7 @@ impl ClientServices {
         let item_visuals = ItemVisualCatalog::load(&mut assets)?;
         let particle_colors = ParticleColorCatalog::load(&mut assets)?;
         let game_object_displays = GameObjectDisplayCatalog::load(&mut assets)?;
+        let transport_paths = solarity_asset::TransportCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
         let area_triggers = super::area_triggers::RuntimeAreaTriggers::new(
@@ -497,7 +498,8 @@ impl ClientServices {
                     game_object_displays,
                     animations,
                 )
-                .with_worker_catalog(transport_catalog),
+                .with_worker_catalog(transport_catalog)
+                .with_transport_catalog(transport_paths),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps)
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
@@ -2279,10 +2281,14 @@ impl ClientServices {
             .game_objects
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
         self.game_objects
-            .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
-        self.game_objects
             .synchronize_templates(self.gameplay.game_object_templates_mut());
         self.gameplay.send_game_object_queries()?;
+        self.game_objects.advance_transports(
+            self.gameplay.world_mut(),
+            crate::platform::client_milliseconds(),
+        )?;
+        self.game_objects
+            .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
         self.terrain.synchronize_game_object_movement(
             self.gameplay.world(),
             &self.game_objects,
