@@ -3,6 +3,9 @@
 #[path = "game_object_transports/collision.rs"]
 pub(in crate::application) mod collision;
 
+#[path = "game_object_transports/animation.rs"]
+mod animation;
+
 use std::error::Error;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -168,7 +171,15 @@ fn fields(world: &mut ActiveWorld, fields: &[(u16, u32)]) -> Result<(), Box<dyn 
 
 /// Decode through encrypted framing, so the production template has no test-only constructor.
 fn template(allow_stopping: u32) -> Result<GameObjectQueryResponse, Box<dyn Error>> {
-    let mut body: Vec<u8> = [42_u32, 15, 42]
+    template_for_type(15, allow_stopping)
+}
+
+/// Both transport families share the exact query response, with distinct type words.
+fn template_for_type(
+    object_type: u32,
+    allow_stopping: u32,
+) -> Result<GameObjectQueryResponse, Box<dyn Error>> {
+    let mut body: Vec<u8> = [42_u32, object_type, 42]
         .into_iter()
         .flat_map(u32::to_le_bytes)
         .collect();
@@ -216,12 +227,12 @@ fn transport_admission_uses_running_clock_and_refreshes_parent_local_children()
     let mut cache = GameObjectTemplateCache::new();
     objects.synchronize(Some(&world))?;
     objects.synchronize_templates(&mut cache);
-    objects.advance_transports(Some(&mut world), 100)?;
+    objects.advance_transports(Some(&mut world), 100, 0)?;
     assert!(world.game_object_animated_pose(9).is_none());
     cache.receive(template(0)?);
     let original = world.game_object_movement(9);
     // Late template admission samples receipt offset + current client time.
-    objects.advance_transports(Some(&mut world), 3462)?;
+    objects.advance_transports(Some(&mut world), 3462, 3362)?;
     let pose = world.game_object_animated_pose(9).ok_or("boat pose")?;
     assert!((pose.matrix().w_axis.truncate() - Vec3::new(20., 5., 0.)).length() < 0.0001);
     let child = objects.object_placement(10).ok_or("child placement")?;
@@ -230,7 +241,7 @@ fn transport_admission_uses_running_clock_and_refreshes_parent_local_children()
             .length()
             < 0.0001
     );
-    objects.advance_transports(Some(&mut world), 6100)?;
+    objects.advance_transports(Some(&mut world), 6100, 2638)?;
     assert_ne!(
         objects.object_placement(10).ok_or("moved child")?.matrix(),
         child.matrix()
@@ -249,7 +260,7 @@ fn transport_admission_uses_running_clock_and_refreshes_parent_local_children()
             .transport_period_ms(),
         0
     );
-    objects.advance_transports(Some(&mut world), 8824)?;
+    objects.advance_transports(Some(&mut world), 8824, 2724)?;
     assert!(
         (world
             .game_object_animated_pose(9)
@@ -273,26 +284,38 @@ fn transport_repeated_stop_notification_releases_the_current_station() -> Result
     cache.receive(template(1)?);
     objects.synchronize(Some(&world))?;
     objects.synchronize_templates(&mut cache);
-    objects.advance_transports(Some(&mut world), 100)?;
-    objects.advance_transports(Some(&mut world), 3462)?;
+    objects.advance_transports(Some(&mut world), 100, 0)?;
+    objects.advance_transports(Some(&mut world), 3462, 3362)?;
     fields(&mut world, &[(17, (15 << 8) | 1)])?;
     let identity = world.object_identity(9).ok_or("identity")?;
     let mut random = CrtRand::new();
-    objects.observe_notification(&world, identity, GameObjectNotification::State, &mut random)?;
-    objects.advance_transports(Some(&mut world), 5462)?;
+    objects.observe_notification(
+        &mut world,
+        identity,
+        GameObjectNotification::State,
+        3462,
+        &mut random,
+    )?;
+    objects.advance_transports(Some(&mut world), 5462, 2000)?;
     let station = world.game_object_animated_pose(9).ok_or("station")?;
     let station_clock = objects
         .object_passenger_time_ms(identity)
         .ok_or("passenger clock")?;
     assert_eq!(station_clock, 5362);
-    objects.advance_transports(Some(&mut world), 6100)?;
+    objects.advance_transports(Some(&mut world), 6100, 638)?;
     assert_eq!(
         objects.object_passenger_time_ms(identity),
         Some(station_clock)
     );
     assert_eq!(world.game_object_animated_pose(9), Some(station));
-    objects.observe_notification(&world, identity, GameObjectNotification::State, &mut random)?;
-    objects.advance_transports(Some(&mut world), 6200)?;
+    objects.observe_notification(
+        &mut world,
+        identity,
+        GameObjectNotification::State,
+        6100,
+        &mut random,
+    )?;
+    objects.advance_transports(Some(&mut world), 6200, 100)?;
     assert_eq!(
         objects.object_passenger_time_ms(identity),
         Some(station_clock + 100)
@@ -318,7 +341,7 @@ fn transport_progress_is_admission_only_and_zero_server_period_does_not_fallback
     cache.receive(template(1)?);
     objects.synchronize(Some(&world))?;
     objects.synchronize_templates(&mut cache);
-    objects.advance_transports(Some(&mut world), 100)?;
+    objects.advance_transports(Some(&mut world), 100, 0)?;
     let start = world
         .game_object_animated_pose(9)
         .ok_or("initial full progress")?;
@@ -326,12 +349,13 @@ fn transport_progress_is_admission_only_and_zero_server_period_does_not_fallback
     fields(&mut world, &[(14, (32768 << 16) | 0x10)])?;
     let identity = world.object_identity(9).ok_or("identity")?;
     objects.observe_notification(
-        &world,
+        &mut world,
         identity,
         GameObjectNotification::Progress,
+        100,
         &mut CrtRand::new(),
     )?;
-    objects.advance_transports(Some(&mut world), 1100)?;
+    objects.advance_transports(Some(&mut world), 1100, 1000)?;
     let moving = world.game_object_animated_pose(9).ok_or("moving")?;
     assert!(moving.matrix().w_axis.x > 10. && moving.matrix().w_axis.x < 20.);
     // Reused GUIDs cannot inherit the old route/pose or its ignored LEVEL value.
@@ -356,7 +380,7 @@ fn transport_progress_is_admission_only_and_zero_server_period_does_not_fallback
     )?;
     objects.synchronize(Some(&world))?;
     objects.synchronize_templates(&mut cache);
-    objects.advance_transports(Some(&mut world), 5000)?;
+    objects.advance_transports(Some(&mut world), 5000, 3900)?;
     assert!(world.game_object_animated_pose(9).is_none());
     Ok(())
 }
@@ -370,7 +394,7 @@ fn transport_model_completes_primary_phases_without_restarting_unchanged_routes(
     cache.receive(template(0)?);
     objects.synchronize(Some(&world))?;
     objects.synchronize_templates(&mut cache);
-    objects.advance_transports(Some(&mut world), 6100)?;
+    objects.advance_transports(Some(&mut world), 6100, 6000)?;
     let identity = world.object_identity(9).ok_or("identity")?;
     let mut random = CrtRand::new();
     objects.synchronize_animations(Some(&world), &mut random)?;
@@ -405,7 +429,7 @@ fn transport_model_completes_primary_phases_without_restarting_unchanged_routes(
     ));
 
     // The route's next deceleration requests ShipStop, whose primary completion is Stand.
-    objects.advance_transports(Some(&mut world), 9824)?;
+    objects.advance_transports(Some(&mut world), 9824, 3724)?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     assert_eq!(playback.borrow().animation_id, 164);
     objects
@@ -444,17 +468,17 @@ fn transport_next_map_section_retains_the_current_pose_until_server_transfer()
     cache.receive(template(0)?);
     objects.synchronize(Some(&world))?;
     objects.synchronize_templates(&mut cache);
-    objects.advance_transports(Some(&mut world), 600)?;
+    objects.advance_transports(Some(&mut world), 600, 500)?;
     let identity = world.object_identity(9).ok_or("identity")?;
     assert_eq!(objects.object_passenger_time_ms(identity), Some(500));
     let current = world
         .game_object_animated_pose(9)
         .ok_or("current map pose")?;
-    objects.advance_transports(Some(&mut world), 1600)?;
+    objects.advance_transports(Some(&mut world), 1600, 1000)?;
     assert_eq!(objects.object_passenger_time_ms(identity), Some(500));
     assert_eq!(world.game_object_animated_pose(9), Some(current));
     assert_eq!(world.map_id().value(), 0);
-    objects.advance_transports(Some(&mut world), 2100)?;
+    objects.advance_transports(Some(&mut world), 2100, 500)?;
     assert_eq!(objects.object_passenger_time_ms(identity), Some(0));
     assert_ne!(world.game_object_animated_pose(9), Some(current));
     Ok(())

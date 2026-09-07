@@ -121,7 +121,7 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                         &mut control,
                         &mut unhandled,
                         1.0,
-                        &mut |_, _, _| Ok(()),
+                        &mut |_, _, _, _| Ok(()),
                         0
                     )?,
                     expected
@@ -158,7 +158,7 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 &mut control,
                 &mut unhandled,
                 1.0,
-                &mut |_, _, _| Ok(()),
+                &mut |_, _, _, _| Ok(()),
                 1000,
             )?;
             sent.await??;
@@ -217,7 +217,7 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                     &mut control,
                     &mut unhandled,
                     1.0,
-                    &mut |_, _, _| Ok(()),
+                    &mut |_, _, _, _| Ok(()),
                     1500
                 )?);
             }
@@ -261,7 +261,7 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 &mut control,
                 &mut unhandled,
                 1.0,
-                &mut |_, _, _| Ok(()),
+                &mut |_, _, _, _| Ok(()),
                 1750,
             )?);
             sent.await??;
@@ -294,7 +294,7 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 &mut control,
                 &mut unhandled,
                 1.,
-                &mut |_, _, _| Ok(()),
+                &mut |_, _, _, _| Ok(()),
                 1750,
             )?);
             sent.await??;
@@ -346,7 +346,7 @@ fn setup_dispatch_admits_encrypted_remote_passenger_snapshots() -> Result<(), Te
                     &mut control,
                     &mut unhandled,
                     1.,
-                    &mut |_, _, _| Ok(()),
+                    &mut |_, _, _, _| Ok(()),
                 )?;
             }
             sent.await??;

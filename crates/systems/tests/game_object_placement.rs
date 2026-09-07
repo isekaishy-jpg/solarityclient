@@ -1,9 +1,9 @@
 //! Native packed quaternion decoding and GameObject placement ownership.
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use solarity_ecs::{
-    ActiveWorld, GameObjectMovement, GameObjectTransport, ObjectKind, ObjectPresentation,
-    WorldBootstrap, WorldMapId, WorldTransform,
+    ActiveWorld, GameObjectAnimatedPose, GameObjectMovement, GameObjectTransport, ObjectKind,
+    ObjectPresentation, WorldBootstrap, WorldMapId, WorldTransform,
 };
 use solarity_systems::{
     GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
@@ -81,6 +81,39 @@ fn composed_passenger_placements_match_native_operations() -> Result<(), Box<dyn
             &bits[12..],
             "matrix case {count}"
         );
+        // 4F45B0 reads the current behavior-packed LOCAL rotation. The animated
+        // matrix is already in world space and must not acquire its parent twice.
+        let parent_matrix = resolver.resolve(&world, 2)?.matrix();
+        world.update_game_object_animated_pose(
+            2,
+            GameObjectAnimatedPose::new(parent_matrix, parent_packed),
+        )?;
+        world.update_transform(2, WorldTransform::new(Vec3::splat(-999.), 0.))?;
+        let mut animated_matrix = placement.matrix();
+        animated_matrix.w_axis += Vec4::new(100., 200., 300., 0.);
+        world.update_game_object_animated_pose(
+            3,
+            GameObjectAnimatedPose::new(animated_matrix, local_packed),
+        )?;
+        let animated = resolver.resolve(&world, 3)?;
+        assert_eq!(
+            animated.matrix(),
+            animated_matrix,
+            "animated passenger case {count}"
+        );
+        assert_eq!(animated.rotation(), placement.rotation());
+        assert_eq!(animated.facing(), placement.facing());
+        let base = resolver.resolve_animation_base(&world, 3)?;
+        assert_eq!(base.rotation(), placement.rotation());
+        assert_eq!(base.matrix().w_axis, placement.matrix().w_axis);
+        assert_eq!(resolver.resolve(&world, 3)?, animated);
+        // Retire this sample before supplying the next native fixture's inputs.
+        world
+            .storage_mut()
+            .delete_component::<(GameObjectAnimatedPose,)>(child);
+        world
+            .storage_mut()
+            .delete_component::<(GameObjectAnimatedPose,)>(parent);
         count += 1;
     }
     assert_eq!(count, 96);

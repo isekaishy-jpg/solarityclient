@@ -31,12 +31,19 @@ impl ClientServices {
             return self.begin_world_replacement(replacement);
         }
         loop {
-            self.gameplay
-                .service_with_game_objects(&mut |world, identity, notification| {
+            self.gameplay.service_with_game_objects(
+                &mut |world, identity, notification, receipt_ms| {
                     self.game_objects
-                        .observe_notification(world, identity, notification, &mut self.crt_rand)
+                        .observe_notification(
+                            world,
+                            identity,
+                            notification,
+                            receipt_ms,
+                            &mut self.crt_rand,
+                        )
                         .map_err(Into::into)
-                })?;
+                },
+            )?;
             let Some(transfer) = self.gameplay.take_world_transfer() else {
                 break;
             };

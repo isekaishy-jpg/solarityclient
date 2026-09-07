@@ -14,6 +14,7 @@ use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
 
 use super::{GameObjectTemplateCache, RuntimeGameObjectPresentation, models, template};
+use crate::application::game_object_behavior::GameObjectNotification;
 use crate::application::terrain_coordinator::{
     RuntimeMovementOwner, RuntimeMovementQuery, RuntimeStaticMovementResidency,
     RuntimeTerrainCoordinator,
@@ -69,6 +70,7 @@ pub(in crate::application) struct Scene {
     pub(in crate::application) terrain: RuntimeTerrainCoordinator,
     cache: GameObjectTemplateCache,
     random: CrtRand,
+    last_frame_ms: u32,
 }
 
 impl Scene {
@@ -118,6 +120,11 @@ impl Scene {
 
     /// The same resident map exercises both map-handle resource families.
     fn with_files(extra: MapFiles) -> Result<Self, Box<dyn Error>> {
+        Self::with_files_and_type(extra, 15)
+    }
+
+    /// Type 11 must construct from its initial fields before resource synchronization.
+    fn with_files_and_type(extra: MapFiles, object_type: u32) -> Result<Self, Box<dyn Error>> {
         let mut files = map_files()?;
         files.extend(extra);
         let sources: Vec<_> = files
@@ -131,6 +138,17 @@ impl Scene {
         let mut world = super::world(8724, 0)?;
         world.update_transform(7, WorldTransform::new(Vec3::new(20., 5., 10.), 0.))?;
         world.update_transform(9, WorldTransform::new(Vec3::new(20., 5., 0.), 0.))?;
+        if object_type == 11 {
+            super::fields(&mut world, &[(17, 11 << 8)])?;
+            let identity = world.object_identity(9).ok_or("identity")?;
+            objects.observe_notification(
+                &mut world,
+                identity,
+                GameObjectNotification::Initialize,
+                100,
+                &mut CrtRand::new(),
+            )?;
+        }
         terrain.synchronize(Some(&world))?;
         objects.synchronize(Some(&world))?;
         let mut cache = GameObjectTemplateCache::new();
@@ -141,6 +159,7 @@ impl Scene {
             terrain,
             cache,
             random: CrtRand::new(),
+            last_frame_ms: 100,
         })
     }
 
@@ -148,8 +167,12 @@ impl Scene {
         &mut self,
         time_ms: u32,
     ) -> Result<(), Box<dyn Error>> {
-        self.objects
-            .advance_transports(Some(&mut self.world), time_ms)?;
+        self.objects.advance_transports(
+            Some(&mut self.world),
+            time_ms,
+            time_ms.wrapping_sub(self.last_frame_ms),
+        )?;
+        self.last_frame_ms = time_ms;
         self.objects
             .synchronize_animations(Some(&self.world), &mut self.random)?;
         assert_eq!(
@@ -224,7 +247,7 @@ fn transport_collision_requires_template_uses_upper_mask_and_moves_with_route()
 
     scene
         .objects
-        .advance_transports(Some(&mut scene.world), 6100)?;
+        .advance_transports(Some(&mut scene.world), 6100, 2638)?;
     scene
         .objects
         .synchronize_animations(Some(&scene.world), &mut scene.random)?;
@@ -401,8 +424,10 @@ fn empty_route_retains_its_reference_slot_while_sampled_station_moves_to_tail()
     scene.objects.synchronize(Some(&scene.world))?;
     scene.objects.synchronize_templates(&mut scene.cache);
     scene.cache.receive(template(0)?);
-    for expected in [[9, 12], [12, 9]] {
-        scene.synchronize(3462)?;
+    // 6F1490 skips an unchanged global clock, then the next positive delta
+    // republishes the station matrix while the empty route retains its slot.
+    for (time_ms, expected) in [(3462, [9, 12]), (3462, [9, 12]), (3463, [12, 9])] {
+        scene.synchronize(time_ms)?;
         let query = scene.collect(station, 0xf00000)?;
         assert_eq!(query.triangles().len(), 2);
         for (index, guid) in expected.into_iter().enumerate() {
@@ -507,6 +532,42 @@ fn wmo_transport_waits_for_map_handle_then_uses_authored_retention_planes()
             .objects
             .object_retains_passenger(identity, Vec3::ZERO)?
     );
+    Ok(())
+}
+
+#[test]
+fn animated_wmo_requires_its_template_then_registers_the_constructor_matrix()
+-> Result<(), Box<dyn Error>> {
+    let mut scene = Scene::with_files_and_type(wmo_files(), 11)?;
+    let station = Vec3::new(20., 5., 0.);
+    let identity = scene.world.object_identity(9).ok_or("identity")?;
+    let pose = scene
+        .world
+        .game_object_animated_pose(9)
+        .ok_or("constructor pose")?;
+    assert_eq!(pose.matrix().w_axis.truncate(), station);
+    scene.synchronize(3462)?;
+    assert!(scene.collect(station, 0xf001ff)?.triangles().is_empty());
+    scene.cache.receive(super::template_for_type(11, 0)?);
+    scene.synchronize(3462)?;
+    let query = scene.collect(station, 0xf001ff)?;
+    assert_eq!(query.triangles().len(), 1);
+    assert_eq!(
+        query.owner(0),
+        Some(RuntimeMovementOwner::GameObjectWorldModel { identity })
+    );
+    assert_eq!(
+        scene
+            .objects
+            .object_placement(9)
+            .ok_or("placement")?
+            .matrix(),
+        pose.matrix()
+    );
+    scene.world.remove_object(9)?;
+    scene.objects.synchronize(Some(&scene.world))?;
+    scene.synchronize(3463)?;
+    assert!(scene.collect(station, 0xf001ff)?.triangles().is_empty());
     Ok(())
 }
 

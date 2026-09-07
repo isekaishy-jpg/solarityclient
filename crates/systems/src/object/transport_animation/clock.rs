@@ -72,6 +72,18 @@ impl TransportAnimationClock {
         self.phase_ms(split_ms, self.cached_state, raw_time_ms)
     }
 
+    /// 7139E0 limits a stalled frame to its last 250 ms, then keeps a non-looping
+    /// interval from presampling before the retained anchor using a signed test.
+    #[must_use]
+    pub fn frame_start_ms(&self, split_ms: u32, raw_time_ms: u32) -> u32 {
+        let start = raw_time_ms.wrapping_sub(250);
+        if split_ms != 0 && self.anchor_ms.wrapping_sub(start) as i32 >= 0 {
+            self.anchor_ms
+        } else {
+            start
+        }
+    }
+
     /// 7106D0/70DA40 settle a reversed interval when its endpoint is sampled.
     pub fn sample_phase_ms(&mut self, split_ms: u32, state: i8, raw_time_ms: u32) -> u32 {
         let phase = self.phase_ms(split_ms, state, raw_time_ms);

@@ -74,6 +74,19 @@ impl PassengerClock {
 }
 
 impl RuntimePlayerMovement {
+    /// Only an admitted local link contributes to the transport's native list.
+    pub(in crate::application) fn passenger_transport(
+        &self,
+        world: Option<&ActiveWorld>,
+    ) -> Option<WorldObjectIdentity> {
+        let world = world?;
+        let owner = self.owner.as_ref()?;
+        let parent = owner.passenger?;
+        (world.object_identity(owner.identity.guid()) == Some(owner.identity)
+            && world.object_identity(parent.identity.guid()) == Some(parent.identity))
+        .then_some(parent.identity)
+    }
+
     /// Runs transport destruction while the outgoing generation still owns its matrix.
     /// A world replacement or an authoritative change to another parent already
     /// supersedes this link and must not produce a stale detach notification.

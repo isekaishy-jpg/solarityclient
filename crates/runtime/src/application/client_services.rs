@@ -145,6 +145,8 @@ pub(crate) struct ClientServices {
     player_movement: super::player_movement::RuntimePlayerMovement,
     remote_movement: super::player_movement::remote::RuntimeRemoteMovement,
     game_objects: RuntimeGameObjectPresentation,
+    /// Global 6F1490 movement-frame clock; object creation never resets its delta.
+    transport_update_time_ms: u32,
     area_triggers: super::area_triggers::RuntimeAreaTriggers,
     terrain: RuntimeTerrainCoordinator,
     /// Shared authored liquid behavior for the camera's resident water query.
@@ -500,6 +502,7 @@ impl ClientServices {
                 )
                 .with_worker_catalog(transport_catalog)
                 .with_transport_catalog(transport_paths),
+                transport_update_time_ms: crate::platform::client_milliseconds(),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps)
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
@@ -2017,12 +2020,13 @@ impl ClientServices {
                         &handle,
                         session,
                         setup_packets,
-                        &mut |world, identity, notification| {
+                        &mut |world, identity, notification, receipt_ms| {
                             self.game_objects
                                 .observe_notification(
                                     world,
                                     identity,
                                     notification,
+                                    receipt_ms,
                                     &mut self.crt_rand,
                                 )
                                 .map_err(Into::into)
@@ -2288,10 +2292,25 @@ impl ClientServices {
         self.game_objects
             .synchronize_templates(self.gameplay.game_object_templates_mut());
         self.gameplay.send_game_object_queries()?;
+        self.game_objects.synchronize_transport_passengers(
+            self.player_movement
+                .passenger_transport(self.gameplay.world())
+                .into_iter()
+                .chain(
+                    self.remote_movement
+                        .passenger_transports(self.gameplay.world()),
+                ),
+        );
+        let transport_time_ms = crate::platform::client_milliseconds();
+        let transport_elapsed_ms = transport_time_ms.wrapping_sub(self.transport_update_time_ms);
         self.game_objects.advance_transports(
             self.gameplay.world_mut(),
-            crate::platform::client_milliseconds(),
+            transport_time_ms,
+            transport_elapsed_ms,
         )?;
+        if transport_elapsed_ms as i32 > 0 {
+            self.transport_update_time_ms = transport_time_ms;
+        }
         self.game_objects
             .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
         self.terrain.synchronize_game_object_movement(

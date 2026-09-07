@@ -25,6 +25,25 @@ pub(in crate::application) struct RuntimeRemoteMovement {
 }
 
 impl RuntimeRemoteMovement {
+    /// Collect linked simulated or spline parents, excluding unresolved wire GUIDs
+    /// and owners retired by a world replacement before this service pass.
+    pub(in crate::application) fn passenger_transports<'a>(
+        &'a self,
+        world: Option<&'a ActiveWorld>,
+    ) -> impl Iterator<Item = WorldObjectIdentity> + 'a {
+        self.owners.values().filter_map(move |owner| {
+            let world = world?;
+            let parent = owner
+                .motion
+                .as_ref()
+                .and_then(|motion| motion.passenger)
+                .or(owner.path_parent)?;
+            (world.object_identity(owner.identity.guid()) == Some(owner.identity)
+                && world.object_identity(parent.identity.guid()) == Some(parent.identity))
+            .then_some(parent.identity)
+        })
+    }
+
     pub(in crate::application) fn take_animation_event(
         &mut self,
     ) -> Option<UnitMovementAnimationEvent> {

@@ -391,8 +391,10 @@ fn generic_callback_applies_family_door_and_parent_guid_gates() -> Result<(), Bo
 fn replicated_root_order_survives_motion_and_retires_with_the_world() -> Result<(), Box<dyn Error>>
 {
     let mut scene = Scene::new(true)?;
-    scene.add(90, 43, 11, Vec3::ZERO)?;
-    scene.add(10, 43, 11, Vec3::ZERO)?;
+    // An intact destructible WMO supplies direct replicated placement. Type-11
+    // animation and template admission are covered by transport lifecycle tests.
+    scene.add(90, 43, 35, Vec3::ZERO)?;
+    scene.add(10, 43, 35, Vec3::ZERO)?;
     scene.synchronize()?;
     let mut query = RuntimeMovementQuery::new();
     let root_guids = |query: &RuntimeMovementQuery| {
@@ -414,7 +416,7 @@ fn replicated_root_order_survives_motion_and_retires_with_the_world() -> Result<
     scene.collect(Vec3::ZERO, 0xf0, &mut query)?;
     assert_eq!(root_guids(&query), [90, 10]);
     scene.world.remove_object(90)?;
-    scene.add(90, 43, 11, Vec3::ZERO)?;
+    scene.add(90, 43, 35, Vec3::ZERO)?;
     scene.synchronize()?;
     scene.collect(Vec3::ZERO, 0xf0, &mut query)?;
     assert_eq!(root_guids(&query), [10, 90]);
@@ -498,7 +500,9 @@ fn retained_wmo_matrix_updates_match_fresh_placements_and_fail_transactionally()
 fn replicated_wmo_roots_collect_doodads_and_register_nearby_props_after_motion()
 -> Result<(), Box<dyn Error>> {
     let mut scene = Scene::new(true)?;
-    scene.add(90, 43, 11, Vec3::ZERO)?;
+    // An intact destructible WMO supplies direct replicated placement. Type-11
+    // animation and template admission are covered by transport lifecycle tests.
+    scene.add(90, 43, 35, Vec3::ZERO)?;
     scene.add(10, 42, 5, Vec3::new(-0.75, -0.75, 0.5))?;
     assert_eq!(scene.synchronize()?, RuntimeStaticMovementResidency::Ready);
     let identity = scene.world.object_identity(90).ok_or("identity")?;

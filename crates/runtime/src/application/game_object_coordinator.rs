@@ -2,6 +2,7 @@
 
 mod passenger;
 mod transport;
+mod transport_animation;
 mod transport_model;
 mod worker;
 mod world_model;
@@ -15,7 +16,7 @@ mod tests;
 pub(in crate::application) mod transport_tests;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
@@ -52,6 +53,21 @@ pub(in crate::application) use world_model::{
 /// Failure while admitting the exact display resource owned by a GameObject.
 #[derive(Debug, Error)]
 pub enum RuntimeGameObjectError {
+    /// Authored type-11 keys cannot supply the requested native interval.
+    #[error(transparent)]
+    TransportAnimation(#[from] solarity_systems::TransportAnimationError),
+    /// A native behavior callback rejected model or collision animation input.
+    #[error(transparent)]
+    AnimationFrame(#[from] RuntimeTerrainFrameError),
+    /// Type-11 construction must use the creation packet's exact field image.
+    #[error("transport {guid:#018x} has no complete creation-time animation state")]
+    MissingTransportCreation {
+        /// Object whose early creation callback was absent or incomplete.
+        guid: u64,
+    },
+    /// Native creation cannot substitute empty tracks for an unavailable catalog.
+    #[error("transport animation catalog is unavailable")]
+    MissingTransportCatalog,
     /// A template route or its exact DBC controls cannot be admitted.
     #[error(transparent)]
     TransportRoute(#[from] solarity_systems::TransportRouteError),
@@ -245,7 +261,7 @@ impl GameObjectInstance {
     pub(in crate::application) fn placement(&self) -> Option<GameObjectPlacement> {
         self.placement.ok()
     }
-    /// Type-15 map handles exist only after template admission (783500).
+    /// Transport map handles exist only after template admission (783500).
     /// CPU resource completion alone cannot register a WMO collision root.
     pub(in crate::application) fn map_placement(&self) -> Option<GameObjectPlacement> {
         match &self.transport {
@@ -282,6 +298,8 @@ pub struct RuntimeGameObjectPresentation {
     behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectBehavior>>,
     transport_behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectTransportBehavior>>,
     transport_catalog: Option<TransportCatalog>,
+    passenger_transports: HashSet<WorldObjectIdentity>,
+    game_object_passenger_transports: HashSet<WorldObjectIdentity>,
     scene_time_ms: Cell<u32>,
 }
 
@@ -328,6 +346,8 @@ impl RuntimeGameObjectPresentation {
             behaviors: HashMap::new(),
             transport_behaviors: HashMap::new(),
             transport_catalog: None,
+            passenger_transports: HashSet::new(),
+            game_object_passenger_transports: HashSet::new(),
             scene_time_ms: Cell::new(0),
         }
     }
@@ -580,11 +600,12 @@ impl RuntimeGameObjectPresentation {
 
     pub(in crate::application) fn observe_notification(
         &mut self,
-        world: &ActiveWorld,
+        world: &mut ActiveWorld,
         identity: WorldObjectIdentity,
         notification: GameObjectNotification,
+        receipt_ms: u32,
         random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
+    ) -> Result<(), RuntimeGameObjectError> {
         self.admit_world(Some(world));
         if let Some(fields) = world.game_object_presentation(identity.guid())
             && world.object_identity(identity.guid()) == Some(identity)
@@ -593,19 +614,26 @@ impl RuntimeGameObjectPresentation {
                 behavior.notify(world, notification, self.scene_time_ms.get(), random)?;
             }
             if let Some(transport) = self.transport_for(identity, fields) {
-                transport.notify(fields, notification);
+                transport.notify(
+                    world,
+                    fields,
+                    notification,
+                    self.transport_catalog.as_ref(),
+                    receipt_ms,
+                    &mut self.placement_resolver,
+                )?;
             }
         }
         Ok(())
     }
 
-    /// Type 15 has a separate native owner; it never enters generic GO collision.
+    /// Types 11 and 15 have separate native motion and map-model owners.
     fn transport_for(
         &mut self,
         identity: WorldObjectIdentity,
         fields: GameObjectPresentation,
     ) -> Option<Rc<GameObjectTransportBehavior>> {
-        if fields.object_type() != 15 {
+        if !matches!(fields.object_type(), 11 | 15) {
             return None;
         }
         Some(Rc::clone(
@@ -619,8 +647,20 @@ impl RuntimeGameObjectPresentation {
         ))
     }
 
-    /// Samples admitted native transport routes and refreshes every dependent placement.
+    /// Retains occupied parent lifetimes from the local and remote movement
+    /// owners. Unresolved wire GUIDs are not native passenger-list membership.
+    pub(in crate::application) fn synchronize_transport_passengers(
+        &mut self,
+        parents: impl IntoIterator<Item = WorldObjectIdentity>,
+    ) {
+        self.passenger_transports.clear();
+        self.passenger_transports.extend(parents);
+    }
+
+    /// Samples native transport motion and refreshes every dependent placement.
     /// Call before collision synchronization and local/remote passenger movement.
+    /// `elapsed_ms` is the shared 6F1490 movement-frame delta, not an object's age;
+    /// non-positive signed deltas admit new handles without advancing live motion.
     ///
     /// # Errors
     /// Returns invalid route, physics, pose, or ECS publication failures.
@@ -628,11 +668,79 @@ impl RuntimeGameObjectPresentation {
         &mut self,
         world: Option<&mut ActiveWorld>,
         client_time_ms: u32,
+        elapsed_ms: u32,
     ) -> Result<(), RuntimeGameObjectError> {
         let (Some(world), Some(catalog)) = (world, self.transport_catalog.as_ref()) else {
             return Ok(());
         };
+        self.game_object_passenger_transports.clear();
+        // 712F30/4F4230 register a GameObject's resolved movement context through
+        // 74B340 -> 712EB0 -> 711AB0. It occupies the list without the unit flag
+        // used by 760720, so it still enables 7139E0's translation epsilon.
         for instance in &self.instances {
+            if let Some(parent) = world
+                .game_object_movement(instance.guid())
+                .and_then(|movement| movement.transport())
+                .filter(|parent| parent.guid != 0)
+                && world
+                    .game_object_presentation(parent.guid)
+                    .is_some_and(|fields| matches!(fields.object_type(), 11 | 15))
+                && let Some(identity) = world.object_identity(parent.guid)
+                && self
+                    .placement_resolver
+                    .resolve(world, instance.guid())
+                    .is_ok()
+            {
+                self.game_object_passenger_transports.insert(identity);
+            }
+        }
+        for instance in &self.instances {
+            if let Some(transport) = &instance.transport
+                && transport.is_animation()
+            {
+                let has_map_model = instance.resource.is_some()
+                    && instance
+                        .template
+                        .as_ref()
+                        .and_then(|binding| binding.template())
+                        .is_some();
+                if has_map_model && transport.needs_map_placement() {
+                    transport.admit_animation_map(
+                        self.placement_resolver.resolve(world, instance.guid())?,
+                    );
+                }
+                let raw_time_ms = world
+                    .game_object_movement(instance.guid())
+                    .ok_or(RuntimeGameObjectError::MissingTransportCreation {
+                        guid: instance.guid(),
+                    })?
+                    .transport_clock_ms(client_time_ms);
+                if elapsed_ms as i32 > 0 {
+                    transport.advance_animation(
+                        world,
+                        transport_animation::AnimationFrame {
+                            raw_time_ms,
+                            elapsed_ms,
+                            map_model: if has_map_model {
+                                transport_animation::AnimationMapModel::Ready
+                            } else {
+                                transport_animation::AnimationMapModel::Absent
+                            },
+                            has_passengers: self.passenger_transports.contains(&instance.identity)
+                                || self
+                                    .game_object_passenger_transports
+                                    .contains(&instance.identity),
+                        },
+                        &mut self.placement_resolver,
+                    )?;
+                }
+                if has_map_model {
+                    transport.set_map_placement(Some(
+                        self.placement_resolver.resolve(world, instance.guid())?,
+                    ));
+                }
+                continue;
+            }
             if instance.resource.is_some()
                 && let Some(transport) = &instance.transport
                 && let Some(template) = instance
@@ -646,7 +754,9 @@ impl RuntimeGameObjectPresentation {
                             .resolve_map_model_initial(world, instance.guid())?,
                     ));
                 }
-                if transport.advance(world, catalog, &template, client_time_ms)? {
+                if (elapsed_ms as i32 > 0 || transport.needs_map_placement())
+                    && transport.advance(world, catalog, &template, client_time_ms, elapsed_ms)?
+                {
                     transport.set_map_placement(Some(
                         self.placement_resolver.resolve(world, instance.guid())?,
                     ));
@@ -717,16 +827,17 @@ impl RuntimeGameObjectPresentation {
             if let (Some(transport), Some(GameObjectResource::M2(source))) =
                 (&instance.transport, instance.resource())
             {
-                transport.model.attach(
+                transport.attach_model(
                     instance.display_id(),
                     source.model(),
-                    transport.animation_phase(),
                     self.scene_time_ms.get(),
                     random,
                 )?;
                 transport
                     .model
                     .synchronize_collision(transport.map_placement(), transport.map_revision())?;
+            } else if let Some(transport) = &instance.transport {
+                transport.discard_model_sequences();
             }
         }
         Ok(())
@@ -1107,6 +1218,8 @@ impl RuntimeGameObjectPresentation {
         self.instances.clear();
         self.behaviors.clear();
         self.transport_behaviors.clear();
+        self.passenger_transports.clear();
+        self.game_object_passenger_transports.clear();
         self.scene_time_ms.set(0);
         self.placement_resolver.clear();
         self.indices.clear();

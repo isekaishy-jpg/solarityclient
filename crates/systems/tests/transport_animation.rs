@@ -8,6 +8,20 @@ use solarity_asset::{TransportAnimationNode, TransportRotationNode};
 use solarity_systems::{TransportAnimationClock, TransportAnimationError, TransportAnimationTrack};
 
 #[test]
+fn stalled_frame_start_uses_the_native_signed_anchor_comparison() -> Result<(), Box<dyn Error>> {
+    let period = Some(NonZeroU32::new(1000).ok_or("period")?);
+    let clock = TransportAnimationClock::new(period, 0, 400, 700, 0);
+    assert_eq!(clock.frame_start_ms(400, 900), 700);
+    assert_eq!(clock.frame_start_ms(0, 900), 650);
+    assert_eq!(clock.frame_start_ms(400, 1000), 750);
+    let wrapped = TransportAnimationClock::new(period, 0, 400, 20, 0);
+    assert_eq!(wrapped.frame_start_ms(400, 100), 20);
+    let signed = TransportAnimationClock::new(period, 0, 400, 0x8000_0001, 0);
+    assert_eq!(signed.frame_start_ms(400, 251), 1);
+    Ok(())
+}
+
+#[test]
 fn transport_animation_clock_matches_native_creation_reversals_and_endpoints()
 -> Result<(), Box<dyn Error>> {
     let mut clock = None;

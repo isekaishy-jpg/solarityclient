@@ -1,30 +1,40 @@
-//! Native type-15 route ownership, admission clocks, and live pose publication.
+//! Native transport behavior ownership, admission clocks, and pose publication.
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use glam::Vec3;
-use solarity_asset::{AnimationDataCatalog, TransportCatalog};
+use solarity_asset::{AnimationDataCatalog, DecodedM2Model, TransportCatalog};
 use solarity_ecs::{ActiveWorld, GameObjectPresentation, WorldObjectIdentity};
 use solarity_network::GameObjectTemplate;
 use solarity_systems::{
-    GameObjectPlacement, TransportRoute, TransportRouteClock, TransportRouteMotion,
-    TransportRouteNode, TransportRoutePhysics, TransportRouteSample, game_object_transport_pose,
+    GameObjectPlacement, GameObjectPlacementResolver, TransportRoute, TransportRouteClock,
+    TransportRouteMotion, TransportRouteNode, TransportRoutePhysics, TransportRouteSample,
+    game_object_transport_pose,
 };
 
 use super::RuntimeGameObjectError;
+use super::transport_animation::{AnimationFrame, TransportAnimationState};
 use super::transport_model::TransportMapModel;
 use crate::application::game_object_behavior::GameObjectNotification;
+use crate::application::terrain_frame::RuntimeTerrainFrameError;
+use crate::random::CrtRand;
 
 /// The native MO behavior survives model replacement and keeps its own stop clock.
 pub(super) struct GameObjectTransportBehavior {
     identity: WorldObjectIdentity,
     cached_state: Cell<u8>,
-    route: RefCell<Option<TransportState>>,
+    motion: TransportMotion,
     needs_admission: Cell<bool>,
     map_placement: Cell<Option<GameObjectPlacement>>,
     map_revision: Cell<u64>,
     pub(super) model: TransportMapModel,
+}
+
+/// Native type 11 owns a creation-time animation; type 15 awaits its route template.
+enum TransportMotion {
+    Route(RefCell<Option<TransportState>>),
+    Animation(RefCell<Option<TransportAnimationState>>),
 }
 
 /// Template-owned route geometry and the mutable clock at behavior+0x40.
@@ -36,7 +46,6 @@ struct TransportState {
     published_time_ms: u32,
     /// Behavior+0x3C is the converted passenger clock returned by virtual A8.
     published_passenger_time_ms: u32,
-    last_client_time_ms: u32,
     sample: Option<TransportRouteSample>,
 }
 
@@ -50,7 +59,11 @@ impl GameObjectTransportBehavior {
         Self {
             identity,
             cached_state: Cell::new(fields.state()),
-            route: RefCell::new(None),
+            motion: if fields.object_type() == 11 {
+                TransportMotion::Animation(RefCell::new(None))
+            } else {
+                TransportMotion::Route(RefCell::new(None))
+            },
             needs_admission: Cell::new(true),
             map_placement: Cell::new(None),
             map_revision: Cell::new(0),
@@ -62,16 +75,52 @@ impl GameObjectTransportBehavior {
     /// Flags and progress callbacks for this behavior are native no-ops.
     pub(super) fn notify(
         &self,
+        world: &mut ActiveWorld,
         fields: GameObjectPresentation,
         notification: GameObjectNotification,
-    ) {
+        catalog: Option<&TransportCatalog>,
+        client_time_ms: u32,
+        resolver: &mut GameObjectPlacementResolver,
+    ) -> Result<(), RuntimeGameObjectError> {
+        if let TransportMotion::Animation(state) = &self.motion {
+            let guid = self.identity.guid();
+            let movement = world
+                .game_object_movement(guid)
+                .ok_or(RuntimeGameObjectError::MissingTransportCreation { guid })?;
+            let raw_time_ms = movement.transport_clock_ms(client_time_ms);
+            let mut state = state.borrow_mut();
+            if notification == GameObjectNotification::Initialize && state.is_none() {
+                *state = Some(TransportAnimationState::new(
+                    world,
+                    self.identity,
+                    catalog.ok_or(RuntimeGameObjectError::MissingTransportCatalog)?,
+                    fields,
+                    raw_time_ms,
+                    resolver,
+                )?);
+            } else if notification == GameObjectNotification::State {
+                let previous = self.cached_state.replace(fields.state());
+                // 711050 admits repeated callbacks only for type 15. This cache
+                // is GO+204, distinct from the animation clock's retained state.
+                if previous != fields.state() {
+                    state
+                        .as_mut()
+                        .ok_or(RuntimeGameObjectError::MissingTransportCreation { guid })?
+                        .notify_state(fields, previous, raw_time_ms);
+                }
+            }
+            return Ok(());
+        }
         if notification != GameObjectNotification::State {
-            return;
+            return Ok(());
         }
         let previous = self.cached_state.replace(fields.state());
-        let mut state = self.route.borrow_mut();
+        let TransportMotion::Route(route) = &self.motion else {
+            return Ok(());
+        };
+        let mut state = route.borrow_mut();
         let Some(state) = state.as_mut().filter(|state| state.allow_stopping) else {
-            return;
+            return Ok(());
         };
         if previous == fields.state() {
             state.clock.set_motion(
@@ -85,6 +134,7 @@ impl GameObjectTransportBehavior {
             state.published_time_ms,
             motion(fields.state() == 1),
         );
+        Ok(())
     }
 
     /// 710190 reapplies admission progress when a new map-model handle arrives.
@@ -92,8 +142,17 @@ impl GameObjectTransportBehavior {
         self.needs_admission.set(true);
         self.model.detach();
         self.map_placement.set(None);
-        if let Some(state) = self.route.borrow_mut().as_mut() {
-            state.sample = None;
+        match &self.motion {
+            TransportMotion::Route(route) => {
+                if let Some(state) = route.borrow_mut().as_mut() {
+                    state.sample = None;
+                }
+            }
+            TransportMotion::Animation(animation) => {
+                if let Some(state) = animation.borrow_mut().as_mut() {
+                    state.detach_model();
+                }
+            }
         }
     }
 
@@ -117,18 +176,96 @@ impl GameObjectTransportBehavior {
 
     /// 959D00 returns the last successful 7134A0/714240 phase, initially zero.
     pub(super) fn passenger_time_ms(&self) -> u32 {
-        self.route
-            .borrow()
-            .as_ref()
-            .map_or(0, |state| state.published_passenger_time_ms)
+        match &self.motion {
+            TransportMotion::Route(route) => route
+                .borrow()
+                .as_ref()
+                .map_or(0, |state| state.published_passenger_time_ms),
+            TransportMotion::Animation(animation) => animation
+                .borrow()
+                .as_ref()
+                .map_or(0, |state| state.passenger_time_ms),
+        }
     }
 
     pub(super) fn animation_phase(&self) -> Option<u32> {
-        self.route
-            .borrow()
-            .as_ref()?
-            .sample
-            .map(|sample| sample.animation_id)
+        match &self.motion {
+            TransportMotion::Route(route) => route
+                .borrow()
+                .as_ref()?
+                .sample
+                .map(|sample| sample.animation_id),
+            TransportMotion::Animation(animation) => animation.borrow().as_ref()?.sequence_id(),
+        }
+    }
+
+    /// Dispatch every key transition in native sampling order. A stalled type-11
+    /// frame can select two different sequences before the scene is presented.
+    pub(super) fn attach_model(
+        &self,
+        display_id: u32,
+        model: &Arc<DecodedM2Model>,
+        scene_time_ms: u32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let TransportMotion::Animation(animation) = &self.motion else {
+            return self.model.attach(
+                display_id,
+                model,
+                self.animation_phase(),
+                scene_time_ms,
+                random,
+            );
+        };
+        self.model
+            .attach(display_id, model, None, scene_time_ms, random)?;
+        if let Some(state) = animation.borrow_mut().as_mut() {
+            while let Some(sequence) = state.take_sequence() {
+                self.model
+                    .attach(display_id, model, Some(sequence), scene_time_ms, random)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Dedicated WMO handles consume key changes without an M2 playback owner.
+    pub(super) fn discard_model_sequences(&self) {
+        if let TransportMotion::Animation(animation) = &self.motion
+            && let Some(state) = animation.borrow_mut().as_mut()
+        {
+            state.discard_sequences();
+        }
+    }
+
+    pub(super) fn is_animation(&self) -> bool {
+        matches!(&self.motion, TransportMotion::Animation(_))
+    }
+
+    /// Type-11 frames run even before asynchronous resource and template admission.
+    pub(super) fn advance_animation(
+        &self,
+        world: &mut ActiveWorld,
+        frame: AnimationFrame,
+        resolver: &mut GameObjectPlacementResolver,
+    ) -> Result<(), RuntimeGameObjectError> {
+        let TransportMotion::Animation(animation) = &self.motion else {
+            return Ok(());
+        };
+        let guid = self.identity.guid();
+        let fields = world
+            .game_object_presentation(guid)
+            .ok_or(RuntimeGameObjectError::MissingTransportCreation { guid })?;
+        animation
+            .borrow_mut()
+            .as_mut()
+            .ok_or(RuntimeGameObjectError::MissingTransportCreation { guid })?
+            .advance(world, guid, fields, frame, resolver)
+    }
+
+    /// 70B5C0 replaces the new type-11 handle's yaw matrix with virtual C4's pose.
+    pub(super) fn admit_animation_map(&self, placement: GameObjectPlacement) {
+        self.set_map_placement(Some(placement));
+        self.needs_admission.set(false);
     }
 
     /// 711B50 builds one route from the exact template and stored DBC controls.
@@ -140,6 +277,7 @@ impl GameObjectTransportBehavior {
         catalog: &TransportCatalog,
         template: &GameObjectTemplate,
         client_time_ms: u32,
+        elapsed_ms: u32,
     ) -> Result<bool, RuntimeGameObjectError> {
         let guid = self.identity.guid();
         if world.object_identity(guid) != Some(self.identity) {
@@ -152,14 +290,12 @@ impl GameObjectTransportBehavior {
             return Ok(false);
         };
         let raw_time_ms = movement.transport_clock_ms(client_time_ms);
-        let mut state = self.route.borrow_mut();
+        let TransportMotion::Route(route) = &self.motion else {
+            return Ok(false);
+        };
+        let mut state = route.borrow_mut();
         if state.is_none() {
-            *state = Some(TransportState::new(
-                catalog,
-                template,
-                fields,
-                client_time_ms,
-            )?);
+            *state = Some(TransportState::new(catalog, template, fields)?);
         }
         let Some(state) = state.as_mut() else {
             return Ok(false);
@@ -168,9 +304,8 @@ impl GameObjectTransportBehavior {
             state.admit(fields, raw_time_ms);
             0
         } else {
-            client_time_ms.wrapping_sub(state.last_client_time_ms)
+            elapsed_ms
         };
-        state.last_client_time_ms = client_time_ms;
         let clock_ms = state.clock.clock_ms(&state.route, raw_time_ms, elapsed_ms);
         let Some(sample) = state.route.sample(clock_ms) else {
             return Ok(false);
@@ -197,7 +332,6 @@ impl TransportState {
         catalog: &TransportCatalog,
         template: &GameObjectTemplate,
         fields: GameObjectPresentation,
-        client_time_ms: u32,
     ) -> Result<Self, RuntimeGameObjectError> {
         let properties = template.properties();
         let nodes: Vec<_> = catalog
@@ -230,7 +364,6 @@ impl TransportState {
             allow_stopping: properties[8] != 0,
             published_time_ms: 0,
             published_passenger_time_ms: 0,
-            last_client_time_ms: client_time_ms,
             sample: None,
         })
     }

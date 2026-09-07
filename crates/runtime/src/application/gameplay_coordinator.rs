@@ -54,6 +54,9 @@ const PING_INTERVAL: Duration = Duration::from_secs(30);
 /// A failure in active-world network or ECS ownership.
 #[derive(Debug, Error)]
 pub enum RuntimeGameplayError {
+    /// A creation or field callback could not update its GameObject behavior.
+    #[error(transparent)]
+    GameObject(#[from] crate::application::game_object_coordinator::RuntimeGameObjectError),
     /// A retained game-object animation rejected a field callback.
     #[error(transparent)]
     ObjectAnimation(#[from] crate::application::terrain_frame::RuntimeTerrainFrameError),
@@ -111,6 +114,7 @@ type GameObjectObserver<'a> = dyn FnMut(
         &mut ActiveWorld,
         solarity_ecs::WorldObjectIdentity,
         GameObjectNotification,
+        u32,
     ) -> Result<(), RuntimeGameplayError>
     + 'a;
 
@@ -165,7 +169,7 @@ impl RuntimeGameplayCoordinator {
         network: InWorldSession<TcpStream>,
         setup_packets: Vec<WorldServerPacket>,
     ) -> Result<(), RuntimeGameplayError> {
-        self.begin_with_game_objects(runtime, network, setup_packets, &mut |_, _, _| Ok(()))
+        self.begin_with_game_objects(runtime, network, setup_packets, &mut |_, _, _, _| Ok(()))
     }
 
     pub(in crate::application) fn begin_with_game_objects(
@@ -242,7 +246,7 @@ impl RuntimeGameplayCoordinator {
     ///
     /// Returns a network, decode, retention, or ECS update failure.
     pub fn service(&mut self) -> Result<usize, RuntimeGameplayError> {
-        self.service_with_game_objects(&mut |_, _, _| Ok(()))
+        self.service_with_game_objects(&mut |_, _, _, _| Ok(()))
     }
 
     pub(in crate::application) fn service_with_game_objects(
@@ -845,7 +849,7 @@ fn dispatch_setup_packet<S>(
             gameplay.world_mut(),
             &updates,
             timestamp_ms,
-            &mut |world, identity, event| notify(world, identity, event),
+            &mut |world, identity, event| notify(world, identity, event, timestamp_ms),
         )?;
         player_control.synchronize(gameplay.world(), timestamp_ms);
         return Ok(());
@@ -916,7 +920,7 @@ fn dispatch_world_packet(
             world,
             &updates,
             timestamp_ms,
-            &mut |world, identity, event| notify(world, identity, event),
+            &mut |world, identity, event| notify(world, identity, event, timestamp_ms),
         )?;
         player_control.synchronize(world, timestamp_ms);
         return Ok(true);

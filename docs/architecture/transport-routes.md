@@ -143,5 +143,7 @@ shared render/collision matrices, moved geometry, stale registration, removal,
 GUID reuse, initial scale 1, and map-model ordering before generic callbacks.
 They also distinguish retained empty routes from repeated station samples when
 rebuilding destination order.
-Local-player attachment and transport-relative movement remain the next
-integration boundaries.
+Local and remote movement now retain admitted parent lifetimes, follow current
+transport frames, and publish passenger clocks. Animated type-11 ownership is
+documented in [transport-animation.md](transport-animation.md), including the
+remaining ordinary-model and swept passenger collision-push boundaries.

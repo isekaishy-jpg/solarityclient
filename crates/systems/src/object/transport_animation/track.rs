@@ -41,6 +41,20 @@ impl TransportAnimationSample {
         self,
         base_position: Vec3,
     ) -> Result<GameObjectAnimatedPose, GameObjectPlacementError> {
+        self.pose_with_transport_parent(base_position, None)
+    }
+
+    /// 4F43B0 stores the sampled local quaternion before 4F45B0 composes it with
+    /// the actual movement parent's rotation. This parent is distinct from the
+    /// GAMEOBJECT_PARENTROTATION field already applied during track sampling.
+    ///
+    /// # Errors
+    /// Returns a placement error for non-finite or singular sampled inputs.
+    pub fn pose_with_transport_parent(
+        self,
+        base_position: Vec3,
+        transport_parent: Option<[f32; 4]>,
+    ) -> Result<GameObjectAnimatedPose, GameObjectPlacementError> {
         if !base_position.is_finite()
             || !self.offset.is_finite()
             || !self.rotation.into_iter().all(f32::is_finite)
@@ -48,9 +62,10 @@ impl TransportAnimationSample {
             return Err(GameObjectPlacementError::InvalidTransform);
         }
         let packed = pack_rotation(self.rotation);
+        let local = unpack_game_object_rotation(packed);
         let placement = GameObjectPlacement::new(
             base_position + self.offset,
-            unpack_game_object_rotation(packed),
+            transport_parent.map_or(local, |parent| compose_rotation(local, parent)),
             1.0,
         )?;
         Ok(GameObjectAnimatedPose::new(placement.matrix(), packed))
@@ -111,6 +126,12 @@ impl TransportAnimationTrack {
     #[must_use]
     pub const fn period_ms(&self) -> Option<NonZeroU32> {
         self.period_ms
+    }
+
+    /// 7139E0 skips one loaded-model frame only when both authored arrays are empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty() && self.rotations.is_empty()
     }
 
     /// Samples the exact native intervals and parent quaternion multiplication.

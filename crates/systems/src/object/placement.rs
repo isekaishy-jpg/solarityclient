@@ -94,12 +94,22 @@ impl GameObjectPlacement {
         self.facing
     }
 
-    /// Admits the transport's full matrix, retaining its separately packed rotation.
-    fn animated(pose: GameObjectAnimatedPose) -> Result<Self, GameObjectPlacementError> {
+    /// Admits the transport's full matrix, retaining its separately packed local
+    /// rotation and the actual movement parent's quaternion when present.
+    ///
+    /// # Errors
+    /// Returns an error for a non-finite or singular matrix or invalid quaternion.
+    pub fn from_animated_pose(
+        pose: GameObjectAnimatedPose,
+        parent_rotation: Option<[f32; 4]>,
+    ) -> Result<Self, GameObjectPlacementError> {
         // 7134A0 sends this matrix directly to 77FDD0. The map-model placement
         // does not apply OBJECT_FIELD_SCALE_X a second time (7B5870/7B67B0).
         let matrix = pose.matrix();
-        let rotation = unpack_game_object_rotation(pose.packed_rotation());
+        let local = unpack_game_object_rotation(pose.packed_rotation());
+        // 712E20/4F45B0 retain a local packed quaternion even when virtual C4
+        // already supplies a complete world matrix from the behavior.
+        let rotation = parent_rotation.map_or(local, |parent| compose_rotation(local, parent));
         if !rotation.into_iter().all(f32::is_finite) {
             return Err(GameObjectPlacementError::InvalidTransform);
         }
@@ -170,6 +180,14 @@ struct CachedPlacement {
     placement: GameObjectPlacement,
 }
 
+/// Which owner position supplies a native placement query; ancestors always use
+/// their current behavior matrix and the owner's current packed rotation survives.
+#[derive(Clone, Copy)]
+enum OwnerPosition {
+    Current,
+    AnimationBase,
+}
+
 impl GameObjectPlacementResolver {
     /// Resolves the current replicated placement through its GameObject parents.
     ///
@@ -186,7 +204,21 @@ impl GameObjectPlacementResolver {
         world: &ActiveWorld,
         guid: u64,
     ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
-        self.resolve_with_scale(world, guid, None)
+        self.resolve_with_scale(world, guid, None, OwnerPosition::Current)
+    }
+
+    /// Resolves 4F4460's original position and 4F45B0's current quaternion for
+    /// 711F20/7139E0 sampling. Only this owner's animated translation is ignored;
+    /// an actual transport parent still contributes its live matrix and rotation.
+    ///
+    /// # Errors
+    /// Returns the same dependency and transform errors as [`Self::resolve`].
+    pub fn resolve_animation_base(
+        &mut self,
+        world: &ActiveWorld,
+        guid: u64,
+    ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
+        self.resolve_with_scale(world, guid, Some(1.0), OwnerPosition::AnimationBase)
     }
 
     /// Constructs 7110B0/783500's initial map handle from world position and yaw.
@@ -200,13 +232,16 @@ impl GameObjectPlacementResolver {
         world: &ActiveWorld,
         guid: u64,
     ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
-        let placement = self.resolve_with_scale(world, guid, Some(1.0))?;
-        GameObjectPlacement::animated(game_object_transport_pose(
-            placement.matrix.w_axis.truncate(),
-            placement.facing(),
-            0.0,
-            0.0,
-        )?)
+        let placement = self.resolve_with_scale(world, guid, Some(1.0), OwnerPosition::Current)?;
+        GameObjectPlacement::from_animated_pose(
+            game_object_transport_pose(
+                placement.matrix.w_axis.truncate(),
+                placement.facing(),
+                0.0,
+                0.0,
+            )?,
+            None,
+        )
     }
 
     /// Initial map handles replace only the requested owner's scale; parent
@@ -216,6 +251,7 @@ impl GameObjectPlacementResolver {
         world: &ActiveWorld,
         guid: u64,
         owner_scale: Option<f32>,
+        owner_position: OwnerPosition,
     ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
         self.chain.clear();
         let mut current = guid;
@@ -245,6 +281,12 @@ impl GameObjectPlacementResolver {
         for &owner in self.chain.iter().rev() {
             let movement = world.game_object_movement(owner).unwrap_or_default();
             let animated = world.game_object_animated_pose(owner);
+            let packed_rotation = animated.map_or(
+                movement.packed_rotation(),
+                GameObjectAnimatedPose::packed_rotation,
+            );
+            let animated = animated
+                .filter(|_| owner != guid || matches!(owner_position, OwnerPosition::Current));
             let local_position = if let Some(pose) = animated {
                 pose.matrix().w_axis.truncate()
             } else if parent.is_some() {
@@ -272,10 +314,7 @@ impl GameObjectPlacementResolver {
                 .object_identity(owner)
                 .ok_or(GameObjectPlacementError::MissingObject { guid: owner })?;
             let inputs = PlacementInputs {
-                packed_rotation: animated.map_or(
-                    movement.packed_rotation(),
-                    GameObjectAnimatedPose::packed_rotation,
-                ),
+                packed_rotation,
                 local_position: local_position.to_array().map(f32::to_bits),
                 scale: scale.to_bits(),
                 parent: parent.map(|parent| {
@@ -294,7 +333,7 @@ impl GameObjectPlacementResolver {
                 parent = Some(cached.placement);
                 continue;
             }
-            let local = unpack_game_object_rotation(movement.packed_rotation());
+            let local = unpack_game_object_rotation(packed_rotation);
             let (position, rotation) = if let Some(parent) = parent {
                 (
                     transform_point(parent.matrix, local_position),
@@ -304,7 +343,7 @@ impl GameObjectPlacementResolver {
                 (local_position, local)
             };
             let mut placement = if let Some(pose) = animated {
-                GameObjectPlacement::animated(pose)?
+                GameObjectPlacement::from_animated_pose(pose, parent.map(|parent| parent.rotation))?
             } else {
                 GameObjectPlacement::new(position, rotation, scale)?
             };
