@@ -11,6 +11,57 @@ use solarity_media::{
 
 use crate::support::{Fixture, FixtureFile, pcm_wav, sdl_test_lock};
 
+/// Measures the full 512-slot adapter with 128 changing positional voice gains.
+#[test]
+#[ignore = "manual mixer performance measurement"]
+fn backend_many_voice_gain_benchmark() -> Result<(), Box<dyn Error>> {
+    let wav = pcm_wav(8_000, &vec![8_000; 8_000])?;
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Sound\\Test\\Gain.wav",
+        bytes: &wav,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let encoded = SoundCache::new().load(&mut store, &AssetPath::new("Sound/Test/Gain.wav")?)?;
+    let _sdl_test = sdl_test_lock();
+    let mut decoder = SoundDecoder::new()?;
+    let sound = decoder.load(&encoded, SoundDecodeMode::Predecoded)?;
+    let output = SoundOutput::open(SoundOutputTarget::Memory)?;
+    let mut backend = SoundBackend::new(
+        &output,
+        NonZeroU16::new(64).ok_or("software channel count is zero")?,
+        NonZeroU16::new(512).ok_or("voice capacity is zero")?,
+    )?;
+    let voices = (0..128)
+        .map(|_| {
+            backend
+                .play(&decoder, sound, 0.5, true, SoundVoicePriority::DEFAULT)
+                .map(|playback| playback.voice())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let started = std::time::Instant::now();
+    for frame in 0..100 {
+        for (index, voice) in voices.iter().enumerate() {
+            backend.set_gain(*voice, 0.25 + ((frame + index) % 128) as f32 / 256.0)?;
+        }
+    }
+    eprintln!(
+        "128 changing voices, 512 slots: {:?} per frame",
+        started.elapsed() / 100
+    );
+    assert_eq!(
+        voices
+            .iter()
+            .filter(|voice| backend.is_virtual(**voice).is_ok_and(|v| !v))
+            .count(),
+        64
+    );
+    Ok(())
+}
+
 /// Priority chooses the one real voice while both virtual timelines advance.
 #[test]
 fn memory_output_preserves_explicit_voice_capacity() -> Result<(), Box<dyn Error>> {

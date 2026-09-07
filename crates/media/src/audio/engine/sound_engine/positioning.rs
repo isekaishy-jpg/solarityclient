@@ -62,8 +62,13 @@ impl SoundEngine<'_> {
         let mut voice = self.active_voices[index];
         voice.spatial_source = Some(PositionedSoundSource { entry_id, position });
         voice.spatial_gain = mix.three_dimensional_gain();
-        self.backend
-            .set_gain(handle, applied_gain(self.settings, voice))?;
+        // Listener direction may change while attenuation stays constant,
+        // especially for sources beyond the cutoff. Only the panner then needs
+        // an SDL update; unchanged audibility cannot change voice ordering.
+        if voice.spatial_gain != self.active_voices[index].spatial_gain {
+            self.backend
+                .set_gain(handle, applied_gain(self.settings, voice))?;
+        }
         self.backend
             .set_spatial_position(handle, mix.backend_position())?;
         self.active_voices[index] = voice;

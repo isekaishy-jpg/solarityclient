@@ -410,6 +410,9 @@ impl<'output> SoundEngine<'output> {
             .position(|voice| voice.handle == handle)
             .ok_or(SoundEngineError::UnknownVoice)?;
         let mut voice = self.active_voices[index];
+        if voice.runtime_gain == runtime_gain {
+            return Ok(());
+        }
         voice.runtime_gain = runtime_gain;
         self.backend
             .set_gain(handle, applied_gain(self.settings, voice))?;
@@ -482,6 +485,9 @@ impl<'output> SoundEngine<'output> {
         self.collect_stopped_unmanaged_voices()?;
         for voice in &mut self.active_voices {
             let duck_gain = ducking.category_gain(voice.category, voice.duck_source);
+            if voice.duck_gain == duck_gain {
+                continue;
+            }
             let mut updated = *voice;
             updated.duck_gain = duck_gain;
             self.backend

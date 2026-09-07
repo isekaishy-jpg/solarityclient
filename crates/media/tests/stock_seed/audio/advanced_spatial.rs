@@ -36,7 +36,7 @@ fn character_listener_uses_native_back_and_up_offsets() -> Result<(), Box<dyn Er
 
 /// World coordinates become SDL right/up/back coordinates at unit distance.
 #[test]
-fn advanced_mix_uses_camera_basis_and_fmod_inverse_rolloff() -> Result<(), Box<dyn Error>> {
+fn advanced_mix_uses_camera_basis_and_stock_rolloff() -> Result<(), Box<dyn Error>> {
     let (mut store, _fixture) = spatial_fixture()?;
     let catalog = SpatialSoundCatalog::load(&mut store)?;
     let resolved = catalog.resolve(90)?;
@@ -60,7 +60,10 @@ fn advanced_mix_uses_camera_basis_and_fmod_inverse_rolloff() -> Result<(), Box<d
     assert_close(coordinates[1], 0.0);
     assert_close(coordinates[2], -core::f32::consts::FRAC_1_SQRT_2);
     assert_close(mix.pan_level(), (emitter.length() - 8.0) / 88.0);
-    assert_close(mix.distance_gain(), 4.0 / emitter.length());
+    assert_close(
+        mix.distance_gain(),
+        4.0 / ((emitter.length() - 4.0) * 4.0 + 4.0),
+    );
     assert_close(mix.cone_gain(), 1.0);
     assert_close(
         mix.three_dimensional_gain(),
@@ -83,8 +86,8 @@ fn positioned_mix_uses_sound_entry_distance_without_advanced_policy() -> Result<
 
     assert_eq!(mix.pan_level(), 1.0);
     assert_eq!(mix.cone_gain(), 1.0);
-    assert_close(mix.distance_gain(), 0.5);
-    assert_close(mix.three_dimensional_gain(), 0.5);
+    assert_close(mix.distance_gain(), 0.2);
+    assert_close(mix.three_dimensional_gain(), 0.2);
     assert_eq!(
         mix.backend_position()
             .ok_or("positioned emitter omitted its backend coordinate")?
@@ -171,12 +174,23 @@ fn advanced_listener_rejects_invalid_bases() {
 
 /// Mounts the two exact build-12340 sound tables used by advanced policy.
 fn spatial_fixture() -> Result<(AssetStore, Fixture), Box<dyn Error>> {
-    let sound_entries = sound_entries_fixture_with_advanced(
+    spatial_fixture_with_range(None)
+}
+
+/// Supplies exact cutoff boundary inputs to the original-code regression.
+fn spatial_fixture_with_range(
+    range: Option<[u32; 2]>,
+) -> Result<(AssetStore, Fixture), Box<dyn Error>> {
+    let mut sound_entries = sound_entries_fixture_with_advanced(
         42,
         [("Wind.wav", 1), ("", 0), ("", 0)],
         "Sound\\Ambience",
         90,
     );
+    if let Some([minimum, maximum]) = range {
+        sound_entries[20 + 26 * 4..20 + 27 * 4].copy_from_slice(&minimum.to_le_bytes());
+        sound_entries[20 + 27 * 4..20 + 28 * 4].copy_from_slice(&maximum.to_le_bytes());
+    }
     let advanced_entries = advanced_sound_entries_fixture(90, 42);
     let fixture = Fixture::new(&[
         FixtureFile {
@@ -195,6 +209,35 @@ fn spatial_fixture() -> Result<(AssetStore, Fixture), Box<dyn Error>> {
         Locale::EnUs,
     )?)?;
     Ok((store, fixture))
+}
+
+/// Original 8782B0 output includes zero/equal ranges and adjacent cutoff floats.
+#[test]
+fn spatial_distance_matches_native_custom_rolloff() -> Result<(), Box<dyn Error>> {
+    let listener = AdvancedSoundListener::new(Vec3::ZERO, Vec3::X, -Vec3::Y, Vec3::Z)?;
+    let mut checked = 0;
+    for line in include_str!("../../fixtures/sound-distance-native.txt").lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let values = line
+            .split_ascii_whitespace()
+            .map(|value| u32::from_str_radix(value, 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (mut store, _fixture) = spatial_fixture_with_range(Some([values[0], values[1]]))?;
+        let catalog = SpatialSoundCatalog::load(&mut store)?;
+        let resolved = catalog.resolve(90)?;
+        let mix = AdvancedSoundSpatialMix::evaluate_positioned(
+            listener,
+            Vec3::X * f32::from_bits(values[2]),
+            resolved.sound_entry(),
+        )?;
+        let expected = f32::from_bits(values[3]);
+        assert_eq!(mix.distance_gain().to_bits(), expected.to_bits(), "{line}");
+        checked += 1;
+    }
+    assert_eq!(checked, 88);
+    Ok(())
 }
 
 /// Compares recovered floating-point policy with a tight arithmetic tolerance.

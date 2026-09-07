@@ -240,19 +240,21 @@ impl RuntimeWorldUi {
         let mut manager =
             FrameManager::start_shared(assets.clone(), environment, cvar_values, addon_catalog)?;
         let mut startup_errors = Vec::new();
-        for event in [
-            "VARIABLES_LOADED",
-            // Chat settings are available before the world becomes visible.
-            // Stock applies colors and subscribes each tab on this event.
-            "UPDATE_CHAT_WINDOWS",
-            "PLAYER_LOGIN",
-            "UPDATE_BINDINGS",
-            "PLAYER_ENTERING_WORLD",
-        ] {
-            if let Err(error) = manager.dispatch_event(event, &UiEventPayload::empty()) {
-                startup_errors.push(error.into());
+        manager.with_suppressed_sound_entries(|manager| {
+            for event in [
+                "VARIABLES_LOADED",
+                // Chat settings are available before the world becomes visible.
+                // Stock applies colors and subscribes each tab on this event.
+                "UPDATE_CHAT_WINDOWS",
+                "PLAYER_LOGIN",
+                "UPDATE_BINDINGS",
+                "PLAYER_ENTERING_WORLD",
+            ] {
+                if let Err(error) = manager.dispatch_event(event, &UiEventPayload::empty()) {
+                    startup_errors.push(error.into());
+                }
             }
-        }
+        });
         let mut texture_cache = BlpTextureCache::new();
         let mut texture_residency = RuntimeUiResidency::new();
         let frame = RuntimeUiFrame::prepare_frame(

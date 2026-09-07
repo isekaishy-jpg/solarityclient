@@ -3212,8 +3212,13 @@ fn register_sound_globals(
         "PlaySound",
         lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
             let sound = required_string(lua, value, "sound resource")?;
-            state
-                .borrow_mut()
+            let mut intent = state.borrow_mut();
+            // 4C6A40 rejects a null-position SoundEntries request while
+            // FrameXML construction or world-entry dispatch holds 4CFB80.
+            if intent.sound_entries_suppressed {
+                return Ok(());
+            }
+            intent
                 .actions
                 .push_back(UiGlueMediaAction::PlaySound(sound));
             Ok(())

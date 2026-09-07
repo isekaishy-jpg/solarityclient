@@ -575,24 +575,21 @@ impl RuntimeSoundCoordinator {
     fn fade_glue_ambience(&mut self, seconds: f32) -> Result<(), RuntimeSoundError> {
         if let Some(voice) = self.glue_ambience.take() {
             self.engine
-                .with_engine_mut(|engine| -> Result<(), SoundEngineError> {
-                    if let Some(load) = voice.load {
-                        engine.cancel_load(load);
-                    }
-                    if let Some(handle) = voice._handle {
-                        match engine.voice_fade(handle) {
-                            Ok(mut fade) => {
-                                fade.retarget_seconds(SoundFadeDirection::Out, seconds);
-                                engine.set_voice_fade(handle, fade)?;
-                            }
-                            Err(SoundEngineError::UnknownVoice) => {}
-                            Err(error) => return Err(error),
-                        }
-                    }
-                    Ok(())
-                })?;
+                .with_engine_mut(|engine| voice.fade_out(engine, seconds))?;
         }
         Ok(())
+    }
+
+    /// Retires Glue music when character entry finishes (4DAB40 state 10,
+    /// 4DB91F). Native 9860E0 removes the repeat callback and supplies a
+    /// three-second fade; pending payloads must not outlive the released owner.
+    pub(crate) fn enter_world(&mut self) -> Result<(), RuntimeSoundError> {
+        self.glue_music_repeat = None;
+        if let Some(voice) = self.glue_music.take() {
+            self.engine
+                .with_engine_mut(|engine| voice.fade_out(engine, 3.0))?;
+        }
+        self.stop_glue_ambience()
     }
 
     /// Releases finished script/Glue identities so later calls can play again.
@@ -840,6 +837,28 @@ impl RuntimeGlueVoice {
         if let Some(voice) = self._handle {
             match engine.stop(voice) {
                 Ok(()) | Err(SoundEngineError::UnknownVoice) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    /// Cancels pending playback or leaves an admitted tail with the engine.
+    fn fade_out(
+        self,
+        engine: &mut solarity_media::SoundEngine<'_>,
+        seconds: f32,
+    ) -> Result<(), SoundEngineError> {
+        if let Some(load) = self.load {
+            engine.cancel_load(load);
+        }
+        if let Some(handle) = self._handle {
+            match engine.voice_fade(handle) {
+                Ok(mut fade) => {
+                    fade.retarget_seconds(SoundFadeDirection::Out, seconds);
+                    engine.set_voice_fade(handle, fade)?;
+                }
+                Err(SoundEngineError::UnknownVoice) => {}
                 Err(error) => return Err(error),
             }
         }

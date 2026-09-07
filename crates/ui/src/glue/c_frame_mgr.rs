@@ -78,6 +78,8 @@ impl FrameManager {
         cvar_values: &[(String, String)],
         addon_catalog: &AddonCatalog,
     ) -> Result<Self, GlueError> {
+        // 52A980 brackets the complete FrameXML load with 4CFB80/4CFB90.
+        let _sound_admission = crate::script::UiSoundSuppression::new(environment.media_intent());
         let (catalog, bindings) = {
             let mut store = assets.borrow_mut();
             let catalog = UiBindingCatalog::load_builtin(&mut store)?;
@@ -268,7 +270,18 @@ impl FrameManager {
         name: &str,
         payload: &UiEventPayload,
     ) -> Result<UiEventDispatch, UiEventError> {
+        // 528010 holds the same bracket on every world-entry notification,
+        // including entry after a transfer when FrameXML is already resident.
+        let _sound_admission =
+            (name == "PLAYER_ENTERING_WORLD").then(|| self.owner.suppress_sound_entries());
         self.owner.dispatch_frame_event(name, payload)
+    }
+
+    /// Runs startup event publication under stock's non-positional sound gate.
+    /// Nested transactions restore their enclosing gate even when Lua fails.
+    pub fn with_suppressed_sound_entries<T>(&mut self, publish: impl FnOnce(&mut Self) -> T) -> T {
+        let _sound_admission = self.owner.suppress_sound_entries();
+        publish(self)
     }
 
     /// Retains a resolved gameplay combat event and delivers filtered and

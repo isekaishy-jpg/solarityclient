@@ -1,14 +1,18 @@
 //! Native model callback ownership reaches the actual archive worker and mixer.
 
-use super::super::{RuntimeSoundLoader, SoundCvarSource, SoundPolicy, output::RuntimeSoundOutput};
+use super::super::{
+    RuntimeGlueVoice, RuntimeGlueVoiceIdentity, RuntimeSoundLoader, SoundCvarSource, SoundPolicy,
+    output::RuntimeSoundOutput,
+};
 use super::{M2SoundKind, M2SoundOwner, ModelPlayback, RuntimeM2Event, RuntimeSoundCoordinator};
 use crate::random::BlizzardRand;
 use glam::Vec3;
 use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
 use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_media::{
-    AdvancedSoundService, OwnedSoundEngine, SoundOutputTarget, SoundSoftwareChannelCount,
-    SoundVoiceState,
+    AdvancedSoundService, OwnedSoundEngine, SoundChannel, SoundConcurrencyMode, SoundEngineError,
+    SoundLoopMode, SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundSoftwareChannelCount,
+    SoundVariationMode, SoundVoiceState,
 };
 use solarity_rendering::{WorldCamera, WorldCameraFrame};
 use std::error::Error;
@@ -126,8 +130,83 @@ fn stock_model_loops_obey_callback_and_model_lifetimes() -> Result<(), Box<dyn E
     for kind in [M2SoundKind::Doodad, M2SoundKind::GameObject] {
         exercise_loop(&mut sound, &cpu, camera, &mut random, kind)?;
     }
+    exercise_glue_world_handoff(&mut sound, &mut random)?;
     sound.shutdown()?;
     cpu.shutdown()?;
+    Ok(())
+}
+
+/// 4DAB40 releases the repeating Glue owner and leaves only its three-second tail.
+fn exercise_glue_world_handoff(
+    sound: &mut RuntimeSoundCoordinator,
+    random: &mut BlizzardRand,
+) -> Result<(), Box<dyn Error>> {
+    let request = SoundPlayRequest::new(
+        15168,
+        SoundChannel::MUSIC,
+        SoundVariationMode::Random,
+        SoundLoopMode::Loop,
+        SoundConcurrencyMode::Concurrent,
+    );
+    let pending = sound
+        .engine
+        .with_engine_mut(|engine| engine.begin_load(request, &mut || 0))?
+        .ok_or("music load was suppressed")?;
+    let pending_handle = pending.handle();
+    sound.glue_music =
+        sound.queue_glue_voice(RuntimeGlueVoiceIdentity::SoundEntry(15168), Some(pending));
+    sound.glue_music_repeat = Some(15168);
+    sound.enter_world()?;
+    assert!(
+        !sound
+            .engine
+            .with_engine(|engine| engine.is_load_pending(pending_handle))
+    );
+    sound.repeat_glue_music(random)?;
+    assert!(sound.glue_music.is_none());
+    assert!(sound.glue_music_repeat.is_none());
+
+    let playback = sound.engine.with_engine_mut(|engine| {
+        engine.play(&mut sound.assets.borrow_mut(), request, &mut || 0)
+    })?;
+    let SoundPlayback::Started(voice) = playback else {
+        return Err("music was suppressed".into());
+    };
+    sound.glue_music =
+        RuntimeGlueVoice::started(RuntimeGlueVoiceIdentity::SoundEntry(15168), playback);
+    sound.glue_music_repeat = Some(15168);
+    sound.enter_world()?;
+    sound.repeat_glue_music(random)?;
+    assert!(sound.glue_music.is_none());
+    assert!(sound.glue_music_repeat.is_none());
+    sound
+        .engine
+        .with_engine_mut(|engine| engine.advance_fades(Duration::from_secs(1)))?;
+    let gain = sound
+        .engine
+        .with_engine(|engine| engine.voice_fade(voice))?
+        .gain();
+    assert!((gain - 2.0 / 3.0).abs() < 1.0e-6);
+    sound
+        .engine
+        .with_engine_mut(|engine| engine.advance_fades(Duration::from_secs(2)))?;
+    // Native envelopes store their gain to f32 after each tick. The rounded
+    // one-third decrement can leave a tiny positive remainder at three seconds;
+    // the following tick must retire it instead of restarting the Glue kit.
+    assert!(
+        sound
+            .engine
+            .with_engine(|engine| engine.voice_fade(voice))?
+            .gain()
+            < 1.0e-6
+    );
+    sound
+        .engine
+        .with_engine_mut(|engine| engine.advance_fades(Duration::from_millis(1)))?;
+    assert!(matches!(
+        sound.engine.with_engine(|engine| engine.voice_state(voice)),
+        Err(SoundEngineError::UnknownVoice)
+    ));
     Ok(())
 }
 

@@ -491,6 +491,8 @@ pub enum UiGlueMediaAction {
 /// Retained stock audio state and ordered requests awaiting the media backend.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UiGlueMediaIntent {
+    /// Native 4CFB80/4CFB90 admission bracket for non-positional sound entries.
+    sound_entries_suppressed: bool,
     /// Physical drivers; `None` means no game sound system is attached.
     output_devices: Option<Vec<String>>,
     pub(crate) music: Option<String>,
@@ -499,6 +501,27 @@ pub struct UiGlueMediaIntent {
     movie: Option<UiGlueMovieRequest>,
     movie_stop_completion: Option<usize>,
     next_movie_generation: u64,
+}
+
+/// Restores the enclosing sound-admission state after a nested UI transaction.
+pub(crate) struct UiSoundSuppression {
+    state: Rc<RefCell<UiGlueMediaIntent>>,
+    previous: bool,
+}
+
+impl UiSoundSuppression {
+    /// Suppresses new entry requests without changing voices or saved CVars.
+    pub(crate) fn new(state: Rc<RefCell<UiGlueMediaIntent>>) -> Self {
+        let previous = state.borrow().sound_entries_suppressed;
+        state.borrow_mut().sound_entries_suppressed = true;
+        Self { state, previous }
+    }
+}
+
+impl Drop for UiSoundSuppression {
+    fn drop(&mut self) {
+        self.state.borrow_mut().sound_entries_suppressed = self.previous;
+    }
 }
 
 /// One active stock MovieFrame request resolved to a locale-loose AVI.

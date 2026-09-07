@@ -15,6 +15,8 @@ mod simple_script;
 mod status;
 mod templates;
 
+pub(crate) use simple_script::UiSoundSuppression;
+
 pub use clock::UiClientClock;
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};
 pub use model_intent::{UiModelAction, UiModelInstance};

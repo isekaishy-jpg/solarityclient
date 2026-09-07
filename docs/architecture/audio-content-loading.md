@@ -479,3 +479,41 @@ uses the current listener and applies distance gain and pan before the first
 mixed sample; pending unit vocals update their bound origin while loading.
 Memory-output regressions check the initial distance gain, pitch-dependent
 playback duration, and pitch reset when a track is reused for direct-file audio.
+
+## World-entry and distance regressions
+
+Stock does not use FMOD's default inverse-distance curve. Initialization at
+`0x0087DDF3` installs `0x00878320` as the system rolloff callback through
+`0x008D1540`; the callback reads the channel's minimum and maximum distances
+and calls `0x008782B0`. That kernel returns zero at or beyond the maximum,
+one within the minimum, and otherwise
+`minimum / ((distance - minimum) * 4 + minimum)`. Above 90% of the maximum,
+it multiplies by a linear taper to silence. The 90% constant is stored as f32
+and extended for the x87 calculation. Cutoff comparison precedes minimum
+comparison, including equal and zero endpoints. The executable oracle in
+`tools/ghidra/sound_distance_oracle.py` supplies 88 exact output-bit cases.
+Both ordinary positioned voices and advanced emitters use this callback.
+
+Character entry in `0x004DAB40`, state 10, calls `0x009860E0(3.0)` at
+`0x004DB91F`. This removes the Glue music repeat callback and releases its
+voice with a three-second fade. Glue ambience retains its default zero
+fade-out. Runtime drains the final Glue actions before this handoff, cancels
+pending music loads, and lets the engine own only an already-playing tail.
+
+FrameXML initialization at `0x0052A980` and world-entry dispatch at
+`0x00528010` bracket non-positional SoundEntries admission with
+`0x004CFB80` and `0x004CFB90`. `0x004C6A40` checks the counter through
+`0x004CFBA0` and rejects a null-position request while it is nonzero.
+`PlaySound` therefore does not enqueue startup sounds for later replay.
+Direct-file playback through `0x004C9110` bypasses this particular gate.
+Scoped UI admission restores the enclosing state after nested calls and Lua
+errors without modifying CVars or already-playing voices.
+
+The adapter now queries playback once per rebalance and skips unchanged SDL
+gains. Promoting only voices already inside the real set cannot change its
+membership, so the second sort and playback scan were redundant. Engine
+runtime and ducking updates also skip unchanged gains. The manual
+`backend_many_voice_gain_benchmark` exercises 128 changing voices in the
+512-slot pool; the debug memory-mixer measurement fell from 30.95 to 9.14 ms
+per update on the development machine. This isolates mixer work and does not
+measure end-to-end game frame time.

@@ -2012,6 +2012,15 @@ impl ClientServices {
                                 .map_err(Into::into)
                         },
                     )?;
+                    // Drain the last character-screen actions before releasing
+                    // their audio owner; ordinary world frames no longer service
+                    // Glue and must not inherit its repeating title music.
+                    self.sound.synchronize_glue_media(
+                        &self.glue,
+                        &mut self.blizzard_rand.borrow_mut(),
+                        &self.cpu,
+                    )?;
+                    self.sound.enter_world()?;
                     tracing::info!("selected character entered the active world");
                 }
             }

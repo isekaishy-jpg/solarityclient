@@ -27,6 +27,10 @@ struct VoiceSlot<'output> {
     track: Track<'output>,
     generation: u32,
     logical_gain: f32,
+    /// Last successfully applied SDL gain, including virtual-voice silence.
+    applied_gain: f32,
+    /// Cleared tracks cannot participate in playback or require SDL queries.
+    has_audio: bool,
     priority_word: i32,
     priority: u16,
     looping: bool,
@@ -258,6 +262,8 @@ impl<'output> SoundBackend<'output> {
                 track,
                 generation: 0,
                 logical_gain: 0.0,
+                applied_gain: 0.0,
+                has_audio: false,
                 priority_word: SoundVoicePriority::DEFAULT.value(),
                 priority: SoundVoicePriority::DEFAULT.effective(),
                 looping: false,
@@ -513,6 +519,8 @@ impl<'output> SoundBackend<'output> {
         }
         slot.generation = generation;
         slot.logical_gain = gain;
+        slot.applied_gain = 0.0;
+        slot.has_audio = true;
         slot.priority_word = priority.value();
         slot.priority = priority.effective();
         slot.looping = looping;
@@ -697,6 +705,7 @@ impl<'output> SoundBackend<'output> {
             .clear_audio()
             .map_err(|source| SoundBackendError::adapter("release sound voice input", source))?;
         slot.logical_gain = 0.0;
+        slot.has_audio = false;
         slot.virtualized = false;
         self.rebalance()
     }
@@ -760,12 +769,14 @@ impl<'output> SoundBackend<'output> {
             .voices
             .iter()
             .enumerate()
-            .filter(|(_index, slot)| slot.track.is_playing() && !slot.track.is_paused())
+            .filter(|(_index, slot)| {
+                slot.has_audio && slot.track.is_playing() && !slot.track.is_paused()
+            })
             .map(|(index, _slot)| index)
             .collect::<Vec<_>>();
         self.sort_real_voice_order(&mut indices);
         let mut real = vec![false; self.voices.len()];
-        for index in indices.into_iter().take(self.software_channel_count) {
+        for index in indices.iter().copied().take(self.software_channel_count) {
             real[index] = true;
         }
         // SoundEngine.cpp promotes only default-priority one-shots that FMOD
@@ -777,32 +788,22 @@ impl<'output> SoundBackend<'output> {
                 slot.priority = 127;
             }
         }
-        let mut promoted_indices = self
-            .voices
-            .iter()
-            .enumerate()
-            .filter(|(_index, slot)| slot.track.is_playing() && !slot.track.is_paused())
-            .map(|(index, _slot)| index)
-            .collect::<Vec<_>>();
-        self.sort_real_voice_order(&mut promoted_indices);
-        real.fill(false);
-        for index in promoted_indices
-            .into_iter()
-            .take(self.software_channel_count)
-        {
-            real[index] = true;
+        // Promotion only improves voices already inside the real set; it cannot
+        // change membership. Reuse the same playback snapshot instead of sorting
+        // again and repeatedly acquiring SDL's mixer lock for every pool slot.
+        for slot in &mut self.voices {
+            slot.virtualized = false;
         }
-        for (index, slot) in self.voices.iter_mut().enumerate() {
-            if !slot.track.is_playing() || slot.track.is_paused() {
-                slot.virtualized = false;
-                continue;
-            }
+        for index in indices {
+            let slot = &mut self.voices[index];
             slot.virtualized = !real[index];
-            slot.track
-                .set_gain(if real[index] { slot.logical_gain } else { 0.0 })
-                .map_err(|source| {
+            let gain = if real[index] { slot.logical_gain } else { 0.0 };
+            if slot.applied_gain != gain {
+                slot.track.set_gain(gain).map_err(|source| {
                     SoundBackendError::adapter("order virtual sound voices", source)
                 })?;
+                slot.applied_gain = gain;
+            }
         }
         Ok(())
     }

@@ -3,6 +3,9 @@
 #[path = "stock_seed/support/mod.rs"]
 mod support;
 
+#[path = "stock_seed/sound_admission.rs"]
+mod sound_admission;
+
 #[path = "stock_seed/addon.rs"]
 mod addon;
 #[path = "stock_seed/addon_loading.rs"]

@@ -584,6 +584,11 @@ impl GlueManager {
         self.media_intent.borrow_mut().take_action()
     }
 
+    /// Brackets FrameXML initialization and entry dispatch with native admission.
+    pub(super) fn suppress_sound_entries(&self) -> crate::script::UiSoundSuppression {
+        crate::script::UiSoundSuppression::new(self.media_intent.clone())
+    }
+
     /// Publishes the current physical output catalog to stock sound-menu Lua.
     pub fn set_sound_output_devices(&self, names: Vec<String>) {
         self.environment.set_sound_output_devices(names);

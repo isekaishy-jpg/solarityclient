@@ -134,7 +134,7 @@ impl AdvancedSoundSpatialMix {
         }
 
         let listener_to_emitter = emitter_position - listener.position;
-        let distance_gain = inverse_distance_gain(
+        let distance_gain = stock_distance_gain(
             listener_to_emitter.length(),
             minimum_distance,
             maximum_distance,
@@ -148,12 +148,12 @@ impl AdvancedSoundSpatialMix {
         })
     }
 
-    /// Evaluates listener coordinates, inverse roll-off, cone, and 3D blend.
+    /// Evaluates listener coordinates, stock distance roll-off, cone, and 3D blend.
     ///
     /// Build 12340 passes `SoundEntries` minimum/maximum distances and the
-    /// corrected advanced cone values to FMOD. FMOD's default 3D inverse
-    /// roll-off is `minimum / distance`, clamped at both endpoints. The 3D pan
-    /// level linearly blends that result with the unattenuated 2D path.
+    /// corrected advanced cone values to FMOD. Its installed callback at
+    /// 0x00878320 overrides FMOD's default attenuation, reaching silence at
+    /// the authored cutoff. The 3D pan level blends with the unattenuated 2D path.
     ///
     /// The SDL position is normalized to unit distance so SDL contributes only
     /// speaker direction; the returned gain retains the stock FMOD distance
@@ -210,7 +210,7 @@ impl AdvancedSoundSpatialMix {
         let distance = listener_to_emitter.length();
         let pan_level =
             properties.pan_level(listener.position.to_array(), emitter_position.to_array());
-        let distance_gain = inverse_distance_gain(distance, minimum_distance, maximum_distance);
+        let distance_gain = stock_distance_gain(distance, minimum_distance, maximum_distance);
         let cone_gain = cone_attenuation(
             listener.position - emitter_position,
             cone_orientation,
@@ -242,7 +242,7 @@ impl AdvancedSoundSpatialMix {
         self.pan_level
     }
 
-    /// Returns inverse-rolloff attenuation before the pan-level blend.
+    /// Returns the stock rolloff callback's gain before the pan-level blend.
     #[must_use]
     pub const fn distance_gain(self) -> f32 {
         self.distance_gain
@@ -303,14 +303,26 @@ fn is_unit(axis: Vec3) -> bool {
     (axis.length_squared() - 1.0).abs() <= BASIS_TOLERANCE
 }
 
-/// Applies FMOD inverse roll-off with minimum and maximum endpoint holds.
-fn inverse_distance_gain(distance: f32, minimum: f32, maximum: f32) -> f32 {
-    if distance <= minimum {
-        1.0
-    } else if minimum == 0.0 {
+/// Reproduces 0x008782B0: fourfold rolloff and a taper over the last 10%.
+/// The cutoff comparison precedes the minimum comparison, including equal
+/// endpoints. The x87 path retains intermediate precision until FMOD stores f32.
+fn stock_distance_gain(distance: f32, minimum: f32, maximum: f32) -> f32 {
+    if distance >= maximum {
         0.0
+    } else if distance <= minimum {
+        1.0
     } else {
-        minimum / distance.min(maximum)
+        let distance = f64::from(distance);
+        let minimum = f64::from(minimum);
+        let maximum = f64::from(maximum);
+        let gain = minimum / ((distance - minimum) * 4.0 + minimum);
+        // The executable constant at A02A34 is f32 0.9, extended for x87.
+        let taper_start = maximum * f64::from(0.9_f32);
+        if distance > taper_start {
+            (gain * (1.0 - (distance - taper_start) / (maximum - taper_start))) as f32
+        } else {
+            gain as f32
+        }
     }
 }
 

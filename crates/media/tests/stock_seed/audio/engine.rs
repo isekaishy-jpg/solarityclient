@@ -584,10 +584,9 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
             })
             .sum::<f64>()
     };
-    // FMOD inverse rolloff clamps at the authored maximum distance, retaining
-    // a quiet tail instead of inventing silence outside that radius.
-    assert!(energy(&muted) > 0.0);
-    assert!(energy(&muted) < energy(&runtime_restored) * 0.1);
+    // Stock installs 878320/8782B0 instead of FMOD's default inverse curve.
+    // Crossing the authored maximum reaches silence without retiring the voice.
+    assert_eq!(energy(&muted), 0.0);
     assert_eq!(engine.active_voice_count(), 1);
     engine.set_voice_runtime_gain(voice, 0.0)?;
     engine.update_listener(near)?;
@@ -620,8 +619,7 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
         return Err("positioned completion was suppressed".into());
     };
     engine.generate(&mut muted)?;
-    assert!(energy(&muted) > 0.0);
-    assert!(energy(&muted) < energy(&runtime_restored) * 0.1);
+    assert_eq!(energy(&muted), 0.0);
     engine.stop(loaded)?;
     assert_eq!(engine.collect_unused_encoded(), 1);
     Ok(())
