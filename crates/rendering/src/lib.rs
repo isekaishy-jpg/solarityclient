@@ -50,7 +50,8 @@ pub use lighting::{
     glue_ghost_sunlight, merge_wotlk_directional_lights,
 };
 pub use liquid::{
-    LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidTextureTimeline,
+    LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidRenderVertex,
+    LiquidTextureTimeline, TerrainLiquidMeshPlan,
 };
 pub use minimap::{MinimapView, MinimapViewError};
 pub use model::{

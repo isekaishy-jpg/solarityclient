@@ -3,8 +3,8 @@
 The specification is the locally owned build-12340 executable with SHA-256
 `aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8`, together
 with its exact client archives. The rendering liquid module currently owns
-depth lookup coordinates, generated water depth images, and resident animated
-texture frame selection. Terrain and WMO draw submission and swimming remain
+depth lookup coordinates, generated water depth images, resident animated
+texture frame selection, and terrain liquid meshes. Terrain and WMO draw submission and swimming remain
 under implementation; these CPU boundaries alone do not display water.
 
 ## Depth coordinates and images
@@ -73,6 +73,17 @@ authored UV words scaled by `3/256`. `0x007CE270` emits row strips with
 degenerate restarts around missing cells. Its cell admission is `0x007CE1F0`.
 `0x007D4AB0` batches these surfaces into retained vertex/index buffers.
 
+`TerrainLiquidMeshPlan` implements the per-member terrain geometry boundary.
+`0x007CDF80` uses a negative `33.333332/8` grid step, with row controlling X
+and column controlling Y, and subtracts the MCNK base Z before storing local
+positions. Adjacent global chunk coordinates cancel before the x87 float
+store, so the step is identical across the map. The factory constructor
+`0x007D4850` initializes an identity matrix. `0x007D4AB0` adds each member's
+base relative to the first member before transforming vertices and deriving
+UVs. Authored UVs are selected only for vertex format one; format three uses
+position UVs despite retaining authored UV words. Mesh indices retain every
+native triangle-strip degenerate around holes and at row boundaries.
+
 ## External verification
 
 `tools/ghidra/liquid_material_oracle.py` maps the fingerprinted executable
@@ -87,3 +98,12 @@ depth table words, 409 texture-frame cases including ties and unsigned clock
 wrap, and 12 complete procedural images. They are generated outputs rather
 than expected values computed by the Rust implementation. External tests
 compare depth float bits, selected frame ordinals, and every image pixel.
+
+`tools/ghidra/liquid_geometry_oracle.py` executes original `7CDF80`, `7CE390`,
+`7CE270`, `7CE1F0`, and `95DA20` using resident accessor stubs for decoded
+height/depth/UV storage. The native material table lookup and all geometry,
+transforms, and mask traversal execute original instructions. Its 36 cases
+cover all four vertex formats, both depth banks and non-water materials,
+global chunk indices, member translations, sparse and empty masks, and
+offset rectangles. Tests encode those inputs as MH2O, decode them through
+the real asset stack, and compare every position/UV bit and strip index.

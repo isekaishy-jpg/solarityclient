@@ -360,7 +360,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     Ok(())
 }
 
-fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
+pub(crate) fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut wdt = WdtFile::new(WowVersion::WotLK);
     wdt.mwmo = Some(MwmoChunk::new());
     let entry = wdt.main.get_mut(32, 32).ok_or("fixture tile is invalid")?;
@@ -370,7 +370,7 @@ fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(bytes)
 }
 
-fn map_table() -> Vec<u8> {
+pub(crate) fn map_table() -> Vec<u8> {
     let mut strings = vec![0_u8];
     let directory = append_string(&mut strings, "Northrend");
     let name = append_string(&mut strings, "Northrend");

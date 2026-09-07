@@ -12,6 +12,8 @@ mod geometry;
 mod lighting;
 #[path = "stock_seed/liquid.rs"]
 mod liquid;
+#[path = "stock_seed/liquid_geometry.rs"]
+mod liquid_geometry;
 #[path = "stock_seed/math.rs"]
 mod math;
 #[path = "stock_seed/minimap.rs"]
