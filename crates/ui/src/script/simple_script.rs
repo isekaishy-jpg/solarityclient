@@ -56,7 +56,7 @@ const VISUAL_STATE_GENERATION_REGISTRY: &str = "solarity.ui.visual_state_generat
 const VISUAL_DIRTY_OBJECTS_REGISTRY: &str = "solarity.ui.visual_dirty_objects";
 const ON_UPDATE_OBJECTS_REGISTRY: &str = "solarity.ui.on_update_objects";
 const ON_UPDATE_MEMBERS_REGISTRY: &str = "solarity.ui.on_update_members";
-const RETAINED_UPDATE_FAILURE_LIMIT: usize = 64;
+const RETAINED_CALLBACK_FAILURE_LIMIT: usize = 64;
 const ON_UPDATE_SEEN_REGISTRY: &str = "solarity.ui.on_update_seen";
 const FOCUSED_EDIT_BOX_REGISTRY: &str = "solarity.ui.focused_edit_box";
 pub(super) const DIRTY_TEXT: u32 = 1 << 0;
@@ -363,7 +363,7 @@ pub struct UiScriptRuntime {
     registered_objects: Rc<Cell<usize>>,
     executed_chunks: usize,
     executed_load_handlers: usize,
-    update_failures: VecDeque<String>,
+    callback_failures: VecDeque<String>,
     snapshot_count: Cell<usize>,
 }
 
@@ -1467,14 +1467,23 @@ impl UiScriptRuntime {
             registered_objects,
             executed_chunks: 0,
             executed_load_handlers: 0,
-            update_failures: VecDeque::new(),
+            callback_failures: VecDeque::new(),
             snapshot_count: Cell::new(0),
         })
     }
 
-    /// Takes the oldest authored `OnUpdate` failure contained by this runtime.
-    pub(crate) fn take_update_failure(&mut self) -> Option<String> {
-        self.update_failures.pop_front()
+    /// Takes the oldest authored callback failure contained by this runtime.
+    pub(crate) fn take_callback_failure(&mut self) -> Option<String> {
+        self.callback_failures.pop_front()
+    }
+
+    /// Retains a bounded diagnostic while the owning input/update transaction finishes.
+    fn retain_callback_failure(&mut self, label: &str, error: mlua::Error) {
+        if self.callback_failures.len() == RETAINED_CALLBACK_FAILURE_LIMIT {
+            self.callback_failures.pop_front();
+        }
+        self.callback_failures
+            .push_back(execution_error(label, error).to_string());
     }
 
     /// Executes one expanded bundle action and advances the stock load cursor.
@@ -2009,11 +2018,7 @@ impl UiScriptRuntime {
                 update_members
                     .raw_set(index, false)
                     .map_err(|error| execution_error("Glue OnUpdate containment", error))?;
-                let failure = execution_error("Glue OnUpdate", error).to_string();
-                if self.update_failures.len() == RETAINED_UPDATE_FAILURE_LIMIT {
-                    self.update_failures.pop_front();
-                }
-                self.update_failures.push_back(failure);
+                self.retain_callback_failure("Glue OnUpdate", error);
                 continue;
             }
             dispatched += 1;
@@ -2406,9 +2411,13 @@ impl UiScriptRuntime {
         let function = object_script_function(lua, &object, handler)
             .map_err(|error| execution_error(&label, error))?;
         let subscriber_count = usize::from(function.is_some());
-        if let Some(function) = function {
-            call_object_handler(lua, &function, object)
-                .map_err(|error| execution_error(&label, error))?;
+        if let Some(function) = function
+            && let Err(error) = call_object_handler(lua, &function, object)
+        {
+            // An authored tooltip error belongs to this callback. Finish its
+            // mutations and the leave/enter transition so a failed OnLeave
+            // cannot retain mouse ownership and fail on every later event.
+            self.retain_callback_failure(&label, error);
         }
         let dispatch = finish_mutation_dispatch(
             lua,

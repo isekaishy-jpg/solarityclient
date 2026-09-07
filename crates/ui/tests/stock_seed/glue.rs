@@ -976,6 +976,102 @@ fn glue_manager_routes_authored_scroll_frame_wheel() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// A failed tooltip must not retain mouse focus or prevent another control's click.
+#[test]
+fn hover_callback_failures_preserve_pointer_transitions_and_mutations() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"PointerFailure.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\PointerFailure.xml",
+            bytes: br#"<Ui>
+<Frame name="PointerTip" hidden="true"><Size x="50" y="20"/><Anchors><Anchor point="CENTER"/></Anchors></Frame>
+<Button name="BrokenHover" enableMouse="true">
+  <Size x="100" y="60"/><Anchors><Anchor point="CENTER" x="-150"/></Anchors>
+  <Scripts>
+    <OnLoad>POINTER_ENTERS=0; POINTER_LEAVES=0; HEALTHY_ENTERS=0; HEALTHY_CLICKS=0; GameTooltip={}</OnLoad>
+    <OnEnter>POINTER_ENTERS=POINTER_ENTERS+1; PointerTip:Show(); GameTooltip:SetInventoryItem("player",20)</OnEnter>
+    <OnLeave>POINTER_LEAVES=POINTER_LEAVES+1; PointerTip:Hide(); ResetCursor()</OnLeave>
+  </Scripts>
+</Button>
+<Button name="HealthyHover" enableMouse="true">
+  <Size x="100" y="60"/><Anchors><Anchor point="CENTER" x="150"/></Anchors>
+  <Scripts><OnEnter>HEALTHY_ENTERS=HEALTHY_ENTERS+1</OnEnter><OnClick>HEALTHY_CLICKS=HEALTHY_CLICKS+1</OnClick></Scripts>
+</Button>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let target = |manager: &GlueManager, name| -> Result<_, Box<dyn Error>> {
+        let index = manager
+            .objects()
+            .iter()
+            .position(|object| object.name() == Some(name))
+            .ok_or("pointer target")?;
+        let bounds = manager
+            .geometry()
+            .region(index)
+            .ok_or("pointer geometry")?
+            .presentation_bounds();
+        Ok((
+            index,
+            (
+                (bounds.left() + bounds.right()) * 0.5,
+                (bounds.bottom() + bounds.top()) * 0.5,
+            ),
+        ))
+    };
+    let (broken, broken_center) = target(&manager, "BrokenHover")?;
+    let (healthy, healthy_center) = target(&manager, "HealthyHover")?;
+    let (tip, _) = target(&manager, "PointerTip")?;
+    assert_eq!(manager.pointer_motion(broken_center)?, Some(broken));
+    assert!(
+        manager
+            .geometry()
+            .region(tip)
+            .ok_or("tip")?
+            .effectively_shown()
+    );
+    let error = manager
+        .take_callback_failure()
+        .ok_or("missing contained enter failure")?;
+    assert!(error.contains("SetInventoryItem"));
+    assert_eq!(manager.pointer_motion(healthy_center)?, Some(healthy));
+    assert!(
+        !manager
+            .geometry()
+            .region(tip)
+            .ok_or("tip")?
+            .effectively_shown()
+    );
+    let error = manager
+        .take_callback_failure()
+        .ok_or("missing contained leave failure")?;
+    assert!(error.contains("ResetCursor"));
+    for _ in 0..10 {
+        manager.pointer_motion(healthy_center)?;
+    }
+    manager.pointer_button(healthy_center, UiPointerButton::Left, true)?;
+    let click = manager.pointer_button(healthy_center, UiPointerButton::Left, false)?;
+    assert_eq!(click.object_index(), Some(healthy));
+    let globals = manager.bundle().lua().globals();
+    for name in [
+        "POINTER_ENTERS",
+        "POINTER_LEAVES",
+        "HEALTHY_ENTERS",
+        "HEALTHY_CLICKS",
+    ] {
+        assert_eq!(globals.get::<u32>(name)?, 1, "{name}");
+    }
+    assert!(manager.take_callback_failure().is_none());
+    Ok(())
+}
+
 /// Native hover boundaries drive authored enter/leave handlers, button
 /// highlight presentation, and pointer handlers on non-button model frames.
 #[test]
@@ -2535,7 +2631,7 @@ fn glue_manager_retains_unchanged_layout_transactions() -> Result<(), Box<dyn Er
         assert_eq!(manager.render_plan().mesh().vertex_bytes(), vertex_bytes);
     }
     assert_eq!(globals.get::<u32>("CALLS")?, 3);
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     manager.dispatch_event("SET_GLUE_SCREEN", &UiEventPayload::empty())?;
     assert_eq!(
         manager.render_plan().mesh().geometry_identity(),
@@ -2609,7 +2705,7 @@ fn glue_manager_retains_unchanged_layout_transactions() -> Result<(), Box<dyn Er
         0.5,
     );
     assert!(!manager.update(0.016)?);
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     Ok(())
 }
 
@@ -2642,10 +2738,10 @@ fn glue_manager_contains_failing_on_update_handler() -> Result<(), Box<dyn Error
 
     manager.update(0.0)?;
     let failure = manager
-        .take_update_failure()
+        .take_callback_failure()
         .ok_or("failing update was not reported")?;
     assert!(failure.contains("fixture failure"));
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     assert_eq!(
         manager
             .bundle()
@@ -2664,7 +2760,7 @@ fn glue_manager_contains_failing_on_update_handler() -> Result<(), Box<dyn Error
     );
 
     assert!(!manager.update(0.0)?);
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     assert_eq!(
         manager
             .bundle()

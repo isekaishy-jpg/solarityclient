@@ -56,6 +56,10 @@ number. Installation queries the executable's `--build-info`, so a newer
 checkout cannot relabel an older executable. The installed `build-info.txt`
 also records the executable's SHA-256 and installation time.
 
+Normal Testing installs omit `-FrameTimings`; enable it only for an explicit
+diagnostic run. Instrumented application timings are aggregated every two
+seconds, and the normal launcher does not enable them.
+
 The executable reports product identity through `--version`, `--build-info`,
 the window title, and the startup log. Source revision and dirty status are
 captured during compilation. Archive, network authentication, and stock Lua

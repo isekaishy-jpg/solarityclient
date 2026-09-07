@@ -894,7 +894,7 @@ impl GlueManager {
     /// Returns [`UiEventError`] when the interval is invalid or retained UI
     /// mutations cannot form valid presentation state. Individual authored
     /// handler failures are isolated and available through
-    /// [`Self::take_update_failure`].
+    /// [`Self::take_callback_failure`].
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
         let update = self
             .runtime
@@ -925,9 +925,9 @@ impl GlueManager {
         Ok(update.changed)
     }
 
-    /// Takes one authored `OnUpdate` failure isolated from frame presentation.
-    pub fn take_update_failure(&mut self) -> Option<String> {
-        self.runtime.take_update_failure()
+    /// Takes one authored callback failure isolated from input and presentation.
+    pub fn take_callback_failure(&mut self) -> Option<String> {
+        self.runtime.take_callback_failure()
     }
 
     fn refresh_event_mutations(

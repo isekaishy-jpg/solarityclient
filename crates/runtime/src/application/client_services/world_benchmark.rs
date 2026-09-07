@@ -277,7 +277,7 @@ impl ClientServices {
             ))?;
         }
         ui.update(elapsed.as_secs_f64())?;
-        if let Some(error) = ui.take_update_failure() {
+        if let Some(error) = ui.take_callback_failure() {
             return Err(WorldBenchmarkError::Ui(error));
         }
         if let (Some(terrain), Some(player)) = (

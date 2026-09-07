@@ -71,6 +71,22 @@ present, and retried it roughly every 50 ms. That produced a false 20 FPS
 "renderer" failure and stale/disappearing UI even though no rendering work was
 the cause.
 
+Pointer `OnEnter` and `OnLeave` failures use the same bounded callback mailbox,
+while completing the current mutation journal and hover transition. A missing
+bag-tooltip API previously aborted `OnLeave` before the manager released its
+old hover target, causing every later mouse event to retry that callback.
+The regression verifies a failed tooltip's visibility changes, transfer to a
+healthy button, and the next click. The archive lifecycle validator also
+replays `CharacterBag0Slot`, subsequent pointer events, and camera bindings.
+
+Ordinary Testing installs omit `-FrameTimings`. Explicit timing sessions retain
+all application samples but emit one summary per scope every two seconds,
+including frame counts, means, maxima, phase timings, and the worst frame.
+The earlier five-millisecond threshold generated nearly 25,000 detailed frame
+records in a four-minute run through the synchronous console/log pipe.
+Expected model-sound exclusivity and channel-capacity rejections are quiet;
+invalid content and unexpected sound failures remain warnings.
+
 World FrameXML requires its own measurement; the Glue results above do not
 establish World throughput. The `validate_frame_lifecycle <Data> <locale>
 [benchmark frames]` example runs the installed FrameXML with a fixture player,

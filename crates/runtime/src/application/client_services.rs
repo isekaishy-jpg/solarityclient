@@ -993,8 +993,8 @@ impl ClientServices {
                 self.glue_ui_dirty = true;
             }
             profile.mark("Glue update");
-            while let Some(message) = self.glue.take_update_failure() {
-                tracing::error!(error = %message, "contained failing GlueXML OnUpdate handler");
+            while let Some(message) = self.glue.take_callback_failure() {
+                tracing::error!(error = %message, "contained failing GlueXML callback");
                 self.developer_console.record_error(&message);
             }
             let current_screen = self.glue.current_screen();
@@ -1067,8 +1067,8 @@ impl ClientServices {
             self.glue_update_clock = update_time;
             if let Some(world_ui) = self.world_ui.as_mut() {
                 world_ui.update(ui_elapsed)?;
-                while let Some(message) = world_ui.take_update_failure() {
-                    tracing::error!(error = %message, "contained failing FrameXML OnUpdate handler");
+                while let Some(message) = world_ui.take_callback_failure() {
+                    tracing::error!(error = %message, "contained failing FrameXML callback");
                     self.developer_console.record_error(&message);
                 }
                 if let (Some(terrain), Some(player)) = (

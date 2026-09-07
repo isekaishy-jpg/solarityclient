@@ -349,7 +349,7 @@ fn timing_only_animation_retains_presentation_and_delivers_completion() -> Resul
         0.5,
     );
     assert!(!manager.update(0.25)?);
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     Ok(())
 }
 

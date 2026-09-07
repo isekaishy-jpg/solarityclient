@@ -265,6 +265,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     println!("Stock wheel zoom bindings emitted both timed distance requests");
+    check_bag_hover_recovery(&mut manager)?;
     if let Some(count) = benchmark_frames {
         manager.set_modifier_keys(solarity_ui::UiModifierKeys::new(
             false, false, false, false, false, false,
@@ -278,7 +279,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             previous = started;
             let changed = manager.update(elapsed)?;
             let duration = started.elapsed();
-            if let Some(error) = manager.take_update_failure() {
+            if let Some(error) = manager.take_callback_failure() {
                 return Err(IoError::other(error).into());
             }
             if index >= 32 {
@@ -308,6 +309,51 @@ fn argument_error(message: &str) -> IoError {
         ErrorKind::InvalidInput,
         format!("{message}; usage: validate_frame_lifecycle <Data> <locale> [benchmark frames]"),
     )
+}
+
+/// Replays the real bag tooltip boundary that previously trapped all later input.
+fn check_bag_hover_recovery(manager: &mut FrameManager) -> Result<(), Box<dyn Error>> {
+    let index = (0..manager.geometry().region_count())
+        .find(|&index| manager.object_name(index) == Some("CharacterBag0Slot"))
+        .ok_or_else(|| IoError::other("missing stock bag button"))?;
+    let bounds = manager
+        .geometry()
+        .region(index)
+        .ok_or_else(|| IoError::other("missing bag geometry"))?
+        .presentation_bounds();
+    let hit = manager.pointer_motion((
+        (bounds.left() + bounds.right()) * 0.5,
+        (bounds.bottom() + bounds.top()) * 0.5,
+    ))?;
+    if hit != Some(index) {
+        return Err(IoError::other("stock bag did not receive pointer enter").into());
+    }
+    manager.pointer_motion((-10., -10.))?;
+    let mut failures = 0;
+    while let Some(error) = manager.take_callback_failure() {
+        if !error.contains("SetInventoryItem") && !error.contains("ResetCursor") {
+            return Err(IoError::other(error).into());
+        }
+        failures += 1;
+    }
+    for _ in 0..100 {
+        manager.pointer_motion((-10., -10.))?;
+        if let Some(error) = manager.take_callback_failure() {
+            return Err(IoError::other(error).into());
+        }
+    }
+    manager.invoke_binding("CAMERAORSELECTORMOVE", true)?;
+    if manager.take_movement_command().is_none() {
+        return Err(IoError::other("camera binding lost after bag hover").into());
+    }
+    manager.invoke_binding("CAMERAORSELECTORMOVE", false)?;
+    if manager.take_movement_command().is_none() {
+        return Err(IoError::other("camera release lost after bag hover").into());
+    }
+    println!(
+        "Stock bag hover completed with {failures} contained tooltip callbacks; 100 later pointer events and camera press/release succeeded"
+    );
+    Ok(())
 }
 
 fn check_player_bar(

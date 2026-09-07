@@ -383,8 +383,8 @@ impl RuntimeWorldUi {
     }
 
     /// Takes one authored FrameXML update fault contained by the UI runtime.
-    pub(super) fn take_update_failure(&mut self) -> Option<String> {
-        self.manager.take_update_failure()
+    pub(super) fn take_callback_failure(&mut self) -> Option<String> {
+        self.manager.take_callback_failure()
     }
 
     /// Updates a requested portrait only when the resident appearance changes.

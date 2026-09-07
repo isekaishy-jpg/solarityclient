@@ -214,6 +214,13 @@ impl RuntimeSoundCoordinator {
                     self.loader.queue(load);
                 }
                 Ok(None) => {}
+                // Native model callbacks ignore ordinary admission rejection.
+                // Repeated animation events for an exclusive ambient loop are
+                // expected and must not produce a warning on every attempt.
+                Err(
+                    SoundEngineError::ExclusiveEntryActive { .. }
+                    | SoundEngineError::ChannelCapacity { .. },
+                ) => {}
                 Err(error) => {
                     // These callbacks ignore native play status; failed content
                     // or channel admission must not terminate model presentation.

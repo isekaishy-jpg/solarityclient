@@ -146,7 +146,7 @@ fn status_bar_fill_tracks_native_range_color_axis_and_texture_replacement()
     let snapshots = manager.runtime_snapshot_count();
     let glyph_identity = manager.glyphs().identity();
     manager.update(0.01)?;
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     assert_eq!(
         manager.render_plan().mesh().indices().as_ptr(),
         index_storage
@@ -156,11 +156,11 @@ fn status_bar_fill_tracks_native_range_color_axis_and_texture_replacement()
     check(&manager, health, 100., 40., true)?;
     check(&manager, dynamic, 200., 40., true)?;
     manager.update(0.01)?;
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     check(&manager, health, 100., 40., false)?;
     check(&manager, dynamic, 200., 40., false)?;
     manager.update(0.01)?;
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     let replacement = index(&manager, "Replacement")?;
     check(&manager, replacement, 200., 40., true)?;
     assert!(
@@ -171,7 +171,7 @@ fn status_bar_fill_tracks_native_range_color_axis_and_texture_replacement()
             .effectively_shown()
     );
     manager.update(0.01)?;
-    assert!(manager.take_update_failure().is_none());
+    assert!(manager.take_callback_failure().is_none());
     assert!(
         !manager
             .geometry()

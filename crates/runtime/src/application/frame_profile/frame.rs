@@ -1,10 +1,10 @@
-//! Opt-in phase attribution for individual slow application frames.
+//! Allocation-free phase sampling for one application transaction.
 
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// Keeps profiling allocation-free until a frame exceeds five milliseconds.
-pub(super) struct RuntimeFrameProfile {
+/// Retains a fixed phase buffer; disabled profiling makes no clock or cycle calls.
+pub(in crate::application) struct RuntimeFrameProfile {
     label: &'static str,
     started: Option<Instant>,
     started_cycles: Option<u64>,
@@ -14,7 +14,8 @@ pub(super) struct RuntimeFrameProfile {
 }
 
 impl RuntimeFrameProfile {
-    pub(super) fn new(label: &'static str) -> Self {
+    /// Enables sampling only for an explicitly instrumented process.
+    pub(in crate::application) fn new(label: &'static str) -> Self {
         static ENABLED: OnceLock<bool> = OnceLock::new();
         let enabled = *ENABLED.get_or_init(|| std::env::var_os("SOLARITY_FRAME_TIMINGS").is_some());
         Self {
@@ -29,7 +30,8 @@ impl RuntimeFrameProfile {
         }
     }
 
-    pub(super) fn mark(&mut self, phase: &'static str) {
+    /// Attributes elapsed time since the previous mark to this phase.
+    pub(in crate::application) fn mark(&mut self, phase: &'static str) {
         let Some(started) = self.started else { return };
         let elapsed = started.elapsed();
         if let Some(slot) = self.phases.get_mut(self.count) {
@@ -43,20 +45,19 @@ impl RuntimeFrameProfile {
 impl Drop for RuntimeFrameProfile {
     fn drop(&mut self) {
         let Some(started) = self.started else { return };
-        let elapsed = started.elapsed();
-        if elapsed >= Duration::from_millis(5) {
-            let cpu_cycles = self
-                .started_cycles
-                .zip(crate::platform::current_thread_cycles())
-                .map(|(start, end)| end.saturating_sub(start));
-            tracing::info!(
-                scope = self.label,
-                total_ms = elapsed.as_secs_f64() * 1_000.0,
-                ?cpu_cycles,
-                phases = ?&self.phases[..self.count],
-                tail = ?elapsed.saturating_sub(self.previous),
-                "profiled slow application frame"
-            );
-        }
+        let now = Instant::now();
+        let elapsed = now.duration_since(started);
+        let cycles = self
+            .started_cycles
+            .zip(crate::platform::current_thread_cycles())
+            .map(|(start, end)| end.saturating_sub(start));
+        super::aggregate::record(
+            self.label,
+            now,
+            elapsed,
+            cycles,
+            &self.phases[..self.count],
+            elapsed.saturating_sub(self.previous),
+        );
     }
 }
