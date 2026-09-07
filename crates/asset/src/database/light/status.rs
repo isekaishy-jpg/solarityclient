@@ -42,21 +42,9 @@ pub enum WorldLightSampleError {
         /// LightIntBand.dbc identifier.
         band_id: u32,
     },
-    /// A selected packed-color channel has no authored time keys.
-    #[error("world light color band {band_id} has no keys")]
-    EmptyColorBand {
-        /// LightIntBand.dbc identifier.
-        band_id: u32,
-    },
     /// One of the required six scalar channels is absent.
     #[error("world light float band {band_id} is missing")]
     MissingFloatBand {
-        /// LightFloatBand.dbc identifier.
-        band_id: u32,
-    },
-    /// A selected scalar channel has no authored time keys.
-    #[error("world light float band {band_id} has no keys")]
-    EmptyFloatBand {
         /// LightFloatBand.dbc identifier.
         band_id: u32,
     },

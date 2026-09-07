@@ -5,6 +5,7 @@ use std::error::Error;
 use glam::Vec3;
 use solarity_asset::{
     ArchiveCatalog, AssetStore, ClientDataRoot, LightCatalog, LiquidTypeCatalog, Locale,
+    WorldLightCondition, WorldLightQuery,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -91,6 +92,78 @@ fn liquid_depth_matches_original_environment_colors() -> Result<(), Box<dyn Erro
         assert_eq!(sample.fog_range(), base.fog_range());
         assert_eq!(sample.sky_colors(), base.sky_colors());
         assert_eq!(sample.liquid_colors(), base.liquid_colors());
+    }
+    Ok(())
+}
+
+/// Native 7EB070 returns opaque black and 7EAEF0 returns zero for empty bands.
+/// Underwater parameter 213 includes the zero-key specular band 3826 seen in
+/// the swimming crash. Nonzero padded values must not become sampled keys.
+#[test]
+fn underwater_empty_light_bands_preserve_stock_defaults() -> Result<(), Box<dyn Error>> {
+    let mut colors = Vec::new();
+    let mut floats = Vec::new();
+    for id in [213_u32, 214] {
+        for channel in 0..18 {
+            let mut row = band((id - 1) * 18 + channel + 1, 0x0011_2233);
+            row[1] = u32::from(id == 214);
+            colors.extend(row);
+        }
+        for channel in 0..6 {
+            let mut row = band((id - 1) * 6 + channel + 1, 17.25_f32.to_bits());
+            row[1] = u32::from(id == 214);
+            floats.extend(row);
+        }
+    }
+    let tables = [
+        (
+            "DBFilesClient\\Light.dbc",
+            table(15, &[1, 1, 0, 0, 0, 0, 0, 214, 213, 0, 0, 0, 0, 0, 0]),
+        ),
+        (
+            "DBFilesClient\\LightParams.dbc",
+            table(
+                9,
+                &[213, 0, 0, 0, 0, 0, 0, 0, 0, 214, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+        ),
+        ("DBFilesClient\\LightSkybox.dbc", table(3, &[])),
+        ("DBFilesClient\\LightIntBand.dbc", table(34, &colors)),
+        ("DBFilesClient\\LightFloatBand.dbc", table(34, &floats)),
+    ];
+    let fixture = Fixture::new(
+        &tables
+            .iter()
+            .map(|(path, bytes)| FixtureFile {
+                archive: "common.MPQ",
+                path,
+                bytes,
+            })
+            .collect::<Vec<_>>(),
+    )?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let lights = LightCatalog::load(&mut store)?;
+    for time in [0, 719, 1440, 2879] {
+        let query = WorldLightQuery::new(1, Vec3::ZERO, time);
+        let exterior = lights.sample(query)?;
+        assert_eq!(exterior.diffuse_color(), unpack(0x0011_2233));
+        let underwater = lights.sample(query.with_condition(WorldLightCondition::UNDERWATER))?;
+        assert_eq!(underwater, lights.sample_parameter(213, time)?);
+        assert_eq!(underwater.ambient_color(), Vec3::ZERO);
+        assert_eq!(underwater.diffuse_color(), Vec3::ZERO);
+        assert_eq!(underwater.fog_color(), Vec3::ZERO);
+        assert_eq!(underwater.specular_color(), Vec3::ZERO);
+        assert_eq!(underwater.sky_colors(), [Vec3::ZERO; 5]);
+        assert_eq!(underwater.liquid_colors(), [Vec3::ZERO; 4]);
+        assert_eq!(underwater.sky_floats(), [0.; 4]);
+        assert_eq!(underwater.fog_range(), (0., 10.));
+        let model = lights.model_light_colors(213, time)?;
+        assert_eq!(model.ambient(), Vec3::ZERO);
+        assert_eq!(model.diffuse(), Vec3::ZERO);
+        assert_eq!(lights.sample(query)?, exterior);
     }
     Ok(())
 }

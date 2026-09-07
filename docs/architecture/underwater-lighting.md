@@ -27,6 +27,17 @@ directly through `0x007ECD80`/`0x007EBFF0`. `LightCatalog::sample_parameter`
 joins the same color, scalar, skybox, and material channels used by ordinary
 volume sampling. It does not construct a synthetic Light.dbc row.
 
+Zero-key bands are valid sampled inputs. `0x007EB070` returns packed opaque
+black for an empty color band; `0x007EAEF0` returns zero for an empty scalar
+band. Neither samples the padded value storage. Underwater parameter 213's
+specular band 3826 exercises this path: rejecting empty bands terminated the
+client after camera submersion. Missing rows remain distinct from empty rows.
+`tools/ghidra/light_empty_band_oracle.py` executes both original samplers for
+all channel ordinals and four times with nonzero padding. The portable test
+covers exterior/underwater/exterior transitions and direct parameter/model
+sampling. `validate_underwater_light` checks every authored underwater bank
+and liquid override across the installed tables and a complete day.
+
 For positive MaxDarkenDepth, `0x007F364F` clamps camera depth between the
 surface and that maximum, then applies the authored fog, ambient, and direct
 factors independently. `0x007ED790` converts each packed color to HSV, scales

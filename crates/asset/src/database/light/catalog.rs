@@ -308,9 +308,8 @@ fn decode_float_bands(table: &WdbcTable) -> Result<HashMap<u32, LightBand<f32>>,
 
 /// Validates the closed zero-through-sixteen stored key count.
 ///
-/// Stock tables contain zero-key rows for unused parameter channels. They are
-/// retained here and become an error only if live environment selection tries
-/// to sample that exact row.
+/// Stock tables contain zero-key rows, including selected underwater channels.
+/// The native samplers return black/zero for those rows (7EB070/7EAEF0).
 fn band_entries(table: &WdbcTable, row: u32) -> Result<usize, AssetError> {
     let entries = field(table, row, 1)? as usize;
     if entries <= BAND_KEY_COUNT {

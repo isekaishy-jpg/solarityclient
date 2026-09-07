@@ -256,7 +256,9 @@ fn sample_color_at(
         .get(&band_id)
         .ok_or(WorldLightSampleError::MissingColorBand { band_id })?;
     if band.entries == 0 {
-        return Err(WorldLightSampleError::EmptyColorBand { band_id });
+        // 0x007EB07B returns packed 0xFF000000 for zero-key rows, including
+        // underwater specular band 3826. Padded values are not authored keys.
+        return Ok(Vec3::ZERO);
     }
     let color = sample_color_band(band, half_minutes);
     Ok(Vec3::new(
@@ -277,7 +279,8 @@ fn sample_float_at(
         .get(&band_id)
         .ok_or(WorldLightSampleError::MissingFloatBand { band_id })?;
     if band.entries == 0 {
-        return Err(WorldLightSampleError::EmptyFloatBand { band_id });
+        // 0x007EAEFB returns FLDZ before interpolation for a zero-key row.
+        return Ok(0.0);
     }
     Ok(sample_float_band(band, half_minutes))
 }
