@@ -28,6 +28,7 @@ use solarity_ecs::{
 };
 use solarity_systems::{
     GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
+    MovementTransportFrame,
 };
 use thiserror::Error;
 
@@ -158,6 +159,8 @@ pub(in crate::application) struct GameObjectInstance {
     transform: Option<WorldTransform>,
     scale: Option<f32>,
     placement: Result<GameObjectPlacement, GameObjectPlacementError>,
+    /// GO+1A8, separate from the map handle's initial scale-one/yaw-only pose.
+    passenger_placement: Result<GameObjectPlacement, GameObjectPlacementError>,
     request: Option<ResourceRequest>,
     resource: Option<Arc<GameObjectResource>>,
     failed: bool,
@@ -494,6 +497,7 @@ impl RuntimeGameObjectPresentation {
                 instance.presentation = presentation;
                 instance.entry = entry;
                 instance.placement = placement;
+                instance.passenger_placement = placement;
                 instance.transform = transform;
                 instance.scale = scale;
                 instance.behavior = behavior;
@@ -512,6 +516,7 @@ impl RuntimeGameObjectPresentation {
                     transform,
                     scale,
                     placement,
+                    passenger_placement: placement,
                     request,
                     resource,
                     failed: false,
@@ -642,6 +647,7 @@ impl RuntimeGameObjectPresentation {
         // Resolve after all parents have moved, regardless of packet/object order.
         for instance in &mut self.instances {
             let mut placement = self.placement_resolver.resolve(world, instance.guid());
+            instance.passenger_placement = placement;
             if let Some(transport) = &instance.transport
                 && let Some(current) = transport.map_placement()
             {
@@ -1014,6 +1020,24 @@ impl RuntimeGameObjectPresentation {
             .iter()
             .find(|instance| instance.guid() == guid)
             .and_then(GameObjectInstance::placement)
+    }
+
+    /// Returns the GameObject's native passenger matrix and virtual facing.
+    /// The initial map-model render/collision pose can differ from this matrix.
+    ///
+    /// # Errors
+    /// Reports missing dependencies or an invalid retained parent conversion.
+    pub fn object_movement_frame(
+        &self,
+        identity: WorldObjectIdentity,
+    ) -> Result<Option<MovementTransportFrame>, GameObjectPlacementError> {
+        let Some(instance) = self.movement_instance(identity) else {
+            return Ok(None);
+        };
+        let placement = instance.passenger_placement?;
+        MovementTransportFrame::new(placement.matrix(), placement.facing())
+            .map(Some)
+            .map_err(|_| GameObjectPlacementError::InvalidTransform)
     }
     /// Returns the retained transport resource family.
     #[must_use]

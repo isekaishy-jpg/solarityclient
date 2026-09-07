@@ -5,12 +5,14 @@ use solarity_ecs::WorldMovementSpeeds;
 use thiserror::Error;
 
 use super::clock::seconds_from_millis;
+use super::transport::MovementTransportChange;
 
 /// Ground input basis and analytic yaw, retained until movement reanchors.
 #[derive(Clone, Copy, Debug)]
 pub struct MovementGroundTrajectory {
+    basis_xy: Vec2,
+    basis_z: f32,
     direction: Vec2,
-    direction_z: f32,
     speed: f32,
     yaw: MovementYawTrajectory,
 }
@@ -29,6 +31,24 @@ pub struct MovementYawTrajectory {
 pub struct MovementYawTrajectoryError;
 
 impl MovementYawTrajectory {
+    /// Changes the retained facing anchor while preserving turn rate and clock ownership.
+    ///
+    /// # Errors
+    /// Rejects a facing that overflows during frame conversion.
+    pub fn rebased(
+        self,
+        change: MovementTransportChange,
+    ) -> Result<Self, MovementYawTrajectoryError> {
+        let orientation = change.orientation(self.orientation);
+        if !orientation.is_finite() {
+            return Err(MovementYawTrajectoryError);
+        }
+        Ok(Self {
+            orientation,
+            ..self
+        })
+    }
+
     /// Resolves `0x00987770`'s turn rate from local movement flags.
     /// Falling and ascent/descent count as movement even without translation.
     ///
@@ -144,8 +164,9 @@ impl MovementGroundTrajectory {
                 .map_err(|_| MovementGroundTrajectoryError)?;
         let direction_z = if flags & 2 != 0 { -0.0 } else { 0.0 };
         Ok(Self {
+            basis_xy: direction,
+            basis_z: direction_z,
             direction,
-            direction_z,
             speed,
             yaw,
         })
@@ -155,6 +176,37 @@ impl MovementGroundTrajectory {
     #[must_use]
     pub const fn direction(self) -> Vec2 {
         self.direction
+    }
+
+    /// Returns the unnormalized full travel basis retained by 98B850.
+    #[must_use]
+    pub fn travel_direction(self) -> Vec3 {
+        self.basis_xy.extend(self.basis_z)
+    }
+
+    /// Changes the retained basis and facing without recomputing input or speed.
+    /// The caller must convert its position anchor and preserve elapsed time.
+    ///
+    /// # Errors
+    /// Rejects non-finite converted state before publishing the new trajectory.
+    pub fn rebased(
+        self,
+        change: MovementTransportChange,
+    ) -> Result<Self, MovementGroundTrajectoryError> {
+        let direction = change.direction(self.travel_direction());
+        if !direction.is_finite() {
+            return Err(MovementGroundTrajectoryError);
+        }
+        Ok(Self {
+            basis_xy: direction.truncate(),
+            basis_z: direction.z,
+            direction: MovementTransportChange::horizontal_direction(direction),
+            yaw: self
+                .yaw
+                .rebased(change)
+                .map_err(|_| MovementGroundTrajectoryError)?,
+            ..self
+        })
     }
 
     /// Returns the admitted movement speed.
@@ -172,9 +224,7 @@ impl MovementGroundTrajectory {
         let displacement = if self.speed == 0.0 || elapsed_ms == 0 {
             Vec3::ZERO
         } else if yaw_rate == 0.0 {
-            (self.direction.as_dvec2() * time * f64::from(self.speed))
-                .as_vec2()
-                .extend(self.direction_z)
+            (self.travel_direction().as_dvec3() * time * f64::from(self.speed)).as_vec3()
         } else {
             // Native stores the radius and trig angle before FSINCOS, then
             // retains products in x87 until the final output stores.

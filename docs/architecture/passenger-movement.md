@@ -28,9 +28,31 @@ still run unchanged. A runtime integration test collects resident terrain throug
 a rotated, translated frame, then verifies local floor contact, world coverage,
 owner identity, cache reuse, and invalidation on frame change.
 
-This establishes the geometry boundary. Live attachment, analytic trajectory
-rebasing, parent retention, and transport wire snapshots still require runtime
-integration. Native contact handling at `0x006EC7B0` is restricted to the active
+`MovementTransportChange` implements `0x0098B850`'s retained-state conversion.
+Entry uses the native reverse matrix and negative parent yaw; exit uses the
+parent matrix and facing. The launch and step heights use the old current foot's
+XY coordinates, with distinct native addition orders. The full travel direction
+remains unnormalized; its separate horizontal launch lane is normalized only
+above squared length 2^-22. Ground/yaw trajectories can be rebased without
+recomputing input, speed, or turn rate, and their caller retains elapsed time.
+Linear motion consumes the full converted direction; ground turns consume the
+normalized horizontal lane.
+
+`tools/ghidra/passenger_rebase_oracle.py` executes `0x0098B850` unchanged for 1,088
+frame changes and follows native ground initialization, rebasing, and sampling
+for 2,048 additional cases. Tests compare every output float bit, including tiny
+directions, tilted/scaled frames, retained heights, and nonzero elapsed times.
+The original unparented ground/yaw fixtures remain unchanged and pass.
+
+`GameObjectPlacement::facing` retains the native virtual angle independently of
+the full matrix. Parent cache keys include that angle. Runtime instances retain
+the GameObject passenger placement separately from the initial map-model pose;
+`object_movement_frame` resolves that exact lifetime. Native facing fixtures cover
+656 cases, and runtime coverage distinguishes a scale-three passenger matrix
+from the same transport's scale-one initial collision model, including removal.
+
+Live attachment, parent retention, and transport wire snapshots still require
+runtime integration. Native contact handling at `0x006EC7B0` is restricted to the active
 mover. Admission at `0x0074B3F0` calls the candidate's virtual `+0xEC`; a GameObject
 checks GAMEOBJECT_FLAGS bit 8 at `0x00712F20`. Leaving a contact can retain the old
 parent through virtual `+0xF0`, which delegates to behavior `+0x6C` (`0x00712E90`).

@@ -4,11 +4,128 @@ use std::error::Error;
 use std::str::SplitWhitespace;
 
 use glam::{Mat4, Vec3};
+use solarity_ecs::WorldMovementSpeeds;
 use solarity_systems::{
     MovementCollisionBounds, MovementCollisionTriangle, MovementCollisionVolume, MovementFallMode,
-    MovementFallTrajectory, MovementGroundProfile, MovementIntervalMode, MovementIntervalRequest,
-    MovementTransportFrame,
+    MovementFallTrajectory, MovementGroundProfile, MovementGroundTrajectory, MovementIntervalMode,
+    MovementIntervalRequest, MovementTransportChange, MovementTransportFrame,
 };
+
+#[test]
+fn passenger_rebased_trajectories_match_native_without_restarting_elapsed_time()
+-> Result<(), Box<dyn Error>> {
+    let speeds = WorldMovementSpeeds::new([
+        2.5,
+        7.,
+        4.5,
+        4.72,
+        2.5,
+        7.,
+        4.5,
+        std::f32::consts::PI,
+        std::f32::consts::PI,
+    ]);
+    let mut count = 0;
+    for line in records(include_str!("fixtures/passenger-trajectory-native.txt")) {
+        let mut fields = line.split_whitespace();
+        let entering = integer(&mut fields)? != 0;
+        let flags = u32::from_str_radix(fields.next().ok_or("flags")?, 16)?;
+        let secondary = u32::from_str_radix(fields.next().ok_or("secondary")?, 16)?;
+        let elapsed = integer(&mut fields)?;
+        let frame = MovementTransportFrame::new(matrix(&mut fields)?, scalar(&mut fields)?)?;
+        let initial_yaw = scalar(&mut fields)?;
+        let change = if entering {
+            frame.entry_change()
+        } else {
+            frame.exit_change()
+        };
+        let trajectory =
+            MovementGroundTrajectory::new(flags, secondary & 8 != 0, initial_yaw, speeds)?
+                .rebased(change)?;
+        assert_vector(trajectory.travel_direction(), vector(&mut fields)?, count);
+        assert_eq!(
+            trajectory.direction().x.to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "direction x {count}"
+        );
+        assert_eq!(
+            trajectory.direction().y.to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "direction y {count}"
+        );
+        assert_eq!(
+            trajectory.speed().to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "speed {count}"
+        );
+        let sample = trajectory.sample(elapsed);
+        assert_vector(sample.displacement, vector(&mut fields)?, count);
+        assert_eq!(
+            sample.orientation.to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "sample yaw {count}"
+        );
+        assert!(fields.next().is_none());
+        count += 1;
+    }
+    assert_eq!(count, 2048);
+    Ok(())
+}
+
+#[test]
+fn passenger_analytic_rebase_preserves_native_anchors_and_launch_lanes()
+-> Result<(), Box<dyn Error>> {
+    let mut count = 0;
+    for line in records(include_str!("fixtures/passenger-rebase-native.txt")) {
+        let mut fields = line.split_whitespace();
+        let entering = integer(&mut fields)? != 0;
+        let frame = MovementTransportFrame::new(matrix(&mut fields)?, scalar(&mut fields)?)?;
+        let change = if entering {
+            frame.entry_change()
+        } else {
+            frame.exit_change()
+        };
+        let position = vector(&mut fields)?;
+        let anchor = vector(&mut fields)?;
+        let yaw = scalar(&mut fields)?;
+        let direction = vector(&mut fields)?;
+        let launch = scalar(&mut fields)?;
+        let step = scalar(&mut fields)?;
+        assert_vector(change.position(anchor), vector(&mut fields)?, count);
+        assert_eq!(
+            change.orientation(yaw).to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "yaw {count}"
+        );
+        let direction = change.direction(direction);
+        assert_vector(direction, vector(&mut fields)?, count);
+        let horizontal = MovementTransportChange::horizontal_direction(direction);
+        assert_eq!(
+            horizontal.x.to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "horizontal x {count}"
+        );
+        assert_eq!(
+            horizontal.y.to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "horizontal y {count}"
+        );
+        assert_eq!(
+            change.launch_height(position, launch).to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "launch {count}"
+        );
+        assert_eq!(
+            change.step_height(position, step).to_bits(),
+            scalar(&mut fields)?.to_bits(),
+            "step {count}"
+        );
+        assert!(fields.next().is_none());
+        count += 1;
+    }
+    assert_eq!(count, 1088);
+    Ok(())
+}
 
 #[test]
 fn passenger_matrices_faces_and_angles_match_native_instructions() -> Result<(), Box<dyn Error>> {

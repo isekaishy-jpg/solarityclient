@@ -56,6 +56,11 @@ fn initial_map_handle_uses_native_facing_and_ignores_own_scale() -> Result<(), B
         }
         let mut resolver = GameObjectPlacementResolver::default();
         let replicated = resolver.resolve(&world, 3)?;
+        assert_eq!(
+            replicated.facing().to_bits(),
+            facing.to_bits(),
+            "virtual facing {count}"
+        );
         let initial = resolver.resolve_map_model_initial(&world, 3)?;
         let expected =
             game_object_transport_pose(replicated.matrix().w_axis.truncate(), facing, 0., 0.)?;

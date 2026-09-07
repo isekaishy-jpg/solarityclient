@@ -33,6 +33,7 @@ pub fn unpack_game_object_rotation(packed: u64) -> [f32; 4] {
 pub struct GameObjectPlacement {
     matrix: Mat4,
     rotation: [f32; 4],
+    facing: f32,
 }
 
 impl GameObjectPlacement {
@@ -67,7 +68,11 @@ impl GameObjectPlacement {
         if !matrix.is_finite() || !determinant.is_finite() || determinant == 0.0 {
             return Err(GameObjectPlacementError::InvalidTransform);
         }
-        Ok(Self { matrix, rotation })
+        Ok(Self {
+            matrix,
+            rotation,
+            facing: quaternion_facing(rotation),
+        })
     }
 
     /// Returns the complete local-to-world matrix in the server Z-up basis.
@@ -80,6 +85,13 @@ impl GameObjectPlacement {
     #[must_use]
     pub const fn rotation(self) -> [f32; 4] {
         self.rotation
+    }
+
+    /// Returns the native virtual facing, including its separate parent-yaw addition.
+    /// This is independent of matrix tilt and scale (70C310/4F42A0).
+    #[must_use]
+    pub const fn facing(self) -> f32 {
+        self.facing
     }
 
     /// Admits the transport's full matrix, retaining its separately packed rotation.
@@ -95,7 +107,11 @@ impl GameObjectPlacement {
         if !matrix.is_finite() || !determinant.is_finite() || determinant == 0.0 {
             return Err(GameObjectPlacementError::InvalidTransform);
         }
-        Ok(Self { matrix, rotation })
+        Ok(Self {
+            matrix,
+            rotation,
+            facing: quaternion_facing(rotation),
+        })
     }
 }
 
@@ -145,7 +161,7 @@ struct PlacementInputs {
     packed_rotation: u64,
     local_position: [u32; 3],
     scale: u32,
-    parent: Option<([u32; 16], [u32; 4])>,
+    parent: Option<([u32; 16], [u32; 4], u32)>,
     animated_matrix: Option<[u32; 16]>,
 }
 
@@ -185,34 +201,9 @@ impl GameObjectPlacementResolver {
         guid: u64,
     ) -> Result<GameObjectPlacement, GameObjectPlacementError> {
         let placement = self.resolve_with_scale(world, guid, Some(1.0))?;
-        let mut yaw = None;
-        // 70C310 first extracts the 4F45B0 composed quaternion's angle, then
-        // 4F42A0 separately adds the parent's virtual facing and wraps it.
-        for &owner in self.chain.iter().rev() {
-            let identity = world
-                .object_identity(owner)
-                .ok_or(GameObjectPlacementError::MissingObject { guid: owner })?;
-            let rotation = self
-                .placements
-                .get(&identity)
-                .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
-                .placement
-                .rotation();
-            let local = quaternion_facing(rotation);
-            yaw = Some(yaw.map_or(local, |parent: f32| {
-                let sum = f64::from((f64::from(parent) + f64::from(local)) as f32);
-                let period = f64::from(std::f32::consts::TAU);
-                let remainder = sum % period;
-                (if remainder < 0.0 {
-                    remainder + period
-                } else {
-                    remainder
-                }) as f32
-            }));
-        }
         GameObjectPlacement::animated(game_object_transport_pose(
             placement.matrix.w_axis.truncate(),
-            yaw.ok_or(GameObjectPlacementError::MissingPlacement { guid })?,
+            placement.facing(),
             0.0,
             0.0,
         )?)
@@ -291,6 +282,7 @@ impl GameObjectPlacementResolver {
                     (
                         parent.matrix.to_cols_array().map(f32::to_bits),
                         parent.rotation.map(f32::to_bits),
+                        parent.facing.to_bits(),
                     )
                 }),
                 animated_matrix: animated
@@ -311,11 +303,24 @@ impl GameObjectPlacementResolver {
             } else {
                 (local_position, local)
             };
-            let placement = if let Some(pose) = animated {
+            let mut placement = if let Some(pose) = animated {
                 GameObjectPlacement::animated(pose)?
             } else {
                 GameObjectPlacement::new(position, rotation, scale)?
             };
+            // 70C310 extracts the composed quaternion angle, then 4F42A0
+            // separately adds parent virtual facing, even for a tilted basis.
+            if let Some(parent) = parent {
+                let sum =
+                    f64::from((f64::from(parent.facing) + f64::from(placement.facing)) as f32);
+                let period = f64::from(std::f32::consts::TAU);
+                let remainder = sum % period;
+                placement.facing = (if remainder < 0.0 {
+                    remainder + period
+                } else {
+                    remainder
+                }) as f32;
+            }
             self.placements
                 .insert(identity, CachedPlacement { inputs, placement });
             parent = Some(placement);

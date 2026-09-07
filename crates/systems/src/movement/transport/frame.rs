@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3};
 use thiserror::Error;
 
+use super::MovementTransportChange;
 use crate::collision::{MovementCollisionTriangle, MovementSweepError};
 
 /// A finite affine parent matrix and its native rigid transpose conversion.
@@ -82,6 +83,18 @@ impl MovementTransportFrame {
         self.local
     }
 
+    /// Converts retained analytic state when boarding this parent (98BA20).
+    #[must_use]
+    pub const fn entry_change(self) -> MovementTransportChange {
+        MovementTransportChange::new(self.local, -self.facing)
+    }
+
+    /// Converts retained analytic state when leaving this parent (98B9A0).
+    #[must_use]
+    pub const fn exit_change(self) -> MovementTransportChange {
+        MovementTransportChange::new(self.world, self.facing)
+    }
+
     /// Converts a passenger-space foot point for world collection (4C2300).
     #[must_use]
     pub fn world_position(self, position: Vec3) -> Vec3 {
@@ -140,7 +153,7 @@ impl MovementTransportFrame {
 }
 
 /// 4C2300 multiplies in x/y/z order, retaining x87 intermediates until each store.
-fn point(matrix: Mat4, position: Vec3) -> Vec3 {
+pub(super) fn point(matrix: Mat4, position: Vec3) -> Vec3 {
     let m = matrix.to_cols_array().map(f64::from);
     let [x, y, z] = position.to_array().map(f64::from);
     Vec3::from_array(std::array::from_fn(|row| {
@@ -149,7 +162,7 @@ fn point(matrix: Mat4, position: Vec3) -> Vec3 {
 }
 
 /// 4C5090 uses a double containing the exact f32 2pi value, then adds that f32.
-fn wrap_orientation(orientation: f32) -> f32 {
+pub(super) fn wrap_orientation(orientation: f32) -> f32 {
     let period = f64::from(std::f32::consts::TAU);
     let remainder = f64::from(orientation) % period;
     (if remainder < 0.0 {

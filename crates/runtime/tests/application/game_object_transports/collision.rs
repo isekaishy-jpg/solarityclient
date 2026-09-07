@@ -239,6 +239,13 @@ fn empty_route_keeps_initial_scale_one_map_handle_and_collision() -> Result<(), 
         .object_placement(9)
         .ok_or("initial map placement")?;
     assert_eq!(placement.matrix().x_axis.truncate().length(), 1.);
+    let identity = scene.world.object_identity(9).ok_or("transport identity")?;
+    let passenger = scene
+        .objects
+        .object_movement_frame(identity)?
+        .ok_or("passenger frame")?;
+    assert_eq!(passenger.world_matrix().x_axis.truncate().length(), 3.);
+    assert_eq!(passenger.world_matrix().w_axis, placement.matrix().w_axis);
     assert_eq!(
         scene
             .collect(Vec3::new(20., 5., 0.), 0xf00000)?
@@ -248,6 +255,17 @@ fn empty_route_keeps_initial_scale_one_map_handle_and_collision() -> Result<(), 
     );
     scene.synchronize(6100)?;
     assert_eq!(scene.objects.object_placement(9), Some(placement));
+    assert_eq!(
+        scene
+            .objects
+            .object_movement_frame(identity)?
+            .ok_or("retained frame")?
+            .world_matrix(),
+        passenger.world_matrix()
+    );
+    scene.world.remove_object(9)?;
+    scene.objects.synchronize(Some(&scene.world))?;
+    assert!(scene.objects.object_movement_frame(identity)?.is_none());
     Ok(())
 }
 
