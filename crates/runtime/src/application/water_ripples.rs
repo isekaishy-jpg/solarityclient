@@ -132,6 +132,7 @@ impl RuntimeWaterRipples {
     pub(super) fn emit_sample(
         &mut self,
         sample: UnitWaterSample,
+        creature_flags: u32,
         world: &ActiveWorld,
         player: &RuntimePlayerPresentation,
         terrain: &mut RuntimeTerrainCoordinator,
@@ -141,7 +142,10 @@ impl RuntimeWaterRipples {
         scene_time: f32,
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeWaterRippleError> {
-        if world.object_identity(sample.identity.guid()) != Some(sample.identity) {
+        // 715D90 passes template bit 22 through 781A10 to registration bit 0x2000.
+        if creature_flags & (1 << 22) != 0
+            || world.object_identity(sample.identity.guid()) != Some(sample.identity)
+        {
             return Ok(());
         }
         let Some(liquid) = sample.liquid else {

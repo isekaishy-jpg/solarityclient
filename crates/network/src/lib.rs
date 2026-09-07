@@ -42,6 +42,7 @@ pub use protocol::{
     WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError,
     WorldTimeSpeed, WorldTransfer, WorldTransferPacketError, WorldTransferTransport,
 };
+pub use protocol::{CreatureQueryPacketError, CreatureQueryResponse, CreatureTemplate};
 pub use protocol::{GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate};
 pub use protocol::{WorldClientControlUpdate, WorldPlayerControlPacketError};
 pub use protocol::{WorldStatePacketError, WorldStateUpdate};

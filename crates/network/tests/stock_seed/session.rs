@@ -1,5 +1,7 @@
 //! External stock-compatibility tests for encrypted world-session I/O.
 
+#[path = "session/creature_query.rs"]
+mod creature_query;
 #[path = "session/game_object_query.rs"]
 mod game_object_query;
 

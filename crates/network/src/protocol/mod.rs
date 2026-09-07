@@ -11,6 +11,7 @@ mod character_creation;
 mod character_deletion;
 mod character_directory;
 mod character_rename;
+mod creature_query;
 mod game_object_query;
 mod liveness;
 mod movement;
@@ -46,6 +47,7 @@ pub use character_directory::{
 pub use character_rename::{
     CharacterNameResult, CharacterRename, CharacterRenameError, CharacterRenameResult,
 };
+pub use creature_query::{CreatureQueryPacketError, CreatureQueryResponse, CreatureTemplate};
 pub use game_object_query::{
     GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate,
 };

@@ -1,10 +1,18 @@
 //! Persistent active-world packet pump and main-thread ECS dispatch.
 
+mod creature_cache;
 mod game_object_cache;
+mod template_cache;
+
+use creature_cache::CreatureTemplateCache;
 
 #[cfg(test)]
 #[path = "../../tests/application/game_object_templates.rs"]
 mod game_object_template_tests;
+
+#[cfg(test)]
+#[path = "../../tests/application/creature_templates.rs"]
+mod creature_template_tests;
 
 pub(in crate::application) use game_object_cache::{
     GameObjectTemplateBinding, GameObjectTemplateCache,
@@ -84,6 +92,9 @@ pub enum RuntimeGameplayError {
     /// A game-object template response was malformed.
     #[error(transparent)]
     GameObjectQuery(#[from] solarity_network::GameObjectQueryPacketError),
+    /// A creature template response was malformed.
+    #[error(transparent)]
+    CreatureQuery(#[from] solarity_network::CreatureQueryPacketError),
     /// A realm clock packet was malformed.
     #[error(transparent)]
     WorldTime(#[from] WorldTimePacketError),
@@ -121,6 +132,7 @@ type GameObjectObserver<'a> = dyn FnMut(
 /// Main-thread ECS owner paired with one cancellable async network pump.
 pub struct RuntimeGameplayCoordinator {
     game_object_templates: GameObjectTemplateCache,
+    creature_templates: CreatureTemplateCache,
     active: Option<ActiveGameplayNetwork>,
     world: Option<ActiveWorld>,
     realm_clock: Option<RealmClock>,
@@ -139,13 +151,17 @@ impl RuntimeGameplayCoordinator {
         let mut coordinator = Self::new();
         coordinator.world = Some(world);
         coordinator
+            .creature_templates
+            .synchronize_world(coordinator.world.as_ref());
+        coordinator
     }
 
     /// Creates an empty gameplay boundary.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             game_object_templates: GameObjectTemplateCache::new(),
+            creature_templates: CreatureTemplateCache::new(),
             active: None,
             world: None,
             realm_clock: None,
@@ -193,7 +209,12 @@ impl RuntimeGameplayCoordinator {
         let mut realm_clock = None;
         let mut action_buttons = None;
         let mut game_object_templates = GameObjectTemplateCache::new();
+        let mut creature_templates = CreatureTemplateCache::new();
         for packet in setup_packets {
+            if let Some(response) = packet.creature_query()? {
+                creature_templates.receive(response);
+                continue;
+            }
             if let Some(response) = packet.game_object_query()? {
                 game_object_templates.receive(response);
                 continue;
@@ -226,6 +247,9 @@ impl RuntimeGameplayCoordinator {
         });
         self.world = Some(world);
         self.game_object_templates = game_object_templates;
+        self.creature_templates = creature_templates;
+        self.creature_templates
+            .synchronize_world(self.world.as_ref());
         self.realm_clock = realm_clock;
         self.action_buttons = action_buttons;
         self.player_control = Some(player_control);
@@ -289,6 +313,10 @@ impl RuntimeGameplayCoordinator {
                                 self.game_object_templates.receive(response);
                                 return Ok(false);
                             }
+                            if let Some(response) = packet.creature_query()? {
+                                self.creature_templates.receive(response);
+                                return Ok(false);
+                            }
                             dispatch_world_packet(
                                 world,
                                 packet,
@@ -313,6 +341,7 @@ impl RuntimeGameplayCoordinator {
                             self.action_buttons = None;
                             self.unhandled_packets.clear();
                             self.game_object_templates.clear();
+                            self.creature_templates.clear();
                             return Err(error);
                         }
                     }
@@ -324,6 +353,7 @@ impl RuntimeGameplayCoordinator {
                     self.action_buttons = None;
                     self.unhandled_packets.clear();
                     self.game_object_templates.clear();
+                    self.creature_templates.clear();
                     return Err(error);
                 }
                 Err(TryRecvError::Empty) => {
@@ -336,9 +366,14 @@ impl RuntimeGameplayCoordinator {
                     self.action_buttons = None;
                     self.unhandled_packets.clear();
                     self.game_object_templates.clear();
+                    self.creature_templates.clear();
                     return Err(RuntimeGameplayError::TaskEnded);
                 }
             }
+        }
+        if applied != 0 {
+            self.creature_templates
+                .synchronize_world(self.world.as_ref());
         }
         Ok(applied)
     }
@@ -353,6 +388,33 @@ impl RuntimeGameplayCoordinator {
         &mut self,
     ) -> &mut GameObjectTemplateCache {
         &mut self.game_object_templates
+    }
+
+    /// Admits queued unit requests; unit callbacks synchronize on packet updates.
+    pub(in crate::application) fn send_creature_queries(
+        &mut self,
+    ) -> Result<(), RuntimeGameplayError> {
+        let Some(active) = self.active.as_ref() else {
+            return Ok(());
+        };
+        while let Some((entry, guid)) = self.creature_templates.pending_request() {
+            match active
+                .commands
+                .try_send(WorldWriterCommand::CreatureQuery { entry, guid })
+            {
+                Ok(()) => self.creature_templates.request_admitted(),
+                Err(TrySendError::Full(_)) => break,
+                Err(TrySendError::Closed(_)) => return Err(RuntimeGameplayError::TaskEnded),
+            }
+        }
+        Ok(())
+    }
+
+    pub(in crate::application) fn unit_template_flags(
+        &self,
+        identity: solarity_ecs::WorldObjectIdentity,
+    ) -> u32 {
+        self.creature_templates.flags(identity)
     }
 
     /// Admits pending template requests without dropping them under backpressure.
@@ -406,6 +468,8 @@ impl RuntimeGameplayCoordinator {
             *destination.world_state_values_mut() = std::mem::take(source.world_state_values_mut());
         }
         self.world = Some(destination);
+        self.creature_templates
+            .synchronize_world(self.world.as_ref());
         let replacement = self
             .world
             .as_ref()
@@ -610,6 +674,7 @@ impl RuntimeGameplayCoordinator {
     /// Aborts packet I/O and drops active ECS state.
     pub fn disconnect(&mut self) {
         self.game_object_templates.clear();
+        self.creature_templates.clear();
         if let Some(active) = self.active.take() {
             active.task.abort();
         }
@@ -751,6 +816,9 @@ where
                     WorldWriterCommand::GameObjectQuery { entry, guid } => {
                         writer.send_game_object_query(entry, guid).await?;
                     }
+                    WorldWriterCommand::CreatureQuery { entry, guid } => {
+                        writer.send_creature_query(entry, guid).await?;
+                    }
                     WorldWriterCommand::AreaTrigger { heartbeat, trigger_id } => {
                         writer.send_movement(&heartbeat).await?;
                         writer.send_area_trigger(trigger_id).await?;
@@ -781,6 +849,10 @@ enum WorldWriterCommand {
     StandState(u32),
     ActiveMover(u64),
     GameObjectQuery {
+        entry: u32,
+        guid: u64,
+    },
+    CreatureQuery {
         entry: u32,
         guid: u64,
     },

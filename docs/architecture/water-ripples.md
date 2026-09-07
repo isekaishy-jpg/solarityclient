@@ -8,8 +8,8 @@ not evidence that these presentation requirements are complete.
 
 The remaining integration and investigation order is:
 
-1. Finish validation of the integrated ripple/splash emitter and GPU pass,
-   including the creature-template flag that suppresses liquid registration.
+1. Validate the integrated ripple/splash emitter, GPU pass and creature-template
+   suppression rule together with their existing movement and cache consumers.
 2. Audit the complete camera path, including water collision settings, pivot
    and eye queries, terrain versus WMO selection, transitions, and obstruction
    ordering. Compare existing camera code against the pinned executable.
@@ -48,9 +48,20 @@ Runtime applies this gate before querying area policy or consuming randomness.
 
 The additional registration flag `0x2000` comes from creature-template flags
 bit 22 (`0x00715D90`, cached record at unit + `0x964`, populated through
-`0x0067B6A0`/`0x0072CDE0`). It is not a `CreatureModelData` flag. Creature-query
-cache integration is still required for this special-unit suppression; absent
-native cache records leave the flag clear.
+`0x0067B6A0`/`0x0072CDE0`). It is not a `CreatureModelData` flag. Runtime now
+queries the creature cache by entry/full GUID (`0x60`) and handles complete
+or high-bit missing-entry replies (`0x61`, `0x0067B840`, `0x0098D4C0`).
+The decoder retains six bounded byte strings, ten full-width words, two floats,
+a normalized leader byte, six quest-item IDs and the final movement ID.
+Absent native cache records leave the suppression flag clear.
+
+Creature and GameObject caches share the same entry coalescing and weak callback
+owner. Unit callbacks register after object-update dispatch and retire by exact
+world/entity lifetime; steady frames only drain pending writer requests. Missing
+replies finish existing callbacks empty, while a later new admission may retry.
+Map replacement retains completed definitions and retires old unit callbacks.
+Connection retirement clears the cache and queued requests. The suppression
+flag gates new ripple emissions before randomness without removing old ripples.
 
 Area substitution is shared by movement sounds and ripple admission through
 `AreaTableCatalog::liquid_flags`. `0x009905C0` applies only to liquid IDs 1..20,
@@ -128,5 +139,5 @@ float stores, UV evaluation, and alpha conversion run original instructions.
 The offscreen Vulkan regression exercises additive blending, depth-test and
 depth-write state, normalized depth bias, no-mip sampling under minification,
 descriptor replacement, growing frame streams, and native vertex-count wrap.
-The remaining creature-cache gate, camera audit, underwater effects audit,
-and final lighting/sky stage are required before declaring water complete.
+The camera audit, underwater effects audit, and final lighting/sky stage are
+required before declaring water complete.

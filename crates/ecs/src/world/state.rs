@@ -287,6 +287,21 @@ impl ActiveWorld {
             .is_none_or(|guid| self.object_kind(guid) == Some(ObjectKind::GameObject))
     }
 
+    /// Iterates visible unit/player lifetimes in admission order without allocating.
+    pub fn visible_units(&self) -> impl Iterator<Item = WorldObjectIdentity> + '_ {
+        self.objects.entries().filter_map(|(guid, entity)| {
+            self.storage
+                .get::<&ObjectKind>(entity)
+                .ok()
+                .filter(|kind| matches!(**kind, ObjectKind::Unit | ObjectKind::Player))
+                .map(|_| WorldObjectIdentity {
+                    world: self.identity,
+                    entity,
+                    guid,
+                })
+        })
+    }
+
     /// Returns every visible unit/player GUID in deterministic identifier order.
     #[must_use]
     pub fn visible_unit_guids(&self) -> Vec<u64> {

@@ -2319,6 +2319,7 @@ impl ClientServices {
         self.game_objects
             .synchronize_templates(self.gameplay.game_object_templates_mut());
         self.gameplay.send_game_object_queries()?;
+        self.gameplay.send_creature_queries()?;
         self.game_objects.synchronize_transport_passengers(
             self.player_movement
                 .passenger_transport(self.gameplay.world())
@@ -2368,6 +2369,7 @@ impl ClientServices {
         ) {
             self.water_ripples.emit_sample(
                 sample,
+                self.gameplay.unit_template_flags(sample.identity),
                 world,
                 &self.player,
                 &mut self.terrain,
@@ -2404,6 +2406,7 @@ impl ClientServices {
             for sample in self.remote_movement.take_water_samples() {
                 self.water_ripples.emit_sample(
                     sample,
+                    self.gameplay.unit_template_flags(sample.identity),
                     world,
                     &self.player,
                     &mut self.terrain,
