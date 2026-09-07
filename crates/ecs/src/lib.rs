@@ -18,7 +18,9 @@ mod vehicle;
 mod view;
 mod world;
 
-pub use game_object::{GameObjectMovement, GameObjectPresentation, GameObjectTransport};
+pub use game_object::{
+    GameObjectAnimatedPose, GameObjectMovement, GameObjectPresentation, GameObjectTransport,
+};
 pub use movement::{
     WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementSpline,
     WorldMovementState, WorldMovementTransport, WorldTransform,

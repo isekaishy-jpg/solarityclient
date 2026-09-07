@@ -62,6 +62,21 @@ long paths, multiple stops, zero-distance first stops, map transitions, same-map
 teleports, server period changes, uint32 rollover, repeated stop/resume requests,
 replicated phase endpoints, missing physics, and disabled wave channels.
 
-This module is the mathematical provider. Runtime DBC admission, moving game
-object placement, collision registration, and passenger attachment still require
-their integration; this change alone does not make live transports move.
+`game_object_transport_pose` reproduces the Z/Y/X Euler matrix writes in
+`0x007134A0`, including the float stores in `0x004C3380`, `0x004C3340`, and
+`0x004C3300`. The separate `0x00982910` quaternion conversion and `0x004F43B0`
+packing use a positive-W hemisphere and truncation at `0x00407930`.
+`GameObjectAnimatedPose` retains the full unscaled matrix and packed rotation
+independently. `GameObjectPlacementResolver` uses the matrix for placement and
+passenger positions, and the decoded packed rotation for passenger orientation.
+Changes to either representation invalidate the cached placement. Replicated
+movement inputs survive pose publication, and removing an entity retires its pose.
+
+`tools/ghidra/transport_pose_oracle.py` executes all original matrix and packing
+instructions for 528 synthetic poses. Tests compare every packed value exactly
+and matrix components within 1e-7, then verify pose publication through an ECS
+parent/passenger chain, cache invalidation, and removal.
+
+Runtime DBC admission, transport clock advancement, collision registration, and
+player attachment still require integration; these providers alone do not make
+live transports move.

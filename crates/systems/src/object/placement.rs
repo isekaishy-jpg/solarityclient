@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use glam::{Mat4, Vec3};
-use solarity_ecs::{ActiveWorld, ObjectKind, WorldObjectIdentity};
+use solarity_ecs::{ActiveWorld, GameObjectAnimatedPose, ObjectKind, WorldObjectIdentity};
 use thiserror::Error;
 
 /// Decodes build 12340's signed 22/21/21-bit local quaternion (`0x00982340`).
@@ -79,6 +79,29 @@ impl GameObjectPlacement {
     pub const fn rotation(self) -> [f32; 4] {
         self.rotation
     }
+
+    /// Admits the transport's full matrix, retaining its separately packed rotation.
+    fn animated(
+        pose: GameObjectAnimatedPose,
+        scale: f32,
+    ) -> Result<Self, GameObjectPlacementError> {
+        let mut matrix = pose.matrix().to_cols_array();
+        let rotation = unpack_game_object_rotation(pose.packed_rotation());
+        if !scale.is_finite() || scale <= 0.0 || !rotation.into_iter().all(f32::is_finite) {
+            return Err(GameObjectPlacementError::InvalidTransform);
+        }
+        for column in 0..3 {
+            for row in 0..3 {
+                matrix[column * 4 + row] *= scale;
+            }
+        }
+        let matrix = Mat4::from_cols_array(&matrix);
+        let determinant = matrix.determinant();
+        if !matrix.is_finite() || !determinant.is_finite() || determinant == 0.0 {
+            return Err(GameObjectPlacementError::InvalidTransform);
+        }
+        Ok(Self { matrix, rotation })
+    }
 }
 
 /// Placement inputs that cannot yet produce a complete GameObject matrix.
@@ -128,6 +151,7 @@ struct PlacementInputs {
     local_position: [u32; 3],
     scale: u32,
     parent: Option<([u32; 16], [u32; 4])>,
+    animated_matrix: Option<[u32; 16]>,
 }
 
 struct CachedPlacement {
@@ -140,7 +164,7 @@ impl GameObjectPlacementResolver {
     ///
     /// Parent motion affects passenger position through the parent's full
     /// matrix and rotation through `0x004F4320`, with each object's own scale.
-    /// Animation-driven transport paths remain a separate placement provider.
+    /// Behavior-owned transport matrices supersede the replicated root pose.
     ///
     /// # Errors
     ///
@@ -178,7 +202,10 @@ impl GameObjectPlacementResolver {
         let mut parent: Option<GameObjectPlacement> = None;
         for &owner in self.chain.iter().rev() {
             let movement = world.game_object_movement(owner).unwrap_or_default();
-            let local_position = if parent.is_some() {
+            let animated = world.game_object_animated_pose(owner);
+            let local_position = if let Some(pose) = animated {
+                pose.matrix().w_axis.truncate()
+            } else if parent.is_some() {
                 movement
                     .transport()
                     .ok_or(GameObjectPlacementError::MissingPlacement { guid: owner })?
@@ -197,7 +224,10 @@ impl GameObjectPlacementResolver {
                 .object_identity(owner)
                 .ok_or(GameObjectPlacementError::MissingObject { guid: owner })?;
             let inputs = PlacementInputs {
-                packed_rotation: movement.packed_rotation(),
+                packed_rotation: animated.map_or(
+                    movement.packed_rotation(),
+                    GameObjectAnimatedPose::packed_rotation,
+                ),
                 local_position: local_position.to_array().map(f32::to_bits),
                 scale: scale.to_bits(),
                 parent: parent.map(|parent| {
@@ -206,6 +236,8 @@ impl GameObjectPlacementResolver {
                         parent.rotation.map(f32::to_bits),
                     )
                 }),
+                animated_matrix: animated
+                    .map(|pose| pose.matrix().to_cols_array().map(f32::to_bits)),
             };
             if let Some(cached) = self.placements.get(&identity)
                 && cached.inputs == inputs
@@ -222,7 +254,11 @@ impl GameObjectPlacementResolver {
             } else {
                 (local_position, local)
             };
-            let placement = GameObjectPlacement::new(position, rotation, scale)?;
+            let placement = if let Some(pose) = animated {
+                GameObjectPlacement::animated(pose, scale)?
+            } else {
+                GameObjectPlacement::new(position, rotation, scale)?
+            };
             self.placements
                 .insert(identity, CachedPlacement { inputs, placement });
             parent = Some(placement);

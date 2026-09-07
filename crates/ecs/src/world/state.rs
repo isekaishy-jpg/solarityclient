@@ -4,7 +4,7 @@ use shipyard::{EntityId, World};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
-use crate::game_object::{GameObjectMovement, GameObjectPresentation};
+use crate::game_object::{GameObjectAnimatedPose, GameObjectMovement, GameObjectPresentation};
 use crate::movement::{WorldMovementState, WorldTransform};
 use crate::object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 use crate::player::{LocalPlayer, PlayerIdentity, PlayerMoney, PlayerProgression};
@@ -435,6 +435,29 @@ impl ActiveWorld {
             .get::<&GameObjectMovement>(entity)
             .map(|value| **value)
             .ok()
+    }
+
+    /// Returns the current behavior-owned transport pose for this object lifetime.
+    #[must_use]
+    pub fn game_object_animated_pose(&self, guid: u64) -> Option<GameObjectAnimatedPose> {
+        self.storage
+            .get::<&GameObjectAnimatedPose>(self.entity_by_guid(guid)?)
+            .map(|value| **value)
+            .ok()
+    }
+
+    /// Publishes a sampled transport pose without altering replication inputs.
+    ///
+    /// # Errors
+    /// Returns [`WorldStateError`] when the object has left the visible registry.
+    pub fn update_game_object_animated_pose(
+        &mut self,
+        guid: u64,
+        pose: GameObjectAnimatedPose,
+    ) -> Result<(), WorldStateError> {
+        let entity = self.require_entity(guid)?;
+        self.storage.add_component(entity, (pose,));
+        Ok(())
     }
 
     /// Replaces the admitted GameObject movement snapshot.
