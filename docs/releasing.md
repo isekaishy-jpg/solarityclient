@@ -1,8 +1,15 @@
 # Product versions and numbered builds
 
-The current product version is **0.0.0a**. When the first major slice is
-complete and verified, the next version is **0.0.1a**. A version bump is a
-release decision, not a side effect of committing a fix or compiling code.
+The current product version is **0.0.2a**, marking the user-accepted basic
+locomotion slice. This milestone covers ground movement, jumping and landing,
+movement animation and sound, and the associated camera behavior. Swimming,
+mounts, flying, vehicles, and other dependent movement modes are backlog items
+waiting for their prerequisite implementations to catch up. They remain outside
+this milestone. See [local player movement](architecture/local-player-movement.md)
+for the implementation scope and remaining details.
+
+A version bump is a release decision, not a side effect of committing a fix
+or compiling code. Numbered Testing builds continue across version changes.
 
 `Cargo.toml` is the version source. All workspace packages inherit its
 SemVer-compatible spelling; the runtime embeds the product spelling:

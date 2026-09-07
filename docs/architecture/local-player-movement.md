@@ -1,5 +1,14 @@
 # Local player movement
 
+Product version **0.0.2a** marks the user-accepted basic locomotion slice,
+following Testing Build 000021's movement sound corrections. The accepted scope
+covers ground movement, jumping and landing, movement animations and sounds,
+and associated camera behavior. Swimming, mounts, flying, vehicles, and other
+dependent movement modes are backlog items waiting for their prerequisite
+implementations to catch up. Existing helpers or partial support for those modes
+do not count as completion of them. The next work is the user's testing-annoyance
+pass.
+
 The production world loop now drains movement commands from its live FrameXML
 state before player presentation samples ECS. `RuntimePlayerMovement` owns
 held-control arbitration, a local ground/fall continuation, analytic motion

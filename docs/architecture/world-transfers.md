@@ -6,9 +6,9 @@ player and transport presentation, and world sound before publishing the
 destination. FrameXML, the realm clock, action-button state, the encrypted
 socket, and the saved camera view remain owned across that boundary.
 
-This is separate from initial character login. Product version remains
-`0.0.0a`; the open gear-particle comparison and in-world movement work do not
-become complete merely because transfer plumbing is available.
+This is separate from initial character login. Transfer plumbing alone does
+not establish completion of presentation or movement slices; their accepted
+scope is recorded in the [release milestones](../releasing.md).
 
 ## Original executable evidence
 
