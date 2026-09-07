@@ -6,6 +6,7 @@ mod movement;
 
 pub(crate) use monster::apply_monster_move;
 pub(crate) use monster::prepare_monster_move;
+pub(crate) use monster::stop_before_path;
 
 use crate::application::game_object_behavior::GameObjectNotification;
 use game_object_notifications::GameObjectUpdateMirrors;
@@ -135,7 +136,8 @@ impl<S> GameplaySession<S> {
     }
 
     /// Applies a server-started path at an explicit receipt clock.
-    /// Returns false for an unknown unit or a transport controller not yet owned.
+    /// Returns false for an unknown unit or a path requiring the runtime's
+    /// resident passenger-frame provider.
     ///
     /// # Errors
     /// Rejects malformed movement geometry or a missing living movement state.

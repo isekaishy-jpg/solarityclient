@@ -282,6 +282,33 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                     .is_none()
             );
             assert!(unhandled.is_empty());
+            let before = world
+                .object_transform(9)
+                .ok_or("remote before rejected path")?;
+            let sent = server.exchange(vec![(0x2ae, passenger_path(9))], 0).await?;
+            assert!(dispatch_world_packet(
+                gameplay.world.as_mut().ok_or("world")?,
+                network.receive_packet().await?,
+                &mut None,
+                &mut None,
+                &mut control,
+                &mut unhandled,
+                1.,
+                &mut |_, _, _| Ok(()),
+                1750,
+            )?);
+            sent.await??;
+            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1750)?;
+            let world = gameplay.world().ok_or("world")?;
+            assert_eq!(world.object_transform(9), Some(before));
+            assert!(
+                world
+                    .movement_state(9)
+                    .ok_or("movement")?
+                    .spline()
+                    .is_none()
+            );
+            assert!(unhandled.is_empty());
             Ok(())
         })
 }
@@ -306,18 +333,22 @@ fn setup_dispatch_admits_encrypted_remote_passenger_snapshots() -> Result<(), Te
                 .ok_or("local identity")?;
             let mut control = RuntimePlayerControl::new(identity);
             let mut unhandled = VecDeque::new();
-            let sent = server.exchange(vec![(0xee, passenger(9))], 0).await?;
-            let packet = gameplay.network_mut().receive_packet().await?;
-            super::dispatch_setup_packet(
-                &mut gameplay,
-                packet,
-                &mut None,
-                &mut None,
-                &mut control,
-                &mut unhandled,
-                1.,
-                &mut |_, _, _| Ok(()),
-            )?;
+            let sent = server
+                .exchange(vec![(0xee, passenger(9)), (0x2ae, passenger_path(9))], 0)
+                .await?;
+            for _ in 0..2 {
+                let packet = gameplay.network_mut().receive_packet().await?;
+                super::dispatch_setup_packet(
+                    &mut gameplay,
+                    packet,
+                    &mut None,
+                    &mut None,
+                    &mut control,
+                    &mut unhandled,
+                    1.,
+                    &mut |_, _, _| Ok(()),
+                )?;
+            }
             sent.await??;
             assert!(unhandled.is_empty());
             Ok(())
@@ -335,6 +366,15 @@ fn passenger(guid: u8) -> Vec<u8> {
     body.extend(8888_u32.to_le_bytes());
     body.push(0xff);
     body.extend(0_u32.to_le_bytes());
+    body
+}
+
+/// The transport path opcode inserts its parent GUID/seat before the control byte.
+fn passenger_path(guid: u8) -> Vec<u8> {
+    let ordinary = path(guid, 0., 1.);
+    let mut body = ordinary[..2].to_vec();
+    body.extend([1, 99, 0xff]);
+    body.extend_from_slice(&ordinary[2..]);
     body
 }
 

@@ -14,6 +14,70 @@ use transfer_world_server::{TestError, WorldServer};
 const SPEEDS: [f32; 9] = [2.5, 7.0, 4.5, 4.75, 2.5, 7.25, 4.75, 3.125, 3.25];
 const CONDITIONAL_FLAGS: u64 = 0x0420_0E20_1200;
 
+/// A creation/movement spline launches in its transmitted passenger frame;
+/// using the ordinary world height here offsets its entire falling trajectory.
+#[test]
+fn transport_snapshot_seeds_falling_path_from_local_height() -> Result<(), TestError> {
+    run(async {
+        let (server, session) = WorldServer::connect().await?;
+        let mut gameplay = GameplaySession::enter(session);
+        gameplay.world_mut().create_object(
+            9,
+            ObjectKind::Unit,
+            Some(WorldTransform::new(Vec3::ZERO, 0.)),
+            [],
+        )?;
+        let mut body = vec![1, 0, 0, 0, 1, 1, 9];
+        body.extend(0x0800_0201_u64.to_le_bytes()[..6].iter().copied());
+        body.extend(0_u32.to_le_bytes());
+        floats(&mut body, &[10., 20., 30., 0.5]);
+        body.extend([1, 7]);
+        floats(&mut body, &[-1.5, 2.25, 3.5, -0.75]);
+        body.extend(25_u32.to_le_bytes());
+        body.push(0xff);
+        body.extend(0_u32.to_le_bytes());
+        floats(&mut body, &SPEEDS);
+        for value in [0x200_u32, 0, 1000, 42] {
+            body.extend(value.to_le_bytes());
+        }
+        floats(&mut body, &[1., 1., 0.]);
+        body.extend(0_u32.to_le_bytes());
+        body.extend(4_u32.to_le_bytes());
+        for z in [4.5, 3.5, 0.5, -0.5] {
+            floats(&mut body, &[-1.5, 2.25, z]);
+        }
+        body.push(0);
+        floats(&mut body, &[-1.5, 2.25, 0.5]);
+        let sent = server.exchange(vec![(0xa9, body)], 0).await?;
+        let packet = gameplay.network_mut().receive_packet().await?;
+        gameplay.apply_object_updates_at(&packet.object_updates()?.ok_or("snapshot")?, 0)?;
+        sent.await??;
+        let world = gameplay.world();
+        let entity = world.entity_by_guid(9).ok_or("remote")?;
+        let mut spline = world
+            .storage()
+            .get::<&solarity_systems::MovementSpline>(entity)?
+            .clone();
+        let movement = world.movement_state(9).ok_or("movement")?;
+        let parent = movement.context().transport.ok_or("transport")?;
+        let (local, _) = spline.advance_movement(
+            250,
+            movement,
+            WorldTransform::new(parent.position, parent.orientation),
+            |_| None,
+        )?;
+        assert!(
+            local.position().z > 2.8 && local.position().z < 3.,
+            "{local:?}"
+        );
+        assert_eq!(
+            world.object_transform(9).ok_or("world pose")?.position().z,
+            30.
+        );
+        Ok(())
+    })
+}
+
 /// The transport clock survives encrypted create decoding and wraps with the
 /// local receipt clock; a repeated create must not re-anchor an existing boat.
 #[test]

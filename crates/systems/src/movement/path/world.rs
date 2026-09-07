@@ -70,8 +70,8 @@ fn advance_paths(
                 if entity == world.local_player() {
                     continue;
                 }
-                // Transport attachment is owned by the pending transport movement
-                // controller. Its local path cannot be published as a world point.
+                // The runtime passenger timeline owns attached paths and their
+                // resident parent frames. Its local point requires world projection.
                 if movement.transport_guid().is_some() {
                     continue;
                 }

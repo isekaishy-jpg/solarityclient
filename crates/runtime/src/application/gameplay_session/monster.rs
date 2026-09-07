@@ -10,9 +10,9 @@ use solarity_systems::{
 
 use super::GameplayUpdateError;
 
-/// Unknown GUIDs are consumed without creating units (`0073F590`). A nonzero
-/// transport remains with the pending transport controller instead of placing
-/// parent-relative path points directly into world space.
+/// Unknown GUIDs are consumed without creating units (`0073F590`). This direct
+/// world-space API leaves attached paths to the runtime dispatcher, which owns
+/// the resident parent frames required to admit and project local path points.
 pub(crate) fn apply_monster_move(
     world: &mut ActiveWorld,
     message: &MonsterMove,
@@ -65,6 +65,7 @@ pub(crate) fn prepare_monster_move(
     stop_distance_tolerance: f32,
     target_position: impl FnOnce(u64) -> Option<Vec3>,
 ) -> Result<PreparedMonsterMovement, MovementSplineError> {
+    let movement = stop_before_path(movement);
     let facing = facing(message.facing);
     let request = match &message.path {
         Some(path) => MovementPathRequest::Move {
@@ -82,13 +83,9 @@ pub(crate) fn prepare_monster_move(
         .map_err(MovementSplineError::from)?;
     let mut context = movement.context();
     context.transport = None;
-    let mut movement_flags = movement.flags() & !0x0140_0000_0000;
+    let mut movement_flags = movement.flags() & !0x0540_0000_0200;
     if message.control_byte != 0 {
         movement_flags |= 0x0040_0000_0000;
-    }
-    // 006ED7E0 resets ordinary movement when no active spline owns it.
-    if movement.spline().is_none_or(|path| path.flags & 0x400 != 0) {
-        movement_flags = reset_movement_flags(movement_flags);
     }
     let prepared = match prepared {
         PreparedMovementPath::Spline {
@@ -177,6 +174,28 @@ pub(crate) fn prepare_monster_move(
             })
         }
     }
+}
+
+/// 6ED7E0 stops ordinary axes before parent admission, including when the
+/// requested parent will be rejected. An active spline retains its movement.
+pub(crate) fn stop_before_path(movement: WorldMovementState) -> WorldMovementState {
+    if movement
+        .spline()
+        .is_some_and(|path| path.flags & 0x400 == 0)
+    {
+        return movement;
+    }
+    let mut context = movement.context();
+    context.falling = None;
+    let mut stopped = WorldMovementState::new(
+        reset_movement_flags(movement.flags()),
+        movement.speeds(),
+        context,
+    );
+    if let Some(spline) = movement.spline() {
+        stopped = stopped.with_spline(spline);
+    }
+    stopped
 }
 
 /// Native 006E9980/006ED7E0 release all axes while retaining walking/effects.

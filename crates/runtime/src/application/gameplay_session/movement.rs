@@ -1,7 +1,7 @@
 //! Network snapshot to retained systems-owned spline projection.
 
 use glam::Vec3;
-use solarity_ecs::ActiveWorld;
+use solarity_ecs::{ActiveWorld, WorldTransform};
 use solarity_network::{MovementSplineFacing as WireFacing, ObjectMovementUpdate};
 use solarity_systems::{
     MovementSpline, MovementSplineDefinition, MovementSplineFacing, set_world_movement_spline,
@@ -39,7 +39,14 @@ pub(super) fn install(
             nodes: source.nodes.iter().copied().map(Vec3::from_array).collect(),
             destination: Vec3::from_array(source.destination),
         };
-        let transform = movement_transform(update)
+        // 6F1520/6EB730 substitute the passenger lane before path continuation.
+        // In particular, a falling spline's origin height is parent-local.
+        let transform = movement
+            .context()
+            .transport
+            .filter(|parent| parent.guid != 0)
+            .map(|parent| WorldTransform::new(parent.position, parent.orientation))
+            .or_else(|| movement_transform(update))
             .ok_or(solarity_systems::MovementSplineError::InvalidDefinition)?;
         let spline = MovementSpline::new(definition, receipt_ms, transform)?;
         movement = movement.with_spline(spline.motion());

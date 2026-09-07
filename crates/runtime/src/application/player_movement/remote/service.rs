@@ -84,6 +84,7 @@ impl RuntimeRemoteMovement {
                 // publications. Keep clock history within this object lifetime.
                 owner.published = (transform, movement);
                 owner.motion = None;
+                owner.path_parent = None;
                 owner.path = world
                     .storage()
                     .get::<&MovementSpline>(entity)

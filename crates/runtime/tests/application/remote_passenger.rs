@@ -3,6 +3,7 @@
 use glam::Vec3;
 use solarity_ecs::{WorldMovementContext, WorldMovementSpeeds, WorldMovementState, WorldTransform};
 use solarity_network::{
+    MonsterMove, MonsterMovePath, MonsterMoveTransport, MovementSplineFacing,
     ObjectMovementContext, ObjectMovementFall, ObjectMovementTransport, RemoteMovement,
     WorldMovementKind,
 };
@@ -39,6 +40,188 @@ fn command(kind: WorldMovementKind, flags: u64, time_ms: u32, local_x: f32) -> R
             spline_elevation: None,
         },
     }
+}
+
+/// A short linear server path whose points and final-facing data are parent-local.
+fn path(parent: Option<u64>) -> MonsterMove {
+    MonsterMove {
+        guid: 7,
+        transport: parent.map(|guid| MonsterMoveTransport { guid, seat: -1 }),
+        control_byte: 0,
+        start: [-0.3, -0.5, 0.],
+        id: 42,
+        facing_type: 3,
+        facing: MovementSplineFacing::Target(33),
+        path: Some(MonsterMovePath {
+            flags: 0,
+            duration_ms: 100,
+            animation: None,
+            parabolic: None,
+            points: vec![[0.4, -0.5, 0.]],
+        }),
+    }
+}
+
+#[test]
+fn transport_path_moves_locally_resolves_world_targets_and_follows_after_completion() -> TestResult
+{
+    let mut scene = Scene::passenger_deck()?;
+    let mut remote = owner(&scene)?;
+    let mut query = RuntimeMovementQuery::new();
+    {
+        let mut geometry = RuntimeMovementGeometry::new(
+            &mut scene.terrain,
+            &scene.world,
+            &scene.objects,
+            0x0010_0111,
+            MovementBspCacheMode::Enabled,
+            &mut query,
+        );
+        remote.receive(
+            command(WorldMovementKind::Heartbeat, 0, 0, -0.3),
+            0,
+            0,
+            &mut geometry,
+        )?;
+        remote.receive_path(&path(Some(9)), 0, 1., &mut geometry, |_| None)?;
+        remote.advance(
+            50,
+            [0.1, 1.5, 0.5],
+            MovementGroundProfile::Other,
+            &mut geometry,
+            |_| None,
+        )?;
+    }
+    let transport = remote
+        .snapshot()
+        .1
+        .context()
+        .transport
+        .ok_or("path transport")?;
+    assert!(
+        (transport.position.x - 0.05).abs() < 0.00001,
+        "{transport:?}"
+    );
+    assert_eq!(transport.position.y, -0.5);
+    scene.synchronize(6100)?;
+    {
+        let mut geometry = RuntimeMovementGeometry::new(
+            &mut scene.terrain,
+            &scene.world,
+            &scene.objects,
+            0x0010_0111,
+            MovementBspCacheMode::Enabled,
+            &mut query,
+        );
+        let frame = geometry.passenger(9)?.ok_or("parent frame")?.frame;
+        let target = frame.world_position(Vec3::new(0.4, 0.5, 0.));
+        remote.advance(
+            100,
+            [0.1, 1.5, 0.5],
+            MovementGroundProfile::Other,
+            &mut geometry,
+            |guid| (guid == 33).then_some(target),
+        )?;
+        let (world, movement) = remote.snapshot();
+        let transport = movement.context().transport.ok_or("completed transport")?;
+        assert_eq!(transport.position, Vec3::new(0.4, -0.5, 0.));
+        assert!(
+            (transport.orientation - std::f32::consts::FRAC_PI_2).abs() < 0.00001,
+            "{transport:?}"
+        );
+        assert_eq!(world.position(), frame.world_position(transport.position));
+        assert_eq!(
+            world.orientation(),
+            frame.world_orientation(transport.orientation)
+        );
+        assert_eq!(movement.flags() & 3, 0);
+        assert_ne!(movement.spline().ok_or("completed path")?.flags & 0x400, 0);
+    }
+    let completed = remote.snapshot();
+    scene.synchronize(6500)?;
+    {
+        let mut geometry = RuntimeMovementGeometry::new(
+            &mut scene.terrain,
+            &scene.world,
+            &scene.objects,
+            0x0010_0111,
+            MovementBspCacheMode::Enabled,
+            &mut query,
+        );
+        remote.advance(
+            100,
+            [0.1, 1.5, 0.5],
+            MovementGroundProfile::Other,
+            &mut geometry,
+            |_| None,
+        )?;
+    }
+    assert_ne!(remote.snapshot().0.position(), completed.0.position());
+    assert_eq!(
+        remote.snapshot().1.context().transport,
+        completed.1.context().transport
+    );
+    Ok(())
+}
+
+#[test]
+fn path_parent_rejection_preserves_attachment_and_world_path_replacement_detaches() -> TestResult {
+    let mut scene = Scene::passenger_deck()?;
+    let mut remote = owner(&scene)?;
+    let mut query = RuntimeMovementQuery::new();
+    let mut geometry = RuntimeMovementGeometry::new(
+        &mut scene.terrain,
+        &scene.world,
+        &scene.objects,
+        0x0010_0111,
+        MovementBspCacheMode::Enabled,
+        &mut query,
+    );
+    remote.receive(
+        command(WorldMovementKind::StartForward, 1, 0, -0.3),
+        0,
+        0,
+        &mut geometry,
+    )?;
+    let before = remote.snapshot();
+    remote.receive_path(&path(Some(999)), 0, 1., &mut geometry, |_| None)?;
+    assert!(remote.path.is_none());
+    assert_eq!(remote.snapshot().0, before.0);
+    assert_eq!(remote.snapshot().1.transport_guid(), Some(9));
+    assert_eq!(
+        remote.snapshot().1.flags() & 3,
+        0,
+        "flush stops ordinary axes even when parent admission fails"
+    );
+    remote.receive_path(&path(Some(9)), 0, 1., &mut geometry, |_| None)?;
+    remote.advance(
+        50,
+        [0.1, 1.5, 0.5],
+        MovementGroundProfile::Other,
+        &mut geometry,
+        |_| None,
+    )?;
+    let before = remote.snapshot();
+    remote.receive_path(&path(Some(999)), 50, 1., &mut geometry, |_| None)?;
+    assert_eq!(remote.path.as_ref().ok_or("retained path")?.id(), 42);
+    assert_eq!(remote.snapshot(), before);
+    let mut replacement = path(None);
+    replacement.start = before.0.position().to_array();
+    replacement.path.as_mut().ok_or("replacement")?.points =
+        vec![(before.0.position() + Vec3::X).to_array()];
+    replacement.id = 43;
+    remote.receive_path(&replacement, 50, 1., &mut geometry, |_| None)?;
+    assert_eq!(remote.snapshot().0.position(), before.0.position());
+    assert!(remote.snapshot().1.transport_guid().is_none());
+    remote.advance(
+        100,
+        [0.1, 1.5, 0.5],
+        MovementGroundProfile::Other,
+        &mut geometry,
+        |_| None,
+    )?;
+    assert!((remote.snapshot().0.position().x - before.0.position().x - 0.5).abs() < 0.00001);
+    Ok(())
 }
 
 /// The scene supplies real identity, terrain, route, and passenger matrices.

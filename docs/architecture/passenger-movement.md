@@ -160,6 +160,34 @@ transport clock metadata; it never publishes the active mover's TLS clock.
 
 Tests use the real resident route and collision deck to cover idle frame changes,
 interpolated walking/stopping, both missing-parent policies, and a queued airborne
-switch between independently clocked transports. Remaining transport integration
-includes remote destruction callbacks, transport-authored unit paths, and type-11
-animation paths.
+switch between independently clocked transports.
+
+## Transport-authored unit paths
+
+Both setup and live dispatch admit `SMSG_MONSTER_MOVE_TRANSPORT` into the same
+receipt-ordered inbox as ordinary remote snapshots. `0x0073C8E0` flushes earlier
+commands (`0x006ED7E0`) before forcing the requested parent through
+`0x006F0C70`/`0x006EC400`. Unlike queued ordinary snapshot admission, this parent
+change rejects an unavailable nonzero parent before unlinking the old one. The
+caller compares the resulting GUID and does not replace the path on failure.
+Ordinary axes are already stopped by that point; an active spline retains its
+axes and geometry.
+
+The runtime prepares and reconciles controls in parent coordinates. It uses the
+retained local pose for a same-parent replacement and converts world placement
+when changing parents. Each retained path owns a parent identity and refreshed
+matrix; evaluation and endpoint facing use local coordinates, including the
+conversion of a target's world position. `0x006E9470` stores the local result and
+`0x004F4460` projects it for world consumers. Completed paths continue to follow
+their parent while idle. A subsequent world-space path first detaches through
+the current parent projection. Creation snapshots also seed a falling path from
+the transmitted local height instead of its ordinary world height.
+
+Resident-deck tests cover local traversal, target facing, continued parent motion
+after completion, rejected parent admission, and replacement by a world path.
+Encrypted fixtures cover both dispatcher branches and falling creation snapshots.
+The standalone world-space path API delegates attached travel to this runtime
+provider instead of publishing local coordinates directly.
+
+Remaining transport integration includes remote destruction callbacks and
+type-11 animation paths.

@@ -809,9 +809,6 @@ fn dispatch_setup_packet<S>(
         return Ok(());
     }
     if let Some(message) = packet.monster_move()? {
-        if message.transport.is_some_and(|parent| parent.guid != 0) {
-            return retain_unhandled(unhandled, packet);
-        }
         crate::application::player_movement::remote::receive_path(
             gameplay.world_mut(),
             message,
@@ -884,10 +881,6 @@ fn dispatch_world_packet(
         ));
     }
     if let Some(message) = packet.monster_move()? {
-        if message.transport.is_some_and(|parent| parent.guid != 0) {
-            retain_unhandled(unhandled, packet)?;
-            return Ok(false);
-        }
         return Ok(crate::application::player_movement::remote::receive_path(
             world,
             message,

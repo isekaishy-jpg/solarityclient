@@ -12,6 +12,7 @@ use solarity_systems::{
     RemoteMovementBlend, RemoteMovementClock, RemoteMovementPose, RemoteMovementReceipt,
 };
 
+use super::super::passenger::PassengerParent;
 use super::super::{
     LocalMovement, LocalMovementGeometry, MovementPhase, RuntimePlayerMovementError,
 };
@@ -49,6 +50,8 @@ pub(super) struct RemoteUnit {
     pub time_ms: u32,
     pub motion: Option<LocalMovement>,
     pub path: Option<MovementSpline>,
+    /// Retained lifetime/frame while spline travel owns the local pose.
+    pub path_parent: Option<PassengerParent>,
     pub animation_events: VecDeque<UnitMovementAnimationEvent>,
     clock: RemoteMovementClock,
     commands: VecDeque<Scheduled>,
@@ -68,6 +71,7 @@ impl RemoteUnit {
             time_ms,
             motion: None,
             path: None,
+            path_parent: None,
             animation_events: VecDeque::new(),
             clock: RemoteMovementClock::default(),
             commands: VecDeque::new(),
@@ -121,20 +125,13 @@ impl RemoteUnit {
                     receipt_ms,
                     stop_distance_tolerance,
                 } => {
-                    self.flush(geometry)?;
-                    // 0073C8E0 uses the current placement after 006ED7E0;
-                    // no path sample may overwrite a just-flushed snapshot.
-                    let (current, movement) = self.snapshot();
-                    let prepared = crate::application::gameplay_session::prepare_monster_move(
-                        current,
-                        movement,
+                    self.receive_path(
                         &message,
                         receipt_ms,
                         stop_distance_tolerance,
+                        geometry,
                         &target_position,
                     )?;
-                    self.baseline(prepared.transform, prepared.movement, receipt_ms);
-                    self.path = prepared.spline;
                 }
             }
         }
@@ -155,6 +152,7 @@ impl RemoteUnit {
         self.time_ms = time_ms;
         self.motion = None;
         self.path = None;
+        self.path_parent = None;
         self.commands.clear();
     }
 
@@ -169,6 +167,9 @@ impl RemoteUnit {
         &mut self,
         geometry: &mut G,
     ) -> Result<(), RuntimePlayerMovementError> {
+        if self.path.is_some() {
+            return self.refresh_path_parent(geometry);
+        }
         let (transform, movement) = self.published;
         // Liquid, flight, and pitch-arc travel require the separate
         // three-dimensional trajectory owner. 00987950 integrates a pitch arc
@@ -402,6 +403,7 @@ impl RemoteUnit {
             self.animation_events.append(&mut motion.animation_events);
         }
         self.motion = None;
+        self.path_parent = None;
         self.time_ms = time_ms;
         self.initialize_motion(geometry)?;
         if let (Some(motion), Some(direction)) = (&mut self.motion, retained_direction)
@@ -517,18 +519,18 @@ impl RemoteUnit {
             let (transform, movement) = self.snapshot();
             // 6EAC40 checks the movement owner's coordinate lane, which is
             // parent-local for passengers, before evaluating its interval.
-            let position = self
-                .motion
-                .as_ref()
-                .map_or(transform.position(), |motion| motion.position);
+            let position = self.motion.as_ref().map_or_else(
+                || {
+                    movement
+                        .context()
+                        .transport
+                        .map_or(transform.position(), |parent| parent.position)
+                },
+                |motion| motion.position,
+            );
             let can_advance = movement.flags() & 0x40c0_10ff != 0 && in_map_bounds(position);
-            if can_advance && let Some(path) = &mut self.path {
-                self.published = path.advance_movement(
-                    next_ms,
-                    self.published.1,
-                    self.published.0,
-                    &target_position,
-                )?;
+            if can_advance && self.path.is_some() {
+                self.advance_path(next_ms, &target_position)?;
             }
             if let Some(motion) = &mut self.motion {
                 motion.remote_profile = Some(profile);
