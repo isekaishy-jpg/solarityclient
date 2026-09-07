@@ -38,7 +38,13 @@ mod stable;
 mod support;
 mod talent;
 mod vehicle;
+mod water_ripple;
 mod world;
+
+pub use water_ripple::{
+    WaterRipple, WaterRippleClock, WaterRippleEmission, WaterRippleEnvelope,
+    WaterRippleEnvelopeError, WaterRippleError, WaterRippleOwner, WaterRipplePool, WaterRippleUnit,
+};
 
 pub use movement::{
     MovementTransportChange, MovementTransportFrame, MovementTransportFrameError,

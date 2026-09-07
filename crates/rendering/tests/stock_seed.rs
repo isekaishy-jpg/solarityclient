@@ -42,6 +42,8 @@ mod terrain;
 mod texture;
 #[path = "stock_seed/ui.rs"]
 mod ui;
+#[path = "stock_seed/water_ripple.rs"]
+mod water_ripple;
 #[path = "stock_seed/weather.rs"]
 mod weather;
 #[path = "stock_seed/world_model.rs"]

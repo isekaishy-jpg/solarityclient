@@ -2,6 +2,8 @@
 
 mod depth;
 mod depth_texture;
+mod ripple_projection;
+mod ripple_vertex;
 mod shader_uniform;
 mod terrain_mesh;
 mod texture_animation;
@@ -10,6 +12,8 @@ mod world_model_mesh;
 
 pub use depth::LiquidDepthCoordinates;
 pub use depth_texture::{LiquidDepthTexture, LiquidDepthTextureKind};
+pub use ripple_projection::{WaterRippleProjectionError, water_ripple_surface_transform};
+pub use ripple_vertex::{WaterRippleRenderVertex, WaterRippleVertexError};
 pub use shader_uniform::{LiquidFog, LiquidLighting, LiquidPointLight, LiquidShaderUniform};
 pub use terrain_mesh::{LiquidRenderVertex, TerrainLiquidMeshPlan};
 pub use texture_animation::LiquidTextureTimeline;

@@ -53,9 +53,10 @@ pub use lighting::{
 pub use liquid::{
     LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidFog, LiquidLighting,
     LiquidPointLight, LiquidRenderVertex, LiquidScrollError, LiquidShaderUniform,
-    LiquidTextureTimeline, TerrainLiquidMeshPlan, WorldModelLiquidDepthColumn,
+    LiquidTextureTimeline, TerrainLiquidMeshPlan, WaterRippleProjectionError,
+    WaterRippleRenderVertex, WaterRippleVertexError, WorldModelLiquidDepthColumn,
     WorldModelLiquidMeshError, WorldModelLiquidMeshPlan, WorldModelLiquidSurface,
-    liquid_magma_surface_transform, liquid_water_surface_transform,
+    liquid_magma_surface_transform, liquid_water_surface_transform, water_ripple_surface_transform,
 };
 pub use minimap::{MinimapView, MinimapViewError};
 pub use model::{

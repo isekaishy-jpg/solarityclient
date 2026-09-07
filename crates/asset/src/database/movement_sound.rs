@@ -51,7 +51,7 @@ pub struct MovementSoundCatalog {
     armor: BTreeMap<u32, u32>,
     ground_effects: BTreeMap<u32, u32>,
     liquids: super::LiquidTypeCatalog,
-    area_liquids: BTreeMap<u32, (u32, [u32; 4])>,
+    areas: super::AreaTableCatalog,
 }
 
 impl MovementSoundCatalog {
@@ -95,10 +95,7 @@ impl MovementSoundCatalog {
             .map(|row| (row[0], row[10]))
             .collect();
         let liquids = super::LiquidTypeCatalog::load(store)?;
-        let area_liquids = rows::<36>(store, "AreaTable")?
-            .into_iter()
-            .map(|row| (row[0], (row[2], [row[29], row[30], row[31], row[32]])))
-            .collect();
+        let areas = super::AreaTableCatalog::load(store)?;
         Ok(Self {
             creatures,
             terrain_sounds,
@@ -106,7 +103,7 @@ impl MovementSoundCatalog {
             armor,
             ground_effects,
             liquids,
-            area_liquids,
+            areas,
         })
     }
 
@@ -144,28 +141,7 @@ impl MovementSoundCatalog {
     /// Resolves native 0x009905C0's area/parent substitution before liquid flags.
     #[must_use]
     pub fn liquid_flags(&self, area: u32, liquid: u32) -> Option<u32> {
-        if liquid == 0 {
-            return None;
-        }
-        let mut resolved = liquid;
-        if liquid < 21
-            && let Some(&(parent, overrides)) = self.area_liquids.get(&area)
-        {
-            let slot = ((liquid - 1) & 3) as usize;
-            let replacement = if overrides[slot] == 0 && parent != 0 {
-                self.area_liquids
-                    .get(&parent)
-                    .map_or(0, |(_, values)| values[slot])
-            } else {
-                overrides[slot]
-            };
-            if replacement != 0 {
-                resolved = replacement;
-            }
-        }
-        self.liquids
-            .entry(resolved)
-            .map(super::LiquidTypeDefinition::flags)
+        self.areas.liquid_flags(&self.liquids, area, liquid)
     }
 }
 

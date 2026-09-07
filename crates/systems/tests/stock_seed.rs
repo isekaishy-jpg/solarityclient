@@ -1,5 +1,8 @@
 //! External stock-compatibility test modules for this crate.
 
+#[path = "stock_seed/water_ripple.rs"]
+mod water_ripple;
+
 #[path = "stock_seed/achievement.rs"]
 mod achievement;
 #[path = "stock_seed/arena.rs"]
