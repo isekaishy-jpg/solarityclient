@@ -20,6 +20,7 @@ use crate::device::vulkan_m2_ribbon_draw::M2RibbonPreparedDraw;
 use crate::device::vulkan_m2_ribbon_pipeline::M2RibbonPipelineRegistry;
 use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
 use crate::device::vulkan_mesh::M2MeshRegistry;
+use crate::device::vulkan_ripple::{RippleFrameResources, RipplePipeline, WaterRippleFrame};
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
@@ -61,6 +62,9 @@ pub(super) struct RecordContext<'a> {
     pub(super) liquid_pipelines: &'a LiquidPipelines,
     pub(super) liquid_meshes: &'a LiquidMeshRegistry,
     pub(super) liquid_resources: &'a LiquidFrameResources,
+    pub(super) ripple_pipeline: &'a RipplePipeline,
+    pub(super) ripple_resources: &'a RippleFrameResources,
+    pub(super) ripple_frame: Option<WaterRippleFrame<'a>>,
     pub(super) liquid_draws: &'a [LiquidPreparedDraw],
     pub(super) liquid_scene_order: u32,
     pub(super) world_model_pipelines: &'a WorldModelPipelineRegistry,
@@ -215,7 +219,10 @@ fn record_m2_scene_elements(
     let mut next_m2 = 0;
     let mut next_particle = 0;
     let mut next_ribbon = 0;
-    let mut water_pending = !context.liquid_draws.is_empty();
+    let mut water_pending = !context.liquid_draws.is_empty()
+        || context
+            .ripple_frame
+            .is_some_and(|frame| frame.draw_count() != 0);
     loop {
         let m2_key = context
             .m2_draws
@@ -241,6 +248,7 @@ fn record_m2_scene_elements(
             && next.is_none_or(|((order, _kind), _)| order >= context.liquid_scene_order)
         {
             record_liquid_queue(context, LiquidQueue::Transparent, bindings)?;
+            record_ripples(context, bindings);
             water_pending = false;
         }
         match next.map(|(_key, kind)| kind) {
@@ -282,6 +290,52 @@ fn record_m2_scene_elements(
 enum LiquidQueue {
     Opaque,
     Transparent,
+}
+
+/// Native 790A80 places 79D5E0 directly after the transparent water queue.
+fn record_ripples(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) {
+    let Some(frame) = context.ripple_frame.filter(|frame| frame.draw_count() != 0) else {
+        return;
+    };
+    let (pipeline, layout) = context.ripple_pipeline.raw();
+    bindings.bind_pipeline(context, pipeline);
+    let sets = context.ripple_resources.sets();
+    let mut offset = 0;
+    // SAFETY: Pipeline preparation and retired-slot writes validate this complete ABI.
+    unsafe {
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &frame.push_bytes(),
+        );
+    }
+    for (index, pass) in frame.passes().into_iter().enumerate() {
+        let Some(pass) = pass else {
+            continue;
+        };
+        let count = pass.draw_vertex_count();
+        if count != 0 {
+            bindings.bind_vertex(context, (context.ripple_resources.buffer(), offset));
+            // SAFETY: The active pass descriptor was validated/written before acquisition.
+            // Sequential native indices address precisely these first low-16-bit vertices.
+            unsafe {
+                context.device.cmd_bind_descriptor_sets(
+                    context.command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    layout,
+                    0,
+                    &[sets[index]],
+                    &[],
+                );
+                context
+                    .device
+                    .cmd_draw(context.command_buffer, count, 1, 0, 0);
+            }
+        }
+        offset += (pass.vertices().len() * crate::WaterRippleRenderVertex::BYTE_SIZE) as u64;
+    }
 }
 
 /// Records one stock queue at its world/M2 stage, retaining the prepared order.

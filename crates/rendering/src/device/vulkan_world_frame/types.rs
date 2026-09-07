@@ -1,7 +1,8 @@
 //! Public scene snapshot and observable unified-world submission facts.
 
 use crate::{
-    LiquidFrame, M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, WorldModelSceneUniform,
+    LiquidFrame, M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, WaterRippleFrame,
+    WorldModelSceneUniform,
 };
 
 /// One coherent terrain, WMO, M2, and M2-effect scene snapshot for a world frame.
@@ -13,6 +14,7 @@ pub struct WorldFrameScene<'a> {
     particle_vertex_capacity: usize,
     particle_index_capacity: usize,
     liquids: Option<LiquidFrame<'a>>,
+    ripples: Option<WaterRippleFrame<'a>>,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -30,6 +32,7 @@ impl<'a> WorldFrameScene<'a> {
             particle_vertex_capacity: 0,
             particle_index_capacity: 0,
             liquids: None,
+            ripples: None,
         }
     }
 
@@ -42,6 +45,17 @@ impl<'a> WorldFrameScene<'a> {
 
     pub(in crate::device) const fn liquids(self) -> Option<LiquidFrame<'a>> {
         self.liquids
+    }
+
+    /// Adds the circular and directional surface effects after transparent water.
+    #[must_use]
+    pub const fn with_ripples(mut self, frame: WaterRippleFrame<'a>) -> Self {
+        self.ripples = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn ripples(self) -> Option<WaterRippleFrame<'a>> {
+        self.ripples
     }
 
     /// Supplies the independent character and pet banks authored by Glue Lua.
@@ -92,6 +106,7 @@ impl<'a> WorldFrameScene<'a> {
 /// Draw and bone counts accepted by one unified presentation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorldFrameReport {
+    ripple_draw_count: usize,
     terrain_draw_count: usize,
     liquid_draw_count: usize,
     world_model_draw_count: usize,
@@ -120,6 +135,7 @@ impl WorldFrameReport {
     ) -> Self {
         Self {
             terrain_draw_count,
+            ripple_draw_count: 0,
             liquid_draw_count,
             world_model_draw_count,
             m2_draw_count,
@@ -130,6 +146,17 @@ impl WorldFrameReport {
             ribbon_vertex_count,
             bone_transform_count,
         }
+    }
+
+    pub(super) const fn with_ripple_draw_count(mut self, count: usize) -> Self {
+        self.ripple_draw_count = count;
+        self
+    }
+
+    /// Returns the circular/directional ripple passes submitted after transparent water.
+    #[must_use]
+    pub const fn ripple_draw_count(self) -> usize {
+        self.ripple_draw_count
     }
 
     /// Returns submitted camera-selected MCNK draw count.

@@ -11,6 +11,7 @@ use crate::device::capacity::geometric_capacity;
 use crate::device::vulkan_liquid::LiquidFrameResources;
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
 use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
+use crate::device::vulkan_ripple::RippleFrameResources;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
     M2MaterialUniform, M2ParticleRenderVertex, M2RibbonRenderVertex, M2SceneUniform,
@@ -156,6 +157,7 @@ impl FrameBufferLayout {
 
 pub(super) struct WorldFrameSlot {
     pub(super) liquids: LiquidFrameResources,
+    pub(super) ripples: RippleFrameResources,
     buffer: vk::Buffer,
     buffer_allocation: Option<vk_mem::Allocation>,
     layout: FrameBufferLayout,
@@ -606,6 +608,7 @@ impl WorldFrameSlot {
 
     fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         self.liquids.destroy(device, allocator);
+        self.ripples.destroy(device, allocator);
         // SAFETY: The caller idles the device before destruction/rebuild.
         unsafe {
             if self.fence != vk::Fence::null() {
@@ -644,6 +647,7 @@ impl WorldFrameSlot {
     const fn empty(layout: FrameBufferLayout) -> Self {
         Self {
             liquids: LiquidFrameResources::empty(),
+            ripples: RippleFrameResources::empty(),
             buffer: vk::Buffer::null(),
             buffer_allocation: None,
             layout,

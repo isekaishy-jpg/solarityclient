@@ -16,6 +16,24 @@ impl RuntimeTerrainCoordinator {
         bounds: solarity_systems::MovementCollisionBounds,
         output: &mut Vec<solarity_systems::MovementCollisionTriangle>,
     ) -> Result<(), super::RuntimeStaticMovementError> {
+        self.collect_water_ripple_surfaces(bounds, output)?;
+        // 75FF90 negates every plane, retaining each authored vertex order.
+        for triangle in output {
+            *triangle = solarity_systems::MovementCollisionTriangle::with_normal(
+                *triangle.vertices(),
+                -triangle.normal(),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Shares 77F340's water-only triangle bank with swimming. Movement service
+    /// synchronizes the root generations before either consumer reaches here.
+    pub(in crate::application) fn collect_water_ripple_surfaces(
+        &mut self,
+        bounds: solarity_systems::MovementCollisionBounds,
+        output: &mut Vec<solarity_systems::MovementCollisionTriangle>,
+    ) -> Result<(), super::RuntimeStaticMovementError> {
         output.clear();
         let active = self
             .active
@@ -39,13 +57,6 @@ impl RuntimeTerrainCoordinator {
                     )?;
                 }
             }
-        }
-        // 75FF90 negates every plane, retaining each authored vertex order.
-        for triangle in output {
-            *triangle = solarity_systems::MovementCollisionTriangle::with_normal(
-                *triangle.vertices(),
-                -triangle.normal(),
-            )?;
         }
         Ok(())
     }

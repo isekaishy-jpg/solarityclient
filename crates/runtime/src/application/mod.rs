@@ -34,6 +34,7 @@ mod terrain_frame;
 pub(crate) mod ui_frame;
 mod unit_animation;
 mod unit_water;
+mod water_ripples;
 mod world_coordinator;
 mod world_transfer;
 mod world_ui;
@@ -76,6 +77,7 @@ pub use terrain_coordinator::{
     RuntimeTerrainPoll, RuntimeTerrainStreamPoll, RuntimeWorldModelMovementOwner,
 };
 pub use terrain_frame::RuntimeTerrainFrameError;
+pub use water_ripples::RuntimeWaterRippleError;
 pub use world_coordinator::{
     RuntimeCharacterSelection, RuntimeWorldCoordinator, RuntimeWorldEntry, RuntimeWorldError,
     RuntimeWorldPoll, RuntimeWorldState,

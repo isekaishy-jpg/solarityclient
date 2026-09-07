@@ -8,6 +8,7 @@ mod terrain_retirement;
 
 use crate::device::vulkan_liquid::{LiquidMeshRegistry, LiquidPipelines};
 use crate::device::vulkan_m2_frame::PortraitRegistry;
+use crate::device::vulkan_ripple::RipplePipeline;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -207,6 +208,7 @@ pub struct VulkanRenderer {
     terrain_meshes: TerrainMeshRegistry,
     liquid_meshes: LiquidMeshRegistry,
     liquid_pipelines: LiquidPipelines,
+    ripple_pipeline: RipplePipeline,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
     terrain_frames: TerrainFrameRenderer,
@@ -291,6 +293,7 @@ impl VulkanRenderer {
             terrain_meshes: TerrainMeshRegistry::default(),
             liquid_meshes: LiquidMeshRegistry::default(),
             liquid_pipelines: LiquidPipelines::default(),
+            ripple_pipeline: RipplePipeline::default(),
             terrain_retirements: std::collections::VecDeque::new(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -2212,6 +2215,10 @@ impl VulkanRenderer {
             self.liquid_pipelines
                 .prepare(&self.device, self.color_format, self.depth_format)?;
         }
+        if scene.ripples().is_some_and(|frame| frame.draw_count() != 0) {
+            self.ripple_pipeline
+                .prepare(&self.device, self.color_format, self.depth_format)?;
+        }
         let report = self.world_frames.present(
             WorldFrameContext {
                 device: &self.device,
@@ -2232,6 +2239,7 @@ impl VulkanRenderer {
                 terrain_meshes: &self.terrain_meshes,
                 terrain_texture_sets: &self.terrain_texture_sets,
                 liquid_pipelines: &self.liquid_pipelines,
+                ripple_pipeline: &self.ripple_pipeline,
                 liquid_meshes: &self.liquid_meshes,
                 liquid_textures: &self.blp_textures,
                 maximum_sampler_anisotropy: if self.sampler_anisotropy {
@@ -2577,6 +2585,7 @@ impl Drop for VulkanRenderer {
         self.ui_pipelines.destroy(&self.device);
         self.terrain_pipelines.destroy(&self.device);
         self.liquid_pipelines.destroy(&self.device);
+        self.ripple_pipeline.destroy(&self.device);
         self.world_model_pipelines.destroy(&self.device);
         self.m2_particle_pipelines.destroy(&self.device);
         self.m2_ribbon_pipelines.destroy(&self.device);

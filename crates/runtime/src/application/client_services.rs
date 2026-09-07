@@ -151,6 +151,7 @@ pub(crate) struct ClientServices {
     terrain: RuntimeTerrainCoordinator,
     /// Shared authored liquid behavior for the camera's resident water query.
     liquids: solarity_asset::LiquidTypeCatalog,
+    water_ripples: super::water_ripples::RuntimeWaterRipples,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
     developer_console: RuntimeDeveloperConsole,
@@ -232,6 +233,7 @@ impl ClientServices {
         let loading_directory = LoadingScreenDirectory::new(&maps, loading_screens);
         let lights = LightCatalog::load(&mut assets)?;
         let liquids = solarity_asset::LiquidTypeCatalog::load(&mut assets)?;
+        let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -507,6 +509,7 @@ impl ClientServices {
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
                 liquids,
+                water_ripples,
                 fps,
                 developer_console,
                 runtime_overlay_draws: Vec::new(),
@@ -1150,6 +1153,20 @@ impl ClientServices {
         let plan = self.terrain.resident_mesh_plan();
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let specular_enabled = self.glue.cvar_boolean("specular");
+        let footstep_bias = self
+            .world_ui
+            .as_ref()
+            .map_or_else(
+                || self.glue.cvar_number("footstepBias"),
+                |ui| ui.cvar_number("footstepBias"),
+            )
+            .ok_or(super::RuntimeWaterRippleError::DepthBiasCvar)?;
+        self.water_ripples.prepare_frame(
+            &mut self.renderer,
+            developer_elapsed,
+            global_animation_time_ms * 0.001,
+        )?;
+        let ripples = self.water_ripples.frame(camera, footstep_bias)?;
         let Some(frame) = self.terrain_frame.as_mut() else {
             return self.present_glue_frame();
         };
@@ -1178,6 +1195,7 @@ impl ClientServices {
             liquid_time_ms,
             underwater.is_some(),
             specular_enabled,
+            Some(ripples),
             &mut self.crt_rand,
             player,
             &creatures,
@@ -2268,6 +2286,7 @@ impl ClientServices {
         }
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
+        self.water_ripples.synchronize_world(self.gameplay.world());
         self.synchronize_component_texture_level();
         profile.mark("world UI and environment");
         if let Some(ui) = &self.world_ui {
@@ -2343,6 +2362,22 @@ impl ClientServices {
         while let Some(event) = self.player_movement.take_water_splash() {
             self.sound.notify_water_splash(event);
         }
+        if let (Some(sample), Some(world)) = (
+            self.player_movement.take_water_sample(),
+            self.gameplay.world(),
+        ) {
+            self.water_ripples.emit_sample(
+                sample,
+                world,
+                &self.player,
+                &mut self.terrain,
+                &self.character_metadata,
+                &self.liquids,
+                crate::platform::client_milliseconds(),
+                self.m2_global_clock.elapsed().as_secs_f32(),
+                &mut self.blizzard_rand.borrow_mut(),
+            )?;
+        }
         if let Some(ui) = &self.world_ui {
             ui.set_swimming(self.player_movement.is_swimming());
         }
@@ -2361,6 +2396,24 @@ impl ClientServices {
         )?;
         while let Some(event) = self.remote_movement.take_water_splash() {
             self.sound.notify_water_splash(event);
+        }
+        if let Some(world) = self.gameplay.world() {
+            let now_ms = crate::platform::client_milliseconds();
+            let scene_time = self.m2_global_clock.elapsed().as_secs_f32();
+            let mut random = self.blizzard_rand.borrow_mut();
+            for sample in self.remote_movement.take_water_samples() {
+                self.water_ripples.emit_sample(
+                    sample,
+                    world,
+                    &self.player,
+                    &mut self.terrain,
+                    &self.character_metadata,
+                    &self.liquids,
+                    now_ms,
+                    scene_time,
+                    &mut random,
+                )?;
+            }
         }
         while let Some(event) = self.remote_movement.take_animation_event() {
             self.sound.notify_unit_movement(event);

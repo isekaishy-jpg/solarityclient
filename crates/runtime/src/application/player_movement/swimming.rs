@@ -75,7 +75,7 @@ impl LocalMovement {
         height: f32,
         world: &ActiveWorld,
         commands: &mut VecDeque<MovementCommand>,
-    ) -> Result<(), RuntimePlayerMovementError> {
+    ) -> Result<bool, RuntimePlayerMovementError> {
         let Some(update) = (MovementSwimImmersion {
             flags: self.flags,
             secondary: self.secondary,
@@ -96,7 +96,7 @@ impl LocalMovement {
         })
         .evaluate()?
         else {
-            return Ok(());
+            return Ok(false);
         };
         self.previous_water_depth = update.previous_depth;
         self.is_swimming = update.is_swimming;
@@ -131,7 +131,7 @@ impl LocalMovement {
                 },
             );
         }
-        Ok(())
+        Ok(update.splash)
     }
 
     /// Executes deferred native events 15/16 and freezes their wire snapshots.

@@ -88,6 +88,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("ffxGlow", "1", 0.0, 1.0),
     ranged("ffxDeath", "1", 0.0, 1.0),
     ranged("projectedTextures", "1", 0.0, 1.0),
+    // 78E400 registers the default; 78D940 admits the inclusive unit interval.
+    ranged("footstepBias", "0.125", 0.0, 1.0),
     ranged("gxStereoEnabled", "0", 0.0, 1.0),
     ranged("gxStereoConvergence", "1", 0.2, 50.0),
     ranged("gxStereoSeparation", "0", 0.0, 100.0),

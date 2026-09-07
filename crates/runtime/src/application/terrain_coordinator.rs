@@ -749,6 +749,19 @@ impl RuntimeTerrainCoordinator {
         Ok((area_id != 0).then_some(area_id))
     }
 
+    /// Resolves a registered unit's MCNK area or the global-WMO map area.
+    pub(in crate::application) fn area_id_at(&self, position: glam::Vec3) -> Option<u32> {
+        let active = self.active.as_ref()?;
+        if active.terrain.global_world_model().is_some() {
+            return active.terrain.global_area_id();
+        }
+        active
+            .tile_at(TerrainMap::tile_at_world_position(position.x, position.y))?
+            .decoded
+            .area_id_at_world_position(position.x, position.y)
+            .filter(|id| *id != 0)
+    }
+
     /// Returns the resident tile's texture table in exact MTEX index order.
     ///
     /// Each source retains the archive selected by ordinary patch precedence,

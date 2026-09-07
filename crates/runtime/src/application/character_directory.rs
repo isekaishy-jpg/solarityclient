@@ -24,6 +24,32 @@ pub(crate) struct RuntimeCharacterMetadata {
 }
 
 impl RuntimeCharacterMetadata {
+    /// Applies the native liquid substitution using the same area catalog as zone text.
+    pub(in crate::application) fn liquid_flags_at(
+        &self,
+        liquids: &solarity_asset::LiquidTypeCatalog,
+        terrain_area: Option<u32>,
+        world_model: Option<super::terrain_coordinator::UnitWorldModelLocation>,
+        liquid: u32,
+    ) -> Option<u32> {
+        self.areas
+            .liquid_flags(liquids, self.area_id(terrain_area, world_model)?, liquid)
+    }
+
+    /// 782560 takes nonzero static-group area overrides, then the MCNK relation.
+    fn area_id(
+        &self,
+        terrain_area: Option<u32>,
+        world_model: Option<super::terrain_coordinator::UnitWorldModelLocation>,
+    ) -> Option<u32> {
+        world_model
+            .filter(|location| location.area_override)
+            .and_then(|location| self.world_model_areas.area(location.key))
+            .map(|row| row.area_id())
+            .filter(|id| *id != 0)
+            .or(terrain_area)
+    }
+
     /// Borrows the same area catalog used by zone text for per-field audio inheritance.
     pub(crate) fn world_location(
         &self,
@@ -40,11 +66,7 @@ impl RuntimeCharacterMetadata {
         });
         let world_model_only = world_model.is_some_and(|location| location.world_model_only);
         // 782560 takes only the group's nonzero AreaTable relation on static roots.
-        let area_id = group
-            .filter(|_| world_model.is_some_and(|location| location.area_override))
-            .map(|row| row.area_id())
-            .filter(|id| *id != 0)
-            .or(terrain_area_id);
+        let area_id = self.area_id(terrain_area_id, world_model);
         let area = area_id
             .map(|id| {
                 self.areas

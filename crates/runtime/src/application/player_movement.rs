@@ -156,6 +156,7 @@ impl MovementCommand {
 
 #[derive(Default)]
 pub(super) struct RuntimePlayerMovement {
+    water_sample: Option<super::unit_water::UnitWaterSample>,
     camera_zoom_settings: PlayerCameraZoomSettings,
     camera_follow_settings: PlayerCameraFollowSettings,
     camera_cvar_revision: Option<u64>,
@@ -428,6 +429,7 @@ impl RuntimePlayerMovement {
         dimensions: Option<[f32; 3]>,
         now_ms: u32,
     ) -> Result<(), RuntimePlayerMovementError> {
+        self.water_sample = None;
         let Some(world) = gameplay.world() else {
             self.reset();
             return Ok(());
@@ -578,10 +580,18 @@ impl RuntimePlayerMovement {
             }
         }
         let immersion = terrain.unit_submerged_liquid(owner.world_position(), liquids)?;
-        owner.queue_immersion(immersion, dimensions[1], world, &mut self.commands)?;
+        let splash = owner.queue_immersion(immersion, dimensions[1], world, &mut self.commands)?;
         owner.camera.sample_zoom(now_ms, self.camera_zoom_settings);
         owner.camera.sample_follow(now_ms);
         let (transform, movement) = owner.snapshot();
+        self.water_sample = Some(super::unit_water::UnitWaterSample {
+            identity: owner.identity,
+            transform,
+            movement,
+            liquid: immersion,
+            height: dimensions[1],
+            splash,
+        });
         owner.published = (transform, movement);
         world.set_local_player_view(owner.camera.view(owner.world_orientation()))?;
         gameplay.apply_local_movement(owner.identity, transform, movement, owner.stand_state)?;
@@ -603,11 +613,19 @@ impl RuntimePlayerMovement {
     }
 
     pub(super) fn reset(&mut self) {
+        self.water_sample = None;
         self.owner = None;
         self.input = PlayerInputState::default();
         self.commands.clear();
         self.output.clear();
         self.camera_cvar_revision = None;
+    }
+}
+
+impl RuntimePlayerMovement {
+    /// Transfers the current registration once, without another scene query.
+    pub(super) fn take_water_sample(&mut self) -> Option<super::unit_water::UnitWaterSample> {
+        self.water_sample.take()
     }
 }
 

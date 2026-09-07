@@ -1,5 +1,7 @@
 //! Local-player model residency and authored presentation measurements.
 
+mod registration;
+
 use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput, UnitAnimationScene};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};

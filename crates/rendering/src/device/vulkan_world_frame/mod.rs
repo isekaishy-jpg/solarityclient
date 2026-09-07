@@ -23,6 +23,7 @@ use crate::device::vulkan_m2_ribbon_draw::M2RibbonPreparedDraw;
 use crate::device::vulkan_m2_ribbon_pipeline::M2RibbonPipelineRegistry;
 use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
 use crate::device::vulkan_mesh::M2MeshRegistry;
+use crate::device::vulkan_ripple::RipplePipeline;
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
@@ -63,6 +64,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) terrain_meshes: &'a TerrainMeshRegistry,
     pub(in crate::device) terrain_texture_sets: &'a TerrainTextureSetRegistry,
     pub(in crate::device) liquid_pipelines: &'a LiquidPipelines,
+    pub(in crate::device) ripple_pipeline: &'a RipplePipeline,
     pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
     pub(in crate::device) liquid_textures: &'a BlpTextureRegistry,
     pub(in crate::device) maximum_sampler_anisotropy: f32,
@@ -320,6 +322,20 @@ impl WorldFrameRenderer {
                     frame,
                 )?;
             }
+            if let Some(frame) = scene.ripples().filter(|frame| frame.draw_count() != 0) {
+                slot.ripples.ensure(
+                    context.device,
+                    context.allocator,
+                    context.ripple_pipeline.descriptor_layout(),
+                    frame.vertex_count(),
+                )?;
+                slot.ripples.write(
+                    context.device,
+                    context.allocator,
+                    context.liquid_textures,
+                    frame,
+                )?;
+            }
             slot.write(
                 context.allocator,
                 scene,
@@ -377,10 +393,15 @@ impl WorldFrameRenderer {
             liquid_pipelines: context.liquid_pipelines,
             liquid_meshes: context.liquid_meshes,
             liquid_resources: &slot.liquids,
+            ripple_pipeline: context.ripple_pipeline,
+            ripple_resources: &slot.ripples,
+            ripple_frame: scene.ripples(),
             liquid_draws: scene.liquids().map_or(&[], |frame| frame.draws()),
             liquid_scene_order: scene
                 .liquids()
-                .map_or(u32::MAX, |frame| frame.water_scene_order()),
+                .map(|frame| frame.water_scene_order())
+                .or_else(|| scene.ripples().map(|frame| frame.water_scene_order()))
+                .unwrap_or(u32::MAX),
             world_model_pipelines: context.world_model_pipelines,
             world_model_meshes: context.world_model_meshes,
             world_model_texture_sets: context.world_model_texture_sets,
@@ -444,7 +465,8 @@ impl WorldFrameRenderer {
             ribbon_draws.len(),
             ribbon_vertices.len(),
             bone_transforms.len(),
-        ))
+        )
+        .with_ripple_draw_count(scene.ripples().map_or(0, |frame| frame.draw_count())))
     }
 
     pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {

@@ -86,6 +86,9 @@ pub enum ApplicationError {
     /// A resident ADT could not enter renderer-owned GPU state.
     #[error(transparent)]
     TerrainFrame(#[from] RuntimeTerrainFrameError),
+    /// Registered unit surface effects could not enter the world frame.
+    #[error(transparent)]
+    WaterRipple(#[from] super::RuntimeWaterRippleError),
     /// A referenced player-transport display resource failed admission.
     #[error(transparent)]
     Transport(#[from] RuntimeGameObjectError),

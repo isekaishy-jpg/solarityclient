@@ -31,6 +31,7 @@ mod vulkan_m2_ribbon_pipeline;
 mod vulkan_m2_texture_set;
 mod vulkan_mesh;
 mod vulkan_renderer;
+mod vulkan_ripple;
 mod vulkan_sampler;
 mod vulkan_selection;
 mod vulkan_terrain_draw;
@@ -74,6 +75,7 @@ pub use vulkan_m2_texture_set::{
 };
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{VulkanPresentMode, VulkanRenderer, VulkanReport};
+pub use vulkan_ripple::{WaterRippleFrame, WaterRippleFrameError, WaterRipplePass};
 pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
 pub use vulkan_terrain_draw::TerrainPreparedDraw;
 pub use vulkan_terrain_frame::TerrainFrameReport;

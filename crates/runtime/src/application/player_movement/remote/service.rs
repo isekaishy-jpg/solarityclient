@@ -14,12 +14,13 @@ use super::super::{
 };
 use super::inbox::RemoteMovementInbox;
 use super::state::RemoteUnit;
-use crate::application::unit_water::UnitWaterSplash;
+use crate::application::unit_water::{UnitWaterSample, UnitWaterSplash};
 use crate::application::{RuntimePlayerPresentation, unit_animation::UnitMovementAnimationEvent};
 
 /// Frame owner for remote timelines and their shared resident geometry queries.
 #[derive(Default)]
 pub(in crate::application) struct RuntimeRemoteMovement {
+    water_samples: Vec<UnitWaterSample>,
     owners: HashMap<WorldObjectIdentity, RemoteUnit>,
     geometry: RuntimeMovementQuery,
     animation_events: VecDeque<UnitMovementAnimationEvent>,
@@ -27,6 +28,13 @@ pub(in crate::application) struct RuntimeRemoteMovement {
 }
 
 impl RuntimeRemoteMovement {
+    /// Transfers completed unit registrations in the movement service's order.
+    pub(in crate::application) fn take_water_samples(
+        &mut self,
+    ) -> impl Iterator<Item = UnitWaterSample> + '_ {
+        self.water_samples.drain(..)
+    }
+
     /// Drains the same unit splash notifications used by the local owner.
     pub(in crate::application) fn take_water_splash(&mut self) -> Option<UnitWaterSplash> {
         self.water_splashes.pop_front()
@@ -67,6 +75,7 @@ impl RuntimeRemoteMovement {
         liquids: &solarity_asset::LiquidTypeCatalog,
         now_ms: u32,
     ) -> Result<(), RuntimePlayerMovementError> {
+        self.water_samples.clear();
         let Some(world) = gameplay.world() else {
             self.owners.clear();
             self.animation_events.clear();
@@ -166,6 +175,7 @@ impl RuntimeRemoteMovement {
             let (transform, movement) = owner.snapshot();
             let liquid = terrain.unit_submerged_liquid(transform.position(), liquids)?;
             let context = movement.context();
+            let mut splash = false;
             if let Some(update) = (solarity_systems::MovementSwimImmersion {
                 flags: movement.flags() as u32,
                 secondary: (movement.flags() >> 32) as u16,
@@ -183,6 +193,7 @@ impl RuntimeRemoteMovement {
                 // The remote timeline receives swim transitions from the server;
                 // the presentation-owned splash lane still advances every frame.
                 owner.previous_water_depth = update.previous_depth;
+                splash = update.splash;
                 if update.splash {
                     self.water_splashes.push_back(UnitWaterSplash {
                         identity,
@@ -190,6 +201,14 @@ impl RuntimeRemoteMovement {
                     });
                 }
             }
+            self.water_samples.push(UnitWaterSample {
+                identity,
+                transform,
+                movement,
+                liquid,
+                height: dimensions[1],
+                splash,
+            });
             owner.published = (transform, movement);
             // The runtime timeline now owns path geometry. ECS keeps its compact
             // motion projection for animation and audio consumers.

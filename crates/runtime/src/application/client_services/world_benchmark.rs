@@ -338,6 +338,7 @@ impl ClientServices {
                 sdl3::timer::ticks() as u32,
                 underwater.is_some(),
                 self.glue.cvar_boolean("specular"),
+                None,
                 &mut self.crt_rand,
                 player,
                 &[],
