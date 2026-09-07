@@ -104,6 +104,10 @@ pub(super) enum PlayerMovementOutput {
 enum MovementCommand {
     Input(UiMovementCommand),
     Control(PlayerControlEvent),
+    /// Native event 9 is queued when a transport destroys its passenger link.
+    SupportRecheck {
+        timestamp_ms: u32,
+    },
     MouseMotion {
         delta: [f32; 2],
         settings: PlayerCameraMouseSettings,
@@ -114,7 +118,9 @@ enum MovementCommand {
 impl MovementCommand {
     fn timestamp_ms(self) -> u32 {
         match self {
-            Self::MouseMotion { timestamp_ms, .. } => timestamp_ms,
+            Self::MouseMotion { timestamp_ms, .. } | Self::SupportRecheck { timestamp_ms } => {
+                timestamp_ms
+            }
             Self::Input(command) => command.timestamp_ms,
             Self::Control(
                 PlayerControlEvent::StandState { timestamp_ms, .. }
@@ -543,6 +549,13 @@ impl LocalMovement {
         let mut effects = Vec::with_capacity(5);
         let was_paired = input.paired_mouse_buttons();
         match command {
+            MovementCommand::SupportRecheck { .. } => {
+                return if self.active {
+                    self.acquire_mover(output)
+                } else {
+                    Ok(())
+                };
+            }
             MovementCommand::MouseMotion {
                 delta, settings, ..
             } => {

@@ -2276,6 +2276,11 @@ impl ClientServices {
         }
         // Publish current map/object collision references before the movement
         // owner queries them, including the first admitted terrain generation.
+        self.player_movement.retire_passenger(
+            self.gameplay.world(),
+            &self.game_objects,
+            crate::platform::client_milliseconds(),
+        )?;
         let previous_game_object_revision = self.game_objects.scene_revision();
         let transport_poll = self
             .game_objects

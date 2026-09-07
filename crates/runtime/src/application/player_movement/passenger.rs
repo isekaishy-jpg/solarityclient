@@ -2,12 +2,16 @@
 
 use glam::Vec3;
 use solarity_ecs::{
-    WorldMovementState, WorldMovementTransport, WorldObjectIdentity, WorldTransform,
+    ActiveWorld, WorldMovementState, WorldMovementTransport, WorldObjectIdentity, WorldTransform,
 };
+use solarity_network::WorldMovementKind;
 use solarity_systems::{MovementFallState, MovementTransportChange, MovementTransportFrame};
 
-use super::{LocalMovement, LocalMovementGeometry, MovementPhase, RuntimePlayerMovementError};
-use crate::application::RuntimeMovementGeometry;
+use super::{
+    LocalMovement, LocalMovementGeometry, MovementCommand, MovementPhase, RuntimePlayerMovement,
+    RuntimePlayerMovementError,
+};
+use crate::application::{RuntimeGameObjectPresentation, RuntimeMovementGeometry};
 
 #[cfg(test)]
 #[path = "../../../tests/application/player_passenger.rs"]
@@ -69,6 +73,87 @@ impl PassengerClock {
     }
 }
 
+impl RuntimePlayerMovement {
+    /// Runs transport destruction while the outgoing generation still owns its matrix.
+    /// A world replacement or an authoritative change to another parent already
+    /// supersedes this link and must not produce a stale detach notification.
+    pub(in crate::application) fn retire_passenger(
+        &mut self,
+        world: Option<&ActiveWorld>,
+        objects: &RuntimeGameObjectPresentation,
+        now_ms: u32,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        let Some(world) = world else {
+            return Ok(());
+        };
+        let Some(owner) = self.owner.as_mut() else {
+            return Ok(());
+        };
+        if world.object_identity(owner.identity.guid()) != Some(owner.identity) {
+            return Ok(());
+        }
+        let Some(parent) = owner.passenger else {
+            return Ok(());
+        };
+        let Some(frame) = objects.retiring_passenger_frame(world, parent.identity)? else {
+            return Ok(());
+        };
+        let Some(movement) = world.movement_state(owner.identity.guid()) else {
+            return Ok(());
+        };
+        let Some(transport) = movement
+            .context()
+            .transport
+            .filter(|transport| transport.guid == parent.identity.guid())
+        else {
+            return Ok(());
+        };
+        let transform = world.local_player_transform()?;
+        if owner.published != (transform, movement) {
+            // A correction received before removal has already changed the
+            // passenger's local pose. Consume it before the destruction callback.
+            let mut corrected = LocalMovement::new_on_parent(
+                owner.identity,
+                transform,
+                movement,
+                owner.time_ms,
+                parent,
+                transport,
+            )?;
+            corrected.active = owner.active;
+            corrected.client_control = owner.client_control;
+            corrected.stand_state = owner.stand_state;
+            corrected.camera = owner.camera;
+            corrected.passenger_clock = owner.passenger_clock;
+            *owner = corrected;
+        }
+        owner.flags &= !0x0800_0000; // 9872B0 precedes the queued event and unlink.
+        owner.rebase_passenger(frame.exit_change())?;
+        owner.passenger = None;
+        owner.passenger_seat = -1;
+        if owner.active {
+            // 6ECCF0 inserts event 9 with 6EC090's stable wrapping-time order;
+            // 6F0C70 immediately sends the forced leave before that event runs.
+            let index = self
+                .commands
+                .iter()
+                .position(|command| (now_ms.wrapping_sub(command.timestamp_ms()) as i32) < 0)
+                .unwrap_or(self.commands.len());
+            self.commands.insert(
+                index,
+                MovementCommand::SupportRecheck {
+                    timestamp_ms: now_ms,
+                },
+            );
+            let saved = owner.time_ms;
+            owner.time_ms = now_ms;
+            owner.emit(WorldMovementKind::ChangeTransport, &mut self.output)?;
+            owner.time_ms = saved;
+        }
+        Ok(())
+    }
+}
+
 impl LocalMovement {
     /// Seeds an authoritative passenger from its transmitted local coordinates.
     /// Loading keeps ownership pending until the parent matrix is resident.
@@ -98,12 +183,31 @@ impl LocalMovement {
         let Some(parent) = geometry.passenger(transport.guid)? else {
             return Ok(None);
         };
+        Self::new_on_parent(identity, transform, movement, time_ms, parent, transport).map(Some)
+    }
+
+    /// Shares authoritative local-pose admission with the pre-retirement callback.
+    fn new_on_parent(
+        identity: WorldObjectIdentity,
+        transform: WorldTransform,
+        movement: WorldMovementState,
+        time_ms: u32,
+        parent: PassengerParent,
+        transport: WorldMovementTransport,
+    ) -> Result<Self, RuntimePlayerMovementError> {
+        let mut context = movement.context();
+        context.transport = None;
         let local = WorldTransform::new(transport.position, transport.orientation);
+        let unparented = WorldMovementState::new(
+            movement.flags() & !(0x400_u64 << 32),
+            movement.speeds(),
+            context,
+        );
         let mut owner = Self::new(identity, local, unparented, time_ms)?;
         owner.passenger = Some(parent);
         owner.passenger_seat = transport.seat;
         owner.published = (transform, movement);
-        Ok(Some(owner))
+        Ok(owner)
     }
 
     /// Scene motion changes the world projection while local analytic anchors stay fixed.

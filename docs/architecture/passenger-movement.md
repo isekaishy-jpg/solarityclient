@@ -120,7 +120,17 @@ airborne volume exit. Packets pass through the encrypted loopback writer and
 reader before field assertions. Tests also cover authoritative local-coordinate
 admission, world-facing mouse input, and the prohibition on remote auto-boarding.
 
-Remaining integration includes type-11 animation paths, remote passenger travel,
-and the transport destruction callback before object retirement. An unexpectedly
-missing parent follows `0x006EC400`'s GUID-clear path without applying a stale
-matrix; normal `0x0070FFD0` destruction requires its earlier detach sequence.
+Transport destruction follows `0x0070FFD0` before presentation releases the old
+generation's matrix. It clears the special movement flag (`0x009872B0`), detaches
+through the live parent frame, and sends the forced GUID-zero leave. The active
+mover also receives `0x006ECCF0`'s queued support recheck, inserted with
+`0x006EC090`'s stable wrapping-timestamp order. That event uses the existing
+zero-launch fall admission; it does not restart an already admitted fall. A
+position correction received before removal supplies the local pose to convert.
+World replacement or a server-authored change to another parent suppresses the
+old link's notification. Tests release the actual parent resource between the
+leave packet and support recheck and inspect both encrypted notifications.
+
+An unexpectedly missing parent still follows `0x006EC400`'s GUID-clear path
+without applying a stale matrix. Remaining integration includes type-11
+animation paths and remote passenger travel.

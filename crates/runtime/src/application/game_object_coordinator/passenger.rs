@@ -1,12 +1,34 @@
 //! GameObject virtual passenger admission and map-handle retention predicates.
 
 use glam::Vec3;
-use solarity_ecs::WorldObjectIdentity;
+use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_systems::{MovementCollectionError, MovementCollisionBounds, MovementTransportVolume};
 
 use super::{GameObjectResource, RuntimeGameObjectPresentation};
 
 impl RuntimeGameObjectPresentation {
+    /// Resolves 70FFD0's still-live parent before refresh retires its generation.
+    /// Other behaviors do not own the transport passenger destruction callback.
+    pub(in crate::application) fn retiring_passenger_frame(
+        &self,
+        world: &ActiveWorld,
+        identity: WorldObjectIdentity,
+    ) -> Result<
+        Option<solarity_systems::MovementTransportFrame>,
+        solarity_systems::GameObjectPlacementError,
+    > {
+        if world.object_identity(identity.guid()) == Some(identity) {
+            return Ok(None);
+        }
+        let Some(instance) = self.movement_instance(identity) else {
+            return Ok(None);
+        };
+        if !matches!(instance.presentation.object_type(), 11 | 15) {
+            return Ok(None);
+        }
+        self.object_movement_frame(identity)
+    }
+
     /// Returns the MO parent's last published passenger phase (`virtual +0xA8`).
     /// The clock is zero before its first route sample and survives a sample
     /// on another map. The active mover owns publication into movement packets.

@@ -7,12 +7,170 @@ use solarity_ecs::{WorldMovementContext, WorldMovementSpeeds, WorldMovementState
 use solarity_network::{WorldMovementKind, WorldMovementMessage};
 use solarity_systems::MovementBspCacheMode;
 
-use super::super::{LocalMovement, LocalMovementGeometry, PlayerMovementOutput};
+use super::super::{
+    LocalMovement, LocalMovementGeometry, MovementCommand, PlayerMovementOutput,
+    RuntimePlayerMovement,
+};
 use crate::application::game_object_coordinator::transport_tests::collision::Scene;
 use crate::application::{RuntimeMovementGeometry, RuntimeMovementQuery};
 use crate::test_network::{TestError, WorldServer};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+#[test]
+fn world_replacement_and_authoritative_detach_suppress_old_parent_notifications() -> TestResult {
+    let mut scene = Scene::passenger_deck()?;
+    let mut owner = mover(&scene)?;
+    let mut query = RuntimeMovementQuery::new();
+    {
+        let mut geometry = RuntimeMovementGeometry::new(
+            &mut scene.terrain,
+            &scene.world,
+            &scene.objects,
+            0x8010_8111,
+            MovementBspCacheMode::Enabled,
+            &mut query,
+        );
+        assert!(owner.contact_passenger(9, &mut geometry)?);
+    }
+    let (transform, movement) = owner.snapshot();
+    owner.published = (transform, movement);
+    scene
+        .world
+        .update_local_movement(owner.identity, transform, movement)?;
+    let identity = owner.identity;
+    let mut runtime = RuntimePlayerMovement {
+        owner: Some(owner),
+        ..RuntimePlayerMovement::default()
+    };
+    scene.world.remove_object(9)?;
+    runtime.retire_passenger(None, &scene.objects, 100)?;
+    let replacement = solarity_ecs::ActiveWorld::enter(solarity_ecs::WorldBootstrap::new(
+        solarity_ecs::WorldMapId::new(1),
+        7,
+        "Replacement",
+        Vec3::ZERO,
+        0.,
+    ));
+    runtime.retire_passenger(Some(&replacement), &scene.objects, 100)?;
+    let mut context = movement.context();
+    context.transport = None;
+    let detached = WorldMovementState::new(movement.flags() & !0x200, movement.speeds(), context);
+    scene
+        .world
+        .update_local_movement(identity, transform, detached)?;
+    runtime.retire_passenger(Some(&scene.world), &scene.objects, 100)?;
+    assert!(runtime.output.is_empty());
+    assert!(runtime.commands.is_empty());
+    scene.objects.synchronize(Some(&scene.world))?;
+    let geometry = RuntimeMovementGeometry::new(
+        &mut scene.terrain,
+        &scene.world,
+        &scene.objects,
+        0x8010_8111,
+        MovementBspCacheMode::Enabled,
+        &mut query,
+    );
+    let admitted = LocalMovement::new_in_geometry(identity, transform, detached, 100, &geometry)?
+        .ok_or("unparented correction")?;
+    assert_eq!(admitted.world_position(), transform.position());
+    assert!(admitted.passenger.is_none());
+    Ok(())
+}
+
+#[test]
+fn transport_retirement_detaches_before_matrix_release_and_rechecks_support() -> TestResult {
+    for corrected in [false, true] {
+        let mut scene = Scene::passenger_deck()?;
+        let mut owner = mover(&scene)?;
+        let mut query = RuntimeMovementQuery::new();
+        {
+            let mut geometry = RuntimeMovementGeometry::new(
+                &mut scene.terrain,
+                &scene.world,
+                &scene.objects,
+                0x8010_8111,
+                MovementBspCacheMode::Enabled,
+                &mut query,
+            );
+            assert!(owner.contact_passenger(9, &mut geometry)?);
+        }
+        let parent = owner.passenger.ok_or("parent")?;
+        let frame = parent.frame;
+        let (transform, movement) = owner.snapshot();
+        owner.published = (transform, movement);
+        scene
+            .world
+            .update_local_movement(owner.identity, transform, movement)?;
+        let mut runtime = RuntimePlayerMovement {
+            owner: Some(owner),
+            ..RuntimePlayerMovement::default()
+        };
+        runtime.retire_passenger(Some(&scene.world), &scene.objects, 90)?;
+        assert!(
+            runtime.output.is_empty(),
+            "a resident parent is not retiring"
+        );
+        let expected = if corrected {
+            let mut context = movement.context();
+            context
+                .transport
+                .as_mut()
+                .ok_or("correction parent")?
+                .position = Vec3::new(0.25, -0.1, 0.8);
+            let expected =
+                frame.world_position(context.transport.ok_or("correction parent")?.position);
+            scene.world.update_local_movement(
+                runtime.owner.as_ref().ok_or("mover")?.identity,
+                WorldTransform::new(expected, transform.orientation()),
+                WorldMovementState::new(movement.flags(), movement.speeds(), context),
+            )?;
+            expected
+        } else {
+            transform.position()
+        };
+        scene.world.remove_object(9)?;
+        runtime.retire_passenger(Some(&scene.world), &scene.objects, 100)?;
+        let owner = runtime.owner.as_ref().ok_or("mover")?;
+        assert_eq!(owner.world_position(), expected);
+        assert!(owner.passenger.is_none());
+        let leave = decode(packet(&runtime.output, WorldMovementKind::ChangeTransport)?)?;
+        assert_eq!(leave.position, expected.to_array());
+        assert_eq!(leave.context.timestamp_ms, 100);
+        assert_eq!(leave.context.transport.ok_or("destruction leave")?.guid, 0);
+        assert_eq!(
+            leave.context.transport.ok_or("destruction leave")?.time_ms,
+            3362
+        );
+        let recheck = runtime.commands.pop_front().ok_or("support recheck")?;
+        assert!(matches!(
+            recheck,
+            MovementCommand::SupportRecheck { timestamp_ms: 100 }
+        ));
+        scene.objects.synchronize(Some(&scene.world))?;
+        assert!(
+            scene
+                .objects
+                .object_movement_frame(parent.identity)?
+                .is_none()
+        );
+        runtime.retire_passenger(Some(&scene.world), &scene.objects, 110)?;
+        assert!(runtime.commands.is_empty(), "destruction is delivered once");
+        let owner = runtime.owner.as_mut().ok_or("mover")?;
+        owner.time_ms = 100;
+        owner.command(
+            recheck,
+            &mut runtime.input,
+            &scene.world,
+            &mut runtime.output,
+        )?;
+        assert!(owner.snapshot().1.context().falling.is_some());
+        let recheck_packet = decode(packet(&runtime.output, WorldMovementKind::Heartbeat)?)?;
+        assert!(recheck_packet.context.transport.is_none());
+        assert_eq!(recheck_packet.position, expected.to_array());
+    }
+    Ok(())
+}
 
 /// Captures the sole writer's encrypted packet, then decodes its MovementInfo
 /// through the server reader. ChangeTransport shares the heartbeat field layout.
