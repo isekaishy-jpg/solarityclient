@@ -64,7 +64,16 @@ The regular water pixel shader combines lit depth-texture RGB, animated
 surface RGB, and an animated alpha-weighted specular contribution. Its
 output alpha comes from the depth texture and vertex alpha. Magma multiplies
 its texture RGB by vertex color and outputs alpha one. These recovered
-shader contracts are not yet a Vulkan draw path.
+shader contracts now have build-validated SPIR-V modules and an explicit
+512-byte `LiquidShaderUniform` ABI. They are not yet submitted by world frames.
+
+The vertex stages retain the original unnormalized transformed normal,
+ambient/directional lighting, first three point lights, and specular power six.
+The fragment stages explicitly saturate the two interpolated color registers,
+as Direct3D 9 does before executing `ps_2_0`. Vertex fog is clamped before
+interpolation and applied to RGB after the material calculation, preserving
+alpha. This implicit register behavior is described by Microsoft's
+[Direct3D 9 shader documentation](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-writing-shaders-9).
 
 Terrain vertex preparation `0x007CE390` writes transformed source positions,
 normal `(0,0,1)`, white vertex color, a depth coordinate from the byte table,
@@ -107,3 +116,20 @@ cover all four vertex formats, both depth banks and non-water materials,
 global chunk indices, member translations, sparse and empty masks, and
 offset rectangles. Tests encode those inputs as MH2O, decode them through
 the real asset stack, and compare every position/UV bit and strip index.
+
+`tools/ghidra/liquid_shader_oracle.py` executes the six fingerprinted original
+BLS files on an offscreen Direct3D 9 device. It creates no window and never
+presents or starts the client. `liquid_shader_frames.bin` retains 36 sets of
+inputs and their original 16-by-16 RGBA output. Cases cover all shader families,
+zero through three point lights, overbright colors, fog, scaled model/view
+transforms, rotated texture coordinates, and spatial depth/surface gradients.
+The only native projection adjustment aligns D3D9's integer pixel centers with
+the production renderer's negative-height Vulkan viewport.
+
+`tools/ghidra/liquid_vulkan_compare.py` renders those same inputs through the
+Cargo-generated SPIR-V with an offscreen Vulkan 1.3 device. Every RGBA channel
+in all 36 frames agrees within one 8-bit level; the tolerance allows native
+shader arithmetic and final UNORM rounding. The Rust fixture test verifies
+the uniform serialization consumed by this comparison. GPU comparison requires
+the Python `vulkan` package and accepts the fixture path followed by Cargo's
+`solarity-rendering-*/out` directory containing the six compiled modules.

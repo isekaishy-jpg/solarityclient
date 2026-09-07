@@ -50,8 +50,9 @@ pub use lighting::{
     glue_ghost_sunlight, merge_wotlk_directional_lights,
 };
 pub use liquid::{
-    LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidRenderVertex,
-    LiquidTextureTimeline, TerrainLiquidMeshPlan,
+    LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidFog, LiquidLighting,
+    LiquidPointLight, LiquidRenderVertex, LiquidShaderUniform, LiquidTextureTimeline,
+    TerrainLiquidMeshPlan,
 };
 pub use minimap::{MinimapView, MinimapViewError};
 pub use model::{
@@ -84,16 +85,17 @@ pub use particle::{
     M2RibbonTrailError,
 };
 pub use shader::{
-    GlowShaderPass, GlowSpirvCompiler, GlowSpirvError, GlowSpirvProgram, M2BlendFactor, M2FogMode,
-    M2LocalLightCount, M2MaterialState, M2ParticleSpirvCompiler, M2ParticleSpirvError,
-    M2ParticleSpirvProgram, M2PixelShader, M2RibbonSpirvCompiler, M2RibbonSpirvError,
-    M2RibbonSpirvProgram, M2ShaderPermutation, M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering,
-    M2ShadowPermutation, M2SpirvCompiler, M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader,
-    TerrainLayerCount, TerrainLayerCountError, TerrainSpirvCompiler, TerrainSpirvError,
-    TerrainSpirvProgram, UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram,
-    WorldModelBlendFactor, WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode,
-    WorldModelMaterialState, WorldModelSpirvCompiler, WorldModelSpirvError, WorldModelSpirvKey,
-    WorldModelSpirvProgram, WorldModelSurfacePass, WorldModelSurfacePassPlan,
+    GlowShaderPass, GlowSpirvCompiler, GlowSpirvError, GlowSpirvProgram, LiquidShader,
+    LiquidSpirvProgram, M2BlendFactor, M2FogMode, M2LocalLightCount, M2MaterialState,
+    M2ParticleSpirvCompiler, M2ParticleSpirvError, M2ParticleSpirvProgram, M2PixelShader,
+    M2RibbonSpirvCompiler, M2RibbonSpirvError, M2RibbonSpirvProgram, M2ShaderPermutation,
+    M2ShaderPlan, M2ShaderPlanError, M2ShadowFiltering, M2ShadowPermutation, M2SpirvCompiler,
+    M2SpirvError, M2SpirvKey, M2SpirvProgram, M2VertexShader, TerrainLayerCount,
+    TerrainLayerCountError, TerrainSpirvCompiler, TerrainSpirvError, TerrainSpirvProgram,
+    UiShaderSource, UiSpirvCompiler, UiSpirvError, UiSpirvProgram, WorldModelBlendFactor,
+    WorldModelBlendState, WorldModelFogMode, WorldModelLightingMode, WorldModelMaterialState,
+    WorldModelSpirvCompiler, WorldModelSpirvError, WorldModelSpirvKey, WorldModelSpirvProgram,
+    WorldModelSurfacePass, WorldModelSurfacePassPlan,
 };
 pub use terrain::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,

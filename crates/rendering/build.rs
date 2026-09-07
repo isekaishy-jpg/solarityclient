@@ -88,6 +88,16 @@ fn main() {
             &[("TERRAIN_LAYER_COUNT", &layer_count)],
         );
     }
+    for (name, shader) in [("water", "0"), ("water-no-specular", "1"), ("magma", "2")] {
+        for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+            compile(
+                &format!("src/shader/liquid_spirv/source/liquid.{stage}.glsl"),
+                kind,
+                &output.join(format!("liquid-{name}.{stage}.spv")),
+                &[("LIQUID_SHADER", shader)],
+            );
+        }
+    }
     for unified in 0..=1 {
         for shader in 0..=6 {
             let unified_value = unified.to_string();
