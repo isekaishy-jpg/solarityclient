@@ -39,7 +39,7 @@ pub(super) fn model_light_colors(
     })
 }
 
-/// Resolves one complete sample without substituting missing global state.
+/// Resolves one complete sample with the stock map-global fallback.
 pub(super) fn sample(
     catalog: &LightCatalog,
     query: WorldLightQuery,
@@ -67,12 +67,15 @@ fn weighted_lights(
     }
 
     let condition = query.condition.index();
+    // 7ECB30 builds a map's light list before selecting a parameter bank.
+    // Its last zero-position row wins; absent one, slot zero is Light.dbc
+    // ID 1, even when that row belongs to another map (including RFC).
     let global = catalog
         .lights
         .iter()
-        .find(|light| {
-            light.map_id == query.map_id && light.is_global && light.parameter_ids[condition] != 0
-        })
+        .rev()
+        .find(|light| light.map_id == query.map_id && light.is_global)
+        .or_else(|| catalog.lights.iter().find(|light| light.id == 1))
         .ok_or(WorldLightSampleError::MissingGlobalLight {
             map_id: query.map_id,
             condition: query.condition.value(),

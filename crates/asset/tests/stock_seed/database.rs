@@ -1430,12 +1430,11 @@ fn light_catalog_samples_stock_color_and_float_channels() -> Result<(), Box<dyn 
     assert_eq!(sample.glow(), 0.75);
     assert_eq!(sample.sky_floats(), [0.25, 0.75, 1.25, 1.5]);
     assert_eq!(sample.liquid_alphas(), [0.3, 0.4, 0.1, 0.2]);
+    // 7ECB30 installs Light.dbc row one when the map has no global row.
+    // RFC (389) must resolve the same complete authored environment.
     assert_eq!(
-        catalog.sample(WorldLightQuery::new(0, glam::Vec3::ZERO, 720)),
-        Err(WorldLightSampleError::MissingGlobalLight {
-            map_id: 0,
-            condition: 0,
-        })
+        catalog.sample(WorldLightQuery::new(389, glam::Vec3::ZERO, 720))?,
+        sample,
     );
     Ok(())
 }

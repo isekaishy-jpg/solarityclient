@@ -8,6 +8,15 @@ can enter water while the player remains on shore, or remain above a swimmer.
 Without a nonzero `LiquidType.LightID`, global selection and local volume
 composition use zero-based Light.dbc parameter bank **one**. Exterior lighting
 uses bank zero. `0x007EE510` applies the same selection to local volumes.
+Before bank selection, `0x007F2790` calls `0x007ECB30` to build the map's
+light list. The last zero-position row for the map occupies its global slot;
+when absent, the slot uses **Light.dbc ID 1**, irrespective of that row's map.
+Local rows still belong to the active map. This fallback is required by RFC
+(map 389): treating its absent map-global row as fatal terminated world entry.
+It applies to both exterior and underwater banks. The empty-list constants in
+`0x007F3230` are a different branch: normal map-list construction reserves the
+global slot even when the map has no authored rows.
+
 `0x004F8501` obtains the light-volume position from the camera's followed
 object, so ordinary player-follow cameras retain player-position weights.
 Camera submersion alone selects the underwater bank and depth.

@@ -36,6 +36,8 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         0,
         0,
     ]);
+    // The fallback deliberately differs from map 571's global and locals.
+    rows.extend([1, 0, 0, 0, 0, 0, 0, 5, 2, 0, 0, 0, 0, 0, 0]);
     let mut parameters = Vec::new();
     let mut colors = Vec::new();
     let mut floats = Vec::new();
@@ -157,6 +159,33 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             ),
             Err(RuntimeWorldEnvironmentError::MissingLiquidType { id: 99 })
         );
+    }
+    // Entering RFC used to terminate the event loop on MissingGlobalLight.
+    // Check repeated transfers, underwater selection, and exterior restoration.
+    for (map, expected) in [(389, 240.), (571, 16.), (389, 240.)] {
+        let position = Vec3::new(1000., 20., 30.);
+        let world = ActiveWorld::enter(WorldBootstrap::new(
+            WorldMapId::new(map),
+            1,
+            "MapTransfer",
+            position,
+            0.,
+        ));
+        let frame = environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("map transfer environment")?;
+        assert_eq!(frame.light().ambient_color(), Vec3::splat(expected / 255.));
+        let underwater = environment.resolve_liquid(
+            frame,
+            Some(SubmergedLiquid {
+                liquid_type: 1,
+                surface_height: position.z,
+                depth: 0.,
+            }),
+            &liquids,
+        )?;
+        assert_eq!(underwater.light().ambient_color(), Vec3::splat(32. / 255.));
+        assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
     }
     Ok(())
 }

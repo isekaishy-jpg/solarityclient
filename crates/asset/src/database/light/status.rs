@@ -8,8 +8,8 @@ pub enum WorldLightSampleError {
     /// The query position contains NaN or infinity.
     #[error("world light query position is not finite")]
     NonFinitePosition,
-    /// The active map has no global exterior light for the requested condition.
-    #[error("map {map_id} has no global light for condition {condition}")]
+    /// Neither the active map's global light nor fallback Light.dbc ID 1 exists.
+    #[error("map {map_id} has no global or fallback light for condition {condition}")]
     MissingGlobalLight {
         /// Active Map.dbc identifier.
         map_id: u32,

@@ -77,10 +77,13 @@ impl LightCatalog {
 
     /// Joins and blends the complete stock exterior environment.
     ///
+    /// Maps without a global volume use Light.dbc entry one, as in 7ECB30.
+    ///
     /// # Errors
     ///
-    /// Returns [`WorldLightSampleError`] when the query or required authored
-    /// row/band is absent. No generic light or nearest-volume substitute is used.
+    /// Returns [`WorldLightSampleError`] when the query or a required authored
+    /// row/band is absent, including when both the map global and fallback
+    /// are missing.
     pub fn sample(
         &self,
         query: WorldLightQuery,
