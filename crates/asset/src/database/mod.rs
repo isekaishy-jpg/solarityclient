@@ -34,6 +34,7 @@ mod realm;
 mod sound;
 mod sound_advanced;
 mod sound_environment;
+mod transport;
 mod ui_sound;
 mod w_data_store;
 mod wow_client_db;
@@ -87,6 +88,10 @@ pub use sound_environment::{
     SoundEmitterCatalog, SoundEmitterDefinition, WorldChunkSoundKey, WorldModelAreaCatalog,
     WorldModelAreaDefinition, WorldModelAreaKey, WorldStateZoneSound, ZoneIntroMusicDefinition,
     ZoneMusicDefinition, ZoneSoundCatalog, ZoneSoundOverrideCatalog,
+};
+pub use transport::{
+    TaxiPathNode, TransportAnimationNode, TransportCatalog, TransportPhysicsRecord,
+    TransportRotationNode,
 };
 pub use ui_sound::{UiSoundLookup, UiSoundLookupCatalog};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

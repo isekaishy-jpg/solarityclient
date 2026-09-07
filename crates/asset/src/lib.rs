@@ -40,11 +40,12 @@ pub use database::{
     PaperDollItemFrameDefinition, ParticleColorCatalog, ParticleColorDefinition,
     RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration, RealmConfigurationCatalog,
     SkyboxBlend, SoundAmbienceDefinition, SoundAsset, SoundEmitterCatalog, SoundEmitterDefinition,
-    SoundEntry, SoundEntryCatalog, SpellItemEnchantment, UiSoundLookup, UiSoundLookupCatalog,
-    WdbcHeader, WdbcTable, WorldChunkSoundKey, WorldLightCondition, WorldLightQuery,
-    WorldLightSample, WorldLightSampleError, WorldModelAreaCatalog, WorldModelAreaDefinition,
-    WorldModelAreaKey, WorldStateZoneSound, ZoneIntroMusicDefinition, ZoneMusicDefinition,
-    ZoneSoundCatalog, ZoneSoundOverrideCatalog, exterior_light_direction,
+    SoundEntry, SoundEntryCatalog, SpellItemEnchantment, TaxiPathNode, TransportAnimationNode,
+    TransportCatalog, TransportPhysicsRecord, TransportRotationNode, UiSoundLookup,
+    UiSoundLookupCatalog, WdbcHeader, WdbcTable, WorldChunkSoundKey, WorldLightCondition,
+    WorldLightQuery, WorldLightSample, WorldLightSampleError, WorldModelAreaCatalog,
+    WorldModelAreaDefinition, WorldModelAreaKey, WorldStateZoneSound, ZoneIntroMusicDefinition,
+    ZoneMusicDefinition, ZoneSoundCatalog, ZoneSoundOverrideCatalog, exterior_light_direction,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
 pub use model::{

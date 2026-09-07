@@ -7,6 +7,16 @@ specification is the pinned `Wow.exe` with SHA256
 
 ## Construction and placement
 
+`TransportCatalog` loads the exact TaxiPathNode (11 words), TransportPhysics
+(11 words), TransportAnimation (7 words), and TransportRotation (7 words) schemas
+through normal archive precedence. Route and animation owner lookups preserve
+the signed-key lower-bound behavior of `0x007F7AD0`, `0x0070C8C0`, and
+`0x0070C930`. Nodes within an owner remain in stored order; the loader never
+sorts controls by their index or strips endpoint controls. Missing owner ranges
+are empty; missing physics keys remain absent. The installed stock tables have
+22,586 route controls, 5,262 position keys, 227 rotation keys, and three physics
+records. All three owner-indexed tables satisfy the native signed ordering.
+
 `0x007F92F0` initializes the route from the template's path, speed, acceleration,
 and optional TransportPhysics record. `0x007F90F0` consumes TaxiPathNode in stored
 order. A map change or the preceding node's flag one ends a continuous section.
@@ -77,6 +87,6 @@ instructions for 528 synthetic poses. Tests compare every packed value exactly
 and matrix components within 1e-7, then verify pose publication through an ECS
 parent/passenger chain, cache invalidation, and removal.
 
-Runtime DBC admission, transport clock advancement, collision registration, and
-player attachment still require integration; these providers alone do not make
-live transports move.
+Runtime transport clock advancement, collision registration, and player
+attachment still require integration; these providers alone do not make live
+transports move.
