@@ -88,6 +88,19 @@ impl LightCatalog {
         super::sampling::sample(self, query)
     }
 
+    /// Samples a complete LightParams override, as LiquidType.LightID does
+    /// at `0x007F32EA`. The identifier belongs to LightParams, not Light.dbc.
+    ///
+    /// # Errors
+    /// Returns an error for an absent parameter or any required band.
+    pub fn sample_parameter(
+        &self,
+        parameter_id: u32,
+        half_minutes: u32,
+    ) -> Result<WorldLightSample, WorldLightSampleError> {
+        super::sampling::sample_parameter(self, parameter_id, half_minutes)
+    }
+
     /// Samples an M2 palette directly from LightParams and its first two bands.
     ///
     /// Build 12340's Glue ghost callback at `0x004E3A20` uses parameter three

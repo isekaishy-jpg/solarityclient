@@ -73,7 +73,7 @@ impl LiquidTypeDefinition {
         self.darken
     }
 
-    /// Returns the related `Light.dbc` identifier.
+    /// Returns the direct `LightParams.dbc` override, or zero for world light banks.
     #[must_use]
     pub const fn light_id(&self) -> u32 {
         self.light_id

@@ -7,8 +7,8 @@ use glam::Vec3;
 use super::catalog::LightCatalog;
 use super::status::WorldLightSampleError;
 use super::types::{
-    COLOR_BAND_COUNT, FLOAT_BAND_COUNT, LightBand, LightDefinition, ModelLightColors, SkyboxBlend,
-    WorldLightQuery, WorldLightSample,
+    COLOR_BAND_COUNT, FLOAT_BAND_COUNT, LightBand, LightDefinition, LightParameter,
+    ModelLightColors, SkyboxBlend, WorldLightQuery, WorldLightSample,
 };
 
 const DAY_HALF_MINUTES: u32 = 2_880;
@@ -150,45 +150,81 @@ fn accumulate(
                 condition: query.condition.value(),
             },
         )?;
-        let color_first = parameter_id * COLOR_BAND_COUNT - (COLOR_BAND_COUNT - 1);
-        let float_first = parameter_id * FLOAT_BAND_COUNT - (FLOAT_BAND_COUNT - 1);
-        let weight = candidate.weight;
-
-        output.total += weight;
-        output.diffuse +=
-            sample_color(catalog, color_first + DIRECT_COLOR_CHANNEL, query)? * weight;
-        output.ambient +=
-            sample_color(catalog, color_first + AMBIENT_COLOR_CHANNEL, query)? * weight;
-        output.fog += sample_color(catalog, color_first + FOG_COLOR_CHANNEL, query)? * weight;
-        output.specular +=
-            sample_color(catalog, color_first + SPECULAR_COLOR_CHANNEL, query)? * weight;
-        for (index, color) in output.sky.iter_mut().enumerate() {
-            *color += sample_color(
-                catalog,
-                color_first + SKY_COLOR_FIRST_CHANNEL + index as u32,
-                query,
-            )? * weight;
-        }
-        for (index, color) in output.liquid.iter_mut().enumerate() {
-            *color +=
-                sample_color(catalog, color_first + LIQUID_COLOR_CHANNELS[index], query)? * weight;
-        }
-
-        let fog_end = sample_float(catalog, float_first, query)? * CLIENT_COORDINATE_SCALE;
-        output.fog_end += fog_end.max(10.0) * weight;
-        output.fog_ratio += sample_float(catalog, float_first + 1, query)?.clamp(0.0, 1.0) * weight;
-        for (index, value) in output.sky_floats.iter_mut().enumerate() {
-            *value += sample_float(catalog, float_first + 2 + index as u32, query)? * weight;
-        }
-        output.highlight_sky += parameter.highlight_sky as f32 * weight;
-        output.glow += parameter.glow * weight;
-        output.liquid_alphas[0] += parameter.ocean_shallow_alpha * weight;
-        output.liquid_alphas[1] += parameter.ocean_deep_alpha * weight;
-        output.liquid_alphas[2] += parameter.river_shallow_alpha * weight;
-        output.liquid_alphas[3] += parameter.river_deep_alpha * weight;
-        add_skybox(&mut output.skyboxes, parameter.skybox_id, weight);
+        accumulate_parameter(
+            catalog,
+            &mut output,
+            parameter,
+            candidate.weight,
+            query.half_minutes,
+        )?;
     }
     Ok(output.finish())
+}
+
+/// Samples a complete LightParams override without a Light.dbc volume.
+pub(super) fn sample_parameter(
+    catalog: &LightCatalog,
+    parameter_id: u32,
+    half_minutes: u32,
+) -> Result<WorldLightSample, WorldLightSampleError> {
+    let parameter = catalog
+        .parameter(parameter_id)
+        .ok_or(WorldLightSampleError::MissingParameterId { parameter_id })?;
+    let mut output = Accumulator::default();
+    accumulate_parameter(catalog, &mut output, parameter, 1.0, half_minutes)?;
+    Ok(output.finish())
+}
+
+/// Joins the same bands for world volumes and a liquid's direct parameter.
+fn accumulate_parameter(
+    catalog: &LightCatalog,
+    output: &mut Accumulator,
+    parameter: &LightParameter,
+    weight: f32,
+    half_minutes: u32,
+) -> Result<(), WorldLightSampleError> {
+    let parameter_id = parameter.id();
+    let color_first = parameter_id * COLOR_BAND_COUNT - (COLOR_BAND_COUNT - 1);
+    let float_first = parameter_id * FLOAT_BAND_COUNT - (FLOAT_BAND_COUNT - 1);
+
+    output.total += weight;
+    output.diffuse +=
+        sample_color_at(catalog, color_first + DIRECT_COLOR_CHANNEL, half_minutes)? * weight;
+    output.ambient +=
+        sample_color_at(catalog, color_first + AMBIENT_COLOR_CHANNEL, half_minutes)? * weight;
+    output.fog += sample_color_at(catalog, color_first + FOG_COLOR_CHANNEL, half_minutes)? * weight;
+    output.specular +=
+        sample_color_at(catalog, color_first + SPECULAR_COLOR_CHANNEL, half_minutes)? * weight;
+    for (index, color) in output.sky.iter_mut().enumerate() {
+        *color += sample_color_at(
+            catalog,
+            color_first + SKY_COLOR_FIRST_CHANNEL + index as u32,
+            half_minutes,
+        )? * weight;
+    }
+    for (index, color) in output.liquid.iter_mut().enumerate() {
+        *color += sample_color_at(
+            catalog,
+            color_first + LIQUID_COLOR_CHANNELS[index],
+            half_minutes,
+        )? * weight;
+    }
+
+    let fog_end = sample_float_at(catalog, float_first, half_minutes)? * CLIENT_COORDINATE_SCALE;
+    output.fog_end += fog_end.max(10.0) * weight;
+    output.fog_ratio +=
+        sample_float_at(catalog, float_first + 1, half_minutes)?.clamp(0.0, 1.0) * weight;
+    for (index, value) in output.sky_floats.iter_mut().enumerate() {
+        *value += sample_float_at(catalog, float_first + 2 + index as u32, half_minutes)? * weight;
+    }
+    output.highlight_sky += parameter.highlight_sky as f32 * weight;
+    output.glow += parameter.glow * weight;
+    output.liquid_alphas[0] += parameter.ocean_shallow_alpha * weight;
+    output.liquid_alphas[1] += parameter.ocean_deep_alpha * weight;
+    output.liquid_alphas[2] += parameter.river_shallow_alpha * weight;
+    output.liquid_alphas[3] += parameter.river_deep_alpha * weight;
+    add_skybox(&mut output.skyboxes, parameter.skybox_id, weight);
+    Ok(())
 }
 
 /// Returns the selected nonzero parameter ID for one candidate.
@@ -204,15 +240,6 @@ fn require_parameter_id(
         light_id: light.id,
         condition: query.condition.value(),
     })
-}
-
-/// Samples and unpacks one required packed-RGB band.
-fn sample_color(
-    catalog: &LightCatalog,
-    band_id: u32,
-    query: WorldLightQuery,
-) -> Result<Vec3, WorldLightSampleError> {
-    sample_color_at(catalog, band_id, query.half_minutes)
 }
 
 /// Shares cyclic packed-color sampling with direct model palettes.
@@ -237,10 +264,10 @@ fn sample_color_at(
 }
 
 /// Samples one required scalar band.
-fn sample_float(
+fn sample_float_at(
     catalog: &LightCatalog,
     band_id: u32,
-    query: WorldLightQuery,
+    half_minutes: u32,
 ) -> Result<f32, WorldLightSampleError> {
     let band = catalog
         .float_bands
@@ -249,7 +276,7 @@ fn sample_float(
     if band.entries == 0 {
         return Err(WorldLightSampleError::EmptyFloatBand { band_id });
     }
-    Ok(sample_float_band(band, query.half_minutes))
+    Ok(sample_float_band(band, half_minutes))
 }
 
 /// Finds the cyclic key interval, including the final-to-first midnight wrap.

@@ -6,6 +6,8 @@ mod application;
 mod configuration;
 #[path = "stock_seed/console.rs"]
 mod console;
+#[path = "stock_seed/environment.rs"]
+mod environment;
 #[path = "stock_seed/event.rs"]
 mod event;
 #[path = "stock_seed/foundation.rs"]

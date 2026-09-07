@@ -1117,6 +1117,9 @@ impl ClientServices {
             .terrain
             .camera_submerged_liquid(camera.camera().position(), &self.liquids)
             .map_err(super::sound_coordinator::RuntimeSoundError::from)?;
+        let environment =
+            self.environment
+                .resolve_liquid(environment, underwater, &self.liquids)?;
         self.sound.stage_zone(
             location,
             self.gameplay.world(),

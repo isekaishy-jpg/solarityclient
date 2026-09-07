@@ -2,12 +2,12 @@
 
 use glam::Vec3;
 use solarity_asset::{
-    LightCatalog, WorldLightQuery, WorldLightSample, WorldLightSampleError,
-    exterior_light_direction,
+    LightCatalog, LiquidTypeCatalog, WorldLightCondition, WorldLightQuery, WorldLightSample,
+    WorldLightSampleError, exterior_light_direction,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_systems::{
-    DEFAULT_WORLD_VIEW_DISTANCE, WorldViewDistance, WorldViewDistanceError,
+    DEFAULT_WORLD_VIEW_DISTANCE, SubmergedLiquid, WorldViewDistance, WorldViewDistanceError,
     WorldViewDistanceRequest, resolve_world_view_distance,
 };
 use thiserror::Error;
@@ -29,6 +29,12 @@ pub enum RuntimeWorldEnvironmentError {
     /// Required authored light state was absent or malformed.
     #[error(transparent)]
     Light(#[from] WorldLightSampleError),
+    /// The admitted camera liquid has no authored environment definition.
+    #[error("submerged liquid type {id} has no environment definition")]
+    MissingLiquidType {
+        /// Raw LiquidType identifier returned by the scene query.
+        id: u32,
+    },
 }
 
 /// Complete exterior state shared by camera, terrain, sky, fog, water, and models.
@@ -158,6 +164,8 @@ impl RuntimeWorldEnvironment {
         };
         self.current = None;
         let map_id = world.map_id();
+        // 4F8501 uses the camera's followed object's position for light volumes;
+        // normal player-follow cameras therefore retain player-space volume weights.
         let position = world.local_player_transform()?.position();
         let half_minutes = clock.half_minutes();
         let view_distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
@@ -184,6 +192,38 @@ impl RuntimeWorldEnvironment {
     #[must_use]
     pub const fn current(&self) -> Option<RuntimeWorldEnvironmentFrame> {
         self.current
+    }
+
+    /// Resolves 7F3230's underwater bank or direct LightParams override after
+    /// camera collision and the scene's submerged query have completed.
+    ///
+    /// # Errors
+    /// Returns an error when the admitted liquid or its required light data is absent.
+    pub fn resolve_liquid(
+        &self,
+        mut frame: RuntimeWorldEnvironmentFrame,
+        submerged: Option<SubmergedLiquid>,
+        liquids: &LiquidTypeCatalog,
+    ) -> Result<RuntimeWorldEnvironmentFrame, RuntimeWorldEnvironmentError> {
+        let Some(submerged) = submerged else {
+            return Ok(frame);
+        };
+        let liquid = liquids.entry(submerged.liquid_type).ok_or(
+            RuntimeWorldEnvironmentError::MissingLiquidType {
+                id: submerged.liquid_type,
+            },
+        )?;
+        let light = if liquid.light_id() == 0 {
+            self.lights.sample(
+                WorldLightQuery::new(frame.map_id, frame.position, frame.half_minutes)
+                    .with_condition(WorldLightCondition::UNDERWATER),
+            )?
+        } else {
+            self.lights
+                .sample_parameter(liquid.light_id(), frame.half_minutes)?
+        };
+        frame.light = light.with_liquid_depth(liquid, submerged.depth);
+        Ok(frame)
     }
 
     /// Clears world-dependent state while retaining immutable DBC tables.

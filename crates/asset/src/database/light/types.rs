@@ -169,6 +169,9 @@ impl WorldLightCondition {
     /// Normal exterior weather/death/zone state.
     pub const EXTERIOR: Self = Self(0);
 
+    /// Normal underwater bank selected by 7F3230/7EE510.
+    pub const UNDERWATER: Self = Self(1);
+
     /// Creates a condition only for the closed stock slot range.
     #[must_use]
     pub const fn new(value: u8) -> Option<Self> {

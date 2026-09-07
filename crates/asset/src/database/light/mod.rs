@@ -5,6 +5,7 @@
 //! channels so individual renderers do not decode or reinterpret DBC rows.
 
 mod catalog;
+mod darkening;
 mod direction;
 mod sampling;
 mod status;

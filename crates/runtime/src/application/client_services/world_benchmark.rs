@@ -300,12 +300,11 @@ impl ClientServices {
         let camera = self
             .resolved_world_camera()?
             .ok_or(WorldBenchmarkError::State("missing camera"))?;
-        let camera_submerged = self
+        let underwater = self
             .terrain
             .camera_submerged_liquid(camera.camera().position(), &self.liquids)
             .map_err(super::super::sound_coordinator::RuntimeSoundError::from)
-            .map_err(ApplicationError::from)?
-            .is_some();
+            .map_err(ApplicationError::from)?;
         let camera_duration = start.elapsed();
         let start = Instant::now();
         let frame = self
@@ -321,6 +320,10 @@ impl ClientServices {
             .environment
             .current()
             .ok_or(WorldBenchmarkError::State("missing environment"))?;
+        let environment = self
+            .environment
+            .resolve_liquid(environment, underwater, &self.liquids)
+            .map_err(ApplicationError::from)?;
         let ui = self
             .world_ui
             .as_ref()
@@ -333,7 +336,7 @@ impl ClientServices {
                 camera,
                 self.m2_global_clock.elapsed().as_secs_f32() * 1000.,
                 sdl3::timer::ticks() as u32,
-                camera_submerged,
+                underwater.is_some(),
                 self.glue.cvar_boolean("specular"),
                 &mut self.crt_rand,
                 player,

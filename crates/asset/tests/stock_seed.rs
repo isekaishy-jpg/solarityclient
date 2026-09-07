@@ -28,6 +28,8 @@ mod database_transport;
 mod database_ui_sound;
 #[path = "stock_seed/file_stack.rs"]
 mod file_stack;
+#[path = "stock_seed/liquid_light.rs"]
+mod liquid_light;
 #[path = "stock_seed/loading_screen.rs"]
 mod loading_screen;
 #[path = "stock_seed/model.rs"]
