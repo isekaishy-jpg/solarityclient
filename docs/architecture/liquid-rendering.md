@@ -4,8 +4,9 @@ The specification is the locally owned build-12340 executable with SHA-256
 `aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8`, together
 with its exact client archives. The rendering liquid module currently owns
 depth lookup coordinates, generated water depth images, resident animated
-texture frame selection, and terrain liquid meshes. Terrain and WMO draw submission and swimming remain
-under implementation; these CPU boundaries alone do not display water.
+texture frame selection, terrain liquid meshes, and a Vulkan world-frame draw
+path. Runtime terrain/WMO material residency and swimming remain under
+implementation; the Testing package does not yet submit world liquids.
 
 ## Depth coordinates and images
 
@@ -65,7 +66,8 @@ surface RGB, and an animated alpha-weighted specular contribution. Its
 output alpha comes from the depth texture and vertex alpha. Magma multiplies
 its texture RGB by vertex color and outputs alpha one. These recovered
 shader contracts now have build-validated SPIR-V modules and an explicit
-512-byte `LiquidShaderUniform` ABI. They are not yet submitted by world frames.
+512-byte `LiquidShaderUniform` ABI. `LiquidFrame` adds prepared strips to the
+unified world submission with one explicit transparent-scene insertion ordinal.
 
 The vertex stages retain the original unnormalized transformed normal,
 ambient/directional lighting, first three point lights, and specular power six.
@@ -92,6 +94,42 @@ base relative to the first member before transforming vertices and deriving
 UVs. Authored UVs are selected only for vertex format one; format three uses
 position UVs despite retaining authored UV words. Mesh indices retain every
 native triangle-strip degenerate around holes and at row boundaries.
+
+## Vulkan resource and draw lifetime
+
+`upload_liquid_mesh` admits the complete 44-byte PNC0T0T1 vertex stream and
+native unsigned-short strip indices. Uploads use the shared graphics queue
+with deferred staging retirement. `retire_liquid_meshes` invalidates handles
+immediately after queuing a covering fence; storage remains alive until all
+earlier frames and transfers have completed. Neither operation waits for GPU
+idle on the CPU.
+
+Each world frame slot owns its dynamic liquid uniforms, material descriptors,
+and three procedural images. After the slot fence retires, the frame writes
+current uniform and image bytes, updates sampled surface-frame descriptors,
+then records the three depth-image copies before dynamic rendering begins.
+Capacity grows geometrically within the retired slot. Changing light colors
+therefore reuses image storage instead of accumulating cached images.
+
+Native `0x008A27C0` retains bit zero of `LiquidMaterial.dbc` field two as the
+queue flag; `0x008A20C0` selects the corresponding queue. The exact table gives
+water/procedural water flag one and magma flag zero. `0x0079A870` submits
+queue zero after terrain/WMO work, before M2. `0x004F8EA0` submits queue one
+through `0x0077F020`/`0x00790A80` between the two transparent M2 passes; its
+camera-liquid branch changes which pass precedes water. The frame API accepts
+that insertion ordinal from scene composition and retains prepared liquid order.
+
+Both material paths explicitly disable culling and enable depth testing.
+The programmable water draw `0x008A56A2` reads the graphics device's capability
+block through `0x00532AF0`; this is not a camera-submersion field. D3D capability
+initialization `0x0068F253` copies `MaxUserClipPlanes` into that field. The
+user-clipping path disables water depth writes while retaining alpha blending;
+opaque magma retains the world pass's ordinary depth state.
+
+The GPU frame test renders opaque magma behind transparent water across nine
+changing frames. It checks every pixel for the selected river/ocean/WMO depth
+image and repeated alpha blending, grows descriptor capacity, reuses frame
+slots, and checks immediate handle invalidation and replacement on retirement.
 
 ## External verification
 

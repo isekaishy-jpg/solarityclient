@@ -2,9 +2,11 @@
 
 #![allow(unsafe_code)]
 
+mod liquid;
 mod portrait;
 mod terrain_retirement;
 
+use crate::device::vulkan_liquid::{LiquidMeshRegistry, LiquidPipelines};
 use crate::device::vulkan_m2_frame::PortraitRegistry;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -203,6 +205,8 @@ pub struct VulkanRenderer {
     world_frames: WorldFrameRenderer,
     glow: VulkanGlowRenderer,
     terrain_meshes: TerrainMeshRegistry,
+    liquid_meshes: LiquidMeshRegistry,
+    liquid_pipelines: LiquidPipelines,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
     terrain_frames: TerrainFrameRenderer,
@@ -285,6 +289,8 @@ impl VulkanRenderer {
             world_frames: WorldFrameRenderer::default(),
             glow: VulkanGlowRenderer::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
+            liquid_meshes: LiquidMeshRegistry::default(),
+            liquid_pipelines: LiquidPipelines::default(),
             terrain_retirements: std::collections::VecDeque::new(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -562,6 +568,7 @@ impl VulkanRenderer {
         if let Some(allocator) = self.allocator.as_ref() {
             self.m2_meshes
                 .retire_completed_transfers(&self.device, allocator)?;
+            self.liquid_meshes.collect(&self.device, allocator)?;
         }
         let result = match present(self) {
             Err(VulkanError::SwapchainOutOfDate) => {
@@ -1941,7 +1948,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame(
         &mut self,
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
@@ -1984,7 +1991,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui(
         &mut self,
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
@@ -2029,7 +2036,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui_layers(
         &mut self,
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
@@ -2071,7 +2078,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui_and_glow(
         &mut self,
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
@@ -2117,7 +2124,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui_layers_and_glow(
         &mut self,
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
@@ -2159,7 +2166,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     fn present_world_frame_internal(
         &mut self,
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
@@ -2198,6 +2205,13 @@ impl VulkanRenderer {
                 self.swapchain_images.len(),
             )?;
         }
+        if scene
+            .liquids()
+            .is_some_and(|frame| !frame.draws().is_empty())
+        {
+            self.liquid_pipelines
+                .prepare(&self.device, self.color_format, self.depth_format)?;
+        }
         let report = self.world_frames.present(
             WorldFrameContext {
                 device: &self.device,
@@ -2217,6 +2231,9 @@ impl VulkanRenderer {
                 terrain_pipelines: &self.terrain_pipelines,
                 terrain_meshes: &self.terrain_meshes,
                 terrain_texture_sets: &self.terrain_texture_sets,
+                liquid_pipelines: &self.liquid_pipelines,
+                liquid_meshes: &self.liquid_meshes,
+                liquid_textures: &self.blp_textures,
                 world_model_pipelines: &self.world_model_pipelines,
                 world_model_meshes: &self.world_model_meshes,
                 world_model_texture_sets: &self.world_model_texture_sets,
@@ -2544,6 +2561,7 @@ impl Drop for VulkanRenderer {
             self.blp_textures.destroy(&self.device, allocator);
             self.terrain_materials.destroy(&self.device, allocator);
             self.terrain_meshes.destroy(allocator);
+            self.liquid_meshes.destroy(&self.device, allocator);
             self.world_model_meshes.destroy(allocator);
             self.m2_meshes.destroy(&self.device, allocator);
         }
@@ -2553,6 +2571,7 @@ impl Drop for VulkanRenderer {
         self.ui_samplers.destroy(&self.device);
         self.ui_pipelines.destroy(&self.device);
         self.terrain_pipelines.destroy(&self.device);
+        self.liquid_pipelines.destroy(&self.device);
         self.world_model_pipelines.destroy(&self.device);
         self.m2_particle_pipelines.destroy(&self.device);
         self.m2_ribbon_pipelines.destroy(&self.device);

@@ -12,6 +12,7 @@ pub enum LiquidDepthTextureKind {
 }
 
 /// One 8-by-64, linear-color RGBA8 procedural liquid image.
+#[derive(Debug, Eq, PartialEq)]
 pub struct LiquidDepthTexture {
     pixels_rgba: Box<[u8; Self::BYTE_SIZE]>,
 }

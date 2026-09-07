@@ -20,6 +20,7 @@ mod vulkan_character_atlas;
 mod vulkan_frame;
 mod vulkan_glow;
 mod vulkan_instance;
+mod vulkan_liquid;
 mod vulkan_m2_draw;
 mod vulkan_m2_frame;
 mod vulkan_m2_particle_draw;
@@ -60,6 +61,7 @@ pub use vulkan_character_atlas::{CharacterAtlasTextureHandle, CharacterAtlasText
 pub use vulkan_frame::CinematicFrameIdentity;
 pub use vulkan_glow::WorldFrameGlow;
 pub use vulkan_instance::VulkanBootstrap;
+pub use vulkan_liquid::{LiquidDrawMaterial, LiquidFrame, LiquidMeshHandle, LiquidPreparedDraw};
 pub use vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
 pub use vulkan_m2_frame::{M2FrameReport, UiPortraitTextureHandle};
 pub use vulkan_m2_particle_draw::M2ParticlePreparedDraw;

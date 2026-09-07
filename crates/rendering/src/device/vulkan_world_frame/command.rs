@@ -8,6 +8,10 @@ use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
+use crate::device::vulkan_liquid::{
+    LiquidDrawMaterial, LiquidFrameResources, LiquidMeshRegistry, LiquidPipelines,
+    LiquidPreparedDraw,
+};
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
@@ -54,6 +58,11 @@ pub(super) struct RecordContext<'a> {
     pub(super) terrain_pipelines: &'a TerrainPipelineRegistry,
     pub(super) terrain_meshes: &'a TerrainMeshRegistry,
     pub(super) terrain_texture_sets: &'a TerrainTextureSetRegistry,
+    pub(super) liquid_pipelines: &'a LiquidPipelines,
+    pub(super) liquid_meshes: &'a LiquidMeshRegistry,
+    pub(super) liquid_resources: &'a LiquidFrameResources,
+    pub(super) liquid_draws: &'a [LiquidPreparedDraw],
+    pub(super) liquid_scene_order: u32,
     pub(super) world_model_pipelines: &'a WorldModelPipelineRegistry,
     pub(super) world_model_meshes: &'a WorldModelMeshRegistry,
     pub(super) world_model_texture_sets: &'a WorldModelTextureSetRegistry,
@@ -85,6 +94,11 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
             .begin_command_buffer(context.command_buffer, &begin)
     }
     .map_err(|source| VulkanError::operation("begin world command buffer", source))?;
+    if !context.liquid_draws.is_empty() {
+        context
+            .liquid_resources
+            .record_uploads(context.device, context.command_buffer);
+    }
     transition_attachments(&context);
     let color = vk::RenderingAttachmentInfo::default()
         .image_view(context.image_view)
@@ -168,6 +182,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
         record_world_model(&context, index, draw, &mut bindings)?;
     }
+    record_liquid_queue(&context, LiquidQueue::Opaque, &mut bindings)?;
     record_m2_scene_elements(&context, &mut bindings)?;
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
@@ -200,6 +215,7 @@ fn record_m2_scene_elements(
     let mut next_m2 = 0;
     let mut next_particle = 0;
     let mut next_ribbon = 0;
+    let mut water_pending = !context.liquid_draws.is_empty();
     loop {
         let m2_key = context
             .m2_draws
@@ -221,6 +237,12 @@ fn record_m2_scene_elements(
         .into_iter()
         .flatten()
         .min_by_key(|(key, _kind)| *key);
+        if water_pending
+            && next.is_none_or(|((order, _kind), _)| order >= context.liquid_scene_order)
+        {
+            record_liquid_queue(context, LiquidQueue::Transparent, bindings)?;
+            water_pending = false;
+        }
         match next.map(|(_key, kind)| kind) {
             Some(0) => {
                 let draw = context
@@ -253,6 +275,56 @@ fn record_m2_scene_elements(
             None => return Ok(()),
         }
     }
+}
+
+/// The material flag selected by native 8A27C0/8A20C0 admits two liquid queues.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LiquidQueue {
+    Opaque,
+    Transparent,
+}
+
+/// Records one stock queue at its world/M2 stage, retaining the prepared order.
+fn record_liquid_queue(
+    context: &RecordContext<'_>,
+    queue: LiquidQueue,
+    bindings: &mut WorldCommandBindings,
+) -> Result<(), VulkanError> {
+    for (index, draw) in context.liquid_draws.iter().copied().enumerate() {
+        let draw_queue = if draw.material() == LiquidDrawMaterial::Magma {
+            LiquidQueue::Opaque
+        } else {
+            LiquidQueue::Transparent
+        };
+        if draw_queue != queue {
+            continue;
+        }
+        let (pipeline, layout) = context.liquid_pipelines.raw(draw.material().shader());
+        let (vertices, indices, count) =
+            context.liquid_meshes.raw(draw.mesh()).ok_or_else(|| {
+                VulkanError::operation("record liquid draw", "unknown liquid mesh handle")
+            })?;
+        let (sets, offset) = context.liquid_resources.draw_sets(index)?;
+        // SAFETY: Preparation validates handles; the slot fence protects uniform,
+        // descriptor, and image storage until this submission has completed.
+        unsafe {
+            bindings.bind_pipeline(context, pipeline);
+            bindings.bind_vertex(context, (vertices, 0));
+            bindings.bind_index(context, (indices, 0), vk::IndexType::UINT16);
+            context.device.cmd_bind_descriptor_sets(
+                context.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                0,
+                &sets,
+                &[offset],
+            );
+            context
+                .device
+                .cmd_draw_indexed(context.command_buffer, count, 1, 0, 0, 0);
+        }
+    }
+    Ok(())
 }
 
 /// Makes the completed world color writes available to the blending UI pass.

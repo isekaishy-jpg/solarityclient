@@ -1,18 +1,21 @@
 //! Public scene snapshot and observable unified-world submission facts.
 
-use crate::{M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, WorldModelSceneUniform};
+use crate::{
+    LiquidFrame, M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, WorldModelSceneUniform,
+};
 
 /// One coherent terrain, WMO, M2, and M2-effect scene snapshot for a world frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WorldFrameScene {
+pub struct WorldFrameScene<'a> {
     terrain: TerrainSceneUniform,
     world_model: WorldModelSceneUniform,
     m2: [M2SceneUniform; M2SceneLightBank::COUNT],
     particle_vertex_capacity: usize,
     particle_index_capacity: usize,
+    liquids: Option<LiquidFrame<'a>>,
 }
 
-impl WorldFrameScene {
+impl<'a> WorldFrameScene<'a> {
     /// Joins the three stock world shader families at one camera/time sample.
     #[must_use]
     pub const fn new(
@@ -26,7 +29,19 @@ impl WorldFrameScene {
             m2: [m2; M2SceneLightBank::COUNT],
             particle_vertex_capacity: 0,
             particle_index_capacity: 0,
+            liquids: None,
         }
+    }
+
+    /// Adds retained liquid draws and the procedural colors sampled for this frame.
+    #[must_use]
+    pub const fn with_liquids(mut self, frame: LiquidFrame<'a>) -> Self {
+        self.liquids = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn liquids(self) -> Option<LiquidFrame<'a>> {
+        self.liquids
     }
 
     /// Supplies the independent character and pet banks authored by Glue Lua.
@@ -78,6 +93,7 @@ impl WorldFrameScene {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorldFrameReport {
     terrain_draw_count: usize,
+    liquid_draw_count: usize,
     world_model_draw_count: usize,
     m2_draw_count: usize,
     particle_draw_count: usize,
@@ -92,6 +108,7 @@ impl WorldFrameReport {
     #[allow(clippy::too_many_arguments)]
     pub(super) const fn new(
         terrain_draw_count: usize,
+        liquid_draw_count: usize,
         world_model_draw_count: usize,
         m2_draw_count: usize,
         particle_draw_count: usize,
@@ -103,6 +120,7 @@ impl WorldFrameReport {
     ) -> Self {
         Self {
             terrain_draw_count,
+            liquid_draw_count,
             world_model_draw_count,
             m2_draw_count,
             particle_draw_count,
@@ -118,6 +136,12 @@ impl WorldFrameReport {
     #[must_use]
     pub const fn terrain_draw_count(self) -> usize {
         self.terrain_draw_count
+    }
+
+    /// Returns submitted opaque and transparent liquid strip count.
+    #[must_use]
+    pub const fn liquid_draw_count(self) -> usize {
+        self.liquid_draw_count
     }
 
     /// Returns submitted physical WMO pass count.

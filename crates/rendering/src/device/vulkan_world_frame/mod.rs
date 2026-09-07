@@ -14,6 +14,7 @@ use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
+use crate::device::vulkan_liquid::{LiquidMeshRegistry, LiquidPipelines};
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
@@ -26,6 +27,7 @@ use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
 use crate::device::vulkan_terrain_texture_set::TerrainTextureSetRegistry;
+use crate::device::vulkan_texture::BlpTextureRegistry;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_frame::UiOverlayRecordContext;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
@@ -60,6 +62,9 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) terrain_pipelines: &'a TerrainPipelineRegistry,
     pub(in crate::device) terrain_meshes: &'a TerrainMeshRegistry,
     pub(in crate::device) terrain_texture_sets: &'a TerrainTextureSetRegistry,
+    pub(in crate::device) liquid_pipelines: &'a LiquidPipelines,
+    pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
+    pub(in crate::device) liquid_textures: &'a BlpTextureRegistry,
     pub(in crate::device) world_model_pipelines: &'a WorldModelPipelineRegistry,
     pub(in crate::device) world_model_meshes: &'a WorldModelMeshRegistry,
     pub(in crate::device) world_model_texture_sets: &'a WorldModelTextureSetRegistry,
@@ -180,7 +185,7 @@ impl WorldFrameRenderer {
         &mut self,
         context: WorldFrameContext<'_>,
         descriptor_layouts: [vk::DescriptorSetLayout; 8],
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
@@ -199,8 +204,22 @@ impl WorldFrameRenderer {
             && m2_draws.is_empty()
             && particle_draws.is_empty()
             && ribbon_draws.is_empty()
+            && scene.liquids().is_none_or(|frame| frame.draws().is_empty())
         {
             return Err(VulkanError::EmptyWorldFrame);
+        }
+        if let Some(frame) = scene.liquids() {
+            for draw in frame.draws() {
+                if context.liquid_meshes.raw(draw.mesh()).is_none() {
+                    return Err(VulkanError::operation(
+                        "validate liquid frame",
+                        "unknown liquid mesh handle",
+                    ));
+                }
+                if context.liquid_textures.view(draw.surface()).is_none() {
+                    return Err(VulkanError::UnknownBlpTextureHandle);
+                }
+            }
         }
         if ribbon_draws.iter().any(|draw| {
             usize::try_from(draw.first_vertex())
@@ -283,6 +302,21 @@ impl WorldFrameRenderer {
         let (acquired, wait_write_elapsed, acquire_elapsed) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
+            if let Some(frame) = scene.liquids().filter(|frame| !frame.draws().is_empty()) {
+                slot.liquids.ensure(
+                    context.device,
+                    context.allocator,
+                    context.liquid_pipelines.descriptor_layouts()?,
+                    frame.draws().len(),
+                    context.uniform_alignment,
+                )?;
+                slot.liquids.write(
+                    context.device,
+                    context.allocator,
+                    context.liquid_textures,
+                    frame,
+                )?;
+            }
             slot.write(
                 context.allocator,
                 scene,
@@ -337,6 +371,13 @@ impl WorldFrameRenderer {
             terrain_pipelines: context.terrain_pipelines,
             terrain_meshes: context.terrain_meshes,
             terrain_texture_sets: context.terrain_texture_sets,
+            liquid_pipelines: context.liquid_pipelines,
+            liquid_meshes: context.liquid_meshes,
+            liquid_resources: &slot.liquids,
+            liquid_draws: scene.liquids().map_or(&[], |frame| frame.draws()),
+            liquid_scene_order: scene
+                .liquids()
+                .map_or(u32::MAX, |frame| frame.water_scene_order()),
             world_model_pipelines: context.world_model_pipelines,
             world_model_meshes: context.world_model_meshes,
             world_model_texture_sets: context.world_model_texture_sets,
@@ -391,6 +432,7 @@ impl WorldFrameRenderer {
         }
         Ok(WorldFrameReport::new(
             terrain_draws.len(),
+            scene.liquids().map_or(0, |frame| frame.draws().len()),
             world_model_draws.len(),
             m2_draws.len(),
             particle_draws.len(),

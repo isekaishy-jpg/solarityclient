@@ -135,7 +135,7 @@ struct TransferResources<'a> {
 }
 
 /// Submitted staging and command resources retained until their fence completes.
-pub(super) struct DeferredMeshTransfer {
+pub(in crate::device) struct DeferredMeshTransfer {
     staging: AllocatedBuffer,
     command_pool: vk::CommandPool,
     fence: vk::Fence,
@@ -143,7 +143,7 @@ pub(super) struct DeferredMeshTransfer {
 
 impl DeferredMeshTransfer {
     /// Polls retirement without waiting on the presentation thread.
-    pub(super) fn is_complete(&self, device: &Device) -> Result<bool, VulkanError> {
+    pub(in crate::device) fn is_complete(&self, device: &Device) -> Result<bool, VulkanError> {
         // SAFETY: This transfer uniquely owns the submitted fence until retirement.
         unsafe { device.get_fence_status(self.fence) }
             .map_err(|source| VulkanError::operation("poll M2 buffer transfer", source))
@@ -157,7 +157,7 @@ impl DeferredMeshTransfer {
     }
 
     /// Releases staging after fence completion or renderer-wide device idle.
-    pub(super) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+    pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         // SAFETY: Callers have retired this submission before releasing its
         // command pool, fence, and source allocation. Device loss also ends use.
         unsafe {
@@ -362,7 +362,7 @@ pub(in crate::device) fn upload_mesh_buffers(
 ///
 /// Vulkan's submission-order dependency extends to subsequent submissions on
 /// this same queue. The fence controls staging lifetime, not draw readiness.
-fn upload_mesh_buffers_deferred(
+pub(in crate::device) fn upload_mesh_buffers_deferred(
     context: MeshUploadContext<'_>,
     vertex_bytes: &[u8],
     index_bytes: &[u8],

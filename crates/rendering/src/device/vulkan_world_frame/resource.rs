@@ -8,6 +8,7 @@ use vk_mem::Alloc;
 
 use crate::device::VulkanError;
 use crate::device::capacity::geometric_capacity;
+use crate::device::vulkan_liquid::LiquidFrameResources;
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
 use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
@@ -154,6 +155,7 @@ impl FrameBufferLayout {
 }
 
 pub(super) struct WorldFrameSlot {
+    pub(super) liquids: LiquidFrameResources,
     buffer: vk::Buffer,
     buffer_allocation: Option<vk_mem::Allocation>,
     layout: FrameBufferLayout,
@@ -269,7 +271,7 @@ impl WorldFrameSlot {
     pub(super) fn write(
         &mut self,
         allocator: &vk_mem::Allocator,
-        scene: WorldFrameScene,
+        scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
@@ -603,6 +605,7 @@ impl WorldFrameSlot {
     }
 
     fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        self.liquids.destroy(device, allocator);
         // SAFETY: The caller idles the device before destruction/rebuild.
         unsafe {
             if self.fence != vk::Fence::null() {
@@ -640,6 +643,7 @@ impl WorldFrameSlot {
 
     const fn empty(layout: FrameBufferLayout) -> Self {
         Self {
+            liquids: LiquidFrameResources::empty(),
             buffer: vk::Buffer::null(),
             buffer_allocation: None,
             layout,

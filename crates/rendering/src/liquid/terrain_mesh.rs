@@ -12,11 +12,53 @@ const AUTHORED_UV_SCALE: f32 = 3.0 / 256.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LiquidRenderVertex {
     position: [f32; 3],
+    normal: [f32; 3],
+    color: [u8; 4],
     depth_coordinates: [f32; 2],
     surface_coordinates: [f32; 2],
 }
 
 impl LiquidRenderVertex {
+    /// Packed position, normal, RGBA color, depth UV, and surface UV extent.
+    pub const BYTE_SIZE: usize = 44;
+
+    /// Retains the complete PNC0T0T1 input shared by terrain and WMO liquids.
+    #[must_use]
+    pub const fn new(
+        position: [f32; 3],
+        normal: [f32; 3],
+        color: [u8; 4],
+        depth_coordinates: [f32; 2],
+        surface_coordinates: [f32; 2],
+    ) -> Self {
+        Self {
+            position,
+            normal,
+            color,
+            depth_coordinates,
+            surface_coordinates,
+        }
+    }
+
+    /// Serializes the Vulkan vertex ABI without depending on Rust struct layout.
+    #[must_use]
+    pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
+        let mut bytes = [0; Self::BYTE_SIZE];
+        for (index, value) in self.position.into_iter().chain(self.normal).enumerate() {
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes[24..28].copy_from_slice(&self.color);
+        for (index, value) in self
+            .depth_coordinates
+            .into_iter()
+            .chain(self.surface_coordinates)
+            .enumerate()
+        {
+            bytes[28 + index * 4..32 + index * 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
     /// Returns the position relative to the render instance's translation.
     #[must_use]
     pub const fn position(self) -> [f32; 3] {
@@ -86,6 +128,8 @@ impl TerrainLiquidMeshPlan {
             };
             vertices.push(LiquidRenderVertex {
                 position,
+                normal: [0.0, 0.0, 1.0],
+                color: [255; 4],
                 depth_coordinates: [
                     0.0,
                     depth.map_or(0.0, |bank| bank.coordinate(layer.depths()[index])),
