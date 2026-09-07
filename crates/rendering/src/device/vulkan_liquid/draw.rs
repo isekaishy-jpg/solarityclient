@@ -1,6 +1,6 @@
 //! Complete liquid draw packets and one coherent frame's procedural depth images.
 
-use crate::device::BlpTextureHandle;
+use crate::device::{BlpTextureHandle, WorldModelTextureFiltering};
 use crate::{LiquidDepthTexture, LiquidDepthTextureKind, LiquidShader, LiquidShaderUniform};
 
 use super::LiquidMeshHandle;
@@ -80,6 +80,7 @@ pub struct LiquidFrame<'a> {
     draws: &'a [LiquidPreparedDraw],
     depths: [&'a LiquidDepthTexture; 3],
     water_scene_order: u32,
+    filtering: WorldModelTextureFiltering,
 }
 
 impl<'a> LiquidFrame<'a> {
@@ -100,7 +101,19 @@ impl<'a> LiquidFrame<'a> {
             draws,
             depths: [river, ocean, world_model],
             water_scene_order,
+            filtering: WorldModelTextureFiltering::Trilinear,
         }
+    }
+
+    /// Applies the global ordinary-texture filter selected by native 4B9760.
+    #[must_use]
+    pub const fn with_texture_filtering(mut self, filtering: WorldModelTextureFiltering) -> Self {
+        self.filtering = filtering;
+        self
+    }
+
+    pub(in crate::device) const fn filtering(self) -> WorldModelTextureFiltering {
+        self.filtering
     }
 
     pub(in crate::device) const fn draws(self) -> &'a [LiquidPreparedDraw] {

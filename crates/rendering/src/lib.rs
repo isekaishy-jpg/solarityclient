@@ -52,8 +52,9 @@ pub use lighting::{
 };
 pub use liquid::{
     LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidFog, LiquidLighting,
-    LiquidPointLight, LiquidRenderVertex, LiquidShaderUniform, LiquidTextureTimeline,
-    TerrainLiquidMeshPlan,
+    LiquidPointLight, LiquidRenderVertex, LiquidScrollError, LiquidShaderUniform,
+    LiquidTextureTimeline, TerrainLiquidMeshPlan, liquid_magma_surface_transform,
+    liquid_water_surface_transform,
 };
 pub use minimap::{MinimapView, MinimapViewError};
 pub use model::{

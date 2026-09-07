@@ -109,7 +109,31 @@ def main():
             textures.append(struct.pack('<5I4f', kind, *colors, *alphas)
                             + depth_texture(kind, colors, alphas))
     (output / 'liquid_depth_textures.bin').write_bytes(b''.join(textures))
-    print(json.dumps({'depth_values': 512, 'frame_cases': len(frames), 'texture_cases': len(textures)}))
+    transforms = []
+    for scale, angle in ((1., 0.), (.25, 180.), (1., 45.), (.125, -90.), (2., .5), (.025, 360.)):
+        uc = native.emulator()
+        matrix = native.HEAP
+        radians = struct.unpack('<f', struct.pack('<f', angle * native.read_floats(uc, 0x9ed910, 1)[0]))[0]
+        native.invoke(uc, 0x4c3290, [matrix, struct.unpack('<I', struct.pack('<f', radians))[0]])
+        uc.reg_write(UC_X86_REG_ECX, matrix)
+        native.invoke(uc, 0x4c1bf0, [struct.unpack('<I', struct.pack('<f', scale))[0]])
+        transforms.append(struct.pack('<I3fI', 0, scale, angle, 0., 0) + bytes(uc.mem_read(matrix, 64)))
+    for rates in ((.025, 0.), (0., .05), (.125, -.125), (-.025, .000001), (0., 0.)):
+        for clock in (0, 1, 39999, 40000, 40001, 0x7fffffff, 0x80000000, 0xffffffff):
+            uc = native.emulator()
+            native.write_floats(uc, native.HEAP, rates)
+            def provider(uc, address, size, context):
+                if address == 0x86ae20:
+                    return_value(uc, clock)
+            uc.hook_add(UC_HOOK_CODE, provider)
+            native.invoke(uc, 0x8a34b0, [native.HEAP])
+            matrix = uc.reg_read(UC_X86_REG_EAX)
+            scale = .75
+            uc.reg_write(UC_X86_REG_ECX, matrix)
+            native.invoke(uc, 0x4c1bf0, [struct.unpack('<I', struct.pack('<f', scale))[0]])
+            transforms.append(struct.pack('<I3fI', 1, scale, *rates, clock) + bytes(uc.mem_read(matrix, 64)))
+    (output / 'liquid_texture_transforms.bin').write_bytes(b''.join(transforms))
+    print(json.dumps({'depth_values': 512, 'frame_cases': len(frames), 'texture_cases': len(textures), 'transform_cases': len(transforms)}))
 
 
 if __name__ == '__main__':

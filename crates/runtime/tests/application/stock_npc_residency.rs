@@ -78,6 +78,7 @@ fn stock_goblin_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error
                 &renderer,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
+                solarity_rendering::M2TransparentPass::One,
                 Vec3::ZERO,
                 100.,
                 100.,

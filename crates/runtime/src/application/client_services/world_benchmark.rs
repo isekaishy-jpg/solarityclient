@@ -114,6 +114,7 @@ impl ClientServices {
             world.map_id().value(),
             resident.mesh(),
             resident.textures(),
+            resident.liquid_batches(),
             resident.m2_scene(),
             resident.world_models(),
             WorldModelTextureFiltering::Anisotropic4x,
@@ -299,6 +300,12 @@ impl ClientServices {
         let camera = self
             .resolved_world_camera()?
             .ok_or(WorldBenchmarkError::State("missing camera"))?;
+        let camera_submerged = self
+            .terrain
+            .camera_submerged_liquid(camera.camera().position(), &self.liquids)
+            .map_err(super::super::sound_coordinator::RuntimeSoundError::from)
+            .map_err(ApplicationError::from)?
+            .is_some();
         let camera_duration = start.elapsed();
         let start = Instant::now();
         let frame = self
@@ -325,6 +332,8 @@ impl ClientServices {
                 environment,
                 camera,
                 self.m2_global_clock.elapsed().as_secs_f32() * 1000.,
+                sdl3::timer::ticks() as u32,
+                camera_submerged,
                 self.glue.cvar_boolean("specular"),
                 &mut self.crt_rand,
                 player,

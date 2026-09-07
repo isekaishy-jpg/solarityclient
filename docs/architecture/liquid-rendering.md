@@ -5,8 +5,45 @@ The specification is the locally owned build-12340 executable with SHA-256
 with its exact client archives. The rendering liquid module currently owns
 depth lookup coordinates, generated water depth images, resident animated
 texture frame selection, terrain liquid meshes, and a Vulkan world-frame draw
-path. Runtime terrain/WMO material residency and swimming remain under
-implementation; the Testing package does not yet submit world liquids.
+path. The runtime streams terrain liquid materials and submits their retained
+geometry with the world camera, light sample, and animation clock. WMO liquid
+presentation and swimming remain under implementation; the current Testing
+package predates terrain liquid submission.
+
+## Terrain residency and scene composition
+
+The CPU terrain generation retains complete `LiquidType.dbc` and
+`LiquidMaterial.dbc` inputs and BLP sources before publishing its geometry.
+Native `8A1FA0` dispatches by material primary key. `8A2450` requests precisely
+30 surface slots for `%d` names, including failed requests; a missing ordinal
+keeps the opaque green Texture.cpp failure image from `4B9760`. Static texture
+names retain one slot. Weak material caches share live generations without
+pinning departed worlds. GPU geometry retires with its owning ADT generation.
+
+On programmable hardware, `780F50` and `7BD8A0` enable the 2-by-2 MCNK path.
+`7CF200` visits its members in row-major order and batches equal liquid types.
+Each member retains native strip degenerates and receives a translation from
+the first member's origin. Runtime culling uses the resulting world bounds.
+The shader receives authored water scale/angle or magma scrolling transforms,
+the selected resident surface ordinal, and the final camera's view-space light
+and fog inputs. Surface sampling follows the shared texture filtering setting;
+procedural depth sampling remains linear and clamped. Retired frame slots
+replace sampler resources when filtering changes.
+
+The camera's existing liquid query chooses transparent M2 pass two before
+water above the surface and pass one before water below it, matching `4F8EA0`.
+Glue continues to use its explicit pass-one-first ordering.
+
+Native `7EBFF0` reads LightParams glow from field four, ocean alphas from
+fields five/six, and river alphas from seven/eight. Liquid color bands 14/15
+are river and 16/17 are ocean. `liquid_environment_oracle.py` executes that
+projection followed by all three original depth callbacks. Runtime tests
+decode equivalent generated DBC files and compare every resulting pixel,
+covering the column offset and bank mapping together.
+
+Runtime archive tests also cover the complete sequence with a failed 17th
+ordinal, material reuse and release, four-member batch ordering and strip
+boundaries, and hidden Vulkan rendering of the retained terrain generation.
 
 ## Depth coordinates and images
 

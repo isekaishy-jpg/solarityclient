@@ -5,14 +5,26 @@
 use ash::{Device, vk};
 use vk_mem::Alloc;
 
-use crate::device::VulkanError;
 use crate::device::capacity::geometric_capacity;
 use crate::device::vulkan_texture::BlpTextureRegistry;
+use crate::device::{VulkanError, WorldModelTextureFiltering};
 use crate::{LiquidDepthTexture, LiquidShaderUniform};
 
 use super::LiquidFrame;
 use super::draw::depth_index;
 use super::frame_image::DepthImage;
+
+/// Retired-slot allocation inputs and enabled adapter filtering limits.
+pub(in crate::device) struct LiquidFrameCreateContext<'a> {
+    pub device: &'a Device,
+    pub allocator: &'a vk_mem::Allocator,
+    pub layouts: [vk::DescriptorSetLayout; 2],
+    pub count: usize,
+    pub alignment: u64,
+    pub filtering: WorldModelTextureFiltering,
+    /// One when the logical device has no enabled anisotropy feature.
+    pub maximum_anisotropy: f32,
+}
 
 /// One world frame slot owns every mutable liquid descriptor and depth texel.
 pub(in crate::device) struct LiquidFrameResources {
@@ -25,6 +37,7 @@ pub(in crate::device) struct LiquidFrameResources {
     uniform_set: vk::DescriptorSet,
     material_sets: Vec<vk::DescriptorSet>,
     samplers: [vk::Sampler; 2],
+    filtering: WorldModelTextureFiltering,
     depths: [DepthImage; 3],
 }
 
@@ -40,6 +53,7 @@ impl LiquidFrameResources {
             uniform_set: vk::DescriptorSet::null(),
             material_sets: Vec::new(),
             samplers: [vk::Sampler::null(); 2],
+            filtering: WorldModelTextureFiltering::Trilinear,
             depths: [
                 DepthImage::empty(),
                 DepthImage::empty(),
@@ -51,22 +65,20 @@ impl LiquidFrameResources {
     /// Grows only this retired slot, preserving existing resources if creation fails.
     pub(in crate::device) fn ensure(
         &mut self,
-        device: &Device,
-        allocator: &vk_mem::Allocator,
-        layouts: [vk::DescriptorSetLayout; 2],
-        count: usize,
-        alignment: u64,
+        context: LiquidFrameCreateContext<'_>,
     ) -> Result<(), VulkanError> {
-        if count == 0 || self.capacity >= count {
+        if context.count == 0
+            || (self.capacity >= context.count && self.filtering == context.filtering)
+        {
             return Ok(());
         }
-        let capacity = geometric_capacity(self.capacity, count);
+        let capacity = geometric_capacity(self.capacity, context.count);
         let mut replacement = Self::empty();
-        if let Err(error) = replacement.create(device, allocator, layouts, capacity, alignment) {
-            replacement.destroy(device, allocator);
+        if let Err(error) = replacement.create(&context, capacity) {
+            replacement.destroy(context.device, context.allocator);
             return Err(error);
         }
-        self.destroy(device, allocator);
+        self.destroy(context.device, context.allocator);
         *self = replacement;
         Ok(())
     }
@@ -74,13 +86,14 @@ impl LiquidFrameResources {
     /// Allocates checked dynamic ranges, immutable sampler state, and exact-size descriptor storage.
     fn create(
         &mut self,
-        device: &Device,
-        allocator: &vk_mem::Allocator,
-        layouts: [vk::DescriptorSetLayout; 2],
+        context: &LiquidFrameCreateContext<'_>,
         capacity: usize,
-        alignment: u64,
     ) -> Result<(), VulkanError> {
-        let alignment = alignment.max(1);
+        let device = context.device;
+        let allocator = context.allocator;
+        let layouts = context.layouts;
+        let alignment = context.alignment.max(1);
+        self.filtering = context.filtering;
         self.stride = (LiquidShaderUniform::BYTE_SIZE as u64)
             .checked_add(alignment - 1)
             .map(|size| size / alignment * alignment)
@@ -119,15 +132,30 @@ impl LiquidFrameResources {
         .into_iter()
         .enumerate()
         {
+            // 8A2450 keeps procedural depth linear/clamped; 4B9760 replaces
+            // ordinary surface filtering with the global textureFilteringMode.
+            let anisotropy = if index == 0 {
+                1.0
+            } else {
+                self.filtering
+                    .requested_anisotropy()
+                    .min(context.maximum_anisotropy.max(1.0))
+            };
             let info = vk::SamplerCreateInfo::default()
                 .mag_filter(vk::Filter::LINEAR)
                 .min_filter(vk::Filter::LINEAR)
-                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                .mipmap_mode(if index == 0 || self.filtering.uses_linear_mips() {
+                    vk::SamplerMipmapMode::LINEAR
+                } else {
+                    vk::SamplerMipmapMode::NEAREST
+                })
+                .anisotropy_enable(anisotropy > 1.0)
+                .max_anisotropy(anisotropy)
                 .address_mode_u(address)
                 .address_mode_v(address)
                 .address_mode_w(address)
                 .max_lod(if index == 0 { 0.0 } else { vk::LOD_CLAMP_NONE });
-            // SAFETY: Samplers use core, normalized-coordinate filtering without optional features.
+            // SAFETY: Anisotropy is capped to the enabled device feature and limit.
             self.samplers[index] = unsafe { device.create_sampler(&info, None) }
                 .map_err(|source| VulkanError::operation("create liquid sampler", source))?;
         }

@@ -94,7 +94,6 @@ pub struct LightParameter {
     pub(super) river_deep_alpha: f32,
     pub(super) ocean_shallow_alpha: f32,
     pub(super) ocean_deep_alpha: f32,
-    pub(super) flags: u32,
 }
 
 impl LightParameter {
@@ -131,12 +130,6 @@ impl LightParameter {
             self.ocean_shallow_alpha,
             self.ocean_deep_alpha,
         ]
-    }
-
-    /// Returns the unmodified build-12340 flags word.
-    #[must_use]
-    pub const fn flags(&self) -> u32 {
-        self.flags
     }
 }
 
@@ -325,7 +318,7 @@ impl WorldLightSample {
         self.sky_floats
     }
 
-    /// Returns ocean shallow/deep followed by river shallow/deep colors.
+    /// Returns river shallow/deep followed by ocean shallow/deep colors (bands 14..17).
     #[must_use]
     pub const fn liquid_colors(self) -> [Vec3; 4] {
         self.liquid_colors

@@ -10,6 +10,7 @@ use solarity_rendering::{
     BlpColorSpace, LiquidDepthTexture, LiquidDepthTextureKind, LiquidDrawMaterial, LiquidFog,
     LiquidFrame, LiquidLighting, LiquidRenderVertex, LiquidShaderUniform, M2LocalLightState,
     M2SceneUniform, TerrainSceneUniform, VulkanBootstrap, WorldFrameScene, WorldModelSceneUniform,
+    WorldModelTextureFiltering,
 };
 
 use crate::support::{Fixture, FixtureFile};
@@ -86,7 +87,16 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
         let draw = renderer.prepare_liquid_draw(water, material, black, uniform)?;
         let mut draws = vec![base];
         draws.extend(std::iter::repeat_n(draw, count));
-        let scene = scene().with_liquids(LiquidFrame::new(&draws, &river, &ocean, &wmo, 0));
+        // Change immutable sampler state while slots also reuse existing capacity.
+        let filtering = [
+            WorldModelTextureFiltering::Bilinear,
+            WorldModelTextureFiltering::Anisotropic4x,
+            WorldModelTextureFiltering::Trilinear,
+            WorldModelTextureFiltering::Anisotropic16x,
+        ][frame_index % 4];
+        let scene = scene().with_liquids(
+            LiquidFrame::new(&draws, &river, &ocean, &wmo, 0).with_texture_filtering(filtering),
+        );
         renderer.request_frame_capture()?;
         let report =
             renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;

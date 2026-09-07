@@ -2234,6 +2234,11 @@ impl VulkanRenderer {
                 liquid_pipelines: &self.liquid_pipelines,
                 liquid_meshes: &self.liquid_meshes,
                 liquid_textures: &self.blp_textures,
+                maximum_sampler_anisotropy: if self.sampler_anisotropy {
+                    self.maximum_sampler_anisotropy
+                } else {
+                    1.0
+                },
                 world_model_pipelines: &self.world_model_pipelines,
                 world_model_meshes: &self.world_model_meshes,
                 world_model_texture_sets: &self.world_model_texture_sets,

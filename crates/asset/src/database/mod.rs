@@ -21,6 +21,7 @@ mod db_client;
 mod game_object;
 mod item;
 mod light;
+mod liquid_material;
 mod loading_screen;
 mod localized;
 mod map;
@@ -70,6 +71,7 @@ pub use light::{
     WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
     exterior_light_direction,
 };
+pub use liquid_material::{LiquidMaterialCatalog, LiquidMaterialDefinition};
 pub use loading_screen::{LoadingScreenCatalog, LoadingScreenDefinition};
 pub use map::{MapCatalog, MapDefinition, MapKind};
 pub use map_difficulty::MapDifficultyCatalog;

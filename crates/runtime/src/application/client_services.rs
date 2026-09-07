@@ -1165,12 +1165,15 @@ impl ClientServices {
             .as_ref()
             .map_or(&[][..], RuntimeWorldUi::draws);
         profile.mark("world sound and render inputs");
+        let liquid_time_ms = sdl3::timer::ticks() as u32;
         frame.present(
             &mut self.renderer,
             plan,
             environment,
             camera,
             global_animation_time_ms,
+            liquid_time_ms,
+            underwater.is_some(),
             specular_enabled,
             &mut self.crt_rand,
             player,
@@ -2125,15 +2128,15 @@ impl ClientServices {
                         &mut self.crt_rand,
                     )?;
                 } else {
-                    let plan = self
+                    let resident = self
                         .terrain
                         .resident_tiles()
                         .find(|resident| resident.mesh().tile() == tile)
-                        .map(|resident| resident.mesh())
                         .ok_or(RuntimeTerrainFrameError::MissingMeshPlan {
                             tile_x: tile.x(),
                             tile_y: tile.y(),
                         })?;
+                    let plan = resident.mesh();
                     let sources = self.terrain.resident_texture_sources().ok_or(
                         RuntimeTerrainFrameError::MissingTextureSources {
                             tile_x: tile.x(),
@@ -2160,6 +2163,7 @@ impl ClientServices {
                         map_id,
                         plan,
                         sources,
+                        resident.liquid_batches(),
                         m2_scene,
                         world_models,
                         WorldModelTextureFiltering::Anisotropic4x,

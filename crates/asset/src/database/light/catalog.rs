@@ -188,12 +188,13 @@ fn decode_parameters(table: &WdbcTable) -> Result<HashMap<u32, LightParameter>, 
             id,
             highlight_sky: field(table, row, 1)?,
             skybox_id: field(table, row, 2)?,
-            glow: float_field(table, row, 3)?,
-            river_shallow_alpha: float_field(table, row, 4)?,
-            river_deep_alpha: float_field(table, row, 5)?,
-            ocean_shallow_alpha: float_field(table, row, 6)?,
-            ocean_deep_alpha: float_field(table, row, 7)?,
-            flags: field(table, row, 8)?,
+            // Native 7EC1D0..7EC20D reads glow at +10, then four alphas.
+            // 8A2BF0 consumes the first pair for ocean and the second for river.
+            glow: float_field(table, row, 4)?,
+            river_shallow_alpha: float_field(table, row, 7)?,
+            river_deep_alpha: float_field(table, row, 8)?,
+            ocean_shallow_alpha: float_field(table, row, 5)?,
+            ocean_deep_alpha: float_field(table, row, 6)?,
         };
         if parameters.insert(id, parameter).is_some() {
             return Err(database_error(

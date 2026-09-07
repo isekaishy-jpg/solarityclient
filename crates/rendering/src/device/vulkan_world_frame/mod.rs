@@ -14,7 +14,7 @@ use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
-use crate::device::vulkan_liquid::{LiquidMeshRegistry, LiquidPipelines};
+use crate::device::vulkan_liquid::{LiquidFrameCreateContext, LiquidMeshRegistry, LiquidPipelines};
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 use crate::device::vulkan_m2_particle_pipeline::M2ParticlePipelineRegistry;
@@ -65,6 +65,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) liquid_pipelines: &'a LiquidPipelines,
     pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
     pub(in crate::device) liquid_textures: &'a BlpTextureRegistry,
+    pub(in crate::device) maximum_sampler_anisotropy: f32,
     pub(in crate::device) world_model_pipelines: &'a WorldModelPipelineRegistry,
     pub(in crate::device) world_model_meshes: &'a WorldModelMeshRegistry,
     pub(in crate::device) world_model_texture_sets: &'a WorldModelTextureSetRegistry,
@@ -303,13 +304,15 @@ impl WorldFrameRenderer {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
             if let Some(frame) = scene.liquids().filter(|frame| !frame.draws().is_empty()) {
-                slot.liquids.ensure(
-                    context.device,
-                    context.allocator,
-                    context.liquid_pipelines.descriptor_layouts()?,
-                    frame.draws().len(),
-                    context.uniform_alignment,
-                )?;
+                slot.liquids.ensure(LiquidFrameCreateContext {
+                    device: context.device,
+                    allocator: context.allocator,
+                    layouts: context.liquid_pipelines.descriptor_layouts()?,
+                    count: frame.draws().len(),
+                    alignment: context.uniform_alignment,
+                    filtering: frame.filtering(),
+                    maximum_anisotropy: context.maximum_sampler_anisotropy,
+                })?;
                 slot.liquids.write(
                     context.device,
                     context.allocator,

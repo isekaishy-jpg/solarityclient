@@ -696,6 +696,8 @@ pub(in crate::application) struct M2Frame {
 
 /// Borrowed dynamic streams assembled for one unified world submission.
 pub(in crate::application) struct M2VisibleFrame<'frame> {
+    /// Native liquid queue one belongs between the two transparent model passes.
+    pub(in crate::application) water_scene_order: u32,
     pub(in crate::application) bone_transforms: &'frame [Mat4],
     pub(in crate::application) draws: &'frame [M2PreparedDraw],
     pub(in crate::application) particle_vertices: &'frame [M2ParticleRenderVertex],
@@ -1814,6 +1816,7 @@ impl M2Frame {
         renderer: &VulkanRenderer,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
+        first_transparent_pass: M2TransparentPass,
         fog_color: glam::Vec3,
         animation_time_ms: f32,
         global_time_ms: f32,
@@ -2601,11 +2604,20 @@ impl M2Frame {
             }
         }
         self.transparent_elements.sort_unstable_by(|left, right| {
-            left.pass
-                .cmp(&right.pass)
+            (left.pass != first_transparent_pass)
+                .cmp(&(right.pass != first_transparent_pass))
                 .then_with(|| compare_m2_transparent(&left.key, &right.key))
         });
         let first_transparent_order = self.visible_draws.len();
+        let water_scene_order = first_transparent_order
+            .checked_add(
+                self.transparent_elements
+                    .iter()
+                    .take_while(|element| element.pass == first_transparent_pass)
+                    .count(),
+            )
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
         for (index, element) in self.transparent_elements.iter().enumerate() {
             let scene_order = first_transparent_order
                 .checked_add(index)
@@ -2639,6 +2651,7 @@ impl M2Frame {
         self.particle_draws.sort_by_key(|draw| draw.scene_order());
         self.ribbon_draws.sort_by_key(|draw| draw.scene_order());
         Ok(M2VisibleFrame {
+            water_scene_order,
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,
             particle_vertices: &self.particle_vertices,

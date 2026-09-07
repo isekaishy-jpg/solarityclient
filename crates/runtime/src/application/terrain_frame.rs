@@ -19,6 +19,10 @@ use thiserror::Error;
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
 use crate::application::game_object_coordinator::GameObjectFrameInput;
+use crate::application::liquid::{
+    LiquidGpuMaterialCache, ResidentTerrainLiquidBatch, TerrainLiquidGpuBatch, liquid_depth_images,
+    liquid_environment,
+};
 use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentPlayerFrameInput,
 };
@@ -37,6 +41,17 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// An authored liquid scroll rate cannot form a native clock divisor.
+    #[error(transparent)]
+    LiquidScroll(#[from] solarity_rendering::LiquidScrollError),
+    /// A selected animated surface ordinal is outside its complete resident sequence.
+    #[error("liquid surface frame {index} is outside its {count}-frame sequence")]
+    LiquidTextureFrame {
+        /// Zero-based ordinal selected by the native animation clock.
+        index: usize,
+        /// Number of retained surface slots.
+        count: usize,
+    },
     /// A retained GameObject could not form its dedicated collision placement.
     #[error(transparent)]
     M2Collision(#[from] solarity_systems::M2CollisionError),
@@ -484,6 +499,7 @@ pub enum RuntimeTerrainFrameError {
 struct TerrainGpuTile {
     plan: Arc<TerrainTileMeshPlan>,
     draws: Vec<TerrainPreparedDraw>,
+    liquids: Vec<TerrainLiquidGpuBatch>,
 }
 
 /// Resident world composition whose placement state survives tile changes.
@@ -492,6 +508,9 @@ pub(super) struct TerrainFrame {
     map_id: Option<u32>,
     tiles: Vec<TerrainGpuTile>,
     visible_draws: Vec<TerrainPreparedDraw>,
+    liquid_materials: LiquidGpuMaterialCache,
+    liquid_filtering: WorldModelTextureFiltering,
+    liquid_draws: Vec<solarity_rendering::LiquidPreparedDraw>,
     m2: M2Frame,
     world_models: WorldModelFrame,
 }
@@ -514,6 +533,7 @@ impl TerrainFrame {
         map_id: u32,
         plan: &Arc<TerrainTileMeshPlan>,
         sources: &[Arc<BlpTextureSource>],
+        liquid_batches: &[ResidentTerrainLiquidBatch],
         m2_scene: &ResidentM2Scene,
         world_models: &ResidentWorldModelScene,
         world_model_filtering: WorldModelTextureFiltering,
@@ -526,6 +546,8 @@ impl TerrainFrame {
         game_objects: GameObjectFrameInput<'_>,
     ) -> Result<Self, RuntimeTerrainFrameError> {
         let draws = prepare_tile_draws(renderer, plan, sources)?;
+        let mut liquid_materials = LiquidGpuMaterialCache::default();
+        let liquids = liquid_materials.prepare_terrain(renderer, liquid_batches)?;
 
         let (m2, world_models) = prepare_scene_models(
             renderer,
@@ -546,8 +568,12 @@ impl TerrainFrame {
             tiles: vec![TerrainGpuTile {
                 plan: Arc::clone(plan),
                 draws,
+                liquids,
             }],
             visible_draws: Vec::with_capacity(plan.chunks().len()),
+            liquid_materials,
+            liquid_filtering: world_model_filtering,
+            liquid_draws: Vec::new(),
             m2,
             world_models,
         })
@@ -586,6 +612,9 @@ impl TerrainFrame {
             map_id: None,
             tiles: Vec::new(),
             visible_draws: Vec::new(),
+            liquid_materials: LiquidGpuMaterialCache::default(),
+            liquid_filtering: world_model_filtering,
+            liquid_draws: Vec::new(),
             m2,
             world_models,
         })
@@ -604,6 +633,8 @@ impl TerrainFrame {
         environment: RuntimeWorldEnvironmentFrame,
         camera: WorldCameraFrame,
         global_animation_time_ms: f32,
+        liquid_time_ms: u32,
+        camera_submerged: bool,
         specular_enabled: bool,
         random: &mut CrtRand,
         player: ResidentPlayerFrameInput<'_>,
@@ -645,6 +676,22 @@ impl TerrainFrame {
             }
         }
         profile.mark("terrain culling");
+        let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera);
+        self.liquid_draws.clear();
+        for batch in self.tiles.iter().flat_map(|tile| &tile.liquids) {
+            if let Some(draw) = batch.prepare_draw(
+                renderer,
+                frustum,
+                camera,
+                liquid_lighting,
+                liquid_fog,
+                liquid_time_ms,
+                specular_enabled,
+            )? {
+                self.liquid_draws.push(draw);
+            }
+        }
+        profile.mark("liquid packets");
         let light = environment.light();
         let terrain_scene = TerrainSceneUniform::new(
             camera.view_projection(),
@@ -692,6 +739,11 @@ impl TerrainFrame {
             renderer,
             frustum,
             camera,
+            if camera_submerged {
+                solarity_rendering::M2TransparentPass::One
+            } else {
+                solarity_rendering::M2TransparentPass::Two
+            },
             light.fog_color(),
             local_animation_time_ms,
             global_animation_time_ms,
@@ -700,8 +752,21 @@ impl TerrainFrame {
             Some(game_objects),
         )?;
         profile.mark("M2 packets");
-        let scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
+        let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));
+        let mut scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
+        if let Some([river, ocean, world_model]) = &depths {
+            scene = scene.with_liquids(
+                solarity_rendering::LiquidFrame::new(
+                    &self.liquid_draws,
+                    river,
+                    ocean,
+                    world_model,
+                    m2.water_scene_order,
+                )
+                .with_texture_filtering(self.liquid_filtering),
+            );
+        }
         let report = renderer.present_world_frame_with_ui_layers(
             scene,
             m2.bone_transforms,

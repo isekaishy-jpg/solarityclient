@@ -5,7 +5,33 @@ use std::num::NonZeroU32;
 
 use solarity_rendering::{
     LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidTextureTimeline,
+    liquid_magma_surface_transform, liquid_water_surface_transform,
 };
+
+/// Native matrix functions preserve authored angle conversion and unsigned scroll periods.
+#[test]
+fn liquid_texture_transforms_match_original_matrix_instructions() -> Result<(), Box<dyn Error>> {
+    let fixture = include_bytes!("../fixtures/liquid_texture_transforms.bin");
+    assert_eq!(fixture.len(), 46 * 84);
+    for record in fixture.as_chunks::<84>().0 {
+        let value = |index| f32::from_bits(read_word(record, index));
+        let actual = if read_word(record, 0) == 0 {
+            liquid_water_surface_transform(value(1), value(2))
+        } else {
+            liquid_magma_surface_transform([value(2), value(3)], value(1), read_word(record, 4))?
+        };
+        for (index, value) in actual.to_cols_array().into_iter().enumerate() {
+            let expected = read_word(record, index + 5);
+            assert_eq!(
+                value.to_bits(),
+                expected,
+                "input {:?}, matrix element {index}",
+                &record[..20]
+            );
+        }
+    }
+    Ok(())
+}
 
 /// Original 79E3C0 output covers every authored depth byte in both banks.
 #[test]

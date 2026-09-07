@@ -18,7 +18,7 @@ pub enum WorldModelTextureFiltering {
 }
 
 impl WorldModelTextureFiltering {
-    pub(super) const fn requested_anisotropy(self) -> f32 {
+    pub(in crate::device) const fn requested_anisotropy(self) -> f32 {
         match self {
             Self::Bilinear | Self::Trilinear => 1.0,
             Self::Anisotropic2x => 2.0,
@@ -28,7 +28,7 @@ impl WorldModelTextureFiltering {
         }
     }
 
-    pub(super) const fn uses_linear_mips(self) -> bool {
+    pub(in crate::device) const fn uses_linear_mips(self) -> bool {
         !matches!(self, Self::Bilinear)
     }
 }

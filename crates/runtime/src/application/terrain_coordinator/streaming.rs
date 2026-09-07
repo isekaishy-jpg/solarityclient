@@ -360,6 +360,13 @@ impl ResidentTerrainMap {
 }
 
 impl ResidentTerrainTile {
+    /// Borrows worker-prepared liquid batches in their stock terrain group order.
+    pub(in crate::application) fn liquid_batches(
+        &self,
+    ) -> &[crate::application::liquid::ResidentTerrainLiquidBatch] {
+        &self.liquid_batches
+    }
+
     /// Shares the immutable plan with renderer culling for this generation.
     pub(in crate::application) fn mesh(
         &self,

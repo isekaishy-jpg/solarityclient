@@ -16,6 +16,7 @@ mod game_object_behavior;
 mod game_object_coordinator;
 mod gameplay_coordinator;
 mod gameplay_session;
+mod liquid;
 mod login_coordinator;
 mod login_model;
 mod login_ui;
@@ -53,6 +54,7 @@ pub use game_object_coordinator::{
 };
 pub use gameplay_coordinator::{RuntimeGameplayCoordinator, RuntimeGameplayError};
 pub use gameplay_session::{GameplaySession, GameplayUpdateError};
+pub use liquid::RuntimeLiquidAssetError;
 pub use login_coordinator::{
     RuntimeAuthenticatedLogin, RuntimeLoginCoordinator, RuntimeLoginError, RuntimeLoginPoll,
     RuntimeLoginState,

@@ -8,7 +8,7 @@ mod pipeline;
 mod pipelines;
 
 pub use draw::{LiquidDrawMaterial, LiquidFrame, LiquidPreparedDraw};
-pub(in crate::device) use frame::LiquidFrameResources;
+pub(in crate::device) use frame::{LiquidFrameCreateContext, LiquidFrameResources};
 pub use mesh::LiquidMeshHandle;
 pub(in crate::device) use mesh::LiquidMeshRegistry;
 pub(in crate::device) use pipelines::LiquidPipelines;

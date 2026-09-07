@@ -22,6 +22,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+use crate::application::liquid::{
+    LiquidAssetCache, ResidentTerrainLiquidBatch, RuntimeLiquidAssetError, prepare_terrain_liquids,
+};
+
 mod camera_profile;
 pub(in crate::application) mod m2_residency;
 mod movement;
@@ -46,6 +50,9 @@ use world_model_residency::{
 /// Failure while synchronizing authored terrain with authoritative world state.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainError {
+    /// Required liquid presentation assets could not complete on the terrain worker.
+    #[error(transparent)]
+    LiquidAssets(#[from] RuntimeLiquidAssetError),
     /// The bounded CPU executor rejected or lost terrain preparation work.
     #[error(transparent)]
     Cpu(#[from] CpuError),
@@ -198,9 +205,10 @@ pub struct RuntimeTerrainCoordinator {
     textures: BlpTextureCache,
     models: M2ModelCache,
     world_models: WmoModelCache,
+    liquid_assets: LiquidAssetCache,
     active: Option<ResidentTerrainMap>,
     worker_catalog: Option<ArchiveCatalog>,
-    worker: Option<TerrainWorkerState>,
+    worker: Option<Box<TerrainWorkerState>>,
     pending: Option<PendingTerrainGeneration>,
     prefetched: Option<PrefetchedTerrainGeneration>,
     failed_request: Option<TerrainRequest>,
@@ -232,6 +240,7 @@ impl RuntimeTerrainCoordinator {
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
+            liquid_assets: LiquidAssetCache::default(),
             active: None,
             worker_catalog: None,
             worker: None,
@@ -675,6 +684,7 @@ impl RuntimeTerrainCoordinator {
             .load_tile(&mut self.assets.borrow_mut(), tile_index)?;
         let resident = ResidentTerrainTile::prepare(
             decoded,
+            &mut self.liquid_assets,
             &mut self.textures,
             &mut self.models,
             &mut self.world_models,
@@ -1262,9 +1272,10 @@ struct PrefetchedTerrainGeneration {
     resident: ResidentTerrainMap,
 }
 
+/// Moves one retained cache bank between jobs without enlarging catalog-only requests.
 enum TerrainWorkerSource {
     Catalog(ArchiveCatalog),
-    Ready(TerrainWorkerState),
+    Ready(Box<TerrainWorkerState>),
 }
 
 struct TerrainWorkerState {
@@ -1272,6 +1283,7 @@ struct TerrainWorkerState {
     textures: BlpTextureCache,
     models: M2ModelCache,
     world_models: WmoModelCache,
+    liquid_assets: LiquidAssetCache,
 }
 
 impl TerrainWorkerState {
@@ -1281,6 +1293,7 @@ impl TerrainWorkerState {
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
+            liquid_assets: LiquidAssetCache::default(),
         })
     }
 
@@ -1316,6 +1329,7 @@ impl TerrainWorkerState {
         let decoded = terrain.load_tile(&mut self.assets, request.tile)?;
         let tile = Some(ResidentTerrainTile::prepare(
             decoded,
+            &mut self.liquid_assets,
             &mut self.textures,
             &mut self.models,
             &mut self.world_models,
@@ -1338,7 +1352,7 @@ impl TerrainWorkerState {
 }
 
 struct TerrainWorkerCompletion {
-    worker: Option<TerrainWorkerState>,
+    worker: Option<Box<TerrainWorkerState>>,
     result: Result<ResidentTerrainMap, RuntimeTerrainError>,
 }
 
@@ -1349,7 +1363,7 @@ fn prepare_terrain_on_worker(
 ) -> TerrainWorkerCompletion {
     let mut worker = match source {
         TerrainWorkerSource::Catalog(catalog) => match TerrainWorkerState::mount(catalog) {
-            Ok(worker) => worker,
+            Ok(worker) => Box::new(worker),
             Err(source) => {
                 return TerrainWorkerCompletion {
                     worker: None,
@@ -1430,6 +1444,7 @@ pub(super) struct ResidentTerrainTile {
     mesh: Arc<TerrainTileMeshPlan>,
     collision: TerrainCollisionMesh,
     liquid: TerrainLiquidMesh,
+    liquid_batches: Vec<ResidentTerrainLiquidBatch>,
     m2_scene: ResidentM2Scene,
     m2_collision: M2CollisionScene,
     world_model_collision: WorldModelCollisionScene,
@@ -1440,6 +1455,7 @@ pub(super) struct ResidentTerrainTile {
 impl ResidentTerrainTile {
     fn prepare(
         decoded: DecodedTerrainTile,
+        liquid_assets: &mut LiquidAssetCache,
         texture_cache: &mut BlpTextureCache,
         model_cache: &mut M2ModelCache,
         world_model_cache: &mut WmoModelCache,
@@ -1455,6 +1471,8 @@ impl ResidentTerrainTile {
         let mesh = Arc::new(TerrainTileMeshPlan::prepare(&decoded)?);
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
+        let liquid_batches =
+            prepare_terrain_liquids(&decoded, liquid_assets, texture_cache, store)?;
         let mut m2_builder = ResidentM2SceneBuilder::new();
         prepare_doodads(&decoded, &mut m2_builder, model_cache, texture_cache, store)?;
         let (world_models, world_model_collision, world_model_liquid) = prepare_world_models(
@@ -1475,6 +1493,7 @@ impl ResidentTerrainTile {
             mesh,
             collision,
             liquid,
+            liquid_batches,
             m2_scene,
             m2_collision,
             world_model_collision,

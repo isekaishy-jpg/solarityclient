@@ -16,6 +16,13 @@ impl TerrainFrame {
         self,
         renderer: &mut VulkanRenderer,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let handles = self
+            .tiles
+            .iter()
+            .flat_map(|tile| &tile.liquids)
+            .map(|batch| batch.mesh())
+            .collect::<Vec<_>>();
+        renderer.retire_liquid_meshes(&handles)?;
         renderer.retire_terrain_plans(self.tiles.iter().map(|tile| tile.plan.as_ref()))?;
         Ok(())
     }
@@ -56,6 +63,9 @@ impl TerrainFrame {
                 added.push(TerrainGpuTile {
                     draws: prepare_tile_draws(renderer, tile.mesh(), tile.textures())?,
                     plan: Arc::clone(tile.mesh()),
+                    liquids: self
+                        .liquid_materials
+                        .prepare_terrain(renderer, tile.liquid_batches())?,
                 });
             }
         }
@@ -68,6 +78,18 @@ impl TerrainFrame {
             renderer,
             tiles.clone().map(ResidentTerrainTile::world_models),
         )?;
+        let departed_liquids = self
+            .tiles
+            .iter()
+            .filter(|gpu| {
+                !tiles
+                    .clone()
+                    .any(|tile| Arc::ptr_eq(&gpu.plan, tile.mesh()))
+            })
+            .flat_map(|tile| &tile.liquids)
+            .map(|batch| batch.mesh())
+            .collect::<Vec<_>>();
+        renderer.retire_liquid_meshes(&departed_liquids)?;
         renderer.retire_terrain_plans(
             self.tiles
                 .iter()

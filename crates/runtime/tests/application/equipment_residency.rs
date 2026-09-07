@@ -433,6 +433,7 @@ fn advance(
         renderer,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
+        solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
         time,
         time,

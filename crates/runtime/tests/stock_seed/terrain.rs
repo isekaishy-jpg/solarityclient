@@ -846,11 +846,19 @@ fn position_streaming_adt(
 #[test]
 fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn Error>> {
     let map_table = map_table();
-    let mut liquid_table = b"WDBC".to_vec();
-    for word in [0u32, 45, 180, 1] {
-        liquid_table.extend(word.to_le_bytes());
-    }
-    liquid_table.push(0);
+    // Terrain publication now admits its real material and surface together.
+    let mut liquid_strings = b"\0tileset\\fixture\\grass.blp\0".to_vec();
+    let depth_name = liquid_strings.len() as u32;
+    liquid_strings.extend_from_slice(b"proceduralRiverDepthTex\0");
+    let mut liquid = [0; 45];
+    liquid[0] = 2;
+    liquid[14] = 1;
+    liquid[15] = 1;
+    liquid[16] = depth_name;
+    liquid[23] = 1.0_f32.to_bits();
+    liquid[25] = 1.0_f32.to_bits();
+    liquid[42] = 1250;
+    let liquid_table = wdbc_fixture(&liquid, &liquid_strings);
     let wdt = terrain_wdt()?;
     let adt = append_stacked_liquid_fixture(
         AdtBuilder::new()
@@ -861,6 +869,10 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     );
     let fixture = ClientFixture::with_common_files(&[
         ("DBFilesClient\\LiquidType.dbc", &liquid_table),
+        (
+            "DBFilesClient\\LiquidMaterial.dbc",
+            &wdbc_fixture(&[1, 0, 1], &[0]),
+        ),
         ("DBFilesClient\\Map.dbc", &map_table),
         ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
         ("World\\Maps\\Northrend\\Northrend_21_30.adt", &adt),

@@ -1363,16 +1363,17 @@ fn map_catalog_decodes_build_12340_world_identity() -> Result<(), Box<dyn Error>
 fn light_catalog_samples_stock_color_and_float_channels() -> Result<(), Box<dyn Error>> {
     let light_fields = [1, 571, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
     let light_table = create_wdbc(1, 15, &light_fields, &[0]);
+    // Native 7EBFF0: field three is not glow; ocean alpha precedes river alpha.
     let parameter_fields = [
         1,
         1,
         0,
+        0x20,
         0.75_f32.to_bits(),
-        0.1_f32.to_bits(),
-        0.2_f32.to_bits(),
         0.3_f32.to_bits(),
         0.4_f32.to_bits(),
-        0x20,
+        0.1_f32.to_bits(),
+        0.2_f32.to_bits(),
     ];
     let parameter_table = create_wdbc(1, 9, &parameter_fields, &[0]);
     let skybox_table = create_wdbc(0, 3, &[], &[0]);

@@ -9,6 +9,26 @@ use solarity_asset::{
 
 use crate::support::{Fixture, FixtureFile};
 
+/// Exact stock rows distinguish shader dispatch from the independent late-queue flag.
+#[test]
+fn liquid_material_catalog_retains_shader_and_queue_fields() -> Result<(), Box<dyn Error>> {
+    let table = create_wdbc(3, 3, &[3, 0, 1, 2, 1, 0, 1, 0, 1], &[0]);
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "DBFilesClient\\LiquidMaterial.dbc",
+        bytes: &table,
+    }])?;
+    let catalog = solarity_asset::LiquidMaterialCatalog::load(&mut mounted_store(&fixture)?)?;
+    for (id, shader, transparent) in [(1, 0, true), (2, 1, false), (3, 0, true)] {
+        let material = catalog.entry(id).ok_or("missing material")?;
+        assert_eq!(material.id(), id);
+        assert_eq!(material.shader(), shader);
+        assert_eq!(material.is_transparent(), transparent);
+    }
+    assert!(catalog.entry(4).is_none());
+    Ok(())
+}
+
 /// These tables begin with coordinate/state fields, never an inferred primary ID.
 #[test]
 fn zone_overrides_preserve_non_id_schemas_and_duplicate_chunk_replacement()

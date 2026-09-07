@@ -1296,6 +1296,7 @@ impl RuntimeGlueModelScene {
             renderer,
             frustum,
             camera,
+            solarity_rendering::M2TransparentPass::One,
             active.environment.fog_color,
             animation_time_ms,
             global_time_ms,
