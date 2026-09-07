@@ -800,9 +800,27 @@ fn global_world_model(
     Ok(Some(TerrainWorldModelPlacement::new(
         model,
         placement.unique_id,
-        placement_position(placement.position),
+        // Build 12340's global WDT loader (0x7BF8B0) changes axes without
+        // the ADT map-origin offset. Applying that offset moves an instance
+        // away from its packet coordinates and prevents initial floor contact.
+        [
+            -placement.position[2],
+            -placement.position[0],
+            placement.position[1],
+        ],
         placement.rotation,
-        placement_bounds(placement.lower_bounds, placement.upper_bounds),
+        [
+            [
+                -placement.upper_bounds[2],
+                -placement.upper_bounds[0],
+                placement.lower_bounds[1],
+            ],
+            [
+                -placement.lower_bounds[2],
+                -placement.lower_bounds[0],
+                placement.upper_bounds[1],
+            ],
+        ],
         placement.flags,
         placement.doodad_set,
         placement.name_set,

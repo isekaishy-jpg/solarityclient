@@ -13,6 +13,105 @@ use solarity_network::WorldMovementKind;
 use solarity_ui::{UiMovementAction, UiMovementCommand, UiMovementControl};
 use std::{error::Error, io::Cursor, sync::Arc};
 
+/// Exercises initial support on the shipped RFC global WMO without a client window.
+#[test]
+#[ignore = "requires locally owned build-12340 archives"]
+fn rfc_archive_world_entry_resolves_initial_support() -> Result<(), Box<dyn Error>> {
+    let root = std::env::var("SOLARITY_STOCK_DATA_ROOT")?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(root)?,
+        Locale::EnUs,
+    )?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let displays = GameObjectDisplayCatalog::load(&mut store)?;
+    let liquids = LiquidTypeCatalog::load(&mut store)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let assets = AssetStoreHandle::new(store);
+    let mut terrain = RuntimeTerrainCoordinator::new(assets.clone(), maps);
+    let objects = RuntimeGameObjectPresentation::new(assets, displays, animations);
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(389),
+        1,
+        "RfcEntry",
+        Vec3::new(3., -10., -13.3668),
+        0.,
+    ));
+    world.update_movement(
+        1,
+        WorldMovementState::new(
+            0,
+            WorldMovementSpeeds::new([
+                2.5,
+                7.,
+                4.5,
+                4.72,
+                2.5,
+                7.,
+                4.5,
+                std::f32::consts::PI,
+                std::f32::consts::PI,
+            ]),
+            WorldMovementContext::default(),
+        ),
+    )?;
+    let player = world.local_player();
+    world.storage_mut().add_component(
+        player,
+        (solarity_ecs::UnitVitals::new(100, 100, [0; 7], [0; 7]),),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+    let (_packets, receiver) = mpsc::channel(8);
+    let (commands, mut writer) = mpsc::channel(128);
+    let mut gameplay = RuntimeGameplayCoordinator::new();
+    gameplay.world = Some(world);
+    gameplay.active = Some(ActiveGameplayNetwork {
+        receiver,
+        commands,
+        task: runtime.spawn(std::future::pending()),
+    });
+    terrain.synchronize(gameplay.world())?;
+    terrain.synchronize_game_object_movement(
+        gameplay.world(),
+        &objects,
+        solarity_systems::MovementBspCacheMode::Enabled,
+    )?;
+    let placement = terrain
+        .active_map()
+        .and_then(|map| map.global_world_model())
+        .ok_or("RFC global WMO")?;
+    assert_eq!(placement.position(), [0.; 3]);
+    let mut movement = RuntimePlayerMovement::default();
+    for now in (0..=5000).step_by(20) {
+        movement.service(
+            &mut gameplay,
+            &mut terrain,
+            &objects,
+            &liquids,
+            Some([0.5, 2., 1.]),
+            now,
+        )?;
+        while writer.try_recv().is_ok() {}
+        if movement.initial_contact_ready() {
+            break;
+        }
+    }
+    let position = gameplay
+        .world()
+        .ok_or("world")?
+        .local_player_transform()?
+        .position();
+    assert!(
+        movement.initial_contact_ready(),
+        "RFC support remained pending at {position:?}"
+    );
+    assert!(
+        (position.z + 16.252_457).abs() < 0.01,
+        "RFC entry floor was missed: {position:?}"
+    );
+    println!("RFC support resolved at {position:?}");
+    Ok(())
+}
+
 #[test]
 fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
 -> Result<(), Box<dyn Error>> {

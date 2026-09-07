@@ -39,6 +39,17 @@ equal-distance ordering. A stable language-library sort would change that order.
 
 ## CPU and renderer ownership
 
+Global-WMO WDT placements use the separate build-12340 loader at `0x007BF8B0`.
+It converts MODF position to `[-z, -x, y]` without the outdoor ADT map-origin
+offset. Bounds become `[-max.z, -max.x, min.y]` through
+`[-min.z, -min.x, max.y]`; the existing rotation order remains shared with
+outdoor WMOs. This keeps RFC's zero-position dungeon at the world packet
+coordinates for rendering, liquid queries, and initial floor contact.
+The portable placement and global-WMO residency fixtures exercise this basis.
+The ignored `rfc_archive_world_entry_resolves_initial_support` runtime test
+also exercises real map 389 archives through the production movement service;
+set `SOLARITY_STOCK_DATA_ROOT` to run it without opening a client window.
+
 One terrain worker owns its mounted archive stack and decoded texture/model
 caches. Initial entry, prewarming, and neighboring loads share this worker and
 the bounded CPU executor. A declared tile remains unavailable until its full

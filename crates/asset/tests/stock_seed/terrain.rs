@@ -200,7 +200,6 @@ fn terrain_map_loads_patched_stock_manifest() -> Result<(), Box<dyn Error>> {
 /// WMO-only WDTs retain the sole MODF transform and Map.dbc base area.
 #[test]
 fn terrain_map_retains_global_world_model_placement() -> Result<(), Box<dyn Error>> {
-    const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
     let map_table = map_table();
     let mut wdt = WdtFile::new(WowVersion::WotLK);
     wdt.mphd.flags |= MphdFlags::WDT_USES_GLOBAL_MAP_OBJ;
@@ -211,10 +210,10 @@ fn terrain_map_retains_global_world_model_placement() -> Result<(), Box<dyn Erro
         entries: vec![ModfEntry {
             id: 0,
             unique_id: 77,
-            position: [CLIENT_MAP_ORIGIN - 20.0, 30.0, CLIENT_MAP_ORIGIN - 10.0],
+            position: [-20.0, 30.0, -10.0],
             rotation: [1.0, 2.0, 3.0],
-            lower_bounds: [CLIENT_MAP_ORIGIN - 22.0, 28.0, CLIENT_MAP_ORIGIN - 12.0],
-            upper_bounds: [CLIENT_MAP_ORIGIN - 18.0, 32.0, CLIENT_MAP_ORIGIN - 8.0],
+            lower_bounds: [-22.0, 28.0, -12.0],
+            upper_bounds: [-18.0, 32.0, -8.0],
             flags: 4,
             doodad_set: 5,
             name_set: 6,

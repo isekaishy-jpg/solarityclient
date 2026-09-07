@@ -1622,7 +1622,6 @@ fn terrain_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 fn global_wmo_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
-    const CLIENT_MAP_ORIGIN: f32 = 32.0 * 533.333_3;
     let mut wdt = WdtFile::new(WowVersion::WotLK);
     wdt.mphd.flags |= MphdFlags::WDT_USES_GLOBAL_MAP_OBJ;
     wdt.mwmo = Some(MwmoChunk {
@@ -1632,10 +1631,10 @@ fn global_wmo_wdt() -> Result<Vec<u8>, Box<dyn Error>> {
         entries: vec![ModfEntry {
             id: 0,
             unique_id: 7,
-            position: [CLIENT_MAP_ORIGIN, 0.0, CLIENT_MAP_ORIGIN],
+            position: [0.0; 3],
             rotation: [0.0; 3],
-            lower_bounds: [CLIENT_MAP_ORIGIN - 5.0, -1.0, CLIENT_MAP_ORIGIN - 5.0],
-            upper_bounds: [CLIENT_MAP_ORIGIN + 5.0, 3.0, CLIENT_MAP_ORIGIN + 5.0],
+            lower_bounds: [-5.0, -1.0, -5.0],
+            upper_bounds: [5.0, 3.0, 5.0],
             flags: 0,
             doodad_set: 0,
             name_set: 0,
