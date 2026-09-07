@@ -20,7 +20,7 @@ use thiserror::Error;
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
 use crate::application::game_object_coordinator::GameObjectFrameInput;
 use crate::application::liquid::{
-    LiquidGpuMaterialCache, ResidentTerrainLiquidBatch, TerrainLiquidGpuBatch, liquid_depth_images,
+    LiquidGpuBatch, LiquidGpuMaterialCache, ResidentTerrainLiquidBatch, liquid_depth_images,
     liquid_environment,
 };
 use crate::application::player_coordinator::{
@@ -499,7 +499,7 @@ pub enum RuntimeTerrainFrameError {
 struct TerrainGpuTile {
     plan: Arc<TerrainTileMeshPlan>,
     draws: Vec<TerrainPreparedDraw>,
-    liquids: Vec<TerrainLiquidGpuBatch>,
+    liquids: Vec<LiquidGpuBatch>,
 }
 
 /// Resident world composition whose placement state survives tile changes.
@@ -691,6 +691,16 @@ impl TerrainFrame {
                 self.liquid_draws.push(draw);
             }
         }
+        self.world_models.prepare_liquid_draws(
+            renderer,
+            frustum,
+            camera,
+            liquid_lighting,
+            liquid_fog,
+            liquid_time_ms,
+            specular_enabled,
+            &mut self.liquid_draws,
+        )?;
         profile.mark("liquid packets");
         let light = environment.light();
         let terrain_scene = TerrainSceneUniform::new(

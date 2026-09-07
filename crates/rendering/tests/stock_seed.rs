@@ -18,6 +18,8 @@ mod liquid_frame;
 mod liquid_geometry;
 #[path = "stock_seed/liquid_shader.rs"]
 mod liquid_shader;
+#[path = "stock_seed/liquid_world_model.rs"]
+mod liquid_world_model;
 #[path = "stock_seed/math.rs"]
 mod math;
 #[path = "stock_seed/minimap.rs"]

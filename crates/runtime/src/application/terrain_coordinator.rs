@@ -655,6 +655,7 @@ impl RuntimeTerrainCoordinator {
                 &mut self.textures,
                 &mut self.models,
                 &mut self.world_models,
+                &mut self.liquid_assets,
                 &mut self.assets.borrow_mut(),
             )?);
             active.synchronize_movement_owners();
@@ -1309,6 +1310,7 @@ impl TerrainWorkerState {
                 &mut self.textures,
                 &mut self.models,
                 &mut self.world_models,
+                &mut self.liquid_assets,
                 &mut self.assets,
             )?);
             return Ok(ResidentTerrainMap {
@@ -1412,6 +1414,7 @@ impl ResidentGlobalWorldModel {
         texture_cache: &mut BlpTextureCache,
         model_cache: &mut M2ModelCache,
         world_model_cache: &mut WmoModelCache,
+        liquid_assets: &mut LiquidAssetCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
         let mut m2_builder = ResidentM2SceneBuilder::new();
@@ -1421,6 +1424,7 @@ impl ResidentGlobalWorldModel {
             model_cache,
             texture_cache,
             &mut m2_builder,
+            liquid_assets,
             store,
         )?;
         let (m2_scene, m2_collision) = m2_builder.finish();
@@ -1481,6 +1485,7 @@ impl ResidentTerrainTile {
             model_cache,
             texture_cache,
             &mut m2_builder,
+            liquid_assets,
             store,
         )?;
         let (m2_scene, m2_collision) = m2_builder.finish();

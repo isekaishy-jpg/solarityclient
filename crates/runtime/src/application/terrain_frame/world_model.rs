@@ -2,20 +2,26 @@
 
 mod streaming;
 
+#[cfg(test)]
+#[path = "../../../tests/application/world_model_liquid_frame.rs"]
+mod liquid_tests;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::Vec3;
 use solarity_ecs::WorldObjectIdentity;
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, PlacedWorldModelDrawPlan,
-    VulkanError, VulkanRenderer, WorldFrustum, WorldModelBaseMip, WorldModelMaterialState,
-    WorldModelMeshHandle, WorldModelMeshPlan, WorldModelPipelineHandle, WorldModelPreparedDraw,
-    WorldModelSampledTexture, WorldModelSurfacePassPlan, WorldModelTextureFiltering,
-    WorldModelTextureSet, WorldModelTextureSetHandle,
+    BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, LiquidFog, LiquidLighting,
+    LiquidPreparedDraw, PlacedWorldModelDrawPlan, VulkanError, VulkanRenderer, WorldCameraFrame,
+    WorldFrustum, WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshHandle,
+    WorldModelMeshPlan, WorldModelPipelineHandle, WorldModelPreparedDraw, WorldModelSampledTexture,
+    WorldModelSurfacePassPlan, WorldModelTextureFiltering, WorldModelTextureSet,
+    WorldModelTextureSetHandle,
 };
 
 use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
+use crate::application::liquid::{LiquidGpuBatch, LiquidGpuMaterialCache};
 use crate::application::terrain_coordinator::world_model_residency::{
     ResidentWorldModelMaterialTextures, ResidentWorldModelScene, ResidentWorldModelSource,
     ResidentWorldModelTexture,
@@ -42,6 +48,7 @@ struct WorldModelGpuSource {
     plan: Arc<WorldModelMeshPlan>,
     mesh: WorldModelMeshHandle,
     draws: Vec<LogicalDrawResource>,
+    liquids: Vec<LiquidGpuBatch>,
 }
 
 /// One MODF transform with retained visibility scratch.
@@ -68,6 +75,7 @@ enum WorldModelGpuPlacementOwner {
 /// Complete resident WMO generation for one terrain tile.
 pub(super) struct WorldModelFrame {
     sources: Vec<Option<WorldModelGpuSource>>,
+    liquid_materials: LiquidGpuMaterialCache,
     placements: Vec<WorldModelGpuPlacement>,
     prepared_draws: Vec<WorldModelPreparedDraw>,
     filtering: WorldModelTextureFiltering,
@@ -75,6 +83,63 @@ pub(super) struct WorldModelFrame {
 }
 
 impl WorldModelFrame {
+    /// Collects liquid packets from each admitted static or dynamic WMO transform.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_liquid_draws(
+        &self,
+        renderer: &VulkanRenderer,
+        frustum: WorldFrustum,
+        camera: WorldCameraFrame,
+        lighting: LiquidLighting,
+        fog: LiquidFog,
+        time_ms: u32,
+        specular_enabled: bool,
+        output: &mut Vec<LiquidPreparedDraw>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        for placement in &self.placements {
+            if !placement.placement_valid {
+                continue;
+            }
+            let source = self.sources[placement.source_index].as_ref().ok_or(
+                RuntimeTerrainFrameError::WorldModelSourceIndex {
+                    source_index: placement.source_index,
+                    source_count: self.sources.len(),
+                },
+            )?;
+            for batch in &source.liquids {
+                if let Some(draw) = batch.prepare_transformed_draw(
+                    renderer,
+                    placement.plan.transform(),
+                    frustum,
+                    camera,
+                    lighting,
+                    fog,
+                    time_ms,
+                    specular_enabled,
+                )? {
+                    output.push(draw);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Retires all remaining liquid factories when their complete world departs.
+    pub(super) fn retire_liquids(
+        &self,
+        renderer: &mut VulkanRenderer,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let handles = self
+            .sources
+            .iter()
+            .filter_map(Option::as_ref)
+            .flat_map(|source| &source.liquids)
+            .map(LiquidGpuBatch::mesh)
+            .collect::<Vec<_>>();
+        renderer.retire_liquid_meshes(&handles)?;
+        Ok(())
+    }
+
     /// Uploads shared generations once and prepares each exact material pass.
     pub(super) fn prepare(
         renderer: &mut VulkanRenderer,
@@ -82,10 +147,15 @@ impl WorldModelFrame {
         filtering: WorldModelTextureFiltering,
         base_mip: WorldModelBaseMip,
     ) -> Result<Self, RuntimeTerrainFrameError> {
+        let mut liquid_materials = LiquidGpuMaterialCache::default();
         let mut sources = Vec::with_capacity(scene.sources().len());
         for source in scene.sources() {
             sources.push(Some(prepare_gpu_source(
-                renderer, source, filtering, base_mip,
+                renderer,
+                source,
+                filtering,
+                base_mip,
+                &mut liquid_materials,
             )?));
         }
 
@@ -130,6 +200,7 @@ impl WorldModelFrame {
         }
         Ok(Self {
             sources,
+            liquid_materials,
             placements,
             prepared_draws: Vec::with_capacity(prepared_capacity),
             filtering,
@@ -198,7 +269,13 @@ impl WorldModelFrame {
             let source_index = if let Some(index) = sources.get(&Arc::as_ptr(cpu.model())) {
                 *index
             } else {
-                let gpu = prepare_gpu_source(renderer, cpu.root(), self.filtering, self.base_mip)?;
+                let gpu = prepare_gpu_source(
+                    renderer,
+                    cpu.root(),
+                    self.filtering,
+                    self.base_mip,
+                    &mut self.liquid_materials,
+                )?;
                 let index = self.sources.len();
                 sources.insert(Arc::as_ptr(&gpu.model), index);
                 self.sources.push(Some(gpu));
@@ -224,7 +301,7 @@ impl WorldModelFrame {
                 visible_draw_indices: Vec::with_capacity(gpu.plan.draws().len()),
             });
         }
-        self.compact_sources();
+        self.compact_sources(renderer)?;
         Ok(())
     }
 
@@ -314,6 +391,7 @@ fn prepare_gpu_source(
     source: &ResidentWorldModelSource,
     filtering: WorldModelTextureFiltering,
     base_mip: WorldModelBaseMip,
+    liquid_materials: &mut LiquidGpuMaterialCache,
 ) -> Result<WorldModelGpuSource, RuntimeTerrainFrameError> {
     let plan = Arc::new(WorldModelMeshPlan::prepare(source.model())?);
     let mesh = renderer.upload_world_model_mesh(&plan)?;
@@ -373,11 +451,13 @@ fn prepare_gpu_source(
         renderer.prepare_world_model_texture_sets(&texture_requests)?
     };
     let draws = prepare_draw_resources(renderer, &plan, &texture_sets)?;
+    let liquids = liquid_materials.prepare_world_model(renderer, source.liquids())?;
     Ok(WorldModelGpuSource {
         model: Arc::clone(source.model()),
         plan,
         mesh,
         draws,
+        liquids,
     })
 }
 

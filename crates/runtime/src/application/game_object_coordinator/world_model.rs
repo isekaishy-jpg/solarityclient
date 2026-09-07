@@ -11,6 +11,7 @@ use solarity_asset::{
     WmoModelCache,
 };
 
+use crate::application::liquid::LiquidAssetCache;
 use crate::application::model_playback::M2Playback;
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::{
@@ -38,9 +39,10 @@ impl GameObjectWorldModelSource {
         roots: &mut WmoModelCache,
         models: &mut M2ModelCache,
         textures: &mut BlpTextureCache,
+        liquids: &mut LiquidAssetCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
-        let root = ResidentWorldModelSource::load(path, roots, textures, store)?;
+        let root = ResidentWorldModelSource::load(path, roots, textures, liquids, store)?;
         let mut sources = HashMap::<AssetPath, Arc<ResidentM2Source>>::new();
         let mut doodads = Vec::new();
         for index in root.model().referenced_active_doodad_indices(0)? {

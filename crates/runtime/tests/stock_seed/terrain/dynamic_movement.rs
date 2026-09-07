@@ -72,7 +72,7 @@ impl Scene {
         // of GameObjects referenced by several neighboring MCNK lists.
         push_wmo_chunk(&mut group, *b"RDOM", &[0, 0, 0, 0]);
         set_u32(&mut group, mogp + 4, size + 12);
-        let fixture = ClientFixture::with_common_files(&[
+        let fixture = world_model_client_fixture(&[
             ("DBFilesClient\\Map.dbc", &map_table()),
             ("DBFilesClient\\GameObjectDisplayInfo.dbc", &displays()),
             ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),

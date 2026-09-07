@@ -23,6 +23,7 @@ impl TerrainFrame {
             .map(|batch| batch.mesh())
             .collect::<Vec<_>>();
         renderer.retire_liquid_meshes(&handles)?;
+        self.world_models.retire_liquids(renderer)?;
         renderer.retire_terrain_plans(self.tiles.iter().map(|tile| tile.plan.as_ref()))?;
         Ok(())
     }

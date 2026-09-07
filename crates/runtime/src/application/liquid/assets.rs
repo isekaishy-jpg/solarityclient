@@ -11,13 +11,24 @@ use solarity_asset::{
 };
 use solarity_rendering::{
     LiquidDepthCoordinates, LiquidDepthTextureKind, LiquidTextureTimeline,
-    liquid_water_surface_transform,
+    WorldModelLiquidMeshError, liquid_water_surface_transform,
 };
 use thiserror::Error;
 
 /// Failure to prepare the exact liquid resources named by resident geometry.
 #[derive(Debug, Error)]
 pub enum RuntimeLiquidAssetError {
+    /// A decoded WMO group cannot fit the native liquid mesh domain.
+    #[error(transparent)]
+    WorldModelMesh(#[from] WorldModelLiquidMeshError),
+    /// Native 7D43F0 asserts that the MLIQ material belongs to MOMT.
+    #[error("world model liquid group {group} references missing MOMT material {material}")]
+    WorldModelMaterial {
+        /// Loaded group index.
+        group: usize,
+        /// Invalid MLIQ material slot.
+        material: u16,
+    },
     /// A required authored table or texture could not be read.
     #[error(transparent)]
     Asset(#[from] AssetError),
@@ -85,6 +96,8 @@ pub(in crate::application) enum ResidentLiquidSurface {
 /// One liquid definition and its complete surface sequence, shared across batches.
 pub(in crate::application) struct ResidentLiquidMaterial {
     pub shader: ResidentLiquidShader,
+    /// 7D4360 selects authored WMO UVs from the material shader column.
+    pub authored_surface_coordinates: bool,
     pub depth_coordinates: Option<LiquidDepthCoordinates>,
     pub timeline: LiquidTextureTimeline,
     pub surfaces: Vec<ResidentLiquidSurface>,
@@ -97,7 +110,78 @@ pub(in crate::application) struct LiquidAssetCache {
     materials: HashMap<u32, Weak<ResidentLiquidMaterial>>,
 }
 
+/// Native factory type selection and the independent original-group depth bank.
+pub(super) struct WorldModelLiquidProperties {
+    pub material_type: u32,
+    pub flags: u32,
+    pub depth: Option<LiquidDepthCoordinates>,
+}
+
 impl LiquidAssetCache {
+    /// Loads the two liquid tables once for both resource and geometry consumers.
+    fn catalogs(
+        &mut self,
+        store: &mut AssetStore,
+    ) -> Result<&(LiquidTypeCatalog, LiquidMaterialCatalog), RuntimeLiquidAssetError> {
+        if self.catalogs.is_none() {
+            self.catalogs = Some((
+                LiquidTypeCatalog::load(store)?,
+                LiquidMaterialCatalog::load(store)?,
+            ));
+        }
+        // The preceding insertion makes catalog absence an internal invariant.
+        #[allow(clippy::expect_used)]
+        Ok(self
+            .catalogs
+            .as_ref()
+            .expect("liquid catalogs initialized before borrowing"))
+    }
+
+    /// Queries the original group type before the interior material remap at 793D20.
+    pub(super) fn world_model_properties(
+        &mut self,
+        id: u32,
+        store: &mut AssetStore,
+    ) -> Result<WorldModelLiquidProperties, RuntimeLiquidAssetError> {
+        let (types, materials) = self.catalogs(store)?;
+        let original = types.entry(id);
+        let definition = match original {
+            Some(definition) => definition,
+            None => {
+                // 793D20 diagnoses a missing type and retries the material
+                // factory with row one. 79B870 still sees the absent original
+                // group type and therefore supplies no vertex depth bank.
+                tracing::warn!(
+                    liquid = id,
+                    "world model liquid type is missing; using stock type one"
+                );
+                types
+                    .entry(1)
+                    .ok_or(RuntimeLiquidAssetError::MissingType { id: 1 })?
+            }
+        };
+        let material = materials.entry(definition.material_id()).ok_or(
+            RuntimeLiquidAssetError::MissingMaterial {
+                liquid: definition.id(),
+                material: definition.material_id(),
+            },
+        )?;
+        let depth = if original.is_none() || !matches!(material.shader(), 0 | 2) {
+            None
+        } else {
+            match definition.integer_parameters()[0] {
+                0 => Some(LiquidDepthCoordinates::River),
+                1 => Some(LiquidDepthCoordinates::Ocean),
+                _ => None,
+            }
+        };
+        Ok(WorldModelLiquidProperties {
+            material_type: definition.id(),
+            flags: definition.flags(),
+            depth,
+        })
+    }
+
     /// Loads a complete sequence once before publishing any of its geometry.
     pub(in crate::application) fn load(
         &mut self,
@@ -108,13 +192,7 @@ impl LiquidAssetCache {
         if let Some(material) = self.materials.get(&id).and_then(Weak::upgrade) {
             return Ok(material);
         }
-        let (types, materials) = match &self.catalogs {
-            Some(catalogs) => catalogs,
-            None => self.catalogs.insert((
-                LiquidTypeCatalog::load(store)?,
-                LiquidMaterialCatalog::load(store)?,
-            )),
-        };
+        let (types, materials) = self.catalogs(store)?;
         let definition = types
             .entry(id)
             .ok_or(RuntimeLiquidAssetError::MissingType { id })?;
@@ -193,6 +271,7 @@ impl LiquidAssetCache {
         };
         let resident = Arc::new(ResidentLiquidMaterial {
             shader,
+            authored_surface_coordinates: material.shader() == 1,
             depth_coordinates,
             surfaces,
             timeline: LiquidTextureTimeline::new(

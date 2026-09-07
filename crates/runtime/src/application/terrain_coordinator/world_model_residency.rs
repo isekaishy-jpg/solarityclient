@@ -13,6 +13,10 @@ use solarity_systems::{
     WorldModelLiquidScene,
 };
 
+use crate::application::liquid::{
+    LiquidAssetCache, ResidentWorldModelLiquidBatch, prepare_world_model_liquids,
+};
+
 use super::RuntimeTerrainError;
 use super::m2_residency::ResidentM2SceneBuilder;
 
@@ -37,6 +41,7 @@ pub(in crate::application) enum ResidentWorldModelMaterialTextures {
 pub(in crate::application) struct ResidentWorldModelSource {
     model: Arc<DecodedWorldModel>,
     materials: Vec<ResidentWorldModelMaterialTextures>,
+    liquids: Vec<ResidentWorldModelLiquidBatch>,
 }
 
 impl ResidentWorldModelSource {
@@ -45,16 +50,27 @@ impl ResidentWorldModelSource {
         path: &AssetPath,
         model_cache: &mut WmoModelCache,
         texture_cache: &mut BlpTextureCache,
+        liquid_assets: &mut LiquidAssetCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
         let model = model_cache.load(store, path)?;
         let materials = prepare_material_textures(&model, texture_cache, store)?;
-        Ok(Self { model, materials })
+        let liquids = prepare_world_model_liquids(&model, liquid_assets, texture_cache, store)?;
+        Ok(Self {
+            model,
+            materials,
+            liquids,
+        })
     }
 
     /// Returns the immutable root/group generation selected by MPQ priority.
     pub(in crate::application) const fn model(&self) -> &Arc<DecodedWorldModel> {
         &self.model
+    }
+
+    /// Returns the complete group-local liquid factories for this root.
+    pub(in crate::application) fn liquids(&self) -> &[ResidentWorldModelLiquidBatch] {
+        &self.liquids
     }
 
     /// Returns material stages in exact MOMT table order.
@@ -134,6 +150,7 @@ pub(super) fn prepare_world_models(
     m2_cache: &mut M2ModelCache,
     texture_cache: &mut BlpTextureCache,
     m2_builder: &mut ResidentM2SceneBuilder,
+    liquid_assets: &mut LiquidAssetCache,
     store: &mut AssetStore,
 ) -> Result<
     (
@@ -155,6 +172,7 @@ pub(super) fn prepare_world_models(
         m2_cache,
         texture_cache,
         m2_builder,
+        liquid_assets,
         store,
     )
 }
@@ -166,6 +184,7 @@ pub(super) fn prepare_global_world_model(
     m2_cache: &mut M2ModelCache,
     texture_cache: &mut BlpTextureCache,
     m2_builder: &mut ResidentM2SceneBuilder,
+    liquid_assets: &mut LiquidAssetCache,
     store: &mut AssetStore,
 ) -> Result<
     (
@@ -181,6 +200,7 @@ pub(super) fn prepare_global_world_model(
         m2_cache,
         texture_cache,
         m2_builder,
+        liquid_assets,
         store,
     )
 }
@@ -192,6 +212,7 @@ fn prepare_world_model_placements<'placement>(
     m2_cache: &mut M2ModelCache,
     texture_cache: &mut BlpTextureCache,
     m2_builder: &mut ResidentM2SceneBuilder,
+    liquid_assets: &mut LiquidAssetCache,
     store: &mut AssetStore,
 ) -> Result<
     (
@@ -224,6 +245,7 @@ fn prepare_world_model_placements<'placement>(
                 placement.path(),
                 model_cache,
                 texture_cache,
+                liquid_assets,
                 store,
             )?);
             source_indices.insert(placement.path().clone(), source_index);

@@ -4,11 +4,11 @@ The specification is the locally owned build-12340 executable with SHA-256
 `aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8`, together
 with its exact client archives. The rendering liquid module currently owns
 depth lookup coordinates, generated water depth images, resident animated
-texture frame selection, terrain liquid meshes, and a Vulkan world-frame draw
-path. The runtime streams terrain liquid materials and submits their retained
-geometry with the world camera, light sample, and animation clock. WMO liquid
-presentation and swimming remain under implementation; the current Testing
-package predates terrain liquid submission.
+texture frame selection, terrain and WMO liquid meshes, and a Vulkan world-frame
+draw path. The runtime streams liquid materials and submits retained geometry
+with the world camera, light sample, animation clock, and current WMO instance
+transforms. Swimming and underwater environment selection remain under
+implementation; the current Testing package predates liquid submission.
 
 ## Terrain residency and scene composition
 
@@ -44,6 +44,50 @@ covering the column offset and bank mapping together.
 Runtime archive tests also cover the complete sequence with a failed 17th
 ordinal, material reuse and release, four-member batch ordering and strip
 boundaries, and hidden Vulkan rendering of the retained terrain generation.
+
+## World-model liquids
+
+`WorldModelLiquidMeshPlan` consumes decoded root/group geometry. `7A7CC0`
+visits MLIQ vertices in row-major order, incrementing X and Y by the stored
+float `4.1666665`. Ordinary water UVs subtract the liquid corner and use the
+float scale `0.24000001`; magma reinterprets the two authored words as signed
+coordinates divided by 256. `7A7920` emits row strips with restart degenerates,
+omitting low-nibble-15 cells and leaving high-bit-80 cells for `7A7F60`.
+
+The clipped path constructs each marked cell as TL, BL, BR, TR and considers
+its group's portal references whose resident neighboring liquid rectangles
+overlap the cell. `7D9470` retains the positive signed plane half-space using
+stable edge links. The strip iterator alternates between both ends of the first
+surviving edge. Positions retain extended interpolation intermediates; attributes
+use the stored float fraction. `7A7F00` interpolates the depth byte and `7A7E50`
+interpolates unsigned UV words, both with explicit truncation. Magma subsequently
+interprets those interpolated words as signed values. These details preserve
+native seams, winding, and unusual authored UV wraps.
+
+`7D7310` first resolves the MOGP liquid type. `7BDE50` derives the instance's
+interior flag from MOGI, and `793D20` combines that flag with MOGP flags and
+LiquidType flag `0x200`. Interior river types in the native 1-through-20 family
+remap to type 17. The material shader column selects authored WMO UVs. The
+depth lookup still uses the original resolved group type, before that remap.
+If the group type is missing, `793D20` diagnoses it and retries material type
+one, while the original group's vertex depth bank remains absent.
+Interior vertices use MOMT diffuse color and depth column one; exterior vertices
+use opaque white and column zero. `7D4F40` supplies interior water with a fixed
+white downward directional light and zero ambient/specular terms.
+
+The terrain and GameObject resource owners load these factories before root
+publication. Static MODF, global-WMO, and replicated GameObject instances share
+renderer-local source meshes. Culling and shader matrices use the current
+instance transform. The last departing instance retires its liquid handles,
+and complete world retirement includes all remaining WMO liquid factories.
+
+`liquid_wmo_geometry_oracle.py` captures 148 complete native meshes, including
+multiple clipping planes, opposite portal sides, absent cells, neighboring
+rectangles, both depth banks, and unsigned magma interpolation. Tests encode
+the inputs as real WMO files and compare every vertex byte and strip index.
+`liquid_wmo_material_oracle.py` captures 224 native type, tint, UV, depth-column,
+and lighting choices. Runtime tests also capture every pixel from shared WMO
+water before and after a replicated transform change and verify final retirement.
 
 ## Depth coordinates and images
 
@@ -84,8 +128,8 @@ period becomes one millisecond. For multiple frames the client computes
 subtracts one half, and performs nearest-even FISTP. Exact boundaries can
 retain the preceding frame; replacing this with floor changes behavior.
 
-Texture acquisition, fallback sequence residency, and archive discovery are
-outside this timeline API and still require their runtime material owner.
+Texture acquisition, failed sequence slots, and archive discovery belong to
+the runtime material owner rather than this timeline API.
 
 ## Recovered draw contracts
 

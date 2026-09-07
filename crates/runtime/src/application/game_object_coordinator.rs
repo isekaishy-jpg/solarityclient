@@ -15,6 +15,7 @@ mod tests;
 #[path = "../../tests/application/game_object_transports.rs"]
 pub(in crate::application) mod transport_tests;
 
+use crate::application::liquid::LiquidAssetCache;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -282,6 +283,7 @@ pub struct RuntimeGameObjectPresentation {
     textures: BlpTextureCache,
     models: M2ModelCache,
     world_models: WmoModelCache,
+    liquid_assets: LiquidAssetCache,
     instances: Vec<GameObjectInstance>,
     indices: HashMap<WorldObjectIdentity, usize>,
     resources: HashMap<ResourceRequest, Arc<GameObjectResource>>,
@@ -293,7 +295,7 @@ pub struct RuntimeGameObjectPresentation {
     readiness: bool,
     scene_revision: u64,
     worker_catalog: Option<ArchiveCatalog>,
-    worker: Option<GameObjectWorkerState>,
+    worker: Option<Box<GameObjectWorkerState>>,
     pending: Option<PendingGeneration>,
     behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectBehavior>>,
     transport_behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectTransportBehavior>>,
@@ -330,6 +332,7 @@ impl RuntimeGameObjectPresentation {
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
+            liquid_assets: LiquidAssetCache::default(),
             instances: Vec::new(),
             indices: HashMap::new(),
             resources: HashMap::new(),
@@ -434,6 +437,7 @@ impl RuntimeGameObjectPresentation {
                     &mut self.world_models,
                     &mut self.models,
                     &mut self.textures,
+                    &mut self.liquid_assets,
                     &mut self.assets.borrow_mut(),
                 )
                 .map(GameObjectResource::WorldModel),

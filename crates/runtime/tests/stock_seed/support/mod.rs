@@ -8,6 +8,10 @@ pub(crate) mod game_object_models;
 #[allow(dead_code)]
 pub(crate) mod unit_models;
 
+#[path = "../../support/liquid_models.rs"]
+#[allow(dead_code)]
+pub(crate) mod liquid_models;
+
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};

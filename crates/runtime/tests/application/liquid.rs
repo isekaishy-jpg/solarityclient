@@ -1,5 +1,8 @@
 //! Real archive, database, MH2O, and material-cache boundaries for liquid admission.
 
+#[path = "liquid_world_model.rs"]
+mod world_model;
+
 use std::{error::Error, sync::Arc};
 
 use solarity_asset::{
@@ -126,7 +129,7 @@ fn liquid_resident_terrain_reaches_the_world_frame() -> Result<(), Box<dyn Error
     renderer.retire_liquid_meshes(
         &prepared
             .iter()
-            .map(super::TerrainLiquidGpuBatch::mesh)
+            .map(super::LiquidGpuBatch::mesh)
             .collect::<Vec<_>>(),
     )?;
     renderer.shutdown()?;

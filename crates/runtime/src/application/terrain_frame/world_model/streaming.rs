@@ -50,7 +50,13 @@ impl WorldModelFrame {
                 let source_index = if let Some(&index) = sources.get(&identity) {
                     index
                 } else {
-                    let gpu = prepare_gpu_source(renderer, source, self.filtering, self.base_mip)?;
+                    let gpu = prepare_gpu_source(
+                        renderer,
+                        source,
+                        self.filtering,
+                        self.base_mip,
+                        &mut self.liquid_materials,
+                    )?;
                     let index = self.sources.len();
                     self.sources.push(Some(gpu));
                     sources.insert(identity, index);
@@ -84,16 +90,29 @@ impl WorldModelFrame {
             WorldModelGpuPlacementOwner::GameObject { .. } => true,
         });
         self.placements.extend(added);
-        self.compact_sources();
+        self.compact_sources(renderer)?;
         Ok(())
     }
 
     /// Removes unused sources without accumulating holes during world traversal.
-    pub(super) fn compact_sources(&mut self) {
+    pub(super) fn compact_sources(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+    ) -> Result<(), RuntimeTerrainFrameError> {
         let mut remap = vec![usize::MAX; self.sources.len()];
         for placement in &self.placements {
             remap[placement.source_index] = 0;
         }
+        let retired = self
+            .sources
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| remap[*index] == usize::MAX)
+            .filter_map(|(_, source)| source.as_ref())
+            .flat_map(|source| &source.liquids)
+            .map(|batch| batch.mesh())
+            .collect::<Vec<_>>();
+        renderer.retire_liquid_meshes(&retired)?;
         let mut index = 0;
         let mut next = 0;
         self.sources.retain(|_| {
@@ -108,5 +127,6 @@ impl WorldModelFrame {
         for placement in &mut self.placements {
             placement.source_index = remap[placement.source_index];
         }
+        Ok(())
     }
 }

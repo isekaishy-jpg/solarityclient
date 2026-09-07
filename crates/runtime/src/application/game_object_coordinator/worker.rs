@@ -4,13 +4,14 @@ use super::world_model::GameObjectWorldModelSource;
 use super::{
     GameObjectResource, ResourceRequest, RuntimeGameObjectError, RuntimeGameObjectResourceKind,
 };
+use crate::application::liquid::LiquidAssetCache;
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use solarity_asset::{ArchiveCatalog, AssetStore, BlpTextureCache, M2ModelCache, WmoModelCache};
 
 pub(super) enum GameObjectWorkerSource {
     Catalog(ArchiveCatalog),
-    Ready(GameObjectWorkerState),
+    Ready(Box<GameObjectWorkerState>),
 }
 
 pub(super) struct GameObjectWorkerState {
@@ -18,6 +19,7 @@ pub(super) struct GameObjectWorkerState {
     textures: BlpTextureCache,
     models: M2ModelCache,
     world_models: WmoModelCache,
+    liquid_assets: LiquidAssetCache,
 }
 
 impl GameObjectWorkerState {
@@ -27,6 +29,7 @@ impl GameObjectWorkerState {
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
+            liquid_assets: LiquidAssetCache::default(),
         })
     }
 
@@ -49,6 +52,7 @@ impl GameObjectWorkerState {
                     &mut self.world_models,
                     &mut self.models,
                     &mut self.textures,
+                    &mut self.liquid_assets,
                     &mut self.assets,
                 )?,
             )),
@@ -63,7 +67,7 @@ impl GameObjectWorkerState {
 }
 
 pub(super) struct GameObjectWorkerCompletion {
-    pub(super) worker: Option<GameObjectWorkerState>,
+    pub(super) worker: Option<Box<GameObjectWorkerState>>,
     pub(super) result: Result<GameObjectResource, RuntimeGameObjectError>,
 }
 
@@ -73,7 +77,7 @@ pub(super) fn prepare_on_worker(
 ) -> GameObjectWorkerCompletion {
     let mut worker = match source {
         GameObjectWorkerSource::Catalog(catalog) => match GameObjectWorkerState::mount(catalog) {
-            Ok(worker) => worker,
+            Ok(worker) => Box::new(worker),
             Err(source) => {
                 return GameObjectWorkerCompletion {
                     worker: None,

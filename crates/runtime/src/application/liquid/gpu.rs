@@ -13,7 +13,8 @@ use solarity_rendering::{
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 
 use super::{
-    ResidentLiquidMaterial, ResidentLiquidShader, ResidentLiquidSurface, ResidentTerrainLiquidBatch,
+    ResidentLiquidMaterial, ResidentLiquidShader, ResidentLiquidSurface,
+    ResidentTerrainLiquidBatch, ResidentWorldModelLiquidBatch, WorldModelLiquidLighting,
 };
 
 /// One renderer's shared images for an immutable resident material generation.
@@ -28,13 +29,14 @@ pub(in crate::application) struct LiquidGpuMaterialCache {
     entries: HashMap<usize, Weak<LiquidGpuMaterial>>,
 }
 
-/// One retained terrain batch, with immutable culling bounds and translation.
-pub(in crate::application) struct TerrainLiquidGpuBatch {
+/// One retained liquid factory, with local geometry and immutable culling bounds.
+pub(in crate::application) struct LiquidGpuBatch {
     material: Arc<LiquidGpuMaterial>,
     mesh: LiquidMeshHandle,
     origin: Vec3,
     minimum: Vec3,
     maximum: Vec3,
+    lighting: WorldModelLiquidLighting,
 }
 
 impl LiquidGpuMaterialCache {
@@ -85,18 +87,19 @@ impl LiquidGpuMaterialCache {
         &mut self,
         renderer: &mut VulkanRenderer,
         batches: &[ResidentTerrainLiquidBatch],
-    ) -> Result<Vec<TerrainLiquidGpuBatch>, RuntimeTerrainFrameError> {
+    ) -> Result<Vec<LiquidGpuBatch>, RuntimeTerrainFrameError> {
         let mut prepared = Vec::with_capacity(batches.len());
         for batch in batches {
             let next = (|| {
                 let material = self.prepare(renderer, &batch.material)?;
                 let mesh = renderer.upload_liquid_mesh(&batch.vertices, &batch.indices)?;
-                Ok(TerrainLiquidGpuBatch {
+                Ok(LiquidGpuBatch {
                     material,
                     mesh,
                     origin: batch.origin,
                     minimum: batch.minimum,
                     maximum: batch.maximum,
+                    lighting: WorldModelLiquidLighting::Exterior,
                 })
             })();
             match next {
@@ -104,7 +107,7 @@ impl LiquidGpuMaterialCache {
                 Err(error) => {
                     let handles = prepared
                         .iter()
-                        .map(TerrainLiquidGpuBatch::mesh)
+                        .map(LiquidGpuBatch::mesh)
                         .collect::<Vec<_>>();
                     renderer.retire_liquid_meshes(&handles)?;
                     return Err(error);
@@ -115,8 +118,46 @@ impl LiquidGpuMaterialCache {
     }
 }
 
-impl TerrainLiquidGpuBatch {
-    /// Returns the retained handle invalidated when this ADT generation departs.
+impl LiquidGpuMaterialCache {
+    /// Uploads immutable group-local WMO strips and retains their lighting mode.
+    pub(in crate::application) fn prepare_world_model(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        batches: &[ResidentWorldModelLiquidBatch],
+    ) -> Result<Vec<LiquidGpuBatch>, RuntimeTerrainFrameError> {
+        let mut prepared = Vec::with_capacity(batches.len());
+        for batch in batches {
+            let next = (|| {
+                let material = self.prepare(renderer, &batch.material)?;
+                let mesh =
+                    renderer.upload_liquid_mesh(batch.mesh.vertices(), batch.mesh.indices())?;
+                Ok(LiquidGpuBatch {
+                    material,
+                    mesh,
+                    origin: Vec3::ZERO,
+                    minimum: batch.minimum,
+                    maximum: batch.maximum,
+                    lighting: batch.lighting,
+                })
+            })();
+            match next {
+                Ok(batch) => prepared.push(batch),
+                Err(error) => {
+                    let handles = prepared
+                        .iter()
+                        .map(LiquidGpuBatch::mesh)
+                        .collect::<Vec<_>>();
+                    renderer.retire_liquid_meshes(&handles)?;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(prepared)
+    }
+}
+
+impl LiquidGpuBatch {
+    /// Returns the retained handle invalidated when its final source owner departs.
     pub(in crate::application) const fn mesh(&self) -> LiquidMeshHandle {
         self.mesh
     }
@@ -133,11 +174,53 @@ impl TerrainLiquidGpuBatch {
         time_ms: u32,
         specular_enabled: bool,
     ) -> Result<Option<LiquidPreparedDraw>, RuntimeTerrainFrameError> {
-        let center = (self.minimum + self.maximum) * 0.5;
+        self.prepare_transformed_draw(
+            renderer,
+            Mat4::from_translation(self.origin),
+            frustum,
+            camera,
+            lighting,
+            fog,
+            time_ms,
+            specular_enabled,
+        )
+    }
+
+    /// Applies the current WMO transform to both bounds and liquid vertices.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::application) fn prepare_transformed_draw(
+        &self,
+        renderer: &VulkanRenderer,
+        transform: Mat4,
+        frustum: WorldFrustum,
+        camera: WorldCameraFrame,
+        lighting: LiquidLighting,
+        fog: LiquidFog,
+        time_ms: u32,
+        specular_enabled: bool,
+    ) -> Result<Option<LiquidPreparedDraw>, RuntimeTerrainFrameError> {
+        let center = transform.transform_point3((self.minimum + self.maximum) * 0.5 - self.origin);
         let half = (self.maximum - self.minimum) * 0.5;
-        if !frustum.intersects_box(center, Vec3::X * half.x, Vec3::Y * half.y, Vec3::Z * half.z)? {
+        if !frustum.intersects_box(
+            center,
+            transform.transform_vector3(Vec3::X * half.x),
+            transform.transform_vector3(Vec3::Y * half.y),
+            transform.transform_vector3(Vec3::Z * half.z),
+        )? {
             return Ok(None);
         }
+        // 7D4F40's private interior light has zero ambient/specular terms,
+        // white diffuse, and world direction (0,0,-1); WMO normals still use
+        // the current instance model-view matrix in the vertex shader.
+        let lighting = match self.lighting {
+            WorldModelLiquidLighting::Exterior => lighting,
+            WorldModelLiquidLighting::Interior => LiquidLighting::new(
+                camera.view().transform_vector3(-Vec3::Z),
+                Vec3::ZERO,
+                Vec3::ONE,
+                Vec3::ZERO,
+            ),
+        };
         let (material, surface_transform, depth_transform) = match self.material.source.shader {
             ResidentLiquidShader::Water {
                 depth,
@@ -172,7 +255,7 @@ impl TerrainLiquidGpuBatch {
             surface,
             LiquidShaderUniform::new(
                 camera.projection(),
-                camera.view() * Mat4::from_translation(self.origin),
+                camera.view() * transform,
                 surface_transform,
                 depth_transform,
                 lighting,

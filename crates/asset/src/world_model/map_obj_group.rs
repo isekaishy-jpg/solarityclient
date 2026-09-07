@@ -435,13 +435,13 @@ impl WorldModelLiquid {
         self.material_id
     }
 
-    /// Returns column-major MLIQ vertices indexed as `x * height + y`.
+    /// Returns row-major MLIQ vertices indexed as `y * width + x`.
     #[must_use]
     pub fn vertices(&self) -> &[WorldModelLiquidVertex] {
         &self.vertices
     }
 
-    /// Returns column-major tile bytes indexed as `x * height + y`.
+    /// Returns row-major tile bytes indexed as `y * width + x`.
     #[must_use]
     pub fn tiles(&self) -> &[u8] {
         &self.tiles

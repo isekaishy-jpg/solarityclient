@@ -435,7 +435,7 @@ fn terrain_streaming_validates_shared_placement_identities() -> Result<(), Box<d
         }
         let mut wdt = Vec::new();
         WdtWriter::new(&mut wdt).write(&manifest)?;
-        let fixture = ClientFixture::with_common_files(&[
+        let fixture = world_model_client_fixture(&[
             ("DBFilesClient\\Map.dbc", &map_table()),
             ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
             (
@@ -536,7 +536,7 @@ fn static_movement_retains_reference_order_and_placement_owners() -> Result<(), 
     }
     let mut wdt = Vec::new();
     WdtWriter::new(&mut wdt).write(&manifest)?;
-    let fixture = ClientFixture::with_common_files(&[
+    let fixture = world_model_client_fixture(&[
         ("DBFilesClient\\Map.dbc", &map_table()),
         ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
         (
@@ -1370,7 +1370,7 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
     let group_wmo = movement_reference_group_wmo()?;
     let m2 = m2_collision_fixture()?;
     let skin = skin_fixture()?;
-    let fixture = ClientFixture::with_common_files(&[
+    let fixture = world_model_client_fixture(&[
         ("DBFilesClient\\Map.dbc", &map_table()),
         ("World\\Maps\\Northrend\\Northrend.wdt", &terrain_wdt()?),
         ("World\\Maps\\Northrend\\Northrend_21_30.adt", &adt),
@@ -1451,7 +1451,7 @@ fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Erro
     let group_wmo = movement_reference_group_wmo()?;
     let m2 = m2_collision_fixture()?;
     let skin = skin_fixture()?;
-    let fixture = ClientFixture::with_common_files(&[
+    let fixture = world_model_client_fixture(&[
         ("DBFilesClient\\Map.dbc", &map_table()),
         ("World\\Maps\\Northrend\\Northrend.wdt", &global_wmo_wdt()?),
         ("World\\Wmo\\Fixture.wmo", &root_wmo),
@@ -2036,10 +2036,38 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, Box<dyn Error>> {
     ))
 }
 
+fn world_model_client_fixture(files: &[(&str, &[u8])]) -> Result<ClientFixture, Box<dyn Error>> {
+    let mut liquid = [0; 45];
+    liquid[0] = 14;
+    liquid[14] = 1;
+    liquid[15] = 1;
+    liquid[23] = 1f32.to_bits();
+    liquid[25] = 1f32.to_bits();
+    let mut strings = b"\0tileset\\fixture\\grass.blp\0".to_vec();
+    liquid[16] = strings.len() as u32;
+    strings.extend_from_slice(b"proceduralRiverDepthTex\0");
+    let types = wdbc_fixture(&liquid, &strings);
+    let materials = wdbc_fixture(&[1, 0, 1], &[0]);
+    let texture = bootstrap_texture_blp();
+    let mut complete = files.to_vec();
+    complete.extend([
+        ("DBFilesClient\\LiquidType.dbc", types.as_slice()),
+        ("DBFilesClient\\LiquidMaterial.dbc", materials.as_slice()),
+    ]);
+    if !complete
+        .iter()
+        .any(|(path, _)| *path == "tileset\\fixture\\grass.blp")
+    {
+        complete.push(("tileset\\fixture\\grass.blp", texture.as_slice()));
+    }
+    ClientFixture::with_common_files(&complete)
+}
+
 fn root_wmo_fixture() -> Vec<u8> {
     let mut bytes = Vec::new();
     push_wmo_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
     let mut header = vec![0_u8; 64];
+    set_u32(&mut header, 0, 1);
     set_u32(&mut header, 4, 1);
     set_u32(&mut header, 16, 1);
     set_u32(&mut header, 20, 1);
@@ -2049,6 +2077,10 @@ fn root_wmo_fixture() -> Vec<u8> {
     set_vec3(&mut header, 48, [5.0, 5.0, 3.0]);
     set_u16(&mut header, 60, 0x4);
     push_wmo_chunk(&mut bytes, *b"DHOM", &header);
+    push_wmo_chunk(&mut bytes, *b"XTOM", &[0]);
+    let mut material = [0; 64];
+    set_u32(&mut material, 28, u32::MAX);
+    push_wmo_chunk(&mut bytes, *b"TMOM", &material);
     let mut group = Vec::new();
     group.extend_from_slice(&0_u32.to_le_bytes());
     for value in [-5.0_f32, -5.0, -1.0, 5.0, 5.0, 3.0] {
