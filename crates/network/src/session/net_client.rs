@@ -5,8 +5,8 @@ use wow_srp::wrath_header::WrathServerAttempt;
 use wow_world_messages::Guid;
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
 use wow_world_messages::wrath::{
-    CMSG_CHAR_CREATE, CMSG_CHAR_DELETE, CMSG_CHAR_RENAME, CMSG_PING, CMSG_PLAYER_LOGIN,
-    CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT, CMSG_TIME_SYNC_RESP,
+    CMSG_AREATRIGGER, CMSG_CHAR_CREATE, CMSG_CHAR_DELETE, CMSG_CHAR_RENAME, CMSG_PING,
+    CMSG_PLAYER_LOGIN, CMSG_READY_FOR_ACCOUNT_DATA_TIMES, CMSG_REALM_SPLIT, CMSG_TIME_SYNC_RESP,
     MSG_MOVE_WORLDPORT_ACK,
 };
 
@@ -380,6 +380,21 @@ where
         packet[6..6 + body.len()].copy_from_slice(body);
         self.stream
             .write_all(&packet[..6 + body.len()])
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Send,
+                message: error.to_string(),
+            })
+    }
+
+    /// Notifies the server that the player entered an authored AreaTrigger volume.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
+    pub async fn send_area_trigger(&mut self, trigger_id: u32) -> Result<(), WorldSessionError> {
+        ClientOpcodeMessage::from(CMSG_AREATRIGGER { trigger_id })
+            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
             .await
             .map_err(|error| WorldSessionError::Io {
                 stage: WorldSessionStage::Send,

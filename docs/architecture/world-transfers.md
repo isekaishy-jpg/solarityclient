@@ -35,6 +35,30 @@ ID-zero row, so these system messages carry an empty language name.
 
 ## Ownership and completion
 
+### Client entry notification
+
+The client loads all 1,220 stock `AreaTrigger.dbc` rows (ten fields and
+forty-byte records). Native `6D2F70` selects the current map's record run;
+`6DBE30` polls the living player's world position every 100 milliseconds.
+`6CE140` includes a sphere's radius boundary and uses strict faces for an
+oriented box. The box retains the native rounded inverse translation before
+testing the transformed point.
+
+The first contained row remains active until the player leaves it, so
+overlapping volumes do not repeatedly send notifications. A map replacement
+resets that ownership, including same-map replacements. Entry freezes an
+active-mover heartbeat (`724E70(0xEE)`) and then sends `CMSG_AREATRIGGER`
+(`0xB4`) with the row identifier. Both writes follow earlier movement output
+and share the existing encrypted writer; queue backpressure retains the pair.
+The server then decides whether to initiate a transfer through the existing
+pending/new-world handlers. There are no instance-specific portal IDs.
+
+Containment is checked against 720 executions of the original predicate and
+its matrix callees. State tests cover overlap, re-entry, dead-player admission,
+missing movers, replacement and clock wraparound. An encrypted loopback test
+fills the actual writer queue and verifies heartbeat/trigger ordering after
+retry. These checks do not replace live rendered entry verification.
+
 The async pump owns one reader and one continuously owned encrypted writer.
 Application acknowledgements, time-sync replies, and latency probes share
 the writer queue. Queue backpressure retains the application's completion

@@ -7,6 +7,7 @@
 mod animation;
 mod appearance;
 mod area;
+mod area_trigger;
 mod c_data_store;
 mod character;
 mod character_base;
@@ -43,6 +44,7 @@ pub use appearance::{
     CharacterSectionKind, CreatureModelAppearance,
 };
 pub use area::{AreaDefinition, AreaTableCatalog};
+pub use area_trigger::{AreaTriggerCatalog, AreaTriggerDefinition, AreaTriggerShape};
 pub use character::{
     CharacterAppearanceCatalog, CharacterFacialHairStyle, CharacterHairGeoset, CharacterSection,
 };

@@ -6,13 +6,75 @@ mod transfer_authentication;
 mod transfer_world_server;
 
 use solarity_ecs::PlayerViewState;
-use solarity_network::WorldTransfer;
+use solarity_network::{
+    ObjectMovementContext, WorldMovementKind, WorldMovementMessage, WorldTransfer,
+};
 use solarity_runtime::{
     RuntimeGameplayCoordinator, RuntimeWorldTransferCoordinator, RuntimeWorldTransferEffect,
 };
 use wow_world_messages::wrath::opcodes::ClientOpcodeMessage;
 
 use transfer_world_server::{TestError, WorldServer, location_body};
+
+/// Entry sends its frozen heartbeat before the trigger ID, on the same cipher.
+#[test]
+fn area_trigger_keeps_heartbeat_and_entry_order_under_backpressure() -> Result<(), TestError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let (server, session) = WorldServer::connect().await?;
+                let mut gameplay = RuntimeGameplayCoordinator::new();
+                gameplay.begin(&tokio::runtime::Handle::current(), session, Vec::new())?;
+                let heartbeat = WorldMovementMessage::new(
+                    WorldMovementKind::Heartbeat,
+                    8,
+                    0,
+                    [12., 2., 3.],
+                    0.5,
+                    ObjectMovementContext {
+                        timestamp_ms: 345,
+                        transport: None,
+                        pitch_radians: None,
+                        fall_time_ms: 0,
+                        falling: None,
+                        spline_elevation: None,
+                    },
+                )?;
+                // The current-thread executor cannot drain the writer while this
+                // loop fills it, so rejection exercises the actual bounded queue.
+                let mut admitted = 0_u32;
+                while gameplay.send_area_trigger(heartbeat, 1000 + admitted)? {
+                    admitted += 1;
+                    assert!(admitted < 1024, "writer queue must remain bounded");
+                }
+                let response = server
+                    .exchange_raw(Vec::new(), (admitted as usize + 1) * 2)
+                    .await?;
+                while !gameplay.send_area_trigger(heartbeat, 1000 + admitted)? {
+                    tokio::task::yield_now().await;
+                }
+                let response = response.await??;
+                let (pairs, remainder) = response.as_chunks::<2>();
+                assert!(remainder.is_empty());
+                for (index, pair) in pairs.iter().enumerate() {
+                    assert_eq!(pair[0].0, 0xEE);
+                    let mut expected = vec![1, 8, 0, 0, 0, 0, 0, 0];
+                    expected.extend_from_slice(&345_u32.to_le_bytes());
+                    for value in [12_f32, 2., 3., 0.5] {
+                        expected.extend_from_slice(&value.to_le_bytes());
+                    }
+                    expected.extend_from_slice(&0_u32.to_le_bytes());
+                    assert_eq!(pair[0].1, expected);
+                    assert_eq!(pair[1].0, 0xB4);
+                    assert_eq!(pair[1].1, (1000 + index as u32).to_le_bytes());
+                }
+                Ok::<(), TestError>(())
+            })
+            .await?
+        })
+}
 
 /// Abort and rejected destination packets never replace the published world or
 /// send an ACK; malformed NEW_WORLD also leaves the encrypted session usable.

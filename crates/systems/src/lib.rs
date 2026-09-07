@@ -103,7 +103,7 @@ pub use object::{
     unpack_game_object_rotation,
 };
 pub use world::{
-    DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,
+    AreaTriggerVolume, DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,
     LEGACY_WORLD_VIEW_DISTANCE_MAXIMUM, TerrainStreamingError, TerrainStreamingWindow,
     WORLD_VIEW_DISTANCE_MINIMUM, WorldViewDistance, WorldViewDistanceError, WorldViewDistanceLimit,
     WorldViewDistanceRequest, prioritize_terrain_tiles, resolve_world_view_distance,

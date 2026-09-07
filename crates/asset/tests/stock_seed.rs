@@ -12,6 +12,8 @@ mod character_appearance;
 mod combat_stat;
 #[path = "stock_seed/database.rs"]
 mod database;
+#[path = "stock_seed/database_area_trigger.rs"]
+mod database_area_trigger;
 #[path = "stock_seed/database_creature_family.rs"]
 mod database_creature_family;
 #[path = "stock_seed/database_game_object.rs"]

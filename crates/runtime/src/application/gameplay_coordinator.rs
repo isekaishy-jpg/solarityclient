@@ -403,6 +403,32 @@ impl RuntimeGameplayCoordinator {
         }
     }
 
+    /// Admits the native heartbeat/AreaTrigger pair to the encrypted writer.
+    ///
+    /// A `false` result retains both frozen packets at the caller under backpressure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeGameplayError::TaskEnded`] when the writer is gone.
+    pub fn send_area_trigger(
+        &self,
+        heartbeat: WorldMovementMessage,
+        trigger_id: u32,
+    ) -> Result<bool, RuntimeGameplayError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(RuntimeGameplayError::TaskEnded)?;
+        match active.commands.try_send(WorldWriterCommand::AreaTrigger {
+            heartbeat,
+            trigger_id,
+        }) {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(RuntimeGameplayError::TaskEnded),
+        }
+    }
+
     /// Returns the authoritative active ECS world.
     #[must_use]
     pub const fn world(&self) -> Option<&ActiveWorld> {
@@ -467,6 +493,12 @@ impl RuntimeGameplayCoordinator {
             }
             Output::StandState(state) => WorldWriterCommand::StandState(state),
             Output::ActiveMover(guid) => WorldWriterCommand::ActiveMover(guid),
+            Output::AreaTrigger {
+                heartbeat,
+                trigger_id,
+            } => {
+                return self.send_area_trigger(heartbeat, trigger_id);
+            }
         };
         match self
             .active
@@ -645,6 +677,10 @@ where
                     WorldWriterCommand::ActiveMover(guid) => {
                         writer.send_active_mover(guid).await?;
                     }
+                    WorldWriterCommand::AreaTrigger { heartbeat, trigger_id } => {
+                        writer.send_movement(&heartbeat).await?;
+                        writer.send_area_trigger(trigger_id).await?;
+                    }
                 }
             }
         }
@@ -664,9 +700,16 @@ enum WorldWriterCommand {
     TimeSync(u32),
     WorldportAcknowledgement,
     Movement(WorldMovementMessage),
-    MovementTimeSkipped { guid: u64, milliseconds: u32 },
+    MovementTimeSkipped {
+        guid: u64,
+        milliseconds: u32,
+    },
     StandState(u32),
     ActiveMover(u64),
+    AreaTrigger {
+        heartbeat: WorldMovementMessage,
+        trigger_id: u32,
+    },
 }
 
 // Each argument borrows an independently owned session service for this dispatch.

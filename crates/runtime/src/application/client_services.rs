@@ -143,6 +143,7 @@ pub(crate) struct ClientServices {
     player_movement: super::player_movement::RuntimePlayerMovement,
     remote_movement: super::player_movement::remote::RuntimeRemoteMovement,
     game_objects: RuntimeGameObjectPresentation,
+    area_triggers: super::area_triggers::RuntimeAreaTriggers,
     terrain: RuntimeTerrainCoordinator,
     /// Shared authored liquid behavior for the camera's resident water query.
     liquids: solarity_asset::LiquidTypeCatalog,
@@ -215,6 +216,9 @@ impl ClientServices {
         let game_object_displays = GameObjectDisplayCatalog::load(&mut assets)?;
         let addon_catalog = AddonCatalog::discover(&mut assets)?;
         let maps = MapCatalog::load(&mut assets)?;
+        let area_triggers = super::area_triggers::RuntimeAreaTriggers::new(
+            &solarity_asset::AreaTriggerCatalog::load(&mut assets)?,
+        );
         let loading_screens = match LoadingScreenCatalog::load(&mut assets) {
             Ok(catalog) => Some(catalog),
             Err(AssetError::AssetNotFound { .. }) => None,
@@ -462,6 +466,7 @@ impl ClientServices {
                 world,
                 gameplay: RuntimeGameplayCoordinator::new(),
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
+                area_triggers,
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
                 player_movement: super::player_movement::RuntimePlayerMovement::default(),
                 remote_movement: super::player_movement::remote::RuntimeRemoteMovement::default(),
@@ -1524,6 +1529,7 @@ impl ClientServices {
                     self.login.disconnect();
                     self.world.disconnect();
                     self.gameplay.disconnect();
+                    self.area_triggers.disconnect();
                     self.world_transfer.disconnect();
                     self.environment.disconnect();
                     self.player.disconnect();
@@ -2021,6 +2027,12 @@ impl ClientServices {
                         &self.cpu,
                     )?;
                     self.sound.enter_world()?;
+                    if let Some(world) = self.gameplay.world() {
+                        self.area_triggers.enter_map(
+                            world.map_id().value(),
+                            crate::platform::client_milliseconds(),
+                        );
+                    }
                     tracing::info!("selected character entered the active world");
                 }
             }
@@ -2277,6 +2289,11 @@ impl ClientServices {
             crate::platform::client_milliseconds(),
         )?;
         profile.mark("player movement");
+        self.area_triggers.service(
+            &self.gameplay,
+            &mut self.player_movement,
+            crate::platform::client_milliseconds(),
+        )?;
         self.remote_movement.service(
             &self.gameplay,
             &mut self.terrain,
@@ -2569,6 +2586,7 @@ impl ClientServices {
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
+        self.area_triggers.disconnect();
         self.world_transfer.disconnect();
         self.environment.disconnect();
         self.player.disconnect();

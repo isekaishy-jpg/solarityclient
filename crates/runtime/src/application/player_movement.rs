@@ -82,9 +82,16 @@ pub enum RuntimePlayerMovementError {
 #[derive(Clone, Copy)]
 pub(super) enum PlayerMovementOutput {
     Movement(WorldMovementMessage),
-    SkippedTime { guid: u64, milliseconds: u32 },
+    SkippedTime {
+        guid: u64,
+        milliseconds: u32,
+    },
     StandState(u32),
     ActiveMover(u64),
+    AreaTrigger {
+        heartbeat: WorldMovementMessage,
+        trigger_id: u32,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -187,6 +194,14 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    /// Orders an entry notification after all earlier local movement writes.
+    pub(super) fn queue_area_trigger(&mut self, heartbeat: WorldMovementMessage, trigger_id: u32) {
+        self.output.push_back(PlayerMovementOutput::AreaTrigger {
+            heartbeat,
+            trigger_id,
+        });
+    }
+
     /// The scene camera feeds collision distance back into its retained zoom lane.
     pub(super) fn camera_obstructed(&mut self, distance: f32, time: u32) {
         if let Some(owner) = &mut self.owner {
@@ -403,6 +418,14 @@ impl RuntimePlayerMovement {
         owner.published = (transform, movement);
         world.set_local_player_view(owner.camera.view(owner.orientation))?;
         gameplay.apply_local_movement(owner.identity, transform, movement, owner.stand_state)?;
+        self.flush_output(gameplay)
+    }
+
+    /// Drains frozen output without rebuilding snapshots under writer backpressure.
+    pub(super) fn flush_output(
+        &mut self,
+        gameplay: &RuntimeGameplayCoordinator,
+    ) -> Result<(), RuntimePlayerMovementError> {
         while let Some(output) = self.output.front().copied() {
             if !gameplay.send_player_movement(output)? {
                 break;

@@ -1,11 +1,13 @@
 //! World state, map landmarks, points of interest, and world-parameter behavior.
 
+mod area_trigger;
 mod terrain_streaming;
 mod view_distance;
 mod world_map;
 mod world_param;
 mod world_source;
 
+pub use area_trigger::AreaTriggerVolume;
 pub use terrain_streaming::{
     TerrainStreamingError, TerrainStreamingWindow, prioritize_terrain_tiles,
 };

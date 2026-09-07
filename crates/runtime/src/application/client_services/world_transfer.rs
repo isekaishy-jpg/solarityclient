@@ -178,6 +178,8 @@ impl ClientServices {
         self.sound.disconnect()?;
         self.terrain_frame = None;
         self.gameplay.replace_world(location)?;
+        self.area_triggers
+            .enter_map(location.map_id(), crate::platform::client_milliseconds());
         leaving_event?;
         tracing::info!(
             map_id = location.map_id(),
