@@ -48,17 +48,31 @@ pub fn game_object_transport_pose(
     matrix[12..15].copy_from_slice(&position.to_array());
     matrix[15] = 1.0;
     let rotation = matrix_rotation(matrix);
-    let sign = if rotation[3] >= 0.0 { 1 } else { -1 };
-    // 407930 explicitly switches FISTP to truncation. The float multiplication
-    // is stored before conversion, then hemisphere sign is applied to integers.
-    let x = ((rotation[0] * 2_097_152.0) as i32 * sign) as u64;
-    let y = ((rotation[1] * 1_048_576.0) as i32 * sign) as u64;
-    let z = ((rotation[2] * 1_048_576.0) as i32 * sign) as u64;
-    let packed = (x << 42) | ((y & 0x1f_ffff) << 21) | (z & 0x1f_ffff);
     Ok(GameObjectAnimatedPose::new(
         Mat4::from_cols_array(&matrix),
-        packed,
+        pack_rotation(rotation),
     ))
+}
+
+/// 4F43B0 packs either an MO matrix rotation or a type-11 sampled quaternion.
+pub(super) fn pack_rotation(rotation: [f32; 4]) -> u64 {
+    let sign = if rotation[3] >= 0.0 { 1 } else { -1 };
+    // 407930 truncates to i64 and returns its low word. The float multiplication
+    // is stored first; hemisphere IMUL subsequently wraps at 32 bits.
+    let x = truncate_rotation_component(rotation[0] * 2_097_152.0).wrapping_mul(sign) as u64;
+    let y = truncate_rotation_component(rotation[1] * 1_048_576.0).wrapping_mul(sign) as u64;
+    let z = truncate_rotation_component(rotation[2] * 1_048_576.0).wrapping_mul(sign) as u64;
+    (x << 42) | ((y & 0x1f_ffff) << 21) | (z & 0x1f_ffff)
+}
+
+fn truncate_rotation_component(value: f32) -> i32 {
+    let value = f64::from(value).trunc();
+    if (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&value) {
+        value as i64 as i32
+    } else {
+        // FISTP's i64 integer-indefinite value has a zero low word.
+        0
+    }
 }
 
 /// 9827B0 takes the transposed matrix and an independently spilled trace.

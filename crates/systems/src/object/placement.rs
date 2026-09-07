@@ -358,7 +358,7 @@ fn quaternion_facing(rotation: [f32; 4]) -> f32 {
 }
 
 /// Native 0x004C1C40 preserves three spilled f32 products before later sums.
-fn quaternion_matrix(rotation: [f32; 4]) -> [f32; 16] {
+pub(super) fn quaternion_matrix(rotation: [f32; 4]) -> [f32; 16] {
     let [x, y, z, w] = rotation.map(f64::from);
     let xx = x * x * 2.0;
     let xy = x * y * 2.0;
@@ -390,7 +390,7 @@ fn quaternion_matrix(rotation: [f32; 4]) -> [f32; 16] {
 }
 
 /// The multiplication order and store boundaries from 0x004F4320.
-fn compose_rotation(local: [f32; 4], parent: [f32; 4]) -> [f32; 4] {
+pub(super) fn compose_rotation(local: [f32; 4], parent: [f32; 4]) -> [f32; 4] {
     let [x, y, z, w] = local.map(f64::from);
     let [px, py, pz, pw] = parent.map(f64::from);
     [

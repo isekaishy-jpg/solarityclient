@@ -7,6 +7,7 @@ mod animation;
 mod behavior;
 mod lifecycle;
 mod placement;
+mod transport_animation;
 mod transport_pose;
 mod types;
 mod update;
@@ -18,6 +19,10 @@ pub use behavior::{
 pub use placement::{
     GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
     unpack_game_object_rotation,
+};
+pub use transport_animation::{
+    TransportAnimationClock, TransportAnimationError, TransportAnimationSample,
+    TransportAnimationTrack,
 };
 pub use transport_pose::game_object_transport_pose;
 pub use update::{ObjectProjectionError, project_object_fields};
