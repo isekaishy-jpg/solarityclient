@@ -2331,6 +2331,7 @@ impl ClientServices {
             &mut self.gameplay,
             &mut self.terrain,
             &self.game_objects,
+            &self.liquids,
             self.player.movement_dimensions(),
             crate::platform::client_milliseconds(),
         )?;

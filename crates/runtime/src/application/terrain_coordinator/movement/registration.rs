@@ -114,7 +114,7 @@ impl RuntimeMovementRegistrationQuery {
 
 impl ResidentTerrainMap {
     /// Shares Unit_C's point registration between location and ground sound queries.
-    fn unit_registration(
+    pub(super) fn unit_registration(
         &mut self,
         position: Vec3,
     ) -> Result<

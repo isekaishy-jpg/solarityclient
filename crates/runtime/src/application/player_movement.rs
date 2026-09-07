@@ -2,6 +2,7 @@
 
 mod passenger;
 pub(super) mod remote;
+mod swimming;
 
 use passenger::{PassengerClock, PassengerParent};
 
@@ -59,6 +60,18 @@ pub enum RuntimePlayerMovementError {
     /// Airborne contact failed arithmetic or geometry admission.
     #[error(transparent)]
     Fall(#[from] solarity_systems::MovementFallAdvanceError),
+    /// Swimming contact failed arithmetic or geometry admission.
+    #[error(transparent)]
+    Swim(#[from] solarity_systems::MovementSwimAdvanceError),
+    /// Swimming trajectory inputs are inconsistent.
+    #[error(transparent)]
+    SwimTrajectory(#[from] solarity_systems::MovementSwimTrajectoryError),
+    /// Registered water or model dimensions cannot form an immersion sample.
+    #[error(transparent)]
+    Immersion(#[from] solarity_systems::MovementSwimImmersionError),
+    /// Unit spatial liquid selection failed.
+    #[error(transparent)]
+    LiquidRegistration(#[from] super::RuntimeMovementRegistrationError),
     /// The fall curve cannot represent the supplied state.
     #[error(transparent)]
     FallCurve(#[from] solarity_systems::MovementFallError),
@@ -104,6 +117,15 @@ pub(super) enum PlayerMovementOutput {
 enum MovementCommand {
     Input(UiMovementCommand),
     Control(PlayerControlEvent),
+    /// Unit_C queues immersion decisions after its movement update callback.
+    Swim {
+        transition: solarity_systems::MovementSwimTransition,
+        timestamp_ms: u32,
+    },
+    /// 730D10 queues the unit's ordinary jump command at the water surface.
+    SurfaceJump {
+        timestamp_ms: u32,
+    },
     /// Native event 9 is queued when a transport destroys its passenger link.
     SupportRecheck {
         timestamp_ms: u32,
@@ -118,9 +140,10 @@ enum MovementCommand {
 impl MovementCommand {
     fn timestamp_ms(self) -> u32 {
         match self {
-            Self::MouseMotion { timestamp_ms, .. } | Self::SupportRecheck { timestamp_ms } => {
-                timestamp_ms
-            }
+            Self::MouseMotion { timestamp_ms, .. }
+            | Self::SupportRecheck { timestamp_ms }
+            | Self::Swim { timestamp_ms, .. }
+            | Self::SurfaceJump { timestamp_ms } => timestamp_ms,
             Self::Input(command) => command.timestamp_ms,
             Self::Control(
                 PlayerControlEvent::StandState { timestamp_ms, .. }
@@ -165,6 +188,7 @@ struct LocalMovement {
     context: WorldMovementContext,
     retained_launch_height: f32,
     retained_downward_speed: f32,
+    previous_water_depth: f32,
     anchor: Vec3,
     elapsed_ms: u32,
     time_ms: u32,
@@ -179,9 +203,22 @@ struct LocalMovement {
 enum MovementPhase {
     Ground { step_anchor: Option<f32> },
     Fall(MovementFallState),
+    Swimming(solarity_systems::MovementSwimTrajectory),
 }
 
 trait LocalMovementGeometry: solarity_systems::MovementGeometry {
+    /// Supplies a separate inverted water bank for the native swimming solver.
+    fn water_triangles(&self) -> &[solarity_systems::MovementCollisionTriangle] {
+        &[]
+    }
+
+    /// Enables water candidates for a 3D swimming interval.
+    fn collect_swimming(
+        &mut self,
+        request: MovementIntervalRequest,
+    ) -> Result<bool, RuntimePlayerMovementError> {
+        self.collect(request)
+    }
     /// Static geometry reports zero; dynamic collectors preserve the native owner GUID.
     fn contact_guid(&self, _contact: Option<Self::TriangleIdentity>) -> u64 {
         0
@@ -215,6 +252,16 @@ trait LocalMovementGeometry: solarity_systems::MovementGeometry {
 }
 
 impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
+    fn water_triangles(&self) -> &[solarity_systems::MovementCollisionTriangle] {
+        solarity_systems::MovementSwimGeometry::water_triangles(self)
+    }
+
+    fn collect_swimming(
+        &mut self,
+        request: MovementIntervalRequest,
+    ) -> Result<bool, RuntimePlayerMovementError> {
+        Ok(self.collect_swimming_interval(request)? == RuntimeStaticMovementResidency::Ready)
+    }
     fn contact_guid(&self, contact: Option<Self::TriangleIdentity>) -> u64 {
         use super::RuntimeMovementOwner;
         match contact {
@@ -364,6 +411,7 @@ impl RuntimePlayerMovement {
         gameplay: &mut RuntimeGameplayCoordinator,
         terrain: &mut RuntimeTerrainCoordinator,
         objects: &RuntimeGameObjectPresentation,
+        liquids: &solarity_asset::LiquidTypeCatalog,
         dimensions: Option<[f32; 3]>,
         now_ms: u32,
     ) -> Result<(), RuntimePlayerMovementError> {
@@ -504,6 +552,8 @@ impl RuntimePlayerMovement {
                 );
             }
         }
+        let immersion = terrain.unit_submerged_liquid(owner.world_position(), liquids)?;
+        owner.queue_immersion(immersion, dimensions[1], world, &mut self.commands)?;
         owner.camera.sample_zoom(now_ms, self.camera_zoom_settings);
         owner.camera.sample_follow(now_ms);
         let (transform, movement) = owner.snapshot();
@@ -549,6 +599,13 @@ impl LocalMovement {
         let mut effects = Vec::with_capacity(5);
         let was_paired = input.paired_mouse_buttons();
         match command {
+            MovementCommand::Swim { transition, .. } => {
+                self.swim_transition(transition, output)?;
+                input.resolve(self.admission(world), &mut |effect| effects.push(effect));
+            }
+            MovementCommand::SurfaceJump { .. } => {
+                return self.apply(PlayerInputEffect::Jump, admission, world, output);
+            }
             MovementCommand::SupportRecheck { .. } => {
                 return if self.active {
                     self.acquire_mover(output)
@@ -637,7 +694,19 @@ impl LocalMovement {
         self.flags &= !0x30;
         input.clear_active_turn();
         self.reanchor()?;
-        self.emit(WorldMovementKind::SetFacing, output)
+        self.emit(WorldMovementKind::SetFacing, output)?;
+        if self.flags & 0x200000 != 0 {
+            // 6023D0 -> 5FBE70 negates the camera angle before 989BC0.
+            let pitch = -self.camera.view(self.world_orientation()).pitch_radians();
+            if (self.context.pitch_radians.unwrap_or(0.0) - pitch).abs() >= 0.000_000_953_674_3 {
+                self.context.pitch_radians = Some(pitch);
+            }
+            self.flags &= !0xc0;
+            input.clear_active_pitch();
+            self.reanchor()?;
+            self.emit(WorldMovementKind::SetPitch, output)?;
+        }
+        Ok(())
     }
 
     fn new(
@@ -647,18 +716,29 @@ impl LocalMovement {
         time_ms: u32,
     ) -> Result<Self, RuntimePlayerMovementError> {
         let flags = movement.flags() as u32 & 0x77ff_fdff;
-        if movement.transport_guid().is_some() || flags & 0x4ae0_0000 != 0 {
+        if movement.transport_guid().is_some()
+            || flags & 0x4a00_0000 != 0
+            || (flags & 0x200000 == 0 && flags & 0xc000c0 != 0)
+        {
             return Err(RuntimePlayerMovementError::UnsupportedMode { flags });
         }
         let context = movement.context();
         let secondary = (movement.flags() >> 32) as u16;
         let ground = MovementGroundTrajectory::new(
-            flags & !0x1000,
+            flags & !0xe0_10c0,
             secondary & 8 != 0,
             transform.orientation(),
             movement.speeds(),
         )?;
-        let phase = if let Some(fall) = context.falling {
+        let phase = if flags & 0x200000 != 0 {
+            MovementPhase::Swimming(solarity_systems::MovementSwimTrajectory::new(
+                flags,
+                secondary,
+                transform.orientation(),
+                context.pitch_radians.unwrap_or(0.0),
+                movement.speeds(),
+            )?)
+        } else if let Some(fall) = context.falling {
             let mode = fall_mode(flags);
             let curve = MovementFallTrajectory::new(mode, fall.vertical_speed)?;
             MovementPhase::Fall(MovementFallState::new(MovementFallSnapshot {
@@ -707,9 +787,10 @@ impl LocalMovement {
             context,
             retained_launch_height: match phase {
                 MovementPhase::Fall(fall) => fall.snapshot().launch_height,
-                MovementPhase::Ground { .. } => 0.,
+                MovementPhase::Ground { .. } | MovementPhase::Swimming(_) => 0.,
             },
             retained_downward_speed: context.falling.map_or(0., |fall| fall.vertical_speed),
+            previous_water_depth: 0.0,
             anchor: transform.position(),
             elapsed_ms: 0,
             time_ms,
@@ -748,7 +829,7 @@ impl LocalMovement {
         self.anchor = self.position;
         self.elapsed_ms = 0;
         self.ground = MovementGroundTrajectory::new(
-            self.flags & !0x1000,
+            self.flags & !0xe0_10c0,
             self.secondary & 8 != 0,
             self.orientation,
             self.speeds,
@@ -759,6 +840,9 @@ impl LocalMovement {
             self.orientation,
             self.speeds.turn_rate(),
         )?;
+        if matches!(self.phase, MovementPhase::Swimming(_)) {
+            self.phase = MovementPhase::Swimming(self.swim_trajectory()?);
+        }
         Ok(())
     }
 
@@ -777,7 +861,11 @@ impl LocalMovement {
         if let MovementPhase::Fall(fall) = self.phase {
             self.context.fall_time_ms = fall.snapshot().fall_time_ms;
         }
-        self.phase = MovementPhase::Ground { step_anchor: None };
+        self.phase = if self.flags & 0x200000 != 0 {
+            MovementPhase::Swimming(self.swim_trajectory()?)
+        } else {
+            MovementPhase::Ground { step_anchor: None }
+        };
         self.active = false;
         self.reanchor()
     }
@@ -962,7 +1050,7 @@ impl LocalMovement {
         context.transport = self.passenger.map(|_| self.passenger_snapshot());
         context.spline_elevation = match self.phase {
             MovementPhase::Ground { step_anchor } => step_anchor,
-            MovementPhase::Fall(_) => None,
+            MovementPhase::Fall(_) | MovementPhase::Swimming(_) => None,
         };
         context.falling = match self.phase {
             MovementPhase::Fall(fall) => {
@@ -975,8 +1063,13 @@ impl LocalMovement {
                     horizontal_speed: fall.horizontal_speed,
                 })
             }
-            MovementPhase::Ground { .. } => None,
+            MovementPhase::Ground { .. } | MovementPhase::Swimming(_) => None,
         };
+        if self.flags & 0x2200000 == 0 && self.secondary & 0x20 == 0 {
+            context.pitch_radians = None;
+        } else {
+            context.pitch_radians = Some(context.pitch_radians.unwrap_or(0.0));
+        }
         (
             WorldTransform::new(self.world_position(), self.world_orientation()),
             WorldMovementState::new(
@@ -1040,7 +1133,7 @@ impl LocalMovement {
             self.heartbeat_ms = self.heartbeat_ms.wrapping_add(duration);
             return Ok(());
         }
-        if self.flags & 0x10ff == 0 {
+        if self.flags & 0xc010ff == 0 {
             return Ok(());
         }
         let [radius, height, step_height] = dimensions;
@@ -1053,6 +1146,12 @@ impl LocalMovement {
             let sample = self.ground.sample(self.elapsed_ms);
             self.orientation = self.yaw.sample(self.elapsed_ms);
             let mut delta = match self.phase {
+                MovementPhase::Swimming(trajectory) => {
+                    let sample = trajectory.sample(self.elapsed_ms);
+                    self.orientation = sample.orientation;
+                    self.context.pitch_radians = Some(sample.pitch);
+                    self.anchor + sample.displacement - self.position
+                }
                 MovementPhase::Ground { .. } => self.anchor + sample.displacement - self.position,
                 MovementPhase::Fall(fall) => {
                     let state = fall.snapshot();
@@ -1095,16 +1194,23 @@ impl LocalMovement {
                     self.context.pitch_radians = Some(analytic.pitch);
                 }
             }
-            if self.flags & 0x100f == 0 {
+            if self.flags & 0xc0100f == 0 {
                 return Ok(());
             }
-            let distance = delta.truncate().as_dvec2().length() as f32;
-            let direction = if distance.abs() >= f32::from_bits(0x3580_0000) {
-                (delta.truncate().as_dvec2() * (1.0 / f64::from(distance))).as_vec2()
+            let swimming = matches!(self.phase, MovementPhase::Swimming(_));
+            let distance = if swimming {
+                delta.as_dvec3().length() as f32
             } else {
-                Vec2::ZERO
+                delta.truncate().as_dvec2().length() as f32
             };
+            let direction3 = if distance.abs() >= f32::from_bits(0x3580_0000) {
+                (delta.as_dvec3() * (1.0 / f64::from(distance))).as_vec3()
+            } else {
+                Vec3::ZERO
+            };
+            let direction = direction3.truncate();
             let mode = match self.phase {
+                MovementPhase::Swimming(_) => MovementIntervalMode::SwimmingOrFlying,
                 MovementPhase::Ground { .. } => MovementIntervalMode::Grounded(profile),
                 MovementPhase::Fall(fall) => {
                     let fall = fall.snapshot();
@@ -1118,23 +1224,35 @@ impl LocalMovement {
                     }
                 }
             };
-            if !geometry.collect(MovementIntervalRequest {
+            let request = MovementIntervalRequest {
                 position: self.position,
                 radius,
                 height,
                 distance,
-                direction: direction.extend(0.),
+                direction: if swimming {
+                    direction3
+                } else {
+                    direction.extend(0.)
+                },
                 duration_ms: remaining,
                 mode,
-            })? {
+            };
+            let ready = if swimming {
+                geometry.collect_swimming(request)?
+            } else {
+                geometry.collect(request)?
+            };
+            if !ready {
                 self.elapsed_ms = self.elapsed_ms.wrapping_sub(remaining);
                 self.skip(remaining, output);
                 return Ok(());
             }
-            // 7618B0 checks an existing parent's retention before airborne motion.
+            // 7618B0 and 760B40 check parent retention before fall/swim motion.
             // A leave consumes no collision time and terminates this interval.
-            if matches!(self.phase, MovementPhase::Fall(_))
-                && self.passenger.is_some()
+            if matches!(
+                self.phase,
+                MovementPhase::Fall(_) | MovementPhase::Swimming(_)
+            ) && self.passenger.is_some()
                 && self.contact_passenger(0, geometry)?
             {
                 self.elapsed_ms = self.elapsed_ms.saturating_sub(remaining);
@@ -1146,7 +1264,28 @@ impl LocalMovement {
             }
             let was_airborne = matches!(self.phase, MovementPhase::Fall(_));
             let mut landing = None;
+            let mut surface_jump = false;
             let (consumed, reset, skipped, contact) = match self.phase {
+                MovementPhase::Swimming(_) => {
+                    let advance = swimming::advance(
+                        solarity_systems::MovementSwimInterval {
+                            position: self.position,
+                            radius,
+                            height,
+                            duration_ms: remaining,
+                            distance,
+                            direction: direction3,
+                            ascending: self.flags & 0x400000 != 0,
+                        },
+                        geometry,
+                    )?;
+                    self.position = advance.position;
+                    if advance.attempt_surface_jump && self.can_surface_jump() {
+                        self.launch_swim_jump()?;
+                        surface_jump = true;
+                    }
+                    (advance.consumed_ms, advance.reset_motion_anchor, 0, None)
+                }
                 MovementPhase::Ground { step_anchor } => {
                     let current_basis = MovementGroundTrajectory::new(
                         self.flags,
@@ -1307,6 +1446,9 @@ impl LocalMovement {
                 self.emit(WorldMovementKind::FallLand, output)?;
             } else if changed {
                 self.emit(WorldMovementKind::ChangeTransport, output)?;
+            } else if surface_jump {
+                self.notify_animation(UnitMovementAnimationEventKind::Changed);
+                self.emit(WorldMovementKind::Jump, output)?;
             }
             self.time_ms = saved;
             self.skip(skipped, output);
@@ -1370,6 +1512,10 @@ impl LocalMovement {
                     || self.secondary & 2 != 0
                 {
                     return Ok(());
+                }
+                if matches!(self.phase, MovementPhase::Swimming(_)) {
+                    self.launch_swim_jump()?;
+                    return self.emit(Kind::Jump, output);
                 }
                 self.reanchor()?;
                 self.phase = MovementPhase::Fall(MovementFallState::new(MovementFallSnapshot {
@@ -1453,6 +1599,34 @@ impl LocalMovement {
             Kind::StartTurnLeft => self.flags = self.flags & !0x20 | 0x10,
             Kind::StartTurnRight => self.flags = self.flags & !0x10 | 0x20,
             Kind::StopTurn => self.flags &= !0x30,
+            Kind::StartPitchUp | Kind::StartPitchDown => {
+                if self.flags & 0x2200000 != 0 || self.secondary & 0x20 != 0 {
+                    self.flags = self.flags & !0xc0
+                        | if kind == Kind::StartPitchUp {
+                            0x40
+                        } else {
+                            0x80
+                        };
+                    self.secondary &= !0x1000;
+                }
+            }
+            Kind::StopPitch => self.flags &= !0xc0,
+            Kind::StartAscend | Kind::StartDescend => {
+                if self.flags & 0x2200000 == 0 || self.secondary & 1 != 0 {
+                    return Ok(());
+                }
+                self.flags |= if kind == Kind::StartAscend {
+                    0x400000
+                } else {
+                    0x800000
+                };
+            }
+            Kind::StopAscend => {
+                if self.flags & 0x2200000 == 0 {
+                    return Ok(());
+                }
+                self.flags &= !0xc00000;
+            }
             Kind::SetRunMode => self.flags &= !0x100,
             Kind::SetWalkMode => self.flags |= 0x100,
             _ => return Err(RuntimePlayerMovementError::UnsupportedMode { flags: self.flags }),

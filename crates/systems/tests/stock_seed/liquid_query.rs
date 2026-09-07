@@ -168,6 +168,10 @@ fn submerged_world_model_matches_original_instruction_fixtures() -> Result<(), B
             &mut store,
             &AssetPath::new(format!("World\\Wmo\\Liquid{index}.wmo"))?,
         )?);
+        let translated = PlacedWorldModelCollision::prepare_transform(
+            Arc::clone(&model),
+            Mat4::from_translation(Vec3::new(0., 0., 32.)),
+        )?;
         let placement = PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;
         let point = Vec3::from_array(std::array::from_fn(|axis| f32::from_bits(words[5 + axis])));
         let sample = placement.registered_submerged_liquid(0, point, &liquids)?;
@@ -179,6 +183,12 @@ fn submerged_world_model_matches_original_instruction_fixtures() -> Result<(), B
                 words[23],
                 "height case {index}"
             );
+            let unit = translated
+                .registered_unit_liquid(0, point + Vec3::new(0., 0., 32.), &liquids)?
+                .ok_or("translated unit liquid")?;
+            assert_eq!(unit.liquid_type, sample.liquid_type);
+            assert!((unit.surface_height - (sample.surface_height + 32.)).abs() < 0.00001);
+            assert!((unit.depth - sample.depth).abs() < 0.00001);
         }
     }
     Ok(())

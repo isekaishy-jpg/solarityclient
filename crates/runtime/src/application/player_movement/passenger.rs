@@ -318,6 +318,9 @@ impl LocalMovement {
         self.ground = self.ground.rebased(change)?;
         self.yaw = self.yaw.rebased(change)?;
         self.phase = match self.phase {
+            MovementPhase::Swimming(trajectory) => {
+                MovementPhase::Swimming(trajectory.rebased(change)?)
+            }
             MovementPhase::Ground { step_anchor } => MovementPhase::Ground {
                 step_anchor: step_anchor.map(|height| change.step_height(old_position, height)),
             },

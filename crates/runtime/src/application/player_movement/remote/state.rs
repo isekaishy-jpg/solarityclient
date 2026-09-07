@@ -171,12 +171,11 @@ impl RemoteUnit {
             return self.refresh_path_parent(geometry);
         }
         let (transform, movement) = self.published;
-        // Liquid, flight, and pitch-arc travel require the separate
-        // three-dimensional trajectory owner. 00987950 integrates a pitch arc
-        // even with a ground launch basis; the horizontal solver cannot stand in.
+        // Swimming shares the local 3D owner; flight retains its separate path.
         if self.motion.is_none()
             && self.path.is_none()
-            && movement.flags() as u32 & 0x4ae0_00c0 == 0
+            && movement.flags() as u32 & 0x4a00_0000 == 0
+            && (movement.flags() as u32 & 0x200000 != 0 || movement.flags() as u32 & 0xc000c0 == 0)
         {
             let mut context = movement.context();
             let transport = context.transport.filter(|parent| parent.guid != 0);
@@ -296,6 +295,7 @@ impl RemoteUnit {
         let retained_direction = if queued {
             self.motion.as_ref().map(|motion| {
                 let mut direction = match motion.phase {
+                    MovementPhase::Swimming(trajectory) => trajectory.direction(),
                     MovementPhase::Fall(fall) => fall.snapshot().direction,
                     MovementPhase::Ground { .. } => motion.ground.travel_direction(),
                 };

@@ -6,7 +6,7 @@ use crate::application::{RuntimeGameObjectPresentation, RuntimeTerrainCoordinato
 use crate::test_support::{ClientFixture, bootstrap_texture_blp};
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot,
-    GameObjectDisplayCatalog, Locale, MapCatalog,
+    GameObjectDisplayCatalog, LiquidTypeCatalog, Locale, MapCatalog,
 };
 use solarity_ecs::{WorldMovementContext, WorldMovementSpeeds, WorldMovementState};
 use solarity_network::WorldMovementKind;
@@ -23,6 +23,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
     )?)?;
     let maps = MapCatalog::load(&mut store)?;
     let displays = GameObjectDisplayCatalog::load(&mut store)?;
+    let liquids = LiquidTypeCatalog::load(&mut store)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
     let assets = AssetStoreHandle::new(store);
     let mut terrain = RuntimeTerrainCoordinator::new(assets.clone(), maps);
@@ -70,7 +71,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
     let mut movement = RuntimePlayerMovement::default();
     // Model readiness arrives after entry. No independent ground-ready flag
     // or direct position write is supplied to this production service.
-    movement.service(&mut gameplay, &mut terrain, &objects, None, 0)?;
+    movement.service(&mut gameplay, &mut terrain, &objects, &liquids, None, 0)?;
     assert!(!movement.initial_contact_ready());
     assert!(writer.try_recv().is_err());
     for time in [0, 100] {
@@ -78,6 +79,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut gameplay,
             &mut terrain,
             &objects,
+            &liquids,
             Some([0.5, 2., 1.]),
             time,
         )?;
@@ -111,6 +113,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut gameplay,
             &mut terrain,
             &objects,
+            &liquids,
             Some([0.5, 2., 1.]),
             time,
         )?;
@@ -133,6 +136,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1000,
     )?;
@@ -140,6 +144,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -182,6 +187,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -197,6 +203,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -211,6 +218,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1400,
     )?;
@@ -239,6 +247,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1400,
     )?;
@@ -256,6 +265,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut gameplay,
             &mut terrain,
             &objects,
+            &liquids,
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -277,6 +287,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1520,
     )?;
@@ -290,6 +301,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         1800,
     )?;
@@ -300,6 +312,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut gameplay,
             &mut terrain,
             &objects,
+            &liquids,
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -323,6 +336,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut gameplay,
             &mut terrain,
             &objects,
+            &liquids,
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -341,6 +355,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut gameplay,
             &mut terrain,
             &objects,
+            &liquids,
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -369,6 +384,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut gameplay,
         &mut terrain,
         &objects,
+        &liquids,
         Some([0.5, 2., 1.]),
         2800,
     )?;

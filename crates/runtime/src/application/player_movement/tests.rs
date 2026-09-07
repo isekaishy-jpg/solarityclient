@@ -485,7 +485,7 @@ pub(super) fn owner() -> Result<(ActiveWorld, LocalMovement), Box<dyn std::error
     Ok((world, owner))
 }
 
-fn apply(
+pub(super) fn apply(
     owner: &mut LocalMovement,
     world: &ActiveWorld,
     effect: PlayerInputEffect,

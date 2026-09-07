@@ -7,6 +7,36 @@ use solarity_systems::MovementGroundProfile;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[test]
+fn remote_swimming_predicts_received_pitch_without_ground_projection() -> TestResult {
+    let (_, motion) = owner()?;
+    let (transform, movement) = motion.snapshot();
+    let mut remote = RemoteUnit::new(motion.identity, transform, movement, 0);
+    let mut message = command(WorldMovementKind::StartSwim, 0x200001, 0, 0.);
+    message.position[2] = 20.;
+    message.context.pitch_radians = Some(0.5);
+    let mut floor = Floor::new()?;
+    remote.receive(message, 0, 0, &mut floor)?;
+    remote.advance(
+        100,
+        [0.5, 2., 1.],
+        MovementGroundProfile::Other,
+        &mut floor,
+        |_| None,
+    )?;
+    let expected =
+        solarity_systems::MovementSwimTrajectory::new(0x200001, 0, 0., 0.5, movement.speeds())?
+            .sample(100)
+            .displacement;
+    assert!(
+        (remote.snapshot().0.position() - glam::Vec3::new(0., 0., 20.) - expected).length()
+            < 0.00001
+    );
+    assert_eq!(remote.snapshot().1.context().pitch_radians, Some(0.5));
+    assert_eq!(remote.snapshot().1.flags() & 0x200000, 0x200000);
+    Ok(())
+}
+
 fn command(kind: WorldMovementKind, flags: u64, timestamp_ms: u32, x: f32) -> RemoteMovement {
     RemoteMovement {
         kind,

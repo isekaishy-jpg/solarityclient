@@ -84,3 +84,6 @@ mod vehicle;
 mod world;
 #[path = "stock_seed/world_model_registration.rs"]
 mod world_model_registration;
+
+#[path = "stock_seed/movement_swimming.rs"]
+mod movement_swimming;

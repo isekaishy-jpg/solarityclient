@@ -58,6 +58,7 @@ pub enum RuntimeMovementOwner {
 #[derive(Default)]
 pub struct RuntimeMovementQuery {
     inner: RuntimeStaticMovementQuery,
+    pub(super) water: Vec<MovementCollisionTriangle>,
     interval_bounds: Option<MovementIntervalBounds>,
 }
 
@@ -79,6 +80,12 @@ impl RuntimeMovementQuery {
     #[must_use]
     pub fn triangles(&self) -> &[MovementCollisionTriangle] {
         self.inner.triangles()
+    }
+
+    /// Returns the separately ordered, inverted swimming surface bank.
+    #[must_use]
+    pub fn water_triangles(&self) -> &[MovementCollisionTriangle] {
+        &self.water
     }
 
     /// Resolves the collision solver's selected face to its owning lifetime.
@@ -105,7 +112,7 @@ impl RuntimeMovementQuery {
         &mut self,
         frame: MovementTransportFrame,
     ) -> Result<(), RuntimeStaticMovementError> {
-        for triangle in &mut self.inner.triangles {
+        for triangle in self.inner.triangles.iter_mut().chain(&mut self.water) {
             match frame.local_triangle(triangle) {
                 Ok(local) => *triangle = local,
                 Err(error) => {
@@ -119,6 +126,7 @@ impl RuntimeMovementQuery {
 
     pub(super) fn clear(&mut self) {
         self.inner.clear();
+        self.water.clear();
         self.interval_bounds = None;
     }
 }

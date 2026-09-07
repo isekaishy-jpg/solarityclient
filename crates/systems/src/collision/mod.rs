@@ -25,6 +25,7 @@ pub use liquid::{
 pub use m2_model::{M2CollisionError, M2CollisionScene, PlacedM2Collision};
 pub use movement_collection::{
     MovementBspCacheMode, MovementCollectionError, MovementCollisionBounds, MovementTerrainChunks,
+    append_terrain_liquid_movement,
 };
 pub use terrain::{
     TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh, TerrainRegistrationPoint,

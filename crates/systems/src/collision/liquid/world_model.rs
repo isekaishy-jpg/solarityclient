@@ -95,6 +95,30 @@ impl PlacedWorldModelCollision {
             liquids,
         )
     }
+
+    /// Queries the unit's registered group and transforms the surface to world Z
+    /// as 7A1A30 does before publishing the spatial record consumed by 77F1E0.
+    ///
+    /// # Errors
+    /// Rejects invalid points/groups and missing admitted LiquidType rows.
+    pub fn registered_unit_liquid(
+        &self,
+        group: usize,
+        point: Vec3,
+        liquids: &LiquidTypeCatalog,
+    ) -> Result<Option<SubmergedLiquid>, SubmergedLiquidError> {
+        let Some(mut sample) = self.registered_submerged_liquid(group, point, liquids)? else {
+            return Ok(None);
+        };
+        let local = transform_point(self.inverse_transform, point);
+        sample.surface_height = transform_point(
+            self.transform,
+            Vec3::new(local.x, local.y, sample.surface_height),
+        )
+        .z;
+        sample.depth = sample.surface_height - point.z;
+        Ok(Some(sample))
+    }
 }
 
 /// Inclusive native 75B5B0 point-box test; no expanded render tolerance.

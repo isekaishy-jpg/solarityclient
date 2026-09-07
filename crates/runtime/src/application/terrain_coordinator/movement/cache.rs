@@ -30,6 +30,7 @@ pub struct RuntimeMovementGeometry<'a> {
     output: &'a mut RuntimeMovementQuery,
     bounds: Option<MovementCollisionBounds>,
     frame: Option<MovementTransportFrame>,
+    swimming: bool,
     failure: Option<RuntimeMovementGeometryFailure>,
 }
 
@@ -100,6 +101,7 @@ impl<'a> RuntimeMovementGeometry<'a> {
             output,
             bounds: None,
             frame: None,
+            swimming: false,
             failure: None,
         }
     }
@@ -121,6 +123,27 @@ impl<'a> RuntimeMovementGeometry<'a> {
         &mut self,
         request: MovementIntervalRequest,
     ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
+        self.swimming = false;
+        self.collect_current_interval(request)
+    }
+
+    /// Collects an interval with 75FF90's separate water surface bank enabled.
+    ///
+    /// # Errors
+    /// Invalid inputs, geometry, or stale references invalidate both banks.
+    pub fn collect_swimming_interval(
+        &mut self,
+        request: MovementIntervalRequest,
+    ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
+        self.swimming = true;
+        self.collect_current_interval(request)
+    }
+
+    /// Shares bounds admission while retaining the selected bank policy on refresh.
+    fn collect_current_interval(
+        &mut self,
+        request: MovementIntervalRequest,
+    ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
         self.bounds = None;
         self.failure = None;
         self.output.clear();
@@ -137,6 +160,7 @@ impl<'a> RuntimeMovementGeometry<'a> {
             self.output,
         )?;
         if residency == RuntimeStaticMovementResidency::Ready {
+            self.collect_water(bounds.query())?;
             self.localize_candidates()?;
             self.output.set_interval_bounds(bounds);
             self.bounds = Some(bounds.query());
@@ -187,10 +211,27 @@ impl<'a> RuntimeMovementGeometry<'a> {
             self.output,
         )?;
         if residency == RuntimeStaticMovementResidency::Ready {
+            self.collect_water(refresh)?;
             self.localize_candidates()?;
             self.bounds = Some(refresh);
         }
         Ok(residency)
+    }
+
+    /// Publishes water faces only alongside an already complete ordinary bank.
+    fn collect_water(
+        &mut self,
+        bounds: MovementCollisionBounds,
+    ) -> Result<(), RuntimeStaticMovementError> {
+        if self.swimming
+            && let Err(error) = self
+                .terrain
+                .collect_swimming_surfaces(bounds, &mut self.output.water)
+        {
+            self.output.clear();
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Native collection converts complete world faces once, preserving owner order.
@@ -231,6 +272,12 @@ impl<'a> RuntimeMovementGeometry<'a> {
     /// invalid until the caller begins a new interval.
     pub fn take_failure(&mut self) -> Option<RuntimeMovementGeometryFailure> {
         self.failure.take()
+    }
+}
+
+impl solarity_systems::MovementSwimGeometry for RuntimeMovementGeometry<'_> {
+    fn water_triangles(&self) -> &[MovementCollisionTriangle] {
+        self.output.water_triangles()
     }
 }
 

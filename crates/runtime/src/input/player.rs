@@ -50,6 +50,11 @@ impl PlayerInputState {
         self.bits &= !0x40000;
     }
 
+    /// 5FBE70 clears the keyboard pitch axis after camera pitch dispatch.
+    pub(crate) fn clear_active_pitch(&mut self) {
+        self.bits &= !0x80000;
+    }
+
     /// Ordinary held edges still enter InputControl when no mover is selected;
     /// native 5FBBC0 then returns without resolving active axes.
     pub(crate) fn record_without_mover(&mut self, action: UiMovementAction) {

@@ -1001,6 +1001,10 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         .ok_or("camera liquid was not selected")?;
     assert_eq!(submerged.liquid_type, 2);
     assert_eq!(submerged.depth, 50.);
+    let unit_liquid = terrain
+        .unit_submerged_liquid(Vec3::new(liquid_x, liquid_y, 150.), &liquids)?
+        .ok_or("unit liquid was not selected")?;
+    assert_eq!(unit_liquid, submerged);
     assert!(
         terrain
             .camera_submerged_liquid(Vec3::new(liquid_x, liquid_y, 250.), &liquids)?

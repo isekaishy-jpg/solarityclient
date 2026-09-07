@@ -1,6 +1,7 @@
 //! Ordered resident movement geometry selection from build 12340.
 
 mod bounds;
+mod liquid;
 mod terrain_grid;
 mod triangle;
 mod world_model;
@@ -9,6 +10,7 @@ use super::MovementSweepError;
 use thiserror::Error;
 
 pub use bounds::MovementCollisionBounds;
+pub use liquid::append_terrain_liquid_movement;
 pub use terrain_grid::MovementTerrainChunks;
 pub(super) use terrain_grid::terrain_square_bounds;
 pub(super) use triangle::{calculated_triangle, transform_point};
