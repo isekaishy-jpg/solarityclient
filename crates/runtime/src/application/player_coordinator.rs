@@ -2079,6 +2079,34 @@ impl RuntimePlayerPresentation {
         })
     }
 
+    /// Model-authored body dimensions also apply before GPU model residency.
+    pub(super) fn remote_movement_dimensions(
+        &self,
+        world: &ActiveWorld,
+        guid: u64,
+    ) -> Result<Option<[f32; 3]>, UnitModelAppearanceError> {
+        let appearance = match resolve_unit_model(world, guid, &self.creatures, &self.characters) {
+            Ok(appearance) => appearance,
+            Err(
+                UnitModelAppearanceError::MissingObjectPresentation { .. }
+                | UnitModelAppearanceError::MissingUnitPresentation { .. }
+                | UnitModelAppearanceError::MissingUnitIdentity { .. }
+                | UnitModelAppearanceError::MissingPlayerAppearance { .. },
+            ) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let body = appearance.body();
+        let scale = body.display().model_scale()
+            * body.model().model_scale()
+            * appearance.object_scale().max(1.0);
+        let [width, height] = body.model().collision_extent();
+        Ok(Some([
+            width * scale * 0.5,
+            height * scale,
+            appearance.object_scale().max(1.0),
+        ]))
+    }
+
     /// Returns the current pre-collision camera orbit for the resident player.
     #[must_use]
     pub fn camera_pose(&self) -> Option<PlayerCameraPose> {

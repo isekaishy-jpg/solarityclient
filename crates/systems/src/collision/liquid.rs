@@ -1,5 +1,10 @@
 //! Point sampling over normalized ADT MH2O liquid surfaces.
 
+mod query;
+mod world_model;
+pub use query::SubmergedLiquid;
+pub use world_model::SubmergedLiquidError;
+
 use glam::{Vec2, Vec3};
 use solarity_asset::{DecodedTerrainTile, TerrainLiquidLayer};
 use thiserror::Error;

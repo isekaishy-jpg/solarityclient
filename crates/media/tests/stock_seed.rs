@@ -26,6 +26,8 @@ mod audio_engine;
 mod audio_liquid;
 #[path = "stock_seed/audio/spatial.rs"]
 mod audio_spatial;
+#[path = "stock_seed/audio/zone.rs"]
+mod audio_zone;
 #[path = "stock_seed/cinematic.rs"]
 mod cinematic;
 #[path = "stock_seed/support/mod.rs"]

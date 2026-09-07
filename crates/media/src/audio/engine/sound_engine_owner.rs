@@ -6,7 +6,9 @@ use std::rc::Rc;
 
 use solarity_asset::AssetStore;
 
-use crate::audio::backend::{SoundOutput, SoundOutputTarget};
+use crate::audio::backend::{
+    SoundOutput, SoundOutputConfiguration, SoundOutputQuality, SoundOutputTarget,
+};
 
 use super::{SoundEngine, SoundEngineError, SoundEngineSettings, SoundSoftwareChannelCount};
 
@@ -35,7 +37,28 @@ impl OwnedSoundEngine {
         software_channel_count: SoundSoftwareChannelCount,
         settings: SoundEngineSettings,
     ) -> Result<Self, SoundEngineError> {
-        let output = Rc::new(SoundOutput::open(target)?);
+        Self::load_configured(
+            store,
+            SoundOutputConfiguration {
+                target,
+                quality: SoundOutputQuality::Medium,
+            },
+            software_channel_count,
+            settings,
+        )
+    }
+
+    /// Opens the requested device and quality, then loads the stock sound catalog.
+    ///
+    /// # Errors
+    /// Returns output, catalog, decoder, or track allocation failures.
+    pub fn load_configured(
+        store: &mut AssetStore,
+        configuration: SoundOutputConfiguration,
+        software_channel_count: SoundSoftwareChannelCount,
+        settings: SoundEngineSettings,
+    ) -> Result<Self, SoundEngineError> {
+        let output = Rc::new(SoundOutput::open_configured(configuration)?);
         let output_pointer = Rc::as_ptr(&output);
         // SAFETY: `output_pointer` points into a stable shared allocation whose
         // contents are never moved or mutably borrowed. The owner retains it; field
@@ -50,6 +73,28 @@ impl OwnedSoundEngine {
             engine,
             _output: output,
         })
+    }
+
+    /// Applies an explicit native sound restart without replacing logical owners.
+    /// Active tracks retire; pending archive completions cannot restart old sounds.
+    ///
+    /// # Errors
+    /// Returns output creation or track allocation failures before replacing output.
+    pub fn restart(
+        &mut self,
+        configuration: SoundOutputConfiguration,
+        software_channel_count: SoundSoftwareChannelCount,
+    ) -> Result<(), SoundEngineError> {
+        let output = Rc::new(SoundOutput::open_configured(configuration)?);
+        let output_pointer = Rc::as_ptr(&output);
+        // SAFETY: this stable allocation is retained below before the old output
+        // retires. restart_output either fails without retaining it, or replaces
+        // and destroys every old track. Scoped engine callbacks cannot expose it.
+        let output_reference = unsafe { &*output_pointer };
+        self.engine
+            .restart_output(output_reference, software_channel_count)?;
+        self._output = output;
+        Ok(())
     }
 
     /// Reads sound state while keeping the output lifetime inside this owner.

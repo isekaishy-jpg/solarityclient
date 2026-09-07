@@ -431,7 +431,7 @@ pub(super) fn skin_fixture() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(cursor.into_inner())
 }
 
-fn root_fixture() -> Vec<u8> {
+pub(super) fn root_fixture() -> Vec<u8> {
     let mut bytes = Vec::new();
     push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
     let mut header = vec![0_u8; 64];
@@ -449,7 +449,7 @@ fn root_fixture() -> Vec<u8> {
     bytes
 }
 
-fn group_fixture(polygon_flags: u8) -> Vec<u8> {
+pub(super) fn group_fixture(polygon_flags: u8) -> Vec<u8> {
     let mut nested = Vec::new();
     push_chunk(&mut nested, *b"YPOM", &[polygon_flags, 0xff]);
     let mut indices = Vec::new();

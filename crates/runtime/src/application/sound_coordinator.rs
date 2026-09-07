@@ -9,11 +9,11 @@ use solarity_asset::{
 use solarity_cpu::{CpuError, CpuExecutor};
 use solarity_media::{
     AdvancedSoundCreateRequest, AdvancedSoundListener, AdvancedSoundService,
-    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategory, SoundCategorySettings,
-    SoundChannel, SoundConcurrencyMode, SoundEngineError, SoundEngineSettings, SoundGain,
-    SoundLoadHandle, SoundLoadRequest, SoundLoopMode, SoundOutputInfo, SoundOutputTarget,
-    SoundPlayRequest, SoundPlayback, SoundResidencyPolicy, SoundSoftwareChannelCount,
-    SoundVariationMode, SoundVoiceHandle,
+    AdvancedSoundServiceError, OwnedSoundEngine, SoundCategorySettings, SoundChannel,
+    SoundConcurrencyMode, SoundEngineError, SoundEngineSettings, SoundFade, SoundFadeDirection,
+    SoundGain, SoundLoadHandle, SoundLoadRequest, SoundLoopMode, SoundOutputInfo,
+    SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
+    SoundSoftwareChannelCount, SoundVariationMode, SoundVoiceHandle,
 };
 use solarity_rendering::WorldCameraFrame;
 use solarity_ui::{GlueManager, UiGlueMediaAction};
@@ -23,21 +23,40 @@ use crate::random::BlizzardRand;
 use crate::time::RealmClock;
 
 use super::frame_profile::RuntimeFrameProfile;
-use super::terrain_frame::RuntimeM2Event;
 
 mod loader;
+mod model;
 mod movement;
+mod output;
+mod vocal;
+mod zone;
 
 use loader::RuntimeSoundLoader;
 pub(super) use movement::UnitSoundContext;
 
+/// Live sound policy and publication of a resolved platform output selection.
 pub(super) trait SoundCvarSource {
     fn sound_cvar(&self, name: &str) -> Option<String>;
+    fn publish_sound_output(
+        &self,
+        names: Vec<String>,
+        index: usize,
+        name: &str,
+    ) -> Result<(), solarity_ui::UiScriptError>;
 }
 
 impl SoundCvarSource for GlueManager {
     fn sound_cvar(&self, name: &str) -> Option<String> {
         self.cvar_value(name)
+    }
+    fn publish_sound_output(
+        &self,
+        names: Vec<String>,
+        index: usize,
+        name: &str,
+    ) -> Result<(), solarity_ui::UiScriptError> {
+        self.set_sound_output_devices(names);
+        self.set_sound_output_selection(index, name)
     }
 }
 
@@ -45,13 +64,30 @@ impl SoundCvarSource for super::world_ui::RuntimeWorldUi {
     fn sound_cvar(&self, name: &str) -> Option<String> {
         self.cvar_value(name)
     }
+    fn publish_sound_output(
+        &self,
+        names: Vec<String>,
+        index: usize,
+        name: &str,
+    ) -> Result<(), solarity_ui::UiScriptError> {
+        self.publish_sound_output(names, index, name)
+    }
 }
-
-const M2_ONE_SHOT_SOUND_IDENTIFIERS: [[u8; 4]; 3] = [*b"$SND", *b"$CSD", *b"$DSO"];
 
 /// Failure while applying stock audio policy at the composition root.
 #[derive(Debug, Error)]
 pub enum RuntimeSoundError {
+    /// A resolved device could not be published to the stock sound menu.
+    #[error(transparent)]
+    Ui(#[from] solarity_ui::UiScriptError),
+    /// An output CVar cannot be decoded as the native signed integer.
+    #[error("sound output CVar {name} has invalid integer value {value:?}")]
+    InvalidOutputOption {
+        /// Exact registered output setting.
+        name: &'static str,
+        /// Unmodified live value.
+        value: String,
+    },
     /// A movement sound lookup table could not be decoded.
     #[error(transparent)]
     Asset(#[from] solarity_asset::AssetError),
@@ -95,6 +131,14 @@ pub enum RuntimeSoundError {
         /// Unmodified live text.
         value: String,
     },
+    /// A registered listener offset could not be represented as a finite distance.
+    #[error("sound listener offset {name} has invalid value {value:?}")]
+    InvalidListenerOffset {
+        /// Exact optional CVar name.
+        name: &'static str,
+        /// Unmodified live text.
+        value: String,
+    },
     /// `Sound_NumChannels` is not a signed integer that stock can clamp.
     #[error("Sound_NumChannels must be a signed integer, got {value:?}")]
     InvalidVoiceCapacity {
@@ -128,9 +172,12 @@ pub enum RuntimeSoundError {
 pub(crate) struct RuntimeSoundCoordinator {
     assets: AssetStoreHandle,
     engine: OwnedSoundEngine,
+    output: output::RuntimeSoundOutput,
     loader: RuntimeSoundLoader,
     advanced: AdvancedSoundService,
     glue_music: Option<RuntimeGlueVoice>,
+    /// 986080 reselects this kit when its admitted track finishes.
+    glue_music_repeat: Option<u32>,
     glue_ambience: Option<RuntimeGlueVoice>,
     resident_tile: Option<TerrainTileIndex>,
     staged_emitters: Option<Vec<StagedTerrainEmitter>>,
@@ -139,9 +186,34 @@ pub(crate) struct RuntimeSoundCoordinator {
     movement_events: std::collections::VecDeque<super::unit_animation::UnitMovementAnimationEvent>,
     movement_loads: Vec<movement::UnitSoundLoad>,
     movement_voices: Vec<SoundVoiceHandle>,
+    model_sounds: Vec<model::ModelSound>,
+    unit_vocals: Vec<vocal::UnitVocal>,
+    world_listener: Option<AdvancedSoundListener>,
+    zone: solarity_media::ZoneSoundService,
+    zone_references: Option<solarity_asset::AreaSoundReferences>,
+    next_zone_references: Option<solarity_asset::AreaSoundReferences>,
+    zone_overrides: solarity_asset::ZoneSoundOverrideCatalog,
+    chunk_references: Option<solarity_asset::AreaSoundReferences>,
+    next_chunk_references: Option<solarity_asset::AreaSoundReferences>,
+    state_references: Option<solarity_asset::AreaSoundReferences>,
+    next_state_references: Option<solarity_asset::AreaSoundReferences>,
+    started: Instant,
+    last_fade_update: Instant,
 }
 
 impl RuntimeSoundCoordinator {
+    /// Focus policy mutes the output bus without rejecting new sound requests.
+    pub(crate) fn apply_focus_policy(
+        &mut self,
+        cvars: &dyn SoundCvarSource,
+        focused: bool,
+    ) -> Result<(), RuntimeSoundError> {
+        let muted = !focused && !boolean(cvars, "Sound_EnableSoundWhenGameIsInBG")?;
+        self.engine
+            .with_engine_mut(|engine| engine.set_background_muted(muted))?;
+        Ok(())
+    }
+
     /// Opens the explicit output after SDL and UI CVar registration exist.
     pub(crate) fn start(
         assets: AssetStoreHandle,
@@ -151,19 +223,35 @@ impl RuntimeSoundCoordinator {
     ) -> Result<Self, RuntimeSoundError> {
         let policy = SoundPolicy::read(glue)?;
         let software_channel_count = software_channel_count(glue)?;
-        let engine = OwnedSoundEngine::load(
+        let localized = glue.localized_text("SYSTEM_DEFAULT")?;
+        // 8783B0 falls back when the localization token is absent or empty.
+        let default_name = if localized == "SYSTEM_DEFAULT" {
+            "System Default".to_owned()
+        } else {
+            localized
+        };
+        let output = output::RuntimeSoundOutput::resolve(glue, target, default_name)?;
+        let engine = OwnedSoundEngine::load_configured(
             &mut assets.borrow_mut(),
-            target,
+            output.configuration(glue)?,
             software_channel_count,
             policy.settings,
         )?;
+        output.publish(glue)?;
         let movement_sounds = solarity_asset::MovementSoundCatalog::load(&mut assets.borrow_mut())?;
+        let zone = solarity_media::ZoneSoundService::new(solarity_asset::ZoneSoundCatalog::load(
+            &mut assets.borrow_mut(),
+        )?);
+        let zone_overrides =
+            solarity_asset::ZoneSoundOverrideCatalog::load(&mut assets.borrow_mut())?;
         Ok(Self {
             assets,
             engine,
+            output,
             loader: RuntimeSoundLoader::new(catalog),
             advanced: AdvancedSoundService::new(),
             glue_music: None,
+            glue_music_repeat: None,
             glue_ambience: None,
             resident_tile: None,
             staged_emitters: None,
@@ -172,6 +260,19 @@ impl RuntimeSoundCoordinator {
             movement_events: std::collections::VecDeque::new(),
             movement_loads: Vec::new(),
             movement_voices: Vec::new(),
+            world_listener: None,
+            model_sounds: Vec::new(),
+            unit_vocals: Vec::new(),
+            zone,
+            zone_references: None,
+            next_zone_references: None,
+            zone_overrides,
+            chunk_references: None,
+            next_chunk_references: None,
+            state_references: None,
+            next_state_references: None,
+            started: Instant::now(),
+            last_fade_update: Instant::now(),
         })
     }
 
@@ -259,7 +360,7 @@ impl RuntimeSoundCoordinator {
         while let Some(action) = glue.take_media_action() {
             let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS")
                 .map(|_| (std::time::Instant::now(), format!("{action:?}")));
-            if let Err(error) = self.apply_glue_media_action(action, random) {
+            if let Err(error) = self.apply_glue_media_action(action, random, glue) {
                 tracing::warn!(%error, "Glue audio action was not played");
             }
             if let Some((started, action)) = timing {
@@ -272,12 +373,20 @@ impl RuntimeSoundCoordinator {
         }
         profile.mark("media actions");
         self.poll_loads(cpu)?;
+        self.repeat_glue_music(random)?;
         profile.mark("load completions and encoded retirement");
         Ok(())
     }
 
     /// Advances already selected audio on either side of the Glue/world boundary.
     pub(crate) fn poll_loads(&mut self, cpu: &CpuExecutor) -> Result<(), RuntimeSoundError> {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_fade_update);
+        self.last_fade_update = now;
+        self.engine
+            .with_engine_mut(|engine| engine.advance_fades(elapsed))?;
+        self.collect_model_sounds()?;
+        self.collect_glue_voices()?;
         if let Some(completion) = self
             .engine
             .with_engine_mut(|engine| self.loader.poll(cpu, engine))?
@@ -290,6 +399,11 @@ impl RuntimeSoundCoordinator {
                 }
             };
             self.complete_unit_load(completion.handle, playback)?;
+            self.complete_model_load(completion.handle, playback)?;
+            self.complete_vocal_load(completion.handle, playback)?;
+            self.engine.with_engine_mut(|engine| {
+                self.zone.complete_load(engine, completion.handle, playback)
+            })?;
             for voice in [&mut self.glue_music, &mut self.glue_ambience] {
                 if voice
                     .as_ref()
@@ -306,12 +420,15 @@ impl RuntimeSoundCoordinator {
     }
 
     /// Applies one typed GlueXML audio operation without reordering neighbors.
-    fn apply_glue_media_action(
+    pub(super) fn apply_glue_media_action(
         &mut self,
         action: UiGlueMediaAction,
         random: &mut BlizzardRand,
+        cvars: &dyn SoundCvarSource,
     ) -> Result<(), RuntimeSoundError> {
+        self.collect_glue_voices()?;
         match action {
+            UiGlueMediaAction::RestartSoundSystem => self.restart_output(cvars)?,
             UiGlueMediaAction::PlaySound(name) => {
                 let Some(entry_id) = self
                     .engine
@@ -327,22 +444,19 @@ impl RuntimeSoundCoordinator {
                     SoundLoopMode::Entry,
                     SoundConcurrencyMode::Entry,
                 );
-                self.engine.with_engine_mut(|engine| {
-                    engine.play(&mut self.assets.borrow_mut(), request, &mut || {
-                        random.next_u32()
-                    })
-                })?;
+                if let Some(load) = self.engine.with_engine_mut(|engine| {
+                    engine.begin_load(request, &mut || random.next_u32())
+                })? {
+                    self.loader.queue(load);
+                }
             }
             UiGlueMediaAction::PlaySoundFile(path) => {
                 let path = AssetPath::new(path).map_err(SoundEngineError::from)?;
-                self.engine.with_engine_mut(|engine| {
-                    engine.play_file(
-                        &mut self.assets.borrow_mut(),
-                        &path,
-                        SoundChannel::SCRIPT_SOUND,
-                        SoundLoopMode::Once,
-                    )
-                })?;
+                if let Some(load) = self.engine.with_engine_mut(|engine| {
+                    engine.begin_file_load(&path, SoundChannel::SCRIPT_SOUND, SoundLoopMode::Once)
+                })? {
+                    self.loader.queue(load);
+                }
             }
             UiGlueMediaAction::PlayMusic(path) => {
                 let path = AssetPath::new(path).map_err(SoundEngineError::from)?;
@@ -377,22 +491,10 @@ impl RuntimeSoundCoordinator {
                     return Ok(());
                 }
                 self.stop_glue_music()?;
-                let request = SoundPlayRequest::new(
-                    entry_id,
-                    SoundChannel::MUSIC,
-                    SoundVariationMode::Sequential,
-                    SoundLoopMode::Loop,
-                    SoundConcurrencyMode::Concurrent,
-                );
-                let load = self.engine.with_engine_mut(|engine| {
-                    engine.begin_load(request, &mut || random.next_u32())
-                })?;
-                self.glue_music = self.queue_glue_voice(identity, load);
+                self.glue_music_repeat = Some(entry_id);
+                self.repeat_glue_music(random)?;
             }
-            UiGlueMediaAction::PlayGlueAmbience {
-                name,
-                fade_seconds: _fade_seconds,
-            } => {
+            UiGlueMediaAction::PlayGlueAmbience { name, fade_seconds } => {
                 let Some(entry_id) = self
                     .engine
                     .with_engine(|engine| engine.internal_sound_entry_id(&name))
@@ -408,28 +510,105 @@ impl RuntimeSoundCoordinator {
                 {
                     return Ok(());
                 }
-                self.stop_glue_ambience()?;
+                // 985FB0 retires the replaced ambience over three seconds.
+                self.fade_glue_ambience(3.0)?;
                 let request = SoundPlayRequest::new(
                     entry_id,
                     SoundChannel::AMBIENCE,
-                    SoundVariationMode::Sequential,
+                    SoundVariationMode::Random,
                     SoundLoopMode::Loop,
-                    SoundConcurrencyMode::Concurrent,
+                    SoundConcurrencyMode::Entry,
                 );
                 let load = self.engine.with_engine_mut(|engine| {
                     engine.begin_load(request, &mut || random.next_u32())
                 })?;
+                if let Some(load) = &load {
+                    // 4C6A40 only overrides the voice fade-in for positive input.
+                    let seconds = fade_seconds as f32;
+                    if seconds > 0.0 {
+                        let mut fade = SoundFade::new(SoundGain::MUTED);
+                        fade.retarget_seconds(SoundFadeDirection::In, seconds);
+                        self.engine
+                            .with_engine_mut(|engine| engine.set_load_fade(load.handle(), fade));
+                    }
+                }
                 self.glue_ambience = self.queue_glue_voice(identity, load);
             }
             UiGlueMediaAction::StopMusic => self.stop_glue_music()?,
-            UiGlueMediaAction::StopGlueAmbience => self.stop_glue_ambience()?,
-            UiGlueMediaAction::StopAllSfx {
-                fade_seconds: _fade_seconds,
-            } => {
-                self.engine
-                    .with_engine_mut(|engine| engine.stop_category(SoundCategory::Sfx))?;
+            UiGlueMediaAction::StopGlueAmbience => self.fade_glue_ambience(1.0)?,
+            UiGlueMediaAction::StopAllSfx { fade_seconds } => {
+                self.engine.with_engine_mut(|engine| {
+                    engine.fade_channel_out(SoundChannel::SFX, fade_seconds as f32)
+                })?;
             }
         }
+        Ok(())
+    }
+
+    /// Glue's frame callback (986080) reselects an ended kit using the default
+    /// random variation and authored loop flag. Looping one initially chosen
+    /// file forever would discard the kit's other music variations.
+    fn repeat_glue_music(&mut self, random: &mut BlizzardRand) -> Result<(), RuntimeSoundError> {
+        if self.glue_music.is_some() {
+            return Ok(());
+        }
+        let Some(entry_id) = self.glue_music_repeat else {
+            return Ok(());
+        };
+        let request = SoundPlayRequest::new(
+            entry_id,
+            SoundChannel::MUSIC,
+            SoundVariationMode::Random,
+            SoundLoopMode::Entry,
+            SoundConcurrencyMode::Entry,
+        );
+        let load = self
+            .engine
+            .with_engine_mut(|engine| engine.begin_load(request, &mut || random.next_u32()))?;
+        self.glue_music =
+            self.queue_glue_voice(RuntimeGlueVoiceIdentity::SoundEntry(entry_id), load);
+        Ok(())
+    }
+
+    /// Releases the Glue identity immediately while its engine-owned tail fades.
+    /// The script stop wrapper supplies one second (4DC130), replacement three.
+    fn fade_glue_ambience(&mut self, seconds: f32) -> Result<(), RuntimeSoundError> {
+        if let Some(voice) = self.glue_ambience.take() {
+            self.engine
+                .with_engine_mut(|engine| -> Result<(), SoundEngineError> {
+                    if let Some(load) = voice.load {
+                        engine.cancel_load(load);
+                    }
+                    if let Some(handle) = voice._handle {
+                        match engine.voice_fade(handle) {
+                            Ok(mut fade) => {
+                                fade.retarget_seconds(SoundFadeDirection::Out, seconds);
+                                engine.set_voice_fade(handle, fade)?;
+                            }
+                            Err(SoundEngineError::UnknownVoice) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    Ok(())
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Releases finished script/Glue identities so later calls can play again.
+    fn collect_glue_voices(&mut self) -> Result<(), RuntimeSoundError> {
+        self.engine
+            .with_engine_mut(|engine| -> Result<(), SoundEngineError> {
+                for slot in [&mut self.glue_music, &mut self.glue_ambience] {
+                    if let Some(voice) = slot.as_ref()
+                        && !voice.is_live(engine)?
+                        && let Some(voice) = slot.take()
+                    {
+                        voice.stop(engine)?;
+                    }
+                }
+                Ok(())
+            })?;
         Ok(())
     }
 
@@ -451,7 +630,11 @@ impl RuntimeSoundCoordinator {
 
     /// Cancels pending Glue reads and observes worker completion before pool shutdown.
     pub(crate) fn shutdown(&mut self) -> Result<(), RuntimeSoundError> {
+        self.clear_unit_vocals()?;
+        self.engine
+            .with_engine_mut(|engine| self.zone.clear(engine))?;
         self.clear_unit_sounds()?;
+        self.clear_model_sounds()?;
         self.stop_glue_music()?;
         self.stop_glue_ambience()?;
         self.engine
@@ -460,17 +643,18 @@ impl RuntimeSoundCoordinator {
 
     /// Stops the single process-owned Glue music generation.
     fn stop_glue_music(&mut self) -> Result<(), RuntimeSoundError> {
-        self.engine
-            .with_engine_mut(|engine| engine.stop_category(SoundCategory::Music))?;
-        self.glue_music = None;
+        self.glue_music_repeat = None;
+        if let Some(voice) = self.glue_music.take() {
+            self.engine.with_engine_mut(|engine| voice.stop(engine))?;
+        }
         Ok(())
     }
 
     /// Stops the single process-owned Glue ambience generation.
     fn stop_glue_ambience(&mut self) -> Result<(), RuntimeSoundError> {
-        self.engine
-            .with_engine_mut(|engine| engine.stop_category(SoundCategory::Ambience))?;
-        self.glue_ambience = None;
+        if let Some(voice) = self.glue_ambience.take() {
+            self.engine.with_engine_mut(|engine| voice.stop(engine))?;
+        }
         Ok(())
     }
 
@@ -493,8 +677,19 @@ impl RuntimeSoundCoordinator {
 
     /// Stops all resident world sounds and releases their terrain identity.
     pub(crate) fn disconnect(&mut self) -> Result<(), RuntimeSoundError> {
+        self.clear_unit_vocals()?;
+        self.engine
+            .with_engine_mut(|engine| self.zone.clear(engine))?;
+        self.zone_references = None;
+        self.next_zone_references = None;
+        self.chunk_references = None;
+        self.next_chunk_references = None;
+        self.state_references = None;
+        self.next_state_references = None;
+        self.world_listener = None;
         self.movement_events.clear();
         self.clear_unit_sounds()?;
+        self.clear_model_sounds()?;
         self.engine
             .with_engine_mut(|engine| self.advanced.clear(engine))?;
         self.resident_tile = None;
@@ -511,13 +706,56 @@ impl RuntimeSoundCoordinator {
         glue: &dyn SoundCvarSource,
         clock: &RealmClock,
         camera: WorldCameraFrame,
+        player_position: Option<Vec3>,
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeSoundError> {
         let policy = SoundPolicy::read(glue)?;
         self.engine
             .with_engine_mut(|engine| engine.set_settings(policy.settings))?;
 
-        let listener = AdvancedSoundListener::from_world_camera(camera);
+        let listener = if boolean(glue, "Sound_ListenerAtCharacter")?
+            && let Some(position) = player_position
+        {
+            AdvancedSoundListener::at_character(
+                camera,
+                position,
+                listener_offset(glue, "Sound_ListenerBackDist", 2.0)?,
+                listener_offset(glue, "Sound_ListenerUpDist", 4.0)?,
+            )
+            .map_err(SoundEngineError::from)?
+        } else {
+            AdvancedSoundListener::from_world_camera(camera)
+        };
+        self.world_listener = Some(listener);
+        self.engine
+            .with_engine_mut(|engine| engine.update_listener(listener))?;
+        self.advance_world_sounds(glue, clock, listener, random)
+    }
+
+    /// Keeps music selection and emitter timers alive while Vulkan is minimized.
+    pub(crate) fn update_suspended_world(
+        &mut self,
+        cvars: &dyn SoundCvarSource,
+        clock: &RealmClock,
+        random: &mut BlizzardRand,
+    ) -> Result<(), RuntimeSoundError> {
+        let settings = SoundPolicy::read(cvars)?.settings;
+        self.engine
+            .with_engine_mut(|engine| engine.set_settings(settings))?;
+        if let Some(listener) = self.world_listener {
+            self.advance_world_sounds(cvars, clock, listener, random)?;
+        }
+        Ok(())
+    }
+
+    fn advance_world_sounds(
+        &mut self,
+        glue: &dyn SoundCvarSource,
+        clock: &RealmClock,
+        listener: AdvancedSoundListener,
+        random: &mut BlizzardRand,
+    ) -> Result<(), RuntimeSoundError> {
+        self.update_zone(glue, clock, random)?;
         if let Some(emitters) = self.staged_emitters.take() {
             self.engine
                 .with_engine_mut(|engine| self.advanced.clear(engine))?;
@@ -557,50 +795,6 @@ impl RuntimeSoundCoordinator {
             .with_engine_mut(|engine| engine.collect_unused_encoded());
         Ok(())
     }
-
-    /// Dispatches the model callback families routed to `playSoundEntryAt`.
-    ///
-    /// `$DSL` and every non-audio callback remain with their future owning
-    /// subsystem. In particular, a loop callback cannot be represented as a
-    /// one-shot without losing the stock stop/update lifecycle.
-    pub(crate) fn play_m2_events(
-        &mut self,
-        events: &[RuntimeM2Event],
-        camera: WorldCameraFrame,
-        random: &mut BlizzardRand,
-    ) -> Result<usize, RuntimeSoundError> {
-        let listener = AdvancedSoundListener::from_world_camera(camera);
-        let mut dispatched = 0;
-        for event in events {
-            if !M2_ONE_SHOT_SOUND_IDENTIFIERS.contains(&event.identifier()) {
-                continue;
-            }
-            let request = SoundPlayRequest::new(
-                event.data(),
-                SoundChannel::SFX,
-                SoundVariationMode::Sequential,
-                SoundLoopMode::Once,
-                SoundConcurrencyMode::Entry,
-            );
-            self.engine.with_engine_mut(|engine| {
-                engine.play_positioned(
-                    &mut self.assets.borrow_mut(),
-                    request,
-                    listener,
-                    event.position(),
-                    &mut || random.next_u32(),
-                )
-            })?;
-            tracing::trace!(
-                identifier = ?event.identifier(),
-                sound_entry_id = event.data(),
-                owner_guid = ?event.owner_guid(),
-                "dispatched M2 positional sound callback"
-            );
-            dispatched += 1;
-        }
-        Ok(dispatched)
-    }
 }
 
 /// Copy of one decoded MCSE record retained across the frame boundary.
@@ -619,6 +813,39 @@ struct RuntimeGlueVoice {
 }
 
 impl RuntimeGlueVoice {
+    /// Finished or stolen script voices must stop suppressing zone music.
+    fn is_live(&self, engine: &solarity_media::SoundEngine<'_>) -> Result<bool, SoundEngineError> {
+        if let Some(load) = self.load {
+            return Ok(engine.is_load_pending(load));
+        }
+        let Some(voice) = self._handle else {
+            return Ok(false);
+        };
+        match engine.voice_state(voice) {
+            Ok(
+                solarity_media::SoundVoiceState::Playing | solarity_media::SoundVoiceState::Paused,
+            ) => Ok(true),
+            Ok(solarity_media::SoundVoiceState::Stopped) | Err(SoundEngineError::UnknownVoice) => {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Releases only this script/Glue generation, preserving other channel owners.
+    fn stop(self, engine: &mut solarity_media::SoundEngine<'_>) -> Result<(), SoundEngineError> {
+        if let Some(load) = self.load {
+            engine.cancel_load(load);
+        }
+        if let Some(voice) = self._handle {
+            match engine.stop(voice) {
+                Ok(()) | Err(SoundEngineError::UnknownVoice) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
     /// Retains only playback generations actually admitted by live CVar policy.
     fn started(identity: RuntimeGlueVoiceIdentity, playback: SoundPlayback) -> Option<Self> {
         match playback {
@@ -701,7 +928,7 @@ impl SoundPolicy {
 
 /// Applies the signed initialization clamp recovered from SoundEngine.cpp.
 fn software_channel_count(
-    glue: &GlueManager,
+    glue: &dyn SoundCvarSource,
 ) -> Result<SoundSoftwareChannelCount, RuntimeSoundError> {
     let text = cvar(glue, "Sound_NumChannels")?;
     let configured =
@@ -736,4 +963,20 @@ fn gain(glue: &dyn SoundCvarSource, name: &'static str) -> Result<SoundGain, Run
             value: value.clone(),
         })?;
     SoundGain::new(parsed).map_err(|_source| RuntimeSoundError::InvalidGain { name, value })
+}
+
+/// 4FA5F0 uses offsets 2/4 when these optional developer CVars are unregistered.
+fn listener_offset(
+    source: &dyn SoundCvarSource,
+    name: &'static str,
+    default: f32,
+) -> Result<f32, RuntimeSoundError> {
+    let Some(value) = source.sound_cvar(name) else {
+        return Ok(default);
+    };
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .ok_or(RuntimeSoundError::InvalidListenerOffset { name, value })
 }

@@ -445,7 +445,7 @@ fn root_registration_matches_original_group_flags_containment_and_portal_precede
     Ok(())
 }
 
-fn chunk_data_mut(bytes: &mut [u8], magic: [u8; 4]) -> &mut [u8] {
+pub(super) fn chunk_data_mut(bytes: &mut [u8], magic: [u8; 4]) -> &mut [u8] {
     let mut offset = 0;
     while offset + 8 <= bytes.len() {
         let size = u32::from_le_bytes(std::array::from_fn(|i| bytes[offset + 4 + i])) as usize;
@@ -531,7 +531,7 @@ fn floor_probe_matches_original_primary_fallback_cache_and_bsp_order() -> Result
     Ok(())
 }
 
-fn floor_fixture(profile: usize, geometry: usize, topology: usize) -> Vec<u8> {
+pub(super) fn floor_fixture(profile: usize, geometry: usize, topology: usize) -> Vec<u8> {
     let positions: [[f32; 3]; 8] = [
         [-3., -3., 0.],
         [3., -3., 0.],
@@ -730,7 +730,7 @@ fn portal_probe_matches_original_edges_sides_proximity_and_ties() -> Result<(), 
     Ok(())
 }
 
-fn portal_fixture(
+pub(super) fn portal_fixture(
     normal: [f32; 3],
     distance: f32,
     side: i16,

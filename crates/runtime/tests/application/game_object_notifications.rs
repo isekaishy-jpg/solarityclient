@@ -1,17 +1,11 @@
 //! Ordered handler dispatch through encrypted packet decoding and ECS admission.
 
-#[path = "../support/transfer_authentication.rs"]
-mod transfer_authentication;
-#[path = "../support/transfer_world_server.rs"]
-#[allow(dead_code)]
-mod transfer_world_server;
-
 use super::*;
 use crate::application::gameplay_session::{GameplayUpdateError, apply_object_updates_with};
+use crate::test_network::{TestError, WorldServer};
 use glam::Vec3;
 use solarity_ecs::{WorldBootstrap, WorldMapId};
 use solarity_systems::project_object_fields;
-use transfer_world_server::{TestError, WorldServer};
 
 #[test]
 fn packet_notifications_compare_live_words_after_all_raw_blocks() -> Result<(), TestError> {
@@ -86,6 +80,7 @@ fn packet_notifications_compare_live_words_after_all_raw_blocks() -> Result<(), 
                 apply_object_updates_with::<GameplayUpdateError>(
                     &mut world,
                     &batch,
+                    0,
                     &mut |world, identity, notification| {
                         assert_eq!(Some(identity), world.object_identity(9));
                         assert_eq!(

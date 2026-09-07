@@ -22,6 +22,7 @@ pub struct ActiveWorld {
     storage: World,
     objects: ObjectRegistry,
     local_player: EntityId,
+    world_state_values: super::WorldStateValues,
 }
 
 impl ActiveWorld {
@@ -57,6 +58,7 @@ impl ActiveWorld {
             storage,
             objects,
             local_player,
+            world_state_values: super::WorldStateValues::default(),
         }
     }
 
@@ -64,6 +66,16 @@ impl ActiveWorld {
     #[must_use]
     pub const fn map_id(&self) -> WorldMapId {
         self.map_id
+    }
+
+    /// Borrows server world-state fields, including zero for unknown keys.
+    pub const fn world_state_values(&self) -> &super::WorldStateValues {
+        &self.world_state_values
+    }
+
+    /// Borrows the replicated owner for ordered packet dispatch and transfer.
+    pub const fn world_state_values_mut(&mut self) -> &mut super::WorldStateValues {
+        &mut self.world_state_values
     }
 
     /// Returns the Shipyard entity controlled by this client.

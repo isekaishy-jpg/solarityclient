@@ -229,7 +229,59 @@ fn world_model_decodes_group_liquid_grid() -> Result<(), Box<dyn Error>> {
     assert_eq!(liquid.vertices()[0].texture_s(), 0x0201);
     assert_eq!(liquid.vertices()[0].texture_t(), 0x0403);
     assert_eq!(liquid.vertices()[0].height(), 5.0);
-    assert_eq!(group.resolve_liquid_type(model.flags(), Some(0x41)), 14);
+    assert_eq!(group.resolve_liquid_type(model.flags()), 14);
+    Ok(())
+}
+
+/// 7D82E0/7C8D80 resolve a single group type before any point is queried.
+#[test]
+fn world_model_liquid_type_uses_first_valid_tile_and_legacy_header_mapping()
+-> Result<(), Box<dyn Error>> {
+    let mut liquid = vec![0u8; 30];
+    set_u32(&mut liquid, 0, 4);
+    set_u32(&mut liquid, 4, 2);
+    set_u32(&mut liquid, 8, 3);
+    set_u32(&mut liquid, 12, 1);
+    for _ in 0..8 {
+        liquid.extend([0u8; 4]);
+        liquid.extend(2f32.to_le_bytes());
+    }
+    liquid.extend([0x0f, 0x42, 0x41]);
+    for (root_flags, header, group_flags, expected) in [
+        (0, 0, 0, 13),
+        (0, 15, 0, 19),
+        (4, 0, 0, 19),
+        (4, 1, 0, 13),
+        (4, 1, 0x80000, 14),
+        (4, 21, 0, 21),
+    ] {
+        let mut root = root_fixture(1);
+        set_u16(&mut root, 80, root_flags);
+        let mut group = group_fixture_with_liquid(8, header, Some(&liquid));
+        set_u32(&mut group, 28, group_flags | 0x1000);
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Wmo\\Fixture.wmo",
+                bytes: &root,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Wmo\\Fixture_000.wmo",
+                bytes: &group,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let model =
+            DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Fixture.wmo")?)?;
+        assert_eq!(
+            model.groups()[0].resolve_liquid_type(model.flags()),
+            expected
+        );
+    }
     Ok(())
 }
 

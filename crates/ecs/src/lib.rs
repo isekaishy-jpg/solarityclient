@@ -20,8 +20,8 @@ mod world;
 
 pub use game_object::{GameObjectMovement, GameObjectPresentation, GameObjectTransport};
 pub use movement::{
-    WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementState,
-    WorldMovementTransport, WorldTransform,
+    WorldMovementContext, WorldMovementFall, WorldMovementSpeeds, WorldMovementSpline,
+    WorldMovementState, WorldMovementTransport, WorldTransform,
 };
 pub use object::{ObjectFields, ObjectGuid, ObjectKind, ObjectPresentation};
 pub use player::{
@@ -34,4 +34,5 @@ pub use unit::{
     UnitSheathState, UnitStats, UnitVitals,
 };
 pub use view::PlayerViewState;
+pub use world::WorldStateValues;
 pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldObjectIdentity, WorldStateError};

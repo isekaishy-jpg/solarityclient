@@ -143,6 +143,28 @@ impl FrameManager {
         self.movement_input.take()
     }
 
+    /// Takes the oldest FrameXML sound operation for the process audio owner.
+    pub fn take_media_action(&self) -> Option<crate::UiGlueMediaAction> {
+        self.owner.take_media_action()
+    }
+
+    /// Refreshes physical output names after a device restart.
+    pub fn set_sound_output_devices(&self, names: Vec<String>) {
+        self.owner.set_sound_output_devices(names);
+    }
+
+    /// Publishes the device selected by the process sound owner.
+    ///
+    /// # Errors
+    /// Returns an error if the registered output CVars cannot be updated.
+    pub fn set_sound_output_selection(
+        &self,
+        index: usize,
+        name: &str,
+    ) -> Result<(), crate::UiScriptError> {
+        self.owner.set_sound_output_selection(index, name)
+    }
+
     /// Executes a stock command in the retained FrameXML Lua state and refreshes
     /// its presentation mutations. Returns whether presentation changed.
     ///

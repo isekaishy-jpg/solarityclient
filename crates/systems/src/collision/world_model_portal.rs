@@ -8,9 +8,9 @@ use super::WorldModelCollisionError;
 /// The nearest portal and the two groups selected by its signed MOPR side.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldModelPortalHit {
-    fraction: f32,
-    source_group: usize,
-    destination_group: usize,
+    pub(super) fraction: f32,
+    pub(super) source_group: usize,
+    pub(super) destination_group: usize,
 }
 
 impl WorldModelPortalHit {
@@ -112,7 +112,12 @@ pub fn probe_world_model_portals(
     Ok(hit)
 }
 
-fn plane_hit(start: Vec3, direction: Vec3, normal: Vec3, distance: f32) -> Option<(f32, Vec3)> {
+pub(super) fn plane_hit(
+    start: Vec3,
+    direction: Vec3,
+    normal: Vec3,
+    distance: f32,
+) -> Option<(f32, Vec3)> {
     let start = start.as_dvec3();
     let direction = direction.as_dvec3();
     let normal = normal.as_dvec3();
@@ -134,7 +139,7 @@ fn plane_hit(start: Vec3, direction: Vec3, normal: Vec3, distance: f32) -> Optio
     Some((distance as f32, (start + direction * distance).as_vec3()))
 }
 
-fn polygon_contains(point: Vec3, vertices: &[[f32; 3]], normal: Vec3) -> bool {
+pub(super) fn polygon_contains(point: Vec3, vertices: &[[f32; 3]], normal: Vec3) -> bool {
     let Some(&last) = vertices.last() else {
         return false;
     };

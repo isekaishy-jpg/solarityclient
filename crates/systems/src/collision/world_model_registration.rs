@@ -203,7 +203,7 @@ impl PlacedWorldModelCollision {
 }
 
 /// Original `0x007F9480`: first outside axis with the largest stored fraction.
-fn segment_intersects_box(bounds: [Vec3; 2], start: Vec3, end: Vec3) -> bool {
+pub(super) fn segment_intersects_box(bounds: [Vec3; 2], start: Vec3, end: Vec3) -> bool {
     let delta = end - start;
     let mut candidates = [-1.0_f32; 3];
     let mut outside = [false; 3];

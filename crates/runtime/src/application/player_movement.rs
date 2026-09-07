@@ -1,5 +1,7 @@
 //! Timestamped local movement, collision continuation, and frozen notifications.
 
+pub(super) mod remote;
+
 use std::collections::VecDeque;
 
 use super::player_camera::{
@@ -36,6 +38,12 @@ use crate::input::{PlayerInputAdmission, PlayerInputEffect, PlayerInputState};
 /// A local movement interval or notification failed admission.
 #[derive(Debug, Error)]
 pub enum RuntimePlayerMovementError {
+    /// A remote server path failed geometry or timeline admission.
+    #[error(transparent)]
+    Spline(#[from] solarity_systems::MovementSplineError),
+    /// Model dimensions could not be resolved through the stock catalogs.
+    #[error(transparent)]
+    Appearance(#[from] solarity_systems::UnitModelAppearanceError),
     /// A native ground trajectory rejected owner state.
     #[error(transparent)]
     Trajectory(#[from] solarity_systems::MovementGroundTrajectoryError),
@@ -117,6 +125,9 @@ pub(super) struct RuntimePlayerMovement {
 }
 
 struct LocalMovement {
+    remote: bool,
+    remote_profile: Option<MovementGroundProfile>,
+    blend: Option<solarity_systems::RemoteMovementBlend>,
     animation_events: VecDeque<UnitMovementAnimationEvent>,
     camera: PlayerCameraInput,
     initial_contact_pending: bool,
@@ -547,6 +558,9 @@ impl LocalMovement {
             }
         };
         Ok(Self {
+            remote: false,
+            remote_profile: None,
+            blend: None,
             animation_events: VecDeque::new(),
             camera: PlayerCameraInput::new(
                 solarity_ecs::PlayerViewState::default(),
@@ -707,7 +721,7 @@ impl LocalMovement {
     }
 
     fn skip(&mut self, milliseconds: u32, output: &mut VecDeque<PlayerMovementOutput>) {
-        if milliseconds == 0 || !self.active {
+        if milliseconds == 0 || !self.active || self.remote {
             return;
         }
         self.heartbeat_ms = self.heartbeat_ms.wrapping_add(milliseconds);
@@ -722,6 +736,9 @@ impl LocalMovement {
         kind: WorldMovementKind,
         output: &mut VecDeque<PlayerMovementOutput>,
     ) -> Result<(), RuntimePlayerMovementError> {
+        if self.remote {
+            return Ok(());
+        }
         let (transform, movement) = self.snapshot();
         let context = movement.context();
         let packet = WorldMovementMessage::new(
@@ -859,13 +876,15 @@ impl LocalMovement {
             return Ok(());
         }
         let [radius, height, step_height] = dimensions;
-        let profile = MovementGroundProfile::PlayerControlled { step_height };
+        let profile = self
+            .remote_profile
+            .unwrap_or(MovementGroundProfile::PlayerControlled { step_height });
         let mut remaining = duration;
         while remaining != 0 {
             self.elapsed_ms = self.elapsed_ms.wrapping_add(remaining);
             let sample = self.ground.sample(self.elapsed_ms);
             self.orientation = self.yaw.sample(self.elapsed_ms);
-            let delta = match self.phase {
+            let mut delta = match self.phase {
                 MovementPhase::Ground { .. } => self.anchor + sample.displacement - self.position,
                 MovementPhase::Fall(fall) => {
                     let state = fall.snapshot();
@@ -880,6 +899,34 @@ impl LocalMovement {
                         - self.position
                 }
             };
+            let mut blended_position = false;
+            if let Some(blend) = &mut self.blend {
+                if let MovementPhase::Fall(fall) = self.phase {
+                    let fall = fall.snapshot();
+                    delta.z = MovementFallTrajectory::new(fall.mode, fall.initial_downward_speed)?
+                        .vertical_displacement(
+                            fall.fall_time_ms.wrapping_add(remaining),
+                            self.position.z,
+                            fall.launch_height,
+                        )?;
+                }
+                let mut analytic = solarity_systems::RemoteMovementPose {
+                    transform: WorldTransform::new(self.position + delta, self.orientation),
+                    pitch: self.context.pitch_radians.unwrap_or(0.0),
+                    transport_guid: 0,
+                };
+                blended_position = blend.sample(
+                    self.position,
+                    self.time_ms.wrapping_add(duration - remaining),
+                    remaining,
+                    &mut analytic,
+                );
+                delta = analytic.transform.position() - self.position;
+                self.orientation = analytic.transform.orientation();
+                if self.context.pitch_radians.is_some() {
+                    self.context.pitch_radians = Some(analytic.pitch);
+                }
+            }
             if self.flags & 0x100f == 0 {
                 return Ok(());
             }
@@ -990,14 +1037,23 @@ impl LocalMovement {
                         self.position.z,
                         state.launch_height,
                     )?;
-                    let displacement = (direction * distance).extend(vertical);
+                    let displacement = (direction * distance).extend(if blended_position {
+                        delta.z
+                    } else {
+                        vertical
+                    });
                     let result = fall.advance_with_geometry(
                         MovementFallInterval {
                             duration_ms: remaining,
                             displacement,
                             radius,
                             height,
-                            support_profile: MovementSupportProfile::PlayerControlled,
+                            support_profile: match profile {
+                                MovementGroundProfile::PlayerControlled { .. } => {
+                                    MovementSupportProfile::PlayerControlled
+                                }
+                                MovementGroundProfile::Other => MovementSupportProfile::Other,
+                            },
                             policy: if self.flags & 0xf == 0 {
                                 MovementFallAdvancePolicy::Live
                             } else {
@@ -1048,7 +1104,7 @@ impl LocalMovement {
                 }
             };
             geometry.check_failure()?;
-            if reset {
+            if reset || blended_position {
                 self.reanchor()?;
             } else {
                 self.elapsed_ms = self.elapsed_ms.wrapping_sub(skipped);

@@ -56,14 +56,23 @@ fn memory_output_preserves_explicit_voice_capacity() -> Result<(), Box<dyn Error
     backend.resume(voice)?;
     backend.set_gain(voice, 1.5)?;
 
-    let mut mixed = [0_u8; 4_096];
+    // Generate beyond the one-second input: MIX_PlayTrack's default options
+    // used to reset the loop count that had been assigned before starting.
+    let mut mixed = vec![0_u8; 44_100 * 4 * 3];
     let mixed_byte_count = backend.generate(&mut mixed)?;
     assert!(mixed_byte_count > 0);
     assert!(mixed_byte_count <= mixed.len());
     assert!(mixed.iter().any(|byte| *byte != 0));
+    assert_eq!(backend.state(voice)?, SoundVoiceState::Playing);
+    assert_eq!(backend.state(more_important)?, SoundVoiceState::Playing);
     backend.stop(voice)?;
     assert_eq!(backend.state(voice)?, SoundVoiceState::Stopped);
     backend.stop(more_important)?;
+    let once = backend
+        .play(&decoder, sound, 0.5, false, SoundVoicePriority::DEFAULT)?
+        .voice();
+    backend.generate(&mut mixed)?;
+    assert_eq!(backend.state(once)?, SoundVoiceState::Stopped);
     Ok(())
 }
 
@@ -121,8 +130,17 @@ fn backend_positions_voice_in_the_listener_frame() -> Result<(), Box<dyn Error>>
         Err(SoundBackendError::InvalidSpatialPanLevel { .. })
     ));
 
-    backend.set_spatial_position(voice, None)?;
+    backend.set_spatial_position(voice, Some(SoundSpatialPosition::new([1.0, 0.0, 0.0])?))?;
     backend.stop(voice)?;
+    // Reusing a former world emitter for a UI sound must reset its pan matrix.
+    let ui_voice = backend
+        .play(&decoder, sound, 1.0, true, SoundVoicePriority::DEFAULT)?
+        .voice();
+    backend.generate(&mut centered)?;
+    let (left, right) = stereo_energy(&centered);
+    assert_eq!(left, right);
+    assert!(left > 0);
+    backend.stop(ui_voice)?;
     Ok(())
 }
 

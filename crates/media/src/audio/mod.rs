@@ -17,8 +17,9 @@ mod spatial;
 mod types;
 
 pub use backend::{
-    SoundBackend, SoundBackendError, SoundBackendPlayback, SoundOutput, SoundOutputInfo,
-    SoundOutputTarget, SoundSpatialPosition, SoundVoiceHandle, SoundVoicePriority, SoundVoiceState,
+    SoundBackend, SoundBackendError, SoundBackendPlayback, SoundOutput, SoundOutputConfiguration,
+    SoundOutputDevice, SoundOutputDeviceId, SoundOutputInfo, SoundOutputQuality, SoundOutputTarget,
+    SoundSpatialPosition, SoundVoiceHandle, SoundVoicePriority, SoundVoiceState,
 };
 pub use cache::{EncodedSound, SoundCache};
 pub use codec::{
@@ -31,12 +32,15 @@ pub use engine::{
     AdvancedSoundSpatialError, AdvancedSoundSpatialMix, AdvancedSoundUpdateReport,
     AdvancedSoundUsage, AdvancedSoundUsageError, OwnedSoundEngine, SoundCategory,
     SoundCategorySettings, SoundChannel, SoundChannelError, SoundConcurrencyMode, SoundEngine,
-    SoundEngineError, SoundEngineSettings, SoundGain, SoundGainError, SoundLoadHandle,
-    SoundLoadRequest, SoundLoopMode, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
-    SoundSoftwareChannelCount,
+    SoundEngineError, SoundEngineSettings, SoundFade, SoundFadeDirection, SoundGain,
+    SoundGainError, SoundLoadHandle, SoundLoadRequest, SoundLoopMode, SoundPlayRequest,
+    SoundPlayback, SoundResidencyPolicy, SoundSoftwareChannelCount,
 };
 pub use selection::{SoundVariationMode, SoundVariationSelector};
 pub use spatial::{
     LiquidSoundCatalog, LiquidSoundError, ResolvedLiquidSound, ResolvedSpatialSound,
-    SpatialSoundCatalog, SpatialSoundError,
+    SpatialSoundCatalog, SpatialSoundError, ZoneMusicCue, ZoneMusicSelection, ZoneSoundFrame,
+    ZoneSoundLayer, ZoneSoundLocationIds, ZoneSoundOptions, ZoneSoundService, ZoneSoundState,
+    ZoneSoundTimeOfDay, resolve_world_state_zone_sounds, resolve_zone_sound_references,
+    world_chunk_sound_key,
 };

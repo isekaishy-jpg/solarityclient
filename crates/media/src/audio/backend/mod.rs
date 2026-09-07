@@ -6,7 +6,9 @@ mod types;
 
 pub use dependency::{SoundBackend, SoundOutput};
 pub use status::SoundBackendError;
+pub(in crate::audio) use types::SoundVoiceStart;
 pub use types::{
-    SoundBackendPlayback, SoundOutputInfo, SoundOutputTarget, SoundSpatialPosition,
-    SoundVoiceHandle, SoundVoicePriority, SoundVoiceState,
+    SoundBackendPlayback, SoundOutputConfiguration, SoundOutputDevice, SoundOutputDeviceId,
+    SoundOutputInfo, SoundOutputQuality, SoundOutputTarget, SoundSpatialPosition, SoundVoiceHandle,
+    SoundVoicePriority, SoundVoiceState,
 };

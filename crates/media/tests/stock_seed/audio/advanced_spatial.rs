@@ -14,6 +14,26 @@ use crate::support::{
     Fixture, FixtureFile, advanced_sound_entries_fixture, sound_entries_fixture_with_advanced,
 };
 
+/// Character listener height follows world Z, including a pitched camera.
+#[test]
+fn character_listener_uses_native_back_and_up_offsets() -> Result<(), Box<dyn Error>> {
+    let camera = WorldCamera::stock(
+        Vec3::new(9.0, 8.0, 7.0),
+        Vec3::new(1.0, 0.0, -1.0).normalize(),
+        Vec3::Z,
+        1000.0,
+    )
+    .frame(1.0)?;
+    let player = Vec3::new(100.0, 200.0, 300.0);
+    let listener = AdvancedSoundListener::at_character(camera, player, 2.0, 4.0)?;
+    assert_eq!(
+        listener.position(),
+        player - camera.forward() * 2.0 + Vec3::Z * 4.0
+    );
+    assert!(AdvancedSoundListener::at_character(camera, player, f32::NAN, 4.0).is_err());
+    Ok(())
+}
+
 /// World coordinates become SDL right/up/back coordinates at unit distance.
 #[test]
 fn advanced_mix_uses_camera_basis_and_fmod_inverse_rolloff() -> Result<(), Box<dyn Error>> {

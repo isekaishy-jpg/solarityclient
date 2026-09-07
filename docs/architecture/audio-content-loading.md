@@ -310,8 +310,8 @@ all sixteen packed selection bytes and MCLY's ground-effect key. The original
 WMO ground types use the existing native registration and fallback-face banks
 and the selected MOMT material. Wet entries consume liquid behavior flags,
 area/parent substitutions, foot height, and the water-walking exclusion through
-the resident static liquid providers. This does not complete registered interior
-group/area liquid selection, vehicle/passenger policy, or transport liquids.
+the resident static liquid providers, including registered interior groups.
+Vehicle/passenger policy and transport liquids still require their owners.
 
 Armor foley joins the player's chest Item.dbc material or the creature model's
 foley material to `Material.dbc`'s third column. The original `0x004CFC10` table
@@ -332,8 +332,8 @@ thread. World frames poll completions, and disconnect cancels pending movement
 loads and stops their admitted voices. Channel/exclusivity refusals and payload
 failures are contained at the unit callback boundary. The memory-output archive
 test checks decoded samples, live footstep suppression, hover/ghost admission,
-the local channel limit, and cancellation across disconnect. Remote jump/land
-notifications still depend on the remaining remote movement packet integration.
+the local channel limit, and cancellation across disconnect. Remote ground
+movement now publishes jump/land notifications through this same callback path.
 
 SDL slot admission reports every replaced voice generation, including a voice
 that finished naturally while the next payload was loading. The engine retires
@@ -341,3 +341,141 @@ that generation and releases its decoded reference before publishing the new
 voice. A memory-output regression completes a sample between load reservation
 and completion, then applies live settings; the old behavior retained a stale
 backend handle and terminated the world event loop on the following update.
+
+## Zone selection and replicated world-state audio
+
+`ZoneSoundCatalog` loads the exact ZoneMusic, ZoneIntroMusicTable, and
+SoundAmbience layouts. AreaTable and WMOAreaTable provide five independently
+inherited relations. The common location projection retains separate zone,
+subzone, WMO-root, and WMO-group IDs, including each placement's name set.
+The native `0x0078E9A0` precedence is group, root, subzone, zone, with the area
+branches suppressed for an exclusive interior WMO registration.
+
+`ZoneSoundState` implements the eleven native priority layers, realm-clock
+day/night columns, normal music delays, introduction cooldowns, and explicit
+zero-entry overrides. `ZoneSoundService` owns asynchronous payload generations,
+native music and ambience crossfades, revival of a fading previous generation,
+and completion callbacks. The engine updates fades before selection and moves
+ordinary positional voices against the current listener every world frame.
+World FrameXML media actions now reach the runtime sound owner.
+
+`SMSG_INIT_WORLD_STATES` (`0x2C2`, reader `0x0052693A`) carries map, zone, area,
+a u16 count, and ordered u32 field/value pairs. `SMSG_UPDATE_WORLD_STATE`
+(`0x2C3`, reader `0x005269E5`) replaces one field. `0x00548970` changes the UI
+location filter; initialization does not erase omitted hash entries.
+`WorldStateValues` preserves that merge behavior, duplicate-key wire order,
+raw value bits, and `0x00548D10`'s zero for absent keys. Map replacement moves
+this session-global owner into the destination world. Both setup and live
+dispatch apply the packets before world audio samples their conditions.
+
+`WorldStateZoneSounds` retains file order and its native eight-word, non-ID
+schema. The selector follows `0x004CBE70`, including its distinct mixed-WMO
+branch, and updates normal layer 1 and introduction layer 6 when the selected
+relations change. WorldChunkSounds uses `0x004C6810`'s float stores and masked
+chunk tuple. The original-executable fixture generator
+`tools/ghidra/zone_sound_oracle.py` covers inheritance, time boundaries, fades,
+chunk coordinates, and world-state rule precedence. Separate playback tests
+exercise actual decoded PCM and cancellation; an encrypted-session test covers
+state-dependent music conditions and transfer lifetime.
+
+The effects provider remains selected metadata until the DSP owner is wired.
+Underwater ambience receives the camera's submerged LiquidType ID each world
+frame. `0x00795D40` first limits a 1760-unit downward ray by terrain and runs
+`0x007D59B0`'s independent camera interior banks. Its selected WMO group is the
+sole liquid provider in `0x00790920`; without one, the general query visits
+resident WMO roots before terrain. Terrain uses bilinear MH2O heights, authored
+holes, and `0x007AD3B0` floor rejection. WMO grids use row-major MLIQ addressing,
+`0x007C8360`'s bilinear interpolation and LiquidType-dependent tolerance.
+The audio owner compares IDs as `0x004C8630` does, retaining liquid-to-liquid
+changes and selecting underwater ambience 4209. Liquid rendering and swimming
+remain prerequisites for the broader water implementation.
+`tools/ghidra/liquid_query_oracle.py` captures complete native WMO liquid and
+camera root queries; external tests compare 512 liquid cases and 256 camera
+selection cases with decoded archive fixtures. Runtime terrain tests cover
+camera entry, exit, and rejection below the terrain floor.
+
+## Output options and explicit restart
+
+The game-output menu receives the actual SDL playback device catalog. Native
+`0x008783B0` places a localized `SYSTEM_DEFAULT` entry at index zero, followed
+by physical drivers; an unattached headless UI retains zero drivers. The
+`Sound_OutputDriverIndex` Lua callback saves the corresponding driver name
+(`0x004D0DD0`) without restarting playback. Startup and restart reconcile both
+saved fields using `0x008790C0`: retain a matching pair, otherwise search by
+name, then select the system default if the device disappeared.
+
+`Sound_OutputQuality` defaults to one (`0x004D1050`). `0x0087C710` requests
+22,050 Hz for zero, 44,100 Hz for one, and 48,000 Hz otherwise. Both UI
+lifetimes queue `Sound_GameSystem_RestartSoundSystem` (`0x00985D30`) to apply
+the live device, quality, and software channel settings. Native restart stops
+voices and cancels pending loads (`0x0087DED0`), while retaining logical
+channel metadata (`0x0087B490`) and the advanced/zone owners. The media owner
+keeps old handles queryable as stopped until those owners retire them normally;
+late archive completions cannot resurrect pre-restart voices.
+
+The SDL adapter opens its replacement before destroying the old tracks and
+output. It needs no native FMOD settling sleep. Tests verify all three actual
+memory-mixer rates, silence and cancellation after restart, fresh audible
+playback, localized Lua enumeration, saved-name reconciliation, and ordered
+restart dispatch. Invalid Lua driver indices return an empty string instead
+of reproducing native unchecked memory access. FMOD's high-quality resampler
+algorithm and automatic physical-device hotplug restarts remain unimplemented.
+
+## Model callback sound ownership
+
+`0x0070C050` and `0x007BD5A0` retain one `$DSL` handle per game object or
+doodad. Both explicitly force looping at options `+0x1C` while retaining the
+default random variation selector at `+0x18`. Game objects fade in/out over
+one second; doodads fade in over three seconds and stop immediately. `$DSE`
+belongs to the doodad callback. `0x004CFE00` suppresses a matching playing or
+paused entry strictly within squared distance 6, excluding pending resources.
+The original callback capture is reproducible with
+`tools/ghidra/model_sound_oracle.py`; its fixture distinguishes these option
+offsets without relying on decompiler local-variable names.
+
+Rendering placements lazily own their model sound lifetime. Callback events,
+pending reads, and retained voices carry weak references, so an event queue
+cannot preserve a removed or replaced model. Removal cancels pending work or
+applies the callback's stop fade, leaving any fade tail with the engine.
+`0x008793C0` copies the callback position; ordinary model loops retain that
+world origin while the listener mix changes. Model payloads now use the same
+ordered archive and decoder workers as other runtime sounds.
+
+The SDL adapter supplies infinite looping through `MIX_PROP_PLAY_LOOPS_NUMBER`
+when starting a track. Setting `MIX_SetTrackLoops` before `MIX_PlayTrack` loses
+the requested count because playback initialization resets it. The backend
+test generates beyond the input duration for both physical and virtual loops,
+then reuses a slot for a one-shot. An archive integration test checks audible
+model loops, duplicate admission, pending cancellation, replacement identity,
+and both stop policies. See the upstream
+[loop setter contract](https://wiki.libsdl.org/SDL3_mixer/MIX_SetTrackLoops).
+
+`$CSD` follows `0x00746D60`: emote and pet gates, the player's health guard,
+local priority 110 and gain multiplier 0.65, entry loop policy, and a retained
+unit voice which replaces its predecessor. It starts from attachment 17
+(`0x00831330`, without the attachment enable track) or origin plus world Z*2.
+The GUID update callback (`0x00879F70` / `0x004C5D60`) subsequently uses the
+unit's current origin. Generic model dispatch no longer plays a second copy.
+Class-specific DSP filters and the player-only internal guard at unit +0x1944
+still require their owning actor/effects state.
+
+Focus loss applies `0x004C5DC0`'s background-sound CVar to the output bus.
+`0x008794A0` and `0x0087A8E0` change gain while timelines continue; focus
+muting therefore does not reject pending requests or pause individual voices.
+Output restart preserves this independent gain. Minimized presentation keeps
+music selection, fades, and emitter servicing active with the retained listener.
+
+SoundEntries flags `0x800` and `0x400` enable volume and pitch variation.
+`0x00982310` constructs its random fraction from the low 23 random bits.
+Volume adds a value in [-0.15, 0.15) after the caller's source multiplier,
+then `0x00879710` clamps the result to [0, 1]. Pitch selects [0.85, 1.15).
+The executable fixture from `tools/ghidra/sound_parameters_oracle.py` covers
+200 cases, matching result bits and random draw order. Mixer admission applies
+frequency, gain, and loop options before playback and clears a reused track's
+previous spatial panning.
+
+Ordinary positioned loads retain their world origin before decoding. Admission
+uses the current listener and applies distance gain and pan before the first
+mixed sample; pending unit vocals update their bound origin while loading.
+Memory-output regressions check the initial distance gain, pitch-dependent
+playback duration, and pitch reset when a track is reused for direct-file audio.

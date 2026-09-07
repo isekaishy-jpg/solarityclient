@@ -3,11 +3,159 @@
 use std::error::Error;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetError, AssetStore, ClientDataRoot, LiquidTypeCatalog, Locale,
-    SoundEmitterCatalog,
+    ArchiveCatalog, AreaTableCatalog, AssetError, AssetStore, ClientDataRoot, LiquidTypeCatalog,
+    Locale, SoundEmitterCatalog, WorldModelAreaCatalog, WorldModelAreaKey, ZoneSoundCatalog,
 };
 
 use crate::support::{Fixture, FixtureFile};
+
+/// These tables begin with coordinate/state fields, never an inferred primary ID.
+#[test]
+fn zone_overrides_preserve_non_id_schemas_and_duplicate_chunk_replacement()
+-> Result<(), Box<dyn Error>> {
+    let chunks = create_wdbc(
+        2,
+        9,
+        &[
+            530, 41, 32, 6, 9, 11, 12, 13, 14, 530, 41, 32, 6, 9, 21, 22, 23, 24,
+        ],
+        &[0],
+    );
+    let states = create_wdbc(
+        2,
+        8,
+        &[
+            1001, 1, 71, 81, 31, 32, 33, 34, 1001, 0, 72, 82, 41, 42, 43, 44,
+        ],
+        &[0],
+    );
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\WorldChunkSounds.dbc",
+            bytes: &chunks,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\WorldStateZoneSounds.dbc",
+            bytes: &states,
+        },
+    ])?;
+    let catalog = solarity_asset::ZoneSoundOverrideCatalog::load(&mut mounted_store(&fixture)?)?;
+    let selected = catalog
+        .chunk(solarity_asset::WorldChunkSoundKey {
+            map_id: 530,
+            tile: [41, 32],
+            chunk: [6, 9],
+        })
+        .ok_or("chunk override")?;
+    assert_eq!(
+        [
+            selected.intro_music_id,
+            selected.zone_music_id,
+            selected.ambience_id,
+            selected.sound_provider_id
+        ],
+        [21, 22, 23, 24]
+    );
+    assert_eq!(catalog.world_states().len(), 2);
+    let state = catalog.world_states()[1];
+    assert_eq!(state.state, [1001, 0]);
+    assert_eq!([state.area_id, state.world_model_area_id], [72, 82]);
+    assert_eq!(state.sounds.zone_music_id, 42);
+    Ok(())
+}
+
+/// Native loaders 6571D0/656F80/64D190/658B40 retain separate namespaces.
+#[test]
+fn zone_sound_catalogs_decode_authored_relations_and_delay_units() -> Result<(), Box<dyn Error>> {
+    let music = create_wdbc(
+        1,
+        8,
+        &[17, 1, 1100, 2200, 3300, 4400, 501, 502],
+        b"\0Music\0",
+    );
+    let intro = create_wdbc(1, 5, &[17, 1, 601, 9, 3], b"\0Intro\0");
+    let ambience = create_wdbc(1, 3, &[17, 701, 702], &[0]);
+    let mut area_words = [0; 36];
+    area_words[0] = 81;
+    area_words[2] = 80;
+    area_words[5..10].copy_from_slice(&[1, 2, 17, 18, 19]);
+    let area = create_wdbc(1, 36, &area_words, &[0]);
+    let mut wmo_words = [0; 28];
+    wmo_words[..11].copy_from_slice(&[91, 92, 93, u32::MAX, 11, 12, 27, 28, 29, 0x20, 81]);
+    wmo_words[11] = 1;
+    let wmo = create_wdbc(1, 28, &wmo_words, b"\0Hall\0");
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\ZoneMusic.dbc",
+            bytes: &music,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\ZoneIntroMusicTable.dbc",
+            bytes: &intro,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\SoundAmbience.dbc",
+            bytes: &ambience,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\AreaTable.dbc",
+            bytes: &area,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "DBFilesClient\\WMOAreaTable.dbc",
+            bytes: &wmo,
+        },
+    ])?;
+    let mut store = mounted_store(&fixture)?;
+    let catalog = ZoneSoundCatalog::load(&mut store)?;
+    let music = catalog.music(17).ok_or("missing music")?;
+    assert_eq!(music.name(), "Music");
+    assert_eq!(music.minimum_delay_ms(), [1100, 2200]);
+    assert_eq!(music.maximum_delay_ms(), [3300, 4400]);
+    assert_eq!(music.sound_entry_ids(), [501, 502]);
+    let intro = catalog.intro(17).ok_or("missing intro")?;
+    assert_eq!(intro.sound_entry_id(), 601);
+    assert_eq!(intro.minimum_delay_minutes(), 3);
+    assert_eq!(intro.priority(), 9);
+    assert_eq!(
+        catalog
+            .ambience(17)
+            .ok_or("missing ambience")?
+            .sound_entry_ids(),
+        [701, 702]
+    );
+    assert!(catalog.music(18).is_none());
+    let areas = AreaTableCatalog::load(&mut store)?;
+    let area = areas.area(81).ok_or("missing area")?;
+    assert_eq!(area.parent_area_id(), 80);
+    assert_eq!(area.sounds().ambience_id, 17);
+    assert_eq!(area.sounds().zone_music_id, 18);
+    assert_eq!(area.sounds().intro_music_id, 19);
+    let areas = WorldModelAreaCatalog::load(&mut store)?;
+    let area = areas
+        .area(WorldModelAreaKey {
+            root_id: 92,
+            name_set: 93,
+            group_id: -1,
+        })
+        .ok_or("missing WMO area")?;
+    assert_eq!(area.id(), 91);
+    assert_eq!(area.name(), "Hall");
+    assert_eq!(area.area_id(), 81);
+    assert_eq!(area.sounds().sound_provider_id, 11);
+    assert_eq!(area.sounds().underwater_sound_provider_id, 12);
+    assert_eq!(area.sounds().ambience_id, 27);
+    assert_eq!(area.sounds().zone_music_id, 28);
+    assert_eq!(area.sounds().intro_music_id, 29);
+    Ok(())
+}
 
 /// LiquidType decodes the complete 45-word WotLK row without MCSE semantics.
 #[test]

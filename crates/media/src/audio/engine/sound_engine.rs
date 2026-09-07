@@ -1,6 +1,9 @@
 //! SoundEntries-driven orchestration over media-owned backend resources.
 
+mod fades;
 mod loading;
+mod parameters;
+mod positioning;
 
 pub use loading::{SoundLoadHandle, SoundLoadRequest};
 
@@ -27,6 +30,7 @@ use super::types::{
 };
 use super::{
     AdvancedSoundDucking, AdvancedSoundInstanceId, AdvancedSoundListener, AdvancedSoundSpatialMix,
+    SoundFade,
 };
 
 /// Hard `maxchannels` argument passed to FMOD System::init by build 12340.
@@ -42,6 +46,9 @@ struct ActiveVoice {
     category: SoundCategory,
     source_gain: f32,
     runtime_gain: f32,
+    spatial_gain: f32,
+    fade: SoundFade,
+    spatial_source: Option<positioning::PositionedSoundSource>,
     duck_gain: f32,
     duck_source: Option<AdvancedSoundInstanceId>,
 }
@@ -57,9 +64,31 @@ pub struct SoundEngine<'output> {
     active_voices: Vec<ActiveVoice>,
     pending_voices: Vec<PendingVoice>,
     variation_selectors: Vec<(u32, SoundVariationSelector)>,
+    listener: Option<AdvancedSoundListener>,
+    background_muted: bool,
 }
 
 impl<'output> SoundEngine<'output> {
+    /// Reopens the backend after native restart retirement, keeping sound-owner
+    /// generations queryable as stopped and rejecting all late load completions.
+    pub(super) fn restart_output(
+        &mut self,
+        output: &'output SoundOutput,
+        software_channel_count: SoundSoftwareChannelCount,
+    ) -> Result<(), SoundEngineError> {
+        let count = NonZeroU16::new(software_channel_count.value())
+            .ok_or(SoundBackendError::VoiceCapacity)?;
+        let replacement = self.backend.restarted(output, count)?;
+        replacement.set_background_muted(self.background_muted)?;
+        for pending in self.pending_voices.drain(..) {
+            if let Some(ticket) = pending.decode {
+                self.decoder.cancel_load(ticket);
+            }
+        }
+        self.backend = replacement;
+        Ok(())
+    }
+
     /// Loads the stock sound catalog and allocates the exact virtual pool.
     ///
     /// # Errors
@@ -90,7 +119,24 @@ impl<'output> SoundEngine<'output> {
             active_voices: Vec::with_capacity(usize::from(STOCK_VIRTUAL_VOICE_CAPACITY)),
             variation_selectors: Vec::new(),
             pending_voices: Vec::new(),
+            listener: None,
+            background_muted: false,
         })
+    }
+
+    /// Applies 4C5DC0's focus mute independently of Sound_EnableAllSound.
+    ///
+    /// Playback timelines, pending admission, and movie PCM remain active.
+    /// 8794A0 and 87A8E0 set bus multipliers, not per-voice pause state.
+    ///
+    /// # Errors
+    /// Returns a backend gain failure.
+    pub fn set_background_muted(&mut self, muted: bool) -> Result<(), SoundEngineError> {
+        if self.background_muted != muted {
+            self.backend.set_background_muted(muted)?;
+            self.background_muted = muted;
+        }
+        Ok(())
     }
 
     /// Returns the currently applied global and category policy.
@@ -283,14 +329,12 @@ impl<'output> SoundEngine<'output> {
         emitter_position: glam::Vec3,
         next_random_word: &mut impl FnMut() -> u32,
     ) -> Result<SoundPlayback, SoundEngineError> {
-        let mix = self.positioned_mix(request.entry_id(), listener, emitter_position)?;
-        let playback = self.play(store, request, next_random_word)?;
-        let SoundPlayback::Started(voice) = playback else {
-            return Ok(playback);
+        let Some(load) =
+            self.begin_positioned_load(request, listener, emitter_position, next_random_word)?
+        else {
+            return Ok(SoundPlayback::Suppressed);
         };
-        self.set_voice_runtime_gain(voice, mix.three_dimensional_gain())?;
-        self.set_voice_spatial_position(voice, mix.backend_position())?;
-        Ok(playback)
+        self.load_immediate(store, load)
     }
 
     /// Resolves ordinary spatial gain before a nonblocking payload load starts.
@@ -588,5 +632,7 @@ fn applied_gain(settings: SoundEngineSettings, voice: ActiveVoice) -> f32 {
     settings.category_gain(voice.category).unwrap_or(0.0)
         * voice.source_gain
         * voice.runtime_gain
+        * voice.spatial_gain
+        * voice.fade.gain()
         * voice.duck_gain
 }

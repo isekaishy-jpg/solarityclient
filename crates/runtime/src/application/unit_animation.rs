@@ -81,7 +81,7 @@ impl UnitAnimationInput {
                 .context()
                 .falling
                 .map_or(0.0, |fall| fall.vertical_speed),
-        );
+        ) || movement.spline().is_some_and(|spline| spline.is_airborne());
         self
     }
 

@@ -584,6 +584,23 @@ impl GlueManager {
         self.media_intent.borrow_mut().take_action()
     }
 
+    /// Publishes the current physical output catalog to stock sound-menu Lua.
+    pub fn set_sound_output_devices(&self, names: Vec<String>) {
+        self.environment.set_sound_output_devices(names);
+    }
+
+    /// Publishes the resolved output selection for menu display and persistence.
+    ///
+    /// # Errors
+    /// Returns an error if the registered output CVars cannot be updated.
+    pub fn set_sound_output_selection(
+        &self,
+        index: usize,
+        name: &str,
+    ) -> Result<(), crate::UiScriptError> {
+        self.environment.set_sound_output_selection(index, name)
+    }
+
     /// Takes one Model mutation in Lua call order, including equal sequence requests.
     pub fn take_model_action(&self) -> Option<crate::UiModelAction> {
         self.environment.take_model_action()

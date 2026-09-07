@@ -4,6 +4,7 @@ use crate::archive::{AssetError, AssetPath};
 use crate::file_stack::AssetStore;
 
 use super::localized::{database_error, localized_string};
+use super::sound_environment::AreaSoundReferences;
 use super::wow_client_db::WdbcTable;
 
 const AREA_TABLE_PATH: &str = "DBFilesClient\\AreaTable.dbc";
@@ -16,9 +17,14 @@ pub struct AreaDefinition {
     id: u32,
     parent_area_id: u32,
     name: String,
+    sounds: AreaSoundReferences,
 }
 
 impl AreaDefinition {
+    /// Returns independently inherited zone sound and provider relations.
+    pub const fn sounds(&self) -> AreaSoundReferences {
+        self.sounds
+    }
     /// Returns the AreaTable identifier carried in character enumeration.
     #[must_use]
     pub const fn id(&self) -> u32 {
@@ -60,6 +66,7 @@ impl AreaTableCatalog {
                 id: field(&table, row, 0)?,
                 parent_area_id: field(&table, row, 2)?,
                 name: localized_string(&table, row, LOCALIZED_NAME_FIRST_FIELD, locale)?,
+                sounds: AreaSoundReferences::read(&table, row, 5)?,
             });
         }
         areas.sort_unstable_by_key(AreaDefinition::id);

@@ -7,12 +7,109 @@ mod transfer_world_server;
 
 use glam::Vec3;
 use solarity_ecs::{GameObjectMovement, ObjectKind, WorldTransform};
-use solarity_network::{ObjectMovementUpdate, WorldObjectUpdate};
+use solarity_network::{MovementSplineFacing, ObjectMovementUpdate, WorldObjectUpdate};
 use solarity_runtime::{GameplaySession, GameplayUpdateError};
 use transfer_world_server::{TestError, WorldServer};
 
 const SPEEDS: [f32; 9] = [2.5, 7.0, 4.5, 4.75, 2.5, 7.25, 4.75, 3.125, 3.25];
 const CONDITIONAL_FLAGS: u64 = 0x0420_0E20_1200;
+
+/// Encrypted movement updates retain the server clock and drive both ECS
+/// position and the stock walk/run speed threshold between received packets.
+#[test]
+fn retained_remote_path_walks_stops_and_is_removed_by_a_new_snapshot() -> Result<(), TestError> {
+    run(async {
+        let (server, session) = WorldServer::connect().await?;
+        let mut gameplay = GameplaySession::enter(session);
+        gameplay.world_mut().create_object(
+            9,
+            ObjectKind::Unit,
+            Some(WorldTransform::new(Vec3::ZERO, 0.0)),
+            [],
+        )?;
+        let sent = server
+            .exchange(
+                vec![
+                    (0xA9, movement_body(9, 0x0800_0001, 77)),
+                    (0xA9, movement_body(9, 0x0800_0001, 78)),
+                    (0xA9, movement_body(9, 0, 79)),
+                ],
+                0,
+            )
+            .await?;
+        let packet = gameplay.network_mut().receive_packet().await?;
+        gameplay.apply_object_updates_at(&packet.object_updates()?.ok_or("missing path")?, 1000)?;
+        let movement = gameplay.world().movement_state(9).ok_or("lost movement")?;
+        assert_eq!(
+            solarity_systems::resolve_unit_locomotion_animation(movement).animation_id(),
+            4
+        );
+        assert!(
+            (solarity_systems::resolve_unit_movement_speed(movement) - 3.0_f32.sqrt() / 2.0).abs()
+                < 0.000001
+        );
+        solarity_systems::advance_world_movement_splines(gameplay.world(), 1125)?;
+        assert_eq!(
+            gameplay
+                .world()
+                .object_transform(9)
+                .ok_or("lost unit")?
+                .position(),
+            Vec3::new(10.125, 21.125, 32.125)
+        );
+        solarity_systems::advance_world_movement_splines(gameplay.world(), 2875)?;
+        let completed = gameplay.world().object_transform(9).ok_or("lost unit")?;
+        assert_eq!(
+            completed,
+            WorldTransform::new(Vec3::new(12.0, 23.0, 34.0), 0.75)
+        );
+        let stopped = gameplay
+            .world()
+            .movement_state(9)
+            .ok_or("lost stopped movement")?;
+        assert_eq!(
+            solarity_systems::resolve_unit_locomotion_animation(stopped).animation_id(),
+            0
+        );
+        assert_eq!(solarity_systems::resolve_unit_movement_speed(stopped), 0.0);
+
+        let packet = gameplay.network_mut().receive_packet().await?;
+        gameplay.apply_object_updates_at(
+            &packet.object_updates()?.ok_or("missing replacement")?,
+            3000,
+        )?;
+        solarity_systems::advance_world_movement_splines(gameplay.world(), 3125)?;
+        assert_eq!(
+            gameplay
+                .world()
+                .object_transform(9)
+                .ok_or("lost replacement")?
+                .position(),
+            Vec3::new(10.125, 21.125, 32.125)
+        );
+        let packet = gameplay.network_mut().receive_packet().await?;
+        gameplay.apply_object_updates_at(&packet.object_updates()?.ok_or("missing stop")?, 3200)?;
+        solarity_systems::advance_world_movement_splines(gameplay.world(), 5000)?;
+        assert_eq!(
+            gameplay
+                .world()
+                .object_transform(9)
+                .ok_or("lost stop")?
+                .position(),
+            Vec3::new(10.0, 20.0, 30.0)
+        );
+        assert!(
+            gameplay
+                .world()
+                .movement_state(9)
+                .ok_or("lost movement")?
+                .spline()
+                .is_none()
+        );
+        sent.await??;
+        Ok(())
+    })
+}
 
 #[test]
 fn movement_decoder_matches_original_native_reader_snapshots() -> Result<(), TestError> {
@@ -122,7 +219,7 @@ fn movement_only_updates_share_living_fields_without_creation_prefixes() -> Resu
                 return Err("wrong movement operation".into());
             };
             assert_eq!(*guid, 9);
-            assert_living(*movement, flags, 123)?;
+            assert_living(movement, flags, 123)?;
             assert_eq!(movement.update_flags(), 0);
             assert!(!movement.is_self());
             assert!(movement.position_transport().is_none());
@@ -146,7 +243,7 @@ fn movement_only_updates_share_living_fields_without_creation_prefixes() -> Resu
             else {
                 return Err("wrong create operation".into());
             };
-            assert_living(*movement, flags, 123)?;
+            assert_living(movement, flags, 123)?;
             assert_eq!(movement.update_flags(), 0x20);
             assert!(fields.is_empty());
         }
@@ -279,14 +376,14 @@ fn truncated_movement_blocks_do_not_consume_the_next_encrypted_frame() -> Result
         let WorldObjectUpdate::Movement { movement, .. } = &batch.updates()[0] else {
             return Err("wrong final operation".into());
         };
-        assert_living(*movement, CONDITIONAL_FLAGS, 123)?;
+        assert_living(movement, CONDITIONAL_FLAGS, 123)?;
         sent.await??;
         Ok(())
     })
 }
 
 fn assert_living(
-    movement: ObjectMovementUpdate,
+    movement: &ObjectMovementUpdate,
     flags: u64,
     timestamp: u32,
 ) -> Result<(), TestError> {
@@ -294,6 +391,30 @@ fn assert_living(
     assert_eq!(movement.position(), Some([10.0, 20.0, 30.0]));
     assert_eq!(movement.orientation(), Some(0.5));
     assert_eq!(movement.speeds().ok_or("missing speeds")?.values(), SPEEDS);
+    if flags & 0x0800_0000 != 0 {
+        let spline = movement.spline().ok_or("lost spline snapshot")?;
+        assert_eq!(spline.flags, 0x20000);
+        assert_eq!(spline.facing, MovementSplineFacing::Angle(0.75));
+        assert_eq!(
+            (spline.elapsed_ms, spline.duration_ms, spline.id),
+            (125, 2000, 37)
+        );
+        assert_eq!(spline.timing_parameters, [1.0, 1.25, 2.5]);
+        assert_eq!(spline.effect_start_ms, 250);
+        assert_eq!(
+            spline.nodes,
+            [
+                [9.0, 20.0, 31.0],
+                [10.0, 21.0, 32.0],
+                [11.0, 22.0, 33.0],
+                [12.0, 23.0, 34.0]
+            ]
+        );
+        assert_eq!(spline.mode, 0);
+        assert_eq!(spline.destination, [12.0, 23.0, 34.0]);
+    } else {
+        assert!(movement.spline().is_none());
+    }
     let context = movement.context().ok_or("missing context")?;
     assert_eq!(context.timestamp_ms, timestamp);
     assert_eq!(context.fall_time_ms, 75);
@@ -363,9 +484,18 @@ fn living(flags: u64, timestamp: u32) -> Vec<u8> {
     if flags & 0x0800_0000 != 0 {
         body.extend_from_slice(&0x20000_u32.to_le_bytes());
         floats(&mut body, &[0.75]);
-        body.extend_from_slice(&[0; 28]);
-        body.extend_from_slice(&1_u32.to_le_bytes());
-        floats(&mut body, &[11.0, 22.0, 33.0]);
+        for word in [125_u32, 2000, 37] {
+            body.extend_from_slice(&word.to_le_bytes());
+        }
+        floats(&mut body, &[1.0, 1.25, 2.5]);
+        body.extend_from_slice(&250_u32.to_le_bytes());
+        body.extend_from_slice(&4_u32.to_le_bytes());
+        floats(
+            &mut body,
+            &[
+                9.0, 20.0, 31.0, 10.0, 21.0, 32.0, 11.0, 22.0, 33.0, 12.0, 23.0, 34.0,
+            ],
+        );
         body.push(0);
         floats(&mut body, &[12.0, 23.0, 34.0]);
     }

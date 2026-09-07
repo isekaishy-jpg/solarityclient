@@ -14,6 +14,16 @@ impl ClientServices {
     /// Drains packets in order, yielding immediately to synchronous verify-world
     /// replacement and deferring NEW_WORLD callbacks until the batch ends.
     pub(super) fn service_world_transfers(&mut self) -> Result<(), ApplicationError> {
+        let path_distance_tolerance = self
+            .world_ui
+            .as_ref()
+            .map_or_else(
+                || self.glue.cvar_number("pathDistTol"),
+                |ui| ui.cvar_number("pathDistTol"),
+            )
+            .unwrap_or(1.0);
+        self.gameplay
+            .set_path_distance_tolerance(path_distance_tolerance);
         if self.world_transfer.is_loading_map() {
             return Ok(());
         }

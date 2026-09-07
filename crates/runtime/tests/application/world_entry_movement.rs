@@ -386,7 +386,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
     Ok(())
 }
 
-fn flat_world() -> Result<ClientFixture, Box<dyn Error>> {
+pub(super) fn flat_world() -> Result<ClientFixture, Box<dyn Error>> {
     let mut map = [0_u32; 66];
     map[0] = 571;
     map[1] = 1;

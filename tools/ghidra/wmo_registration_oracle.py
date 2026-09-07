@@ -293,7 +293,7 @@ def large_floor_probe(profile):
     return [read_words(uc,p,1)[0] for p in (primary,pface,fallback,fface)]
 
 
-def registration_probe(uc,model,segment,maximum,secondary,point,mogi,mogp,transformed,adjacent_floor,side,distance):
+def registration_probe(uc,model,segment,maximum,secondary,point,mogi,mogp,transformed,adjacent_floor,side,distance,camera=False):
     other,placed0,placed1,link0,link1,vertices,portals,refs,shared,placed,info,containment,primary,fallback = [HEAP+v for v in (0xc000,0xd000,0xd100,0xd200,0xd220,0xd400,0xd600,0xd700,0xe000,0xf000,0xe400,0xe600,0xe700,0xe740)]
     if adjacent_floor:
         uc.mem_write(other,bytes(uc.mem_read(model,0x200)))
@@ -319,6 +319,17 @@ def registration_probe(uc,model,segment,maximum,secondary,point,mogi,mogp,transf
     write_words(uc,placed+0x114,0x10)
     write_words(uc,placed+0x118,placed+0x118,(placed+0x118)|1)
     register_native_groups(uc,shared,placed,[placed0,placed1],[link0,link1])
+    if camera:
+        # Complete 7D59B0, including its native general BSP ray and root portals.
+        write_floats(uc, shared + 0x1a8, [-16., -16., -16., 16., 16., 16.])
+        write_words(uc, model + 0x18c, shared)
+        write_words(uc, other + 0x18c, shared)
+        write_words(uc, 0xd25438, 0)
+        write_words(uc, 0xd25440, placed)
+        write_words(uc, placed + 4, 1)
+        invoke(uc, 0x7d59b0, [segment, segment + 12, struct.unpack('<I',struct.pack('<f',maximum))[0], primary, fallback])
+        owner = read_words(uc,primary,1)[0]
+        return [int(owner != 0), read_words(uc,fallback,1)[0] if owner else 0xffffffff]
     write_floats(uc,containment,point)
     for output,limit in ((primary,maximum),(fallback,secondary)):
         for bank in (0,1):

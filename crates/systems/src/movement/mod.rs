@@ -17,6 +17,7 @@ mod movement_shared;
 mod movement_source;
 mod path;
 mod player;
+mod remote;
 mod stance;
 mod unit_animation;
 
@@ -48,7 +49,17 @@ pub use interval_bounds::{
 pub use movement_shared::{
     UnitLocomotionAnimation, resolve_unit_locomotion_animation, resolve_unit_movement_speed,
 };
+pub use path::{
+    MovementPath, MovementPathError, MovementPathMode, MovementPathRequest, MovementPathSample,
+    MovementSpline, MovementSplineDefinition, MovementSplineError, MovementSplineFacing,
+    PreparedMovementPath, advance_world_movement_spline, advance_world_movement_splines,
+    set_world_movement_spline,
+};
 pub use player::{WorldEntryGroundContact, WorldEntryGroundContactError};
+pub use remote::{
+    RemoteMovementAdmission, RemoteMovementBlend, RemoteMovementClock, RemoteMovementPose,
+    RemoteMovementReceipt,
+};
 pub use stance::{
     UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
     resolve_unit_primary_animation_completion, resolve_unit_stand_animation,

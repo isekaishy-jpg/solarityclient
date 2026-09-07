@@ -141,8 +141,11 @@ pub(crate) struct ClientServices {
     environment: RuntimeWorldEnvironment,
     player: RuntimePlayerPresentation,
     player_movement: super::player_movement::RuntimePlayerMovement,
+    remote_movement: super::player_movement::remote::RuntimeRemoteMovement,
     game_objects: RuntimeGameObjectPresentation,
     terrain: RuntimeTerrainCoordinator,
+    /// Shared authored liquid behavior for the camera's resident water query.
+    liquids: solarity_asset::LiquidTypeCatalog,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
     developer_console: RuntimeDeveloperConsole,
@@ -219,6 +222,7 @@ impl ClientServices {
         };
         let loading_directory = LoadingScreenDirectory::new(&maps, loading_screens);
         let lights = LightCatalog::load(&mut assets)?;
+        let liquids = solarity_asset::LiquidTypeCatalog::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -460,6 +464,7 @@ impl ClientServices {
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
                 player_movement: super::player_movement::RuntimePlayerMovement::default(),
+                remote_movement: super::player_movement::remote::RuntimeRemoteMovement::default(),
                 player: RuntimePlayerPresentation::new(
                     assets.clone(),
                     RuntimePlayerCatalogs::new(
@@ -488,6 +493,7 @@ impl ClientServices {
                 terrain: RuntimeTerrainCoordinator::new(assets, maps)
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
+                liquids,
                 fps,
                 developer_console,
                 runtime_overlay_draws: Vec::new(),
@@ -893,7 +899,33 @@ impl ClientServices {
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
         let mut profile = RuntimeFrameProfile::new("application present");
         let update_time = std::time::Instant::now();
+        self.sound.apply_focus_policy(
+            self.world_ui.as_ref().map_or(
+                &self.glue as &dyn super::sound_coordinator::SoundCvarSource,
+                |ui| ui,
+            ),
+            self.input.is_focused(),
+        )?;
         if self.platform.presentation_suspended() {
+            if self.gameplay.world().is_none() {
+                self.sound.synchronize_glue_media(
+                    &self.glue,
+                    &mut self.blizzard_rand.borrow_mut(),
+                    &self.cpu,
+                )?;
+            } else {
+                self.sound.poll_loads(&self.cpu)?;
+                if let Some(clock) = self.gameplay.realm_clock() {
+                    self.sound.update_suspended_world(
+                        self.world_ui.as_ref().map_or(
+                            &self.glue as &dyn super::sound_coordinator::SoundCvarSource,
+                            |ui| ui,
+                        ),
+                        clock,
+                        &mut self.blizzard_rand.borrow_mut(),
+                    )?;
+                }
+            }
             // A minimized Vulkan surface cannot pace the main loop reliably,
             // so keep animation time bounded and yield briefly while the event
             // pump remains responsive to restoration.
@@ -1056,6 +1088,29 @@ impl ClientServices {
             return self.present_glue_frame();
         };
         profile.mark("world camera");
+        if let Some(ui) = &self.world_ui {
+            while let Some(action) = ui.take_media_action() {
+                if let Err(error) = self.sound.apply_glue_media_action(
+                    action,
+                    &mut self.blizzard_rand.borrow_mut(),
+                    ui,
+                ) {
+                    tracing::warn!(%error, "FrameXML audio action was not played");
+                }
+            }
+        }
+        let location = self.current_world_location()?;
+        let underwater = self
+            .terrain
+            .camera_submerged_liquid(camera.camera().position(), &self.liquids)
+            .map_err(super::sound_coordinator::RuntimeSoundError::from)?;
+        self.sound.stage_zone(
+            location,
+            self.gameplay.world(),
+            underwater.map_or(0, |liquid| liquid.liquid_type),
+        );
+        // Retire completed fades before zone selection can consider revival.
+        self.sound.poll_loads(&self.cpu)?;
         if let Some(clock) = self.gameplay.realm_clock() {
             self.sound.update(
                 self.world_ui.as_ref().map_or(
@@ -1064,10 +1119,18 @@ impl ClientServices {
                 ),
                 clock,
                 camera,
+                self.gameplay
+                    .world()
+                    .map(|world| {
+                        world
+                            .local_player_transform()
+                            .map(|transform| transform.position())
+                    })
+                    .transpose()
+                    .map_err(super::gameplay_coordinator::RuntimeGameplayError::from)?,
                 &mut self.blizzard_rand.borrow_mut(),
             )?;
         }
-        self.sound.poll_loads(&self.cpu)?;
         let plan = self.terrain.resident_mesh_plan();
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let specular_enabled = self.glue.cvar_boolean("specular");
@@ -2205,6 +2268,17 @@ impl ClientServices {
             crate::platform::client_milliseconds(),
         )?;
         profile.mark("player movement");
+        self.remote_movement.service(
+            &self.gameplay,
+            &mut self.terrain,
+            &self.game_objects,
+            &self.player,
+            crate::platform::client_milliseconds(),
+        )?;
+        while let Some(event) = self.remote_movement.take_animation_event() {
+            self.sound.notify_unit_movement(event);
+            self.player.notify_movement_animation(event);
+        }
         while let Some(event) = self.player_movement.take_animation_event() {
             self.sound.notify_unit_movement(event);
             self.player.notify_movement_animation(event);
@@ -2382,6 +2456,7 @@ impl ClientServices {
             self.gameplay.realm_clock(),
             self.gameplay.action_buttons(),
             general_tab_name,
+            self.sound.output_names(),
         )?;
         for error in &startup_errors {
             let captured = self.record_recoverable_error(error);
@@ -2396,16 +2471,38 @@ impl ClientServices {
         Ok(())
     }
 
+    /// Joins the player's registered WMO with terrain through one metadata owner.
+    fn current_world_location(
+        &mut self,
+    ) -> Result<super::character_directory::RuntimeWorldLocation, ApplicationError> {
+        let Some(world) = self.gameplay.world() else {
+            return Ok(Default::default());
+        };
+        let terrain_area = self.terrain.current_area_id(world)?;
+        let position = world
+            .local_player_transform()
+            .map_err(super::gameplay_coordinator::RuntimeGameplayError::from)?
+            .position();
+        let world_model = self
+            .terrain
+            .unit_world_model_location(position)
+            .map_err(super::sound_coordinator::RuntimeSoundError::from)?;
+        let mut location = self
+            .character_metadata
+            .world_location(terrain_area, world_model)?;
+        location.chunk_key =
+            solarity_media::world_chunk_sound_key(world.map_id().value(), position.x, position.y);
+        Ok(location)
+    }
+
     /// Keeps FrameXML's area labels synchronized with the authoritative player
     /// position after world UI bootstrap.
     fn synchronize_world_ui_zone(&mut self) -> Result<(), ApplicationError> {
-        let (Some(world_ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world()) else {
+        let location = self.current_world_location()?;
+        let Some(world_ui) = self.world_ui.as_mut() else {
             return Ok(());
         };
-        world_ui.synchronize_zone(
-            self.character_metadata
-                .zone_state(self.terrain.current_area_id(active)?)?,
-        )
+        world_ui.synchronize_zone(self.character_metadata.zone_state(location.area_id)?)
     }
 
     /// Returns synchronous login ownership for diagnostics and Glue routing.

@@ -81,7 +81,10 @@ pub use realm::{
 pub use sound::{SoundAsset, SoundEntry, SoundEntryCatalog};
 pub use sound_advanced::{AdvancedSoundEntry, AdvancedSoundEntryCatalog};
 pub use sound_environment::{
-    LiquidTypeCatalog, LiquidTypeDefinition, SoundEmitterCatalog, SoundEmitterDefinition,
+    AreaSoundReferences, LiquidTypeCatalog, LiquidTypeDefinition, SoundAmbienceDefinition,
+    SoundEmitterCatalog, SoundEmitterDefinition, WorldChunkSoundKey, WorldModelAreaCatalog,
+    WorldModelAreaDefinition, WorldModelAreaKey, WorldStateZoneSound, ZoneIntroMusicDefinition,
+    ZoneMusicDefinition, ZoneSoundCatalog, ZoneSoundOverrideCatalog,
 };
 pub use ui_sound::{UiSoundLookup, UiSoundLookupCatalog};
 pub use wow_client_db::{WdbcHeader, WdbcTable};

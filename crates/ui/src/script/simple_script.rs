@@ -458,6 +458,8 @@ impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
 /// One ordered stock audio operation emitted by GlueXML.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiGlueMediaAction {
+    /// Reopens the game output using the current output CVars (0x00985D30).
+    RestartSoundSystem,
     /// `PlaySound` with a numeric identifier or script lookup name.
     PlaySound(String),
     /// `PlaySoundFile` with one exact archive path.
@@ -489,6 +491,8 @@ pub enum UiGlueMediaAction {
 /// Retained stock audio state and ordered requests awaiting the media backend.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UiGlueMediaIntent {
+    /// Physical drivers; `None` means no game sound system is attached.
+    output_devices: Option<Vec<String>>,
     pub(crate) music: Option<String>,
     pub(crate) ambience: Option<String>,
     actions: VecDeque<UiGlueMediaAction>,
@@ -761,6 +765,34 @@ impl UiScriptEnvironment {
     #[must_use]
     pub fn cvar_value(&self, name: &str) -> Option<String> {
         self.cvars.get(name)
+    }
+
+    /// Attaches physical output names before stock sound-menu queries execute.
+    pub fn set_sound_output_devices(&self, names: Vec<String>) {
+        self.media_intent.borrow_mut().output_devices = Some(names);
+    }
+
+    /// Publishes the resolved output selection to the live profile registry.
+    ///
+    /// # Errors
+    /// Returns an error if the required mutable sound CVars are unavailable.
+    pub fn set_sound_output_selection(
+        &self,
+        index: usize,
+        name: &str,
+    ) -> Result<(), UiScriptError> {
+        for (key, value) in [
+            ("Sound_OutputDriverIndex", index.to_string()),
+            ("Sound_OutputDriverName", name.to_owned()),
+        ] {
+            self.cvars
+                .set(key, value)
+                .map_err(|error| UiScriptError::Execution {
+                    label: "sound output selection".to_owned(),
+                    message: format!("cannot update {key}: {error:?}"),
+                })?;
+        }
+        Ok(())
     }
 
     /// Returns a finite numeric CVar without copying its retained text.

@@ -85,6 +85,29 @@ pub struct WorldMovementState {
     flags: u64,
     speeds: WorldMovementSpeeds,
     context: WorldMovementContext,
+    spline: Option<WorldMovementSpline>,
+}
+
+/// Compact native spline state needed by animation, independently of geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldMovementSpline {
+    /// Exact live path flags, including the finished bit 0x400.
+    pub flags: u32,
+    /// Cached path length in yards.
+    pub length: f32,
+    /// Authored duration before cyclic clock scaling, used by `987570`.
+    pub duration_ms: u32,
+    /// The parabolic or animation effect has crossed its start clock.
+    pub effect_started: bool,
+}
+
+impl WorldMovementSpline {
+    /// Spline branches of native airborne admission at `00723350`.
+    #[must_use]
+    pub const fn is_airborne(self) -> bool {
+        self.flags & 0x400 == 0
+            && (self.flags & 0x200 != 0 || self.effect_started && self.flags & 0x800 != 0)
+    }
 }
 
 impl WorldMovementState {
@@ -99,6 +122,7 @@ impl WorldMovementState {
             flags,
             speeds,
             context,
+            spline: None,
         }
     }
 
@@ -127,5 +151,25 @@ impl WorldMovementState {
     #[must_use]
     pub const fn context(self) -> WorldMovementContext {
         self.context
+    }
+
+    /// Publishes the live spline summary used by stock speed/airborne selection.
+    #[must_use]
+    pub const fn with_spline(mut self, spline: WorldMovementSpline) -> Self {
+        self.spline = Some(spline);
+        self
+    }
+
+    /// Returns the live spline summary when a path owns movement.
+    #[must_use]
+    pub const fn spline(self) -> Option<WorldMovementSpline> {
+        self.spline
+    }
+
+    /// Replaces movement flags after the native path completion transition.
+    #[must_use]
+    pub const fn with_flags(mut self, flags: u64) -> Self {
+        self.flags = flags;
+        self
     }
 }

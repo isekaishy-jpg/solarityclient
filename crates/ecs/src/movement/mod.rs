@@ -10,4 +10,4 @@ mod state;
 
 pub use context::{WorldMovementContext, WorldMovementFall, WorldMovementTransport};
 pub use movement_c::WorldTransform;
-pub use state::{WorldMovementSpeeds, WorldMovementState};
+pub use state::{WorldMovementSpeeds, WorldMovementSpline, WorldMovementState};

@@ -2,6 +2,7 @@
 
 mod cache;
 mod dynamic;
+mod liquid;
 mod registration;
 mod world_model;
 
@@ -11,6 +12,7 @@ pub use dynamic::{RuntimeMovementOwner, RuntimeMovementQuery};
 pub use world_model::RuntimeWorldModelMovementOwner;
 use world_model::{MovementRootReference, ResidentGameObjectWorldModels};
 
+pub(in crate::application) use registration::UnitWorldModelLocation;
 pub use registration::{
     RuntimeMovementReference, RuntimeMovementRegistrationError, RuntimeMovementRegistrationQuery,
 };

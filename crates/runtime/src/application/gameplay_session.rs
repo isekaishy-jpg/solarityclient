@@ -1,6 +1,11 @@
 //! Composition boundary between an accepted network login and ECS ownership.
 
 mod game_object_notifications;
+mod monster;
+mod movement;
+
+pub(crate) use monster::apply_monster_move;
+pub(crate) use monster::prepare_monster_move;
 
 use crate::application::game_object_behavior::GameObjectNotification;
 use game_object_notifications::GameObjectUpdateMirrors;
@@ -27,6 +32,15 @@ pub enum GameplayUpdateError {
     /// The decoded field table could not be projected into typed views.
     #[error(transparent)]
     Projection(#[from] ObjectProjectionError),
+    /// The server spline cannot be admitted by the movement owner.
+    #[error(transparent)]
+    Spline(#[from] solarity_systems::MovementSplineError),
+    /// A known living object lacks the movement state required by its command.
+    #[error("movement command targets unit {guid:#018X} without movement state")]
+    MissingMovement {
+        /// Target GUID.
+        guid: u64,
+    },
     /// A living movement-only operation targeted a non-unit object category.
     #[error("living movement update targets {kind:?} object {guid:#018X}")]
     NonLivingMovement {
@@ -106,6 +120,38 @@ impl<S> GameplaySession<S> {
     ) -> Result<(), GameplayUpdateError> {
         apply_object_updates(&mut self.world, batch)
     }
+
+    /// Applies a batch at an explicit client receipt clock for deterministic
+    /// movement playback and preserves the server's elapsed spline time.
+    ///
+    /// # Errors
+    /// Returns an invalid world lifecycle, field projection, or movement error.
+    pub fn apply_object_updates_at(
+        &mut self,
+        batch: &WorldObjectUpdateBatch,
+        receipt_ms: u32,
+    ) -> Result<(), GameplayUpdateError> {
+        apply_object_updates_with(&mut self.world, batch, receipt_ms, &mut |_, _, _| Ok(()))
+    }
+
+    /// Applies a server-started path at an explicit receipt clock.
+    /// Returns false for an unknown unit or a transport controller not yet owned.
+    ///
+    /// # Errors
+    /// Rejects malformed movement geometry or a missing living movement state.
+    pub fn apply_monster_move_at(
+        &mut self,
+        message: &solarity_network::MonsterMove,
+        receipt_ms: u32,
+        stop_distance_tolerance: f32,
+    ) -> Result<bool, GameplayUpdateError> {
+        apply_monster_move(
+            &mut self.world,
+            message,
+            receipt_ms,
+            stop_distance_tolerance,
+        )
+    }
 }
 
 /// Applies a decoded batch to a main-thread-owned ECS world.
@@ -116,26 +162,33 @@ pub(crate) fn apply_object_updates(
     world: &mut ActiveWorld,
     batch: &WorldObjectUpdateBatch,
 ) -> Result<(), GameplayUpdateError> {
-    apply_object_updates_with(world, batch, &mut |_, _, _| Ok(()))
+    apply_object_updates_with(
+        world,
+        batch,
+        crate::platform::client_milliseconds(),
+        &mut |_, _, _| Ok(()),
+    )
 }
 
 /// Native packet processing applies all raw blocks before any field callback.
 pub(crate) fn apply_object_updates_with<E: From<GameplayUpdateError>>(
     world: &mut ActiveWorld,
     batch: &WorldObjectUpdateBatch,
+    receipt_ms: u32,
     notify: &mut impl FnMut(
         &ActiveWorld,
         solarity_ecs::WorldObjectIdentity,
         GameObjectNotification,
     ) -> Result<(), E>,
 ) -> Result<(), E> {
-    let mirrors = apply_object_updates_raw(world, batch).map_err(E::from)?;
+    let mirrors = apply_object_updates_raw(world, batch, receipt_ms).map_err(E::from)?;
     mirrors.dispatch(world, batch, notify)
 }
 
 fn apply_object_updates_raw(
     world: &mut ActiveWorld,
     batch: &WorldObjectUpdateBatch,
+    receipt_ms: u32,
 ) -> Result<GameObjectUpdateMirrors, GameplayUpdateError> {
     let mut mirrors = GameObjectUpdateMirrors::default();
     for update in batch.updates() {
@@ -169,12 +222,10 @@ fn apply_object_updates_raw(
                         return Err(WorldStateError::UnknownObject { guid: *guid }.into());
                     }
                 }
-                if let Some(transform) = movement_transform(*movement) {
+                if let Some(transform) = movement_transform(movement) {
                     world.update_transform(*guid, transform)?;
                 }
-                if let Some(movement) = movement_state(*movement) {
-                    world.update_movement(*guid, movement)?;
-                }
+                movement::install(world, *guid, movement, receipt_ms)?;
             }
             WorldObjectUpdate::Create {
                 guid,
@@ -188,21 +239,19 @@ fn apply_object_updates_raw(
                 world.create_object(
                     *guid,
                     object_kind(*kind),
-                    movement_transform(*movement),
+                    movement_transform(movement),
                     fields.iter().map(|field| (field.index(), field.value())),
                 )?;
                 // Stock skips the create movement block when the GUID already
                 // resolves to a non-local object, retaining its live movement
                 // state while refreshing the sparse field data.
-                if (existing.is_none() || existing == Some(world.local_player()))
-                    && let Some(movement) = movement_state(*movement)
-                {
-                    world.update_movement(*guid, movement)?;
+                if existing.is_none() || existing == Some(world.local_player()) {
+                    movement::install(world, *guid, movement, receipt_ms)?;
                 }
                 if (existing.is_none() || existing == Some(world.local_player()))
                     && *kind == WorldObjectKind::GameObject
                 {
-                    world.update_game_object_movement(*guid, game_object_movement(*movement))?;
+                    world.update_game_object_movement(*guid, game_object_movement(movement))?;
                 }
                 project_object_fields(
                     world,
@@ -223,7 +272,7 @@ fn apply_object_updates_raw(
 }
 
 /// Preserves the complete admitted living context at the network-to-ECS boundary.
-fn movement_state(movement: ObjectMovementUpdate) -> Option<WorldMovementState> {
+fn movement_state(movement: &ObjectMovementUpdate) -> Option<WorldMovementState> {
     let context = movement.context()?;
     Some(WorldMovementState::new(
         movement.movement_flags()?,
@@ -251,7 +300,7 @@ fn movement_state(movement: ObjectMovementUpdate) -> Option<WorldMovementState> 
     ))
 }
 
-fn movement_transform(movement: ObjectMovementUpdate) -> Option<WorldTransform> {
+fn movement_transform(movement: &ObjectMovementUpdate) -> Option<WorldTransform> {
     let [x, y, z] = movement.position()?;
     Some(WorldTransform::new(
         Vec3::new(x, y, z),
@@ -259,7 +308,7 @@ fn movement_transform(movement: ObjectMovementUpdate) -> Option<WorldTransform> 
     ))
 }
 
-fn game_object_movement(movement: ObjectMovementUpdate) -> GameObjectMovement {
+fn game_object_movement(movement: &ObjectMovementUpdate) -> GameObjectMovement {
     GameObjectMovement::new(
         movement.packed_rotation().unwrap_or(0),
         movement

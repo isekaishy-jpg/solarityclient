@@ -350,7 +350,7 @@ fn read_bounds(words: &mut SplitWhitespace<'_>) -> Result<MovementCollisionBound
 }
 
 /// Authors distinct MCNK origins, holes, and height values across both axes.
-fn terrain_tile(tile_x: u8, tile_y: u8) -> Result<Vec<u8>, Box<dyn Error>> {
+pub(super) fn terrain_tile(tile_x: u8, tile_y: u8) -> Result<Vec<u8>, Box<dyn Error>> {
     let bytes = AdtBuilder::new()
         .with_version(AdtVersion::WotLK)
         .add_texture("tileset/fixture/grass.blp")
@@ -379,7 +379,7 @@ fn terrain_tile(tile_x: u8, tile_y: u8) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 /// Declares the two test ADTs in an otherwise empty stock WDT.
-fn world_table() -> Result<Vec<u8>, Box<dyn Error>> {
+pub(super) fn world_table() -> Result<Vec<u8>, Box<dyn Error>> {
     let mut wdt = WdtFile::new(WowVersion::WotLK);
     wdt.mwmo = Some(MwmoChunk::new());
     for (x, y) in [(32, 32), (21, 30)] {
@@ -391,7 +391,7 @@ fn world_table() -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 /// Supplies the exact 66-field Map.dbc record needed for archive tile decoding.
-fn map_table() -> Vec<u8> {
+pub(super) fn map_table() -> Vec<u8> {
     let strings = b"\0Northrend\0";
     let mut fields = [0u32; 66];
     fields[0] = 571;

@@ -1,0 +1,25 @@
+# native 70C050 / 7BD5A0: kind identifier live nearby -> action entry retained options[0..18]
+gameobject $DSL 0 0 play 4d 1 0 bf800000 3f800000 ffffffff 3f800000 3f800000 2 1 ffffffff 0 0 bf800000 0 3f000000 1 1 0 0 1
+gameobject $DSL 1 0 none
+gameobject $DSL 0 1 none
+gameobject $DSO 0 0 play 4d 0
+gameobject $DSO 1 0 play 4d 0
+gameobject $DSO 0 1 play 4d 0
+gameobject $SND 0 0 play 4d 0
+gameobject $SND 1 0 play 4d 0
+gameobject $SND 0 1 play 4d 0
+gameobject $DSE 0 0 none
+gameobject $DSE 1 0 none
+gameobject $DSE 0 1 none
+doodad $DSL 0 0 play 4d 1 0 bf800000 3f800000 ffffffff 40400000 0 2 1 ffffffff 0 0 bf800000 0 3f000000 1 1 0 0 1
+doodad $DSL 1 0 none
+doodad $DSL 0 1 none
+doodad $DSO 0 0 play 4d 0
+doodad $DSO 1 0 play 4d 0
+doodad $DSO 0 1 play 4d 0
+doodad $SND 0 0 none
+doodad $SND 1 0 none
+doodad $SND 0 1 none
+doodad $DSE 0 0 stop 0 bf800000 1
+doodad $DSE 1 0 stop 0 bf800000 1
+doodad $DSE 0 1 stop 0 bf800000 1

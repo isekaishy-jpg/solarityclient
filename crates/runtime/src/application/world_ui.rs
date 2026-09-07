@@ -89,6 +89,22 @@ impl RuntimeWorldUi {
         self.manager.take_movement_command()
     }
 
+    /// Preserves FrameXML sound calls in the same order as GlueXML calls.
+    pub(super) fn take_media_action(&self) -> Option<solarity_ui::UiGlueMediaAction> {
+        self.manager.take_media_action()
+    }
+
+    /// Publishes the process sound owner's resolved device after a restart.
+    pub(super) fn publish_sound_output(
+        &self,
+        names: Vec<String>,
+        index: usize,
+        name: &str,
+    ) -> Result<(), solarity_ui::UiScriptError> {
+        self.manager.set_sound_output_devices(names);
+        self.manager.set_sound_output_selection(index, name)
+    }
+
     /// Delivers the transfer handler's localized system chat event before card dismissal.
     pub(super) fn transfer_aborted(
         &mut self,
@@ -183,12 +199,16 @@ impl RuntimeWorldUi {
         realm_clock: Option<&RealmClock>,
         action_buttons: Option<&WorldActionButtons>,
         general_tab_name: String,
+        sound_output_names: Option<Vec<String>>,
     ) -> Result<(Self, Vec<ApplicationError>), ApplicationError> {
         let environment = UiScriptEnvironment::new(logical_extent.0, logical_extent.1, false)
             .map_err(GlueError::from)?
             .with_client_clock(solarity_ui::UiClientClock::from_source(
                 crate::platform::client_milliseconds,
             ));
+        if let Some(names) = sound_output_names {
+            environment.set_sound_output_devices(names);
+        }
         let world = environment.world_state();
         metadata.publish_active_player(active, &world)?;
 

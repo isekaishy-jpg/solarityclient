@@ -7,6 +7,14 @@ use super::{MovementBspCacheMode, PlacedWorldModelCollision, WorldModelCollision
 
 const REGION_TOLERANCE: f64 = 0.01_f32 as f64;
 
+/// The camera's general ray admits every unmarked face; unit floor registration
+/// rejects detail faces and separates primary and fallback polygon channels.
+#[derive(Clone, Copy)]
+enum FloorProbeKind {
+    Unit,
+    Camera,
+}
+
 /// One authored face selected by the registration floor ray.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldModelFloorHit {
@@ -87,11 +95,35 @@ impl PlacedWorldModelCollision {
             [start, end],
             maximum_fractions,
             cache_mode,
+            FloorProbeKind::Unit,
         )
+    }
+
+    /// 7CB0C0's general ray shares BSP traversal with the dual floor query.
+    pub(super) fn probe_camera_group_floor(
+        &mut self,
+        group_index: usize,
+        start: Vec3,
+        end: Vec3,
+        maximum: f32,
+    ) -> Result<Option<WorldModelFloorHit>, WorldModelCollisionError> {
+        let group = &self.model.groups()[group_index];
+        Ok(self
+            .floor_probe
+            .probe(
+                group,
+                &self.movement_cached_leaves[group_index],
+                [start, end],
+                [maximum; 2],
+                MovementBspCacheMode::Enabled,
+                FloorProbeKind::Camera,
+            )?
+            .primary)
     }
 }
 
 impl FloorProbeScratch {
+    #[allow(clippy::too_many_arguments)]
     fn probe(
         &mut self,
         group: &DecodedWorldModelGroup,
@@ -99,6 +131,7 @@ impl FloorProbeScratch {
         segment: [Vec3; 2],
         maximum: [f32; 2],
         cache_mode: MovementBspCacheMode,
+        kind: FloorProbeKind,
     ) -> Result<WorldModelFloorHits, WorldModelCollisionError> {
         let mut hits = [None; 2];
         // 7C77D0 spills each subtraction, but retains the length and reciprocal
@@ -142,7 +175,11 @@ impl FloorProbeScratch {
                 for &face in &group.bsp_faces()[first..first + usize::from(node.face_count())] {
                     let index = usize::from(face);
                     let flags = group.polygons()[index].flags();
-                    if self.visited[index] || flags & 0x82 != 0 || selected == 8192 {
+                    let exclusion = match kind {
+                        FloorProbeKind::Unit => 0x82,
+                        FloorProbeKind::Camera => 0x80,
+                    };
+                    if self.visited[index] || flags & exclusion != 0 || selected == 8192 {
                         continue;
                     }
                     self.visited[index] = true;
@@ -166,7 +203,7 @@ impl FloorProbeScratch {
                     if distance < 0.0 {
                         continue;
                     }
-                    let channels = if flags & 0x20 != 0 {
+                    let channels = if matches!(kind, FloorProbeKind::Camera) || flags & 0x20 != 0 {
                         [true, true]
                     } else if flags & 8 != 0 {
                         [true, false]

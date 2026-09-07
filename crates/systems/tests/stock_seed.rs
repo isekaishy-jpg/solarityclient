@@ -38,6 +38,8 @@ mod interaction;
 mod inventory;
 #[path = "stock_seed/language.rs"]
 mod language;
+#[path = "stock_seed/liquid_query.rs"]
+mod liquid_query;
 #[path = "stock_seed/loot.rs"]
 mod loot;
 #[path = "stock_seed/mail.rs"]

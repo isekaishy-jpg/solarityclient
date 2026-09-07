@@ -56,6 +56,9 @@ pub enum RuntimeMovementRegistrationError {
     /// Native box transformation failed.
     #[error(transparent)]
     Collection(#[from] MovementCollectionError),
+    /// A queried liquid group references unavailable behavior data.
+    #[error(transparent)]
+    Liquid(#[from] solarity_systems::SubmergedLiquidError),
     /// An admitted MODF no longer resolves to its complete collision generation.
     #[error("resident movement registration reference is invalid")]
     InvalidReference,
@@ -110,7 +113,42 @@ impl RuntimeMovementRegistrationQuery {
 }
 
 impl ResidentTerrainMap {
-    fn registration_root_mut(
+    /// Shares Unit_C's point registration between location and ground sound queries.
+    fn unit_registration(
+        &mut self,
+        position: Vec3,
+    ) -> Result<
+        WorldModelRegistrationSelection<RuntimeWorldModelMovementOwner>,
+        RuntimeMovementRegistrationError,
+    > {
+        let start = position + Vec3::Z * 0.1;
+        let end = position - Vec3::Z * 1000.0;
+        let address = TerrainRegistrationPoint::new(position.x, position.y)?;
+        let terrain_height = self
+            .tile_at(address.tile())
+            .map(|tile| tile.collision.registration_height_at(address))
+            .transpose()?
+            .flatten();
+        let terrain_fraction = terrain_height
+            .map(|height| ((f64::from(start.z) - f64::from(height)) * f64::from(0.001_f32)) as f32)
+            .filter(|fraction| *fraction >= 0.0);
+        let cache = MovementBspCacheMode::Enabled;
+        let mut selection = self.probe_registration_roots(start, end, start, cache)?;
+        if terrain_fraction.is_none() && selection.selected().is_none() {
+            selection = self.probe_registration_roots(
+                position,
+                position + Vec3::Z * 1000.0,
+                position,
+                cache,
+            )?;
+        }
+        if let Some(fraction) = terrain_fraction {
+            selection.occlude_by_terrain(fraction)?;
+        }
+        Ok(selection)
+    }
+
+    pub(super) fn registration_root_mut(
         &mut self,
         root: MovementRootReference,
     ) -> Result<&mut PlacedWorldModelCollision, RuntimeMovementRegistrationError> {
@@ -295,6 +333,75 @@ impl ResidentTerrainMap {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Resolves 7A1640's WMO tuple from the same floor/portal banks as Unit_C.
+    pub(in crate::application) fn unit_world_model_location(
+        &mut self,
+        position: Vec3,
+    ) -> Result<Option<UnitWorldModelLocation>, RuntimeMovementRegistrationError> {
+        let Some(active) = self.active.as_mut() else {
+            return Ok(None);
+        };
+        let selection = active.unit_registration(position)?;
+        for candidate in selection.primary().into_iter().flatten() {
+            let reference = active
+                .movement
+                .roots
+                .iter()
+                .find(|reference| reference.owner() == candidate.owner())
+                .copied()
+                .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
+            // 77F090/7A1640 skip exterior groups on transformed roots (flag 0x400).
+            let transformed = matches!(reference, MovementRootReference::GameObject(_));
+            if transformed && !candidate.hit().is_interior() {
+                continue;
+            }
+            let name_set = match reference {
+                // 7BF120 initializes replicated roots' name-set word +0x104 to zero.
+                MovementRootReference::GameObject(_) => 0,
+                MovementRootReference::Static(reference) => {
+                    let scene = match reference.scene {
+                        SceneAddress::Global => {
+                            &active
+                                .global_world_model
+                                .as_ref()
+                                .ok_or(RuntimeMovementRegistrationError::InvalidReference)?
+                                .world_models
+                        }
+                        SceneAddress::Tile(index) => {
+                            &active
+                                .tile_at(index)
+                                .ok_or(RuntimeMovementRegistrationError::InvalidReference)?
+                                .world_models
+                        }
+                    };
+                    u32::from(
+                        scene
+                            .placements()
+                            .get(reference.placement)
+                            .ok_or(RuntimeMovementRegistrationError::InvalidReference)?
+                            .name_set(),
+                    )
+                }
+            };
+            let placement = active.registration_root_mut(reference)?;
+            let group = placement
+                .model()
+                .groups()
+                .get(candidate.hit().group_index())
+                .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
+            return Ok(Some(UnitWorldModelLocation {
+                key: solarity_asset::WorldModelAreaKey {
+                    root_id: placement.model().world_model_id(),
+                    name_set,
+                    group_id: group.area_table_id() as i32,
+                },
+                world_model_only: candidate.hit().is_interior(),
+                area_override: !transformed,
+            }));
+        }
+        Ok(None)
+    }
+
     /// Resolves Unit_C's ground sound type with native floor and texture selection.
     pub(in crate::application) fn unit_ground_sound_type(
         &mut self,
@@ -304,30 +411,7 @@ impl RuntimeTerrainCoordinator {
         let Some(active) = self.active.as_mut() else {
             return Ok(u32::MAX);
         };
-        let start = position + Vec3::Z * 0.1;
-        let end = position - Vec3::Z * 1000.0;
-        let address = TerrainRegistrationPoint::new(position.x, position.y)?;
-        let terrain_height = active
-            .tile_at(address.tile())
-            .map(|tile| tile.collision.registration_height_at(address))
-            .transpose()?
-            .flatten();
-        let terrain_fraction = terrain_height
-            .map(|height| ((f64::from(start.z) - f64::from(height)) * f64::from(0.001_f32)) as f32)
-            .filter(|fraction| *fraction >= 0.0);
-        let cache = MovementBspCacheMode::Enabled;
-        let mut selection = active.probe_registration_roots(start, end, start, cache)?;
-        if terrain_fraction.is_none() && selection.selected().is_none() {
-            selection = active.probe_registration_roots(
-                position,
-                position + Vec3::Z * 1000.0,
-                position,
-                cache,
-            )?;
-        }
-        if let Some(fraction) = terrain_fraction {
-            selection.occlude_by_terrain(fraction)?;
-        }
+        let selection = active.unit_registration(position)?;
         // 0x007C2A70 uses the corresponding fallback face, including its
         // absent-face sentinel after portal-only registration.
         if let Some(candidate) = selection.fallback().into_iter().flatten().next() {
@@ -409,4 +493,13 @@ impl RuntimeTerrainCoordinator {
         }
         result
     }
+}
+
+/// WMO identity and location gates, before resolving any DBC relationships.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::application) struct UnitWorldModelLocation {
+    pub key: solarity_asset::WorldModelAreaKey,
+    pub world_model_only: bool,
+    /// 782560 excludes transformed roots when overriding the terrain AreaTable ID.
+    pub area_override: bool,
 }

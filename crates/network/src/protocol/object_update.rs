@@ -6,6 +6,7 @@ use flate2::read::ZlibDecoder;
 use thiserror::Error;
 
 use super::movement::{ObjectMovementContext, ObjectMovementFall, ObjectMovementTransport};
+use super::movement_spline::{MovementSplineFacing, MovementSplineSnapshot};
 
 const SMSG_COMPRESSED_UPDATE_OBJECT: u16 = 0x01F6;
 const MAX_UPDATE_BODY_BYTES: usize = 0x7F_FFFD;
@@ -78,12 +79,13 @@ impl ObjectFieldUpdate {
 }
 
 /// Position and facing present in a movement update block.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ObjectMovementUpdate {
     update_flags: u16,
     movement_flags: Option<u64>,
     transport_guid: Option<u64>,
     context: Option<ObjectMovementContext>,
+    spline: Option<MovementSplineSnapshot>,
     speeds: Option<ObjectMovementSpeeds>,
     position: Option<[f32; 3]>,
     orientation: Option<f32>,
@@ -105,61 +107,67 @@ pub struct ObjectPositionTransport {
 impl ObjectMovementUpdate {
     /// Returns creation `UpdateFlag` bits, or zero for a movement-only operation.
     #[must_use]
-    pub const fn update_flags(self) -> u16 {
+    pub const fn update_flags(&self) -> u16 {
         self.update_flags
     }
 
     /// Returns the exact 48-bit movement flags for a living block.
     #[must_use]
-    pub const fn movement_flags(self) -> Option<u64> {
+    pub const fn movement_flags(&self) -> Option<u64> {
         self.movement_flags
     }
 
     /// Returns the exact associated transport GUID carried by this block.
     #[must_use]
-    pub const fn transport_guid(self) -> Option<u64> {
+    pub const fn transport_guid(&self) -> Option<u64> {
         self.transport_guid
     }
 
     /// Returns the complete conditional living movement snapshot.
     #[must_use]
-    pub const fn context(self) -> Option<ObjectMovementContext> {
+    pub const fn context(&self) -> Option<ObjectMovementContext> {
         self.context
+    }
+
+    /// Returns the retained path when the living movement enables a spline.
+    #[must_use]
+    pub const fn spline(&self) -> Option<&MovementSplineSnapshot> {
+        self.spline.as_ref()
     }
 
     /// Returns all nine ordered speed values supplied by a living block.
     #[must_use]
-    pub const fn speeds(self) -> Option<ObjectMovementSpeeds> {
+    pub const fn speeds(&self) -> Option<ObjectMovementSpeeds> {
         self.speeds
     }
 
     /// Returns the world position when this block supplies one.
     #[must_use]
-    pub const fn position(self) -> Option<[f32; 3]> {
+    pub const fn position(&self) -> Option<[f32; 3]> {
         self.position
     }
 
     /// Returns facing when this block supplies it.
     #[must_use]
-    pub const fn orientation(self) -> Option<f32> {
+    pub const fn orientation(&self) -> Option<f32> {
         self.orientation
     }
 
     /// Returns the non-living passenger offset without discarding a zero GUID.
     #[must_use]
-    pub const fn position_transport(self) -> Option<ObjectPositionTransport> {
+    pub const fn position_transport(&self) -> Option<ObjectPositionTransport> {
         self.position_transport
     }
 
     /// Returns the exact packed local quaternion when `UPDATEFLAG_ROTATION` is set.
     #[must_use]
-    pub const fn packed_rotation(self) -> Option<u64> {
+    pub const fn packed_rotation(&self) -> Option<u64> {
         self.packed_rotation
     }
 
     /// Returns whether this block identifies the controlled object.
     #[must_use]
-    pub const fn is_self(self) -> bool {
+    pub const fn is_self(&self) -> bool {
         self.update_flags & UPDATE_FLAG_SELF != 0
     }
 }
@@ -492,6 +500,7 @@ impl<'a> UpdateCursor<'a> {
                 movement_flags: None,
                 transport_guid: None,
                 context: None,
+                spline: None,
                 speeds: None,
                 position: None,
                 orientation: None,
@@ -603,14 +612,17 @@ impl<'a> UpdateCursor<'a> {
                 self.read_f32("pitch rate is truncated")?,
             ],
         };
-        if flags & MOVEMENT_SPLINE_ENABLED != 0 {
-            self.read_spline()?;
-        }
+        let spline = if flags & MOVEMENT_SPLINE_ENABLED != 0 {
+            Some(self.read_spline()?)
+        } else {
+            None
+        };
         Ok(ObjectMovementUpdate {
             update_flags: 0,
             movement_flags: Some(flags),
             transport_guid: context.transport.map(|transport| transport.guid),
             context: Some(context),
+            spline,
             speeds: Some(speeds),
             position: Some(position),
             orientation: Some(orientation),
@@ -644,21 +656,50 @@ impl<'a> UpdateCursor<'a> {
         })
     }
 
-    fn read_spline(&mut self) -> Result<(), ObjectUpdateError> {
+    /// Retains the complete native 004F4B50 snapshot and 004F4AE0 path array.
+    fn read_spline(&mut self) -> Result<MovementSplineSnapshot, ObjectUpdateError> {
         let flags = self.read_u32("spline flags are truncated")?;
-        if flags & SPLINE_FINAL_ANGLE != 0 {
-            self.skip(4, "spline final angle is truncated")?;
+        let facing = if flags & SPLINE_FINAL_ANGLE != 0 {
+            MovementSplineFacing::Angle(self.read_f32("spline final angle is truncated")?)
         } else if flags & SPLINE_FINAL_TARGET != 0 {
-            self.skip(8, "spline final target is truncated")?;
+            let low = u64::from(self.read_u32("spline final target is truncated")?);
+            let high = u64::from(self.read_u32("spline final target is truncated")?);
+            MovementSplineFacing::Target(low | (high << 32))
         } else if flags & SPLINE_FINAL_POINT != 0 {
-            self.skip(12, "spline final point is truncated")?;
-        }
-        self.skip(28, "spline timing is truncated")?;
+            MovementSplineFacing::Point(self.read_position()?)
+        } else {
+            MovementSplineFacing::Direction
+        };
+        let elapsed_ms = self.read_u32("spline elapsed time is truncated")?;
+        let duration_ms = self.read_u32("spline duration is truncated")?;
+        let id = self.read_u32("spline ID is truncated")?;
+        let timing_parameters = [
+            self.read_f32("spline timing is truncated")?,
+            self.read_f32("spline timing is truncated")?,
+            self.read_f32("spline timing is truncated")?,
+        ];
+        let effect_start_ms = self.read_u32("spline effect time is truncated")?;
         let node_count = self.read_u32("spline node count is truncated")? as usize;
-        let node_bytes = node_count
-            .checked_mul(12)
-            .ok_or_else(|| self.error("spline node count overflows"))?;
-        self.skip(node_bytes, "spline nodes are truncated")?;
-        self.skip(1 + 12, "spline mode or final node is truncated")
+        if node_count > self.remaining() / 12 {
+            return Err(self.error("spline nodes are truncated"));
+        }
+        let mut nodes = Vec::with_capacity(node_count);
+        for _ in 0..node_count {
+            nodes.push(self.read_position()?);
+        }
+        let mode = self.read_u8("spline mode is truncated")?;
+        let destination = self.read_position()?;
+        Ok(MovementSplineSnapshot {
+            flags,
+            facing,
+            elapsed_ms,
+            duration_ms,
+            id,
+            timing_parameters,
+            effect_start_ms,
+            nodes,
+            mode,
+            destination,
+        })
     }
 }

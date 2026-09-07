@@ -17,6 +17,7 @@ mod combat_log;
 mod credits;
 mod legal_agreement;
 mod scan_dll;
+mod sound_output;
 mod string_format;
 
 const ERROR_HANDLER_REGISTRY: &str = "solarity.ui.error_handler";
@@ -1912,6 +1913,7 @@ fn register_client_runtime_globals(
         })?,
     )?;
     let cvars = environment.cvars();
+    let sound_devices = environment.media_intent();
     globals.raw_set(
         "SetCVar",
         lua.create_function(move |lua, (name, value): (Value, Value)| {
@@ -1919,7 +1921,17 @@ fn register_client_runtime_globals(
             let value = lua
                 .coerce_string(value)?
                 .map_or_else(|| "0".to_owned(), |value| value.to_string_lossy());
-            set_cvar(&cvars, &name, value)
+            set_cvar(&cvars, &name, value)?;
+            // 4D0DD0 updates the saved driver name immediately, but changing
+            // the index alone does not restart playback.
+            if name.eq_ignore_ascii_case("Sound_OutputDriverIndex")
+                && let Some(index) = cvars.get(&name).and_then(|value| value.parse::<i32>().ok())
+                && index >= 0
+                && let Some(name) = sound_output::driver_name(lua, &sound_devices.borrow(), index)?
+            {
+                set_cvar(&cvars, "Sound_OutputDriverName", name)?;
+            }
+            Ok(())
         })?,
     )?;
     let cvars = environment.cvars();
@@ -2062,16 +2074,7 @@ fn register_client_runtime_globals(
         "IsStereoVideoAvailable",
         lua.create_function(|_, ()| Ok(None::<u32>))?,
     )?;
-    // The platform audio service has not attached devices to this headless
-    // environment. Stock represents that state as an empty indexed list.
-    globals.raw_set(
-        "Sound_GameSystem_GetNumOutputDrivers",
-        lua.create_function(|_, ()| Ok(0_u32))?,
-    )?;
-    globals.raw_set(
-        "Sound_GameSystem_GetOutputDriverNameByIndex",
-        lua.create_function(|_, _index: u32| Ok(None::<String>))?,
-    )?;
+    sound_output::register(lua, globals, environment)?;
     globals.raw_set(
         "Sound_ChatSystem_GetNumInputDrivers",
         lua.create_function(|_, ()| Ok(0_u32))?,

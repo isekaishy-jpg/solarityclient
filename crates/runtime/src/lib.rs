@@ -25,6 +25,10 @@ mod time;
 #[path = "../tests/stock_seed/support/mod.rs"]
 pub(crate) mod test_support;
 
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod test_network;
+
 pub use build_identity::{CLIENT_BUILD, ClientBuild};
 pub use random::{BlizzardRand, CrtRand};
 pub use time::RealmClock;

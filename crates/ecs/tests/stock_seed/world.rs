@@ -210,3 +210,20 @@ fn object_updates_mutate_indexed_entities_in_server_order() -> Result<(), Box<dy
     ));
     Ok(())
 }
+/// 548970 changes the UI filter; it does not reset BE8F58's omitted fields.
+#[test]
+fn world_state_initialization_merges_in_wire_order_and_preserves_zero_lookup() {
+    let mut states = solarity_ecs::WorldStateValues::default();
+    assert_eq!(states.value(77), 0);
+    assert!(!states.set(77, 0));
+    assert!(states.set(77, 3));
+    assert!(!states.set(77, 3));
+    states.initialize([571, 4197, 4200], &[(88, u32::MAX), (77, 1), (77, 2)]);
+    states.initialize([0, 12, 0], &[(99, 8)]);
+    assert_eq!(states.location(), [0, 12, 0]);
+    assert_eq!(states.value(77), 2);
+    assert_eq!(states.value(88), u32::MAX);
+    assert_eq!(states.value(99), 8);
+    assert!(states.set(77, 0));
+    assert_eq!(states.value(77), 0);
+}

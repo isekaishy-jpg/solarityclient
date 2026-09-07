@@ -169,43 +169,29 @@ impl DecodedWorldModelGroup {
         self.liquid.as_ref()
     }
 
-    /// Resolves one build-12340 `LiquidType.dbc` identifier.
-    ///
-    /// Legacy roots overload the low tile nibble when MOGP liquid type is 15;
-    /// newer roots identify liquid types directly through MOHD flag `0x4`.
+    /// Resolves the group's build-12340 `LiquidType.dbc` identifier.
+    /// 7D82E0/7D7310 map the MOGP word first. If it resolves to zero,
+    /// 7D7C30/7C8D80 use the first nonempty MLIQ tile for the whole group.
     #[must_use]
-    pub const fn resolve_liquid_type(&self, root_flags: u16, tile: Option<u8>) -> u32 {
-        let value = self.liquid_type;
-        if value == 0 {
-            return 0;
-        }
-        if root_flags & 0x4 != 0 {
-            return if value < 21 {
-                local_liquid_type(value - 1, self.flags)
-            } else {
-                value
-            };
-        }
-        if value == 15
-            && let Some(tile) = tile
-        {
-            let legacy = (tile & 0x0f) as u32;
-            return if legacy == 1 {
-                14
-            } else if legacy == 2 {
-                19
-            } else if legacy == 3 {
-                20
-            } else if legacy >= 4 {
-                13
-            } else {
-                0
-            };
-        }
-        if value < 20 {
-            local_liquid_type(value, self.flags)
+    pub fn resolve_liquid_type(&self, root_flags: u16) -> u32 {
+        let mut value = if root_flags & 4 != 0 {
+            self.liquid_type
+        } else if self.liquid_type == 15 {
+            0
         } else {
-            value + 1
+            self.liquid_type.wrapping_add(1)
+        };
+        if value == 0 && self.flags & 0x1000 != 0 {
+            value = self
+                .liquid
+                .as_ref()
+                .and_then(|liquid| liquid.tiles.iter().find(|tile| **tile & 15 != 15))
+                .map_or(0, |tile| u32::from(tile & 15) + 1);
+        }
+        if (1..21).contains(&value) {
+            local_liquid_type(value - 1, self.flags)
+        } else {
+            value
         }
     }
 

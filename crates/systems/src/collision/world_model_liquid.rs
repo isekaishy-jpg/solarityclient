@@ -80,7 +80,7 @@ impl PlacedWorldModelLiquid {
         for group in model.groups() {
             let group_bounds = transformed_bounds(group.bounds(), transform)?;
             if let Some(liquid) = group.liquid() {
-                let vertex_height = usize::try_from(liquid.vertex_height())
+                let vertex_width = usize::try_from(liquid.vertex_width())
                     .map_err(|_error| WorldModelLiquidError::NonFiniteGeometry)?;
                 let tile_width = usize::try_from(liquid.tile_width())
                     .map_err(|_error| WorldModelLiquidError::NonFiniteGeometry)?;
@@ -88,16 +88,16 @@ impl PlacedWorldModelLiquid {
                     .map_err(|_error| WorldModelLiquidError::NonFiniteGeometry)?;
                 for x in 0..tile_width {
                     for y in 0..tile_height {
-                        let tile = liquid.tiles()[x * tile_height + y];
+                        let tile = liquid.tiles()[y * tile_width + x];
                         if tile & 0x0f == 0x0f {
                             continue;
                         }
-                        let liquid_type = group.resolve_liquid_type(model.flags(), Some(tile));
+                        let liquid_type = group.resolve_liquid_type(model.flags());
                         if liquid_type == 0 {
                             continue;
                         }
                         let vertex = |x: usize, y: usize| {
-                            let source = liquid.vertices()[x * vertex_height + y];
+                            let source = liquid.vertices()[y * vertex_width + x];
                             transform.transform_point3(Vec3::new(
                                 liquid.corner()[0] + x as f32 * LIQUID_TILE_SIZE,
                                 liquid.corner()[1] + y as f32 * LIQUID_TILE_SIZE,
@@ -122,7 +122,7 @@ impl PlacedWorldModelLiquid {
                 && group.liquid_type() != 0
                 && group.flags() & 0x1000 != 0
             {
-                let liquid_type = group.resolve_liquid_type(model.flags(), None);
+                let liquid_type = group.resolve_liquid_type(model.flags());
                 if liquid_type != 0 {
                     draws.push(implicit_group_draw(
                         group,

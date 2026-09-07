@@ -20,9 +20,72 @@ pub(crate) struct RuntimeCharacterMetadata {
     classes: CharacterClassCatalog,
     factions: CharacterFactionCatalog,
     areas: AreaTableCatalog,
+    world_model_areas: solarity_asset::WorldModelAreaCatalog,
 }
 
 impl RuntimeCharacterMetadata {
+    /// Borrows the same area catalog used by zone text for per-field audio inheritance.
+    pub(crate) fn world_location(
+        &self,
+        terrain_area_id: Option<u32>,
+        world_model: Option<super::terrain_coordinator::UnitWorldModelLocation>,
+    ) -> Result<RuntimeWorldLocation, CharacterProjectionError> {
+        let group = world_model.and_then(|location| self.world_model_areas.area(location.key));
+        let root = world_model.and_then(|location| {
+            self.world_model_areas
+                .area(solarity_asset::WorldModelAreaKey {
+                    group_id: -1,
+                    ..location.key
+                })
+        });
+        let world_model_only = world_model.is_some_and(|location| location.world_model_only);
+        // 782560 takes only the group's nonzero AreaTable relation on static roots.
+        let area_id = group
+            .filter(|_| world_model.is_some_and(|location| location.area_override))
+            .map(|row| row.area_id())
+            .filter(|id| *id != 0)
+            .or(terrain_area_id);
+        let area = area_id
+            .map(|id| {
+                self.areas
+                    .area(id)
+                    .ok_or(CharacterProjectionError::UnknownArea { id })
+            })
+            .transpose()?;
+        let parent = if let Some(area) = area.filter(|area| area.parent_area_id() != 0) {
+            Some(self.areas.area(area.parent_area_id()).ok_or(
+                CharacterProjectionError::UnknownArea {
+                    id: area.parent_area_id(),
+                },
+            )?)
+        } else {
+            None
+        };
+        Ok(RuntimeWorldLocation {
+            chunk_key: None,
+            area_id,
+            sound_location_ids: solarity_media::ZoneSoundLocationIds {
+                areas: [
+                    parent.or(area).map_or(0, |row| row.id()),
+                    area.filter(|_| parent.is_some()).map_or(0, |row| row.id()),
+                ],
+                world_model_areas: [
+                    root.map_or(0, |row| row.id()),
+                    group.map_or(0, |row| row.id()),
+                ],
+                world_model_only,
+            },
+            sounds: solarity_media::resolve_zone_sound_references(
+                parent.map(|area| area.sounds()),
+                area.map(|area| area.sounds()),
+                root.map(|row| row.sounds()),
+                group.map(|row| row.sounds()),
+                world_model_only,
+            ),
+            world_model_only,
+        })
+    }
+
     /// Loads selection metadata before the asset stack transfers into Glue.
     pub(crate) fn load(store: &mut AssetStore) -> Result<Self, AssetError> {
         Ok(Self {
@@ -30,6 +93,7 @@ impl RuntimeCharacterMetadata {
             classes: CharacterClassCatalog::load(store)?,
             factions: CharacterFactionCatalog::load(store)?,
             areas: AreaTableCatalog::load(store)?,
+            world_model_areas: solarity_asset::WorldModelAreaCatalog::load(store)?,
         })
     }
 
@@ -284,6 +348,16 @@ impl RuntimeCharacterMetadata {
             None,
         ))
     }
+}
+
+/// Common resolved location supplied to zone text and the sound owner.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RuntimeWorldLocation {
+    pub sound_location_ids: solarity_media::ZoneSoundLocationIds,
+    pub chunk_key: Option<solarity_asset::WorldChunkSoundKey>,
+    pub area_id: Option<u32>,
+    pub sounds: solarity_asset::AreaSoundReferences,
+    pub world_model_only: bool,
 }
 
 /// Converts `UNIT_FIELD_BYTES_0`'s closed build-12340 power vocabulary.

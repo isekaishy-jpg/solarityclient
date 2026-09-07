@@ -47,8 +47,82 @@ mutation, conditional spline consumption, and every prefix truncation of a
 populated movement packet followed by a valid encrypted frame. The deliberately
 incorrect creation-prefix layout is rejected.
 
-The native fixture corpus excludes spline-enabled blocks; the independently
-authored encrypted fixture tests their consumption. Spline trajectories are still
-consumed without a retained path owner. These checks establish this packet
-boundary and ECS projection, not complete remote-motion interpolation, local
-ground/fall integration, dynamic collision, or live visual parity.
+The native reader fixture corpus excludes spline-enabled blocks; independently
+authored encrypted fixtures check every retained spline field and packet tail.
+`MovementSplineSnapshot` preserves the complete final-facing union, clocks,
+scales, controls, mode byte, effect time, and separate destination.
+
+The systems-owned `MovementSpline` component installs these controls using
+`receipt - elapsed` (`004F4B50`). Installation selects linear or Catmull-Rom
+geometry from flags `0x42000`, as `006F1520` does. `MovementPath` uses the original
+four-control windows, distance-weighted segment selection, and twenty-sample
+smooth length cache (`004C3980`, vtable `009E2F28`). The native geometry fixture
+contains 200 position/direction samples, including long and degenerate paths.
+
+The runtime remote movement phase runs before model and sound synchronization.
+It takes ownership of the admitted spline and publishes its compact movement
+summary to ECS. `advance_world_movement_splines` also exposes standalone path
+playback for consumers that do not own an ordinary command timeline.
+The path clock follows `0098CA00`, including unsigned clock wraparound, scaled
+durations, frozen/reversed paths, one cycle per evaluation, and the initial-cycle
+control replacement at `0098C940`. Endpoint placement/facing and movement stop
+follow `006EB0B0`/`0098BD10`. Its 320 native evaluator fixtures also cover falling
+and parabolic vertical offsets; dedicated tests check final target facing and
+the initial-cycle replacement. Fixtures compare floats within 1e-5 absolute or
+1e-6 relative tolerance; they do not claim bit-exact x87 emulation.
+
+`WorldMovementSpline` publishes only the live flags, cached length, authored
+duration, and effect admission to animation. `Movement::GetSpeed(0)` (`987570`)
+uses path length divided by authored duration for an active spline, allowing
+the existing native walk/run threshold to select walking for slow NPC paths.
+Encrypted integration tests check intermediate placement, walking, endpoint
+orientation, stopping, path replacement, and removal by a nonspline snapshot.
+
+Post-spawn `SMSG_MONSTER_MOVE` (`0xDD`) is decoded and dispatched through the
+same retained owner. The protocol also decodes the transport form (`0x2AE`),
+whose attachment controller remains a prerequisite for applying those points.
+Native `0073F590`/`0073C8E0` define the header, stop/facing forms, conditional
+effects, and full or packed point arrays. Packed offsets use signed 11/11/10-bit
+quarter-yard coordinates relative to the start/destination midpoint (`007152B0`).
+
+`MovementPathRequest::prepare` follows `0073C8E0` and `007180C0`: it reconciles
+linear starts against the current unit position, builds endpoint controls, and
+limits speed to `max(28, 4 * run_speed)` or 50 for smooth paths. Its duration uses
+the original chord-length calculation and nearest-even integer conversion.
+Short stops place immediately inside `pathDistTol` (native default one yard,
+registration `00715330`); larger corrections traverse a short path. A corpus of
+540 complete native preparations checks decoded points, controls, placement
+decisions, and effective durations. Its controlled tolerance is four yards.
+Encrypted tests cover idle-to-walk, replacing an advancing path, stopping, and
+late commands after GUID removal. Unknown units are not manufactured by a path.
+
+Ordinary incoming movement commands use the original `00741B60` GUID guard and
+`006EB730` receipt/server clock admission. The retained history, delay clamps,
+wrapping comparisons, and immediate/future decisions are checked against native
+execution. Future commands retain stable timestamp order. `006EA6A0`/`006EA7E0`
+position and angle correction are sampled before ground/fall collision; a
+separate native corpus checks their numeric results. Normal frames cap movement
+at 250 ms and split at queued timestamps (`006F09F0`); immediate corrections
+catch up in 250 ms chunks (`006EA550`). Rooted translation is discarded by the
+`006EF860` command gate. Idle units do not initiate terrain simulation, and
+`00406DE0`'s two-yard map margin prevents out-of-map integration.
+
+Object baselines, ordinary commands, and monster paths share an ECS inbox.
+Before path replacement, `006ED7E0`/`006ED0F0` flush future snapshots without
+replaying ordinary jump/axis actions. Retaining each baseline's own path avoids
+later packets overwriting geometry before its turn in the queue. World/entity
+identity prevents GUID reuse from retaining an old command or trajectory.
+Encrypted loopback tests exercise NPC walking, remote-player running, stopping,
+local echoes, unknown GUIDs, and GUID reuse through dispatch and resident terrain
+to ECS publication. Regression cases cover mixed ordinary/path ordering,
+heartbeat landing, unavailable geometry, roots, and clock wrap.
+
+Transport path frames and special spline collision/event policies still require
+their native owners. Swimming, flight, mounts, and vehicles remain backlog work
+with their prerequisites. Ordinary pitch-arc trajectories (`00987950`) retain
+authoritative snapshots until the three-dimensional solver is present; the
+horizontal predictor does not simulate them. Separate speed, root, and movement
+effect opcode families also require their command owners. Transport paths
+are retained but are not published as world coordinates before that attachment
+controller exists. These tests do not establish live visual parity or complete
+remote movement behavior.

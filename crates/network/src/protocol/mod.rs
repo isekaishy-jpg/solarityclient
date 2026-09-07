@@ -14,10 +14,17 @@ mod character_rename;
 mod liveness;
 mod movement;
 mod movement_message;
+mod movement_spline;
+mod remote_movement;
+
+pub use remote_movement::{
+    MonsterMove, MonsterMovePath, MonsterMoveTransport, MovementPacketError, RemoteMovement,
+};
 mod object_update;
 mod player_control;
 mod server_packet;
 mod world_entry;
+mod world_state;
 mod world_time;
 mod world_transfer;
 mod wow_svcs_client_services;
@@ -43,6 +50,7 @@ pub use movement::{ObjectMovementContext, ObjectMovementFall, ObjectMovementTran
 pub use movement_message::{
     WorldMovementEncodeError, WorldMovementField, WorldMovementKind, WorldMovementMessage,
 };
+pub use movement_spline::{MovementSplineFacing, MovementSplineSnapshot};
 pub use object_update::{
     ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectPositionTransport,
     ObjectUpdateError, WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,
@@ -52,5 +60,6 @@ pub use server_packet::WorldServerPacket;
 pub use world_entry::{
     CharacterLoginRejection, CharacterLoginRejectionReason, WorldEntryPacketError, WorldLocation,
 };
+pub use world_state::{WorldStatePacketError, WorldStateUpdate};
 pub use world_time::{WorldTimePacketError, WorldTimeSpeed};
 pub use world_transfer::{WorldTransfer, WorldTransferPacketError, WorldTransferTransport};

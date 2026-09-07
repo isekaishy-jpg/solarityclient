@@ -69,9 +69,14 @@ pub(in crate::application) struct ResidentWorldModelPlacement {
     unique_id: u32,
     position: Vec3,
     rotation_degrees: Vec3,
+    name_set: u16,
 }
 
 impl ResidentWorldModelPlacement {
+    /// Returns the MODF name set used by the WMOAreaTable tuple lookup.
+    pub(in crate::application) const fn name_set(&self) -> u16 {
+        self.name_set
+    }
     /// Returns the MODF identity shared by references in neighboring ADTs.
     pub(in crate::application) const fn unique_id(&self) -> u32 {
         self.unique_id
@@ -244,6 +249,7 @@ fn prepare_world_model_placements<'placement>(
             unique_id: placement.unique_id(),
             position,
             rotation_degrees,
+            name_set: placement.name_set(),
         });
         for doodad_index in source
             .model()

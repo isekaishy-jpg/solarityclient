@@ -846,6 +846,11 @@ fn position_streaming_adt(
 #[test]
 fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn Error>> {
     let map_table = map_table();
+    let mut liquid_table = b"WDBC".to_vec();
+    for word in [0u32, 45, 180, 1] {
+        liquid_table.extend(word.to_le_bytes());
+    }
+    liquid_table.push(0);
     let wdt = terrain_wdt()?;
     let adt = append_stacked_liquid_fixture(
         AdtBuilder::new()
@@ -855,6 +860,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
             .to_bytes()?,
     );
     let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\LiquidType.dbc", &liquid_table),
         ("DBFilesClient\\Map.dbc", &map_table),
         ("World\\Maps\\Northrend\\Northrend.wdt", &wdt),
         ("World\\Maps\\Northrend\\Northrend_21_30.adt", &adt),
@@ -875,6 +881,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let item_displays = ItemDisplayCatalog::load(&mut store)?;
     let item_visuals = ItemVisualCatalog::load(&mut store)?;
     let particle_colors = ParticleColorCatalog::load(&mut store)?;
+    let liquids = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
     let assets = AssetStoreHandle::new(store);
     let mut player = RuntimePlayerPresentation::new(
         assets.clone(),
@@ -977,6 +984,21 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         .ok_or("fixture liquid was not sampled")?;
     assert!((highest.height() - 200.0).abs() < 0.001);
     assert_eq!(highest.liquid_type(), 2);
+    let submerged = terrain
+        .camera_submerged_liquid(Vec3::new(liquid_x, liquid_y, 150.), &liquids)?
+        .ok_or("camera liquid was not selected")?;
+    assert_eq!(submerged.liquid_type, 2);
+    assert_eq!(submerged.depth, 50.);
+    assert!(
+        terrain
+            .camera_submerged_liquid(Vec3::new(liquid_x, liquid_y, 250.), &liquids)?
+            .is_none()
+    );
+    assert!(
+        terrain
+            .camera_submerged_liquid(Vec3::new(liquid_x, liquid_y, -50.), &liquids)?
+            .is_none()
+    );
     assert!(highest.is_fishable());
     assert!(!highest.is_deep());
     assert_liquid_height(

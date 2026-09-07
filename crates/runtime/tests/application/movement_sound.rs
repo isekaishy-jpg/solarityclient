@@ -21,11 +21,28 @@ use std::time::Instant;
 struct Cvars {
     footsteps: Cell<bool>,
     armor: Cell<bool>,
+    emotes: Cell<bool>,
+    pets: Cell<bool>,
+    listener_at_character: Cell<bool>,
 }
 
 impl SoundCvarSource for Cvars {
+    fn publish_sound_output(
+        &self,
+        _names: Vec<String>,
+        _index: usize,
+        _name: &str,
+    ) -> Result<(), solarity_ui::UiScriptError> {
+        Err(solarity_ui::UiScriptError::Execution {
+            label: "movement sound fixture".to_owned(),
+            message: "memory output must not publish physical devices".to_owned(),
+        })
+    }
     fn sound_cvar(&self, name: &str) -> Option<String> {
         Some(match name {
+            "Sound_EnableEmoteSounds" => u8::from(self.emotes.get()).to_string(),
+            "Sound_EnablePetSounds" => u8::from(self.pets.get()).to_string(),
+            "Sound_ListenerAtCharacter" => u8::from(self.listener_at_character.get()).to_string(),
             "FootstepSounds" => u8::from(self.footsteps.get()).to_string(),
             "Sound_EnableArmorFoleySoundForSelf" | "Sound_EnableArmorFoleySoundForOthers" => {
                 u8::from(self.armor.get()).to_string()
@@ -74,6 +91,9 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
     let cvars = Cvars {
         footsteps: Cell::new(true),
         armor: Cell::new(false),
+        emotes: Cell::new(true),
+        pets: Cell::new(true),
+        listener_at_character: Cell::new(true),
     };
     let engine = OwnedSoundEngine::load(
         &mut store,
@@ -82,11 +102,32 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
         SoundPolicy::read(&cvars)?.settings,
     )?;
     let mut sound = RuntimeSoundCoordinator {
+        model_sounds: Vec::new(),
+        unit_vocals: Vec::new(),
+        output: super::super::output::RuntimeSoundOutput::resolve(
+            &cvars,
+            SoundOutputTarget::Memory,
+            "System Default".to_owned(),
+        )?,
+        zone: solarity_media::ZoneSoundService::new(solarity_asset::ZoneSoundCatalog::load(
+            &mut store,
+        )?),
+        zone_references: None,
+        zone_overrides: solarity_asset::ZoneSoundOverrideCatalog::load(&mut store)?,
+        chunk_references: None,
+        next_chunk_references: None,
+        state_references: None,
+        next_state_references: None,
+        next_zone_references: None,
+        started: Instant::now(),
+        last_fade_update: Instant::now(),
+        world_listener: None,
         assets: AssetStoreHandle::new(store),
         engine,
         loader: RuntimeSoundLoader::new(catalog),
         advanced: AdvancedSoundService::new(),
         glue_music: None,
+        glue_music_repeat: None,
         glue_ambience: None,
         resident_tile: None,
         staged_emitters: None,
@@ -277,7 +318,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
     cvars.armor.set(false);
     cvars.footsteps.set(false);
     sound.play_unit_events(
-        &[event],
+        std::slice::from_ref(&event),
         camera,
         UnitSoundContext {
             world: &world,
@@ -302,7 +343,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
     for (field, flag) in [(74, 0x0002_0000), (150, 0x10)] {
         world.update_fields(1, [(field, flag)])?;
         sound.play_unit_events(
-            &[event],
+            std::slice::from_ref(&event),
             camera,
             UnitSoundContext {
                 world: &world,
@@ -326,7 +367,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
         world.update_fields(1, [(field, 0)])?;
     }
     sound.play_unit_events(
-        &[event; 20],
+        &std::array::from_fn::<_, 20, _>(|_| event.clone()),
         camera,
         UnitSoundContext {
             world: &world,
@@ -373,7 +414,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
         0
     );
     sound.play_unit_events(
-        &[event],
+        std::slice::from_ref(&event),
         camera,
         UnitSoundContext {
             world: &world,
@@ -387,6 +428,92 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
     assert_eq!(sound.movement_loads.len(), 1);
     sound.disconnect()?;
     assert!(sound.movement_loads.is_empty());
+    // $CSD has a retained unit handle and obeys both of its native gates.
+    world.storage_mut().add_component(
+        player,
+        (solarity_ecs::UnitVitals::new(100, 100, [0; 7], [0; 7]),),
+    );
+    world.update_fields(1, [(75, 1)])?;
+    cvars.listener_at_character.set(false);
+    let vocal = RuntimeM2Event::new(*b"$CSD", 15168, Vec3::new(2., 0., 0.), Some(1));
+    for (emotes, pets) in [(false, true), (true, false), (true, true)] {
+        cvars.emotes.set(emotes);
+        cvars.pets.set(pets);
+        sound.play_unit_events(
+            &[vocal.clone(), vocal.clone()],
+            camera,
+            UnitSoundContext {
+                world: &world,
+                creatures: &creatures,
+                items: &items,
+                cvars: &cvars,
+            },
+            |_, _, _| panic!("vocal must not query a footstep surface"),
+            &mut random,
+        )?;
+        assert_eq!(sound.unit_vocals.len(), usize::from(emotes && pets));
+    }
+    assert_eq!(
+        sound.play_m2_events(std::slice::from_ref(&vocal), camera, &mut random)?,
+        0
+    );
+    let deadline = Instant::now() + std::time::Duration::from_secs(20);
+    while sound
+        .engine
+        .with_engine(|engine| engine.active_voice_count())
+        == 0
+    {
+        sound.poll_loads(&cpu)?;
+        if Instant::now() > deadline {
+            return Err("vocal worker timeout".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(
+        sound
+            .engine
+            .with_engine(|engine| engine.active_voice_count()),
+        1
+    );
+    assert!(
+        sound
+            .engine
+            .with_engine(|engine| engine.has_nearby_entry(15168, vocal.position()))?
+    );
+    world.update_transform(
+        1,
+        solarity_ecs::WorldTransform::new(Vec3::new(20., 0., 0.), 0.),
+    )?;
+    sound.play_unit_events(
+        &[],
+        camera,
+        UnitSoundContext {
+            world: &world,
+            creatures: &creatures,
+            items: &items,
+            cvars: &cvars,
+        },
+        |_, _, _| Ok((0, false)),
+        &mut random,
+    )?;
+    assert!(
+        !sound
+            .engine
+            .with_engine(|engine| engine.has_nearby_entry(15168, vocal.position()))?
+    );
+    assert!(
+        sound
+            .engine
+            .with_engine(|engine| engine.has_nearby_entry(15168, Vec3::new(20., 0., 0.)))?
+    );
+    sound.disconnect()?;
+    assert!(sound.unit_vocals.is_empty());
+    assert_eq!(
+        sound
+            .engine
+            .with_engine(|engine| engine.active_voice_count()),
+        0
+    );
     sound.shutdown()?;
     cpu.shutdown()?;
     Ok(())

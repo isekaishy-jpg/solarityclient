@@ -23,7 +23,8 @@ pub use connection::{
     WorldPacketWriter, WorldQueue, WorldSession, WorldSessionInfo,
 };
 pub use protocol::{
-    AddonManifestError, AddonPolicyError, BannedAddon, WorldAddon, WorldAddonManifest,
+    AddonManifestError, AddonPolicyError, BannedAddon, MonsterMove, MonsterMovePath,
+    MonsterMoveTransport, MovementPacketError, RemoteMovement, WorldAddon, WorldAddonManifest,
     WorldAddonPolicy, WorldAddonPolicyEntry,
 };
 pub use protocol::{
@@ -32,16 +33,17 @@ pub use protocol::{
     CharacterDirectoryError, CharacterEntry, CharacterEquipment, CharacterGender,
     CharacterLocation, CharacterLoginRejection, CharacterLoginRejectionReason, CharacterNameResult,
     CharacterPet, CharacterRace, CharacterRename, CharacterRenameError, CharacterRenameResult,
-    ObjectFieldUpdate, ObjectMovementContext, ObjectMovementFall, ObjectMovementSpeeds,
-    ObjectMovementTransport, ObjectMovementUpdate, ObjectPositionTransport, ObjectUpdateError,
-    WORLD_ACTION_BUTTON_COUNT, WorldActionButtonPacketError, WorldActionButtonUpdate,
-    WorldActionButtons, WorldEntryPacketError, WorldLivenessPacketError, WorldLocation,
-    WorldMovementEncodeError, WorldMovementField, WorldMovementKind, WorldMovementMessage,
-    WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket,
-    WorldTimePacketError, WorldTimeSpeed, WorldTransfer, WorldTransferPacketError,
-    WorldTransferTransport,
+    MovementSplineFacing, MovementSplineSnapshot, ObjectFieldUpdate, ObjectMovementContext,
+    ObjectMovementFall, ObjectMovementSpeeds, ObjectMovementTransport, ObjectMovementUpdate,
+    ObjectPositionTransport, ObjectUpdateError, WORLD_ACTION_BUTTON_COUNT,
+    WorldActionButtonPacketError, WorldActionButtonUpdate, WorldActionButtons,
+    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldMovementEncodeError,
+    WorldMovementField, WorldMovementKind, WorldMovementMessage, WorldObjectKind,
+    WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError,
+    WorldTimeSpeed, WorldTransfer, WorldTransferPacketError, WorldTransferTransport,
 };
 pub use protocol::{WorldClientControlUpdate, WorldPlayerControlPacketError};
+pub use protocol::{WorldStatePacketError, WorldStateUpdate};
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
 pub use session::{WorldSessionError, WorldSessionStage};
 pub use transport::{TcpEndpoint, TcpTransport, TransportError};

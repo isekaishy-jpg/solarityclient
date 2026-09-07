@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+shipyard.workspace = true
 ash.workspace = true
 egui.workspace = true
 egui_console.workspace = true

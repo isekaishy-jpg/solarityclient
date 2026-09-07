@@ -14,13 +14,22 @@ const TRANSLATION_MASK: u64 =
     MOVEMENT_FORWARD | MOVEMENT_BACKWARD | MOVEMENT_STRAFE_LEFT | MOVEMENT_STRAFE_RIGHT;
 const AQUATIC_MASK: u64 = MOVEMENT_SWIMMING | MOVEMENT_FLYING;
 
-/// Resolves `Movement::GetSpeed(0)` (`987570`) for nonspline movement.
+/// Resolves `Movement::GetSpeed(0)` (`987570`) for ordinary and spline movement.
 /// Ascending and descending count as motion; turning alone does not.
 #[must_use]
 pub const fn resolve_unit_movement_speed(movement: WorldMovementState) -> f32 {
     let flags = movement.flags();
     if flags & 0xc0000f == 0 {
         return 0.0;
+    }
+    if let Some(spline) = movement.spline()
+        && spline.flags & 0x400 == 0
+    {
+        return if spline.duration_ms == 0 {
+            0.0
+        } else {
+            (spline.length as f64 / spline.duration_ms as f64 * 1000.0) as f32
+        };
     }
     let speeds = movement.speeds();
     let (forward, backward) = if flags & MOVEMENT_FLYING != 0 {
@@ -83,7 +92,9 @@ pub const fn resolve_unit_locomotion_animation(
         Some(fall) => fall.vertical_speed,
         None => 0.0,
     };
-    if super::unit_animation::unit_movement_is_airborne(flags as u32, vertical_speed) {
+    if super::unit_animation::unit_movement_is_airborne(flags as u32, vertical_speed)
+        || matches!(movement.spline(), Some(spline) if spline.is_airborne())
+    {
         return UnitLocomotionAnimation::new(40);
     }
 

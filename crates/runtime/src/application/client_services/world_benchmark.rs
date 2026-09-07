@@ -154,6 +154,7 @@ impl ClientServices {
             Some(clock),
             None,
             general,
+            self.sound.output_names(),
         )?;
         if let Some(error) = errors.into_iter().next() {
             return Err(error.into());

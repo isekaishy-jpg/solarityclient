@@ -40,6 +40,11 @@ mod talent;
 mod vehicle;
 mod world;
 
+pub use movement::{
+    RemoteMovementAdmission, RemoteMovementBlend, RemoteMovementClock, RemoteMovementPose,
+    RemoteMovementReceipt,
+};
+
 pub use camera::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
     CameraSubjectHeightSource, MountCameraGeometry, MountCameraHeightError,
@@ -55,13 +60,14 @@ pub use collision::{
     MovementCollisionBounds, MovementCollisionPlane, MovementCollisionTriangle,
     MovementCollisionVolume, MovementFallContactKind, MovementSupportProfile, MovementSweep,
     MovementSweepError, MovementTerrainChunks, PlacedM2Collision, PlacedWorldModelCollision,
-    PlacedWorldModelLiquid, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
-    TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, TerrainRegistrationPoint,
-    WorldModelCollisionError, WorldModelCollisionScene, WorldModelFloorHit, WorldModelFloorHits,
-    WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene, WorldModelPortalHit,
-    WorldModelRegistrationCandidate, WorldModelRegistrationHit, WorldModelRegistrationHits,
-    WorldModelRegistrationKind, WorldModelRegistrationQuery, WorldModelRegistrationSelection,
-    probe_world_model_portals,
+    PlacedWorldModelLiquid, SubmergedLiquid, SubmergedLiquidError, TerrainCollisionError,
+    TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh,
+    TerrainLiquidSample, TerrainRegistrationPoint, WorldModelCameraRegistration,
+    WorldModelCameraRegistrationQuery, WorldModelCollisionError, WorldModelCollisionScene,
+    WorldModelFloorHit, WorldModelFloorHits, WorldModelLiquidError, WorldModelLiquidSample,
+    WorldModelLiquidScene, WorldModelPortalHit, WorldModelRegistrationCandidate,
+    WorldModelRegistrationHit, WorldModelRegistrationHits, WorldModelRegistrationKind,
+    WorldModelRegistrationQuery, WorldModelRegistrationSelection, probe_world_model_portals,
 };
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
@@ -76,17 +82,19 @@ pub use movement::{
     MovementGroundAdvanceError, MovementGroundContinuation, MovementGroundInterval,
     MovementGroundProfile, MovementGroundSample, MovementGroundSnapshot, MovementGroundState,
     MovementGroundTrajectory, MovementGroundTrajectoryError, MovementIntervalBounds,
-    MovementIntervalBoundsError, MovementIntervalMode, MovementIntervalRequest,
-    MovementYawTrajectory, MovementYawTrajectoryError, UnitBodyOrientation,
+    MovementIntervalBoundsError, MovementIntervalMode, MovementIntervalRequest, MovementPath,
+    MovementPathError, MovementPathMode, MovementPathRequest, MovementPathSample, MovementSpline,
+    MovementSplineDefinition, MovementSplineError, MovementSplineFacing, MovementYawTrajectory,
+    MovementYawTrajectoryError, PreparedMovementPath, UnitBodyOrientation,
     UnitBodyOrientationInput, UnitBodyOrientationSample, UnitLocomotionAnimation,
     UnitModelAnimation, UnitMovementAnimationDecision, UnitPrimaryAnimationCompletion,
     UnitStandAnimationDecision, WorldEntryGroundContact, WorldEntryGroundContactError,
-    resolve_unit_airborne_animation, resolve_unit_landing_animation,
-    resolve_unit_locomotion_animation, resolve_unit_model_animation,
-    resolve_unit_movement_animation_completion, resolve_unit_movement_speed,
-    resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
-    resolve_unit_stand_completion, resolve_unit_stand_transition, resolve_unit_turn_animation,
-    unit_movement_is_airborne,
+    advance_world_movement_spline, advance_world_movement_splines, resolve_unit_airborne_animation,
+    resolve_unit_landing_animation, resolve_unit_locomotion_animation,
+    resolve_unit_model_animation, resolve_unit_movement_animation_completion,
+    resolve_unit_movement_speed, resolve_unit_primary_animation_completion,
+    resolve_unit_stand_animation, resolve_unit_stand_completion, resolve_unit_stand_transition,
+    resolve_unit_turn_animation, set_world_movement_spline, unit_movement_is_airborne,
 };
 pub use object::{
     GameObjectAnimationRequest, GameObjectAnimationState, GameObjectPlacement,

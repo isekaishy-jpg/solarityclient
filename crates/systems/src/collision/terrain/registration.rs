@@ -106,6 +106,15 @@ impl TerrainRegistrationPoint {
     pub const fn chunk(self) -> TerrainChunkIndex {
         self.chunk
     }
+
+    pub(in crate::collision) fn liquid_square(self) -> ([usize; 2], [f32; 2]) {
+        let fractions = std::array::from_fn(|index| {
+            let scaled = ((f64::from(17_066.666_f32) - f64::from(self.world[index]))
+                * f64::from(0.24_f32)) as f32;
+            (f64::from(scaled) - f64::from(self.squares[index])) as f32
+        });
+        (self.squares.map(|square| (square & 7) as usize), fractions)
+    }
 }
 
 impl TerrainCollisionMesh {

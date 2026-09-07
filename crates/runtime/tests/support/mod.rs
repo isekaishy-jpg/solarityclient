@@ -1,0 +1,6 @@
+//! Shared encrypted loopback transport for crate-internal integration tests.
+
+mod transfer_authentication;
+mod transfer_world_server;
+
+pub(crate) use transfer_world_server::{TestError, WorldServer};

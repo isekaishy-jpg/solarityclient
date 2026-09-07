@@ -5,6 +5,12 @@ use thiserror::Error;
 /// Failure to open an output or control one backend voice.
 #[derive(Debug, Error)]
 pub enum SoundBackendError {
+    /// Playback frequency must be finite and strictly positive.
+    #[error("sound voice frequency ratio must be positive and finite, got {ratio}")]
+    InvalidFrequencyRatio {
+        /// Unmodified playback multiplier.
+        ratio: f32,
+    },
     /// SDL initialization, output, track, or playback control failed.
     #[error("{operation} failed: {message}")]
     Adapter {

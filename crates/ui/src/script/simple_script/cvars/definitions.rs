@@ -48,6 +48,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     // AccountLogin.lua's native GetServerName bridge exposes the last realm
     // restored from this process CVar before any connection exists.
     value("realmName", ""),
+    // Unit_C registration 00715330, consumed by monster short-stop correction.
+    value("pathDistTol", "1"),
     ranged("playIntroMovie", "1", 0.0, 1.0),
     // Enabled by default in build 12340's native performance display.
     ranged("showfps", "1", 0.0, 1.0),
@@ -113,8 +115,9 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("Sound_NumChannels", "64", 32.0, 64.0),
     value("Sound_MaxCacheSizeInBytes", "16777216"),
     value("Sound_MaxCacheableSizeInBytes", "1048576"),
-    ranged("Sound_OutputQuality", "2", 0.0, 2.0),
+    ranged("Sound_OutputQuality", "1", 0.0, 2.0),
     value("Sound_OutputDriverIndex", "0"),
+    value("Sound_OutputDriverName", "Primary Sound Driver"),
     value("Sound_VoiceChatInputDriverIndex", "0"),
     value("Sound_VoiceChatOutputDriverIndex", "0"),
     ranged("Sound_ZoneMusicNoDelay", "0", 0.0, 1.0),

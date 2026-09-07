@@ -1,5 +1,9 @@
 //! Owned wrapper around one decrypted server packet.
 
+#[cfg(test)]
+#[path = "../../tests/protocol/world_state.rs"]
+mod world_state_tests;
+
 use super::{
     AddonPolicyError, CharacterCreationError, CharacterCreationResult, CharacterDeletionError,
     CharacterDeletionResult, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
@@ -51,6 +55,8 @@ impl WorldServerPacket {
             SMSG_CHARACTER_LOGIN_FAILED => Some("SMSG_CHARACTER_LOGIN_FAILED"),
             SMSG_LOGIN_SETTIMESPEED => Some("SMSG_LOGIN_SETTIMESPEED"),
             0x00A9 => Some("SMSG_UPDATE_OBJECT"),
+            0x00DD => Some("SMSG_MONSTER_MOVE"),
+            0x02AE => Some("SMSG_MONSTER_MOVE_TRANSPORT"),
             SMSG_PONG => Some("SMSG_PONG"),
             0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
@@ -61,6 +67,8 @@ impl WorldServerPacket {
             SMSG_TIME_SYNC_REQ => Some("SMSG_TIME_SYNC_REQ"),
             0x159 => Some("SMSG_CLIENT_CONTROL_UPDATE"),
             0x29d => Some("SMSG_STANDSTATE_UPDATE"),
+            0x2c2 => Some("SMSG_INIT_WORLD_STATES"),
+            0x2c3 => Some("SMSG_UPDATE_WORLD_STATE"),
             _ => None,
         }
     }
@@ -69,6 +77,34 @@ impl WorldServerPacket {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// Decodes the ordinary and transport monster path packet forms.
+    ///
+    /// # Errors
+    /// Reports invalid path fields without consuming another encrypted frame.
+    pub fn monster_move(&self) -> Result<Option<super::MonsterMove>, super::MovementPacketError> {
+        super::MonsterMove::decode(self.opcode, &self.payload)
+    }
+
+    /// Decodes ordinary remote movement events and their complete MovementInfo.
+    ///
+    /// # Errors
+    /// Rejects truncated conditional fields and unexpected trailing bytes.
+    pub fn remote_movement(
+        &self,
+    ) -> Result<Option<super::RemoteMovement>, super::MovementPacketError> {
+        super::RemoteMovement::decode(self.opcode, &self.payload)
+    }
+
+    /// Decodes ordered world-state replacements for their two native opcodes.
+    ///
+    /// # Errors
+    /// Rejects truncated or trailing fields before applying any replacement.
+    pub fn world_state_update(
+        &self,
+    ) -> Result<Option<super::WorldStateUpdate>, super::WorldStatePacketError> {
+        super::WorldStateUpdate::decode(self.opcode, &self.payload)
     }
 
     /// Decodes the native packed-GUID client-control update.

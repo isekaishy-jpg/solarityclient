@@ -8,6 +8,7 @@ mod character_residency;
 mod game_objects;
 mod playback;
 mod portrait;
+pub(in crate::application) mod sound;
 mod streaming;
 mod visibility;
 use crate::application::unit_animation::UnitAnimationBehavior;
@@ -142,6 +143,7 @@ enum M2TransparentDrawIndex {
 
 /// Exact per-instance state required by later animation and material assembly.
 struct M2GpuPlacement {
+    sound_lifetime: std::cell::OnceCell<Rc<sound::M2SoundKind>>,
     placement_valid: bool,
     world_model_state: Option<Rc<GameObjectWorldModelState>>,
     source_index: usize,
@@ -576,12 +578,14 @@ impl<'source> From<&'source ResidentCreatureGeosets> for M2GeosetSelection<'sour
 }
 
 /// One generic authored M2 callback resolved into world space.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(in crate::application) struct RuntimeM2Event {
     identifier: [u8; 4],
     data: u32,
     position: glam::Vec3,
     owner_guid: Option<u64>,
+    sound_owner: Option<sound::M2SoundOwner>,
+    sound_kind: Option<sound::M2SoundKind>,
 }
 
 /// Camera markers sampled from the controlled player's current mount pose.
@@ -618,23 +622,39 @@ impl RuntimeM2Event {
             data,
             position,
             owner_guid,
+            sound_owner: None,
+            sound_kind: None,
         }
     }
 
-    pub(in crate::application) const fn identifier(self) -> [u8; 4] {
+    pub(in crate::application) const fn identifier(&self) -> [u8; 4] {
         self.identifier
     }
 
-    pub(in crate::application) const fn data(self) -> u32 {
+    pub(in crate::application) const fn data(&self) -> u32 {
         self.data
     }
 
-    pub(in crate::application) const fn position(self) -> glam::Vec3 {
+    pub(in crate::application) const fn position(&self) -> glam::Vec3 {
         self.position
     }
 
-    pub(in crate::application) const fn owner_guid(self) -> Option<u64> {
+    pub(in crate::application) const fn owner_guid(&self) -> Option<u64> {
         self.owner_guid
+    }
+
+    pub(in crate::application) fn sound_owner(&self) -> Option<&sound::M2SoundOwner> {
+        self.sound_owner.as_ref()
+    }
+
+    pub(in crate::application) fn with_sound_owner(mut self, owner: sound::M2SoundOwner) -> Self {
+        self.sound_kind = Some(owner.kind());
+        self.sound_owner = Some(owner);
+        self
+    }
+
+    pub(in crate::application) const fn sound_kind(&self) -> Option<sound::M2SoundKind> {
+        self.sound_kind
     }
 }
 
@@ -824,6 +844,7 @@ impl M2Frame {
             animations,
             sources: vec![Some(source)],
             placements: vec![M2GpuPlacement {
+                sound_lifetime: Default::default(),
                 placement_valid: true,
                 world_model_state: None,
                 source_index: 0,
@@ -1099,6 +1120,7 @@ impl M2Frame {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
+                sound_lifetime: Default::default(),
                 placement_valid: true,
                 source_index,
                 ..placement
@@ -1257,6 +1279,7 @@ impl M2Frame {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
+                sound_lifetime: Default::default(),
                 placement_valid: true,
                 source_index,
                 ..placement
@@ -2100,6 +2123,7 @@ impl M2Frame {
                     &source.model,
                     placement.owner,
                     placement.transform,
+                    &placement.sound_lifetime,
                     &self.bone_pose_scratch,
                     expired.event_window,
                 )?;
@@ -2135,6 +2159,7 @@ impl M2Frame {
                 &source.model,
                 placement.owner,
                 placement.transform,
+                &placement.sound_lifetime,
                 bone_pose,
                 event_window,
             )?;
@@ -2847,6 +2872,7 @@ fn append_triggered_events(
     model: &DecodedM2Model,
     owner: M2GpuPlacementOwner,
     model_transform: Mat4,
+    sound_lifetime: &std::cell::OnceCell<Rc<sound::M2SoundKind>>,
     bone_pose: &M2BonePose,
     window: M2EventTimeWindow,
 ) -> Result<(), RuntimeTerrainFrameError> {
@@ -2864,12 +2890,40 @@ fn append_triggered_events(
                 })?,
             None => Mat4::IDENTITY,
         };
-        destination.push(RuntimeM2Event::new(
+        let mut callback = RuntimeM2Event::new(
             event.identifier(),
             event.data(),
             (model_transform * bone).transform_point3(event.position()),
             placement_owner_guid(owner),
-        ));
+        );
+        callback.sound_kind = sound::M2SoundKind::for_placement(owner);
+        if event.identifier() == *b"$CSD"
+            && callback.sound_kind.is_none()
+            && callback.owner_guid.is_some()
+        {
+            // 746D60 selects attachment 17 through 8273D0 / 831330. The
+            // position query uses the bone and authored point without the
+            // attachment enable track; its fallback is origin + world Z*2.
+            callback.position = if let Some(attachment) = model.attachment(17) {
+                let bone = bone_pose
+                    .transforms()
+                    .get(usize::from(attachment.bone_index()))
+                    .ok_or(solarity_rendering::M2BonePoseError::AttachmentBoneIndex {
+                        requested: attachment.bone_index(),
+                        available: bone_pose.transforms().len(),
+                    })?;
+                (model_transform * *bone).transform_point3(attachment.position())
+            } else {
+                model_transform.transform_point3(glam::Vec3::ZERO) + glam::Vec3::Z * 2.0
+            };
+        }
+        if matches!(&event.identifier(), b"$DSL" | b"$DSE")
+            && let Some(kind) = callback.sound_kind
+        {
+            let lifetime = sound_lifetime.get_or_init(|| Rc::new(kind));
+            callback = callback.with_sound_owner(sound::M2SoundOwner::new(lifetime));
+        }
+        destination.push(callback);
     }
     Ok(())
 }
@@ -2975,6 +3029,7 @@ fn m2_gpu_placement(
         .map(M2RibbonTrail::new)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(M2GpuPlacement {
+        sound_lifetime: Default::default(),
         placement_valid: true,
         world_model_state: None,
         source_index,

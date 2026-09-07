@@ -6,9 +6,8 @@ use solarity_asset::{
 };
 use solarity_ecs::{ActiveWorld, ObjectFields, ObjectKind, PlayerEquipment, PlayerEquipmentSlot};
 use solarity_media::{
-    AdvancedSoundListener, AdvancedSoundSpatialMix, SoundChannel, SoundConcurrencyMode,
-    SoundEngineError, SoundLoadHandle, SoundLoopMode, SoundPlayRequest, SoundPlayback,
-    SoundVariationMode, SoundVoicePriority,
+    AdvancedSoundListener, SoundChannel, SoundConcurrencyMode, SoundEngineError, SoundLoadHandle,
+    SoundLoopMode, SoundPlayRequest, SoundPlayback, SoundVariationMode, SoundVoicePriority,
 };
 use solarity_rendering::WorldCameraFrame;
 use solarity_systems::{UnitMovementAnimationDecision, resolve_unit_landing_animation};
@@ -42,7 +41,9 @@ struct UnitSoundSource {
 
 pub(super) struct UnitSoundLoad {
     handle: SoundLoadHandle,
-    spatial: Option<AdvancedSoundSpatialMix>,
+    entry_id: u32,
+    position: Option<Vec3>,
+    listener: AdvancedSoundListener,
 }
 
 #[derive(Clone, Copy)]
@@ -160,8 +161,11 @@ impl RuntimeSoundCoordinator {
                 Err(SoundEngineError::UnknownVoice)
             )
         });
-        let listener = AdvancedSoundListener::from_world_camera(camera);
+        let listener = self
+            .world_listener
+            .unwrap_or_else(|| AdvancedSoundListener::from_world_camera(camera));
         let at_character = boolean(context.cvars, "Sound_ListenerAtCharacter")?;
+        self.update_unit_vocals(context.world, listener)?;
         while let Some(event) = self.movement_events.pop_front() {
             if context.world.object_identity(event.identity.guid()) != Some(event.identity) {
                 continue;
@@ -213,7 +217,15 @@ impl RuntimeSoundCoordinator {
             )?;
         }
         let footsteps = boolean(context.cvars, "FootstepSounds")?;
-        for event in events.iter().filter(|event| event.identifier() == *b"$FSD") {
+        for event in events {
+            match &event.identifier() {
+                b"$CSD" => {
+                    self.play_unit_vocal(event, &context, listener, random)?;
+                    continue;
+                }
+                b"$FSD" => {}
+                _ => continue,
+            }
             let Some(guid) = event.owner_guid() else {
                 continue;
             };
@@ -299,19 +311,27 @@ impl RuntimeSoundCoordinator {
         if entry == 0 {
             return Ok(());
         }
-        let request = options.request(entry);
+        let request = options
+            .request(entry)
+            .with_gain_multiplier(if position.is_none() { 0.65 } else { 1.0 })?;
         let result = self.engine.with_engine_mut(|engine| {
-            let spatial = position
-                .map(|position| engine.positioned_mix(entry, listener, position))
-                .transpose()?;
-            let load = engine.begin_load(request, &mut || random.next_u32())?;
-            Ok::<_, SoundEngineError>(load.map(|load| (load, spatial)))
+            let load = match position {
+                Some(position) => {
+                    engine.begin_positioned_load(request, listener, position, &mut || {
+                        random.next_u32()
+                    })?
+                }
+                None => engine.begin_load(request, &mut || random.next_u32())?,
+            };
+            Ok::<_, SoundEngineError>(load)
         });
         match result {
-            Ok(Some((load, spatial))) => {
+            Ok(Some(load)) => {
                 self.movement_loads.push(UnitSoundLoad {
                     handle: load.handle(),
-                    spatial,
+                    entry_id: entry,
+                    position,
+                    listener,
                 });
                 self.loader.queue(load);
             }
@@ -349,16 +369,16 @@ impl RuntimeSoundCoordinator {
         let load = self.movement_loads.remove(index);
         if let SoundPlayback::Started(voice) = playback {
             self.engine.with_engine_mut(|engine| {
-                engine.set_voice_runtime_gain(
-                    voice,
-                    load.spatial
-                        .map_or(0.65, AdvancedSoundSpatialMix::three_dimensional_gain),
-                )?;
-                engine.set_voice_spatial_position(
-                    voice,
-                    load.spatial
-                        .and_then(AdvancedSoundSpatialMix::backend_position),
-                )
+                if let Some(position) = load.position {
+                    engine.set_voice_world_position(
+                        voice,
+                        load.entry_id,
+                        self.world_listener.unwrap_or(load.listener),
+                        position,
+                    )
+                } else {
+                    Ok(())
+                }
             })?;
             self.movement_voices.push(voice);
         }

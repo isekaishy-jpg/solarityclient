@@ -65,6 +65,28 @@ impl AdvancedSoundListener {
         }
     }
 
+    /// Uses stock's character-relative listener origin with the camera basis.
+    /// `0x004fa5f0` subtracts the camera forward times the back distance, then
+    /// adds the up distance on the world Z axis rather than the pitched camera up.
+    ///
+    /// # Errors
+    /// Returns [`AdvancedSoundSpatialError::NonFiniteListener`] for non-finite
+    /// coordinates, offsets, or the resulting origin.
+    pub fn at_character(
+        frame: WorldCameraFrame,
+        position: Vec3,
+        back_distance: f32,
+        up_distance: f32,
+    ) -> Result<Self, AdvancedSoundSpatialError> {
+        let mut listener = Self::from_world_camera(frame);
+        listener.position = position - frame.forward() * back_distance + Vec3::Z * up_distance;
+        if !back_distance.is_finite() || !up_distance.is_finite() || !listener.position.is_finite()
+        {
+            return Err(AdvancedSoundSpatialError::NonFiniteListener);
+        }
+        Ok(listener)
+    }
+
     /// Returns the listener's world-space origin.
     #[must_use]
     pub const fn position(self) -> Vec3 {

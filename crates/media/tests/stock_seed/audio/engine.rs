@@ -1,14 +1,15 @@
 //! External stock-compatibility tests for SoundEntries-driven orchestration.
 
+use glam::Vec3;
 use std::cell::Cell;
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_media::{
-    OwnedSoundEngine, SoundCategory, SoundCategorySettings, SoundChannel, SoundConcurrencyMode,
-    SoundDecodeMode, SoundEngine, SoundEngineError, SoundEngineSettings, SoundGain, SoundLoopMode,
-    SoundOutput, SoundOutputTarget, SoundPlayRequest, SoundPlayback, SoundResidencyPolicy,
-    SoundSoftwareChannelCount, SoundVariationMode,
+    AdvancedSoundListener, OwnedSoundEngine, SoundCategory, SoundCategorySettings, SoundChannel,
+    SoundConcurrencyMode, SoundDecodeMode, SoundEngine, SoundEngineError, SoundEngineSettings,
+    SoundGain, SoundLoopMode, SoundOutput, SoundOutputTarget, SoundPlayRequest, SoundPlayback,
+    SoundResidencyPolicy, SoundSoftwareChannelCount, SoundVariationMode,
 };
 
 use crate::support::{
@@ -19,6 +20,9 @@ use crate::support::{
 
 #[path = "engine/loading.rs"]
 mod loading;
+
+#[path = "engine/output.rs"]
+mod output;
 
 /// Master and category CVar gains retain their evidenced zero-to-one domain.
 #[test]
@@ -562,6 +566,38 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
     engine.generate(&mut runtime_restored)?;
     assert!(runtime_restored.iter().any(|byte| *byte != 0));
 
+    // A retained source stays fixed in world space as the listener moves.
+    // Distance and fade gains remain independent through subsequent CVar edits.
+    let near = AdvancedSoundListener::new(Vec3::ZERO, Vec3::X, -Vec3::Y, Vec3::Z)?;
+    let far = AdvancedSoundListener::new(Vec3::X * 10_000.0, Vec3::X, -Vec3::Y, Vec3::Z)?;
+    engine.set_voice_world_position(voice, 42, near, Vec3::ZERO)?;
+    engine.update_listener(far)?;
+    engine.generate(&mut muted)?;
+    let energy = |samples: &[u8]| {
+        samples
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|sample| {
+                let value = f64::from(i16::from_le_bytes([sample[0], sample[1]]));
+                value * value
+            })
+            .sum::<f64>()
+    };
+    // FMOD inverse rolloff clamps at the authored maximum distance, retaining
+    // a quiet tail instead of inventing silence outside that radius.
+    assert!(energy(&muted) > 0.0);
+    assert!(energy(&muted) < energy(&runtime_restored) * 0.1);
+    assert_eq!(engine.active_voice_count(), 1);
+    engine.set_voice_runtime_gain(voice, 0.0)?;
+    engine.update_listener(near)?;
+    engine.set_settings(enabled)?;
+    engine.generate(&mut muted)?;
+    assert!(muted.iter().all(|byte| *byte == 0));
+    engine.set_voice_runtime_gain(voice, 1.0)?;
+    engine.generate(&mut restored)?;
+    assert!(restored.iter().any(|byte| *byte != 0));
+
     assert!(matches!(
         engine.set_voice_runtime_gain(voice, f32::NAN),
         Err(SoundEngineError::Backend(
@@ -574,6 +610,19 @@ fn engine_applies_stock_volume_policy_to_active_voice() -> Result<(), Box<dyn Er
         engine.voice_state(voice),
         Err(SoundEngineError::UnknownVoice)
     ));
+    // A listener change during loading must affect the very first mixed block.
+    let load = engine
+        .begin_positioned_load(request, near, Vec3::ZERO, &mut || 0)?
+        .ok_or("positioned load was suppressed")?;
+    engine.update_listener(far)?;
+    let encoded = solarity_media::SoundCache::new().load(&mut store, load.path())?;
+    let SoundPlayback::Started(loaded) = engine.complete_load(load.handle(), &encoded)? else {
+        return Err("positioned completion was suppressed".into());
+    };
+    engine.generate(&mut muted)?;
+    assert!(energy(&muted) > 0.0);
+    assert!(energy(&muted) < energy(&runtime_restored) * 0.1);
+    engine.stop(loaded)?;
     assert_eq!(engine.collect_unused_encoded(), 1);
     Ok(())
 }

@@ -403,13 +403,13 @@ fn deferred_landing_flags_match_original_resolver() -> TestResult {
     Ok(())
 }
 
-struct Floor {
+pub(super) struct Floor {
     triangles: Vec<MovementCollisionTriangle>,
-    ready: bool,
+    pub(super) ready: bool,
 }
 
 impl Floor {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub(super) fn new() -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             triangles: vec![
                 MovementCollisionTriangle::new([
@@ -453,7 +453,7 @@ impl LocalMovementGeometry for Floor {
     }
 }
 
-fn owner() -> Result<(ActiveWorld, LocalMovement), Box<dyn std::error::Error>> {
+pub(super) fn owner() -> Result<(ActiveWorld, LocalMovement), Box<dyn std::error::Error>> {
     let world = ActiveWorld::enter(solarity_ecs::WorldBootstrap::new(
         solarity_ecs::WorldMapId::new(0),
         1,

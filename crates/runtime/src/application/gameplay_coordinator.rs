@@ -4,6 +4,10 @@
 #[path = "../../tests/application/world_entry_movement.rs"]
 mod movement_entry_tests;
 
+#[cfg(test)]
+#[path = "../../tests/application/remote_movement.rs"]
+mod remote_movement_tests;
+
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -61,9 +65,15 @@ pub enum RuntimeGameplayError {
     /// An object-update packet was malformed.
     #[error(transparent)]
     ObjectUpdate(#[from] solarity_network::ObjectUpdateError),
+    /// An incoming movement command was malformed.
+    #[error(transparent)]
+    MovementPacket(#[from] solarity_network::MovementPacketError),
     /// A realm clock packet was malformed.
     #[error(transparent)]
     WorldTime(#[from] WorldTimePacketError),
+    /// An authoritative world-state packet was malformed.
+    #[error(transparent)]
+    WorldStatePacket(#[from] solarity_network::WorldStatePacketError),
     /// An authoritative action-button image was malformed.
     #[error(transparent)]
     ActionButtons(#[from] WorldActionButtonPacketError),
@@ -101,6 +111,8 @@ pub struct RuntimeGameplayCoordinator {
     unhandled_packets: VecDeque<WorldServerPacket>,
     /// Packet dispatch yields to the composition root at each transfer packet.
     transfer: Option<WorldTransfer>,
+    /// Native Unit_C short-stop CVar, refreshed before packet dispatch.
+    path_distance_tolerance: f32,
 }
 
 impl RuntimeGameplayCoordinator {
@@ -122,6 +134,7 @@ impl RuntimeGameplayCoordinator {
             player_control: None,
             unhandled_packets: VecDeque::new(),
             transfer: None,
+            path_distance_tolerance: 1.0,
         }
     }
 
@@ -168,6 +181,7 @@ impl RuntimeGameplayCoordinator {
                 &mut action_buttons,
                 &mut player_control,
                 &mut retained,
+                self.path_distance_tolerance,
                 notify,
             )?;
         }
@@ -251,7 +265,9 @@ impl RuntimeGameplayCoordinator {
                             .as_mut()
                             .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?,
                         &mut self.unhandled_packets,
+                        self.path_distance_tolerance,
                         notify,
+                        crate::platform::client_milliseconds(),
                     ) {
                         Ok(true) => applied += 1,
                         Ok(false) => {}
@@ -318,10 +334,13 @@ impl RuntimeGameplayCoordinator {
             Vec3::new(location.x(), location.y(), location.z()),
             location.orientation(),
         );
-        self.world = Some(ActiveWorld::enter_with_view(
-            bootstrap,
-            world.local_player_view()?,
-        ));
+        let mut destination = ActiveWorld::enter_with_view(bootstrap, world.local_player_view()?);
+        // World-state fields live in the session-global BE8F58 hash, outside
+        // the object manager replaced during a map transfer.
+        if let Some(source) = self.world.as_mut() {
+            *destination.world_state_values_mut() = std::mem::take(source.world_state_values_mut());
+        }
+        self.world = Some(destination);
         let replacement = self
             .world
             .as_ref()
@@ -388,6 +407,11 @@ impl RuntimeGameplayCoordinator {
     #[must_use]
     pub const fn world(&self) -> Option<&ActiveWorld> {
         self.world.as_ref()
+    }
+
+    /// Refreshes native `pathDistTol` before draining the packet queue.
+    pub(super) fn set_path_distance_tolerance(&mut self, tolerance: f32) {
+        self.path_distance_tolerance = tolerance;
     }
 
     /// Returns the native selected movement subject, including an explicit zero.
@@ -645,6 +669,8 @@ enum WorldWriterCommand {
     ActiveMover(u64),
 }
 
+// Each argument borrows an independently owned session service for this dispatch.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_setup_packet<S>(
     gameplay: &mut GameplaySession<S>,
     packet: WorldServerPacket,
@@ -652,9 +678,41 @@ fn dispatch_setup_packet<S>(
     action_buttons: &mut Option<WorldActionButtons>,
     player_control: &mut RuntimePlayerControl,
     unhandled: &mut VecDeque<WorldServerPacket>,
+    path_distance_tolerance: f32,
     notify: &mut GameObjectObserver<'_>,
 ) -> Result<(), RuntimeGameplayError> {
     let timestamp_ms = crate::platform::client_milliseconds();
+    if let Some(message) = packet.remote_movement()? {
+        if message
+            .context
+            .transport
+            .is_some_and(|parent| parent.guid != 0)
+        {
+            return retain_unhandled(unhandled, packet);
+        }
+        crate::application::player_movement::remote::receive(
+            gameplay.world_mut(),
+            message,
+            timestamp_ms,
+            player_control.active_mover(),
+        );
+        return Ok(());
+    }
+    if let Some(message) = packet.monster_move()? {
+        if message.transport.is_some_and(|parent| parent.guid != 0) {
+            return retain_unhandled(unhandled, packet);
+        }
+        crate::application::player_movement::remote::receive_path(
+            gameplay.world_mut(),
+            message,
+            timestamp_ms,
+            path_distance_tolerance,
+        );
+        return Ok(());
+    }
+    if apply_world_state_packet(gameplay.world_mut(), &packet)? {
+        return Ok(());
+    }
     if let Some(update) = packet.client_control_update()? {
         player_control.receive(gameplay.world(), update, timestamp_ms);
         return Ok(());
@@ -679,6 +737,7 @@ fn dispatch_setup_packet<S>(
         apply_object_updates_with(
             gameplay.world_mut(),
             &updates,
+            timestamp_ms,
             &mut |world, identity, event| notify(world, identity, event),
         )?;
         player_control.synchronize(gameplay.world(), timestamp_ms);
@@ -693,6 +752,8 @@ fn dispatch_setup_packet<S>(
     retain_unhandled(unhandled, packet)
 }
 
+// Each argument borrows an independently owned session service for this dispatch.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_world_packet(
     world: &mut ActiveWorld,
     packet: WorldServerPacket,
@@ -700,9 +761,41 @@ fn dispatch_world_packet(
     action_buttons: &mut Option<WorldActionButtons>,
     player_control: &mut RuntimePlayerControl,
     unhandled: &mut VecDeque<WorldServerPacket>,
+    path_distance_tolerance: f32,
     notify: &mut GameObjectObserver<'_>,
+    timestamp_ms: u32,
 ) -> Result<bool, RuntimeGameplayError> {
-    let timestamp_ms = crate::platform::client_milliseconds();
+    if let Some(message) = packet.remote_movement()? {
+        if message
+            .context
+            .transport
+            .is_some_and(|parent| parent.guid != 0)
+        {
+            retain_unhandled(unhandled, packet)?;
+            return Ok(false);
+        }
+        return Ok(crate::application::player_movement::remote::receive(
+            world,
+            message,
+            timestamp_ms,
+            player_control.active_mover(),
+        ));
+    }
+    if let Some(message) = packet.monster_move()? {
+        if message.transport.is_some_and(|parent| parent.guid != 0) {
+            retain_unhandled(unhandled, packet)?;
+            return Ok(false);
+        }
+        return Ok(crate::application::player_movement::remote::receive_path(
+            world,
+            message,
+            timestamp_ms,
+            path_distance_tolerance,
+        ));
+    }
+    if apply_world_state_packet(world, &packet)? {
+        return Ok(false);
+    }
     if let Some(update) = packet.client_control_update()? {
         player_control.receive(world, update, timestamp_ms);
         return Ok(false);
@@ -724,9 +817,12 @@ fn dispatch_world_packet(
         return Ok(false);
     }
     if let Some(updates) = packet.object_updates()? {
-        apply_object_updates_with(world, &updates, &mut |world, identity, event| {
-            notify(world, identity, event)
-        })?;
+        apply_object_updates_with(
+            world,
+            &updates,
+            timestamp_ms,
+            &mut |world, identity, event| notify(world, identity, event),
+        )?;
         player_control.synchronize(world, timestamp_ms);
         return Ok(true);
     }
@@ -738,6 +834,25 @@ fn dispatch_world_packet(
     }
     retain_unhandled(unhandled, packet)?;
     Ok(false)
+}
+
+fn apply_world_state_packet(
+    world: &mut ActiveWorld,
+    packet: &WorldServerPacket,
+) -> Result<bool, RuntimeGameplayError> {
+    let Some(update) = packet.world_state_update()? else {
+        return Ok(false);
+    };
+    let states = world.world_state_values_mut();
+    match update {
+        solarity_network::WorldStateUpdate::Initialize { location, values } => {
+            states.initialize(location, &values)
+        }
+        solarity_network::WorldStateUpdate::Value { field, value } => {
+            states.set(field, value);
+        }
+    }
+    Ok(true)
 }
 
 fn retain_unhandled(

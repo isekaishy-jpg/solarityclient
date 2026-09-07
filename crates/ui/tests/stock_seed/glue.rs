@@ -12,6 +12,87 @@ use solarity_ui::{
 
 use crate::support::{Fixture, FixtureFile};
 
+/// 985C70/985CA0 expose default plus physical devices; 4D0DD0 saves the name
+/// without restarting until Lua explicitly invokes 985D30.
+#[test]
+fn sound_output_menu_resolves_names_and_queues_explicit_restart() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"Audio.xml\n",
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\Audio.xml",
+            bytes: br#"<Ui><Frame name="GlueParent"/></Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
+    let lua = manager.bundle().lua();
+    lua.load(
+        r#"
+        assert(GetCVarDefault("Sound_OutputQuality") == "1")
+        assert(GetCVarDefault("Sound_OutputDriverName") == "Primary Sound Driver")
+        assert(Sound_GameSystem_GetNumOutputDrivers() == 0)
+        assert(Sound_GameSystem_GetOutputDriverNameByIndex(0) == "")
+    "#,
+    )
+    .exec()?;
+    manager.set_sound_output_devices(vec!["Speakers".to_owned(), "Headphones".to_owned()]);
+    lua.load(
+        r#"
+        assert(Sound_GameSystem_GetNumOutputDrivers() == 3)
+        assert(Sound_GameSystem_GetOutputDriverNameByIndex(0) == "System Default")
+        SYSTEM_DEFAULT = "Localized default"
+        assert(Sound_GameSystem_GetOutputDriverNameByIndex(-1) == SYSTEM_DEFAULT)
+        assert(Sound_GameSystem_GetOutputDriverNameByIndex(1) == "Speakers")
+        assert(Sound_GameSystem_GetOutputDriverNameByIndex(2) == "Headphones")
+        assert(Sound_GameSystem_GetOutputDriverNameByIndex(3) == "")
+        SetCVar("Sound_OutputDriverIndex", 2)
+        assert(GetCVar("Sound_OutputDriverName") == "Headphones")
+    "#,
+    )
+    .exec()?;
+    assert_eq!(manager.take_media_action(), None);
+    lua.load(
+        r#"
+        PlaySound("gsTitleOptions")
+        Sound_GameSystem_RestartSoundSystem()
+        PlaySound("gsTitleOptions")
+    "#,
+    )
+    .exec()?;
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::PlaySound("gsTitleOptions".to_owned()))
+    );
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::RestartSoundSystem)
+    );
+    assert_eq!(
+        manager.take_media_action(),
+        Some(UiGlueMediaAction::PlaySound("gsTitleOptions".to_owned()))
+    );
+    manager.set_sound_output_selection(0, "Localized default")?;
+    assert_eq!(
+        manager.cvar_value("Sound_OutputDriverIndex").as_deref(),
+        Some("0")
+    );
+    assert_eq!(
+        manager.cvar_value("Sound_OutputDriverName").as_deref(),
+        Some("Localized default")
+    );
+    assert!(
+        manager
+            .take_changed_cvars()
+            .iter()
+            .any(|(name, value)| name == "Sound_OutputDriverName" && value == "Localized default")
+    );
+    Ok(())
+}
+
 /// Startup publishes the two stock lifecycle events before the first snapshot.
 #[test]
 fn glue_manager_activates_the_stock_login_screen() -> Result<(), Box<dyn Error>> {

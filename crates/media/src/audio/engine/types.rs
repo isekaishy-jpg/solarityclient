@@ -119,6 +119,9 @@ impl SoundChannel {
 pub struct SoundGain(f32);
 
 impl SoundGain {
+    /// Fully muted gain for the initial frame of an authored fade-in.
+    pub const MUTED: Self = Self(0.0);
+
     /// Validates a master or category gain before it reaches active voices.
     ///
     /// # Errors
@@ -239,8 +242,9 @@ impl SoundEngineSettings {
 }
 
 /// One fully explicit request whose playback call advances stock randomness.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SoundPlayRequest {
+    gain_multiplier: f32,
     entry_id: u32,
     channel: SoundChannel,
     variation_mode: SoundVariationMode,
@@ -262,6 +266,7 @@ impl SoundPlayRequest {
     ) -> Self {
         Self {
             entry_id,
+            gain_multiplier: 1.0,
             channel,
             variation_mode,
             loop_mode,
@@ -282,6 +287,7 @@ impl SoundPlayRequest {
     ) -> Self {
         Self {
             entry_id,
+            gain_multiplier: 1.0,
             channel,
             variation_mode,
             loop_mode,
@@ -296,6 +302,22 @@ impl SoundPlayRequest {
     pub const fn with_priority(mut self, priority: SoundVoicePriority) -> Self {
         self.priority = priority;
         self
+    }
+
+    /// Sets the native options +8 multiplier, applied before random volume.
+    ///
+    /// # Errors
+    /// Rejects negative or non-finite gain at the request boundary.
+    pub fn with_gain_multiplier(mut self, gain: f32) -> Result<Self, super::SoundEngineError> {
+        if !gain.is_finite() || gain < 0.0 {
+            return Err(crate::audio::backend::SoundBackendError::InvalidGain { gain }.into());
+        }
+        self.gain_multiplier = gain;
+        Ok(self)
+    }
+
+    pub(super) const fn gain_multiplier(self) -> f32 {
+        self.gain_multiplier
     }
 
     /// Returns the exact `SoundEntries.dbc` identifier.

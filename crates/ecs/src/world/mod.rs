@@ -7,6 +7,8 @@
 mod registry;
 mod state;
 mod types;
+mod values;
 
 pub use state::{ActiveWorld, WorldStateError};
 pub use types::{WorldBootstrap, WorldMapId, WorldObjectIdentity};
+pub use values::WorldStateValues;

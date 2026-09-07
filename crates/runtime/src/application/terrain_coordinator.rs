@@ -29,6 +29,7 @@ mod streaming;
 pub(in crate::application) mod world_model_residency;
 
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
+pub(in crate::application) use movement::UnitWorldModelLocation;
 use movement::{ResidentMovementReferences, ResidentMovementScene};
 pub use movement::{
     RuntimeMovementGeometry, RuntimeMovementGeometryFailure, RuntimeMovementOwner,

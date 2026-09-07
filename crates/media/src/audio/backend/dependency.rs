@@ -8,17 +8,18 @@ use std::time::Duration;
 
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::mixer::{Mixer, Point3D, StereoGains, Track};
+use sdl3::properties::{Properties, Setter};
 use sdl3::sys::audio::{SDL_AUDIO_S16LE, SDL_AudioSpec};
 
 use crate::audio::codec::{DecodedSoundHandle, SoundDecoder};
 
 use super::status::SoundBackendError;
 use super::types::{
-    SoundBackendPlayback, SoundOutputInfo, SoundOutputTarget, SoundSpatialPosition,
-    SoundVoiceHandle, SoundVoicePriority, SoundVoiceState,
+    SoundBackendPlayback, SoundOutputConfiguration, SoundOutputDevice, SoundOutputDeviceId,
+    SoundOutputInfo, SoundOutputQuality, SoundOutputTarget, SoundSpatialPosition, SoundVoiceHandle,
+    SoundVoicePriority, SoundVoiceState,
 };
 
-const STOCK_OUTPUT_SAMPLE_RATE_HZ: i32 = 44_100;
 const STOCK_OUTPUT_CHANNEL_COUNT: i32 = 2;
 
 /// One reusable SDL track and the generation currently exposed to callers.
@@ -51,6 +52,33 @@ pub struct SoundOutput {
 }
 
 impl SoundOutput {
+    /// Enumerates the current physical outputs in the platform's stable order.
+    ///
+    /// # Errors
+    /// Returns SDL initialization, enumeration, or device-name failures.
+    pub fn devices() -> Result<Vec<SoundOutputDevice>, SoundBackendError> {
+        let sdl = sdl3::init().map_err(|source| {
+            SoundBackendError::adapter("retain SDL for sound enumeration", source)
+        })?;
+        let audio = sdl.audio().map_err(|source| {
+            SoundBackendError::adapter("retain audio for sound enumeration", source)
+        })?;
+        let devices = audio
+            .audio_playback_device_ids()
+            .map_err(|source| SoundBackendError::adapter("enumerate sound outputs", source))?;
+        devices
+            .into_iter()
+            .map(|device| {
+                Ok(SoundOutputDevice {
+                    id: SoundOutputDeviceId(device.id().0),
+                    name: device.name().map_err(|source| {
+                        SoundBackendError::adapter("read sound output name", source)
+                    })?,
+                })
+            })
+            .collect()
+    }
+
     /// Opens the selected output using build 12340's default format request.
     ///
     /// A device may choose another actual format, which is reported by
@@ -62,13 +90,31 @@ impl SoundOutput {
     /// Returns [`SoundBackendError`] when SDL cannot create or inspect the
     /// requested output.
     pub fn open(target: SoundOutputTarget) -> Result<Self, SoundBackendError> {
+        Self::open_configured(SoundOutputConfiguration {
+            target,
+            quality: SoundOutputQuality::Medium,
+        })
+    }
+
+    /// Opens the exact selected device and native quality format.
+    ///
+    /// # Errors
+    /// Returns an output creation or actual-format validation failure.
+    pub fn open_configured(
+        configuration: SoundOutputConfiguration,
+    ) -> Result<Self, SoundBackendError> {
+        let target = configuration.target;
         let requested_format = SDL_AudioSpec {
             format: SDL_AUDIO_S16LE,
             channels: STOCK_OUTPUT_CHANNEL_COUNT,
-            freq: STOCK_OUTPUT_SAMPLE_RATE_HZ,
+            freq: configuration.quality.sample_rate_hz() as i32,
         };
         let mixer = match target {
             SoundOutputTarget::DefaultDevice => Mixer::open_device(Some(&requested_format)),
+            SoundOutputTarget::Device(id) => Mixer::open_device_id(
+                sdl3::sys::audio::SDL_AudioDeviceID(id.0),
+                Some(&requested_format),
+            ),
             SoundOutputTarget::Memory => Mixer::create_memory(Some(&requested_format)),
         }
         .map_err(|source| SoundBackendError::adapter("open sound output", source))?;
@@ -131,6 +177,7 @@ impl SoundOutput {
 /// facility, so every logical voice retains a track and voices outside the
 /// software set advance silently at zero gain.
 pub struct SoundBackend<'output> {
+    loop_options: Properties,
     backend_id: u64,
     output: &'output SoundOutput,
     voices: Vec<VoiceSlot<'output>>,
@@ -140,6 +187,37 @@ pub struct SoundBackend<'output> {
 }
 
 impl<'output> SoundBackend<'output> {
+    /// Native background policy changes bus gain while voices keep advancing.
+    pub(in crate::audio) fn set_background_muted(
+        &self,
+        muted: bool,
+    ) -> Result<(), SoundBackendError> {
+        self.output
+            .mixer
+            .set_gain(if muted { 0.0 } else { 1.0 })
+            .map_err(|source| SoundBackendError::adapter("apply background sound gain", source))
+    }
+
+    /// Recreates stopped tracks on a new output while old generation queries
+    /// remain valid. Native 0087DED0 retires playback before the device reopens.
+    pub(in crate::audio) fn restarted(
+        &self,
+        output: &'output SoundOutput,
+        software_channel_count: NonZeroU16,
+    ) -> Result<Self, SoundBackendError> {
+        let capacity = u16::try_from(self.voices.len())
+            .ok()
+            .and_then(NonZeroU16::new)
+            .ok_or(SoundBackendError::VoiceCapacity)?;
+        let mut replacement = Self::new(output, software_channel_count, capacity)?;
+        replacement.backend_id = self.backend_id;
+        replacement.next_admission_sequence = self.next_admission_sequence;
+        for (next, previous) in replacement.voices.iter_mut().zip(&self.voices) {
+            next.generation = previous.generation;
+        }
+        Ok(replacement)
+    }
+
     /// Allocates the complete voice pool on an already opened output.
     ///
     /// # Errors
@@ -160,6 +238,16 @@ impl<'output> SoundBackend<'output> {
             });
         }
 
+        let loop_options = Properties::new().map_err(|source| {
+            SoundBackendError::adapter("create sound loop options", format!("{source:?}"))
+        })?;
+        // MIX_PROP_PLAY_LOOPS_NUMBER from SDL_mixer.h. MIX_PlayTrack resets
+        // loops, so MIX_SetTrackLoops before play cannot configure a new voice.
+        loop_options
+            .set("SDL_mixer.play.loops", -1_i64)
+            .map_err(|source| {
+                SoundBackendError::adapter("configure sound loops", format!("{source:?}"))
+            })?;
         let mut voices = Vec::with_capacity(usize::from(voice_capacity.get()));
         for _slot in 0..voice_capacity.get() {
             let track = output
@@ -179,6 +267,7 @@ impl<'output> SoundBackend<'output> {
         }
         Ok(Self {
             backend_id: NEXT_BACKEND_ID.fetch_add(1, Ordering::Relaxed),
+            loop_options,
             output,
             voices,
             cinematic: None,
@@ -327,8 +416,39 @@ impl<'output> SoundBackend<'output> {
         looping: bool,
         priority: SoundVoicePriority,
     ) -> Result<SoundBackendPlayback, SoundBackendError> {
+        self.play_prepared(
+            decoder,
+            sound,
+            super::SoundVoiceStart {
+                gain,
+                looping,
+                priority,
+                frequency_ratio: 1.0,
+                position: None,
+            },
+        )
+    }
+
+    pub(in crate::audio) fn play_prepared(
+        &mut self,
+        decoder: &SoundDecoder,
+        sound: DecodedSoundHandle,
+        options: super::SoundVoiceStart,
+    ) -> Result<SoundBackendPlayback, SoundBackendError> {
+        let super::SoundVoiceStart {
+            gain,
+            looping,
+            priority,
+            frequency_ratio,
+            position,
+        } = options;
         if !gain.is_finite() || gain < 0.0 {
             return Err(SoundBackendError::InvalidGain { gain });
+        }
+        if !frequency_ratio.is_finite() || frequency_ratio <= 0.0 {
+            return Err(SoundBackendError::InvalidFrequencyRatio {
+                ratio: frequency_ratio,
+            });
         }
         let audio = decoder
             .audio(sound)
@@ -370,9 +490,23 @@ impl<'output> SoundBackend<'output> {
         }
         let result = slot
             .track
-            .set_loops(if looping { -1 } else { 0 })
-            .and_then(|()| slot.track.set_gain(0.0))
-            .and_then(|()| slot.track.play());
+            .set_gain(0.0)
+            .and_then(|()| slot.track.set_stereo(None))
+            .and_then(|()| slot.track.set_frequency_ratio(frequency_ratio))
+            .and_then(|()| match position {
+                Some(position) => {
+                    let [x, y, z] = position.coordinates();
+                    slot.track.set_3d_position(Point3D { x, y, z })
+                }
+                None => Ok(()),
+            })
+            .and_then(|()| {
+                if looping {
+                    slot.track.play_with_options(&self.loop_options)
+                } else {
+                    slot.track.play()
+                }
+            });
         if let Err(source) = result {
             let _cleanup_result = slot.track.clear_audio();
             return Err(SoundBackendError::adapter("start sound voice", source));

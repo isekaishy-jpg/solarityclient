@@ -1,15 +1,84 @@
 //! Dependency-neutral output and voice identity for the sound backend.
 
+/// All properties that must be assigned before the mixer can hear a new track.
+pub(in crate::audio) struct SoundVoiceStart {
+    pub(in crate::audio) gain: f32,
+    pub(in crate::audio) looping: bool,
+    pub(in crate::audio) priority: SoundVoicePriority,
+    pub(in crate::audio) frequency_ratio: f32,
+    pub(in crate::audio) position: Option<SoundSpatialPosition>,
+}
+
 /// Explicit destination selected when opening the backend.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SoundOutputTarget {
     /// Mix to the operating system's default playback device.
     DefaultDevice,
+    /// A physical playback device returned by [`SoundOutputDevice::target`].
+    Device(SoundOutputDeviceId),
     /// Mix to an application-provided memory buffer.
     ///
     /// This target supports deterministic validation and offline tools. It is
     /// never selected automatically when device creation fails.
     Memory,
+}
+
+/// Opaque process-local identity supplied by the platform audio enumeration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SoundOutputDeviceId(pub(super) u32);
+
+/// One named physical playback device, excluding the synthetic default entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SoundOutputDevice {
+    pub(super) id: SoundOutputDeviceId,
+    pub(super) name: String,
+}
+
+impl SoundOutputDevice {
+    /// Returns the platform's display name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Selects this exact enumerated physical output.
+    #[must_use]
+    pub const fn target(&self) -> SoundOutputTarget {
+        SoundOutputTarget::Device(self.id)
+    }
+}
+
+/// Native `Sound_OutputQuality` format selection in `0087C710`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SoundOutputQuality {
+    /// CVar zero: 22.05 kHz.
+    Low,
+    /// CVar one: 44.1 kHz; the stock registered default (`004D1050`).
+    #[default]
+    Medium,
+    /// CVar two: 48 kHz.
+    High,
+}
+
+impl SoundOutputQuality {
+    /// Returns the requested mixer sample rate.
+    #[must_use]
+    pub const fn sample_rate_hz(self) -> u32 {
+        match self {
+            Self::Low => 22_050,
+            Self::Medium => 44_100,
+            Self::High => 48_000,
+        }
+    }
+}
+
+/// Complete output selection applied at startup or an explicit sound restart.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SoundOutputConfiguration {
+    /// Explicit device or tooling destination.
+    pub target: SoundOutputTarget,
+    /// Requested quality; the actual format is reported by [`SoundOutputInfo`].
+    pub quality: SoundOutputQuality,
 }
 
 /// Actual format accepted by the SDL mixer.

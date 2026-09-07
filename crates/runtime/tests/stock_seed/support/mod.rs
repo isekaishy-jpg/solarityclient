@@ -120,6 +120,12 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(14), "DBFilesClient\\FactionTemplate.dbc");
         builder = builder.add_file_data(empty_wdbc(20), "DBFilesClient\\FactionGroup.dbc");
         builder = builder.add_file_data(empty_wdbc(36), "DBFilesClient\\AreaTable.dbc");
+        builder = builder.add_file_data(empty_wdbc(28), "DBFilesClient\\WMOAreaTable.dbc");
+        builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\ZoneMusic.dbc");
+        builder = builder.add_file_data(empty_wdbc(5), "DBFilesClient\\ZoneIntroMusicTable.dbc");
+        builder = builder.add_file_data(empty_wdbc(3), "DBFilesClient\\SoundAmbience.dbc");
+        builder = builder.add_file_data(empty_wdbc(9), "DBFilesClient\\WorldChunkSounds.dbc");
+        builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\WorldStateZoneSounds.dbc");
         builder = builder.add_file_data(empty_wdbc(66), "DBFilesClient\\Map.dbc");
         builder = builder.add_file_data(empty_wdbc(15), "DBFilesClient\\Light.dbc");
         builder = builder.add_file_data(empty_wdbc(30), "DBFilesClient\\SoundEntries.dbc");

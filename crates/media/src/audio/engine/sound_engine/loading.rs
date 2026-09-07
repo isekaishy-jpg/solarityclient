@@ -13,9 +13,12 @@ use crate::audio::codec::{DecodedSoundHandle, SoundDecodeAdmission, SoundDecodeT
 use crate::audio::engine::{AdvancedSoundInstanceId, SoundLoopMode, SoundResidencyPolicy};
 use crate::audio::selection::SoundVariationSelector;
 
+use super::positioning::PositionedSoundSource;
 use super::{
     ActiveVoice, SoundChannel, SoundEngine, SoundEngineError, SoundPlayRequest, SoundPlayback,
 };
+use crate::audio::engine::AdvancedSoundListener;
+use glam::Vec3;
 
 /// Process-unique identity for a selected sound awaiting resource admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,6 +63,9 @@ pub(super) struct PendingVoice {
     pub(super) entry_id: Option<u32>,
     pub(super) channel: SoundChannel,
     source_gain: f32,
+    frequency_ratio: f32,
+    spatial_source: Option<(PositionedSoundSource, AdvancedSoundListener)>,
+    fade: super::SoundFade,
     looping: bool,
     priority: SoundVoicePriority,
     duck_source: Option<AdvancedSoundInstanceId>,
@@ -158,11 +164,20 @@ impl SoundEngine<'_> {
             })?
             .path()
             .clone();
+        let parameters = super::parameters::select_parameters(
+            entry.volume(),
+            request.gain_multiplier(),
+            entry.flags(),
+            next_random_word,
+        );
         let pending = PendingVoice {
             load: SoundLoadRequest::new(asset_path)?,
             entry_id: Some(entry.id()),
             channel,
-            source_gain: entry.volume(),
+            source_gain: parameters.gain,
+            frequency_ratio: parameters.frequency_ratio,
+            spatial_source: None,
+            fade: super::SoundFade::default(),
             looping: request.loop_mode().is_looping(entry.flags()),
             priority: request.priority(),
             duck_source: request.advanced_source(),
@@ -213,6 +228,9 @@ impl SoundEngine<'_> {
             entry_id: None,
             channel,
             source_gain: 1.0,
+            frequency_ratio: 1.0,
+            spatial_source: None,
+            fade: super::SoundFade::default(),
             looping: loop_mode.is_looping(0),
             priority: SoundVoicePriority::DEFAULT,
             duck_source: None,
@@ -228,6 +246,66 @@ impl SoundEngine<'_> {
         self.pending_voices
             .iter()
             .any(|voice| voice.load.handle == handle)
+    }
+
+    /// Reserves a world sound with spatial gain and pan applied before playback.
+    /// The latest shared listener is used when decoding completes.
+    ///
+    /// # Errors
+    /// Returns spatial validation or ordinary sound admission failures.
+    pub fn begin_positioned_load(
+        &mut self,
+        request: SoundPlayRequest,
+        listener: AdvancedSoundListener,
+        position: Vec3,
+        next_random_word: &mut impl FnMut() -> u32,
+    ) -> Result<Option<SoundLoadRequest>, SoundEngineError> {
+        self.positioned_mix(request.entry_id(), listener, position)?;
+        let load = self.begin_load(request, next_random_word)?;
+        if let Some(load) = &load {
+            self.set_load_world_position(load.handle(), request.entry_id(), listener, position)?;
+        }
+        Ok(load)
+    }
+
+    /// Updates a pending unit's origin while archive extraction or decoding runs.
+    /// Returns false for completed, cancelled, or foreign request identities.
+    ///
+    /// # Errors
+    /// Returns an absent entry or invalid spatial input; the reservation remains
+    /// owned by the caller and must still be completed or cancelled.
+    pub fn set_load_world_position(
+        &mut self,
+        handle: SoundLoadHandle,
+        entry_id: u32,
+        listener: AdvancedSoundListener,
+        position: Vec3,
+    ) -> Result<bool, SoundEngineError> {
+        self.positioned_mix(entry_id, listener, position)?;
+        let Some(pending) = self
+            .pending_voices
+            .iter_mut()
+            .find(|voice| voice.load.handle == handle)
+        else {
+            return Ok(false);
+        };
+        pending.spatial_source = Some((PositionedSoundSource { entry_id, position }, listener));
+        Ok(true)
+    }
+
+    /// Sets the envelope before resource admission, avoiding a full-volume sample
+    /// between starting the backend track and the owner's completion callback.
+    /// Returns false for a cancelled, completed, or foreign load generation.
+    pub fn set_load_fade(&mut self, handle: SoundLoadHandle, fade: super::SoundFade) -> bool {
+        let Some(pending) = self
+            .pending_voices
+            .iter_mut()
+            .find(|voice| voice.load.handle == handle)
+        else {
+            return false;
+        };
+        pending.fade = fade;
+        true
     }
 
     /// Retires a reservation after cancellation or failed archive extraction.
@@ -377,13 +455,38 @@ impl SoundEngine<'_> {
         sound: DecodedSoundHandle,
     ) -> Result<SoundPlayback, SoundEngineError> {
         let category = pending.channel.category();
-        let gain = self.settings.category_gain(category).unwrap_or(0.0) * pending.source_gain;
-        let playback = match self.backend.play(
+        let spatial_mix = match pending
+            .spatial_source
+            .map(|(source, listener)| {
+                self.positioned_mix(
+                    source.entry_id,
+                    self.listener.unwrap_or(listener),
+                    source.position,
+                )
+            })
+            .transpose()
+        {
+            Ok(mix) => mix,
+            Err(error) => {
+                self.decoder.release(sound);
+                return Err(error);
+            }
+        };
+        let spatial_gain = spatial_mix.map_or(1.0, |mix| mix.three_dimensional_gain());
+        let gain = self.settings.category_gain(category).unwrap_or(0.0)
+            * pending.source_gain
+            * spatial_gain
+            * pending.fade.gain();
+        let playback = match self.backend.play_prepared(
             &self.decoder,
             sound,
-            gain,
-            pending.looping,
-            pending.priority,
+            crate::audio::backend::SoundVoiceStart {
+                gain,
+                looping: pending.looping,
+                priority: pending.priority,
+                frequency_ratio: pending.frequency_ratio,
+                position: spatial_mix.and_then(|mix| mix.backend_position()),
+            },
         ) {
             Ok(playback) => playback,
             Err(error) => {
@@ -409,6 +512,9 @@ impl SoundEngine<'_> {
             category,
             source_gain: pending.source_gain,
             runtime_gain: 1.0,
+            spatial_gain,
+            fade: pending.fade,
+            spatial_source: pending.spatial_source.map(|(source, _listener)| source),
             duck_gain: 1.0,
             duck_source: pending.duck_source,
         });
