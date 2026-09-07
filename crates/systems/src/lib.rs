@@ -42,7 +42,9 @@ mod world;
 
 pub use movement::{
     RemoteMovementAdmission, RemoteMovementBlend, RemoteMovementClock, RemoteMovementPose,
-    RemoteMovementReceipt,
+    RemoteMovementReceipt, TransportRoute, TransportRouteClock, TransportRouteError,
+    TransportRouteEvent, TransportRouteMotion, TransportRouteNode, TransportRoutePhysics,
+    TransportRoutePhysicsError, TransportRouteSample,
 };
 
 pub use camera::{

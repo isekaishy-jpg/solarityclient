@@ -82,6 +82,23 @@ impl MovementPath {
         self.length
     }
 
+    /// Native `004C3720` sums completed segments before a DBC control node.
+    /// Both the approach control and first traversed point have distance zero.
+    pub(crate) fn distance_to_control(&self, index: usize) -> f64 {
+        self.lengths
+            .iter()
+            .take(index.saturating_sub(1))
+            .map(|length| f64::from(*length))
+            .sum()
+    }
+
+    /// `004C3920`/`004C42C0` return the raw derivative for transport banking,
+    /// without the chord admission policy of the complete placement sampler.
+    pub(crate) fn tangent(&self, fraction: f32) -> Vec3 {
+        let (segment, parameter) = self.segment_parameter(fraction.clamp(0.0, 1.0));
+        polynomial(&self.nodes[segment..segment + 4], parameter, true)
+    }
+
     /// `0098C940` removes the initial approach control and closes the cycle
     /// with the old third-to-last control before rebuilding the length cache.
     pub(super) fn enter_cycle(&mut self) -> Result<(), MovementPathError> {

@@ -19,6 +19,7 @@ mod path;
 mod player;
 mod remote;
 mod stance;
+mod transport;
 mod unit_animation;
 
 pub use airborne::{
@@ -64,6 +65,11 @@ pub use stance::{
     UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
     resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
     resolve_unit_stand_completion, resolve_unit_stand_transition,
+};
+pub use transport::{
+    TransportRoute, TransportRouteClock, TransportRouteError, TransportRouteEvent,
+    TransportRouteMotion, TransportRouteNode, TransportRoutePhysics, TransportRoutePhysicsError,
+    TransportRouteSample,
 };
 pub use unit_animation::{
     UnitMovementAnimationDecision, resolve_unit_airborne_animation, resolve_unit_landing_animation,

@@ -60,8 +60,9 @@ Repeated creates for an existing GUID retain its current movement lifetime.
 The native property lookup `0x00746190` and table at `0x00A36F34` identify type
 15 properties 0, 1, 2, 5, and 8 as path ID, speed, acceleration, transport physics,
 and stopping permission. Type 11 is the other animated transport family; type 7
-is a chair. This slice retains template and clock inputs. Route construction,
-sampling, and passenger movement still require their separate providers.
+is a chair. These owners retain template and clock inputs. The separate
+[transport route provider](transport-routes.md) implements native construction,
+sampling, physics, and stopping; live placement and passenger integration remain.
 
 ## Verification
 
