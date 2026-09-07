@@ -37,6 +37,7 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 Locale::EnUs,
             )?)?;
             let maps = MapCatalog::load(&mut store)?;
+            let liquids = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
             let displays = GameObjectDisplayCatalog::load(&mut store)?;
             let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
             let catalogs = RuntimePlayerCatalogs::new(
@@ -128,9 +129,23 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 );
             }
             sent.await??;
-            movement.service(&gameplay, &mut terrain, &objects, &presentation, 0)?;
+            movement.service(
+                &gameplay,
+                &mut terrain,
+                &objects,
+                &presentation,
+                &liquids,
+                0,
+            )?;
             for now in [250, 500, 750, 1000] {
-                movement.service(&gameplay, &mut terrain, &objects, &presentation, now)?;
+                movement.service(
+                    &gameplay,
+                    &mut terrain,
+                    &objects,
+                    &presentation,
+                    &liquids,
+                    now,
+                )?;
             }
             let world = gameplay.world().ok_or("world")?;
             for (guid, expected_x) in [(9, 1002.5_f32), (10, 1007.0)] {
@@ -162,7 +177,14 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 1000,
             )?;
             sent.await??;
-            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1250)?;
+            movement.service(
+                &gameplay,
+                &mut terrain,
+                &objects,
+                &presentation,
+                &liquids,
+                1250,
+            )?;
             assert_eq!(
                 gameplay
                     .world()
@@ -187,7 +209,14 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 10,
                 WorldMovementState::new(0, speeds, WorldMovementContext::default()),
             )?;
-            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1500)?;
+            movement.service(
+                &gameplay,
+                &mut terrain,
+                &objects,
+                &presentation,
+                &liquids,
+                1500,
+            )?;
             assert_eq!(
                 gameplay
                     .world()
@@ -222,7 +251,14 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 )?);
             }
             sent.await??;
-            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1500)?;
+            movement.service(
+                &gameplay,
+                &mut terrain,
+                &objects,
+                &presentation,
+                &liquids,
+                1500,
+            )?;
             assert_eq!(
                 gameplay
                     .world()
@@ -233,7 +269,14 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                     .x,
                 1005.0
             );
-            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1750)?;
+            movement.service(
+                &gameplay,
+                &mut terrain,
+                &objects,
+                &presentation,
+                &liquids,
+                1750,
+            )?;
             let position = gameplay
                 .world()
                 .ok_or("world")?
@@ -265,7 +308,14 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 1750,
             )?);
             sent.await??;
-            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1750)?;
+            movement.service(
+                &gameplay,
+                &mut terrain,
+                &objects,
+                &presentation,
+                &liquids,
+                1750,
+            )?;
             let world = gameplay.world().ok_or("world")?;
             assert_eq!(
                 world
@@ -298,7 +348,14 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 1750,
             )?);
             sent.await??;
-            movement.service(&gameplay, &mut terrain, &objects, &presentation, 1750)?;
+            movement.service(
+                &gameplay,
+                &mut terrain,
+                &objects,
+                &presentation,
+                &liquids,
+                1750,
+            )?;
             let world = gameplay.world().ok_or("world")?;
             assert_eq!(world.object_transform(9), Some(before));
             assert!(

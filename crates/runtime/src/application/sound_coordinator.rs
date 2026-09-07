@@ -184,6 +184,7 @@ pub(crate) struct RuntimeSoundCoordinator {
     last_update: Instant,
     movement_sounds: solarity_asset::MovementSoundCatalog,
     movement_events: std::collections::VecDeque<super::unit_animation::UnitMovementAnimationEvent>,
+    water_splashes: std::collections::VecDeque<super::unit_water::UnitWaterSplash>,
     movement_loads: Vec<movement::UnitSoundLoad>,
     movement_voices: Vec<SoundVoiceHandle>,
     model_sounds: Vec<model::ModelSound>,
@@ -258,6 +259,7 @@ impl RuntimeSoundCoordinator {
             last_update: Instant::now(),
             movement_sounds,
             movement_events: std::collections::VecDeque::new(),
+            water_splashes: std::collections::VecDeque::new(),
             movement_loads: Vec::new(),
             movement_voices: Vec::new(),
             world_listener: None,
@@ -685,6 +687,7 @@ impl RuntimeSoundCoordinator {
         self.next_state_references = None;
         self.world_listener = None;
         self.movement_events.clear();
+        self.water_splashes.clear();
         self.clear_unit_sounds()?;
         self.clear_model_sounds()?;
         self.engine

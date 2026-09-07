@@ -593,6 +593,7 @@ struct UiWorldStateInner {
     target_trade_money_copper: Cell<u32>,
     area_resurrection_available: Cell<bool>,
     resting: Cell<bool>,
+    swimming: Cell<bool>,
     friend_counts: Cell<UiFriendCounts>,
 }
 
@@ -722,6 +723,7 @@ impl UiWorldState {
         self.inner.target_trade_money_copper.set(0);
         self.inner.area_resurrection_available.set(false);
         self.inner.resting.set(false);
+        self.inner.swimming.set(false);
     }
 
     /// Returns the current player projection when one is authoritative.
@@ -844,6 +846,17 @@ impl UiWorldState {
     #[must_use]
     pub fn is_resting(&self) -> bool {
         self.inner.resting.get()
+    }
+
+    /// Publishes Unit_C's immersion bit before deferred movement transitions.
+    pub fn set_swimming(&self, swimming: bool) {
+        self.inner.swimming.set(swimming);
+    }
+
+    /// Returns the local unit's 0xA30 bit 0x200000 (`IsSwimming`, 6124A0).
+    #[must_use]
+    pub fn is_swimming(&self) -> bool {
+        self.player().is_some() && self.inner.swimming.get()
     }
 
     /// Replaces copper currently attached to the stock money cursor.

@@ -33,6 +33,7 @@ mod terrain_coordinator;
 mod terrain_frame;
 pub(crate) mod ui_frame;
 mod unit_animation;
+mod unit_water;
 mod world_coordinator;
 mod world_transfer;
 mod world_ui;

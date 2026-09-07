@@ -2,7 +2,8 @@
 
 use glam::Vec3;
 use solarity_asset::{
-    CreatureCatalog, CreatureMovementSounds, ItemDefinitionCatalog, MovementSoundCatalog,
+    CharacterRaceCatalog, CreatureCatalog, CreatureMovementSounds, ItemDefinitionCatalog,
+    MovementSoundCatalog,
 };
 use solarity_ecs::{ActiveWorld, ObjectFields, ObjectKind, PlayerEquipment, PlayerEquipmentSlot};
 use solarity_media::{
@@ -29,6 +30,7 @@ pub(in crate::application) struct UnitSoundContext<'a> {
     pub world: &'a ActiveWorld,
     pub creatures: &'a CreatureCatalog,
     pub items: &'a ItemDefinitionCatalog,
+    pub races: &'a CharacterRaceCatalog,
     pub cvars: &'a dyn SoundCvarSource,
 }
 
@@ -135,6 +137,14 @@ impl UnitSoundContext<'_> {
 }
 
 impl RuntimeSoundCoordinator {
+    /// Queues 746720's race-authored splash independently of model callbacks.
+    pub(in crate::application) fn notify_water_splash(
+        &mut self,
+        event: crate::application::unit_water::UnitWaterSplash,
+    ) {
+        self.water_splashes.push_back(event);
+    }
+
     pub(crate) fn notify_unit_movement(&mut self, event: UnitMovementAnimationEvent) {
         if !matches!(event.kind, UnitMovementAnimationEventKind::Changed) {
             self.movement_events.push_back(event);
@@ -166,6 +176,40 @@ impl RuntimeSoundCoordinator {
             .unwrap_or_else(|| AdvancedSoundListener::from_world_camera(camera));
         let at_character = boolean(context.cvars, "Sound_ListenerAtCharacter")?;
         self.update_unit_vocals(context.world, listener)?;
+        while let Some(event) = self.water_splashes.pop_front() {
+            if context.world.object_identity(event.identity.guid()) != Some(event.identity) {
+                continue;
+            }
+            let Some(race_id) = context
+                .world
+                .entity_by_guid(event.identity.guid())
+                .and_then(|entity| {
+                    context
+                        .world
+                        .storage()
+                        .get::<&solarity_ecs::UnitIdentity>(entity)
+                        .ok()
+                        .map(|unit| u32::from(unit.race_id()))
+                })
+            else {
+                continue;
+            };
+            let Some(race) = context.races.race(race_id) else {
+                continue;
+            };
+            let local = context.world.local_player_guid().ok() == Some(event.identity.guid());
+            // 746720 supplies the unit's actual position, with no vocal Z offset.
+            self.play_unit_entry(
+                race.splash_sound_id(),
+                (!local || !at_character).then_some(event.position),
+                UnitSoundOptions {
+                    local,
+                    footstep: false,
+                },
+                listener,
+                random,
+            )?;
+        }
         while let Some(event) = self.movement_events.pop_front() {
             if context.world.object_identity(event.identity.guid()) != Some(event.identity) {
                 continue;

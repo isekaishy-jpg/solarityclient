@@ -65,6 +65,11 @@ pub(super) struct RuntimeWorldUi {
 }
 
 impl RuntimeWorldUi {
+    /// Publishes the immediate unit immersion state consumed by 6124A0.
+    pub(super) fn set_swimming(&self, swimming: bool) {
+        self.world.set_swimming(swimming);
+    }
+
     pub(super) fn set_modifier_keys(&self, keys: solarity_ui::UiModifierKeys) {
         self.manager.set_modifier_keys(keys);
     }

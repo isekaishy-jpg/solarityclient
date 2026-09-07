@@ -215,6 +215,11 @@ fn register_frame_globals(
     let friend_counts = world.clone();
     let threat_warnings = environment.cvars();
     let resting = world.clone();
+    let swimming = world.clone();
+    globals.raw_set(
+        "IsSwimming",
+        lua.create_function(move |_, ()| Ok(swimming.is_swimming().then_some(1_u8)))?,
+    )?;
     globals.raw_set(
         "IsResting",
         lua.create_function(move |_, ()| Ok(resting.is_resting().then_some(1_u8)))?,

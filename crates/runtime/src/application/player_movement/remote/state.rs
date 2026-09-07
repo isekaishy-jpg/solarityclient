@@ -53,6 +53,8 @@ pub(super) struct RemoteUnit {
     /// Retained lifetime/frame while spline travel owns the local pose.
     pub path_parent: Option<PassengerParent>,
     pub animation_events: VecDeque<UnitMovementAnimationEvent>,
+    /// Unit +0x784 survives packet and spline replacement within this lifetime.
+    pub previous_water_depth: f32,
     clock: RemoteMovementClock,
     commands: VecDeque<Scheduled>,
 }
@@ -73,6 +75,7 @@ impl RemoteUnit {
             path: None,
             path_parent: None,
             animation_events: VecDeque::new(),
+            previous_water_depth: 0.0,
             clock: RemoteMovementClock::default(),
             commands: VecDeque::new(),
         }

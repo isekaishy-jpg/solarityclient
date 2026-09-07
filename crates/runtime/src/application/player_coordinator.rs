@@ -1378,9 +1378,15 @@ impl RuntimePlayerPresentation {
         self.unit_animations.notify_movement(event);
     }
 
-    /// Shares the retained display and item tables with the unit sound owner.
-    pub(super) fn sound_catalogs(&self) -> (&CreatureCatalog, &ItemDefinitionCatalog) {
-        (&self.creatures, &self.item_definitions)
+    /// Shares retained display, item, and race tables with the unit sound owner.
+    pub(super) fn sound_catalogs(
+        &self,
+    ) -> (
+        &CreatureCatalog,
+        &ItemDefinitionCatalog,
+        &CharacterRaceCatalog,
+    ) {
+        (&self.creatures, &self.item_definitions, &self.races)
     }
 
     /// Supplies admitted mouse-facing ownership to the retained body controller.

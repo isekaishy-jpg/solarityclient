@@ -1673,7 +1673,47 @@ fn frame_runtime_reads_live_player_state() -> Result<(), Box<dyn Error>> {
     assert_eq!(count, 0);
     assert_eq!(cooldown_duration, 0.0);
 
+    // 6124A0 returns exactly one result: numeric 1 or nil, never Lua false.
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return IsSwimming()")
+            .eval::<Option<u8>>()?,
+        None
+    );
+    world.set_swimming(true);
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return type(IsSwimming()), IsSwimming(), select('#', IsSwimming())")
+            .eval::<(String, u8, u8)>()?,
+        ("number".to_owned(), 1, 1)
+    );
+    world.set_swimming(false);
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return type(IsSwimming()), select('#', IsSwimming())")
+            .eval::<(String, u8)>()?,
+        ("nil".to_owned(), 1)
+    );
+    world.set_swimming(true);
+    world.leave_world();
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return IsSwimming()")
+            .eval::<Option<u8>>()?,
+        None
+    );
     world.enter_player(UiPlayerState::new(u32::MAX));
+    assert_eq!(
+        bundle
+            .lua()
+            .load("return IsSwimming()")
+            .eval::<Option<u8>>()?,
+        None
+    );
     world.set_player_progression(UiPlayerProgressionState::new(u32::MAX, 0));
     world.set_cursor_money_copper(234);
     world.set_player_trade_money_copper(567);

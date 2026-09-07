@@ -112,6 +112,7 @@ fn stock_model_loops_obey_callback_and_model_lifetimes() -> Result<(), Box<dyn E
         staged_emitters: None,
         last_update: Instant::now(),
         movement_events: Default::default(),
+        water_splashes: Default::default(),
         movement_loads: Vec::new(),
         movement_voices: Vec::new(),
         world_listener: None,

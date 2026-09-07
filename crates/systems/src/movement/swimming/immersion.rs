@@ -43,10 +43,10 @@ pub struct MovementSwimImmersionUpdate {
     pub transition: Option<MovementSwimTransition>,
     /// 72EB80's surface-jump request; the jump command owns further admission.
     pub attempt_surface_jump: bool,
-    /// Crossing the 40%-height splash boundary invokes 746720 and sound 0xC9.
+    /// Crossing 40% height invokes splash audio (746720) and ripple kind 3 (71CBA0).
     pub splash: bool,
     /// Unit +0xA30 bit 0x200000, independent of deferred swim flags.
-    pub water_animation: bool,
+    pub is_swimming: bool,
     /// Next value of the retained splash-depth lane.
     pub previous_depth: f32,
 }
@@ -82,7 +82,7 @@ impl MovementSwimImmersion {
             && self.parent_guid == 0;
         let depth = self.liquid_depth.unwrap_or(0.0);
         // 730DAB retains the extended product for entry/surface-jump decisions,
-        // but animation reads its float store. Exit subtracts before that store.
+        // but IsSwimming reads its float store. Exit subtracts before that store.
         let threshold = f64::from(self.height) * 0.75;
         let exit_threshold = (threshold - f64::from(f32::from_bits(0x3ce3_8e39))) as f32;
         let rising = self.flags & 0x1000 != 0
@@ -109,7 +109,7 @@ impl MovementSwimImmersion {
             splash: !swimming
                 && ((f64::from(depth) > splash_threshold)
                     != (f64::from(self.previous_depth) > splash_threshold)),
-            water_animation: swimming || (depth > threshold as f32 && eligible),
+            is_swimming: swimming || (depth > threshold as f32 && eligible),
             previous_depth: if swimming { self.previous_depth } else { depth },
         }))
     }

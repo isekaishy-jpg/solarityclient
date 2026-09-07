@@ -17,6 +17,7 @@ pub struct CharacterRace {
     faction_id: u32,
     male_display_id: u32,
     female_display_id: u32,
+    splash_sound_id: u32,
     client_prefix: String,
     client_file_string: String,
     name: String,
@@ -56,6 +57,12 @@ impl CharacterRace {
     #[must_use]
     pub const fn female_display_id(&self) -> u32 {
         self.female_display_id
+    }
+
+    /// Returns field 10's SoundEntries identifier copied to Unit_C +0x8F0.
+    #[must_use]
+    pub const fn splash_sound_id(&self) -> u32 {
+        self.splash_sound_id
     }
 
     /// Returns the short helmet-model suffix such as `Hu` or `Or`.
@@ -151,6 +158,7 @@ impl CharacterRaceCatalog {
                 faction_id: field(&table, row, 2)?,
                 male_display_id: field(&table, row, 4)?,
                 female_display_id: field(&table, row, 5)?,
+                splash_sound_id: field(&table, row, 10)?,
                 client_prefix: string(&table, row, 6)?,
                 client_file_string: string(&table, row, 11)?,
                 name: localized_string(&table, row, 14, locale)?,

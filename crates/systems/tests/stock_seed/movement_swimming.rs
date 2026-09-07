@@ -41,7 +41,7 @@ fn swim_immersion_notifications_match_original_executable() -> Result<(), Box<dy
                 u32::from(update.transition == Some(MovementSwimTransition::Leave)),
                 u32::from(update.attempt_surface_jump),
                 u32::from(update.splash),
-                u32::from(update.water_animation) * 0x200000,
+                u32::from(update.is_swimming) * 0x200000,
                 update.previous_depth.to_bits(),
             ]
         });

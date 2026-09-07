@@ -1199,11 +1199,12 @@ impl ClientServices {
         let m2_events = frame.drain_m2_events();
         let frame_errors = frame.drain_recoverable_errors();
         if let Some(world) = self.gameplay.world() {
-            let (creatures, items) = self.player.sound_catalogs();
+            let (creatures, items, races) = self.player.sound_catalogs();
             let context = super::sound_coordinator::UnitSoundContext {
                 world,
                 creatures,
                 items,
+                races,
                 cvars: self.world_ui.as_ref().map_or(
                     &self.glue as &dyn super::sound_coordinator::SoundCvarSource,
                     |ui| ui as &dyn super::sound_coordinator::SoundCvarSource,
@@ -2339,6 +2340,12 @@ impl ClientServices {
             crate::platform::client_milliseconds(),
         )?;
         profile.mark("player movement");
+        while let Some(event) = self.player_movement.take_water_splash() {
+            self.sound.notify_water_splash(event);
+        }
+        if let Some(ui) = &self.world_ui {
+            ui.set_swimming(self.player_movement.is_swimming());
+        }
         self.area_triggers.service(
             &self.gameplay,
             &mut self.player_movement,
@@ -2349,8 +2356,12 @@ impl ClientServices {
             &mut self.terrain,
             &self.game_objects,
             &self.player,
+            &self.liquids,
             crate::platform::client_milliseconds(),
         )?;
+        while let Some(event) = self.remote_movement.take_water_splash() {
+            self.sound.notify_water_splash(event);
+        }
         while let Some(event) = self.remote_movement.take_animation_event() {
             self.sound.notify_unit_movement(event);
             self.player.notify_movement_animation(event);

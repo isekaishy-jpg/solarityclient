@@ -1118,6 +1118,7 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
     fields[4] = 49;
     fields[5] = 50;
     fields[6] = prefix;
+    fields[10] = 1234;
     fields[11] = file_string;
     fields[14] = display_name;
     fields[31] = female_name;
@@ -1141,6 +1142,7 @@ fn character_race_catalog_decodes_model_naming_fields() -> Result<(), Box<dyn Er
     assert_eq!(race.faction_id(), 1);
     assert_eq!(race.male_display_id(), 49);
     assert_eq!(race.female_display_id(), 50);
+    assert_eq!(race.splash_sound_id(), 1234);
     assert_eq!(race.client_prefix(), "Hu");
     assert_eq!(race.client_file_string(), "Human");
     assert_eq!(race.name(), "Human");

@@ -174,6 +174,7 @@ struct LocalMovement {
     remote_profile: Option<MovementGroundProfile>,
     blend: Option<solarity_systems::RemoteMovementBlend>,
     animation_events: VecDeque<UnitMovementAnimationEvent>,
+    water_splashes: VecDeque<super::unit_water::UnitWaterSplash>,
     camera: PlayerCameraInput,
     initial_contact_pending: bool,
     active: bool,
@@ -189,6 +190,8 @@ struct LocalMovement {
     retained_launch_height: f32,
     retained_downward_speed: f32,
     previous_water_depth: f32,
+    /// Unit immersion state precedes the embedded movement owner's swim flag.
+    is_swimming: bool,
     anchor: Vec3,
     elapsed_ms: u32,
     time_ms: u32,
@@ -405,6 +408,16 @@ impl RuntimePlayerMovement {
         self.owner.as_mut()?.animation_events.pop_front()
     }
 
+    /// Reads the immediate unit state, including before queued swim dispatch.
+    pub(super) fn is_swimming(&self) -> bool {
+        self.owner.as_ref().is_some_and(|owner| owner.is_swimming)
+    }
+
+    /// Drains each unit-water crossing once after movement registration.
+    pub(super) fn take_water_splash(&mut self) -> Option<super::unit_water::UnitWaterSplash> {
+        self.owner.as_mut()?.water_splashes.pop_front()
+    }
+
     /// The composition root calls this before presentation samples ECS.
     pub(super) fn service(
         &mut self,
@@ -478,6 +491,8 @@ impl RuntimePlayerMovement {
                     owner.stand_state,
                     owner.camera,
                     owner.passenger_clock,
+                    owner.previous_water_depth,
+                    owner.is_swimming,
                 )
             });
             let Some(owner) =
@@ -488,7 +503,15 @@ impl RuntimePlayerMovement {
             self.owner = Some(owner);
             if let (
                 Some(owner),
-                Some((active, client_control, stand_state, camera, passenger_clock)),
+                Some((
+                    active,
+                    client_control,
+                    stand_state,
+                    camera,
+                    passenger_clock,
+                    depth,
+                    swimming,
+                )),
             ) = (self.owner.as_mut(), retained_control)
             {
                 // Control and stance updates have their own ordered commands.
@@ -499,6 +522,8 @@ impl RuntimePlayerMovement {
                 owner.stand_state = stand_state;
                 owner.camera = camera;
                 owner.passenger_clock = passenger_clock;
+                owner.previous_water_depth = depth;
+                owner.is_swimming = swimming;
             }
         }
         let Some(owner) = self.owner.as_mut() else {
@@ -770,6 +795,7 @@ impl LocalMovement {
             remote_profile: None,
             blend: None,
             animation_events: VecDeque::new(),
+            water_splashes: VecDeque::new(),
             camera: PlayerCameraInput::new(
                 solarity_ecs::PlayerViewState::default(),
                 transform.orientation(),
@@ -791,6 +817,7 @@ impl LocalMovement {
             },
             retained_downward_speed: context.falling.map_or(0., |fall| fall.vertical_speed),
             previous_water_depth: 0.0,
+            is_swimming: false,
             anchor: transform.position(),
             elapsed_ms: 0,
             time_ms,

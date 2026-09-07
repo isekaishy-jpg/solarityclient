@@ -99,6 +99,14 @@ impl LocalMovement {
             return Ok(());
         };
         self.previous_water_depth = update.previous_depth;
+        self.is_swimming = update.is_swimming;
+        if update.splash {
+            self.water_splashes
+                .push_back(super::super::unit_water::UnitWaterSplash {
+                    identity: self.identity,
+                    position: self.world_position(),
+                });
+        }
         // 6EC090 inserts after equal timestamps and before future commands.
         // A queued input from a later platform tick must not delay immersion.
         let mut index = commands

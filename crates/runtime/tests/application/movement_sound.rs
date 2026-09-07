@@ -134,6 +134,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
         last_update: Instant::now(),
         movement_sounds,
         movement_events: Default::default(),
+        water_splashes: Default::default(),
         movement_loads: Vec::new(),
         movement_voices: Vec::new(),
     };
@@ -190,6 +191,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
         world: &world,
         creatures: &creatures,
         items: &items,
+        races: &races,
         cvars: &cvars,
     }
     .source(1, &sound.movement_sounds)
@@ -199,6 +201,65 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
     // intentional; creatures/vehicles with those fields exercise the cue path.
     assert_eq!(sounds.jump(), 0);
     assert_eq!(sounds.land(), 0);
+    // Native 746720 uses the race entry and the frozen unit position, without
+    // requiring CreatureSoundData or a model event.
+    world.storage_mut().add_component(
+        player,
+        (solarity_ecs::UnitIdentity::new(10, 1, 0, 0, 80, 1),),
+    );
+    let splash_entry = races.race(10).ok_or("splash race")?.splash_sound_id();
+    assert_ne!(splash_entry, 0);
+    for at_character in [true, false] {
+        cvars.listener_at_character.set(at_character);
+        sound.notify_water_splash(crate::application::unit_water::UnitWaterSplash {
+            identity: world.object_identity(1).ok_or("splash identity")?,
+            position: Vec3::new(1., 0., 0.),
+        });
+        sound.play_unit_events(
+            &[],
+            camera,
+            UnitSoundContext {
+                world: &world,
+                creatures: &creatures,
+                items: &items,
+                races: &races,
+                cvars: &cvars,
+            },
+            |_, _, _| {
+                Err(RuntimeSoundError::MissingCVar {
+                    name: "splash must not query footstep terrain",
+                })
+            },
+            &mut random,
+        )?;
+        assert!(sound.water_splashes.is_empty());
+        assert_eq!(sound.movement_loads.len(), 1);
+        assert_eq!(sound.movement_loads[0].entry_id, splash_entry);
+        assert_eq!(
+            sound.movement_loads[0].position,
+            (!at_character).then_some(Vec3::new(1., 0., 0.))
+        );
+        finish_loads(&mut sound, &cpu)?;
+        assert_eq!(
+            sound
+                .engine
+                .with_engine(|engine| engine.active_voice_count()),
+            1
+        );
+        let mut audible = false;
+        for _ in 0..32 {
+            let mut samples = [0_u8; 4096];
+            sound
+                .engine
+                .with_engine(|engine| engine.generate(&mut samples))?;
+            audible |= samples.iter().any(|sample| *sample != 0);
+        }
+        assert!(audible, "splash audio remained silent");
+        sound
+            .engine
+            .with_engine_mut(|engine| engine.stop_category(SoundCategory::Sfx))?;
+    }
+    cvars.listener_at_character.set(true);
     let vocal_display = creatures
         .displays()
         .iter()
@@ -280,6 +341,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
                 world: &world,
                 creatures: &creatures,
                 items: &items,
+                races: &races,
                 cvars: &cvars,
             },
             |_, _, _| Ok((0, wet)),
@@ -324,6 +386,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
             world: &world,
             creatures: &creatures,
             items: &items,
+            races: &races,
             cvars: &cvars,
         },
         |_, _, _| {
@@ -349,6 +412,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
                 world: &world,
                 creatures: &creatures,
                 items: &items,
+                races: &races,
                 cvars: &cvars,
             },
             |_, _, _| {
@@ -373,6 +437,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
             world: &world,
             creatures: &creatures,
             items: &items,
+            races: &races,
             cvars: &cvars,
         },
         |_, _, _| Ok((0, false)),
@@ -420,6 +485,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
             world: &world,
             creatures: &creatures,
             items: &items,
+            races: &races,
             cvars: &cvars,
         },
         |_, _, _| Ok((0, false)),
@@ -446,6 +512,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
                 world: &world,
                 creatures: &creatures,
                 items: &items,
+                races: &races,
                 cvars: &cvars,
             },
             |_, _, _| panic!("vocal must not query a footstep surface"),
@@ -491,6 +558,7 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
             world: &world,
             creatures: &creatures,
             items: &items,
+            races: &races,
             cvars: &cvars,
         },
         |_, _, _| Ok((0, false)),
