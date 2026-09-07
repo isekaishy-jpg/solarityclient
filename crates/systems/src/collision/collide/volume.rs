@@ -63,6 +63,8 @@ impl MovementCollisionPlane {
 pub struct MovementCollisionVolume {
     pub(super) planes: [MovementCollisionPlane; 9],
     pub(super) vertices: [Vec3; 9],
+    pub(super) radius: f32,
+    pub(super) height: f32,
 }
 
 impl MovementCollisionVolume {
@@ -116,6 +118,11 @@ impl MovementCollisionVolume {
         {
             return Err(MovementSweepError::InvalidVolume);
         }
-        Ok(Self { planes, vertices })
+        Ok(Self {
+            planes,
+            vertices,
+            radius,
+            height,
+        })
     }
 }

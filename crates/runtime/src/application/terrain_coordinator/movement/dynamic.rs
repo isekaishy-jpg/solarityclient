@@ -8,7 +8,7 @@ use solarity_asset::DecodedM2Model;
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_systems::{
     MovementBspCacheMode, MovementCollisionBounds, MovementCollisionTriangle,
-    MovementIntervalBounds, MovementIntervalRequest,
+    MovementIntervalBounds, MovementIntervalRequest, MovementTransportFrame,
 };
 
 use super::map_models::ResidentMapModels;
@@ -75,6 +75,7 @@ impl RuntimeMovementQuery {
     }
 
     /// Returns candidates in native root, group, chunk, and reference order.
+    /// A passenger geometry context converts these faces to its supplied frame.
     #[must_use]
     pub fn triangles(&self) -> &[MovementCollisionTriangle] {
         self.inner.triangles()
@@ -86,11 +87,34 @@ impl RuntimeMovementQuery {
         self.inner.owners.get(triangle).copied()
     }
 
-    /// Returns the body and probe bounds from the last complete interval query.
+    /// Returns the world body and probe bounds from the last complete interval query.
     /// Explicit-box queries, pending residency, and errors clear this value.
     #[must_use]
     pub const fn interval_bounds(&self) -> Option<MovementIntervalBounds> {
         self.interval_bounds
+    }
+
+    /// Publishes complete interval coverage after optional passenger conversion.
+    pub(super) fn set_interval_bounds(&mut self, bounds: MovementIntervalBounds) {
+        self.interval_bounds = Some(bounds);
+    }
+
+    /// Converts complete candidates without changing their native owner ordering.
+    /// A conversion failure retires the entire query, including metadata.
+    pub(super) fn localize(
+        &mut self,
+        frame: MovementTransportFrame,
+    ) -> Result<(), RuntimeStaticMovementError> {
+        for triangle in &mut self.inner.triangles {
+            match frame.local_triangle(triangle) {
+                Ok(local) => *triangle = local,
+                Err(error) => {
+                    self.clear();
+                    return Err(error.into());
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn clear(&mut self) {

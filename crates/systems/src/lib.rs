@@ -41,10 +41,11 @@ mod vehicle;
 mod world;
 
 pub use movement::{
-    RemoteMovementAdmission, RemoteMovementBlend, RemoteMovementClock, RemoteMovementPose,
-    RemoteMovementReceipt, TransportRoute, TransportRouteClock, TransportRouteError,
-    TransportRouteEvent, TransportRouteMotion, TransportRouteNode, TransportRoutePhysics,
-    TransportRoutePhysicsError, TransportRouteSample,
+    MovementTransportFrame, MovementTransportFrameError, RemoteMovementAdmission,
+    RemoteMovementBlend, RemoteMovementClock, RemoteMovementPose, RemoteMovementReceipt,
+    TransportRoute, TransportRouteClock, TransportRouteError, TransportRouteEvent,
+    TransportRouteMotion, TransportRouteNode, TransportRoutePhysics, TransportRoutePhysicsError,
+    TransportRouteSample,
 };
 
 pub use camera::{

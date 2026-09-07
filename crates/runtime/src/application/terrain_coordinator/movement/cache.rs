@@ -4,7 +4,7 @@ use glam::Vec3;
 use solarity_ecs::ActiveWorld;
 use solarity_systems::{
     MovementBspCacheMode, MovementCollisionBounds, MovementCollisionTriangle,
-    MovementCollisionVolume, MovementGeometry, MovementIntervalRequest,
+    MovementCollisionVolume, MovementGeometry, MovementIntervalRequest, MovementTransportFrame,
 };
 
 use super::{
@@ -19,8 +19,8 @@ use crate::application::RuntimeGameObjectPresentation;
 /// each ground/step/fall probe. A hit reuses ordered candidates; a miss recollects
 /// the union required by stock. Pending or failed collection exposes no faces.
 /// Movement response and partial-state handling remain the solver's responsibility.
-/// This adapter accepts world-space probes; it does not resolve passenger space,
-/// liquid/WDL policy, or specialized GameObject behavior.
+/// A supplied passenger frame converts collection bounds to world space and
+/// collected faces back to solver space. Liquid/WDL policy is owned separately.
 pub struct RuntimeMovementGeometry<'a> {
     terrain: &'a mut RuntimeTerrainCoordinator,
     world: &'a ActiveWorld,
@@ -29,6 +29,7 @@ pub struct RuntimeMovementGeometry<'a> {
     cache: MovementBspCacheMode,
     output: &'a mut RuntimeMovementQuery,
     bounds: Option<MovementCollisionBounds>,
+    frame: Option<MovementTransportFrame>,
     failure: Option<RuntimeMovementGeometryFailure>,
 }
 
@@ -60,8 +61,18 @@ impl<'a> RuntimeMovementGeometry<'a> {
             cache,
             output,
             bounds: None,
+            frame: None,
             failure: None,
         }
+    }
+
+    /// Freezes a parent's matrix for this context's passenger-space probes.
+    /// Changing coordinate systems invalidates both candidates and world coverage.
+    pub fn set_transport_frame(&mut self, frame: Option<MovementTransportFrame>) {
+        self.frame = frame;
+        self.bounds = None;
+        self.failure = None;
+        self.output.clear();
     }
 
     /// Collects the initial interval region, including its private probe reach.
@@ -74,15 +85,24 @@ impl<'a> RuntimeMovementGeometry<'a> {
     ) -> Result<RuntimeStaticMovementResidency, RuntimeStaticMovementError> {
         self.bounds = None;
         self.failure = None;
-        let residency = self.terrain.collect_movement_interval(
+        self.output.clear();
+        let bounds = match self.frame {
+            Some(frame) => request.collection_bounds_in_frame(frame)?,
+            None => request.collection_bounds()?,
+        };
+        let residency = self.terrain.collect_movement(
             self.world,
             self.objects,
-            request,
+            bounds.query(),
             self.flags,
             self.cache,
             self.output,
         )?;
-        self.bounds = self.output.interval_bounds().map(|bounds| bounds.query());
+        if residency == RuntimeStaticMovementResidency::Ready {
+            self.localize_candidates()?;
+            self.output.set_interval_bounds(bounds);
+            self.bounds = Some(bounds.query());
+        }
         Ok(residency)
     }
 
@@ -104,7 +124,11 @@ impl<'a> RuntimeMovementGeometry<'a> {
         let cached = self
             .bounds
             .ok_or(RuntimeStaticMovementError::InvalidReference)?;
-        let refresh = match volume.sweep_refresh_bounds(direction, distance, cached) {
+        let refresh = match self.frame {
+            Some(frame) => volume.sweep_refresh_bounds_in_frame(direction, distance, cached, frame),
+            None => volume.sweep_refresh_bounds(direction, distance, cached),
+        };
+        let refresh = match refresh {
             Ok(refresh) => refresh,
             Err(error) => {
                 self.bounds = None;
@@ -125,9 +149,18 @@ impl<'a> RuntimeMovementGeometry<'a> {
             self.output,
         )?;
         if residency == RuntimeStaticMovementResidency::Ready {
+            self.localize_candidates()?;
             self.bounds = Some(refresh);
         }
         Ok(residency)
+    }
+
+    /// Native collection converts complete world faces once, preserving owner order.
+    fn localize_candidates(&mut self) -> Result<(), RuntimeStaticMovementError> {
+        if let Some(frame) = self.frame {
+            self.output.localize(frame)?;
+        }
+        Ok(())
     }
 
     /// Returns the last complete region within this borrowed context.

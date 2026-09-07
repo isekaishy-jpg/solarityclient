@@ -3,7 +3,9 @@
 use glam::Vec3;
 use thiserror::Error;
 
-use super::{MovementFallError, MovementFallTrajectory, MovementGroundProfile};
+use super::{
+    MovementFallError, MovementFallTrajectory, MovementGroundProfile, MovementTransportFrame,
+};
 use crate::collision::{MovementCollectionError, MovementCollisionBounds};
 
 const CONTACT_TOLERANCE: f32 = f32::from_bits(0x3ab6_0b61);
@@ -92,8 +94,36 @@ impl MovementIntervalRequest {
     /// # Errors
     /// Returns an error for invalid inputs or non-finite generated bounds.
     pub fn collection_bounds(self) -> Result<MovementIntervalBounds, MovementIntervalBoundsError> {
+        self.collection_bounds_at(self.position, self.direction)
+    }
+
+    /// Builds world-axis collection bounds for a passenger-space movement request.
+    /// Native 75FF90 transforms foot/direction before constructing the body box;
+    /// radius, height, and the fall curve's local launch/current Z stay unchanged.
+    ///
+    /// # Errors
+    /// Returns an error for invalid inputs or non-finite transformed bounds.
+    pub fn collection_bounds_in_frame(
+        self,
+        frame: MovementTransportFrame,
+    ) -> Result<MovementIntervalBounds, MovementIntervalBoundsError> {
+        self.collection_bounds_at(
+            frame.world_position(self.position),
+            frame.world_direction(self.direction),
+        )
+    }
+
+    /// The fall clock is evaluated in the original movement space, while body
+    /// bounds and sweep travel are expressed in the resolved world space.
+    fn collection_bounds_at(
+        self,
+        position: Vec3,
+        direction: Vec3,
+    ) -> Result<MovementIntervalBounds, MovementIntervalBoundsError> {
         if !self.position.is_finite()
             || !self.direction.is_finite()
+            || !position.is_finite()
+            || !direction.is_finite()
             || [self.radius, self.height, self.distance]
                 .iter()
                 .any(|v| !v.is_finite() || *v < 0.)
@@ -101,13 +131,13 @@ impl MovementIntervalRequest {
             return Err(MovementIntervalBoundsError::InvalidInput);
         }
         let body = MovementCollisionBounds::new(
-            self.position - Vec3::new(self.radius, self.radius, 0.),
-            self.position + Vec3::new(self.radius, self.radius, self.height),
+            position - Vec3::new(self.radius, self.radius, 0.),
+            position + Vec3::new(self.radius, self.radius, self.height),
         )?;
         let mut minimum = body.minimum();
         let mut maximum = body.maximum();
         let distance = f64::from(self.distance);
-        let direction = self.direction.as_dvec3();
+        let direction = direction.as_dvec3();
         match self.mode {
             MovementIntervalMode::Grounded(profile) => {
                 let step = match profile {
@@ -124,7 +154,7 @@ impl MovementIntervalRequest {
                 minimum = minimum.min((body.minimum().as_dvec3() + direction * reach).as_vec3());
                 maximum = maximum.max((body.maximum().as_dvec3() + direction * reach).as_vec3());
                 let half = distance * 0.5;
-                let center = self.position.as_dvec3() + direction * half;
+                let center = position.as_dvec3() + direction * half;
                 // Native keeps X in x87 but reloads rounded Y and Z.
                 let x = center.x;
                 let y = f64::from(center.y as f32);
@@ -168,7 +198,7 @@ impl MovementIntervalRequest {
             }
             MovementIntervalMode::SwimmingOrFlying => {
                 let half = distance * 0.5;
-                let center = self.position.as_dvec3() + direction * half;
+                let center = position.as_dvec3() + direction * half;
                 let x = center.x;
                 let y = f64::from(center.y as f32);
                 let z = f64::from(center.z as f32);

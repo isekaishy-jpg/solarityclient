@@ -10,6 +10,7 @@ import random
 import struct
 
 import wmo_registration_oracle as native
+from movement_interval_bounds_oracle import install_transport_provider
 from unicorn import UC_HOOK_CODE
 from unicorn.x86_const import (
     UC_X86_REG_EBP, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP,
@@ -21,11 +22,13 @@ def words(values):
     return struct.unpack('<' + 'I' * len(values), struct.pack('<' + 'f' * len(values), *values))
 
 
-def capture(uc, values):
+def capture(uc, values, parent_matrix=None):
     unit, direction, selected, planes, count, travel = [native.HEAP + i * 0x1000 for i in range(6)]
     uc.mem_write(native.HEAP, bytes(0x6000))
     native.write_floats(uc, unit + 0x10, values[:3])
     native.write_floats(uc, unit + 0xc8, values[3:5])
+    if parent_matrix is not None:
+        install_transport_provider(uc, unit, parent_matrix)
     native.write_floats(uc, direction, values[5:8])
     native.write_floats(uc, 0xca1660, values[9:15])
     native.write_words(uc, 0xadba34, 0, 0, 0)

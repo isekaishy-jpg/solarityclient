@@ -23,7 +23,22 @@ def words(values):
     return struct.unpack('<' + 'I' * len(values), struct.pack('<' + 'f' * len(values), *values))
 
 
-def capture(uc, mode, player, slow, duration, fall_ms, values):
+def install_transport_provider(uc, unit, matrix):
+    """Supply one resident parent matrix at the external GUID-provider boundary."""
+    source = native.HEAP + 0x9000
+    native.write_floats(uc, source, matrix)
+    native.write_words(uc, unit + 8, 2, 0)
+    native.write_words(uc, unit + 0x28, source + 64)
+    native.write_words(uc, source + 64, 1, 0)
+    # Cdecl 74B4C0 receives its output pointer as the third argument.
+    code = b'\x8b\x44\x24\x0c'
+    for offset in range(0, 64, 4):
+        code += b'\x8b\x15' + struct.pack('<I', source + offset)
+        code += b'\x89\x50' + bytes([offset])
+    uc.mem_write(0x74b4c0, code + b'\xb8\x01\x00\x00\x00\xc3')
+
+
+def capture(uc, mode, player, slow, duration, fall_ms, values, parent_matrix=None):
     origin, radius, height, distance = values[:3], values[3], values[4], values[5]
     direction, step, launch, downward = values[6:9], values[9], values[10], values[11]
     unit, owner, fields, kind = [native.HEAP + n for n in (0, 0x1000, 0x2000, 0x3000)]
@@ -39,6 +54,8 @@ def capture(uc, mode, player, slow, duration, fall_ms, values):
     native.write_floats(uc, unit + 0xc8, [radius, height, step])
     native.write_floats(uc, unit + 0x84, [launch])
     native.write_floats(uc, unit + 0xb8, [downward])
+    if parent_matrix is not None:
+        install_transport_provider(uc, unit, parent_matrix)
     sp = native.STACK + 0x18000
     native.write_words(uc, sp, native.STOP, words([distance])[0], duration, *words(direction))
     uc.reg_write(UC_X86_REG_ESP, sp)

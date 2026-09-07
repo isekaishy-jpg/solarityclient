@@ -7,8 +7,108 @@ use solarity_systems::{
     MovementCollisionVolume, MovementFallAdvancePolicy, MovementFallContinuation,
     MovementFallInterval, MovementFallMode, MovementFallPhase, MovementFallSnapshot,
     MovementFallState, MovementFallTrajectory, MovementGroundProfile, MovementIntervalMode,
-    MovementIntervalRequest, MovementSupportProfile,
+    MovementIntervalRequest, MovementSupportProfile, MovementTransportFrame,
 };
+
+#[test]
+fn passenger_queries_collect_in_world_space_and_sweep_local_faces() -> Result<(), Box<dyn Error>> {
+    let mut scene = Scene::new(false)?;
+    scene.synchronize()?;
+    // An exact quarter turn and translation distinguish world coverage from
+    // passenger solver coordinates without introducing trigonometric rounding.
+    let matrix = glam::Mat4::from_cols(
+        Vec3::Y.extend(0.),
+        Vec3::NEG_X.extend(0.),
+        Vec3::Z.extend(0.),
+        Vec3::new(1000., 5800., 9.).extend(1.),
+    );
+    let frame = MovementTransportFrame::new(matrix, std::f32::consts::FRAC_PI_2)?;
+    let request = MovementIntervalRequest {
+        position: Vec3::new(0., 0., 2.),
+        radius: 0.5,
+        height: 2.,
+        distance: 0.,
+        direction: Vec3::X,
+        duration_ms: 16,
+        mode: MovementIntervalMode::SwimmingOrFlying,
+    };
+    let volume = MovementCollisionVolume::new(request.position, request.radius, request.height)?;
+    let mut query = RuntimeMovementQuery::new();
+    {
+        let mut geometry = RuntimeMovementGeometry::new(
+            &mut scene.terrain,
+            &scene.world,
+            &scene.objects,
+            0x100111,
+            MovementBspCacheMode::Enabled,
+            &mut query,
+        );
+        geometry.set_transport_frame(Some(frame));
+        assert_eq!(
+            geometry.collect_interval(request)?,
+            RuntimeStaticMovementResidency::Ready
+        );
+        let initial = request.collection_bounds_in_frame(frame)?.query();
+        assert_eq!(geometry.cached_bounds(), Some(initial));
+        assert!(geometry.triangles().is_empty());
+        assert_eq!(
+            geometry.prepare_sweep(&volume, Vec3::NEG_Z, 2.)?,
+            RuntimeStaticMovementResidency::Ready,
+        );
+        assert_eq!(
+            geometry.cached_bounds(),
+            volume.sweep_refresh_bounds_in_frame(Vec3::NEG_Z, 2., initial, frame)?,
+        );
+        let hit = volume.sweep(Vec3::NEG_Z * 2., geometry.triangles())?;
+        assert!((hit.distance() - 1.).abs() < 0.01, "{hit:?}");
+        assert!(matches!(
+            geometry.owner(hit.last_triangle().ok_or("missing passenger support")?),
+            Some(RuntimeMovementOwner::Static(
+                RuntimeStaticMovementOwner::Terrain { .. }
+            )),
+        ));
+        let vertices = *geometry.triangles()[0].vertices();
+        geometry.prepare_sweep(&volume, Vec3::NEG_Z, 2.)?;
+        assert_eq!(
+            geometry.triangles()[0].vertices(),
+            &vertices,
+            "cache hit must not transform twice"
+        );
+        // The same retained query must recollect after a coordinate change.
+        geometry.set_transport_frame(None);
+        assert!(geometry.cached_bounds().is_none());
+        assert!(geometry.triangles().is_empty());
+        assert!(geometry.owner(0).is_none());
+        assert!(geometry.prepare_sweep(&volume, Vec3::NEG_Z, 2.).is_err());
+        geometry.set_transport_frame(Some(frame));
+        geometry.collect_interval(MovementIntervalRequest {
+            mode: MovementIntervalMode::Grounded(MovementGroundProfile::PlayerControlled {
+                step_height: 1.,
+            }),
+            ..request
+        })?;
+        assert!(!geometry.triangles().is_empty());
+    }
+    assert_eq!(
+        query.interval_bounds(),
+        Some(
+            MovementIntervalRequest {
+                mode: MovementIntervalMode::Grounded(MovementGroundProfile::PlayerControlled {
+                    step_height: 1.
+                }),
+                ..request
+            }
+            .collection_bounds_in_frame(frame)?
+        )
+    );
+    assert!(
+        query
+            .triangles()
+            .iter()
+            .all(|triangle| triangle.vertices().iter().all(|vertex| vertex.z == 1.))
+    );
+    Ok(())
+}
 
 #[test]
 fn sweep_cache_refreshes_union_and_invalidates_pending_or_failed_geometry()
