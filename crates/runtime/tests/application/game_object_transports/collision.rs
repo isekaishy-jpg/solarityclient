@@ -73,7 +73,13 @@ struct Scene {
 
 impl Scene {
     fn new() -> Result<Self, Box<dyn Error>> {
-        let files = map_files()?;
+        Self::with_files(Vec::new())
+    }
+
+    /// The same resident map exercises both map-handle resource families.
+    fn with_files(extra: MapFiles) -> Result<Self, Box<dyn Error>> {
+        let mut files = map_files()?;
+        files.extend(extra);
         let sources: Vec<_> = files
             .iter()
             .map(|(path, bytes)| (*path, bytes.as_slice()))
@@ -366,6 +372,171 @@ fn empty_route_retains_its_reference_slot_while_sampled_station_moves_to_tail()
         }
     }
     Ok(())
+}
+
+#[test]
+fn map_handle_retention_and_boarding_have_independent_lifetime_gates() -> Result<(), Box<dyn Error>>
+{
+    let mut scene = Scene::new()?;
+    let identity = scene.world.object_identity(9).ok_or("identity")?;
+    assert!(!scene.objects.object_can_board(identity));
+    assert!(
+        scene
+            .objects
+            .object_retains_passenger(identity, Vec3::splat(100.))?
+    );
+    super::fields(&mut scene.world, &[(9, 8)])?;
+    scene.objects.synchronize(Some(&scene.world))?;
+    assert!(scene.objects.object_can_board(identity));
+    scene.cache.receive(template(0)?);
+    scene.synchronize(3462)?;
+    // The model's authored box tops at 0.1; native headroom extends above it.
+    for (position, expected) in [
+        (Vec3::ZERO, true),
+        (Vec3::new(0., 0., 1.7), true),
+        (Vec3::new(0., 0., 1.8), false),
+        (Vec3::new(1.01, 0., 0.), false),
+        (Vec3::new(0., 0., -0.11), false),
+    ] {
+        assert_eq!(
+            scene.objects.object_retains_passenger(identity, position)?,
+            expected
+        );
+    }
+    // Removing the boarding flag does not change an existing passenger's volume.
+    super::fields(&mut scene.world, &[(9, 0)])?;
+    scene.objects.synchronize(Some(&scene.world))?;
+    assert!(!scene.objects.object_can_board(identity));
+    assert!(
+        scene
+            .objects
+            .object_retains_passenger(identity, Vec3::ZERO)?
+    );
+    scene.world.remove_object(9)?;
+    scene.objects.synchronize(Some(&scene.world))?;
+    assert!(!scene.objects.object_can_board(identity));
+    assert!(
+        !scene
+            .objects
+            .object_retains_passenger(identity, Vec3::ZERO)?
+    );
+    Ok(())
+}
+
+#[test]
+fn wmo_transport_waits_for_map_handle_then_uses_authored_retention_planes()
+-> Result<(), Box<dyn Error>> {
+    let mut scene = Scene::with_files(wmo_files())?;
+    let identity = scene.world.object_identity(9).ok_or("identity")?;
+    let station = Vec3::new(20., 5., 0.);
+    scene.synchronize(3462)?;
+    assert!(scene.collect(station, 0xf001ff)?.triangles().is_empty());
+    assert!(
+        scene
+            .objects
+            .object_retains_passenger(identity, Vec3::splat(100.))?
+    );
+    scene.cache.receive(template(0)?);
+    scene.synchronize(3462)?;
+    let query = scene.collect(station, 0xf001ff)?;
+    assert_eq!(query.triangles().len(), 1);
+    assert_eq!(
+        query.owner(0),
+        Some(RuntimeMovementOwner::GameObjectWorldModel { identity })
+    );
+    // MCVP is deliberately narrower than the MOGI/MOGP/root collision boxes.
+    assert!(
+        scene
+            .objects
+            .object_retains_passenger(identity, Vec3::new(0.5, 0., 0.))?
+    );
+    assert!(
+        !scene
+            .objects
+            .object_retains_passenger(identity, Vec3::new(0.51, 0., 0.))?
+    );
+    scene.world.remove_object(9)?;
+    scene.objects.synchronize(Some(&scene.world))?;
+    scene.synchronize(3462)?;
+    assert!(scene.collect(station, 0xf001ff)?.triangles().is_empty());
+    assert!(
+        !scene
+            .objects
+            .object_retains_passenger(identity, Vec3::ZERO)?
+    );
+    Ok(())
+}
+
+/// One collision-only root with an authored X <= 0.5 retention plane.
+fn wmo_files() -> MapFiles {
+    let mut root = Vec::new();
+    chunk(&mut root, b"REVM", &17_u32.to_le_bytes());
+    let bounds = [-1_f32, -1., -0.1, 1., 1., 0.1];
+    let bounds_bytes: Vec<_> = bounds.into_iter().flat_map(f32::to_le_bytes).collect();
+    let mut header = [0_u8; 64];
+    header[4..8].copy_from_slice(&1_u32.to_le_bytes());
+    header[36..60].copy_from_slice(&bounds_bytes);
+    chunk(&mut root, b"DHOM", &header);
+    let mut info = [0_u8; 32];
+    info[4..28].copy_from_slice(&bounds_bytes);
+    info[28..32].copy_from_slice(&u32::MAX.to_le_bytes());
+    chunk(&mut root, b"IGOM", &info);
+    chunk(
+        &mut root,
+        b"PVCM",
+        &[1_f32, 0., 0., -0.5]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>(),
+    );
+    let mut body = vec![0_u8; 68];
+    body[12..36].copy_from_slice(&bounds_bytes);
+    chunk(&mut body, b"YPOM", &[8, 255]);
+    chunk(&mut body, b"IVOM", &[0, 0, 1, 0, 2, 0]);
+    chunk(
+        &mut body,
+        b"TVOM",
+        &[-1_f32, -1., 0., 1., -1., 0., 0., 1., 0.]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>(),
+    );
+    chunk(
+        &mut body,
+        b"RNOM",
+        &[0_f32, 0., 1., 0., 0., 1., 0., 0., 1.]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>(),
+    );
+    let mut node = vec![4, 0, 255, 255, 255, 255, 1, 0];
+    node.extend([0_u8; 8]);
+    chunk(&mut body, b"NBOM", &node);
+    chunk(&mut body, b"RBOM", &[0, 0]);
+    let mut group = Vec::new();
+    chunk(&mut group, b"REVM", &17_u32.to_le_bytes());
+    chunk(&mut group, b"PGOM", &body);
+    let mut row = vec![0_u32; 19];
+    row[0] = 42;
+    row[1] = 1;
+    row[12..18].copy_from_slice(&bounds.map(f32::to_bits));
+    let mut displays = super::table(19, &[row]);
+    displays.pop();
+    let path = b"\0World\\Transport.wmo\0";
+    displays.extend_from_slice(path);
+    displays[16..20].copy_from_slice(&(path.len() as u32).to_le_bytes());
+    vec![
+        ("DBFilesClient\\GameObjectDisplayInfo.dbc", displays),
+        ("World\\Transport.wmo", root),
+        ("World\\Transport_000.wmo", group),
+    ]
+}
+
+/// Preserve raw WMO chunk lengths, including nested MOGP subchunks.
+fn chunk(bytes: &mut Vec<u8>, magic: &[u8; 4], payload: &[u8]) {
+    bytes.extend(magic);
+    bytes.extend((payload.len() as u32).to_le_bytes());
+    bytes.extend(payload);
 }
 
 /// WDBC/WDT/ADT fixtures use exact map zero and the native station's tile (31,31).

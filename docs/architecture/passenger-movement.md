@@ -51,11 +51,30 @@ the GameObject passenger placement separately from the initial map-model pose;
 656 cases, and runtime coverage distinguishes a scale-three passenger matrix
 from the same transport's scale-one initial collision model, including removal.
 
-Live attachment, parent retention, and transport wire snapshots still require
-runtime integration. Native contact handling at `0x006EC7B0` is restricted to the active
+Live attachment and transport wire snapshots still require integration into the
+movement owner. Native contact handling at `0x006EC7B0` is restricted to the active
 mover. Admission at `0x0074B3F0` calls the candidate's virtual `+0xEC`; a GameObject
 checks GAMEOBJECT_FLAGS bit 8 at `0x00712F20`. Leaving a contact can retain the old
 parent through virtual `+0xF0`, which delegates to behavior `+0x6C` (`0x00712E90`).
 Type-11 and type-15 behaviors use `0x0070B360` and `0x0077FFB0`: no map handle
 retains the parent, while resident M2 and WMO handles use their own containment
 rules. These gates must not be replaced with a generic grounded-contact rule.
+
+`MovementTransportVolume` preserves `0x0077FFB0`/`0x007AEA10`'s inclusive
+half-spaces. An M2 requires a ready model and uses its authored collision box,
+with the native two-constant upper-Z padding and single float spill. A WMO
+requires loaded groups and tests its MCVP planes; a loaded root with no planes
+retains every point. `tools/ghidra/passenger_containment_oracle.py` captures 880
+original decisions with controlled M2 readiness, including missing models,
+unloaded groups, empty and oblique plane sets, and adjacent float boundaries.
+
+The runtime exposes boarding permission and retention independently, keyed by
+object lifetime. Tests cover the M2 headroom, flag removal, object removal, and
+WMO authored planes. Type-15 WMO collision registration now waits for the
+template to admit its map handle, matching the existing M2 admission gate.
+
+MO behavior retains both raw route time (`+0x30`) and the converted passenger
+clock (`+0x3C`, virtual `+0xA8`). The latter is the sampled phase, including
+station holds and period wrapping, and remains unchanged on a next-map sample.
+Runtime tests distinguish these clocks. The movement-context current/previous
+clock and the optional second wire clock remain part of the attachment work.

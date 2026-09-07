@@ -6,6 +6,7 @@ mod frame;
 mod physics;
 mod route;
 mod timing;
+mod volume;
 
 pub use change::MovementTransportChange;
 pub use clock::{TransportRouteClock, TransportRouteMotion};
@@ -15,3 +16,4 @@ pub use route::{
     TransportRoute, TransportRouteError, TransportRouteEvent, TransportRouteNode,
     TransportRouteSample,
 };
+pub use volume::MovementTransportVolume;

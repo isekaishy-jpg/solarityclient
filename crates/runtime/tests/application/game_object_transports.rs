@@ -94,6 +94,7 @@ fn presentation_for_route_with_files(
         ("World\\GameObject.m2", &model),
         ("World\\GameObject00.skin", &skin),
     ];
+    sources.retain(|(path, _)| !files.iter().any(|(extra, _)| path == extra));
     sources.extend_from_slice(files);
     let fixture = ClientFixture::with_common_files(&sources)?;
     let archive =
@@ -280,10 +281,22 @@ fn transport_repeated_stop_notification_releases_the_current_station() -> Result
     objects.observe_notification(&world, identity, GameObjectNotification::State, &mut random)?;
     objects.advance_transports(Some(&mut world), 5462)?;
     let station = world.game_object_animated_pose(9).ok_or("station")?;
+    let station_clock = objects
+        .object_passenger_time_ms(identity)
+        .ok_or("passenger clock")?;
+    assert_eq!(station_clock, 5362);
     objects.advance_transports(Some(&mut world), 6100)?;
+    assert_eq!(
+        objects.object_passenger_time_ms(identity),
+        Some(station_clock)
+    );
     assert_eq!(world.game_object_animated_pose(9), Some(station));
     objects.observe_notification(&world, identity, GameObjectNotification::State, &mut random)?;
     objects.advance_transports(Some(&mut world), 6200)?;
+    assert_eq!(
+        objects.object_passenger_time_ms(identity),
+        Some(station_clock + 100)
+    );
     assert!(
         world
             .game_object_animated_pose(9)
@@ -432,13 +445,17 @@ fn transport_next_map_section_retains_the_current_pose_until_server_transfer()
     objects.synchronize(Some(&world))?;
     objects.synchronize_templates(&mut cache);
     objects.advance_transports(Some(&mut world), 600)?;
+    let identity = world.object_identity(9).ok_or("identity")?;
+    assert_eq!(objects.object_passenger_time_ms(identity), Some(500));
     let current = world
         .game_object_animated_pose(9)
         .ok_or("current map pose")?;
     objects.advance_transports(Some(&mut world), 1600)?;
+    assert_eq!(objects.object_passenger_time_ms(identity), Some(500));
     assert_eq!(world.game_object_animated_pose(9), Some(current));
     assert_eq!(world.map_id().value(), 0);
     objects.advance_transports(Some(&mut world), 2100)?;
+    assert_eq!(objects.object_passenger_time_ms(identity), Some(0));
     assert_ne!(world.game_object_animated_pose(9), Some(current));
     Ok(())
 }

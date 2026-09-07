@@ -1,5 +1,6 @@
 //! Shared visible-GameObject generations and loading-card transport readiness.
 
+mod passenger;
 mod transport;
 mod transport_model;
 mod worker;
@@ -243,6 +244,14 @@ impl GameObjectInstance {
     }
     pub(in crate::application) fn placement(&self) -> Option<GameObjectPlacement> {
         self.placement.ok()
+    }
+    /// Type-15 map handles exist only after template admission (783500).
+    /// CPU resource completion alone cannot register a WMO collision root.
+    pub(in crate::application) fn map_placement(&self) -> Option<GameObjectPlacement> {
+        match &self.transport {
+            Some(transport) => transport.map_placement(),
+            None => self.placement(),
+        }
     }
     pub(in crate::application) fn resource(&self) -> Option<&GameObjectResource> {
         self.resource.as_deref()

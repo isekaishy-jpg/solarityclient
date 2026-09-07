@@ -285,7 +285,7 @@ impl ResidentMovementScene {
                 continue;
             }
             let (Some(GameObjectResource::WorldModel(source)), Some(placement)) =
-                (instance.resource(), instance.placement())
+                (instance.resource(), instance.map_placement())
             else {
                 continue;
             };

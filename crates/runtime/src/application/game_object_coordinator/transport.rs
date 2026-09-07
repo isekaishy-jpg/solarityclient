@@ -34,6 +34,8 @@ struct TransportState {
     allow_stopping: bool,
     /// Behavior+0x30 is written only after a successful current-map sample.
     published_time_ms: u32,
+    /// Behavior+0x3C is the converted passenger clock returned by virtual A8.
+    published_passenger_time_ms: u32,
     last_client_time_ms: u32,
     sample: Option<TransportRouteSample>,
 }
@@ -113,6 +115,14 @@ impl GameObjectTransportBehavior {
         self.map_revision.get()
     }
 
+    /// 959D00 returns the last successful 7134A0/714240 phase, initially zero.
+    pub(super) fn passenger_time_ms(&self) -> u32 {
+        self.route
+            .borrow()
+            .as_ref()
+            .map_or(0, |state| state.published_passenger_time_ms)
+    }
+
     pub(super) fn animation_phase(&self) -> Option<u32> {
         self.route
             .borrow()
@@ -175,6 +185,7 @@ impl GameObjectTransportBehavior {
             game_object_transport_pose(sample.position, sample.yaw, sample.pitch, sample.roll)?;
         world.update_game_object_animated_pose(guid, pose)?;
         state.published_time_ms = raw_time_ms;
+        state.published_passenger_time_ms = clock_ms;
         state.sample = Some(sample);
         Ok(true)
     }
@@ -218,6 +229,7 @@ impl TransportState {
             clock: TransportRouteClock::default(),
             allow_stopping: properties[8] != 0,
             published_time_ms: 0,
+            published_passenger_time_ms: 0,
             last_client_time_ms: client_time_ms,
             sample: None,
         })
