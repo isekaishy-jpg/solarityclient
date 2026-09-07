@@ -147,6 +147,10 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     // FUN_0051D9B0 registers the type-5 value at 0x009E1340, whose
     // initialized build-12340 bytes are the exact string "1.0".
     value("cameraDistanceMaxFactor", "1.0"),
+    // 5FD910: character-owned saved camera CVars (native flag 0x20).
+    value("cameraSavedDistance", "5.55"),
+    value("cameraSavedPitch", "10.0"),
+    value("cameraSavedVehicleDistance", "-1.0"),
     ranged(
         "cameraDistanceMoveSpeed",
         "8.33",

@@ -274,6 +274,30 @@ are covered by `camera_obstruction_recovery_oracle.py` histories. Waterline
 correction is applied after the distance feedback and does not become a zoom
 request.
 
+Ordinary camera distance and pitch now survive process shutdown in the character
+cache. Native `0x00518BF0` restores the camera after character CVar loading;
+`0x00512890` saves it before serializing those CVars on UI teardown. The local
+owner follows `0x006B8B90`'s
+`WTF/Account/<account>/<realm>/<character>/config-cache.wtf` path below the
+configured profile root. Other records in that file are preserved. The current
+implementation routes `cameraSavedDistance`, `cameraSavedPitch`, and
+`cameraSavedVehicleDistance` to this file, independently of global Config.wtf.
+Their registered defaults at `0x005FD910` are 5.55, 10.0 degrees, and -1.0.
+
+`0x005FF3E0` clamps restored distance to 0..50 and converts saved degrees using
+the executable's single-precision constant. `0x005FF320` saves the current
+distance at camera+0x1E8 and pitch at camera+0x230, including collision feedback,
+with six decimal places. Ordinary save does not persist yaw or replace the
+vehicle distance. Restoration happens before the movement owner copies ECS
+camera state; a world transfer retains the current view instead of reloading
+the file. `camera_persistence_oracle.py` captures 72 original restore/save cases,
+and a lifecycle test drops the profile, camera, and world before reloading a
+fresh character profile and world.
+
+This owns the local character cache. Account-data download/upload synchronization
+(`0x006B9050`/`0x006B9440`) remains unimplemented in the network account-data
+subsystem. Special camera subjects and saved-view editing remain separate gaps.
+
 The reported Blood Elf alternate jump has additional archive-backed coverage.
 Both standing and forward-running movement execute 128 complete jumps for each
 sex through the real local movement and retained animation owners. Both authored

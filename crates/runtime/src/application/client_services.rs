@@ -2,6 +2,7 @@
 
 #![allow(unsafe_code)]
 
+mod camera_profile;
 pub(super) mod glue_benchmark;
 pub(super) mod world_benchmark;
 mod world_camera;
@@ -132,6 +133,7 @@ pub(crate) struct ClientServices {
     glue: GlueManager,
     assets: AssetStoreHandle,
     startup_profile: StartupProfile,
+    character_profile: Option<crate::configuration::CharacterProfile>,
     cpu: CpuExecutor,
     network: Option<Runtime>,
     login: RuntimeLoginCoordinator,
@@ -460,6 +462,7 @@ impl ClientServices {
                 assets: assets.clone(),
                 world_ui_catalog,
                 startup_profile,
+                character_profile: None,
                 cpu,
                 network: Some(network),
                 login,
@@ -1526,6 +1529,10 @@ impl ClientServices {
                     }
                 }
                 UiGlueNetworkAction::Disconnect => {
+                    self.persist_active_cvars()?;
+                    self.save_character_camera()?;
+                    self.character_profile = None;
+                    self.player_movement.reset();
                     self.login.disconnect();
                     self.world.disconnect();
                     self.gameplay.disconnect();
@@ -2003,6 +2010,7 @@ impl ClientServices {
             Ok(RuntimeWorldPoll::EnteredWorld) => {
                 if let Some(entry) = self.world.take_world_entry() {
                     let (session, setup_packets) = entry.into_parts();
+                    self.load_character_profile(session.account_name(), session.character_name())?;
                     self.gameplay.begin_with_game_objects(
                         &handle,
                         session,
@@ -2018,6 +2026,7 @@ impl ClientServices {
                                 .map_err(Into::into)
                         },
                     )?;
+                    self.restore_character_camera()?;
                     // Drain the last character-screen actions before releasing
                     // their audio owner; ordinary world frames no longer service
                     // Glue and must not inherit its repeating title music.
@@ -2468,13 +2477,14 @@ impl ClientServices {
             .glue
             .localized_text("GENERAL")
             .map_err(GlueError::from)?;
+        let cvar_values = self.world_cvar_values();
         let (world_ui, startup_errors) = RuntimeWorldUi::prepare(
             &mut self.renderer,
             self.platform.window_id(),
             self.assets.clone(),
             self.world_ui_catalog.clone(),
             self.platform.logical_extent(),
-            self.startup_profile.cvar_values(),
+            &cvar_values,
             &self.addon_catalog,
             &self.character_metadata,
             active,
@@ -2583,6 +2593,9 @@ impl ClientServices {
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
         self.persist_active_cvars()?;
+        self.save_character_camera()?;
+        self.character_profile = None;
+        self.player_movement.reset();
         self.login.disconnect();
         self.world.disconnect();
         self.gameplay.disconnect();
@@ -2612,7 +2625,13 @@ impl ClientServices {
         if let Some(world_ui) = self.world_ui.as_ref() {
             changed.extend(world_ui.take_changed_cvars());
         }
-        self.startup_profile.persist_cvars(&changed)?;
+        let (character, global): (Vec<_>, Vec<_>) = changed
+            .into_iter()
+            .partition(|(name, _)| camera_profile::is_saved_camera_cvar(name));
+        if let Some(profile) = &mut self.character_profile {
+            profile.persist_cvars(&character)?;
+        }
+        self.startup_profile.persist_cvars(&global)?;
         Ok(())
     }
 

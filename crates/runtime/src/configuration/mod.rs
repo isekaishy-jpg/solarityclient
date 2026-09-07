@@ -12,6 +12,7 @@ mod window;
 
 pub use login::LoginConfiguration;
 pub use profile::RuntimeConfiguration;
+pub(crate) use startup_profile::CharacterProfile;
 pub use startup_profile::StartupProfile;
 pub use status::ConfigurationError;
 pub use window::{WindowConfiguration, WindowMode};

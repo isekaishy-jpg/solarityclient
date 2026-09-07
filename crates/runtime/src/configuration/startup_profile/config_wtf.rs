@@ -19,6 +19,21 @@ pub struct StartupProfile {
 }
 
 impl StartupProfile {
+    /// Opens the character-owned CVar cache beside the global configuration.
+    pub(crate) fn character_profile(
+        &self,
+        account: &str,
+        realm: &str,
+        character: &str,
+    ) -> Result<super::CharacterProfile, ConfigurationError> {
+        super::CharacterProfile::load(
+            self.config_path.with_file_name("Account"),
+            account,
+            realm,
+            character,
+        )
+    }
+
     /// Loads `WTF\\Config.wtf` below one explicit client profile root.
     ///
     /// An absent file has the registered build-12340 default of one. Malformed
@@ -146,8 +161,9 @@ impl StartupProfile {
     }
 }
 
-fn parse_cvar_values(contents: &str) -> Vec<(String, String)> {
+pub(super) fn parse_cvar_values(contents: &str) -> Vec<(String, String)> {
     contents
+        .trim_start_matches('\u{feff}')
         .lines()
         .filter_map(set_record)
         .map(|(name, value)| (name.to_owned(), value.to_owned()))
@@ -195,9 +211,10 @@ fn replace_play_intro_movie(contents: &str) -> String {
     output
 }
 
-fn replace_cvar_values(contents: &str, values: &[(String, String)]) -> String {
+pub(super) fn replace_cvar_values(contents: &str, values: &[(String, String)]) -> String {
     let mut found = vec![false; values.len()];
     let mut lines = contents
+        .trim_start_matches('\u{feff}')
         .lines()
         .map(|line| {
             let Some((name, _value)) = set_record(line) else {

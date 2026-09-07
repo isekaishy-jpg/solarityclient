@@ -194,6 +194,13 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    /// Samples the live camera after this frame's collision feedback.
+    pub(super) fn camera_view(&self) -> Option<solarity_ecs::PlayerViewState> {
+        self.owner
+            .as_ref()
+            .map(|owner| owner.camera.view(owner.orientation))
+    }
+
     /// Orders an entry notification after all earlier local movement writes.
     pub(super) fn queue_area_trigger(&mut self, heartbeat: WorldMovementMessage, trigger_id: u32) {
         self.output.push_back(PlayerMovementOutput::AreaTrigger {
@@ -435,7 +442,7 @@ impl RuntimePlayerMovement {
         Ok(())
     }
 
-    fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.owner = None;
         self.input = PlayerInputState::default();
         self.commands.clear();
