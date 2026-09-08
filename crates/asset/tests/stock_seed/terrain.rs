@@ -360,7 +360,13 @@ fn terrain_tile_decodes_stock_chunk_geometry() -> Result<(), Box<dyn Error>> {
     assert_eq!(tile.chunks()[0].position(), [1_000.0, 6_000.0, 200.0]);
     assert_eq!(tile.area_id_at_world_position(999.0, 5_999.0), Some(4395));
     assert_eq!(tile.area_id_at_world_position(1_001.0, 6_001.0), None);
-    assert_eq!(tile.chunks()[0].normals()[0], [1.0, 0.0, 0.0]);
+    for (actual, (_, expected)) in tile.chunks()[0]
+        .normals()
+        .iter()
+        .zip(native_terrain_normals()?)
+    {
+        assert_eq!(actual.map(f32::to_bits), expected);
+    }
     let alpha = tile.chunks()[0]
         .alpha_map()
         .ok_or("fixture blend layer has no decoded alpha map")?
@@ -509,6 +515,26 @@ fn assert_position(actual: [f32; 3], expected: [f32; 3]) {
     }
 }
 
+type NativeTerrainNormal = ([i8; 3], [u32; 3]);
+
+fn native_terrain_normals() -> Result<Vec<NativeTerrainNormal>, Box<dyn Error>> {
+    include_str!("../fixtures/terrain_normal_native.txt")
+        .lines()
+        .filter(|row| !row.starts_with('#'))
+        .map(|row| {
+            let fields = row.split_ascii_whitespace().collect::<Vec<_>>();
+            Ok((
+                [fields[0].parse()?, fields[1].parse()?, fields[2].parse()?],
+                [
+                    u32::from_str_radix(fields[3], 16)?,
+                    u32::from_str_radix(fields[4], 16)?,
+                    u32::from_str_radix(fields[5], 16)?,
+                ],
+            ))
+        })
+        .collect()
+}
+
 /// Gives the first generated chunk distinct values in every stored axis.
 ///
 /// The dependency's fixture writer otherwise emits symmetric zero origins,
@@ -528,14 +554,13 @@ fn asymmetric_terrain_adt(bytes: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     // use their transposed terrain-grid convention.
     first.header.position = [1_000.0, 6_000.0, 200.0];
     first.header.area_id = 4_395;
-    let first_normal = first
+    let normals = first
         .normals
         .as_mut()
-        .and_then(|normals| normals.normals.first_mut())
-        .ok_or("fixture MCNK contains no normal")?;
-    first_normal.x = 127;
-    first_normal.y = 0;
-    first_normal.z = 0;
+        .ok_or("fixture MCNK contains no normals")?;
+    for (normal, (bytes, _)) in normals.normals.iter_mut().zip(native_terrain_normals()?) {
+        [normal.x, normal.z, normal.y] = bytes;
+    }
     first.header.n_layers = 3;
     first.header.flags.value |= 0x8000;
     first.layers = Some(MclyChunk {
@@ -703,6 +728,37 @@ fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
 
 /// Packed MCSH bits expand to stock opacity and honor the shared edge flag.
 #[test]
+fn terrain_shadow_maps_match_native_texture_expansion() -> Result<(), Box<dyn Error>> {
+    let hex = |value: &str| -> Result<Vec<u8>, Box<dyn Error>> {
+        (0..value.len())
+            .step_by(2)
+            .map(|i| Ok(u8::from_str_radix(&value[i..i + 2], 16)?))
+            .collect()
+    };
+    for row in include_str!("../fixtures/terrain_shadow_native.txt")
+        .lines()
+        .filter(|row| !row.starts_with('#'))
+    {
+        let fields = row.split_ascii_whitespace().collect::<Vec<_>>();
+        let packed: [u8; 512] = if fields[2] == "none" {
+            [0; 512]
+        } else {
+            hex(fields[2])?.try_into().map_err(|_| "MCSH size")?
+        };
+        let shadow = TerrainShadowMap::from_packed(&packed, fields[1] == "1");
+        assert_eq!(
+            shadow.opacity().as_slice(),
+            hex(fields[3])?,
+            "format {}, preserve {}",
+            fields[0],
+            fields[1]
+        );
+    }
+    Ok(())
+}
+
+/// Packed MCSH bits expand to stock opacity and honor the shared edge flag.
+#[test]
 fn terrain_shadow_map_expands_stock_bits_and_edges() {
     let mut packed = [0_u8; 512];
     packed[0] = 0b0000_0001;
@@ -712,14 +768,14 @@ fn terrain_shadow_map_expands_stock_bits_and_edges() {
     packed[final_corner / 8] |= 1 << (final_corner % 8);
 
     let fixed = TerrainShadowMap::from_packed(&packed, false);
-    assert_eq!(fixed.opacity()[0], 85);
-    assert_eq!(fixed.opacity()[62 * 64 + 62], 85);
-    assert_eq!(fixed.opacity()[62 * 64 + 63], 85);
-    assert_eq!(fixed.opacity()[63 * 64 + 62], 85);
-    assert_eq!(fixed.opacity()[63 * 64 + 63], 85);
+    assert_eq!(fixed.opacity()[0], 255);
+    assert_eq!(fixed.opacity()[62 * 64 + 62], 255);
+    assert_eq!(fixed.opacity()[62 * 64 + 63], 255);
+    assert_eq!(fixed.opacity()[63 * 64 + 62], 255);
+    assert_eq!(fixed.opacity()[63 * 64 + 63], 255);
 
     packed[penultimate_corner / 8] &= !(1 << (penultimate_corner % 8));
     let authored = TerrainShadowMap::from_packed(&packed, true);
     assert_eq!(authored.opacity()[62 * 64 + 62], 0);
-    assert_eq!(authored.opacity()[63 * 64 + 63], 85);
+    assert_eq!(authored.opacity()[63 * 64 + 63], 255);
 }

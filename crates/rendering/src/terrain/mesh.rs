@@ -16,7 +16,6 @@ const TERRAIN_ALPHA_TEXEL_CENTER: f32 = 0.5 / 64.0;
 const TERRAIN_ALPHA_TEXEL_SPAN: f32 = 63.0 / 64.0;
 const VERTICES_PER_CHUNK: usize = 145;
 const MAXIMUM_INDICES_PER_CHUNK: usize = 8 * 8 * 4 * 3;
-const NEUTRAL_VERTEX_COLOR_BGRA: [u8; 4] = [0x7F, 0x7F, 0x7F, 0xFF];
 
 /// Fixed CPU vertex layout for the Vulkan terrain upload boundary.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,12 +24,12 @@ pub struct TerrainRenderVertex {
     normal: [f32; 3],
     texture_coordinates: [f32; 2],
     alpha_coordinates: [f32; 2],
-    color_bgra: [u8; 4],
+    color_bgra: Option<[u8; 4]>,
 }
 
 impl TerrainRenderVertex {
     /// Size of one explicitly serialized Vulkan terrain vertex.
-    pub const BYTE_SIZE: usize = 44;
+    pub const BYTE_SIZE: usize = 52;
 
     /// Returns world position in the network/ECS coordinate convention.
     #[must_use]
@@ -56,9 +55,9 @@ impl TerrainRenderVertex {
         self.alpha_coordinates
     }
 
-    /// Returns authored MCCV data in BGRA order or stock's neutral value.
+    /// Returns authored MCCV data in BGRA order, when this chunk supplies it.
     #[must_use]
-    pub const fn color_bgra(self) -> [u8; 4] {
+    pub const fn color_bgra(self) -> Option<[u8; 4]> {
         self.color_bgra
     }
 
@@ -76,7 +75,14 @@ impl TerrainRenderVertex {
         for value in self.alpha_coordinates {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
-        bytes.extend_from_slice(&self.color_bgra);
+        // Terrain.bls uses exactly 0.5 when MCCV is absent, and the normalized
+        // authored bytes when present. 0x7f is not exactly that same value.
+        let color = self.color_bgra.map_or([0.5; 3], |[b, g, r, _]| {
+            [r, g, b].map(|value| f32::from(value) / 255.0)
+        });
+        for value in color {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
     }
 }
 
@@ -232,9 +238,7 @@ fn prepare_vertices(chunk: &TerrainChunk) -> Vec<TerrainRenderVertex> {
             let index = interleaved_vertex_index(logical_row, column);
             let row_units = logical_row as f32 * 0.5;
             let column_units = column as f32 + if inner { 0.5 } else { 0.0 };
-            let color_bgra = chunk
-                .vertex_colors_bgra()
-                .map_or(NEUTRAL_VERTEX_COLOR_BGRA, |colors| colors[index]);
+            let color_bgra = chunk.vertex_colors_bgra().map(|colors| colors[index]);
             vertices.push(TerrainRenderVertex {
                 position: [
                     base[0] - row_units * TERRAIN_UNIT_SIZE,

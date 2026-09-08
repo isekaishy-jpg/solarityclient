@@ -317,10 +317,10 @@ fn decode_chunk(
         .normals
         .into_iter()
         .map(|normal| {
-            let decoded = normal.to_normalized();
-            // wow-adt has already restored MCNR's stored X/Z/Y byte order to
-            // the server/ECS [X, Y, Z] convention.
-            decoded
+            // 7C4620 copies the three stored signed bytes directly to world
+            // XYZ. The dependency's to_normalized() instead exposes Y-up
+            // coordinates, so its field names must not reorder this payload.
+            [normal.x, normal.z, normal.y].map(|value| f32::from(value) * (1.0 / 127.0))
         })
         .collect::<Vec<_>>()
         .into_boxed_slice()

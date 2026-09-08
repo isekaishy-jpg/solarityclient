@@ -1,0 +1,47 @@
+# Terrain lighting and texture values
+
+Terrain and WMO diffuse BLP images use UNORM sampling, retaining the stored
+color values in the existing UNORM world framebuffer. Their former sRGB
+uploads introduced transfer decoding that the world composition did not undo.
+The draw validators and WMO fallback image use the same interpretation.
+
+MCNR components retain their stored XYZ order. The dependency names its three
+stored fields `x, z, y` and exposes a Y-up conversion; using that conversion
+swapped world Y and Z. Native `7C4620` instead multiplies each consecutive
+signed byte by its stored float reciprocal of 127. The decoder now reproduces
+all 145 captured normals exactly, including asymmetric and negative values.
+
+The ambient/directional branch of Terrain.bls lights vertices before
+interpolation, clamps the directional dot product and final illumination, and
+then multiplies by the vertex color. An absent MCCV supplies exactly 0.5;
+authored MCCV supplies byte/255, including values above 127. The pixel shader
+doubles this color after texture multiplication. Terrain vertices serialize
+the three float color inputs explicitly so absent MCCV remains distinct from
+an authored 127 value.
+
+`7B87F0` expands MCSH into binary visibility in both 16-bit and 32-bit material
+textures. The native lookup at A4004C is `[255, 0]`; fixed edges copy the
+penultimate samples. Solarity stores its inverse, opacity, and the shader
+computes `0.7 + 0.3 * visibility`. Previously the decoder supplied 85 for set
+bits and the shader independently subtracted that opacity from all lighting.
+
+## Evidence
+
+- `terrain_vertex_oracle.py`: 145 unchanged native vertex-builder outputs.
+- `terrain_shadow_texture_oracle.py`: 12 complete native shadow textures,
+  including absent input, both texture formats, and edge modes.
+- `terrain_lighting_shader_oracle.py`: 72 colored D3D9 outputs from the original
+  Terrain.bls/Terrain1.bls bytecode. The Vulkan ADT/BLP integration checks the
+  48 binary-shadow cases, including no MCCV, neutral MCCV, bright tints,
+  colored illumination, clamping, and reversed light direction. RGB tolerance
+  is two byte values for the native D3D9 interpolator/target conversion.
+- The existing 44 terrain fog captures remain in the same GPU test.
+
+The original colored regression produced RGB `(6, 23, 54)` where the native
+shader produced `(46, 92, 138)` with the same explicit inputs. This exposed
+errors that a fully green texture and white ambient light could not reveal.
+
+This verifies the ambient/directional terrain path. It does not certify the
+entire outdoor lighting system. Terrain point-light and specular permutations,
+dynamic shadow maps, other material families, and visual comparisons at the
+same camera/time/settings still require their own integration and checks.

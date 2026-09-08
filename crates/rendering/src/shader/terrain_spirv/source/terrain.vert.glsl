@@ -4,7 +4,7 @@ layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec2 in_texture_coordinates;
 layout(location = 3) in vec2 in_alpha_coordinates;
-layout(location = 4) in vec4 in_color_bgra;
+layout(location = 4) in vec3 in_color_rgb;
 
 layout(set = 0, binding = 0) uniform TerrainScene {
     mat4 view_projection;
@@ -20,7 +20,6 @@ layout(push_constant) uniform TerrainDraw {
     uvec2 atlas_chunk;
 } draw;
 
-layout(location = 0) out vec3 out_normal;
 layout(location = 1) out vec2 out_texture_coordinates;
 layout(location = 2) out vec2 out_atlas_coordinates;
 layout(location = 3) out vec3 out_vertex_light;
@@ -38,11 +37,12 @@ void main() {
     float visibility = max((scene.fog_parameters.y - eye_depth) * inverse_range, 0.0);
     out_fog_visibility = scene.fog_color.w > 0.0
         ? min(pow(visibility, scene.fog_parameters.w), 1.0) : 1.0;
-    out_normal = in_normal;
     out_texture_coordinates = in_texture_coordinates;
     out_atlas_coordinates = (atlas_origin + in_alpha_coordinates * chunk_texels) / atlas_texels;
 
-    // MCCV is stored BGRA, and stock's neutral 0x7f value represents unit
-    // modulation rather than half intensity.
-    out_vertex_light = min(in_color_bgra.bgr * (255.0 / 127.0), vec3(1.0));
+    // Terrain.bls lights vertices before interpolation. The normal and light
+    // direction are transformed by the same camera rotation in the original.
+    float diffuse_amount = clamp(dot(in_normal, scene.sun_direction.xyz), 0.0, 1.0);
+    vec3 lighting = min(scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse_amount, vec3(1.0));
+    out_vertex_light = lighting * in_color_rgb;
 }

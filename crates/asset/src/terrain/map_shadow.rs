@@ -8,7 +8,9 @@ pub const TERRAIN_SHADOW_MAP_BYTE_COUNT: usize =
     TERRAIN_SHADOW_MAP_WIDTH * TERRAIN_SHADOW_MAP_WIDTH;
 
 const PACKED_SHADOW_MAP_BYTE_COUNT: usize = TERRAIN_SHADOW_MAP_BYTE_COUNT / 8;
-const AUTHORED_SHADOW_OPACITY: u8 = 85;
+// 7B87F0 expands set bits to zero visibility (lookup A4004C), including
+// both 16-bit and 32-bit material textures. The pixel shader owns strength.
+const AUTHORED_SHADOW_OPACITY: u8 = 255;
 
 /// One decoded 64-by-64 terrain shadow-opacity plane.
 pub struct TerrainShadowMap {

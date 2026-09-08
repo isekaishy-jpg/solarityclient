@@ -147,7 +147,7 @@ pub(in crate::device) fn prepare_draw(
                     && actual.path() == expected_path
             },
         );
-        if !source_matches || actual.color_space() != BlpColorSpace::Srgb {
+        if !source_matches || actual.color_space() != BlpColorSpace::Linear {
             return Err(VulkanError::WorldModelDrawTextureSetMismatch);
         }
     }

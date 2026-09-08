@@ -515,7 +515,7 @@ fn collect_texture_upload<'source>(
 ) {
     match texture {
         ResidentWorldModelTexture::Authored(source) => {
-            uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Srgb))
+            uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Linear))
         }
         ResidentWorldModelTexture::StockGreen => *needs_stock_green = true,
     }

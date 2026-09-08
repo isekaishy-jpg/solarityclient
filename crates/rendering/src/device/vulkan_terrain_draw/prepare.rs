@@ -77,7 +77,7 @@ pub(in crate::device) fn prepare_draw(
         let actual = textures
             .info(*handle)
             .ok_or(VulkanError::TerrainDrawTextureSetMismatch)?;
-        if actual.path() != expected_path || actual.color_space() != BlpColorSpace::Srgb {
+        if actual.path() != expected_path || actual.color_space() != BlpColorSpace::Linear {
             return Err(VulkanError::TerrainDrawTextureSetMismatch);
         }
     }

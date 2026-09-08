@@ -28,6 +28,9 @@ use crate::support::{Fixture, FixtureFile};
 #[path = "terrain_fog.rs"]
 mod fog;
 
+#[path = "terrain_lighting.rs"]
+mod lighting;
+
 /// The 145-vertex MCNK grid becomes 256 stock fan triangles with no holes.
 #[test]
 fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error>> {
@@ -186,7 +189,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         stock_green_info.source_kind(),
         BlpTextureSourceKind::StockWorldModelGreen
     );
-    assert_eq!(stock_green_info.color_space(), BlpColorSpace::Srgb);
+    assert_eq!(stock_green_info.color_space(), BlpColorSpace::Linear);
     assert_eq!(stock_green_info.storage(), BlpTextureStorage::Rgba8);
     assert_eq!(stock_green_info.extent(), (8, 8));
     assert_eq!(stock_green_info.mip_count(), 1);
@@ -275,7 +278,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         material_info.byte_count(),
         TERRAIN_MATERIAL_ATLAS_BYTE_COUNT
     );
-    let grass_texture = renderer.upload_blp_texture(&grass_source, BlpColorSpace::Srgb)?;
+    let grass_texture = renderer.upload_blp_texture(&grass_source, BlpColorSpace::Linear)?;
     let texture_set = TerrainTextureSet::new(material, &[grass_texture])?;
     let texture_sets =
         renderer.prepare_terrain_texture_sets(&[texture_set.clone(), texture_set.clone()])?;
@@ -341,6 +344,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(frame.ribbon_draw_count(), 0);
     assert_eq!(frame.ribbon_vertex_count(), 0);
     fog::compare_native_fog(&mut renderer, draw)?;
+    lighting::compare_native_lighting(&mut renderer)?;
     // A valid frustum can reject every resident chunk. The terrain pass must
     // still clear and present its attachments for that camera orientation.
     let empty_frame = renderer.present_terrain(scene, &[])?;

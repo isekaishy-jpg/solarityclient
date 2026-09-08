@@ -123,7 +123,7 @@ pub(super) fn create_pipeline(
         attribute(1, vk::Format::R32G32B32_SFLOAT, 12),
         attribute(2, vk::Format::R32G32_SFLOAT, 24),
         attribute(3, vk::Format::R32G32_SFLOAT, 32),
-        attribute(4, vk::Format::R8G8B8A8_UNORM, 40),
+        attribute(4, vk::Format::R32G32B32_SFLOAT, 40),
     ];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&bindings)

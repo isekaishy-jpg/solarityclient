@@ -8,7 +8,6 @@
 #error TERRAIN_LAYER_COUNT lies outside stock's one-through-four range
 #endif
 
-layout(location = 0) in vec3 in_normal;
 layout(location = 1) in vec2 in_texture_coordinates;
 layout(location = 2) in vec2 in_atlas_coordinates;
 layout(location = 3) in vec3 in_vertex_light;
@@ -51,11 +50,9 @@ void main() {
     ground = mix(ground, texture(diffuse_3, in_texture_coordinates).rgb, material.b);
 #endif
 
-    vec3 normal = normalize(in_normal);
-    vec3 sun = normalize(scene.sun_direction.xyz);
-    float diffuse_amount = max(dot(normal, sun), 0.0);
-    vec3 lighting = scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse_amount;
-    float baked_shadow = 1.0 - material.a;
-    vec3 lit = ground * lighting * in_vertex_light * baked_shadow;
+    // Terrain1.bls multiplies shadow visibility by 0.3 and adds 0.7;
+    // diffuse vertex colors are doubled after texture/shadow multiplication.
+    float baked_shadow = 0.7 + 0.3 * (1.0 - material.a);
+    vec3 lit = ground * baked_shadow * in_vertex_light * 2.0;
     out_color = vec4(mix(scene.fog_color.rgb, lit, in_fog_visibility), 1.0);
 }

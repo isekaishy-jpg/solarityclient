@@ -1040,7 +1040,9 @@ fn prepare_tile_draws(
     let material = renderer.upload_terrain_material(plan)?;
     let texture_uploads = sources
         .iter()
-        .map(|source| solarity_rendering::BlpTextureUploadRequest::new(source, BlpColorSpace::Srgb))
+        .map(|source| {
+            solarity_rendering::BlpTextureUploadRequest::new(source, BlpColorSpace::Linear)
+        })
         .collect::<Vec<_>>();
     let textures = renderer.upload_blp_textures(&texture_uploads)?;
 

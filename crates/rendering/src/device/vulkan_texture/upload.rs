@@ -534,7 +534,7 @@ pub(super) fn upload_textures_deferred(
     Ok((guard.finish(), Some(transfer.defer())))
 }
 
-/// Uploads stock's opaque 8x8 green WMO placeholder as an sRGB image.
+/// Uploads stock's opaque 8x8 green WMO placeholder without transfer conversion.
 pub(super) fn upload_stock_world_model_green(
     context: TextureUploadContext<'_>,
 ) -> Result<GpuBlpTexture, BlpTextureUploadError> {
@@ -543,7 +543,7 @@ pub(super) fn upload_stock_world_model_green(
         [0, 255, 0, 255],
         "SOLARITY\\STOCK\\WMO_GREEN.BLP",
         BlpTextureSourceKind::StockWorldModelGreen,
-        BlpColorSpace::Srgb,
+        BlpColorSpace::Linear,
     )
 }
 
