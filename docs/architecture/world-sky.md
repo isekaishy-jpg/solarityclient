@@ -121,8 +121,8 @@ tests cover weather updates, underwater lighting, direct overrides and reset.
 Weather particle rendering, particle drainage during resource-type switches,
 and weather ambient audio are not implemented by this lighting owner. Its
 current type follows accepted weather updates; particle residency must replace
-that input when the precipitation owner is introduced. Authored skybox
-selection and WMO sky visibility remain in this slice.
+that input when the precipitation owner is introduced. WMO sky visibility
+and the separate global sky override provider remain outside this owner.
 
 The three celestial texture requests now use `Textures/sunCenter.blp`,
 `Textures/moon.blp` and `Textures/moon02.blp`, as in `9AD0B0`. Their parsed
@@ -189,3 +189,42 @@ translation, and checks opacity changes. The installed stars sequence has
 static geometry and material tracks; the retained ordinary clock does not
 invent motion. Its two textures render the authored star field. The six
 existing liquid, ripple, underwater and other sky GPU tests also pass.
+
+The three ordinary LightSkybox slots now resolve through the installed catalog
+and retained M2/SKIN/BLP resources. `7F3230` admits positive-weight valid rows in
+palette order. A replacement row above the strict float 0.99 cutoff resets the
+output count; its authored flag bit two keeps an overlay instead. Empty paths
+still participate in that compaction, and the first unused weight is zeroed.
+`7F09B0` suppresses stars, celestials, the gradient and clouds only when a loaded
+replacement model exceeds that cutoff. Skybox models follow the clouds in
+palette order, preserving each model's opaque and sorted transparent batches.
+
+`7F30C0` retains models by case-insensitive path across world replacement.
+The first request's flags remain attached to that cached animation owner even
+when a later DBC row names the same path with different flags. All resident
+skybox models advance before active slots perform `7ECF20` phase checks.
+The phase cache reads the current primary's scene span once. Flag bit one
+requests Stand at the realm minute's fraction of that span only when the
+signed wrapping absolute minute change is at least two. Every sampled minute
+replaces the previous minute, so consecutive one-minute steps do not seek.
+Speed uses the native stored float reciprocal of 86,400,000 milliseconds;
+phase offsets preserve the x87 product's 64-bit significand and truncate.
+
+The realm's whole-minute provider now advances once per gameplay service frame
+through `76D900`'s repeated float stores and strict greater-than-one rollover.
+It is separate from continuous daylight and Map.dbc daylight overrides. Its
+oracle executes the original update, minute increment and getter with only
+calendar-day mutation, registered callbacks and monotonic time supplied.
+The capture covers fractional frame intervals, minute/day rollover and unsigned
+elapsed-clock wrap. Existing continuous sky-clock and calendar tests remain.
+
+Each LightSkybox slot has a fence-retired M2 scene descriptor for its animated
+authored directional/point lights; stars keep their independent empty bank.
+The installed 124 DBC rows select 48 unique model paths. All models load and
+render through the runtime owner; all have hardcoded textures and no particle
+or ribbon emitters. PortalWorldLegionSky supplies the installed lit dome.
+Archive-backed GPU tests exercise all 48 models, changed bone prefixes, exact
+camera-translation invariance, opacity fades, cached flag reuse, overlapping
+slots and that dome's authored lighting. `world_skybox_oracle.py` captures the
+unaltered selection block and phase helper, including absent/empty paths,
+cutoff-adjacent floats and wide unsigned animation spans.

@@ -167,14 +167,29 @@ impl<'a> WorldFrameScene<'a> {
     }
 }
 
-/// Separate native sky M2 scene, sharing retained mesh resources with world M2s.
+/// One authored sky model's packets and its sampled scene lighting.
 /// Bone offsets in these packets start after the ordinary frame's bone palette.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldSkyModelBatch<'a> {
+    pub(in crate::device) scene: M2SceneUniform,
+    pub(in crate::device) draws: &'a [crate::M2PreparedDraw],
+}
+
+impl<'a> WorldSkyModelBatch<'a> {
+    /// Retains one skybox's material packets and sampled authored lighting.
+    #[must_use]
+    pub const fn new(scene: M2SceneUniform, draws: &'a [crate::M2PreparedDraw]) -> Self {
+        Self { scene, draws }
+    }
+}
+
+/// Stars and the three native LightSkybox slots in one frame's retained bank.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldSkyModelFrame<'a> {
     pub(in crate::device) scene: M2SceneUniform,
     pub(in crate::device) bones: &'a [glam::Mat4],
     pub(in crate::device) stars: &'a [crate::M2PreparedDraw],
-    pub(in crate::device) skyboxes: &'a [crate::M2PreparedDraw],
+    pub(in crate::device) skyboxes: [WorldSkyModelBatch<'a>; 3],
 }
 
 impl<'a> WorldSkyModelFrame<'a> {
@@ -190,18 +205,34 @@ impl<'a> WorldSkyModelFrame<'a> {
             scene,
             bones,
             stars,
-            skyboxes,
+            skyboxes: [
+                WorldSkyModelBatch::new(scene, skyboxes),
+                WorldSkyModelBatch::new(scene, &[]),
+                WorldSkyModelBatch::new(scene, &[]),
+            ],
         }
+    }
+
+    /// Preserves palette slot order and an independent light bank for each model.
+    #[must_use]
+    pub const fn with_skybox_batches(mut self, batches: [WorldSkyModelBatch<'a>; 3]) -> Self {
+        self.skyboxes = batches;
+        self
     }
 
     /// Returns the total submitted authored-model material batches.
     #[must_use]
     pub const fn draw_count(self) -> usize {
-        self.stars.len() + self.skyboxes.len()
+        self.stars.len()
+            + self.skyboxes[0].draws.len()
+            + self.skyboxes[1].draws.len()
+            + self.skyboxes[2].draws.len()
     }
 
     pub(in crate::device) fn draws(self) -> impl Iterator<Item = &'a crate::M2PreparedDraw> {
-        self.stars.iter().chain(self.skyboxes)
+        self.stars
+            .iter()
+            .chain(self.skyboxes.into_iter().flat_map(|batch| batch.draws))
     }
 }
 

@@ -58,7 +58,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) depth_view: vk::ImageView,
     pub(super) extent: (u32, u32),
     pub(super) screen_window: crate::WorldScreenWindow,
-    pub(super) frame_sets: [vk::DescriptorSet; 9],
+    pub(super) frame_sets: [vk::DescriptorSet; 12],
     pub(super) world_model_material_stride: vk::DeviceSize,
     pub(super) m2_material_stride: vk::DeviceSize,
     pub(super) terrain_pipelines: &'a TerrainPipelineRegistry,
@@ -796,19 +796,26 @@ fn record_sky_models(
     let Some(frame) = context.sky_models else {
         return Ok(());
     };
-    let (draws, offset) = if skyboxes {
-        (frame.skyboxes, frame.stars.len())
+    let mut index = context.m2_draws.len();
+    if skyboxes {
+        index += frame.stars.len();
+        for (slot, batch) in frame.skyboxes.iter().enumerate() {
+            for draw in batch.draws {
+                record_m2(
+                    context,
+                    index,
+                    *draw,
+                    context.frame_sets[9 + slot],
+                    bindings,
+                )?;
+                index += 1;
+            }
+        }
     } else {
-        (frame.stars, 0)
-    };
-    for (index, draw) in draws.iter().copied().enumerate() {
-        record_m2(
-            context,
-            context.m2_draws.len() + offset + index,
-            draw,
-            context.frame_sets[8],
-            bindings,
-        )?;
+        for draw in frame.stars {
+            record_m2(context, index, *draw, context.frame_sets[8], bindings)?;
+            index += 1;
+        }
     }
     Ok(())
 }

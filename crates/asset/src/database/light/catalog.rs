@@ -75,6 +75,11 @@ impl LightCatalog {
         self.skyboxes.get(&id)
     }
 
+    /// Iterates every exact LightSkybox.dbc row for process-retained resources.
+    pub fn skyboxes(&self) -> impl Iterator<Item = &LightSkybox> {
+        self.skyboxes.values()
+    }
+
     /// Joins and blends the complete stock exterior environment.
     ///
     /// Maps without a global volume use Light.dbc entry one, as in 7ECB30.

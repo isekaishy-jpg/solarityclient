@@ -51,9 +51,53 @@ impl RealmSkyTime {
 pub struct RealmClock {
     source: WorldTimeSpeed,
     received_at: Instant,
+    minute_clock: RealmMinuteClock,
+}
+
+/// The calendar owner advances only when its retained fraction is strictly
+/// greater than one (76D900), independently of the continuous sky-day getter.
+#[derive(Clone, Debug)]
+struct RealmMinuteClock {
+    minute: u16,
+    fraction: f32,
+    elapsed_ms: u32,
+}
+
+impl RealmMinuteClock {
+    fn advance(&mut self, elapsed_ms: u32, rate: f32) {
+        let seconds = elapsed_ms.wrapping_sub(self.elapsed_ms) as f32 * 0.001;
+        self.elapsed_ms = elapsed_ms;
+        self.fraction = (f64::from(rate) * f64::from(seconds) + f64::from(self.fraction)) as f32;
+        // Preserve the native repeated f32 stores rather than quotient/remainder
+        // division; exact integer boundaries remain in the preceding minute.
+        while self.fraction > 1. {
+            let next = self.fraction - 1.;
+            if next == self.fraction {
+                // The native loop stalls for an unrepresentable decrement.
+                // Keep its clock state without hanging the presentation thread.
+                break;
+            }
+            self.fraction = next;
+            self.minute = (self.minute + 1) % 1440;
+        }
+    }
 }
 
 impl RealmClock {
+    /// Advances the native whole-minute calendar owner once per client frame.
+    pub(crate) fn advance(&mut self) {
+        self.minute_clock.advance(
+            self.received_at.elapsed().as_millis() as u32,
+            self.source.game_time_speed(),
+        );
+    }
+
+    /// Returns the realm calendar minute used for authored skybox animation.
+    /// Map.dbc daylight overrides do not change this provider.
+    #[must_use]
+    pub const fn whole_minute(&self) -> i32 {
+        self.minute_clock.minute as i32
+    }
     /// Samples continuous sky time and the second moon's native calendar provider.
     /// Returns `None` if the platform cannot convert the realm calendar.
     #[must_use]
@@ -92,6 +136,11 @@ impl RealmClock {
     #[must_use]
     pub fn new(source: WorldTimeSpeed) -> Self {
         Self {
+            minute_clock: RealmMinuteClock {
+                minute: u16::from(source.hour()) * 60 + u16::from(source.minute()),
+                fraction: 0.,
+                elapsed_ms: 0,
+            },
             source,
             received_at: Instant::now(),
         }
@@ -148,5 +197,47 @@ impl RealmClock {
         let base_minutes = f64::from(self.source.hour()) * 60.0 + f64::from(self.source.minute());
         let advanced_minutes = elapsed.as_secs_f64() * f64::from(self.source.game_time_speed());
         ((base_minutes + advanced_minutes) * 60_000.0).rem_euclid(DAY_MILLISECONDS) as u32
+    }
+}
+
+#[cfg(test)]
+mod minute_tests {
+    use super::RealmMinuteClock;
+
+    #[test]
+    fn native_realm_whole_minute_frames() -> Result<(), Box<dyn std::error::Error>> {
+        let mut clock = RealmMinuteClock {
+            minute: 0,
+            fraction: 0.,
+            elapsed_ms: 0,
+        };
+        let mut rate = 0.;
+        for (index, line) in include_str!("../../tests/fixtures/realm_minute_clock_native.txt")
+            .lines()
+            .enumerate()
+        {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            match fields.first().copied() {
+                Some("reset") => {
+                    clock = RealmMinuteClock {
+                        minute: fields[1].parse()?,
+                        fraction: 0.,
+                        elapsed_ms: fields[3].parse()?,
+                    };
+                    rate = f32::from_bits(u32::from_str_radix(fields[2], 16)?);
+                }
+                Some("tick") => {
+                    clock.advance(fields[1].parse()?, rate);
+                    assert_eq!(clock.minute, fields[2].parse::<u16>()?, "line {index}");
+                    assert_eq!(
+                        clock.fraction.to_bits(),
+                        u32::from_str_radix(fields[3], 16)?,
+                        "line {index}"
+                    );
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }

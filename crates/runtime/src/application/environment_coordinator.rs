@@ -50,6 +50,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     half_minutes: u32,
     day_fraction: f32,
     calendar_days: i32,
+    realm_minute: i32,
     weather_blend: f32,
     view_distance: WorldViewDistance,
     light: WorldLightSample,
@@ -57,6 +58,11 @@ pub struct RuntimeWorldEnvironmentFrame {
 }
 
 impl RuntimeWorldEnvironmentFrame {
+    /// Returns the realm calendar minute independently of map daylight overrides.
+    #[must_use]
+    pub const fn realm_minute(self) -> i32 {
+        self.realm_minute
+    }
     /// Returns the native precipitation palette and cloud-light attenuation.
     #[must_use]
     pub const fn weather_blend(self) -> f32 {
@@ -252,6 +258,7 @@ impl RuntimeWorldEnvironment {
             half_minutes,
             day_fraction: sky_time.day_fraction(),
             calendar_days: sky_time.calendar_days(),
+            realm_minute: clock.whole_minute(),
             weather_blend,
             view_distance,
             light,

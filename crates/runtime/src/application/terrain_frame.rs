@@ -788,24 +788,27 @@ impl TerrainFrame {
             unit_effect_callback,
         )?;
         profile.mark("M2 packets");
-        let sky_models = sky_resources.prepare_models(
+        let (default_sky, sky_models) = sky_resources.prepare_models(
             renderer,
             camera,
             liquid_time_ms,
-            environment.day_fraction(),
+            environment,
             m2.bone_transforms.len(),
             random,
         )?;
         let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));
         let mut scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
             .with_sky_models(sky_models)
-            .with_celestials(
-                self.sky
-                    .celestial_frame(camera, celestial_resources.textures),
-            )
-            .with_sky(self.sky.gradient_frame(camera))
-            .with_clouds(self.sky.cloud_frame(camera))
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
+        if default_sky {
+            scene = scene
+                .with_celestials(
+                    self.sky
+                        .celestial_frame(camera, celestial_resources.textures),
+                )
+                .with_sky(self.sky.gradient_frame(camera))
+                .with_clouds(self.sky.cloud_frame(camera));
+        }
         if let Some([river, ocean, world_model]) = &depths {
             scene = scene.with_liquids(
                 solarity_rendering::LiquidFrame::new(

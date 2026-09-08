@@ -43,7 +43,7 @@ use crate::{M2ParticleRenderVertex, M2RibbonRenderVertex};
 use command::{RecordContext, record, submit_and_present};
 use resource::{FrameCreateContext, WorldFrameResources};
 
-pub use types::{WorldFrameReport, WorldFrameScene, WorldSkyModelFrame};
+pub use types::{WorldFrameReport, WorldFrameScene, WorldSkyModelBatch, WorldSkyModelFrame};
 
 pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) device: &'a Device,
@@ -191,7 +191,7 @@ impl WorldFrameRenderer {
     pub(in crate::device) fn present(
         &mut self,
         context: WorldFrameContext<'_>,
-        descriptor_layouts: [vk::DescriptorSetLayout; 9],
+        descriptor_layouts: [vk::DescriptorSetLayout; 12],
         scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],

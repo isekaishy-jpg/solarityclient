@@ -245,8 +245,6 @@ impl ClientServices {
         let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
         let underwater_particles =
             super::underwater_particles::RuntimeUnderwaterParticles::load(&mut assets)?;
-        let sky_resources =
-            super::sky_resources::RuntimeSkyResources::load(&mut assets, Arc::clone(&animations))?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -304,6 +302,11 @@ impl ClientServices {
                 .join("vulkan-pipelines.bin"),
         )?;
         let assets = AssetStoreHandle::new(assets);
+        let sky_resources = super::sky_resources::RuntimeSkyResources::load(
+            assets.clone(),
+            &lights,
+            Arc::clone(&animations),
+        )?;
         let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, &assets, platform.pixel_extent())?;
         let developer_console =
             RuntimeDeveloperConsole::new(overlay_extent(platform.pixel_extent()));

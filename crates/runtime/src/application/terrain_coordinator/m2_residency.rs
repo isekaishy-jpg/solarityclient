@@ -55,9 +55,20 @@ impl ResidentM2Source {
         texture_cache: &mut BlpTextureCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
+        Self::load_with_lights(path, cache, texture_cache, store, M2LocalLightCount::Zero)
+    }
+
+    /// Loads a separate scene model with its bounded local-light shader bank.
+    pub(in crate::application) fn load_with_lights(
+        path: &AssetPath,
+        cache: &mut M2ModelCache,
+        texture_cache: &mut BlpTextureCache,
+        store: &mut AssetStore,
+        local_light_count: M2LocalLightCount,
+    ) -> Result<Self, RuntimeTerrainError> {
         let model = cache.load(store, path)?;
         let textures = prepare_textures(&model, texture_cache, store)?;
-        let cpu_source = prepare_m2_cpu_source(&model, M2LocalLightCount::Zero)?;
+        let cpu_source = prepare_m2_cpu_source(&model, local_light_count)?;
         Ok(Self {
             model,
             textures,

@@ -22,7 +22,7 @@ use crate::{
     TerrainSceneUniform, WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
-const DESCRIPTOR_SET_COUNT: usize = 9;
+const DESCRIPTOR_SET_COUNT: usize = 12;
 const BONE_TRANSFORM_BYTES: vk::DeviceSize = 64;
 
 pub(super) struct FrameCreateContext<'a> {
@@ -89,7 +89,7 @@ impl FrameBufferLayout {
             uniform_alignment,
         )?;
         let m2_scene_stride = align_up(M2SceneUniform::BYTE_SIZE as u64, uniform_alignment)?;
-        let m2_scene_bytes = ((M2SceneLightBank::COUNT + 1) as u64)
+        let m2_scene_bytes = ((M2SceneLightBank::COUNT + 4) as u64)
             .checked_mul(m2_scene_stride)
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let bone_offset = align_up(
@@ -346,6 +346,19 @@ impl WorldFrameSlot {
                     .to_bytes(),
                 self.layout.total_bytes,
             )?;
+            for slot in 0..3 {
+                copy_bytes(
+                    destination,
+                    self.layout.m2_scene_offset + self.layout.m2_scene_stride * (4 + slot as u64),
+                    &sky_models
+                        .map_or_else(
+                            || scene.m2(M2SceneLightBank::Environment),
+                            |frame| frame.skyboxes[slot].scene,
+                        )
+                        .to_bytes(),
+                    self.layout.total_bytes,
+                )?;
+            }
             if bone_transforms.is_empty() && sky_bones.is_empty() {
                 copy_bytes(
                     destination,
@@ -466,7 +479,7 @@ impl WorldFrameSlot {
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(6),
+                .descriptor_count(9),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                 .descriptor_count(2),
@@ -477,7 +490,7 @@ impl WorldFrameSlot {
         let pool_info = vk::DescriptorPoolCreateInfo::default()
             .max_sets(DESCRIPTOR_SET_COUNT as u32)
             .pool_sizes(&pool_sizes);
-        // SAFETY: Counts exactly cover the six fixed layouts.
+        // SAFETY: Counts exactly cover all fixed frame layouts.
         self.descriptor_pool = unsafe { context.device.create_descriptor_pool(&pool_info, None) }
             .map_err(|source| {
             VulkanError::operation("create world frame descriptor pool", source)
@@ -537,6 +550,21 @@ impl WorldFrameSlot {
                 self.layout.m2_scene_offset + self.layout.m2_scene_stride * 3,
                 M2SceneUniform::BYTE_SIZE,
             ),
+            buffer_info(
+                self.buffer,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 4,
+                M2SceneUniform::BYTE_SIZE,
+            ),
+            buffer_info(
+                self.buffer,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 5,
+                M2SceneUniform::BYTE_SIZE,
+            ),
+            buffer_info(
+                self.buffer,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 6,
+                M2SceneUniform::BYTE_SIZE,
+            ),
         ];
         let descriptor_types = [
             vk::DescriptorType::UNIFORM_BUFFER,
@@ -547,6 +575,9 @@ impl WorldFrameSlot {
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::STORAGE_BUFFER,
             M2_MATERIAL_DESCRIPTOR_TYPE,
+            vk::DescriptorType::UNIFORM_BUFFER,
+            vk::DescriptorType::UNIFORM_BUFFER,
+            vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER,
         ];
         for index in 0..DESCRIPTOR_SET_COUNT {

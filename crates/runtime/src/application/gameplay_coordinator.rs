@@ -395,6 +395,9 @@ impl RuntimeGameplayCoordinator {
         &mut self,
         notify: &mut GameObjectObserver<'_>,
     ) -> Result<usize, RuntimeGameplayError> {
+        if let Some(clock) = &mut self.realm_clock {
+            clock.advance();
+        }
         if self.transfer.is_some() {
             return Ok(0);
         }

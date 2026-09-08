@@ -3429,6 +3429,14 @@ fn prepare_source(
     renderer: &mut VulkanRenderer,
     source: &ResidentM2Source,
 ) -> Result<Option<M2GpuSource>, RuntimeTerrainFrameError> {
+    prepare_source_with_lights(renderer, source, M2LocalLightCount::Zero)
+}
+
+fn prepare_source_with_lights(
+    renderer: &mut VulkanRenderer,
+    source: &ResidentM2Source,
+    local_light_count: M2LocalLightCount,
+) -> Result<Option<M2GpuSource>, RuntimeTerrainFrameError> {
     let model = source.model();
     if source.textures().len() != model.textures().len() {
         return Err(RuntimeTerrainFrameError::M2TextureTableCount {
@@ -3507,7 +3515,7 @@ fn prepare_source(
         model,
         &resolved,
         None,
-        M2LocalLightCount::Zero,
+        local_light_count,
         source.cpu_source(),
         M2ModelOrientation::Authored,
     )?))
