@@ -371,12 +371,13 @@ where
             .await
     }
 
-    /// Sends the explicit Lua release-spirit request from native 6D2950.
+    /// Sends native 6D2950's release-spirit request with its automatic-entry flag.
     ///
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
-    pub async fn send_release_spirit(&mut self) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x15a, &[0]).await
+    pub async fn send_release_spirit(&mut self, automatic: bool) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x15a, &[u8::from(automatic)])
+            .await
     }
 
     /// Sends native 51ADD0's replicated self-resurrection spell request.

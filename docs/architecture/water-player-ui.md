@@ -134,6 +134,30 @@ produces `PLAYER_UNGHOST`. Packet `37A` refreshes the release timer and emits th
 current life event even without a raw-health transition. Runtime notifications
 retain the health, ghost and timer image seen by each callback.
 
+The raw-health death callback also produces the eight-argument `UNIT_DIED`
+combat record before the life event. `718A90` admits players, rejects creatures
+without a resolved template, and suppresses template flag `400`. Creature type
+13 selects `UNIT_DISSIPATES`. The record has an empty source GUID, nil source
+name, source flags `80000000`, and no damage/spell tail. Both filtered and
+unfiltered combat events run with the updated player health and retained release
+timer already visible: `729220` calls `6DC0F0` before `7561E0` constructs the log.
+Template bindings require the current unit generation and entry. A late or
+missing template does not retroactively produce a death record.
+
+`UNIT_DESTROYED` has an unusual native branch: `752ED0` reads the unmodified
+stack output after a failed Spell lookup. The oracle supplies an empty Spell
+bank and zeroed stack, and does not claim arbitrary stack-residue reproduction.
+The runtime preserves the deterministic ordinary-death and type-13 branches.
+Remote-player names still depend on the separate name-query provider.
+
+After `PLAYER_DEAD`, `519280` clears the cursor and emits `CURSOR_UPDATE`.
+The UI item-cursor projection clears at that boundary; `CursorHasItem` returns
+numeric one for the item predicate and nil otherwise, matching `515100`.
+The stock UI then dismisses the pending equip-bind popups. The native cursor's
+inventory, spell, money and auction pickup/cancellation operations are separate
+providers; this establishes the death callback and item predicate, not all cursor
+mode side effects.
+
 `6DC070` initializes the retained release timer using the low byte of absolute
 private field 1197 and `PLAYER_FLAGS`. `GetReleaseTimeRemaining` (`516210`)
 preserves the native signed countdown, clock wrapping, inactive zero and
@@ -162,6 +186,20 @@ branch (`51ADD0`) checks the restriction but has no health/ghost gate; it sends
 `2B3` with an empty body. Both actions enter the sole encrypted writer in order,
 retaining pending requests under backpressure and clearing them on world exit.
 
+World entry invokes `528010`'s automatic release for signed nonpositive raw
+health, using byte one, before `6E7F50`'s life event. Positive-health ghosts do
+not trigger that automatic request. Initial and replacement worlds retain the
+release timer, seed resurrection inputs, and announce life after
+`PLAYER_ENTERING_WORLD`. The native life fixture covers health boundaries and
+the following cursor event; encrypted tests distinguish explicit and automatic
+release bytes.
+
+Character selection uses `SMSG_CHAR_ENUM` flag `2000` for its ghost preview,
+independently of current-world health. The refreshed directory passes that flag
+through metadata and Glue to the existing ghost model and lighting path. The
+archive-dependent character refresh test covers repeated living/ghost changes
+for the same GUID, including the independent rename flag.
+
 `player_death_dialog_oracle.py` executes the original Lua wrappers, release
 function and real player virtual predicate for 190 cases. Lookup, inventory
 name, restriction-provider and datastore boundaries are documented in the
@@ -180,7 +218,6 @@ activation and world cinematic ownership still need their respective session
 providers. Their current empty state has no item, restriction, active arena or
 world cinematic. Provider inputs are not established by the death-dialog oracle.
 
-The initial-world path also needs `528010`'s automatic release request (byte
-one) and `6E7F50`'s life event after world entry. Death cursor cancellation,
-`UNIT_DIED` combat-log delivery, corpse recovery and resurrection offers remain
-in the life-system audit. Lighting and sky remain the final water-slice work.
+Corpse recovery, resurrection offers, other cursor-mode side effects, and the
+unit's forced-release flag remain in the life-system audit. Lighting and sky
+remain the final water-slice work.

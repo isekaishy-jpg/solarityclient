@@ -5,6 +5,7 @@ pub(in crate::application) mod environmental_damage;
 mod game_object_cache;
 pub(in crate::application) mod player_ui;
 mod template_cache;
+pub(in crate::application) mod unit_death;
 
 use creature_cache::CreatureTemplateCache;
 
@@ -15,6 +16,10 @@ mod game_object_template_tests;
 #[cfg(test)]
 #[path = "../../tests/application/creature_templates.rs"]
 mod creature_template_tests;
+
+#[cfg(test)]
+#[path = "../../tests/application/unit_death_log.rs"]
+mod unit_death_log_tests;
 
 #[cfg(test)]
 #[path = "../../tests/application/tutorial_writer.rs"]
@@ -281,6 +286,8 @@ impl RuntimeGameplayCoordinator {
                 self.path_distance_tolerance,
                 notify,
                 &mut player_ui,
+                Some(&creature_templates),
+                self.factions.as_deref(),
             )?;
             player_ui.observe_combat(gameplay.world());
             player_ui.refresh_health(gameplay.world());
@@ -414,6 +421,8 @@ impl RuntimeGameplayCoordinator {
                                 notify,
                                 crate::platform::client_milliseconds(),
                                 &mut self.player_ui,
+                                Some(&self.creature_templates),
+                                self.factions.as_deref(),
                             )?;
                             self.player_ui.observe_combat(world);
                             self.player_ui.refresh_health(world);
@@ -944,7 +953,7 @@ where
                         writer.send_stand_state(state).await?;
                     }
                     WorldWriterCommand::PlayerDeath(action) => match action {
-                        solarity_ui::UiPlayerDeathAction::ReleaseSpirit => writer.send_release_spirit().await?,
+                        solarity_ui::UiPlayerDeathAction::ReleaseSpirit { automatic } => writer.send_release_spirit(automatic).await?,
                         solarity_ui::UiPlayerDeathAction::SelfResurrect => writer.send_self_resurrect().await?,
                     },
                     WorldWriterCommand::Tutorial(action) => match action {
@@ -1018,6 +1027,8 @@ fn dispatch_setup_packet<S>(
     path_distance_tolerance: f32,
     notify: &mut GameObjectObserver<'_>,
     player_ui: &mut player_ui::RuntimePlayerUiState,
+    creatures: Option<&CreatureTemplateCache>,
+    factions: Option<&solarity_asset::CharacterFactionCatalog>,
 ) -> Result<(), RuntimeGameplayError> {
     let timestamp_ms = crate::platform::client_milliseconds();
     if packet.opcode() == 0x37a {
@@ -1072,7 +1083,14 @@ fn dispatch_setup_packet<S>(
             timestamp_ms,
             &mut |world, identity, event| notify(world, identity, event, timestamp_ms),
             &mut |world, identity, event| {
-                player_ui.receive_unit_field(world, identity, event, timestamp_ms)
+                player_ui.receive_unit_field_with_sources(
+                    world,
+                    identity,
+                    event,
+                    timestamp_ms,
+                    creatures,
+                    factions,
+                )
             },
         )?;
         player_control.synchronize(gameplay.world(), timestamp_ms);
@@ -1100,6 +1118,8 @@ fn dispatch_world_packet(
     notify: &mut GameObjectObserver<'_>,
     timestamp_ms: u32,
     player_ui: &mut player_ui::RuntimePlayerUiState,
+    creatures: Option<&CreatureTemplateCache>,
+    factions: Option<&solarity_asset::CharacterFactionCatalog>,
 ) -> Result<bool, RuntimeGameplayError> {
     if packet.opcode() == 0x37a {
         player_ui.receive_death_notice(world, timestamp_ms);
@@ -1151,7 +1171,14 @@ fn dispatch_world_packet(
             timestamp_ms,
             &mut |world, identity, event| notify(world, identity, event, timestamp_ms),
             &mut |world, identity, event| {
-                player_ui.receive_unit_field(world, identity, event, timestamp_ms)
+                player_ui.receive_unit_field_with_sources(
+                    world,
+                    identity,
+                    event,
+                    timestamp_ms,
+                    creatures,
+                    factions,
+                )
             },
         )?;
         player_control.synchronize(world, timestamp_ms);

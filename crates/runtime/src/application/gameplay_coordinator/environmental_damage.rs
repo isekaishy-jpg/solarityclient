@@ -71,32 +71,7 @@ impl RuntimeEnvironmentalDamageSnapshot {
         let identity = world.object_identity(packet.guid)?;
         let local_guid = world.local_player_guid().ok()?;
         let entity = world.entity_by_guid(packet.guid)?;
-        let fields = world.storage().get::<&ObjectFields>(entity).ok()?;
-        let mut controller = owner(&fields).unwrap_or(packet.guid);
-        let charmed_or_summoned = field_guid(&fields, 12) != 0 || field_guid(&fields, 14) != 0;
-        drop(fields);
-        if controller != packet.guid
-            && !is_player_guid(controller)
-            && let Some(next) = unit_fields(world, controller).and_then(|fields| owner(&fields))
-        {
-            controller = next;
-        }
-        let flags = combat_log_object_flags(CombatLogObjectClassification {
-            guid: packet.guid,
-            controller_guid: controller,
-            local_player_guid: local_guid,
-            charmed_or_summoned,
-            reaction: directed_reaction(world, packet.guid, local_guid, factions),
-            // These correspond to the currently resident ungrouped, unselected
-            // world providers; the shared reducer accepts group/selection facts.
-            party_member: false,
-            raid_member: false,
-            in_group: false,
-            target: false,
-            focus: false,
-            role_mask: 0,
-            raid_marker: None,
-        });
+        let flags = unit_combat_log_flags(world, packet.guid, factions)?;
         let snapshot = Self {
             identity,
             packet,
@@ -130,6 +105,39 @@ impl RuntimeEnvironmentalDamageSnapshot {
         }
         Some(snapshot)
     }
+}
+
+pub(super) fn unit_combat_log_flags(
+    world: &ActiveWorld,
+    guid: u64,
+    factions: Option<&CharacterFactionCatalog>,
+) -> Option<u32> {
+    let local_guid = world.local_player_guid().ok()?;
+    let fields = unit_fields(world, guid)?;
+    let mut controller = owner(&fields).unwrap_or(guid);
+    let charmed_or_summoned = field_guid(&fields, 12) != 0 || field_guid(&fields, 14) != 0;
+    drop(fields);
+    if controller != guid
+        && !is_player_guid(controller)
+        && let Some(next) = unit_fields(world, controller).and_then(|fields| owner(&fields))
+    {
+        controller = next;
+    }
+    Some(combat_log_object_flags(CombatLogObjectClassification {
+        guid,
+        controller_guid: controller,
+        local_player_guid: local_guid,
+        charmed_or_summoned,
+        reaction: directed_reaction(world, guid, local_guid, factions),
+        // Resident providers are presently ungrouped and unselected.
+        party_member: false,
+        raid_member: false,
+        in_group: false,
+        target: false,
+        focus: false,
+        role_mask: 0,
+        raid_marker: None,
+    }))
 }
 
 fn field_guid(fields: &ObjectFields, index: u16) -> u64 {

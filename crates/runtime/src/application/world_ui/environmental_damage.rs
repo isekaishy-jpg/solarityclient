@@ -8,6 +8,41 @@ use solarity_ui::{
     FrameManager, UiCombatLogEntry, UiCombatLogObject, UiEventArgument as Arg, UiEventPayload,
 };
 
+pub(super) fn dispatch_unit_death(
+    manager: &mut FrameManager,
+    world: &solarity_ui::UiWorldState,
+    death: crate::application::gameplay_coordinator::unit_death::RuntimeUnitDeathSnapshot,
+) -> Result<(), ApplicationError> {
+    if let Some((health, timer)) = death.player_ui {
+        health.publish(world);
+        world.set_release_timer(timer);
+    }
+    let entry = UiCombatLogEntry::new(
+        death.clock.timestamp(death.timestamp_ms),
+        death.event,
+        UiCombatLogObject {
+            guid: 0,
+            name: None,
+            flags: 0x80000000,
+        },
+        UiCombatLogObject {
+            guid: death.identity.guid(),
+            name: death.name,
+            flags: death.flags,
+        },
+        None,
+        UiEventPayload::empty(),
+    )
+    .map_err(|error| {
+        solarity_ui::UiEventError::from(solarity_ui::UiScriptError::Execution {
+            label: death.event.into(),
+            message: error.to_string(),
+        })
+    })?;
+    manager.append_combat_log(entry)?;
+    Ok(())
+}
+
 pub(super) fn dispatch_environmental_damage(
     manager: &mut FrameManager,
     impact: RuntimeEnvironmentalDamageSnapshot,

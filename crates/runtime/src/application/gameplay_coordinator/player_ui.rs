@@ -57,6 +57,7 @@ pub(in crate::application) struct TimedMirrorTimerUpdate {
 /// Shared ordering prevents a later flag packet changing an earlier timer trigger.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::application) enum RuntimePlayerUiNotification {
+    UnitDeath(super::unit_death::RuntimeUnitDeathSnapshot),
     Resurrection(RuntimePlayerResurrectionSnapshot),
     Life {
         snapshot: RuntimePlayerHealthSnapshot,
@@ -143,6 +144,7 @@ impl RuntimePlayerUiState {
         self.release_timer
     }
 
+    #[cfg(test)]
     pub(in crate::application) fn receive_unit_field(
         &mut self,
         world: &solarity_ecs::ActiveWorld,
@@ -150,7 +152,56 @@ impl RuntimePlayerUiState {
         notification: crate::application::gameplay_session::UnitFieldNotification,
         timestamp_ms: u32,
     ) {
-        if world.local_player_guid().ok() != Some(identity.guid()) {
+        self.receive_unit_field_with_sources(
+            world,
+            identity,
+            notification,
+            timestamp_ms,
+            None,
+            None,
+        );
+    }
+
+    pub(super) fn receive_unit_field_with_sources(
+        &mut self,
+        world: &solarity_ecs::ActiveWorld,
+        identity: solarity_ecs::WorldObjectIdentity,
+        notification: crate::application::gameplay_session::UnitFieldNotification,
+        timestamp_ms: u32,
+        creatures: Option<&super::creature_cache::CreatureTemplateCache>,
+        factions: Option<&solarity_asset::CharacterFactionCatalog>,
+    ) {
+        let local = world.local_player_guid().ok() == Some(identity.guid());
+        let entered_death = matches!(notification,
+            crate::application::gameplay_session::UnitFieldNotification::Health { previous }
+            if (previous as i32) > 0 && world.unit_vitals(identity.guid()).is_some_and(|vitals| (vitals.health() as i32) <= 0));
+        // 729220 calls 6DC0F0 before 7561E0 constructs the combat record.
+        if local
+            && entered_death
+            && world.object_identity(identity.guid()) == Some(identity)
+            && world
+                .storage()
+                .get::<&solarity_ecs::ObjectFields>(world.local_player())
+                .is_ok_and(|fields| fields.get(79) & 0x20 == 0)
+        {
+            self.initialize_release_timer(world, timestamp_ms);
+        }
+        if entered_death
+            && let Some(mut death) = super::unit_death::RuntimeUnitDeathSnapshot::admit(
+                world,
+                identity,
+                creatures,
+                factions,
+                timestamp_ms,
+                self.combat_clock,
+            )
+        {
+            death.player_ui = RuntimePlayerHealthSnapshot::from_world(world)
+                .map(|health| (health, self.release_timer));
+            self.pending
+                .push_back(RuntimePlayerUiNotification::UnitDeath(death));
+        }
+        if !local {
             return;
         }
         self.refresh_resurrection(world);
@@ -162,13 +213,6 @@ impl RuntimePlayerUiState {
             UnitFieldNotification::Health { previous } => {
                 // Global 73F330 runs before the per-unit 60C240 UI observer.
                 if (previous as i32) > 0 && (snapshot.health as i32) <= 0 {
-                    if world
-                        .storage()
-                        .get::<&solarity_ecs::ObjectFields>(world.local_player())
-                        .is_ok_and(|fields| fields.get(79) & 0x20 == 0)
-                    {
-                        self.initialize_release_timer(world, timestamp_ms);
-                    }
                     self.life(snapshot, RuntimePlayerLifeEvent::Dead);
                 } else if (previous as i32) <= 0 && (snapshot.health as i32) > 0 {
                     self.life(snapshot, RuntimePlayerLifeEvent::Alive);

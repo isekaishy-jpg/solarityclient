@@ -1,44 +1,45 @@
-# Native 73F330/520F70 health; 6E0FD0/6DF710 ghost flags.
+# Native 73F330/520F70 health and empty-cursor 519280; 6E0FD0/6DF710 ghost flags.
 # event 101 PLAYER_ALIVE
 # event 102 PLAYER_DEAD
+# event 113 CURSOR_UPDATE
 # event 188 PLAYER_UNGHOST
 # event 18f PLAYER_FLAGS_CHANGED
-health 00000000 00000000 00000000 none 102
-health 00000000 00000001 00000001 alive 101
-health 00000000 00000064 00000064 alive 101
-health 00000000 7fffffff 7fffffff alive 101
-health 00000000 80000000 80000000 none 102
-health 00000000 ffffffff ffffffff none 102
-health 00000001 00000000 00000000 dead 102
-health 00000001 00000001 00000001 none 101
-health 00000001 00000064 00000064 none 101
-health 00000001 7fffffff 7fffffff none 101
-health 00000001 80000000 80000000 dead 102
-health 00000001 ffffffff ffffffff dead 102
-health 00000064 00000000 00000000 dead 102
-health 00000064 00000001 00000001 none 101
-health 00000064 00000064 00000064 none 101
-health 00000064 7fffffff 7fffffff none 101
-health 00000064 80000000 80000000 dead 102
-health 00000064 ffffffff ffffffff dead 102
-health 7fffffff 00000000 00000000 dead 102
-health 7fffffff 00000001 00000001 none 101
-health 7fffffff 00000064 00000064 none 101
-health 7fffffff 7fffffff 7fffffff none 101
-health 7fffffff 80000000 80000000 dead 102
-health 7fffffff ffffffff ffffffff dead 102
-health 80000000 00000000 00000000 none 102
-health 80000000 00000001 00000001 alive 101
-health 80000000 00000064 00000064 alive 101
-health 80000000 7fffffff 7fffffff alive 101
-health 80000000 80000000 80000000 none 102
-health 80000000 ffffffff ffffffff none 102
-health ffffffff 00000000 00000000 none 102
-health ffffffff 00000001 00000001 alive 101
-health ffffffff 00000064 00000064 alive 101
-health ffffffff 7fffffff 7fffffff alive 101
-health ffffffff 80000000 80000000 none 102
-health ffffffff ffffffff ffffffff none 102
+health 00000000 00000000 00000000 none 102 113
+health 00000000 00000001 00000001 alive 101 none
+health 00000000 00000064 00000064 alive 101 none
+health 00000000 7fffffff 7fffffff alive 101 none
+health 00000000 80000000 80000000 none 102 113
+health 00000000 ffffffff ffffffff none 102 113
+health 00000001 00000000 00000000 dead 102 113
+health 00000001 00000001 00000001 none 101 none
+health 00000001 00000064 00000064 none 101 none
+health 00000001 7fffffff 7fffffff none 101 none
+health 00000001 80000000 80000000 dead 102 113
+health 00000001 ffffffff ffffffff dead 102 113
+health 00000064 00000000 00000000 dead 102 113
+health 00000064 00000001 00000001 none 101 none
+health 00000064 00000064 00000064 none 101 none
+health 00000064 7fffffff 7fffffff none 101 none
+health 00000064 80000000 80000000 dead 102 113
+health 00000064 ffffffff ffffffff dead 102 113
+health 7fffffff 00000000 00000000 dead 102 113
+health 7fffffff 00000001 00000001 none 101 none
+health 7fffffff 00000064 00000064 none 101 none
+health 7fffffff 7fffffff 7fffffff none 101 none
+health 7fffffff 80000000 80000000 dead 102 113
+health 7fffffff ffffffff ffffffff dead 102 113
+health 80000000 00000000 00000000 none 102 113
+health 80000000 00000001 00000001 alive 101 none
+health 80000000 00000064 00000064 alive 101 none
+health 80000000 7fffffff 7fffffff alive 101 none
+health 80000000 80000000 80000000 none 102 113
+health 80000000 ffffffff ffffffff none 102 113
+health ffffffff 00000000 00000000 none 102 113
+health ffffffff 00000001 00000001 alive 101 none
+health ffffffff 00000064 00000064 alive 101 none
+health ffffffff 7fffffff 7fffffff alive 101 none
+health ffffffff 80000000 80000000 none 102 113
+health ffffffff ffffffff ffffffff none 102 113
 flags 00000000 00000000 18f
 flags 00000000 00000010 18f
 flags 00000010 00000000 18f,188

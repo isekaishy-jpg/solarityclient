@@ -228,6 +228,13 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         );
         while let Some(notification) = state.take_notification() {
             match notification {
+                RuntimePlayerUiNotification::UnitDeath(snapshot) => {
+                    super::super::environmental_damage::dispatch_unit_death(
+                        &mut manager,
+                        &world,
+                        snapshot,
+                    )?
+                }
                 RuntimePlayerUiNotification::Life {
                     snapshot,
                     event,
@@ -274,6 +281,13 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
     );
     while let Some(notification) = state.take_notification() {
         match notification {
+            RuntimePlayerUiNotification::UnitDeath(snapshot) => {
+                super::super::environmental_damage::dispatch_unit_death(
+                    &mut manager,
+                    &world,
+                    snapshot,
+                )?
+            }
             RuntimePlayerUiNotification::Life {
                 snapshot,
                 event,
@@ -332,7 +346,7 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
             let (server, session) = WorldServer::connect().await?;
             let (_, mut writer) = session.split();
             let received = server.exchange_raw(vec![], 1).await?;
-            writer.send_release_spirit().await?;
+            writer.send_release_spirit(false).await?;
             world.accept_death_action();
             assert_eq!(received.await??, vec![(0x15a, vec![0])]);
             Ok::<_, TestError>(())
@@ -343,6 +357,13 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
     state.receive_death_notice(&active, 2201);
     while let Some(notification) = state.take_notification() {
         match notification {
+            RuntimePlayerUiNotification::UnitDeath(snapshot) => {
+                super::super::environmental_damage::dispatch_unit_death(
+                    &mut manager,
+                    &world,
+                    snapshot,
+                )?
+            }
             RuntimePlayerUiNotification::Resurrection(snapshot) => {
                 snapshot.publish(&world, &spell_names)
             }
@@ -429,6 +450,7 @@ fn water_tutorials_preserve_server_order_native_callbacks_and_wire_acknowledgeme
         sent.await??;
         while let Some(notification)=state.take_notification() {
             match notification {
+RuntimePlayerUiNotification::UnitDeath(snapshot) => super::super::environmental_damage::dispatch_unit_death(&mut manager, &world, snapshot)?,
                 RuntimePlayerUiNotification::Resurrection(snapshot) => snapshot.publish(&world, &names),
                 RuntimePlayerUiNotification::Life {snapshot,event,release_timer} => super::dispatch_life(&mut manager,&world,snapshot,event,release_timer)?,
                 RuntimePlayerUiNotification::Combat(in_combat) => manager.player_combat_changed(in_combat)?,

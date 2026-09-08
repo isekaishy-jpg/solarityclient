@@ -27,6 +27,7 @@ fn events(state: &mut RuntimePlayerUiState) -> Vec<&'static str> {
     let mut events = Vec::new();
     while let Some(notification) = state.take_notification() {
         match notification {
+            RuntimePlayerUiNotification::UnitDeath(_) => events.push("unit_died"),
             RuntimePlayerUiNotification::Life { event, .. } => match event {
                 RuntimePlayerLifeEvent::Dead => events.push("dead"),
                 RuntimePlayerLifeEvent::Alive => events.push("alive"),
@@ -53,6 +54,37 @@ fn events(state: &mut RuntimePlayerUiState) -> Vec<&'static str> {
         }
     }
     events
+}
+
+#[test]
+fn unit_death_log_observes_native_timer_before_player_dead() -> Result<(), TestError> {
+    for line in include_str!("../fixtures/unit_death_log_timer_native.txt").lines() {
+        let row = line.split_ascii_whitespace().collect::<Vec<_>>();
+        let mut active = world(0)?;
+        active.update_fields(
+            7,
+            [
+                (79, u32::from_str_radix(row[0], 16)?),
+                (1197, u32::from_str_radix(row[1], 16)?),
+                (150, u32::from_str_radix(row[2], 16)?),
+            ],
+        )?;
+        let mut state = RuntimePlayerUiState::default();
+        state.receive_unit_field(
+            &active,
+            active.object_identity(7).ok_or("identity")?,
+            UnitFieldNotification::Health { previous: 100 },
+            1000,
+        );
+        let Some(RuntimePlayerUiNotification::UnitDeath(death)) = state.take_notification() else {
+            return Err("death log must precede life callbacks".into());
+        };
+        let (health, timer) = death.player_ui.ok_or("death UI snapshot")?;
+        assert_eq!(health.health, 0);
+        assert_eq!(health.predicted, 0);
+        assert_eq!(timer.remaining(1000), row[3].parse::<i32>()?, "{line}");
+    }
+    Ok(())
 }
 
 #[test]
@@ -96,7 +128,11 @@ fn player_life_admission_matches_native_signed_health_and_notice() -> Result<(),
         let expected = if row[4] == "none" {
             vec!["health"]
         } else {
-            vec![row[4], "health"]
+            if row[4] == "dead" {
+                vec!["unit_died", "dead", "health"]
+            } else {
+                vec![row[4], "health"]
+            }
         };
         assert_eq!(events(&mut state), expected, "{line}");
         if row[4] == "dead" {
@@ -120,7 +156,11 @@ fn player_life_callbacks_read_last_packet_mirror_and_final_raw_image() -> Result
         .block_on(async {
             let (server, mut session) = WorldServer::connect().await?;
             for (initial, blocks, expected) in [
-                (100, vec![vec![(24, 0)]], vec!["dead", "health"]),
+                (
+                    100,
+                    vec![vec![(24, 0)]],
+                    vec!["unit_died", "dead", "health"],
+                ),
                 (
                     100,
                     vec![vec![(24, 0)], vec![(24, 100)]],
@@ -226,8 +266,8 @@ fn player_life_lua_observes_timer_and_final_ghost_before_each_event() -> Result<
     let fixture = super::tests::fixture_with(&[
         ("Interface/FrameXML/FrameXML.toc", b"Life.xml\n"),
         ("Interface/FrameXML/Life.xml", br#"<Ui><Frame name="LifeObserver"><Scripts>
-<OnLoad>LOG='';for _,e in ipairs({'PLAYER_DEAD','PLAYER_ALIVE','UNIT_HEALTH','PLAYER_FLAGS_CHANGED','PLAYER_UNGHOST'}) do self:RegisterEvent(e) end</OnLoad>
-<OnEvent>LOG=LOG..event..':'..tostring(UnitIsGhost('player'))..':'..GetReleaseTimeRemaining()..'|'</OnEvent>
+<OnLoad>LOG='';for _,e in ipairs({'COMBAT_LOG_EVENT','COMBAT_LOG_EVENT_UNFILTERED','PLAYER_DEAD','CURSOR_UPDATE','PLAYER_ALIVE','UNIT_HEALTH','PLAYER_FLAGS_CHANGED','PLAYER_UNGHOST'}) do self:RegisterEvent(e) end</OnLoad>
+<OnEvent>LOG=LOG..event..':'..tostring(UnitIsGhost('player'))..':'..GetReleaseTimeRemaining()..'|';if event=='COMBAT_LOG_EVENT' then HEALTH_AT_DEATH_LOG=tostring(UnitHealth('player')) end;if event=='PLAYER_DEAD' then ITEM_AT_DEATH=tostring(CursorHasItem()) elseif event=='CURSOR_UPDATE' then ITEM_AFTER_DEATH=tostring(CursorHasItem()) end</OnEvent>
 </Scripts></Frame></Ui>"#),
     ]).map_err(|error| error.to_string())?;
     let store = AssetStore::mount(ArchiveCatalog::discover(
@@ -252,6 +292,7 @@ fn player_life_lua_observes_timer_and_final_ghost_before_each_event() -> Result<
         &[],
         &AddonCatalog::default(),
     )?;
+    ui.set_cursor_has_item(true);
     let mut world = world(0)?;
     let mut state = RuntimePlayerUiState::default();
     let identity = world.object_identity(7).ok_or("identity")?;
@@ -284,6 +325,13 @@ fn player_life_lua_observes_timer_and_final_ghost_before_each_event() -> Result<
     );
     while let Some(notification) = state.take_notification() {
         match notification {
+            RuntimePlayerUiNotification::UnitDeath(snapshot) => {
+                super::super::environmental_damage::dispatch_unit_death(
+                    &mut manager,
+                    &ui,
+                    snapshot,
+                )?
+            }
             RuntimePlayerUiNotification::Life {
                 snapshot,
                 event,
@@ -306,9 +354,152 @@ fn player_life_lua_observes_timer_and_final_ghost_before_each_event() -> Result<
     assert_eq!(
         manager.localized_text("LOG")?.as_deref(),
         Some(
-            "PLAYER_DEAD:nil:360|UNIT_HEALTH:nil:360|PLAYER_ALIVE:1:360|UNIT_HEALTH:1:360|PLAYER_FLAGS_CHANGED:1:360|PLAYER_FLAGS_CHANGED:nil:360|PLAYER_UNGHOST:nil:360|"
+            "COMBAT_LOG_EVENT:nil:360|COMBAT_LOG_EVENT_UNFILTERED:nil:360|PLAYER_DEAD:nil:360|CURSOR_UPDATE:nil:360|UNIT_HEALTH:nil:360|PLAYER_ALIVE:1:360|UNIT_HEALTH:1:360|PLAYER_FLAGS_CHANGED:1:360|PLAYER_FLAGS_CHANGED:nil:360|PLAYER_UNGHOST:nil:360|"
         )
     );
     assert!(manager.take_callback_failure().is_none());
+    assert_eq!(
+        manager.localized_text("HEALTH_AT_DEATH_LOG")?.as_deref(),
+        Some("0")
+    );
+    assert_eq!(
+        manager.localized_text("ITEM_AT_DEATH")?.as_deref(),
+        Some("1")
+    );
+    assert_eq!(
+        manager.localized_text("ITEM_AFTER_DEATH")?.as_deref(),
+        Some("nil")
+    );
     Ok(())
+}
+
+#[test]
+fn unit_death_log_lua_arguments_match_original_record_builder() -> Result<(), TestError> {
+    use crate::application::gameplay_coordinator::{
+        environmental_damage::RuntimeCombatLogClock, unit_death::RuntimeUnitDeathSnapshot,
+    };
+    use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
+    use solarity_ui::{AddonCatalog, FrameManager, UiScriptEnvironment};
+    let fixture = super::tests::fixture_with(&[
+        ("Interface/FrameXML/FrameXML.toc", b"DeathLog.xml\n"),
+        ("Interface/FrameXML/DeathLog.xml", br#"<Ui><Frame name="DeathLog"><Scripts>
+<OnLoad>LOG='';self:RegisterEvent('COMBAT_LOG_EVENT');self:RegisterEvent('COMBAT_LOG_EVENT_UNFILTERED')</OnLoad>
+<OnEvent>local values={};for i=1,select('#',...) do values[i]=tostring(select(i,...)) end;if LOG~='' then LOG=LOG..';' end;LOG=LOG..(event=='COMBAT_LOG_EVENT' and '566:' or '567:')..table.concat(values,',')</OnEvent>
+</Scripts></Frame></Ui>"#),
+        ("Interface/FrameXML/Bindings.xml", br#"<Bindings><Binding name="RESET">LOG='';CombatLogClearEntries()</Binding></Bindings>"#),
+    ]).map_err(|error| error.to_string())?;
+    let store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let mut manager = FrameManager::start_shared(
+        AssetStoreHandle::new(store),
+        UiScriptEnvironment::new(800, 600, false)?,
+        &[],
+        &AddonCatalog::default(),
+    )?;
+    for line in include_str!("../fixtures/unit_death_log_native.txt").lines() {
+        let row = line.split('|').collect::<Vec<_>>();
+        let guid = u64::from_str_radix(row[0], 16)?;
+        let mut active = world(0)?;
+        active.create_object(
+            guid,
+            if guid <= 2 {
+                ObjectKind::Player
+            } else {
+                ObjectKind::Unit
+            },
+            None,
+            [],
+        )?;
+        manager.invoke_binding("RESET", true)?;
+        super::super::environmental_damage::dispatch_unit_death(
+            &mut manager,
+            &solarity_ui::UiWorldState::default(),
+            RuntimeUnitDeathSnapshot {
+                player_ui: None,
+                identity: active.object_identity(guid).ok_or("identity")?,
+                name: Some("WaterTest".into()),
+                flags: match guid {
+                    1 => 1297,
+                    2 => 1320,
+                    _ => 2600,
+                },
+                event: if row[1] == "13" {
+                    "UNIT_DISSIPATES"
+                } else {
+                    "UNIT_DIED"
+                },
+                timestamp_ms: 2250,
+                clock: RuntimeCombatLogClock {
+                    unix_seconds: 1_700_000_000,
+                    milliseconds: 1000,
+                },
+            },
+        )?;
+        assert_eq!(
+            manager.localized_text("LOG")?.as_deref(),
+            Some(row[2]),
+            "{line}"
+        );
+    }
+    assert!(manager.take_callback_failure().is_none());
+    Ok(())
+}
+
+#[test]
+fn player_life_world_entry_preserves_timer_and_sends_automatic_release_before_life()
+-> Result<(), TestError> {
+    use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};
+    use solarity_ui::{
+        AddonCatalog, FrameManager, UiPlayerDeathAction, UiPlayerReleaseTimer, UiPlayerState,
+        UiPlayerVitalsState, UiScriptEnvironment, UiUnitPowerType,
+    };
+    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+        let fixture = super::tests::fixture_with(&[
+            ("Interface/FrameXML/FrameXML.toc", b"Entry.xml\n"),
+            ("Interface/FrameXML/Entry.xml", br#"<Ui><Frame name="EntryObserver"><Scripts>
+<OnLoad>LOG='';for _,e in ipairs({'PLAYER_ENTERING_WORLD','PLAYER_DEAD','CURSOR_UPDATE','PLAYER_ALIVE'}) do self:RegisterEvent(e) end</OnLoad>
+<OnEvent>if event=='PLAYER_ENTERING_WORLD' then LOG='' end;LOG=LOG..event..'|'</OnEvent>
+</Scripts></Frame></Ui>"#),
+        ]).map_err(|error| error.to_string())?;
+        let store = AssetStore::mount(ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?)?;
+        let environment = UiScriptEnvironment::new(800, 600, false)?;
+        let ui = environment.world_state();
+        ui.enter_player(UiPlayerState::new(0));
+        let timer = UiPlayerReleaseTimer::on_death(8, 0, 1000);
+        ui.set_release_timer(timer);
+        let mut manager = FrameManager::start_shared(AssetStoreHandle::new(store), environment, &[], &AddonCatalog::default())?;
+        let (server, session) = WorldServer::connect().await?;
+        let (_, mut writer) = session.split();
+        for row in include_str!("../fixtures/player_life_native.txt").lines().filter(|line| line.starts_with("health ")).map(|line| line.split_ascii_whitespace().collect::<Vec<_>>()) {
+            let health = u32::from_str_radix(row[2], 16)?;
+            // A ghost with positive raw health emits ALIVE and does not auto-release.
+            for ghost in [false, true] {
+                ui.set_player_vitals(UiPlayerVitalsState::new(health, 100, 0, 0, UiUnitPowerType::Mana).with_health(health, 100, 12345, ghost));
+                manager.dispatch_event("PLAYER_ENTERING_WORLD", &solarity_ui::UiEventPayload::empty())?;
+                super::dispatch_world_entry_life(&mut manager, &ui)?;
+                let expected = if row[5] == "102" { "PLAYER_ENTERING_WORLD|PLAYER_DEAD|CURSOR_UPDATE|" } else { "PLAYER_ENTERING_WORLD|PLAYER_ALIVE|" };
+                assert_eq!(manager.localized_text("LOG")?.as_deref(), Some(expected));
+                assert_eq!(row[6], if row[5] == "102" { "113" } else { "none" });
+                assert_eq!(ui.release_timer(), timer);
+                if row[5] == "102" {
+                    assert_eq!(ui.pending_death_action(), Some(UiPlayerDeathAction::ReleaseSpirit { automatic: true }));
+                    let received = server.exchange_raw(vec![], 1).await?;
+                    writer.send_release_spirit(true).await?;
+                    ui.accept_death_action();
+                    assert_eq!(received.await??, vec![(0x15a, vec![1])]);
+                }
+                assert_eq!(ui.pending_death_action(), None);
+            }
+        }
+        ui.set_player_vitals(UiPlayerVitalsState::new(0, 100, 0, 0, UiUnitPowerType::Mana));
+        ui.player_entered_world();
+        assert!(ui.pending_death_action().is_some());
+        ui.clear_death_actions();
+        assert_eq!(ui.pending_death_action(), None);
+        assert_eq!(ui.release_timer(), timer);
+        assert_eq!(manager.take_callback_failure(), None);
+        Ok(())
+    })
 }

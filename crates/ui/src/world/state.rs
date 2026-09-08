@@ -625,6 +625,7 @@ struct UiWorldStateInner {
     realm_date: Cell<Option<UiRealmDate>>,
     realm_time: Cell<Option<UiRealmTime>>,
     cursor_money_copper: Cell<u32>,
+    cursor_has_item: Cell<bool>,
     player_trade_money_copper: Cell<u32>,
     target_trade_money_copper: Cell<u32>,
     area_resurrection_available: Cell<bool>,
@@ -646,6 +647,17 @@ impl Default for UiWorldState {
 }
 
 impl UiWorldState {
+    /// Publishes whether the cursor holds an item (native modes 1 or 9).
+    pub fn set_cursor_has_item(&self, has_item: bool) {
+        self.inner.cursor_has_item.set(has_item);
+    }
+
+    /// Reads 515100's item-cursor predicate.
+    #[must_use]
+    pub fn cursor_has_item(&self) -> bool {
+        self.inner.cursor_has_item.get()
+    }
+
     /// Publishes native GameUI's in-world cinematic flag (BD07FC).
     pub fn set_in_cinematic(&self, active: bool) {
         self.inner.cinematic.set(active);
@@ -691,6 +703,23 @@ impl UiWorldState {
     /// Acknowledges one request accepted by the session writer.
     pub fn accept_death_action(&self) {
         self.inner.death_actions.borrow_mut().pop_front();
+    }
+
+    /// Abandons requests belonging to the world being left.
+    pub fn clear_death_actions(&self) {
+        self.inner.death_actions.borrow_mut().clear();
+    }
+
+    /// Native 528010 requests automatic release for raw-health-dead players.
+    /// It retains the release timer and permits the subsequent life callback.
+    pub fn player_entered_world(&self) {
+        if self
+            .player_vitals()
+            .is_some_and(|vitals| (vitals.health() as i32) <= 0)
+            && self.resurrection_state().release_allowed()
+        {
+            self.queue_death_action(super::UiPlayerDeathAction::ReleaseSpirit { automatic: true });
+        }
     }
 
     /// Publishes the native timer initialized when the local player dies.
@@ -858,6 +887,7 @@ impl UiWorldState {
         self.inner.realm_date.set(None);
         self.inner.realm_time.set(None);
         self.inner.cursor_money_copper.set(0);
+        self.inner.cursor_has_item.set(false);
         self.inner.player_trade_money_copper.set(0);
         self.inner.target_trade_money_copper.set(0);
         self.inner.area_resurrection_available.set(false);

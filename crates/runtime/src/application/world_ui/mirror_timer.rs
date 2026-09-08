@@ -34,6 +34,10 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::UnitDeath(snapshot) => {
+                self.dirty = true;
+                super::environmental_damage::dispatch_unit_death(&mut self.manager, &self.world, snapshot)
+            }
             crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Resurrection(snapshot) => {
                 snapshot.publish(&self.world, &self.spell_names);
                 Ok(())
@@ -115,6 +119,9 @@ fn dispatch_life(
     match event {
         RuntimePlayerLifeEvent::Dead => {
             manager.dispatch_event("PLAYER_DEAD", &UiEventPayload::empty())?;
+            // 520F70 -> 519280 always announces the resulting empty cursor.
+            world.set_cursor_has_item(false);
+            manager.dispatch_event("CURSOR_UPDATE", &UiEventPayload::empty())?;
         }
         RuntimePlayerLifeEvent::Alive => {
             manager.dispatch_event("PLAYER_ALIVE", &UiEventPayload::empty())?;
@@ -127,6 +134,23 @@ fn dispatch_life(
             if unghost {
                 manager.dispatch_event("PLAYER_UNGHOST", &UiEventPayload::empty())?;
             }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn dispatch_world_entry_life(
+    manager: &mut solarity_ui::FrameManager,
+    world: &solarity_ui::UiWorldState,
+) -> Result<(), ApplicationError> {
+    world.player_entered_world();
+    if let Some(vitals) = world.player_vitals() {
+        if (vitals.health() as i32) <= 0 {
+            manager.dispatch_event("PLAYER_DEAD", &UiEventPayload::empty())?;
+            world.set_cursor_has_item(false);
+            manager.dispatch_event("CURSOR_UPDATE", &UiEventPayload::empty())?;
+        } else {
+            manager.dispatch_event("PLAYER_ALIVE", &UiEventPayload::empty())?;
         }
     }
     Ok(())

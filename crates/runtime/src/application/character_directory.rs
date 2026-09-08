@@ -4,6 +4,10 @@
 #[path = "../../tests/application/unit_cold_area.rs"]
 mod cold_area_tests;
 
+#[cfg(test)]
+#[path = "../../tests/application/character_ghost.rs"]
+mod ghost_tests;
+
 use solarity_asset::{
     AreaTableCatalog, AssetError, AssetStore, CharacterClassCatalog, CharacterFactionCatalog,
     CharacterRaceCatalog,

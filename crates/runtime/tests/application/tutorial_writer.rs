@@ -40,7 +40,7 @@ fn water_tutorial_acknowledgements_retain_order_under_backpressure() -> Result<(
     }
     assert_eq!(state.pending_action(), None);
     let actions = [
-        solarity_ui::UiPlayerDeathAction::ReleaseSpirit,
+        solarity_ui::UiPlayerDeathAction::ReleaseSpirit { automatic: false },
         solarity_ui::UiPlayerDeathAction::SelfResurrect,
     ];
     for action in actions {

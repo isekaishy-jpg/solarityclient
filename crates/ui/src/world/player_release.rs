@@ -53,6 +53,11 @@ pub(crate) fn register_globals(
     globals: &mlua::Table,
     environment: &crate::UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    let world = environment.world_state();
+    globals.raw_set(
+        "CursorHasItem",
+        lua.create_function(move |_, ()| Ok(world.cursor_has_item().then_some(1)))?,
+    )?;
     let cinematic = environment.world_state();
     globals.raw_set(
         "InCinematic",
@@ -107,7 +112,7 @@ pub(crate) fn register_globals(
                 .is_some_and(|v| (v.health() as i32) <= 0 || v.ghost())
                 && world.resurrection_state().release_allowed()
             {
-                world.queue_death_action(UiPlayerDeathAction::ReleaseSpirit);
+                world.queue_death_action(UiPlayerDeathAction::ReleaseSpirit { automatic: false });
             }
             Ok(())
         })?,
@@ -147,8 +152,11 @@ pub struct UiPlayerResurrectionState {
 /// Ordered requests admitted by the death-dialog native Lua APIs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiPlayerDeathAction {
-    /// Explicit Release Spirit button; opcode 15A with a zero byte.
-    ReleaseSpirit,
+    /// Release Spirit; opcode 15A carries the native automatic-request byte.
+    ReleaseSpirit {
+        /// False for the Lua button, true for automatic release on world entry.
+        automatic: bool,
+    },
     /// Use the replicated self-resurrection spell; opcode 2B3, empty body.
     SelfResurrect,
 }

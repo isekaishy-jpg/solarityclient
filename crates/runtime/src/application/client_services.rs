@@ -2630,7 +2630,11 @@ impl ClientServices {
             && self.world_transfer.complete_player()
             && let (Some(ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world())
         {
-            ui.enter_replacement_world(&self.character_metadata, active)?;
+            ui.enter_replacement_world(
+                &self.character_metadata,
+                active,
+                self.gameplay.player_ui(),
+            )?;
         }
         if self.loading_screen.is_some()
             && let (Some(ui), Some(terrain), Some(player)) = (

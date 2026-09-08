@@ -1,7 +1,7 @@
 """Capture native replicated-health admission and local life-event dispatch.
 
-Runs 73F330, 520F70, 6E0FD0 and 6DF710. Object lookup, animation/death side
-effects, cursor cancellation, display refresh and Lua event delivery are
+Runs 73F330, 520F70, 519280, 6E0FD0 and 6DF710. Object lookup, animation/death side
+effects, empty cursor providers, display refresh and Lua event delivery are
 supplied boundaries. Original instructions choose health and ghost transitions;
 event names come from the executable's literal registration instructions.
 """
@@ -18,14 +18,14 @@ from liquid_material_oracle import return_value
 
 def capture():
     uc = native.emulator()
-    unit, fields, guid, vtable, previous, player = [native.HEAP + x for x in (0, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000)]
-    native.write_words(uc, unit, vtable)
+    unit, fields, guid, previous, player = [native.HEAP + x for x in (0, 0x2000, 0x3000, 0x5000, 0x6000)]
+    native.write_words(uc, unit, 0xa326c8)
+    assert native.read_words(uc, 0xa326c8 + 0x128, 1)[0] == 0x6dac10
     native.write_words(uc, unit + 8, guid)
     native.write_words(uc, guid, 7, 0, 0x19)
     native.write_words(uc, unit + 0xd0, fields)
     native.write_words(uc, unit + 0x1008, player)
     native.write_words(uc, fields + 0x68, 100)
-    native.write_words(uc, vtable + 0x128, native.STOP + 16)
     events, transitions = [], []
 
     def hook(uc, address, size, context):
@@ -35,9 +35,7 @@ def capture():
             return_value(uc, 7)
         elif address == 0x4d4db0:
             return_value(uc, unit)
-        elif address == native.STOP + 16:
-            return_value(uc, 1)
-        elif address in (0x53cf10, 0x519280, 0x523eb0, 0x51f690, 0x530840, 0x524a30, 0x4f88b0, 0x6dc5a0, 0x4d4b30, 0x7e5550):
+        elif address in (0x53cf10, 0x6cefb0, 0x6167e0, 0x523eb0, 0x51f690, 0x530840, 0x524a30, 0x4f88b0, 0x6dc5a0, 0x4d4b30, 0x7e5550):
             return_value(uc, 0)
         elif address == 0x71f8f0:
             return_value(uc, 0)
@@ -55,9 +53,9 @@ def capture():
             return_value(uc, 0)
 
     uc.hook_add(UC_HOOK_CODE, hook)
-    lines = ['# Native 73F330/520F70 health; 6E0FD0/6DF710 ghost flags.']
+    lines = ['# Native 73F330/520F70 health and empty-cursor 519280; 6E0FD0/6DF710 ghost flags.']
     image = bytes(uc.mem_read(native.image_base, native.image_size))
-    for event in [0x101, 0x102, 0x188, 0x18f]:
+    for event in [0x101, 0x102, 0x113, 0x188, 0x18f]:
         pattern = b'\xc7\x05' + struct.pack('<I', 0xc24eb0 + event * 4)
         position = image.index(pattern) + len(pattern)
         pointer = struct.unpack_from('<I', image, position)[0]
@@ -68,13 +66,14 @@ def capture():
             native.write_words(uc, previous, old)
             native.write_words(uc, fields + 0x48, health)
             native.write_words(uc, unit + 0xfb0, 1234)
+            native.write_words(uc, 0xbd0748, 0, 0)
             transitions.clear()
             events.clear()
             native.invoke(uc, 0x73f330, [7, 0, 0x48, 0, previous])
             native.invoke(uc, 0x520f70, [])
-            assert len(transitions) <= 1 and len(events) == 1
+            assert len(transitions) <= 1 and events in ([0x101], [0x102, 0x113])
             predicted = native.read_words(uc, unit + 0xfb0, 1)[0]
-            lines.append(f'health {old:08x} {health:08x} {predicted:08x} {transitions[0] if transitions else "none"} {events[0]:x}')
+            lines.append(f'health {old:08x} {health:08x} {predicted:08x} {transitions[0] if transitions else "none"} {events[0]:x} {"113" if len(events) == 2 else "none"}')
     for old in [0, 0x10]:
         for flags in [0, 0x10]:
             native.write_words(uc, player + 8, flags)

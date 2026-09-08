@@ -195,6 +195,7 @@ impl RuntimeWorldUi {
             .map(|_| ())
             .map_err(ApplicationError::from);
         let timers = self.stop_world_mirror_timers();
+        self.world.clear_death_actions();
         release.and(combat).and(leave).and(timers)
     }
 
@@ -203,11 +204,17 @@ impl RuntimeWorldUi {
         &mut self,
         metadata: &RuntimeCharacterMetadata,
         active: &ActiveWorld,
+        player_ui: &super::gameplay_coordinator::player_ui::RuntimePlayerUiState,
     ) -> Result<(), ApplicationError> {
         metadata.publish_active_player(active, &self.world)?;
+        self.world.set_release_timer(player_ui.release_timer());
+        player_ui
+            .resurrection()
+            .publish(&self.world, &self.spell_names);
         self.dirty = true;
         self.manager
             .dispatch_event("PLAYER_ENTERING_WORLD", &UiEventPayload::empty())?;
+        mirror_timer::dispatch_world_entry_life(&mut self.manager, &self.world)?;
         Ok(())
     }
 
@@ -295,6 +302,9 @@ impl RuntimeWorldUi {
                 if let Err(error) = manager.dispatch_event(event, &UiEventPayload::empty()) {
                     startup_errors.push(error.into());
                 }
+            }
+            if let Err(error) = mirror_timer::dispatch_world_entry_life(manager, &world) {
+                startup_errors.push(error);
             }
         });
         let mut texture_cache = BlpTextureCache::new();

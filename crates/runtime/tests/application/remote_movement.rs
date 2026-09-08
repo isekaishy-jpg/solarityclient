@@ -125,6 +125,8 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                         &mut |_, _, _, _| Ok(()),
                         0,
                         &mut super::player_ui::RuntimePlayerUiState::default(),
+                        None,
+                        None,
                     )?,
                     expected
                 );
@@ -177,6 +179,8 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 &mut |_, _, _, _| Ok(()),
                 1000,
                 &mut super::player_ui::RuntimePlayerUiState::default(),
+                None,
+                None,
             )?;
             sent.await??;
             movement.service(
@@ -251,6 +255,8 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                     &mut |_, _, _, _| Ok(()),
                     1500,
                     &mut super::player_ui::RuntimePlayerUiState::default(),
+                    None,
+                    None,
                 )?);
             }
             sent.await??;
@@ -310,6 +316,8 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 &mut |_, _, _, _| Ok(()),
                 1750,
                 &mut super::player_ui::RuntimePlayerUiState::default(),
+                None,
+                None,
             )?);
             sent.await??;
             movement.service(
@@ -351,6 +359,8 @@ fn encrypted_remote_walk_run_stop_reaches_ecs_without_moving_active_or_unknown_u
                 &mut |_, _, _, _| Ok(()),
                 1750,
                 &mut super::player_ui::RuntimePlayerUiState::default(),
+                None,
+                None,
             )?);
             sent.await??;
             movement.service(
@@ -410,6 +420,8 @@ fn setup_dispatch_admits_encrypted_remote_passenger_snapshots() -> Result<(), Te
                     1.,
                     &mut |_, _, _, _| Ok(()),
                     &mut super::player_ui::RuntimePlayerUiState::default(),
+                    None,
+                    None,
                 )?;
             }
             sent.await??;
