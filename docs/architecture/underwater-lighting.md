@@ -46,6 +46,11 @@ and nearest-even integer rounding matter at 8-bit boundaries. Directly scaling
 RGB is observably different. Sky, water palette, fog range, and other sampled
 channels retain the selected bank's values.
 
+The depth-scaled fog value above is the working horizon color consumed by
+`0x007F0530`. The subsequent `0x007F16F0` scene-fog pass reads the undarkened
+palette color again. The final scene fog, camera clamp, expansion-map exponent,
+and underwater multiplier are described in [world-fog.md](world-fog.md).
+
 `RuntimeWorldEnvironment::resolve_liquid` runs after camera collision and the
 terrain/WMO submerged query. Normal presentation and benchmark replay both
 pass its completed frame to terrain, WMO, M2, sky, fog, and water rendering.

@@ -84,6 +84,11 @@ fn compare(sample: WorldLightSample, bytes: &[u8], line: &str) {
     }
     let f = |index| f32::from_bits(words[index]);
     let (near, far) = sample.fog_range();
+    assert_eq!(
+        sample.fog_exponent().to_bits(),
+        words[20],
+        "{line}: fog exponent"
+    );
     assert!(
         (far - f(18)).abs() < 0.0001,
         "{line}: fog far {far} != {}",
@@ -192,10 +197,11 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
         Locale::EnUs,
     )?)?;
     let lights = LightCatalog::load(&mut store)?;
-    let mut counts = [0; 3];
+    let mut counts = [0; 4];
     for line in fixture_text
         .lines()
         .chain(include_str!("../fixtures/world_weather_palette_native.txt").lines())
+        .chain(include_str!("../fixtures/world_weather_fog_native.txt").lines())
     {
         let row = line.split_ascii_whitespace().collect::<Vec<_>>();
         match row.first().copied() {
@@ -219,7 +225,23 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
                 compare(sample, &unhex(row[4])?, line);
                 counts[1] += 1;
             }
-            Some("weather") => {
+            Some("weather" | "fog-weather") => {
+                let fog_context = if row[0] == "fog-weather" {
+                    Some(
+                        solarity_asset::WorldFogContext::new(
+                            530,
+                            f32::from_bits(u32::from_str_radix(row[1], 16)?),
+                        )
+                        .ok_or("invalid native fog clip")?,
+                    )
+                } else {
+                    None
+                };
+                let row = if fog_context.is_some() {
+                    &row[1..]
+                } else {
+                    &row[..]
+                };
                 let time = row[1].parse()?;
                 let weight = f32::from_bits(u32::from_str_radix(row[2], 16)?);
                 let numerator: f32 = row[3].parse()?;
@@ -227,22 +249,24 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
                     solarity_asset::WorldLightCondition::EXTERIOR,
                     solarity_asset::WorldLightCondition::UNDERWATER,
                 ] {
-                    let sample = lights.sample(
-                        WorldLightQuery::new(
-                            if numerator == 0. { 4 } else { 5 },
-                            Vec3::new(256. - numerator, 0., 0.),
-                            time,
-                        )
-                        .with_condition(condition)
-                        .with_weather(weight),
-                    )?;
+                    let mut query = WorldLightQuery::new(
+                        if numerator == 0. { 4 } else { 5 },
+                        Vec3::new(256. - numerator, 0., 0.),
+                        time,
+                    )
+                    .with_condition(condition)
+                    .with_weather(weight);
+                    if let Some(context) = fog_context {
+                        query = query.with_fog_context(context);
+                    }
+                    let sample = lights.sample(query)?;
                     compare(sample, &unhex(row[4])?, line);
                 }
-                counts[2] += 1;
+                counts[if fog_context.is_some() { 3 } else { 2 }] += 1;
             }
             _ => {}
         }
     }
-    assert_eq!(counts, [68, 231, 392]);
+    assert_eq!(counts, [68, 231, 392, 392]);
     Ok(())
 }

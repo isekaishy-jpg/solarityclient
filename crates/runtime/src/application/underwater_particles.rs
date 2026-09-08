@@ -167,7 +167,7 @@ impl RuntimeUnderwaterParticles {
         &self,
         camera: WorldCameraFrame,
         liquids: &LiquidTypeCatalog,
-        light: solarity_asset::WorldLightSample,
+        fog: solarity_asset::WorldFogSample,
     ) -> Result<Option<UnderwaterParticleFrame<'_>>, RuntimeUnderwaterParticleError> {
         let Some(texture) = self.texture.filter(|_| !self.indices.is_empty()) else {
             return Ok(None);
@@ -181,8 +181,8 @@ impl RuntimeUnderwaterParticles {
         let fog = if definition.flags() & 16 == 0 {
             None
         } else {
-            let (start, end) = light.fog_range();
-            Some(UnderwaterParticleFog::new(start, end, light.fog_color())?)
+            let (start, end) = fog.range();
+            Some(UnderwaterParticleFog::new(start, end, fog.color())?)
         };
         Ok(Some(UnderwaterParticleFrame::new(
             camera.projection() * Mat4::from_scale(Vec3::new(1., 1., -1.)),

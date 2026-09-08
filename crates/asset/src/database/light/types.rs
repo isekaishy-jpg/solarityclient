@@ -205,6 +205,7 @@ pub struct WorldLightQuery {
     pub(super) condition: WorldLightCondition,
     pub(super) light_id_override: Option<u32>,
     pub(super) weather_blend: f32,
+    pub(super) fog_context: Option<super::WorldFogContext>,
 }
 
 impl WorldLightQuery {
@@ -218,7 +219,15 @@ impl WorldLightQuery {
             condition: WorldLightCondition::EXTERIOR,
             light_id_override: None,
             weather_blend: 0.0,
+            fog_context: None,
         }
+    }
+
+    /// Applies the native camera fog conversion to each palette before blending.
+    #[must_use]
+    pub const fn with_fog_context(mut self, context: super::WorldFogContext) -> Self {
+        self.fog_context = Some(context);
+        self
     }
 
     /// Blends the exterior/underwater precipitation bank before local overlays.
@@ -270,6 +279,8 @@ impl SkyboxBlend {
 pub struct WorldLightSample {
     pub(super) fog_near: f32,
     pub(super) fog_far: f32,
+    pub(super) fog_ratio: f32,
+    pub(super) fog_exponent: f32,
     pub(super) fog_color: Vec3,
     pub(super) ambient_color: Vec3,
     pub(super) diffuse_color: Vec3,
@@ -291,6 +302,12 @@ impl WorldLightSample {
     #[must_use]
     pub const fn fog_range(self) -> (f32, f32) {
         (self.fog_near, self.fog_far)
+    }
+
+    /// Returns the blended fog visibility exponent before the camera-liquid factor.
+    #[must_use]
+    pub const fn fog_exponent(self) -> f32 {
+        self.fog_exponent
     }
 
     /// Returns the linear fog color.

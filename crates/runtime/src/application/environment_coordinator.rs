@@ -4,8 +4,9 @@ mod weather;
 
 use glam::Vec3;
 use solarity_asset::{
-    LightCatalog, LiquidTypeCatalog, MapCatalog, WorldLightCondition, WorldLightQuery,
-    WorldLightSample, WorldLightSampleError, exterior_light_direction_at,
+    LightCatalog, LiquidTypeCatalog, MapCatalog, WorldFogContext, WorldFogSample,
+    WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
+    exterior_light_direction_at,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_systems::{
@@ -22,6 +23,9 @@ pub enum RuntimeWorldEnvironmentError {
     /// The platform CRT could not convert the authoritative realm calendar.
     #[error("world environment cannot convert the realm calendar")]
     Calendar,
+    /// The resolved camera clip could not form a fog context.
+    #[error("world environment camera fog clip is invalid")]
+    InvalidFogClip,
     /// Platform startup did not supply a usable physical-memory report.
     #[error("world environment requires a positive physical-memory report")]
     MissingPhysicalMemory,
@@ -54,6 +58,8 @@ pub struct RuntimeWorldEnvironmentFrame {
     weather_blend: f32,
     view_distance: WorldViewDistance,
     light: WorldLightSample,
+    fog_context: WorldFogContext,
+    fog: WorldFogSample,
     light_direction: Vec3,
 }
 
@@ -107,6 +113,12 @@ impl RuntimeWorldEnvironmentFrame {
     #[must_use]
     pub const fn light(self) -> WorldLightSample {
         self.light
+    }
+
+    /// Returns final camera fog shared by terrain, models, and liquid rendering.
+    #[must_use]
+    pub const fn fog(self) -> WorldFogSample {
+        self.fog
     }
 
     /// Returns stock's time-derived exterior sun direction.
@@ -247,10 +259,13 @@ impl RuntimeWorldEnvironment {
             map_id,
             self.total_physical_memory_bytes,
         ))?;
+        let fog_context = WorldFogContext::new(map_id.value(), view_distance.value())
+            .ok_or(RuntimeWorldEnvironmentError::InvalidFogClip)?;
         let weather_blend = self.weather.sample(crate::platform::client_milliseconds());
         let light = self.lights.sample(
             WorldLightQuery::new(map_id.value(), position, half_minutes)
-                .with_weather(weather_blend),
+                .with_weather(weather_blend)
+                .with_fog_context(fog_context),
         )?;
         let current = RuntimeWorldEnvironmentFrame {
             map_id: map_id.value(),
@@ -262,6 +277,8 @@ impl RuntimeWorldEnvironment {
             weather_blend,
             view_distance,
             light,
+            fog_context,
+            fog: light.final_fog(fog_context, false),
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),
         };
         self.current = Some(current);
@@ -297,12 +314,19 @@ impl RuntimeWorldEnvironment {
             self.lights.sample(
                 WorldLightQuery::new(frame.map_id, frame.position, frame.half_minutes)
                     .with_condition(WorldLightCondition::UNDERWATER)
-                    .with_weather(frame.weather_blend),
+                    .with_weather(frame.weather_blend)
+                    .with_fog_context(frame.fog_context),
             )?
         } else {
-            self.lights
-                .sample_parameter(liquid.light_id(), frame.half_minutes)?
+            self.lights.sample_parameter_with_fog(
+                liquid.light_id(),
+                frame.half_minutes,
+                frame.fog_context,
+            )?
         };
+        // 7F3230 darkens the horizon's working color before 7F0530. The later
+        // 7F16F0 scene-fog pass reads the undarkened palette color at D38BF4.
+        frame.fog = light.final_fog(frame.fog_context, submerged.liquid_type != 0);
         frame.light = light.with_liquid_depth(liquid, submerged.depth);
         Ok(frame)
     }

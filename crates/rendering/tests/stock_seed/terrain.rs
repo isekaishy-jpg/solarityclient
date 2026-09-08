@@ -25,6 +25,9 @@ use wow_wdt::{WdtFile, WdtWriter};
 
 use crate::support::{Fixture, FixtureFile};
 
+#[path = "terrain_fog.rs"]
+mod fog;
+
 /// The 145-vertex MCNK grid becomes 256 stock fan triangles with no holes.
 #[test]
 fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error>> {
@@ -337,6 +340,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(frame.m2_draw_count(), 0);
     assert_eq!(frame.ribbon_draw_count(), 0);
     assert_eq!(frame.ribbon_vertex_count(), 0);
+    fog::compare_native_fog(&mut renderer, draw)?;
     // A valid frustum can reject every resident chunk. The terrain pass must
     // still clear and present its attachments for that camera orientation.
     let empty_frame = renderer.present_terrain(scene, &[])?;

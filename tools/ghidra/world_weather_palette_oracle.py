@@ -9,8 +9,11 @@ from liquid_material_oracle import return_value
 from world_light_sampling_oracle import tables, bits
 
 
-def capture():
+def capture(far_clip=None):
     u = n.emulator()
+    if far_clip is not None:
+        n.write_words(u, 0xd38acc, 1)
+        n.write_words(u, 0xd38b40, bits(far_clip))
     parameter, output, weather, local = [n.HEAP + i * 0x1000 for i in range(4)]
     data = {i: tables(i) for i in range(1, 5)}
 
@@ -47,7 +50,8 @@ def capture():
                     n.invoke(u, 0x7ec220, [local, weather, bits(weight)])
                     u.reg_write(UC_X86_REG_EDI, output)
                     n.invoke(u, 0x7ed4c0, [local, bits(numerator / 256.)])
-                rows.append(f'weather {time} {bits(weight):08x} {numerator} ' + bytes(u.mem_read(output, 156)).hex())
+                prefix = 'weather' if far_clip is None else f'fog-weather {bits(far_clip):08x}'
+                rows.append(f'{prefix} {time} {bits(weight):08x} {numerator} ' + bytes(u.mem_read(output, 156)).hex())
     return '\n'.join(rows) + '\n'
 
 
@@ -55,6 +59,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--exe', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--far-clip', type=float)
     args = parser.parse_args()
     n.initialize(args.exe)
-    Path(args.output).write_text(capture(), encoding='utf-8')
+    Path(args.output).write_text(capture(args.far_clip), encoding='utf-8')

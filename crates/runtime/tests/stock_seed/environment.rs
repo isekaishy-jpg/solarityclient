@@ -55,7 +55,12 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             colors.extend(band((id - 1) * 18 + channel + 1, color));
         }
         for channel in 0..6 {
-            floats.extend(band((id - 1) * 6 + channel + 1, 0));
+            let value = match channel {
+                0 => 18_000_f32,
+                1 => 0.5,
+                _ => 0.,
+            };
+            floats.extend(band((id - 1) * 6 + channel + 1, value.to_bits()));
         }
     }
     let mut liquids = Vec::new();
@@ -101,6 +106,8 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             .synchronize(Some(&world), Some(&clock))?
             .ok_or("environment")?;
         assert_eq!(frame.light().ambient_color(), Vec3::splat(exterior / 255.));
+        assert_eq!(frame.fog().range(), (388.5, 777.));
+        assert_eq!(frame.fog().exponent(), 4.25);
         assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
         for (depth, expected) in [
             (-0.001, underwater),
@@ -129,6 +136,9 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
                 resolved.light().fog_color(),
                 resolved.light().ambient_color()
             );
+            assert_eq!(resolved.fog().range(), (388.5, 777.));
+            assert_eq!(resolved.fog().exponent(), 8.5);
+            assert_eq!(resolved.fog().color(), Vec3::splat(underwater / 255.));
             assert_eq!(resolved.position(), position);
             assert_eq!(resolved.view_distance(), frame.view_distance());
             assert_eq!(environment.current(), Some(frame));
@@ -143,6 +153,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             &liquids,
         )?;
         assert_eq!(resolved.light().ambient_color(), Vec3::splat(240. / 255.));
+        assert_eq!(resolved.fog().exponent(), 8.5);
         assert!(
             environment
                 .resolve_liquid(
@@ -194,6 +205,19 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             &liquids,
         )?;
         assert_eq!(underwater.light().ambient_color(), Vec3::splat(32. / 255.));
+        assert_eq!(
+            frame.fog().range(),
+            if map < 530 {
+                (250., 500.)
+            } else {
+                (388.5, 777.)
+            }
+        );
+        assert_eq!(frame.fog().exponent(), if map < 530 { 1. } else { 4.25 });
+        assert_eq!(
+            underwater.fog().exponent(),
+            if map < 530 { 1. } else { 8.5 }
+        );
         assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
     }
     let world = ActiveWorld::enter(WorldBootstrap::new(

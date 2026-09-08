@@ -1218,7 +1218,7 @@ impl ClientServices {
             .prepare(&mut self.renderer, environment)?;
         let underwater_particles =
             self.underwater_particles
-                .frame(camera, &self.liquids, environment.light())?;
+                .frame(camera, &self.liquids, environment.fog())?;
         let Some(frame) = self.terrain_frame.as_mut() else {
             return self.present_glue_frame();
         };

@@ -726,14 +726,16 @@ impl TerrainFrame {
             liquid_time_ms,
             celestial_resources.colors,
         );
+        let fog = environment.fog();
+        let (fog_start, fog_end) = fog.range();
+        let fog_parameters = Vec4::new(fog_start, fog_end, 0.0, fog.exponent());
         let terrain_scene = TerrainSceneUniform::new(
             camera.view_projection(),
             light.ambient_color(),
             light.diffuse_color(),
             environment.light_direction(),
-        );
-        let (fog_start, fog_end) = light.fog_range();
-        let fog_parameters = Vec4::new(fog_start, fog_end, 0.0, 1.0);
+        )
+        .with_fog(camera.view(), fog_parameters, fog.color());
         let world_model_scene = WorldModelSceneUniform::new(
             camera.view_projection(),
             camera.camera().position(),
@@ -750,7 +752,7 @@ impl TerrainFrame {
             light.diffuse_color(),
             environment.light_direction(),
             fog_parameters,
-            light.fog_color(),
+            fog.color(),
             [M2LocalLightState::disabled(); 4],
         )
         .with_specular_enabled(specular_enabled);
@@ -758,7 +760,7 @@ impl TerrainFrame {
             renderer,
             frustum,
             environment.world_model_emissive(),
-            light.fog_color(),
+            fog.color(),
         )?;
         profile.mark("WMO packets");
         self.m2
@@ -780,7 +782,7 @@ impl TerrainFrame {
             } else {
                 solarity_rendering::M2TransparentPass::Two
             },
-            light.fog_color(),
+            fog.color(),
             local_animation_time_ms,
             solarity_rendering::M2CameraEffectScale::EXTERNAL_CAMERA,
             random,

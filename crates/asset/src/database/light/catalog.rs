@@ -106,7 +106,20 @@ impl LightCatalog {
         parameter_id: u32,
         half_minutes: u32,
     ) -> Result<WorldLightSample, WorldLightSampleError> {
-        super::sampling::sample_parameter(self, parameter_id, half_minutes)
+        super::sampling::sample_parameter(self, parameter_id, half_minutes, None)
+    }
+
+    /// Samples a direct liquid LightParams override with camera fog conversion.
+    ///
+    /// # Errors
+    /// Returns an error for an absent parameter or any required band.
+    pub fn sample_parameter_with_fog(
+        &self,
+        parameter_id: u32,
+        half_minutes: u32,
+        fog: super::WorldFogContext,
+    ) -> Result<WorldLightSample, WorldLightSampleError> {
+        super::sampling::sample_parameter(self, parameter_id, half_minutes, Some(fog))
     }
 
     /// Samples an M2 palette directly from LightParams and its first two bands.

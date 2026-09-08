@@ -9,11 +9,14 @@ pub struct TerrainSceneUniform {
     ambient_color: Vec3,
     diffuse_color: Vec3,
     sun_direction: Vec3,
+    view_depth: Vec4,
+    fog_parameters: Vec4,
+    fog_color: Vec4,
 }
 
 impl TerrainSceneUniform {
     /// Byte size of the exact std140 scene block consumed by both stages.
-    pub const BYTE_SIZE: usize = 112;
+    pub const BYTE_SIZE: usize = 160;
 
     /// Captures one camera/light snapshot without introducing lighting defaults.
     ///
@@ -30,7 +33,20 @@ impl TerrainSceneUniform {
             ambient_color,
             diffuse_color,
             sun_direction,
+            view_depth: Vec4::ZERO,
+            fog_parameters: Vec4::ZERO,
+            fog_color: Vec4::ZERO,
         }
+    }
+
+    /// Enables the original Terrain.bls vertex fog using view-space depth.
+    /// `parameters` contains start, end, an unused component, and exponent.
+    #[must_use]
+    pub fn with_fog(mut self, view: Mat4, parameters: Vec4, color: Vec3) -> Self {
+        self.view_depth = view.row(2);
+        self.fog_parameters = parameters;
+        self.fog_color = color.extend(1.0);
+        self
     }
 
     /// Serializes the shader block without relying on host layout or glam ABI.
@@ -42,6 +58,9 @@ impl TerrainSceneUniform {
         write_vec4(&mut bytes, &mut offset, self.ambient_color.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.diffuse_color.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.sun_direction.extend(0.0));
+        write_vec4(&mut bytes, &mut offset, self.view_depth);
+        write_vec4(&mut bytes, &mut offset, self.fog_parameters);
+        write_vec4(&mut bytes, &mut offset, self.fog_color);
         debug_assert_eq!(offset, Self::BYTE_SIZE);
         bytes
     }

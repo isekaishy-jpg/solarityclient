@@ -1,0 +1,27 @@
+# Original D3D9 Terrain.bls/Terrain0.bls: depth exponent RGBA.
+# SHADERS_VERTEX_VS_2_0_TERRAIN.BLS sha256=3bedcdfa3f183363739338cbac8abd698210cc253b10a3330f1c5778e517186c
+# SHADERS_PIXEL_PS_2_0_TERRAIN0.BLS sha256=b0d5a7365afa70ef426d7e913e4ad8d331236166f2d268b8f04c5a57d51540ed
+terrain 0 1 00ff0000
+terrain 0 1.5 00ff0000
+terrain 0 2 00ff0000
+terrain 0 7 00ff0000
+terrain 5 1 08d01800
+terrain 5 1.5 0bbd2200
+terrain 5 2 0eac2a00
+terrain 5 7 1c5a5300
+terrain 10 1 10a03000
+terrain 10 1.5 15843e00
+terrain 10 2 18704800
+terrain 10 7 20415f00
+terrain 15 1 18704800
+terrain 15 1.5 1c585400
+terrain 15 2 1e4c5a00
+terrain 15 7 20406000
+terrain 20 1 20406000
+terrain 20 1.5 20406000
+terrain 20 2 20406000
+terrain 20 7 20406000
+terrain 25 1 20406000
+terrain 25 1.5 20406000
+terrain 25 2 20406000
+terrain 25 7 20406000

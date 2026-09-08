@@ -12,12 +12,16 @@ layout(location = 0) in vec3 in_normal;
 layout(location = 1) in vec2 in_texture_coordinates;
 layout(location = 2) in vec2 in_atlas_coordinates;
 layout(location = 3) in vec3 in_vertex_light;
+layout(location = 4) in float in_fog_visibility;
 
 layout(set = 0, binding = 0) uniform TerrainScene {
     mat4 view_projection;
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 sun_direction;
+    vec4 view_depth;
+    vec4 fog_parameters;
+    vec4 fog_color;
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D material_atlas;
@@ -52,5 +56,6 @@ void main() {
     float diffuse_amount = max(dot(normal, sun), 0.0);
     vec3 lighting = scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse_amount;
     float baked_shadow = 1.0 - material.a;
-    out_color = vec4(ground * lighting * in_vertex_light * baked_shadow, 1.0);
+    vec3 lit = ground * lighting * in_vertex_light * baked_shadow;
+    out_color = vec4(mix(scene.fog_color.rgb, lit, in_fog_visibility), 1.0);
 }

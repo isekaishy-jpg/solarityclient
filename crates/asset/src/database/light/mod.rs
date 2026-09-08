@@ -7,12 +7,14 @@
 mod catalog;
 mod darkening;
 mod direction;
+mod fog;
 mod sampling;
 mod status;
 mod types;
 
 pub use catalog::LightCatalog;
 pub use direction::{exterior_light_direction, exterior_light_direction_at};
+pub use fog::{WorldFogContext, WorldFogSample};
 pub use status::WorldLightSampleError;
 pub use types::{
     LightDefinition, LightParameter, LightSkybox, ModelLightColors, SkyboxBlend,

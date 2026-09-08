@@ -157,7 +157,8 @@ fn accumulate(
                 condition: query.condition.value(),
             },
         )?;
-        let mut palette = parameter_palette(catalog, parameter, query.half_minutes)?;
+        let mut palette =
+            parameter_palette(catalog, parameter, query.half_minutes, query.fog_context)?;
         if query.weather_blend > 0.0 && query.condition.index() < 2 {
             let condition = query.condition.index() + 2;
             let parameter = catalog
@@ -168,7 +169,7 @@ fn accumulate(
                     condition: condition as u8,
                 })?;
             palette.weather(
-                parameter_palette(catalog, parameter, query.half_minutes)?,
+                parameter_palette(catalog, parameter, query.half_minutes, query.fog_context)?,
                 query.weather_blend.min(1.0),
             );
         }
@@ -191,11 +192,12 @@ pub(super) fn sample_parameter(
     catalog: &LightCatalog,
     parameter_id: u32,
     half_minutes: u32,
+    fog_context: Option<super::WorldFogContext>,
 ) -> Result<WorldLightSample, WorldLightSampleError> {
     let parameter = catalog
         .parameter(parameter_id)
         .ok_or(WorldLightSampleError::MissingParameterId { parameter_id })?;
-    Ok(parameter_palette(catalog, parameter, half_minutes)?.finish())
+    Ok(parameter_palette(catalog, parameter, half_minutes, fog_context)?.finish())
 }
 
 /// Joins the same bands for world volumes and a liquid's direct parameter.
@@ -203,6 +205,7 @@ fn parameter_palette(
     catalog: &LightCatalog,
     parameter: &LightParameter,
     half_minutes: u32,
+    fog_context: Option<super::WorldFogContext>,
 ) -> Result<Accumulator, WorldLightSampleError> {
     let parameter_id = parameter.id();
     let color_first = parameter_id * COLOR_BAND_COUNT - (COLOR_BAND_COUNT - 1);
@@ -214,6 +217,11 @@ fn parameter_palette(
     }
     output.fog_end = sample_float_at(catalog, float_first, half_minutes)?.max(10.0);
     output.fog_ratio = sample_float_at(catalog, float_first + 1, half_minutes)?.clamp(-1.0, 1.0);
+    output.fog_exponent = 1.0;
+    if let Some(context) = fog_context {
+        (output.fog_end, output.fog_ratio, output.fog_exponent) =
+            context.palette(output.fog_end, output.fog_ratio);
+    }
     for (index, value) in output.sky_floats.iter_mut().enumerate() {
         *value = sample_float_at(catalog, float_first + 2 + index as u32, half_minutes)?;
     }
@@ -397,6 +405,7 @@ struct Accumulator {
     colors: [u32; 18],
     fog_end: f32,
     fog_ratio: f32,
+    fog_exponent: f32,
     highlight_sky: f32,
     glow: f32,
     sky_floats: [f32; 4],
@@ -425,6 +434,7 @@ impl Accumulator {
         }
         self.fog_end = overlay_float(self.fog_end, other.fog_end, weight);
         self.fog_ratio = overlay_float(self.fog_ratio, other.fog_ratio, weight);
+        self.fog_exponent = overlay_float(self.fog_exponent, other.fog_exponent, weight);
         self.glow = overlay_float(self.glow, other.glow, weight);
         self.sky_floats[1] = overlay_float(self.sky_floats[1], other.sky_floats[1], weight);
         for (current, next) in self.liquid_alphas.iter_mut().zip(other.liquid_alphas) {
@@ -439,6 +449,7 @@ impl Accumulator {
         }
         self.fog_end = overlay_float(self.fog_end, local.fog_end, weight);
         self.fog_ratio = overlay_float(self.fog_ratio, local.fog_ratio, weight);
+        self.fog_exponent = overlay_float(self.fog_exponent, local.fog_exponent, weight);
         self.highlight_sky = overlay_float(self.highlight_sky, local.highlight_sky, weight);
         self.glow = overlay_float(self.glow, local.glow, weight);
         // Only cloud density is locally blended. Native retains global bands
@@ -458,6 +469,8 @@ impl Accumulator {
         WorldLightSample {
             fog_near: fog_far * self.fog_ratio,
             fog_far,
+            fog_ratio: self.fog_ratio,
+            fog_exponent: self.fog_exponent,
             fog_color: color_vector(self.colors[FOG_COLOR_CHANNEL as usize]),
             ambient_color: color_vector(self.colors[AMBIENT_COLOR_CHANNEL as usize]),
             diffuse_color: color_vector(self.colors[DIRECT_COLOR_CHANNEL as usize]),

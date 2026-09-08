@@ -54,13 +54,17 @@ pub(in crate::application) fn liquid_environment(
         light.diffuse_color(),
         light.specular_color(),
     );
-    let (near, far) = light.fog_range();
+    let fog = environment.fog();
+    let (near, far) = fog.range();
     // 8A38B0 supplies (far - depth)/(far - near). Our RH view has negative
     // forward Z, so its coefficient is positive, matching the shader's view Z.
     let inverse = 1.0 / (far - near);
     (
         lighting,
-        LiquidFog::new(Vec3::new(inverse, far * inverse, 1.0), light.fog_color()),
+        LiquidFog::new(
+            Vec3::new(inverse, far * inverse, fog.exponent()),
+            fog.color(),
+        ),
     )
 }
 

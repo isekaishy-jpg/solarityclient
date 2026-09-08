@@ -45,10 +45,11 @@ pub use database::{
     SpellEffectDefinition, SpellItemEnchantment, SpellNameCatalog, SpellVisualEffectCatalog,
     SpellVisualEffectDefinition, TaxiPathNode, TransportAnimationNode, TransportCatalog,
     TransportPhysicsRecord, TransportRotationNode, UiSoundLookup, UiSoundLookupCatalog, WdbcHeader,
-    WdbcTable, WorldChunkSoundKey, WorldLightCondition, WorldLightQuery, WorldLightSample,
-    WorldLightSampleError, WorldModelAreaCatalog, WorldModelAreaDefinition, WorldModelAreaKey,
-    WorldStateZoneSound, ZoneIntroMusicDefinition, ZoneMusicDefinition, ZoneSoundCatalog,
-    ZoneSoundOverrideCatalog, exterior_light_direction, exterior_light_direction_at,
+    WdbcTable, WorldChunkSoundKey, WorldFogContext, WorldFogSample, WorldLightCondition,
+    WorldLightQuery, WorldLightSample, WorldLightSampleError, WorldModelAreaCatalog,
+    WorldModelAreaDefinition, WorldModelAreaKey, WorldStateZoneSound, ZoneIntroMusicDefinition,
+    ZoneMusicDefinition, ZoneSoundCatalog, ZoneSoundOverrideCatalog, exterior_light_direction,
+    exterior_light_direction_at,
 };
 pub use database::{WeatherCatalog, WeatherDefinition};
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
