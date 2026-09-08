@@ -275,7 +275,9 @@ impl UiRenderQuad {
         self.colors
     }
 
-    pub(super) const fn source(&self) -> &UiRenderSource {
+    /// Returns the quad's image or native composition source for residency planning.
+    #[must_use]
+    pub const fn source(&self) -> &UiRenderSource {
         &self.source
     }
 

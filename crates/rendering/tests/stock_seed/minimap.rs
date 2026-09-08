@@ -19,6 +19,134 @@ fn near(actual: [f32; 2], expected: [f32; 2]) {
     );
 }
 
+fn native_floats<const N: usize>(hex: &str) -> Result<[f32; N], Box<dyn Error>> {
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>()?;
+    let values = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_le_bytes(*bytes))
+        .collect::<Vec<_>>();
+    Ok(values.try_into().map_err(|_| "invalid native vector")?)
+}
+
+#[test]
+fn corpse_marker_matches_native_filter_atlas_and_vertex_captures() -> Result<(), Box<dyn Error>> {
+    let icon = AssetPath::new("ObjectIcons.blp")?;
+    let arrow = AssetPath::new("CorpseArrow.blp")?;
+    let mut atlas = [[0.0; 2]; 4];
+    let mut filters = 0;
+    let mut geometries = 0;
+    // Native vertices use BL, BR, TL, TR; retained UI uses TL, BL, TR, BR.
+    let order = [2, 0, 3, 1];
+    for line in include_str!("../fixtures/minimap_corpse_native.txt").lines() {
+        let row = line.split_ascii_whitespace().collect::<Vec<_>>();
+        match row.first().copied() {
+            Some("dimensions") => {
+                let icon = native_floats::<12>(row[1])?;
+                let arrow = native_floats::<12>(row[2])?;
+                assert!(((icon[3] - icon[0]) * 1280.0 - 16.0).abs() < 0.00001);
+                assert!(((arrow[3] - arrow[0]) * 1280.0 - 57.6).abs() < 0.00001);
+                assert!((native_floats::<1>(row[3])?[0] * 1280.0 * 0.8 - 56.32).abs() < 0.00001);
+            }
+            Some("atlas") => {
+                let values = native_floats::<8>(row[1])?;
+                atlas = order.map(|index| [values[index * 2], values[index * 2 + 1]]);
+            }
+            Some("filter") => {
+                let indoor = row[1] == "1";
+                let zoom: usize = row[2].parse()?;
+                let radius = if indoor {
+                    [150.0, 120.0, 90.0, 60.0, 40.0, 25.0][zoom]
+                } else {
+                    [14.0, 12.0, 10.0, 8.0, 6.0, 4.0][zoom] * 0.5 * 33.333_332
+                };
+                let [px, py, x, y] = native_floats::<4>(row[3])?;
+                let view = MinimapView::new([px, py], radius, 0.0, [0.0, 0.0, 140.0, 140.0])?;
+                let quad = view.corpse_quad(4, [x, y], 1.0, icon.clone(), arrow.clone());
+                if row[4] == "0" && row[5] == "0" {
+                    assert!(quad.is_none(), "{line}");
+                } else {
+                    let quad = quad.ok_or("missing native corpse")?;
+                    if row[4] == "1" {
+                        assert_eq!(
+                            quad.source(),
+                            &UiRenderSource::Texture(icon.clone()),
+                            "{line}"
+                        );
+                        assert_eq!(quad.texture_coordinates(), atlas);
+                    } else {
+                        assert_eq!(
+                            quad.source(),
+                            &UiRenderSource::Texture(arrow.clone()),
+                            "{line}"
+                        );
+                        assert_eq!(row[9], "2");
+                        let angle = native_floats::<1>(row[8])?[0];
+                        let (sin, cos) = f64::from(angle - FRAC_PI_4).sin_cos();
+                        near(
+                            quad.texture_coordinates()[0],
+                            [0.5 + sin as f32, 0.5 - cos as f32],
+                        );
+                    }
+                }
+                filters += 1;
+            }
+            Some("inside" | "outside") => {
+                let [scale, width, height, heading, x, y] = native_floats::<6>(row[1])?;
+                let view = MinimapView::new(
+                    [10.0, 20.0],
+                    100.0,
+                    heading,
+                    [11.0, 17.0, 11.0 + width * scale, 17.0 + height * scale],
+                )?;
+                let quad = view
+                    .corpse_quad(4, [x, y], scale, icon.clone(), arrow.clone())
+                    .ok_or("missing corpse")?;
+                let outside = quad.source() == &UiRenderSource::Texture(arrow.clone());
+                // The executable fixture captures both isolated draw blocks;
+                // compare the one actually admitted by the native list owner.
+                if outside != (row[0] == "outside") {
+                    continue;
+                }
+                let vertices = native_floats::<12>(row[2])?;
+                let expected = order.map(|i| {
+                    [
+                        vertices[i * 3] * 1280.0 + 11.0,
+                        vertices[i * 3 + 1] * 1280.0 + 17.0,
+                    ]
+                });
+                for (actual, expected) in quad.positions().into_iter().zip(expected) {
+                    near(actual, expected);
+                }
+                if outside {
+                    let uv = native_floats::<8>(row[3])?;
+                    for (actual, index) in quad.texture_coordinates().into_iter().zip(order) {
+                        near(actual, [uv[index * 2], uv[index * 2 + 1]]);
+                    }
+                } else {
+                    assert_eq!(quad.texture_coordinates(), atlas);
+                }
+                geometries += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(filters, 120);
+    assert_eq!(geometries, 54);
+    let view = MinimapView::new([0.0; 2], 100.0, 0.0, [0.0, 0.0, 140.0, 140.0])?;
+    for position in [[0.0; 2], [f32::NAN, 1.0], [1.0, f32::INFINITY]] {
+        assert!(
+            view.corpse_quad(4, position, 1.0, icon.clone(), arrow.clone())
+                .is_none()
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn minimap_projects_native_axes_and_shares_exact_terrain_edges() -> Result<(), Box<dyn Error>> {
     let bounds = [0.0, 0.0, 100.0, 100.0];

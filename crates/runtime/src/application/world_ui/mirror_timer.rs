@@ -34,8 +34,9 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
-            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::CorpseLocation { corpse, marker, event } => {
                 self.world.set_corpse_state(corpse);
+                self.manager.minimap_state().set_corpse(marker.map(f32::from_bits));
                 if let Some(event) = event {
                     self.dirty = true;
                     self.manager.dispatch_event(event, &UiEventPayload::empty())?;

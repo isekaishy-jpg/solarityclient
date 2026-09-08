@@ -11,6 +11,7 @@ struct MinimapState {
     indoors: Cell<bool>,
     revision: Cell<u64>,
     mask: RefCell<Option<AssetPath>>,
+    corpse: Cell<[u32; 2]>,
 }
 
 /// Native minimap scene controls, independent of any particular Lua widget.
@@ -24,6 +25,7 @@ impl Default for UiMinimapState {
             indoors: Cell::new(false),
             revision: Cell::new(0),
             mask: RefCell::new(None),
+            corpse: Cell::new([0; 2]),
         }))
     }
 }
@@ -44,7 +46,7 @@ impl UiMinimapState {
         self.0.indoors.get()
     }
 
-    /// Changes when the scene's zoom, selected mode, or mask changes.
+    /// Changes when the scene's zoom, selected mode, mask, or corpse changes.
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.0.revision.get()
@@ -54,6 +56,20 @@ impl UiMinimapState {
     #[must_use]
     pub fn mask(&self) -> Option<AssetPath> {
         self.0.mask.borrow().clone()
+    }
+
+    /// Native retained corpse world X/Y. Both zero means no marker.
+    #[must_use]
+    pub fn corpse(&self) -> [f32; 2] {
+        self.0.corpse.get().map(f32::from_bits)
+    }
+
+    /// Publishes the resolved corpse or transport position from world gameplay.
+    /// Raw-bit comparison keeps malformed non-finite input from dirtying every frame.
+    pub fn set_corpse(&self, position: [f32; 2]) {
+        if self.0.corpse.replace(position.map(f32::to_bits)) != position.map(f32::to_bits) {
+            self.bump_revision();
+        }
     }
 
     pub(crate) fn set_mask(&self, path: AssetPath) {

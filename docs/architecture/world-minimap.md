@@ -82,6 +82,45 @@ unit-radius UV corners around `(0.5, 0.5)`, offset by facing minus map heading
 minus pi/4. Its dimensions do not expand with rotation. Stock `Minimap.lua`
 sets both dimensions to 40; the archive arrow itself is 32 by 32.
 
+The corpse marker comes from the retained position written by `0x007F4990`,
+including the resolved transport pose. Its `(0, 0)` sentinel clears the marker.
+`0x007F44A0` compares two-dimensional distance divided by the active radius
+against the f32 value `0.8`, retaining its differences and square root in x87.
+An inside corpse uses ObjectIcons atlas index 8. Initialization at `0x00583651`
+gives exact UV edges `(145, 1)` through `(162, 18)` in the stock 256px image.
+The constructor at `0x0057DCA0` gives a 16-unit icon, a 57.6-unit edge-arrow quad,
+and a 56.32-unit edge-arrow offset, all multiplied by inherited widget scale.
+These constants follow the native normalized screen-height conversion to the
+768-unit UI, and remain fixed when a widget changes dimensions.
+
+Outside corpses select `Interface/Minimap/Rotating-MinimapCorpseArrow` through
+the native special index 2 and remain eligible at any distance. `0x004F5130`
+supplies the world bearing, including its near-cardinal epsilon branches;
+`0x0057D860` rotates both the position and sampling for a rotating map. Inside
+projection at `0x00582706` uses width for both axes and its local Y origin, even
+on rectangular widgets. Both marker forms precede the authored player texture,
+retain the viewport scissor and inherited opacity, and use ordinary asynchronous
+archive residency. They do not borrow the terrain's alpha mask. Non-finite input
+is retained by the state boundary but omitted from GPU submission.
+
+Gameplay publishes marker changes even when the reclaim-range latch does not
+change, so a moving transport updates without a fabricated Lua range event.
+`UiMinimapState` stores raw position bits and changes its revision only on a
+different snapshot. Range prompts and their events keep their separate corpse
+recovery state. World-entry and ghost transitions clear both through the native
+corpse owner. Generic marker hover/tooltip selection, other marker categories,
+and world-map area projection remain separate unfinished minimap/map providers.
+
+`minimap_corpse_oracle.py` captures 230 samples from the fingerprinted executable:
+constructor dimensions, the atlas, 120 list/filter cases, and both marker draw
+blocks for 54 geometry inputs. Projection tests compare all filter cases and
+each admitted geometry against those captures, with rotated maps, rectangular
+widgets, translated bounds and inherited scaling. The runtime GPU test checks
+the atlas icon, fixed-offset edge arrow, retained movement, and removal after
+clear. A transport test checks marker-only notification and unchanged-frame
+suppression; the full stock FrameXML death/reclaim test checks shared marker
+publication and clearing alongside the recovery popup.
+
 Projection tests cover cardinal directions, center/scale changes, exact shared
 edges, marker UVs, and retained corner updates. GPU captures verify four differently
 colored tiles at zero, pi/4, and pi/2 headings, with a fixed circular mask, no

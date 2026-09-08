@@ -59,6 +59,8 @@ pub(super) struct RuntimeMinimapScene {
     textures: HashMap<AssetPath, BlpTextureHandle>,
     failed: HashSet<AssetPath>,
     default_mask: AssetPath,
+    corpse_icon: AssetPath,
+    corpse_arrow: AssetPath,
     slots: Vec<MinimapSlot>,
     /// Hidden frames can disappear from a full UI topology rebuild. Their GPU
     /// storage remains owned by the same stable Lua object on its next reveal.
@@ -91,6 +93,8 @@ impl RuntimeMinimapScene {
             textures: HashMap::new(),
             failed: HashSet::new(),
             default_mask: AssetPath::new("Textures\\MinimapMask.blp")?,
+            corpse_icon: AssetPath::new("Interface/Minimap/ObjectIcons.blp")?,
+            corpse_arrow: AssetPath::new("Interface/Minimap/Rotating-MinimapCorpseArrow.blp")?,
             slots: Vec::new(),
             dormant_frames: HashMap::new(),
             combined: Vec::new(),
@@ -193,7 +197,7 @@ impl RuntimeMinimapScene {
             if !slot_changed && !self.request_deferred {
                 continue;
             }
-            let mut quads = Vec::with_capacity(5);
+            let mut quads = Vec::with_capacity(6);
             if let (Some(map), Some(world)) = (map, world)
                 && slot.opacity > 0.0
             {
@@ -244,6 +248,19 @@ impl RuntimeMinimapScene {
                                         .with_clip(clip),
                                     );
                                 }
+                            }
+                        }
+                        if let Some(corpse) = view.corpse_quad(
+                            slot.object_index,
+                            state.corpse(),
+                            slot.widget.effective_scale(),
+                            self.corpse_icon.clone(),
+                            self.corpse_arrow.clone(),
+                        ) && let UiRenderSource::Texture(path) = corpse.source()
+                        {
+                            requested.push(path.clone());
+                            if self.textures.contains_key(path) {
+                                quads.push(corpse.with_opacity(slot.opacity).with_clip(clip));
                             }
                         }
                         let player = slot.widget.player_texture();

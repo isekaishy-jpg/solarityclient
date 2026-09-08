@@ -240,8 +240,15 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
                         )?;
                     }
                 }
-                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                RuntimePlayerUiNotification::CorpseLocation {
+                    corpse,
+                    marker,
+                    event,
+                } => {
                     world.set_corpse_state(corpse);
+                    manager
+                        .minimap_state()
+                        .set_corpse(marker.map(f32::from_bits));
                     if let Some(event) = event {
                         manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
                     }
@@ -445,8 +452,15 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         );
         while let Some(notification) = state.take_notification() {
             match notification {
-                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                RuntimePlayerUiNotification::CorpseLocation {
+                    corpse,
+                    marker,
+                    event,
+                } => {
                     world.set_corpse_state(corpse);
+                    manager
+                        .minimap_state()
+                        .set_corpse(marker.map(f32::from_bits));
                     if let Some(event) = event {
                         manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
                     }
@@ -526,8 +540,15 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
      -> Result<(), Box<dyn std::error::Error>> {
         while let Some(notification) = state.take_notification() {
             match notification {
-                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                RuntimePlayerUiNotification::CorpseLocation {
+                    corpse,
+                    marker,
+                    event,
+                } => {
                     world.set_corpse_state(corpse);
+                    manager
+                        .minimap_state()
+                        .set_corpse(marker.map(f32::from_bits));
                     if let Some(event) = event {
                         manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
                     }
@@ -604,6 +625,7 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
     state.advance_corpse(&active);
     publish(&mut state, &mut manager)?;
     manager.update(0.1)?;
+    assert_eq!(manager.minimap_state().corpse(), [position.x, position.y]);
     assert_eq!(manager.region_is_shown("StaticPopup1"), Some(true));
     click_button(&mut manager, "StaticPopup1Button1")?;
     assert!(
@@ -652,6 +674,7 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
     );
     state.receive_corpse(&active, solarity_network::WorldPlayerCorpseUpdate::Missing);
     publish(&mut state, &mut manager)?;
+    assert_eq!(manager.minimap_state().corpse(), [0.0; 2]);
     assert_eq!(manager.region_is_shown("StaticPopup1"), Some(false));
     assert_eq!(manager.take_callback_failure(), None);
     Ok(())
@@ -717,8 +740,9 @@ RuntimePlayerUiNotification::UnitDeath(snapshot) => super::super::environmental_
                     world.set_resurrection_offer(offer);
                     if let Some(name) = name { manager.dispatch_event("RESURRECT_REQUEST", &solarity_ui::UiEventPayload::new([solarity_ui::UiEventArgument::String(name)]))?; }
                 }
-                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                RuntimePlayerUiNotification::CorpseLocation { corpse, marker, event } => {
                     world.set_corpse_state(corpse);
+                    manager.minimap_state().set_corpse(marker.map(f32::from_bits));
                     if let Some(event) = event { manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?; }
                 }
                 RuntimePlayerUiNotification::CorpseRecovery(corpse) => {

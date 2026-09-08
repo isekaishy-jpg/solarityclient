@@ -343,6 +343,60 @@ fn ghost_field_notifications_preserve_native_corpse_event_order() -> Result<(), 
 }
 
 #[test]
+fn moving_transport_publishes_corpse_marker_without_a_range_event() -> Result<(), TestError> {
+    use super::super::player_ui::{RuntimePlayerUiNotification, RuntimePlayerUiState};
+    let mut world = world(true, true, 0, Vec3::new(110., 220., 330.))?;
+    let transport = 0x1fc0000000000009;
+    world.create_object(
+        transport,
+        ObjectKind::GameObject,
+        Some(WorldTransform::new(Vec3::ZERO, 0.)),
+        [(4, 10), (5, 1f32.to_bits())],
+    )?;
+    solarity_systems::project_object_fields(&mut world, transport, [(4, 10), (5, 1f32.to_bits())])?;
+    world.update_game_object_movement(transport, solarity_ecs::GameObjectMovement::new(0, None))?;
+    let mut state = RuntimePlayerUiState::default();
+    state.corpse = reset((0, 0), true);
+    state.corpse.transport = 9;
+    let minimap = solarity_ui::UiMinimapState::default();
+    for x in [100., 110.] {
+        world.update_game_object_animated_pose(
+            transport,
+            solarity_ecs::GameObjectAnimatedPose::new(
+                Mat4::from_translation(Vec3::new(x, 200., 300.)),
+                0,
+            ),
+        )?;
+        state.advance_corpse(&world);
+        let RuntimePlayerUiNotification::CorpseLocation { marker, event, .. } = state
+            .take_notification()
+            .ok_or("moving marker notification")?
+        else {
+            return Err("unexpected notification".into());
+        };
+        assert_eq!(event, None, "the player stays within reclaim range");
+        minimap.set_corpse(marker.map(f32::from_bits));
+        assert_eq!(minimap.corpse(), [x + 10., 220.]);
+        assert!(state.take_notification().is_none());
+        state.advance_corpse(&world);
+        assert!(
+            state.take_notification().is_none(),
+            "unchanged transport must not dirty the UI"
+        );
+    }
+    state.corpse_world_entry(&world);
+    let RuntimePlayerUiNotification::CorpseLocation { marker, .. } = state
+        .take_notification()
+        .ok_or("clear marker notification")?
+    else {
+        return Err("unexpected notification".into());
+    };
+    minimap.set_corpse(marker.map(f32::from_bits));
+    assert_eq!(minimap.corpse(), [0.; 2]);
+    Ok(())
+}
+
+#[test]
 fn map_replacement_keeps_corpse_deadline_and_transport_fallback_until_next_entry()
 -> Result<(), TestError> {
     let mut old = world(true, true, 0, Vec3::ZERO)?;

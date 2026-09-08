@@ -64,6 +64,7 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
     CorpseRecovery(solarity_ui::UiPlayerCorpseState),
     CorpseLocation {
         corpse: solarity_ui::UiPlayerCorpseState,
+        marker: [u32; 2],
         event: Option<&'static str>,
     },
     DeathAction(solarity_ui::UiPlayerDeathAction),
@@ -191,6 +192,10 @@ impl RuntimePlayerUiState {
         self.corpse.ui
     }
 
+    pub(in crate::application) fn corpse_marker(&self) -> [f32; 2] {
+        self.corpse.marker
+    }
+
     pub(super) fn corpse_world_entry(&mut self, world: &solarity_ecs::ActiveWorld) {
         let ghost = RuntimePlayerHealthSnapshot::from_world(world).is_some_and(|v| v.ghost);
         let event = self.corpse.clear(ghost, self.arena);
@@ -211,10 +216,14 @@ impl RuntimePlayerUiState {
 
     pub(in crate::application) fn advance_corpse(&mut self, world: &solarity_ecs::ActiveWorld) {
         let before = self.corpse.ui;
+        let marker = self.corpse.marker.map(f32::to_bits);
         let event = self
             .corpse
             .advance(world, self.arena, super::player_corpse::seconds());
-        if before != self.corpse.ui || event.is_some() {
+        if before != self.corpse.ui
+            || marker != self.corpse.marker.map(f32::to_bits)
+            || event.is_some()
+        {
             self.publish_corpse(event);
         }
     }
@@ -223,6 +232,7 @@ impl RuntimePlayerUiState {
         self.pending
             .push_back(RuntimePlayerUiNotification::CorpseLocation {
                 corpse: self.corpse.ui,
+                marker: self.corpse.marker.map(f32::to_bits),
                 event,
             });
     }

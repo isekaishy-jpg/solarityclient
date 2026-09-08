@@ -32,6 +32,14 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     let slots = dbc(&[], 3, b"\0");
     let red = blp(&[0xffff0000; 16], 4);
     let green = blp(&[0xff00ff00; 16], 4);
+    let yellow = blp(&[0xffffff00; 16], 4);
+    let mut icon_pixels = vec![0xff0000ff; 256 * 256];
+    for y in 1..18 {
+        for x in 145..162 {
+            icon_pixels[y * 256 + x] = 0xff00ffff;
+        }
+    }
+    let icon = blp(&icon_pixels, 256);
     let mask_pixels = (0..64)
         .flat_map(|y| {
             (0..64).map(move |x| {
@@ -61,6 +69,8 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         ("Textures/Minimap/c.blp", &red), ("Textures/Minimap/d.blp", &red),
         ("Textures/MinimapMask.blp", &mask),
         ("Interface/Minimap/MinimapArrow.blp", &green),
+        ("Interface/Minimap/ObjectIcons.blp", &icon),
+        ("Interface/Minimap/Rotating-MinimapCorpseArrow.blp", &yellow),
         ("Interface/FrameXML/FrameXML.toc", b"Map.xml\n"),
         ("Interface/FrameXML/Map.xml", br#"<Ui>
 <Frame name="Backdrop"><Size x="768" y="768"/><Anchors><Anchor point="CENTER"/></Anchors>
@@ -149,6 +159,74 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         "map mask must preserve the background"
     );
 
+    let minimap_state = manager.minimap_state();
+    minimap_state.set_corpse([40.0, 0.0]);
+    wait_ready(
+        &mut scene,
+        &mut renderer,
+        &cpu,
+        &manager,
+        &ui,
+        &map,
+        1,
+        world,
+    )?;
+    assert_eq!(scene.textures.len(), 7);
+    assert_eq!(scene.draws(&ui).len(), 8);
+    let pixels = capture(&mut renderer, scene.draws(&ui))?;
+    assert_eq!(
+        pixel(&pixels, 48, 38),
+        [0, 255, 255],
+        "native atlas corpse icon"
+    );
+    let corpse_mesh = scene.slots[0].frame.as_ref().ok_or("corpse frame")?.mesh();
+    let revision = minimap_state.revision();
+    minimap_state.set_corpse([40.0, 0.0]);
+    assert_eq!(minimap_state.revision(), revision);
+    minimap_state.set_corpse([35.0, 0.0]);
+    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 1, Some(&map), world)?;
+    assert_eq!(
+        scene.slots[0]
+            .frame
+            .as_ref()
+            .ok_or("moving corpse frame")?
+            .mesh(),
+        corpse_mesh
+    );
+    minimap_state.set_corpse([4000.0, 0.0]);
+    wait_ready(
+        &mut scene,
+        &mut renderer,
+        &cpu,
+        &manager,
+        &ui,
+        &map,
+        1,
+        world,
+    )?;
+    assert_eq!(scene.textures.len(), 8);
+    assert_eq!(scene.draws(&ui).len(), 8);
+    let pixels = capture(&mut renderer, scene.draws(&ui))?;
+    assert_eq!(
+        pixel(&pixels, 48, 41),
+        [255, 255, 0],
+        "fixed-offset corpse edge arrow"
+    );
+    minimap_state.set_corpse([0.0; 2]);
+    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 1, Some(&map), world)?;
+    assert_eq!(scene.draws(&ui).len(), 7);
+    let pixels = capture(&mut renderer, scene.draws(&ui))?;
+    assert_eq!(
+        pixel(&pixels, 48, 41),
+        [255, 0, 0],
+        "cleared marker removes retained draw"
+    );
+    let retained_mesh = scene.slots[0]
+        .frame
+        .as_ref()
+        .ok_or("cleared corpse frame")?
+        .mesh();
+
     manager.invoke_binding("ROTATE", true)?;
     ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
     let moved = Some(WorldTransform::new(
@@ -164,7 +242,7 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
             .mesh(),
         retained_mesh
     );
-    assert_eq!(scene.textures.len(), 6);
+    assert_eq!(scene.textures.len(), 8);
     manager.invoke_binding("HIDE", true)?;
     ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
     scene.synchronize(&mut renderer, &cpu, &manager, &ui, 2, Some(&map), moved)?;

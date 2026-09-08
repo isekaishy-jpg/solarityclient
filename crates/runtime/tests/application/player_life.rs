@@ -360,6 +360,7 @@ fn player_life_lua_observes_timer_and_final_ghost_before_each_event() -> Result<
             RuntimePlayerUiNotification::CorpseLocation {
                 corpse,
                 event: None,
+                ..
             } => ui.set_corpse_state(corpse),
             RuntimePlayerUiNotification::Resurrection(_) => {}
             _ => panic!("life event"),

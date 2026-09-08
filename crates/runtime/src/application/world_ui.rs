@@ -214,6 +214,9 @@ impl RuntimeWorldUi {
         self.world.set_release_timer(player_ui.release_timer());
         self.world.set_resurrection_offer(player_ui.offer());
         self.world.set_corpse_state(player_ui.corpse());
+        self.manager
+            .minimap_state()
+            .set_corpse(player_ui.corpse_marker());
         player_ui
             .resurrection()
             .publish(&self.world, &self.spell_names);
@@ -296,6 +299,9 @@ impl RuntimeWorldUi {
         }
         let mut manager =
             FrameManager::start_shared(assets.clone(), environment, cvar_values, addon_catalog)?;
+        manager
+            .minimap_state()
+            .set_corpse(player_ui.corpse_marker());
         let mut startup_errors = Vec::new();
         manager.with_suppressed_sound_entries(|manager| {
             for event in [

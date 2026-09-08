@@ -35,6 +35,7 @@ pub struct UiMinimapPresentation {
     opacity: f32,
     player_texture: AssetPath,
     player_size: [f32; 2],
+    effective_scale: f32,
 }
 
 impl UiMinimapPresentation {
@@ -66,6 +67,12 @@ impl UiMinimapPresentation {
     #[must_use]
     pub const fn player_size(&self) -> [f32; 2] {
         self.player_size
+    }
+
+    /// Returns inherited UI scaling for native fixed-size map markers.
+    #[must_use]
+    pub const fn effective_scale(&self) -> f32 {
+        self.effective_scale
     }
 }
 
@@ -507,6 +514,7 @@ impl UiPresentationPlan {
             player_size: minimap
                 .player_size
                 .map(|value| value * region.effective_scale() as f32),
+            effective_scale: region.effective_scale() as f32,
         })
     }
 

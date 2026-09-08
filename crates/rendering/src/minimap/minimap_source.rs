@@ -19,6 +19,7 @@ pub struct MinimapView {
     bounds: [f32; 4],
     screen_center: [f32; 2],
     scale: [f32; 2],
+    radius: f32,
     heading: f32,
     sin: f32,
     cos: f32,
@@ -67,6 +68,7 @@ impl MinimapView {
             bounds,
             screen_center,
             scale,
+            radius,
             heading,
             sin,
             cos,
@@ -171,6 +173,87 @@ impl MinimapView {
             .with_positions(positions)
     }
 
+    /// Projects the corpse icon or its fixed-size edge arrow. The zero vector
+    /// is stock's cleared marker sentinel (7F44A0); no player health gate applies.
+    /// The supplied scale is the owning widget's inherited UI scale.
+    #[must_use]
+    pub fn corpse_quad(
+        &self,
+        object_index: usize,
+        corpse: [f32; 2],
+        effective_scale: f32,
+        icon: AssetPath,
+        arrow: AssetPath,
+    ) -> Option<UiRenderQuad> {
+        if corpse == [0.0; 2]
+            || !corpse.into_iter().all(f32::is_finite)
+            || !effective_scale.is_finite()
+            || effective_scale <= 0.0
+        {
+            return None;
+        }
+        let [north, west] =
+            std::array::from_fn(|i| f64::from(corpse[i]) - f64::from(self.world_center[i]));
+        // The native list owner retains differences and sqrt in x87 until
+        // comparing against the single-precision 0.8 constant.
+        let outside =
+            (west * west + north * north).sqrt() / f64::from(self.radius) > f64::from(0.8_f32);
+        let (center, dimensions, coordinates, image) = if outside {
+            let facing = corpse_direction(north, west);
+            let (sin, cos) = f64::from(facing).sin_cos();
+            let offset = 56.32_f64 * f64::from(effective_scale);
+            let relative = [-(sin as f32 as f64) * offset, (cos as f32 as f64) * offset];
+            let center = self.rotate_marker(relative);
+            let angle = facing - self.heading - std::f32::consts::FRAC_PI_4;
+            let (sin, cos) = f64::from(angle).sin_cos();
+            let (sin, cos) = (sin as f32, cos as f32);
+            let coordinates = [
+                [0.5 + sin, 0.5 - cos],
+                [0.5 - cos, 0.5 - sin],
+                [0.5 + cos, 0.5 + sin],
+                [0.5 - sin, 0.5 + cos],
+            ];
+            (center, 57.6 * effective_scale, coordinates, arrow)
+        } else {
+            // 582706 uses width for BOTH axes, even on a rectangular widget.
+            // Its local Y origin is also half-width before heading rotation.
+            let half_width = f64::from(self.bounds[2] - self.bounds[0]) * 0.5;
+            let half_height = f64::from(self.bounds[3] - self.bounds[1]) * 0.5;
+            let center = self.rotate_marker([
+                -west * half_width / f64::from(self.radius),
+                half_width - half_height + north * half_width / f64::from(self.radius),
+            ]);
+            // Constructor 583651: icon 8 in the 256px ObjectIcons atlas,
+            // 18px stride, 1px top/left inset. Retain its exact native UVs.
+            let coordinates = [
+                [145.0 / 256.0, 1.0 / 256.0],
+                [145.0 / 256.0, 18.0 / 256.0],
+                [162.0 / 256.0, 1.0 / 256.0],
+                [162.0 / 256.0, 18.0 / 256.0],
+            ];
+            (center, 16.0 * effective_scale, coordinates, icon)
+        };
+        let half = dimensions * 0.5;
+        let positions = [[-half, half], [-half, -half], [half, half], [half, -half]]
+            .map(|[x, y]| [center[0] + x, center[1] + y]);
+        if !positions.into_iter().flatten().all(f32::is_finite) {
+            return None;
+        }
+        Some(
+            self.image_quad(object_index, image, coordinates)
+                .with_positions(positions),
+        )
+    }
+
+    fn rotate_marker(&self, [x, y]: [f64; 2]) -> [f32; 2] {
+        [
+            (f64::from(self.screen_center[0]) + x * f64::from(self.cos) + y * f64::from(self.sin))
+                as f32,
+            (f64::from(self.screen_center[1]) + y * f64::from(self.cos) - x * f64::from(self.sin))
+                as f32,
+        ]
+    }
+
     fn image_quad(
         &self,
         object_index: usize,
@@ -190,6 +273,26 @@ impl MinimapView {
             [[1.0; 4]; 4],
         )
         .with_clip(self.bounds)
+    }
+}
+
+/// 4F5130 snaps nearly cardinal bearings before its x87 FPATAN.
+fn corpse_direction(north: f64, west: f64) -> f32 {
+    let epsilon = f64::from(2.0 * f32::EPSILON);
+    if north.abs() < epsilon {
+        if west < 0.0 {
+            (1.5 * f64::from(std::f32::consts::PI)) as f32
+        } else {
+            std::f32::consts::FRAC_PI_2
+        }
+    } else if west.abs() < epsilon {
+        if north < 0.0 {
+            std::f32::consts::PI
+        } else {
+            0.0
+        }
+    } else {
+        west.atan2(north) as f32
     }
 }
 
