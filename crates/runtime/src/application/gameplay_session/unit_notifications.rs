@@ -90,6 +90,9 @@ impl UnitFieldMirrors {
             };
             let touched = |word| create || fields.iter().any(|field| field.index() == word);
             if touched(24) && previous.health != current.health {
+                if (previous.health as i32) > 0 && (current.health as i32) <= 0 {
+                    world.set_unit_attack_target(guid, 0);
+                }
                 if let Some(entity) = world.entity_by_guid(guid) {
                     world.storage_mut().add_component(
                         entity,

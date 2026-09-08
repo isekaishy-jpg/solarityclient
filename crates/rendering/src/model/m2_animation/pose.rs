@@ -50,6 +50,9 @@ pub struct M2BonePoseOverrides<'a> {
     /// Additional local transforms indexed by the model's semantic key bones.
     /// Missing key bones are ignored, as in the native model setter.
     pub bone_transforms: &'a [(u16, Mat4)],
+    /// Sequence clocks rooted at semantic bones, inherited by descendants.
+    /// The nearest root wins; later entries replace earlier entries at a root.
+    pub bone_sequences: &'a [(u16, M2AnimationClock)],
 }
 
 /// Precomputed camera transforms shared by every billboard bone in a pose.
@@ -153,6 +156,7 @@ impl M2BonePose {
             model_oriented_billboard_bones,
             None,
             &[],
+            &[],
         )
     }
 
@@ -178,6 +182,7 @@ impl M2BonePose {
                 model_oriented_billboard_bones,
                 finger_pose,
                 bone_transforms: &[],
+                bone_sequences: &[],
             },
         )
     }
@@ -209,6 +214,7 @@ impl M2BonePose {
             overrides.model_oriented_billboard_bones,
             overrides.finger_pose,
             overrides.bone_transforms,
+            overrides.bone_sequences,
         )
     }
 
@@ -227,6 +233,7 @@ impl M2BonePose {
             model_oriented_billboard_bones,
             None,
             &[],
+            &[],
         )?;
         Ok(pose)
     }
@@ -241,8 +248,12 @@ impl M2BonePose {
         model_oriented_billboard_bones: &[bool],
         finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
         bone_transforms: &[(u16, Mat4)],
+        bone_sequences: &[(u16, M2AnimationClock)],
     ) -> Result<(), M2BonePoseError> {
         let clock = clock.resolve(animations)?;
+        for (_, clock) in bone_sequences {
+            clock.resolve(animations)?;
+        }
         for (key_bone, transform) in bone_transforms {
             if !finite_matrix(*transform) {
                 return Err(M2BonePoseError::InvalidBoneTransform {
@@ -270,6 +281,8 @@ impl M2BonePose {
 
         self.local.resize(animations.bones().len(), Mat4::IDENTITY);
         for (index, bone) in animations.bones().iter().enumerate() {
+            let clock = bone_sequence_clock(animations, index, bone_sequences)
+                .map_or(Ok(clock), |clock| clock.resolve(animations))?;
             let finger_pose =
                 finger_pose.filter(|pose| pose.hands.includes(finger_pose_hand(animations, index)));
             let translation = sample_vec3(
@@ -416,7 +429,32 @@ fn track_clock<T>(
                     .get(pose.clock.sequence())
                     .is_some_and(|channel| !channel.timestamps_ms().is_empty())
         })
-        .map_or(clock, |pose| pose.clock)
+        .map_or(clock, |pose| pose.clock.inherit_secondary(clock))
+}
+
+/// `82F426..82F77F` inherits clocks along the authored parent tree.
+fn bone_sequence_clock(
+    animations: &M2AnimationSet,
+    mut index: usize,
+    sequences: &[(u16, M2AnimationClock)],
+) -> Option<M2AnimationClock> {
+    if sequences.is_empty() {
+        return None;
+    }
+    for _ in 0..animations.bones().len() {
+        if let Some((_, clock)) = sequences.iter().rev().find(|(key, _)| {
+            animations
+                .key_bone_lookup()
+                .get(usize::from(*key))
+                .copied()
+                .flatten()
+                .is_some_and(|bone| usize::from(bone) == index)
+        }) {
+            return Some(*clock);
+        }
+        index = usize::from(animations.bones().get(index)?.parent()?);
+    }
+    None
 }
 
 /// Finds the nearest named finger ancestor in stock's key-bone domain.

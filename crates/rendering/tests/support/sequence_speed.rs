@@ -3,6 +3,48 @@
 use super::{M2ModelAnimationMode, M2ModelSequenceTimer, M2SequenceStartPhase};
 
 #[test]
+fn wound_secondary_timer_initialization_matches_native() -> Result<(), std::num::ParseIntError> {
+    let mut count = 0;
+    for line in include_str!("../fixtures/unit_wound_native.timers.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        let values = words[..6]
+            .iter()
+            .map(|value| value.parse::<u32>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let timer = M2ModelSequenceTimer::with_timing(
+            values[0],
+            1,
+            0,
+            M2ModelAnimationMode::Forward,
+            1.0,
+            values[1],
+            0,
+            if values[2] == 0 {
+                M2SequenceStartPhase::BeforeSceneUpdate
+            } else {
+                M2SequenceStartPhase::DuringSceneUpdate
+            },
+        );
+        assert_eq!(timer.start_time_ms(), values[3]);
+        assert_eq!(timer.end_time_ms(), values[4]);
+        assert_eq!(values[1].wrapping_add(values[0]), values[5]);
+        let inverse = if values[0] == 0 {
+            1.0
+        } else {
+            1.0 / values[0] as f32
+        };
+        assert_eq!(inverse.to_bits(), u32::from_str_radix(words[6], 16)?);
+        assert_eq!(0.75_f32.to_bits(), u32::from_str_radix(words[7], 16)?);
+        count += 1;
+    }
+    assert_eq!(count, 20);
+    Ok(())
+}
+
+#[test]
 fn sequence_seek_matches_original_client() -> Result<(), Box<dyn std::error::Error>> {
     let mut cases = 0;
     for line in include_str!("../fixtures/native_model_sequence_seek.txt")

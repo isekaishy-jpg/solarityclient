@@ -13,6 +13,53 @@ const POSES: &[u16] = &[
 ];
 
 #[test]
+fn wounds_retain_packet_attack_context_and_primary_motion() -> Result<(), Box<dyn Error>> {
+    let owner = owner_with_input(&[0, 4, 8, 9, 10], input(0))?;
+    let mut random = CrtRand::new();
+    owner.advance_scene(100.0, &mut random)?;
+    owner.request_environmental_animation(9, 88, None);
+    owner.set_input(input(0));
+    owner.advance_scene(101.0, &mut random)?;
+    let blend = owner.playback.borrow().script_blend.ok_or("combat wound")?;
+    assert_eq!(
+        owner.model.animations().sequences()[blend.sequence()].animation_id(),
+        9
+    );
+    assert_eq!(owner.playback.borrow().animation_id, 0);
+    owner.set_input(input(0).with_movement(movement(0x101, None)));
+    owner.advance_scene(102.0, &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 4);
+    assert_eq!(
+        owner.playback.borrow().script_blend,
+        Some(blend),
+        "movement must retain the active strong secondary blend"
+    );
+    owner.request_environmental_animation(10, 0, None);
+    owner.advance_scene(103.0, &mut random)?;
+    let critical = owner
+        .playback
+        .borrow()
+        .script_blend
+        .ok_or("critical wound")?;
+    assert_eq!(
+        owner.model.animations().sequences()[critical.sequence()].animation_id(),
+        10
+    );
+    assert_eq!(critical.weight(103), 0.75);
+    owner.request_environmental_animation(9, 0, Some(8));
+    owner.advance_scene(104.0, &mut random)?;
+    assert_eq!(
+        owner.playback.borrow().script_blend,
+        Some(critical),
+        "the template gate must reject the new wound"
+    );
+    owner.advance_scene(critical.end_time_ms() as f32 + 1.0, &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 4);
+    assert!(owner.playback.borrow().script_blend.is_none());
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
 fn stock_drowning_kit_and_health_death_complete_and_return_to_current_movement()
 -> Result<(), Box<dyn Error>> {
@@ -54,15 +101,33 @@ fn stock_drowning_kit_and_health_death_complete_and_return_to_current_movement()
                 owner.advance_scene(101.0, &mut random)?;
                 assert_eq!(
                     owner.behavior(&owner.playback.borrow()),
-                    9,
+                    ordinary,
                     "{path}, flags={flags}"
                 );
-                let end = owner
-                    .playback
-                    .borrow()
-                    .script_timer
-                    .ok_or("wound timer")?
-                    .end_time_ms();
+                let blend = if flags == 0 {
+                    assert!(owner.upper_body_wound.get().is_none());
+                    owner
+                        .playback
+                        .borrow()
+                        .script_blend
+                        .ok_or("root wound blend")?
+                } else {
+                    let (key, blend) =
+                        owner.upper_body_wound.get().ok_or("swimming wound blend")?;
+                    assert_eq!(key, 4);
+                    blend
+                };
+                let wound = model.animations().sequences()[blend.sequence()].animation_id();
+                assert_eq!(
+                    animations
+                        .definition(u32::from(wound))
+                        .ok_or("wound definition")?
+                        .behavior_id(),
+                    8,
+                    "{path}"
+                );
+                assert_eq!(blend.weight(101), 0.75);
+                let end = blend.end_time_ms();
                 owner.advance_scene(end as f32 + 1.0, &mut random)?;
                 assert_eq!(
                     owner.behavior(&owner.playback.borrow()),
@@ -71,10 +136,16 @@ fn stock_drowning_kit_and_health_death_complete_and_return_to_current_movement()
                 );
                 let mut dying = input(0).with_movement(movement(flags, None));
                 dying.alive = false;
+                owner.request_visual_kit_animation(animation);
+                owner.advance_scene(end as f32 + 99.0, &mut random)?;
                 owner.set_input(dying);
                 let mut now = end as f32 + 100.0;
                 owner.advance_scene(now, &mut random)?;
                 let entry = owner.behavior(&owner.playback.borrow());
+                assert!(
+                    owner.upper_body_wound.get().is_none(),
+                    "{path}: death must clear the upper-body wound"
+                );
                 assert!(matches!(entry, 1 | 131 | 466), "{path}: {entry}");
                 if flags != 0 {
                     assert_eq!(entry, 131, "{path}");

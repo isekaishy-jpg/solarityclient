@@ -47,6 +47,7 @@ fn environmental_packets_select_live_unit_kits_and_reject_replaced_units()
             },
             Some("Effect target".into()),
             None,
+            None,
             1000,
         );
         assert!(ui.take_notification().is_none());

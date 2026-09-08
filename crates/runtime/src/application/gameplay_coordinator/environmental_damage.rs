@@ -46,6 +46,8 @@ pub(in crate::application) struct RuntimeEnvironmentalDamageSnapshot {
     pub local_player: bool,
     pub timestamp_ms: u32,
     pub clock: RuntimeCombatLogClock,
+    pub attack_target_guid: u64,
+    pub template_flags: Option<u32>,
 }
 
 impl RuntimeEnvironmentalDamageSnapshot {
@@ -81,6 +83,8 @@ impl RuntimeEnvironmentalDamageSnapshot {
             local_player: packet.guid == local_guid,
             timestamp_ms,
             clock,
+            attack_target_guid: world.unit_attack_target(packet.guid),
+            template_flags: None,
         };
         let vitals = world
             .storage()

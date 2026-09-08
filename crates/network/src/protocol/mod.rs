@@ -20,6 +20,7 @@ mod movement;
 mod movement_message;
 mod movement_spline;
 mod remote_movement;
+mod unit_attack;
 
 pub use remote_movement::{
     MonsterMove, MonsterMovePath, MonsterMoveTransport, MovementPacketError, RemoteMovement,
@@ -67,6 +68,7 @@ pub use object_update::{
 };
 pub use player_control::{WorldClientControlUpdate, WorldPlayerControlPacketError};
 pub use server_packet::WorldServerPacket;
+pub use unit_attack::{WorldUnitAttack, WorldUnitAttackPacketError};
 pub use world_entry::{
     CharacterLoginRejection, CharacterLoginRejectionReason, WorldEntryPacketError, WorldLocation,
 };

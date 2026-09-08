@@ -47,6 +47,7 @@ pub use combat::{
     is_player_guid,
 };
 pub use combat::{EnvironmentalDamageKind, predict_unit_health};
+pub use movement::{UnitWoundAnimation, UnitWoundAnimationInput, resolve_unit_wound_animation};
 
 pub use effect::{UnitBreathEnvironment, UnitBreathState, UnitWaterEffect, UnitWaterSprayInput};
 pub use effect::{

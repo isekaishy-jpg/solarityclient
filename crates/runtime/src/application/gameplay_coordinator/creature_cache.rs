@@ -60,6 +60,16 @@ impl CreatureTemplateCache {
             .map_or(0, |template| template.flags())
     }
 
+    /// Preserve absence separately from a zero flag word at packet admission.
+    pub(super) fn bound_flags(&self, world: &ActiveWorld, guid: u64) -> Option<u32> {
+        let identity = world.object_identity(guid)?;
+        let template = self.template(identity)?;
+        world
+            .object_presentation(guid)
+            .filter(|presentation| presentation.entry_id() == template.entry())
+            .map(|_| template.flags())
+    }
+
     pub(super) fn receive(&mut self, response: CreatureQueryResponse) {
         let entry = response.entry();
         let template = match response {

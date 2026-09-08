@@ -4,12 +4,14 @@
 //! and `UnitCombatLog_C.cpp`. It stores authoritative client state but does not
 //! execute combat rules.
 
+mod unit_attack;
 mod unit_c;
 mod unit_flags;
 mod unit_presentation;
 mod unit_stats;
 mod unit_vitals;
 
+pub use unit_attack::UnitAttackTarget;
 pub use unit_c::UnitIdentity;
 pub use unit_flags::UnitFlags;
 pub use unit_presentation::{UnitAnimationTier, UnitPresentation, UnitSheathState};

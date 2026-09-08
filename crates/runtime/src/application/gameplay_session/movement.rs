@@ -17,6 +17,9 @@ pub(super) fn install(
     update: &ObjectMovementUpdate,
     receipt_ms: u32,
 ) -> Result<(), GameplayUpdateError> {
+    if let Some(target) = update.attacking_target() {
+        world.set_unit_attack_target(guid, target);
+    }
     let Some(mut movement) = movement_state(update) else {
         return Ok(());
     };

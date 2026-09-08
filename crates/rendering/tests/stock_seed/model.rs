@@ -16,6 +16,8 @@ mod sequence_blend;
 mod sequence_timer;
 #[path = "model/track_sampling.rs"]
 mod track_sampling;
+#[path = "model/wound.rs"]
+mod wound;
 
 use std::error::Error;
 use std::io::Cursor;

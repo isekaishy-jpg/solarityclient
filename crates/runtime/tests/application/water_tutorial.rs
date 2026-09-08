@@ -224,6 +224,7 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
             },
             Some("WaterTutorialTest".into()),
             None,
+            None,
             1000,
         );
         while let Some(notification) = state.take_notification() {
@@ -458,6 +459,7 @@ RuntimePlayerUiNotification::UnitDeath(snapshot) => super::super::environmental_
                 RuntimePlayerUiNotification::Health {snapshot,health_changed,maximum_changed} => super::dispatch_health(&mut manager,&world,snapshot,health_changed,maximum_changed)?,
                 RuntimePlayerUiNotification::TutorialFlags(flags) => tutorials.replace_flags(&flags),
                 RuntimePlayerUiNotification::MirrorTimer(timer) => super::dispatch_notification(&mut manager,&world,&names,timer)?,
+                RuntimePlayerUiNotification::Attack(started) => { manager.dispatch_event(if started { "PLAYER_ENTER_COMBAT" } else { "PLAYER_LEAVE_COMBAT" }, &solarity_ui::UiEventPayload::empty())?; }
             }
         }
         assert_eq!(manager.localized_text("LOG")?.as_deref(),Some("mirror:BREATH;mirror:BREATH;tutorial:29:nil:nil;mirror:BREATH;mirror:EXHAUSTION;tutorial:27:nil:nil;"));

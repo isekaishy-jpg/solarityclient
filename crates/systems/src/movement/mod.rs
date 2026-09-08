@@ -22,6 +22,7 @@ mod stance;
 mod swimming;
 mod transport;
 mod unit_animation;
+mod unit_wound;
 
 pub use airborne::{
     MovementFallAdvance, MovementFallAdvanceError, MovementFallAdvancePolicy,
@@ -85,3 +86,4 @@ pub use unit_animation::{
     resolve_unit_movement_animation_completion, resolve_unit_turn_animation,
     unit_movement_is_airborne,
 };
+pub use unit_wound::{UnitWoundAnimation, UnitWoundAnimationInput, resolve_unit_wound_animation};

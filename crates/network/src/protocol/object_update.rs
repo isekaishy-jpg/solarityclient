@@ -92,6 +92,7 @@ pub struct ObjectMovementUpdate {
     position_transport: Option<ObjectPositionTransport>,
     packed_rotation: Option<u64>,
     transport_progress_ms: Option<u32>,
+    attacking_target: Option<u64>,
 }
 
 /// Non-living passenger position carried by `UPDATEFLAG_POSITION`.
@@ -106,6 +107,13 @@ pub struct ObjectPositionTransport {
 }
 
 impl ObjectMovementUpdate {
+    /// Create blocks always replace the attack GUID, using zero when flag 4
+    /// is absent. Ordinary MovementInfo updates do not carry this owner state.
+    #[must_use]
+    pub const fn attacking_target(&self) -> Option<u64> {
+        self.attacking_target
+    }
+
     /// Returns the path clock carried by `UPDATEFLAG_TRANSPORT`, including zero.
     #[must_use]
     pub const fn transport_progress_ms(&self) -> Option<u32> {
@@ -514,9 +522,11 @@ impl<'a> UpdateCursor<'a> {
                 position_transport: None,
                 packed_rotation: None,
                 transport_progress_ms: None,
+                attacking_target: None,
             }
         };
         movement.update_flags = update_flags;
+        movement.attacking_target = Some(0);
         if update_flags & (UPDATE_FLAG_LIVING | UPDATE_FLAG_POSITION) == UPDATE_FLAG_POSITION {
             let guid = self.read_packed_guid("position transport GUID is truncated")?;
             movement.transport_guid = Some(guid);
@@ -541,7 +551,8 @@ impl<'a> UpdateCursor<'a> {
             self.skip(4, "movement low GUID value is truncated")?;
         }
         if update_flags & UPDATE_FLAG_ATTACKING_TARGET != 0 {
-            self.read_packed_guid("attacking-target GUID is truncated")?;
+            movement.attacking_target =
+                Some(self.read_packed_guid("attacking-target GUID is truncated")?);
         }
         if update_flags & UPDATE_FLAG_TRANSPORT != 0 {
             movement.transport_progress_ms =
@@ -638,6 +649,7 @@ impl<'a> UpdateCursor<'a> {
             position_transport: None,
             packed_rotation: None,
             transport_progress_ms: None,
+            attacking_target: None,
         })
     }
 

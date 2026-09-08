@@ -2275,6 +2275,10 @@ impl M2Frame {
                 }
             }
             let clock = advance.clock;
+            let bone_sequences = placement
+                .unit_animation
+                .as_ref()
+                .and_then(|animation| animation.bone_sequences(clock, animation_time_ms as u32));
             let finger_pose_hands = held_item_finger_pose(&self.requested_items, owner);
             let finger_pose = finger_pose_hands.and_then(|hands| {
                 source
@@ -2306,6 +2310,9 @@ impl M2Frame {
                     model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                     finger_pose,
                     bone_transforms,
+                    bone_sequences: bone_sequences
+                        .as_ref()
+                        .map_or(&[], |sequences| sequences.as_slice()),
                 },
             )?;
             let bone_pose = &self.bone_pose_scratch;

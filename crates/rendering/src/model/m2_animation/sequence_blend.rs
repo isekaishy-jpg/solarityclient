@@ -9,9 +9,22 @@ pub struct M2ModelSequenceBlend {
     timer: M2ModelSequenceTimer,
     end_ms: u32,
     inverse_duration: f32,
+    amplitude: f32,
 }
 
 impl M2ModelSequenceBlend {
+    /// Returns the authored sequence occupying the secondary slot.
+    #[must_use]
+    pub const fn sequence(self) -> usize {
+        self.sequence
+    }
+
+    /// Returns the wrapping scene deadline for the secondary contribution.
+    #[must_use]
+    pub const fn end_time_ms(self) -> u32 {
+        self.end_ms
+    }
+
     /// Copies the old timer when `0x00826C40` starts a new automatic blend.
     ///
     /// The envelope starts at the current scene tick, even when the callback
@@ -32,6 +45,22 @@ impl M2ModelSequenceBlend {
             } else {
                 1.0 / duration_ms as f32
             },
+            amplitude: 1.0,
+        }
+    }
+
+    /// `826DD0` installs a wound in the secondary slot at 75% strength.
+    /// Its envelope lasts one authored clip, independently of cycle count.
+    #[must_use]
+    pub fn wound(
+        sequence: usize,
+        timer: M2ModelSequenceTimer,
+        scene_time_ms: u32,
+        duration_ms: u32,
+    ) -> Self {
+        Self {
+            amplitude: 0.75,
+            ..Self::new(sequence, timer, scene_time_ms, duration_ms)
         }
     }
 
@@ -43,7 +72,7 @@ impl M2ModelSequenceBlend {
             return 0.0;
         }
         let fraction = (remaining as f32 * self.inverse_duration).clamp(0.0, 1.0);
-        (3.0 - (fraction + fraction)) * fraction * fraction
+        (3.0 - (fraction + fraction)) * fraction * fraction * self.amplitude
     }
 
     /// Pauses the secondary pose while retaining the original blend envelope.

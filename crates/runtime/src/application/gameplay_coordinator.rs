@@ -18,6 +18,9 @@ mod game_object_template_tests;
 mod creature_template_tests;
 
 #[cfg(test)]
+#[path = "../../tests/application/unit_attack.rs"]
+mod unit_attack_tests;
+#[cfg(test)]
 #[path = "../../tests/application/unit_death_log.rs"]
 mod unit_death_log_tests;
 
@@ -121,6 +124,9 @@ pub enum RuntimeGameplayError {
     /// A server-authored environmental impact was malformed.
     #[error(transparent)]
     EnvironmentalDamage(#[from] solarity_network::WorldEnvironmentalDamagePacketError),
+    /// An attack start/stop notification was malformed.
+    #[error(transparent)]
+    UnitAttack(#[from] solarity_network::WorldUnitAttackPacketError),
     /// A native unit-control or local stand-state packet was malformed.
     #[error(transparent)]
     PlayerControl(#[from] solarity_network::WorldPlayerControlPacketError),
@@ -251,11 +257,13 @@ impl RuntimeGameplayCoordinator {
                         .object_identity(damage.guid)
                         .and_then(|identity| creature_templates.name(identity))
                 };
+                let template_flags = creature_templates.bound_flags(active, damage.guid);
                 player_ui.receive_environmental_damage(
                     gameplay.world_mut(),
                     damage,
                     name,
                     self.factions.as_deref(),
+                    template_flags,
                     crate::platform::client_milliseconds(),
                 );
                 continue;
@@ -382,11 +390,14 @@ impl RuntimeGameplayCoordinator {
                                         .object_identity(damage.guid)
                                         .and_then(|identity| self.creature_templates.name(identity))
                                 };
+                                let template_flags =
+                                    self.creature_templates.bound_flags(world, damage.guid);
                                 self.player_ui.receive_environmental_damage(
                                     world,
                                     damage,
                                     name,
                                     self.factions.as_deref(),
+                                    template_flags,
                                     crate::platform::client_milliseconds(),
                                 );
                                 return Ok(false);
@@ -1053,7 +1064,7 @@ fn dispatch_setup_packet<S>(
         );
         return Ok(());
     }
-    if apply_world_state_packet(gameplay.world_mut(), &packet)? {
+    if apply_state_packet(gameplay.world_mut(), &packet, player_ui)? {
         return Ok(());
     }
     if let Some(update) = packet.client_control_update()? {
@@ -1141,7 +1152,7 @@ fn dispatch_world_packet(
             path_distance_tolerance,
         ));
     }
-    if apply_world_state_packet(world, &packet)? {
+    if apply_state_packet(world, &packet, player_ui)? {
         return Ok(false);
     }
     if let Some(update) = packet.client_control_update()? {
@@ -1194,10 +1205,15 @@ fn dispatch_world_packet(
     Ok(false)
 }
 
-fn apply_world_state_packet(
+fn apply_state_packet(
     world: &mut ActiveWorld,
     packet: &WorldServerPacket,
+    player_ui: &mut player_ui::RuntimePlayerUiState,
 ) -> Result<bool, RuntimeGameplayError> {
+    if let Some(attack) = packet.unit_attack()? {
+        player_ui.receive_attack(world, attack);
+        return Ok(true);
+    }
     let Some(update) = packet.world_state_update()? else {
         return Ok(false);
     };

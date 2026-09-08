@@ -96,6 +96,7 @@ Hit:SetFontObject(Hit:GetFontObject());TEXT=Hit:GetText();ALPHA=tostring(Hit:Get
             },
             Some("WaterTest".into()),
             None,
+            None,
             1000,
         );
         while let Some(notification) = state.take_notification() {
@@ -199,7 +200,7 @@ if event=='COMBAT_LOG_EVENT' then LOG=Capture(...);HEALTH_AT_LOG=tostring(UnitHe
             let packet=reader.receive_packet().await?;
             assert_eq!(packet.name(),Some("SMSG_ENVIRONMENTALDAMAGELOG"));
             let packet=packet.environmental_damage()?.ok_or("damage packet")?;
-            state.receive_environmental_damage(&mut active,packet,Some("WaterTest".into()),None,2250);
+            state.receive_environmental_damage(&mut active,packet,Some("WaterTest".into()),None,None,2250);
             while let Some(notification)=state.take_notification() {
                 match notification {
                     RuntimePlayerUiNotification::Health {snapshot,health_changed,maximum_changed} => super::dispatch_health(&mut manager,&ui,snapshot,health_changed,maximum_changed)?,

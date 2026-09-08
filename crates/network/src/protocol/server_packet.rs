@@ -36,6 +36,16 @@ pub struct WorldServerPacket {
 }
 
 impl WorldServerPacket {
+    /// Decodes the attack GUID lifecycle handled by native 756800.
+    ///
+    /// # Errors
+    /// Rejects truncated fields and trailing bytes.
+    pub fn unit_attack(
+        &self,
+    ) -> Result<Option<super::WorldUnitAttack>, super::WorldUnitAttackPacketError> {
+        super::WorldUnitAttack::decode(self.opcode, &self.payload)
+    }
+
     /// Decodes the environmental impact consumed by native 756800.
     ///
     /// # Errors

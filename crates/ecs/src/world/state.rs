@@ -360,6 +360,37 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns Unit_C's retained attack GUID; newly created units start at zero.
+    #[must_use]
+    pub fn unit_attack_target(&self, guid: u64) -> u64 {
+        self.objects
+            .find(guid)
+            .and_then(|entity| {
+                self.storage
+                    .get::<&crate::UnitAttackTarget>(entity)
+                    .ok()
+                    .map(|target| target.guid())
+            })
+            .unwrap_or(0)
+    }
+
+    /// Publishes an attack GUID only while its unit owner is resident.
+    /// The target itself does not need to be resident.
+    pub fn set_unit_attack_target(&mut self, guid: u64, target: u64) -> bool {
+        if !matches!(
+            self.object_kind(guid),
+            Some(ObjectKind::Unit | ObjectKind::Player)
+        ) {
+            return false;
+        }
+        let Some(entity) = self.objects.find(guid) else {
+            return false;
+        };
+        self.storage
+            .add_component(entity, (crate::UnitAttackTarget::new(target),));
+        true
+    }
+
     /// Returns Player_C's immediate local stand state, independent of unit bytes.
     ///
     /// # Errors

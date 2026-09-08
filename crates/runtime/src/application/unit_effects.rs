@@ -209,7 +209,11 @@ impl RuntimeUnitEffects {
         };
         owner.set_model_color(state.tint.sample(impact.timestamp_ms, u32::MAX));
         if let Ok(animation) = u16::try_from(kit.animation()) {
-            owner.request_visual_kit_animation(animation);
+            owner.request_environmental_animation(
+                animation,
+                impact.attack_target_guid,
+                impact.template_flags,
+            );
         }
         let definition = world
             .unit_presentation(impact.identity.guid())

@@ -209,6 +209,9 @@ encrypted packet bodies. It does not replace authored popup scripts.
 
 ### Remaining life-system work
 
+Environmental wound reactions and their retained attack context are described
+in [unit-wounds.md](unit-wounds.md).
+
 The popup/query and explicit spell-button path is implemented; this is not a
 claim of complete resurrection support. Native inventory fallback (`6D6640`,
 `6D6560`) finds usable item spells with effect 94. Aura type 314 builds the

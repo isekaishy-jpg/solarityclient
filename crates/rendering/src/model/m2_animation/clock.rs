@@ -97,6 +97,19 @@ impl M2AnimationClock {
         self.global_time_ms
     }
 
+    /// Bone primary overrides inherit the parent's independent secondary slot.
+    pub(super) const fn inherit_secondary(mut self, parent: Self) -> Self {
+        self.secondary = parent.secondary;
+        self
+    }
+
+    /// Clears the secondary slot before a bone-specific replacement is sampled.
+    #[must_use]
+    pub const fn without_secondary_sequence(mut self) -> Self {
+        self.secondary = None;
+        self
+    }
+
     pub(super) fn global_sequence_time_ms(self, duration_ms: u32) -> f32 {
         if duration_ms == 0 {
             return 0.0;

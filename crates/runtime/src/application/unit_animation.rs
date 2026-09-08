@@ -12,15 +12,19 @@ use std::sync::Arc;
 use glam::Mat4;
 use solarity_asset::{AnimationDataCatalog, DecodedM2Model, M2ModelAnimationMode};
 use solarity_ecs::{ActiveWorld, UnitAnimationTier, WorldMovementState, WorldObjectIdentity};
-use solarity_rendering::{M2EventTimeWindow, M2SequenceStartPhase};
+use solarity_rendering::{
+    M2AnimationClock, M2EventTimeWindow, M2ModelSequenceBlend, M2ModelSequenceTimer,
+    M2SequenceStartPhase,
+};
 use solarity_systems::{
     UnitBodyOrientation, UnitBodyOrientationInput, UnitLocomotionAnimation,
     UnitMovementAnimationDecision, UnitPrimaryAnimationCompletion, UnitStandAnimationDecision,
-    resolve_unit_airborne_animation, resolve_unit_landing_animation,
+    UnitWoundAnimationInput, resolve_unit_airborne_animation, resolve_unit_landing_animation,
     resolve_unit_locomotion_animation, resolve_unit_model_animation,
     resolve_unit_movement_animation_completion, resolve_unit_movement_speed,
     resolve_unit_primary_animation_completion, resolve_unit_stand_animation,
-    resolve_unit_stand_transition, resolve_unit_turn_animation, unit_movement_is_airborne,
+    resolve_unit_stand_transition, resolve_unit_turn_animation, resolve_unit_wound_animation,
+    unit_movement_is_airborne,
 };
 
 use super::model_playback::{M2Playback, M2PlaybackAdvance};
@@ -43,6 +47,8 @@ pub(super) struct UnitAnimationInput {
     pub feigning_death: bool,
     pub controlled: bool,
     pub mouse_turning: bool,
+    pub attack_target_guid: u64,
+    pub movement_spline_flags: u32,
 }
 
 impl UnitAnimationInput {
@@ -67,6 +73,8 @@ impl UnitAnimationInput {
             feigning_death: false,
             controlled: false,
             mouse_turning: false,
+            attack_target_guid: 0,
+            movement_spline_flags: 0,
         };
         movement.map_or(input, |movement| input.with_movement(movement))
     }
@@ -76,6 +84,7 @@ impl UnitAnimationInput {
         self.movement_flags = movement.flags() as u32;
         self.movement_speed = resolve_unit_movement_speed(movement);
         self.secondary_flags = (movement.flags() >> 32) as u16;
+        self.movement_spline_flags = movement.spline().map_or(0, |spline| spline.flags);
         self.turn_rate = movement.speeds().turn_rate();
         self.airborne = unit_movement_is_airborne(
             self.movement_flags,
@@ -103,6 +112,7 @@ impl UnitAnimationInput {
         self.feigning_death = world
             .unit_flags(guid)
             .is_some_and(|flags| flags.secondary() & 1 != 0);
+        self.attack_target_guid = world.unit_attack_target(guid);
         self.controlled = controlled;
         self.mouse_turning = mouse_turning;
         self
@@ -134,7 +144,11 @@ impl UnitAnimationInput {
 #[derive(Clone, Copy)]
 pub(super) enum UnitMovementAnimationEventKind {
     Changed,
-    VisualKit(u16),
+    VisualKit {
+        animation: u16,
+        attack_target_guid: u64,
+        template_flags: Option<u32>,
+    },
     Jump,
     Land {
         previous_flags: u32,
@@ -254,6 +268,7 @@ pub(super) struct UnitAnimationBehavior {
     scene_sample: RefCell<Option<UnitAnimationSceneSample>>,
     body: RefCell<UnitBodyPose>,
     model_color: Cell<u32>,
+    upper_body_wound: Cell<Option<(u16, M2ModelSequenceBlend)>>,
 }
 
 /// Instance state survives GPU rebuilds alongside the primary sequence owner.
@@ -314,6 +329,7 @@ impl UnitAnimationBehavior {
             playback: Rc::new(RefCell::new(M2Playback::unstarted(0, scene_time_ms))),
             scene_sample: RefCell::new(None),
             model_color: Cell::new(u32::MAX),
+            upper_body_wound: Cell::new(None),
             body: RefCell::new(UnitBodyPose {
                 controller: UnitBodyOrientation::new(input.facing),
                 last_scene_time: None,
@@ -344,11 +360,25 @@ impl UnitAnimationBehavior {
         self.model_color.get()
     }
 
-    /// 73B140 routes the environmental phase's animation through 7385C0.
+    /// 73B140 routes wound behaviors through 736640; other kits use 7385C0.
+    #[cfg(test)]
     pub fn request_visual_kit_animation(&self, animation: u16) {
+        self.request_environmental_animation(animation, self.input.get().attack_target_guid, None);
+    }
+
+    pub fn request_environmental_animation(
+        &self,
+        animation: u16,
+        attack_target_guid: u64,
+        template_flags: Option<u32>,
+    ) {
         self.pending.borrow_mut().push_back(PendingUnitAnimation {
             input: self.input.get(),
-            event: UnitMovementAnimationEventKind::VisualKit(animation),
+            event: UnitMovementAnimationEventKind::VisualKit {
+                animation,
+                attack_target_guid,
+                template_flags,
+            },
         });
     }
 
@@ -433,10 +463,106 @@ impl UnitAnimationBehavior {
     }
 
     fn behavior(&self, playback: &M2Playback) -> u16 {
+        self.animation_behavior(playback.animation_id)
+    }
+
+    fn animation_behavior(&self, animation: u16) -> u16 {
         self.animations
-            .definition(u32::from(playback.animation_id))
+            .definition(u32::from(animation))
             .and_then(|definition| u16::try_from(definition.behavior_id()).ok())
             .unwrap_or(506) // Unit_C's missing AnimationData behavior sentinel.
+    }
+
+    /// A second bone timer blends over the advancing body without owning events.
+    pub fn bone_sequences(
+        &self,
+        clock: M2AnimationClock,
+        scene_time_ms: u32,
+    ) -> Option<[(u16, M2AnimationClock); 1]> {
+        self.upper_body_wound
+            .get()
+            .filter(|(_, blend)| blend.weight(scene_time_ms) > 0.0)
+            .map(|(key, blend)| {
+                [(
+                    key,
+                    blend.apply_to_clock(clock.without_secondary_sequence(), scene_time_ms),
+                )]
+            })
+    }
+
+    fn wound(
+        &self,
+        playback: &mut M2Playback,
+        animation: u16,
+        input: UnitAnimationInput,
+        template_flags: Option<u32>,
+        scene_time_ms: u32,
+        random: &mut CrtRand,
+    ) {
+        let Some(wound) = resolve_unit_wound_animation(UnitWoundAnimationInput {
+            critical: animation == 10,
+            attack_target_guid: input.attack_target_guid,
+            movement_flags: input.movement_flags,
+            secondary_movement_flags: input.secondary_flags,
+            movement_handler_flags: input.movement_spline_flags,
+            stand: input.stand,
+            mounted: input.mounted,
+            primary_animation: playback.animation_id,
+            primary_behavior: self.behavior(playback),
+            current_animation: playback.animation_id,
+            current_behavior: self.behavior(playback),
+            upper_body_key_bone: [4, 6]
+                .into_iter()
+                .find(|key| self.model.animations().key_bone(*key).is_some()),
+            dead: input.dead(),
+            model_ready: !self.model.animations().sequences().is_empty(),
+            template_flags,
+            ..Default::default()
+        }) else {
+            return;
+        };
+        let Some(resolved) = resolve_unit_model_animation(
+            &self.animations,
+            UnitLocomotionAnimation::new(wound.animation),
+            input.tier,
+            |animation| {
+                self.model
+                    .animations()
+                    .available_variation_count(animation)
+                    .is_some()
+            },
+        ) else {
+            return;
+        };
+        let Some(sequence) = self
+            .model
+            .animations()
+            .select_model_sequence(resolved.animation_id(), random.next_u15())
+        else {
+            return;
+        };
+        if self.model.animations().is_sequence_available(sequence) != Some(true) {
+            return;
+        }
+        let authored = &self.model.animations().sequences()[sequence];
+        let timer = M2ModelSequenceTimer::new(
+            authored,
+            M2ModelAnimationMode::Forward,
+            scene_time_ms,
+            0,
+            random.next_u15(),
+            M2SequenceStartPhase::BeforeSceneUpdate,
+        );
+        let blend =
+            M2ModelSequenceBlend::wound(sequence, timer, scene_time_ms, authored.duration_ms());
+        if let Some(key) = wound
+            .key_bone
+            .filter(|key| self.model.animations().key_bone_lookup()[usize::from(*key)] != Some(0))
+        {
+            self.upper_body_wound.set(Some((key, blend)));
+        } else {
+            playback.script_blend = Some(blend);
+        }
     }
 
     fn request(&self, input: UnitAnimationInput, playback: &M2Playback) -> Option<u16> {
@@ -544,6 +670,14 @@ impl UnitAnimationBehavior {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let requested = request.animation;
+        // 7385C0's 73917C death branch clears both upper-body sequence slots.
+        // 826A60 excludes bone zero, so the root's transient blend survives.
+        if matches!(
+            self.animation_behavior(requested),
+            1 | 6 | 131 | 132 | 466..=468 | 472
+        ) {
+            self.upper_body_wound.set(None);
+        }
         if self.model.animations().sequences().is_empty() {
             playback.animation_id = requested;
             return Ok(());
@@ -647,9 +781,25 @@ impl UnitAnimationBehavior {
             };
             let input = pending.input;
             let request = match pending.event {
-                // Wound admission 736640 exits through 71F560 before playback.
-                UnitMovementAnimationEventKind::VisualKit(8..=10) if input.dead() => None,
-                UnitMovementAnimationEventKind::VisualKit(animation) => Some(animation),
+                UnitMovementAnimationEventKind::VisualKit {
+                    animation,
+                    attack_target_guid,
+                    template_flags,
+                } if matches!(self.animation_behavior(animation), 8..=10) => {
+                    self.wound(
+                        &mut playback,
+                        animation,
+                        UnitAnimationInput {
+                            attack_target_guid,
+                            ..input
+                        },
+                        template_flags,
+                        scene_time_ms,
+                        random,
+                    );
+                    None
+                }
+                UnitMovementAnimationEventKind::VisualKit { animation, .. } => Some(animation),
                 UnitMovementAnimationEventKind::Jump if !input.dead() && !input.mounted => {
                     self.landing.set(false);
                     Some(37)

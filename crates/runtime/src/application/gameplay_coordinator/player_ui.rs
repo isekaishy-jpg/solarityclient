@@ -57,6 +57,7 @@ pub(in crate::application) struct TimedMirrorTimerUpdate {
 /// Shared ordering prevents a later flag packet changing an earlier timer trigger.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::application) enum RuntimePlayerUiNotification {
+    Attack(bool),
     UnitDeath(super::unit_death::RuntimeUnitDeathSnapshot),
     Resurrection(RuntimePlayerResurrectionSnapshot),
     Life {
@@ -291,9 +292,10 @@ impl RuntimePlayerUiState {
         packet: solarity_network::WorldEnvironmentalDamage,
         name: Option<String>,
         factions: Option<&solarity_asset::CharacterFactionCatalog>,
+        template_flags: Option<u32>,
         timestamp_ms: u32,
     ) {
-        if let Some(snapshot) = RuntimeEnvironmentalDamageSnapshot::admit(
+        if let Some(mut snapshot) = RuntimeEnvironmentalDamageSnapshot::admit(
             world,
             packet,
             name,
@@ -301,6 +303,7 @@ impl RuntimePlayerUiState {
             timestamp_ms,
             self.combat_clock,
         ) {
+            snapshot.template_flags = template_flags;
             if snapshot.has_combat_event() {
                 self.refresh_health(world);
                 self.pending
@@ -309,6 +312,22 @@ impl RuntimePlayerUiState {
                     ));
             }
             self.impacts.push_back(snapshot);
+        }
+    }
+
+    pub(in crate::application) fn receive_attack(
+        &mut self,
+        world: &mut solarity_ecs::ActiveWorld,
+        attack: solarity_network::WorldUnitAttack,
+    ) {
+        if world.set_unit_attack_target(attack.attacker(), attack.retained_target())
+            && world.local_player_guid().ok() == Some(attack.attacker())
+        {
+            self.pending
+                .push_back(RuntimePlayerUiNotification::Attack(matches!(
+                    attack,
+                    solarity_network::WorldUnitAttack::Start { .. }
+                )));
         }
     }
 
