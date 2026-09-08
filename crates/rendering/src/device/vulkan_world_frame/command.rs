@@ -20,12 +20,14 @@ use crate::device::vulkan_m2_ribbon_draw::M2RibbonPreparedDraw;
 use crate::device::vulkan_m2_ribbon_pipeline::M2RibbonPipelineRegistry;
 use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
 use crate::device::vulkan_mesh::M2MeshRegistry;
-use crate::device::vulkan_ripple::{RippleFrameResources, RipplePipeline, WaterRippleFrame};
+use crate::device::vulkan_pct_pipeline::PctPipeline;
+use crate::device::vulkan_ripple::{RippleFrameResources, WaterRippleFrame};
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
 use crate::device::vulkan_terrain_texture_set::TerrainTextureSetRegistry;
 use crate::device::vulkan_ui_frame::{UiOverlayRecordContext, record_loaded_overlay};
+use crate::device::vulkan_underwater::{UnderwaterFrameResources, UnderwaterParticleFrame};
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::device::vulkan_world_model_mesh::WorldModelMeshRegistry;
 use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
@@ -62,9 +64,12 @@ pub(super) struct RecordContext<'a> {
     pub(super) liquid_pipelines: &'a LiquidPipelines,
     pub(super) liquid_meshes: &'a LiquidMeshRegistry,
     pub(super) liquid_resources: &'a LiquidFrameResources,
-    pub(super) ripple_pipeline: &'a RipplePipeline,
+    pub(super) ripple_pipeline: &'a PctPipeline,
     pub(super) ripple_resources: &'a RippleFrameResources,
     pub(super) ripple_frame: Option<WaterRippleFrame<'a>>,
+    pub(super) underwater_pipeline: &'a PctPipeline,
+    pub(super) underwater_resources: &'a UnderwaterFrameResources,
+    pub(super) underwater_frame: Option<UnderwaterParticleFrame<'a>>,
     pub(super) liquid_draws: &'a [LiquidPreparedDraw],
     pub(super) liquid_scene_order: u32,
     pub(super) world_model_pipelines: &'a WorldModelPipelineRegistry,
@@ -188,6 +193,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     }
     record_liquid_queue(&context, LiquidQueue::Opaque, &mut bindings)?;
     record_m2_scene_elements(&context, &mut bindings)?;
+    record_underwater(&context, &mut bindings);
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     if let Some((glow, settings)) = context.glow {
@@ -335,6 +341,48 @@ fn record_ripples(context: &RecordContext<'_>, bindings: &mut WorldCommandBindin
             }
         }
         offset += (pass.vertices().len() * crate::WaterRippleRenderVertex::BYTE_SIZE) as u64;
+    }
+}
+
+/// Native 77F9D0 draws camera-relative billboards after the world effect queues.
+fn record_underwater(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) {
+    let Some(frame) = context
+        .underwater_frame
+        .filter(|frame| frame.draw_count() != 0)
+    else {
+        return;
+    };
+    let (pipeline, layout) = context.underwater_pipeline.raw();
+    bindings.bind_pipeline(context, pipeline);
+    bindings.bind_vertex(context, context.underwater_resources.vertex_buffer());
+    let (buffer, offset) = context.underwater_resources.index_buffer();
+    bindings.bind_index(context, (buffer, offset), vk::IndexType::UINT16);
+    // SAFETY: Retired-slot writes validate both complete geometry banks and this
+    // texture descriptor; pipeline preparation fixes the 96-byte push ABI.
+    unsafe {
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &frame.push_bytes(),
+        );
+        context.device.cmd_bind_descriptor_sets(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            layout,
+            0,
+            &[context.underwater_resources.descriptor()],
+            &[],
+        );
+        context.device.cmd_draw_indexed(
+            context.command_buffer,
+            frame.indices().len() as u32,
+            1,
+            0,
+            0,
+            0,
+        );
     }
 }
 

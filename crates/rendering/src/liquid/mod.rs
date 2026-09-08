@@ -8,6 +8,7 @@ mod shader_uniform;
 mod terrain_mesh;
 mod texture_animation;
 mod texture_transform;
+mod underwater_vertex;
 mod world_model_mesh;
 
 pub use depth::LiquidDepthCoordinates;
@@ -20,6 +21,7 @@ pub use texture_animation::LiquidTextureTimeline;
 pub use texture_transform::{
     LiquidScrollError, liquid_magma_surface_transform, liquid_water_surface_transform,
 };
+pub use underwater_vertex::{UnderwaterParticleVertex, UnderwaterParticleVertexError};
 pub use world_model_mesh::{
     WorldModelLiquidDepthColumn, WorldModelLiquidMeshError, WorldModelLiquidMeshPlan,
     WorldModelLiquidSurface,

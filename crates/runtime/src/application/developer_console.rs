@@ -45,6 +45,7 @@ pub(super) struct RuntimeDeveloperConsole {
     logical_extent: [f32; 2],
     recoverable_error_count: u64,
     unique_errors: HashSet<String>,
+    water_particulate_toggle_pending: bool,
 }
 
 impl RuntimeDeveloperConsole {
@@ -54,9 +55,11 @@ impl RuntimeDeveloperConsole {
             .history_size(128)
             .scrollback_size(2_000)
             .build();
-        console
-            .command_table_mut()
-            .extend(["clear", "errors", "help"].into_iter().map(str::to_owned));
+        console.command_table_mut().extend(
+            ["clear", "errors", "help", "waterParticulates"]
+                .into_iter()
+                .map(str::to_owned),
+        );
         console.write("Solarity developer console. Press ` to close; type help for commands.");
         Self {
             context: egui::Context::default(),
@@ -74,6 +77,7 @@ impl RuntimeDeveloperConsole {
             logical_extent,
             recoverable_error_count: 0,
             unique_errors: HashSet::new(),
+            water_particulate_toggle_pending: false,
         }
     }
 
@@ -272,11 +276,26 @@ impl RuntimeDeveloperConsole {
         &self.draws
     }
 
+    pub(super) fn take_water_particulate_toggle(&mut self) -> bool {
+        std::mem::take(&mut self.water_particulate_toggle_pending)
+    }
+
+    pub(super) fn report_water_particulates(&mut self, enabled: bool) {
+        self.console.write(if enabled {
+            "Particulates enabled"
+        } else {
+            "Particulates disabled"
+        });
+    }
+
     fn handle_command(&mut self, event: ConsoleEvent) {
         let ConsoleEvent::Command(command) = event else {
             return;
         };
         match command.trim().to_ascii_lowercase().as_str() {
+            "waterparticulates" => {
+                self.water_particulate_toggle_pending = !self.water_particulate_toggle_pending
+            }
             "clear" => self.console.clear(),
             "errors" => self.console.write(&format!(
                 "{} recoverable presentation error(s), {} unique, captured this run",
@@ -285,7 +304,7 @@ impl RuntimeDeveloperConsole {
             )),
             "help" => self
                 .console
-                .write("commands: clear, errors, help (press ` to close)"),
+                .write("commands: clear, errors, help, waterParticulates (press ` to close)"),
             "" => {}
             other => self.console.write(&format!("unknown command: {other}")),
         }

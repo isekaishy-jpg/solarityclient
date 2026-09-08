@@ -38,7 +38,8 @@ pub use device::{
     TerrainTextureSetHandle, TerrainTextureSetInfo, UiFrameReport, UiGlyphTextureHandle,
     UiGlyphTextureResourceInfo, UiMeshHandle, UiMeshResourceInfo, UiPipelineHandle, UiPipelineInfo,
     UiPortraitTextureHandle, UiPreparedDraw, UiSampledTexture, UiSamplerHandle, UiSamplerInfo,
-    UiTextureImageHandle, UiTextureSetHandle, UiTextureSetInfo, VulkanBootstrap, VulkanError,
+    UiTextureImageHandle, UiTextureSetHandle, UiTextureSetInfo, UnderwaterParticleFog,
+    UnderwaterParticleFrame, UnderwaterParticleFrameError, VulkanBootstrap, VulkanError,
     VulkanPresentMode, VulkanRenderer, VulkanReport, WaterRippleFrame, WaterRippleFrameError,
     WaterRipplePass, WorldFrameGlow, WorldFrameReport, WorldFrameScene, WorldModelBaseMip,
     WorldModelMeshHandle, WorldModelMeshResourceInfo, WorldModelPipelineHandle,
@@ -54,10 +55,11 @@ pub use lighting::{
 pub use liquid::{
     LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidFog, LiquidLighting,
     LiquidPointLight, LiquidRenderVertex, LiquidScrollError, LiquidShaderUniform,
-    LiquidTextureTimeline, TerrainLiquidMeshPlan, WaterRippleProjectionError,
-    WaterRippleRenderVertex, WaterRippleVertexError, WorldModelLiquidDepthColumn,
-    WorldModelLiquidMeshError, WorldModelLiquidMeshPlan, WorldModelLiquidSurface,
-    liquid_magma_surface_transform, liquid_water_surface_transform, water_ripple_surface_transform,
+    LiquidTextureTimeline, TerrainLiquidMeshPlan, UnderwaterParticleVertex,
+    UnderwaterParticleVertexError, WaterRippleProjectionError, WaterRippleRenderVertex,
+    WaterRippleVertexError, WorldModelLiquidDepthColumn, WorldModelLiquidMeshError,
+    WorldModelLiquidMeshPlan, WorldModelLiquidSurface, liquid_magma_surface_transform,
+    liquid_water_surface_transform, water_ripple_surface_transform,
 };
 pub use minimap::{MinimapView, MinimapViewError};
 pub use model::{

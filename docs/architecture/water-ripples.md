@@ -6,7 +6,7 @@ last stage: the incomplete general lighting/sky renderer may require a broader
 implementation. Existing swimming and submerged-light code is a starting point,
 not evidence that these presentation requirements are complete.
 
-The remaining integration and investigation order is:
+The integration and investigation order is:
 
 1. Validate the integrated ripple/splash emitter, GPU pass and creature-template
    suppression rule together with their existing movement and cache consumers.
@@ -18,6 +18,11 @@ The remaining integration and investigation order is:
    which effects the original client actually uses before adding any.
 4. Complete water surface/underwater lighting and its general lighting and sky
    dependencies. Preserve the existing empty-band crash regression throughout.
+
+The native ripple and ordinary local-player water-camera stages are committed.
+Ambient underwater simulation and GPU presentation are described in
+[underwater-particles.md](underwater-particles.md). Authored unit breath/spray
+and the final lighting/sky stage remain in this slice.
 
 ## Native ripple boundaries
 

@@ -30,6 +30,7 @@ mod vulkan_m2_ribbon_draw;
 mod vulkan_m2_ribbon_pipeline;
 mod vulkan_m2_texture_set;
 mod vulkan_mesh;
+mod vulkan_pct_pipeline;
 mod vulkan_renderer;
 mod vulkan_ripple;
 mod vulkan_sampler;
@@ -48,6 +49,7 @@ mod vulkan_ui_mesh;
 mod vulkan_ui_pipeline;
 mod vulkan_ui_sampler;
 mod vulkan_ui_texture_set;
+mod vulkan_underwater;
 mod vulkan_world_frame;
 mod vulkan_world_model_draw;
 mod vulkan_world_model_mesh;
@@ -97,6 +99,9 @@ pub use vulkan_ui_pipeline::{UiPipelineHandle, UiPipelineInfo};
 pub use vulkan_ui_sampler::{UiSamplerHandle, UiSamplerInfo};
 pub use vulkan_ui_texture_set::{
     UiSampledTexture, UiTextureImageHandle, UiTextureSetHandle, UiTextureSetInfo,
+};
+pub use vulkan_underwater::{
+    UnderwaterParticleFog, UnderwaterParticleFrame, UnderwaterParticleFrameError,
 };
 pub use vulkan_world_frame::{WorldFrameReport, WorldFrameScene};
 pub use vulkan_world_model_draw::WorldModelPreparedDraw;

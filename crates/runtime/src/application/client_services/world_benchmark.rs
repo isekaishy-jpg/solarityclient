@@ -339,6 +339,7 @@ impl ClientServices {
                 underwater.is_some(),
                 self.glue.cvar_boolean("specular"),
                 None,
+                None,
                 &mut self.crt_rand,
                 player,
                 &[],

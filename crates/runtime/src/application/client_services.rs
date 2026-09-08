@@ -152,6 +152,7 @@ pub(crate) struct ClientServices {
     /// Shared authored liquid behavior for the camera's resident water query.
     liquids: solarity_asset::LiquidTypeCatalog,
     water_ripples: super::water_ripples::RuntimeWaterRipples,
+    underwater_particles: super::underwater_particles::RuntimeUnderwaterParticles,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
     developer_console: RuntimeDeveloperConsole,
@@ -234,6 +235,8 @@ impl ClientServices {
         let lights = LightCatalog::load(&mut assets)?;
         let liquids = solarity_asset::LiquidTypeCatalog::load(&mut assets)?;
         let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
+        let underwater_particles =
+            super::underwater_particles::RuntimeUnderwaterParticles::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -297,6 +300,7 @@ impl ClientServices {
         // The stock process owns one Blizzard RNG stream. Character creation
         // and sound variation consume it in actual main-thread call order.
         let blizzard_rand = Rc::new(RefCell::new(BlizzardRand::new(sdl3::timer::ticks() as u32)));
+        let underwater_particles = underwater_particles.initialize(&mut blizzard_rand.borrow_mut());
         if initial_screen == GlueInitialScreen::Movie {
             // Consume only once the expensive native prerequisites have
             // succeeded and immediately before selecting the movie Glue
@@ -510,6 +514,7 @@ impl ClientServices {
                 terrain_frame: None,
                 liquids,
                 water_ripples,
+                underwater_particles,
                 fps,
                 developer_console,
                 runtime_overlay_draws: Vec::new(),
@@ -957,6 +962,10 @@ impl ClientServices {
             .as_secs_f32();
         self.developer_console
             .prepare_frame(&mut self.renderer, developer_elapsed)?;
+        if self.developer_console.take_water_particulate_toggle() {
+            let enabled = self.underwater_particles.toggle();
+            self.developer_console.report_water_particulates(enabled);
+        }
         self.refresh_runtime_overlay_draws();
         profile.mark("developer overlay");
         if self.gameplay.world().is_none() && self.glue.flush_deferred_refresh()? {
@@ -1116,6 +1125,11 @@ impl ClientServices {
             }
         }
         let location = self.current_world_location()?;
+        self.underwater_particles.advance(
+            camera.camera().position(),
+            developer_elapsed,
+            &mut self.blizzard_rand.borrow_mut(),
+        )?;
         let underwater = self
             .terrain
             .camera_submerged_liquid(camera.camera().position(), &self.liquids)
@@ -1123,6 +1137,13 @@ impl ClientServices {
         let environment =
             self.environment
                 .resolve_liquid(environment, underwater, &self.liquids)?;
+        self.underwater_particles.prepare_frame(
+            &mut self.renderer,
+            camera,
+            underwater.and_then(|liquid| self.liquids.entry(liquid.liquid_type)),
+            &self.liquids,
+            &mut self.blizzard_rand.borrow_mut(),
+        )?;
         self.sound.stage_zone(
             location,
             self.gameplay.world(),
@@ -1167,6 +1188,9 @@ impl ClientServices {
             global_animation_time_ms * 0.001,
         )?;
         let ripples = self.water_ripples.frame(camera, footstep_bias)?;
+        let underwater_particles =
+            self.underwater_particles
+                .frame(camera, &self.liquids, environment.light())?;
         let Some(frame) = self.terrain_frame.as_mut() else {
             return self.present_glue_frame();
         };
@@ -1196,6 +1220,7 @@ impl ClientServices {
             underwater.is_some(),
             specular_enabled,
             Some(ripples),
+            underwater_particles,
             &mut self.crt_rand,
             player,
             &creatures,
@@ -2287,6 +2312,8 @@ impl ClientServices {
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         self.water_ripples.synchronize_world(self.gameplay.world());
+        self.underwater_particles
+            .synchronize_world(self.gameplay.world(), &mut self.blizzard_rand.borrow_mut());
         self.synchronize_component_texture_level();
         profile.mark("world UI and environment");
         if let Some(ui) = &self.world_ui {

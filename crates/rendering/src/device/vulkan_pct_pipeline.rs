@@ -1,31 +1,39 @@
-//! Unlit, unfogged PCT triangle drawing from native 79D5E0.
+//! Shared PCT pipeline ownership for native surface ripples and underwater billboards.
 
 #![allow(unsafe_code)]
 
 use ash::{Device, vk};
 
-use crate::{VulkanError, WaterRippleRenderVertex};
+use crate::{UnderwaterParticleVertex, VulkanError};
 
-/// Renderer-lifetime ownership of the ripple pipeline and descriptor ABI.
+/// Native fixed-function variants sharing the packed XYZ/RGBA/UV vertex ABI.
+#[derive(Clone, Copy)]
+pub(in crate::device) enum PctPipelineKind {
+    Ripple,
+    Underwater,
+}
+
+/// Renderer-lifetime ownership of one PCT pipeline and descriptor ABI.
 #[derive(Default)]
-pub(in crate::device) struct RipplePipeline {
+pub(in crate::device) struct PctPipeline {
     pipeline: vk::Pipeline,
     layout: vk::PipelineLayout,
     descriptor: vk::DescriptorSetLayout,
 }
 
-impl RipplePipeline {
+impl PctPipeline {
     /// Creates the complete pipeline before any frame publishes descriptors.
     pub(in crate::device) fn prepare(
         &mut self,
         device: &Device,
         color: vk::Format,
         depth: vk::Format,
+        kind: PctPipelineKind,
     ) -> Result<(), VulkanError> {
         if self.pipeline != vk::Pipeline::null() {
             return Ok(());
         }
-        let result = self.create(device, color, depth);
+        let result = self.create(device, color, depth, kind);
         if result.is_err() {
             self.destroy(device);
         }
@@ -37,6 +45,7 @@ impl RipplePipeline {
         device: &Device,
         color: vk::Format,
         depth: vk::Format,
+        kind: PctPipelineKind,
     ) -> Result<(), VulkanError> {
         let bindings = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
@@ -46,19 +55,22 @@ impl RipplePipeline {
         let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
         // SAFETY: Binding storage remains live and has no immutable samplers.
         self.descriptor = unsafe { device.create_descriptor_set_layout(&info, None) }
-            .map_err(|source| VulkanError::operation("create ripple descriptor layout", source))?;
+            .map_err(|source| VulkanError::operation("create PCT descriptor layout", source))?;
         let sets = [self.descriptor];
         let pushes = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
-            .size(68)];
+            .size(match kind {
+                PctPipelineKind::Ripple => 68,
+                PctPipelineKind::Underwater => 96,
+            })];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
             .push_constant_ranges(&pushes);
-        // SAFETY: The descriptor layout is live, and 68 bytes fit Vulkan's required minimum.
+        // SAFETY: The descriptor layout is live, and 96 bytes fit Vulkan's required minimum.
         self.layout = unsafe { device.create_pipeline_layout(&info, None) }
-            .map_err(|source| VulkanError::operation("create ripple pipeline layout", source))?;
-        let modules = ShaderModules::create(device)?;
-        self.pipeline = create_pipeline(device, self.layout, color, depth, &modules)?;
+            .map_err(|source| VulkanError::operation("create PCT pipeline layout", source))?;
+        let modules = ShaderModules::create(device, kind)?;
+        self.pipeline = create_pipeline(device, self.layout, color, depth, &modules, kind)?;
         Ok(())
     }
 
@@ -94,6 +106,7 @@ fn create_pipeline(
     color_format: vk::Format,
     depth_format: vk::Format,
     modules: &ShaderModules<'_>,
+    kind: PctPipelineKind,
 ) -> Result<vk::Pipeline, VulkanError> {
     let stages = [
         vk::PipelineShaderStageCreateInfo::default()
@@ -107,7 +120,7 @@ fn create_pipeline(
     ];
     let bindings = [vk::VertexInputBindingDescription::default()
         .binding(0)
-        .stride(WaterRippleRenderVertex::BYTE_SIZE as u32)
+        .stride(UnderwaterParticleVertex::BYTE_SIZE as u32)
         .input_rate(vk::VertexInputRate::VERTEX)];
     let attributes = [
         attribute(0, vk::Format::R32G32B32_SFLOAT, 0),
@@ -133,15 +146,19 @@ fn create_pipeline(
         .depth_test_enable(true)
         .depth_write_enable(false)
         .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL);
-    // Native GX blend 3 sets source alpha / one without a
-    // separate alpha blend override (D3D tables A2F964/A2F994).
+    // Native GX blend 3 is source alpha / one; blend 2 uses inverse source
+    // alpha. Neither enables separate alpha blending (A2F964/A2F994).
+    let destination = match kind {
+        PctPipelineKind::Ripple => vk::BlendFactor::ONE,
+        PctPipelineKind::Underwater => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+    };
     let attachments = [vk::PipelineColorBlendAttachmentState::default()
         .blend_enable(true)
         .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-        .dst_color_blend_factor(vk::BlendFactor::ONE)
+        .dst_color_blend_factor(destination)
         .color_blend_op(vk::BlendOp::ADD)
         .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
-        .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(destination)
         .alpha_blend_op(vk::BlendOp::ADD)
         .color_write_mask(vk::ColorComponentFlags::RGBA)];
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
@@ -173,12 +190,12 @@ fn create_pipeline(
                     unsafe { device.destroy_pipeline(pipeline, None) };
                 }
             }
-            VulkanError::operation("create ripple graphics pipeline", source)
+            VulkanError::operation("create PCT graphics pipeline", source)
         })?
         .into_iter()
         .next()
         .ok_or_else(|| {
-            VulkanError::operation("create ripple graphics pipeline", "driver returned none")
+            VulkanError::operation("create PCT graphics pipeline", "driver returned none")
         })
 }
 
@@ -202,7 +219,7 @@ struct ShaderModules<'a> {
 }
 
 impl<'a> ShaderModules<'a> {
-    fn create(device: &'a Device) -> Result<Self, VulkanError> {
+    fn create(device: &'a Device, kind: PctPipelineKind) -> Result<Self, VulkanError> {
         let create = |bytes: &[u8]| {
             let words: Vec<u32> = bytes
                 .as_chunks::<4>()
@@ -213,10 +230,20 @@ impl<'a> ShaderModules<'a> {
             let info = vk::ShaderModuleCreateInfo::default().code(&words);
             // SAFETY: shaderc validates the complete word-aligned SPIR-V at build time.
             unsafe { device.create_shader_module(&info, None) }
-                .map_err(|source| VulkanError::operation("create ripple shader module", source))
+                .map_err(|source| VulkanError::operation("create PCT shader module", source))
         };
-        let vertex = create(include_bytes!(concat!(env!("OUT_DIR"), "/ripple.vert.spv")))?;
-        let fragment = match create(include_bytes!(concat!(env!("OUT_DIR"), "/ripple.frag.spv"))) {
+        let (vertex_bytes, fragment_bytes): (&[u8], &[u8]) = match kind {
+            PctPipelineKind::Ripple => (
+                include_bytes!(concat!(env!("OUT_DIR"), "/ripple.vert.spv")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/ripple.frag.spv")),
+            ),
+            PctPipelineKind::Underwater => (
+                include_bytes!(concat!(env!("OUT_DIR"), "/underwater.vert.spv")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/underwater.frag.spv")),
+            ),
+        };
+        let vertex = create(vertex_bytes)?;
+        let fragment = match create(fragment_bytes) {
             Ok(fragment) => fragment,
             Err(error) => {
                 // SAFETY: This unsubmitted vertex module has unique local ownership.

@@ -91,7 +91,7 @@ impl LiquidTypeDefinition {
         self.particle_movement
     }
 
-    /// Returns the particle texture-slot mask.
+    /// Returns the native atlas pattern index (0 through 4 in 79CA70).
     #[must_use]
     pub const fn particle_texture_slots(&self) -> u32 {
         self.particle_texture_slots

@@ -637,6 +637,7 @@ impl TerrainFrame {
         camera_submerged: bool,
         specular_enabled: bool,
         ripples: Option<solarity_rendering::WaterRippleFrame<'_>>,
+        underwater_particles: Option<solarity_rendering::UnderwaterParticleFrame<'_>>,
         random: &mut CrtRand,
         player: ResidentPlayerFrameInput<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
@@ -780,6 +781,9 @@ impl TerrainFrame {
         }
         if let Some(ripples) = ripples {
             scene = scene.with_ripples(ripples.with_water_scene_order(m2.water_scene_order));
+        }
+        if let Some(underwater_particles) = underwater_particles {
+            scene = scene.with_underwater_particles(underwater_particles);
         }
         let report = renderer.present_world_frame_with_ui_layers(
             scene,

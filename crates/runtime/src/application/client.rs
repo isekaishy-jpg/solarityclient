@@ -89,6 +89,9 @@ pub enum ApplicationError {
     /// Registered unit surface effects could not enter the world frame.
     #[error(transparent)]
     WaterRipple(#[from] super::RuntimeWaterRippleError),
+    /// The camera-relative underwater effect could not enter the world frame.
+    #[error(transparent)]
+    UnderwaterParticle(#[from] super::RuntimeUnderwaterParticleError),
     /// A referenced player-transport display resource failed admission.
     #[error(transparent)]
     Transport(#[from] RuntimeGameObjectError),

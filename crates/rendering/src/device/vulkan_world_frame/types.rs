@@ -1,8 +1,8 @@
 //! Public scene snapshot and observable unified-world submission facts.
 
 use crate::{
-    LiquidFrame, M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, WaterRippleFrame,
-    WorldModelSceneUniform,
+    LiquidFrame, M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, UnderwaterParticleFrame,
+    WaterRippleFrame, WorldModelSceneUniform,
 };
 
 /// One coherent terrain, WMO, M2, and M2-effect scene snapshot for a world frame.
@@ -15,6 +15,7 @@ pub struct WorldFrameScene<'a> {
     particle_index_capacity: usize,
     liquids: Option<LiquidFrame<'a>>,
     ripples: Option<WaterRippleFrame<'a>>,
+    underwater: Option<UnderwaterParticleFrame<'a>>,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -33,6 +34,7 @@ impl<'a> WorldFrameScene<'a> {
             particle_index_capacity: 0,
             liquids: None,
             ripples: None,
+            underwater: None,
         }
     }
 
@@ -56,6 +58,17 @@ impl<'a> WorldFrameScene<'a> {
 
     pub(in crate::device) const fn ripples(self) -> Option<WaterRippleFrame<'a>> {
         self.ripples
+    }
+
+    /// Adds native underwater billboards after all world and M2 effect queues.
+    #[must_use]
+    pub const fn with_underwater_particles(mut self, frame: UnderwaterParticleFrame<'a>) -> Self {
+        self.underwater = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn underwater(self) -> Option<UnderwaterParticleFrame<'a>> {
+        self.underwater
     }
 
     /// Supplies the independent character and pet banks authored by Glue Lua.
@@ -107,6 +120,7 @@ impl<'a> WorldFrameScene<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorldFrameReport {
     ripple_draw_count: usize,
+    underwater_draw_count: usize,
     terrain_draw_count: usize,
     liquid_draw_count: usize,
     world_model_draw_count: usize,
@@ -136,6 +150,7 @@ impl WorldFrameReport {
         Self {
             terrain_draw_count,
             ripple_draw_count: 0,
+            underwater_draw_count: 0,
             liquid_draw_count,
             world_model_draw_count,
             m2_draw_count,
@@ -157,6 +172,17 @@ impl WorldFrameReport {
     #[must_use]
     pub const fn ripple_draw_count(self) -> usize {
         self.ripple_draw_count
+    }
+
+    pub(super) const fn with_underwater_draw_count(mut self, count: usize) -> Self {
+        self.underwater_draw_count = count;
+        self
+    }
+
+    /// Returns the native late-world underwater billboard draw count (zero or one).
+    #[must_use]
+    pub const fn underwater_draw_count(self) -> usize {
+        self.underwater_draw_count
     }
 
     /// Returns submitted camera-selected MCNK draw count.

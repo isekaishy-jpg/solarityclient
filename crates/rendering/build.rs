@@ -106,6 +106,14 @@ fn main() {
             &[],
         );
     }
+    for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+        compile(
+            &format!("src/shader/underwater_spirv/source/underwater.{stage}.glsl"),
+            kind,
+            &output.join(format!("underwater.{stage}.spv")),
+            &[],
+        );
+    }
     for unified in 0..=1 {
         for shader in 0..=6 {
             let unified_value = unified.to_string();

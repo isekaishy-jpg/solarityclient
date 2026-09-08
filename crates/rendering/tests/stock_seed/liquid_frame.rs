@@ -9,7 +9,8 @@ use solarity_asset::{
 use solarity_rendering::{
     BlpColorSpace, LiquidDepthTexture, LiquidDepthTextureKind, LiquidDrawMaterial, LiquidFog,
     LiquidFrame, LiquidLighting, LiquidRenderVertex, LiquidShaderUniform, M2LocalLightState,
-    M2SceneUniform, TerrainSceneUniform, VulkanBootstrap, WaterRippleFrame, WaterRipplePass,
+    M2SceneUniform, TerrainSceneUniform, UnderwaterParticleFog, UnderwaterParticleFrame,
+    UnderwaterParticleVertex, VulkanBootstrap, WaterRippleFrame, WaterRipplePass,
     WaterRippleRenderVertex, WorldFrameScene, WorldModelSceneUniform, WorldModelTextureFiltering,
 };
 
@@ -308,6 +309,187 @@ fn water_ripple_frames_preserve_native_passes_depth_bias_and_no_mip_sampling()
         }
     }
     renderer.retire_liquid_meshes(&[water, background])?;
+    Ok(())
+}
+
+/// Captured pixels distinguish alpha blending, depth testing without bias,
+/// absent depth writes, nearest mip selection, and late-world queue placement.
+#[test]
+#[allow(unsafe_code)] // SDL transfers the hidden test surface to Vulkan ownership.
+fn underwater_particle_frames_preserve_native_blend_depth_mips_and_slot_reuse()
+-> Result<(), Box<dyn Error>> {
+    let green_bytes = crate::model::solid_raw3_blp(1, 1, &[0x8000_ff00]);
+    let blue_bytes = crate::model::solid_raw3_blp(1, 1, &[0x8000_00ff]);
+    let mip_bytes = crate::model::solid_raw3_blp(
+        1024,
+        1024,
+        &[
+            0x8000_ff00,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+            0x80ff_0000,
+        ],
+    );
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Green.blp",
+            bytes: &green_bytes,
+        },
+        FixtureFile {
+            path: "Blue.blp",
+            bytes: &blue_bytes,
+        },
+        FixtureFile {
+            path: "Mips.blp",
+            bytes: &mip_bytes,
+        },
+    ])?;
+    let mut assets = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let _sdl_test = crate::support::sdl_test_lock();
+    let sdl = sdl3::init()?;
+    let video = sdl.video()?;
+    let window = video
+        .window("Solarity underwater frame test", 32, 32)
+        .vulkan()
+        .hidden()
+        .build()?;
+    let bootstrap = VulkanBootstrap::start(&window.vulkan_instance_extensions()?)?;
+    // SAFETY: The bootstrap enabled this live window's surface extensions.
+    let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
+    // SAFETY: SDL transfers ownership and the window outlives the renderer.
+    let mut renderer = unsafe { bootstrap.attach_surface(surface, (32, 32), 0) }?;
+    let mut textures = Vec::new();
+    for name in ["Green.blp", "Blue.blp", "Mips.blp"] {
+        let source = BlpTextureSource::load(&mut assets, &AssetPath::new(name)?)?;
+        textures.push(renderer.upload_blp_texture(&source, BlpColorSpace::Linear)?);
+    }
+    let white = renderer.upload_stock_m2_white()?;
+    let background = renderer.upload_liquid_mesh(&triangle(0.8, [255, 0, 0, 255]), &[0, 1, 2])?;
+    let uniform = LiquidShaderUniform::new(
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        LiquidLighting::new(-Vec3::Z, Vec3::ONE, Vec3::ZERO, Vec3::ZERO),
+        LiquidFog::new(Vec3::new(0., 1., 1.), Vec3::ZERO),
+    );
+    let draws =
+        [renderer.prepare_liquid_draw(background, LiquidDrawMaterial::Magma, white, uniform)?];
+    let depth = LiquidDepthTexture::prepare(LiquidDepthTextureKind::River, [0; 2], [0; 2]);
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for (case, (count, z, texture_index, intensity)) in [
+        (1, 0.5, 0, 1.),
+        (2, 0.5, 1, 1.),
+        (2, 0.800_06, 0, 1.),
+        (2, 0.8, 1, 1.),
+        (666, 0.5, 0, 1.),
+        (0, 0.5, 1, 1.),
+        (2, 0.5, 2, 1.),
+        (2, 0.5, 0, 0.5),
+        (1, 0.5, 1, 1.),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // The second particle is farther away. It remains visible because
+        // the first particle must not write depth into the world attachment.
+        let points: Vec<_> = (0..count)
+            .map(|index| [0., 0., z + (index.min(1) as f32 * 0.01), 2.2])
+            .collect();
+        UnderwaterParticleVertex::project_into(
+            &points,
+            Mat4::IDENTITY,
+            0,
+            &mut vertices,
+            &mut indices,
+        )?;
+        let particles = UnderwaterParticleFrame::new(
+            Mat4::IDENTITY,
+            if intensity == 1. {
+                None
+            } else {
+                Some(UnderwaterParticleFog::new(
+                    0.,
+                    1.,
+                    Vec3::new(0.1, 0.2, 0.3),
+                )?)
+            },
+            textures[texture_index],
+            &vertices,
+            &indices,
+        )?;
+        let mut ripple_vertices = Vec::new();
+        WaterRippleRenderVertex::project_into(
+            &[[
+                Vec3::new(-1., -1., 0.7),
+                Vec3::new(3., -1., 0.7),
+                Vec3::new(-1., 3., 0.7),
+            ]],
+            Mat4::IDENTITY,
+            0.25,
+            &mut ripple_vertices,
+        )?;
+        let ripple = WaterRippleFrame::new(
+            Mat4::IDENTITY,
+            0.,
+            0,
+            Some(WaterRipplePass::new(white, &ripple_vertices)),
+            None,
+        )?;
+        let scene = scene()
+            .with_liquids(LiquidFrame::new(&draws, &depth, &depth, &depth, 0))
+            .with_ripples(ripple)
+            .with_underwater_particles(particles);
+        renderer.request_frame_capture()?;
+        let report =
+            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        assert_eq!(report.underwater_draw_count(), particles.draw_count());
+        let capture = renderer
+            .take_captured_frame()?
+            .ok_or("missing underwater capture")?;
+        // White additive ripple precedes the alpha-blended underwater bank.
+        let mut expected = [255_f32, 64., 64., 255.];
+        let color = match texture_index {
+            0 => [0., 255., 0.],
+            1 => [0., 0., 255.],
+            _ => [255., 0., 0.],
+        };
+        let alpha = 128. / 255.;
+        for point in &points {
+            if point[2] <= 0.8 {
+                for channel in 0..3 {
+                    let source = if intensity == 1. {
+                        color[channel]
+                    } else {
+                        let fog_color = [26., 51., 77.][channel];
+                        color[channel] * (1. - point[2]) + fog_color * point[2]
+                    };
+                    expected[channel] = (source * alpha + expected[channel] * (1. - alpha)).round();
+                }
+                expected[3] = (128. * alpha + expected[3] * (1. - alpha)).round();
+            }
+        }
+        for pixel in capture.rgba8().as_chunks::<4>().0 {
+            for channel in 0..4 {
+                assert!(
+                    (f32::from(pixel[channel]) - expected[channel]).abs() <= 2.,
+                    "underwater frame {case}: {pixel:?}, expected {expected:?}"
+                );
+            }
+        }
+    }
+    renderer.retire_liquid_meshes(&[background])?;
     Ok(())
 }
 

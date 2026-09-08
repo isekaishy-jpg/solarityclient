@@ -37,6 +37,7 @@ mod spell;
 mod stable;
 mod support;
 mod talent;
+mod underwater_particles;
 mod vehicle;
 mod water_ripple;
 mod world;
@@ -45,6 +46,8 @@ pub use water_ripple::{
     WaterRipple, WaterRippleClock, WaterRippleEmission, WaterRippleEnvelope,
     WaterRippleEnvelopeError, WaterRippleError, WaterRippleOwner, WaterRipplePool, WaterRippleUnit,
 };
+
+pub use underwater_particles::{UnderwaterParticleError, UnderwaterParticles};
 
 pub use movement::{
     MovementTransportChange, MovementTransportFrame, MovementTransportFrameError,
