@@ -94,9 +94,9 @@ fn live_transition_completes_without_gpu_placement_and_preserves_shared_timer()
     owner.notify(&world, GameObjectNotification::State, 100, &mut random)?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Opening));
     assert_eq!(playback.borrow().animation_id, 148);
-    owner.advance_scene(&world, 1_100.0, 1_100.0, &mut random)?;
+    owner.advance_scene(&world, 1_100.0, &mut random)?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Opening));
-    owner.advance_scene(&world, 1_101.0, 1_101.0, &mut random)?;
+    owner.advance_scene(&world, 1_101.0, &mut random)?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Opened));
     assert_eq!(playback.borrow().animation_id, 149);
     let sample = owner.take_scene_sample().ok_or("scene sample")?;
@@ -115,9 +115,9 @@ fn live_transition_completes_without_gpu_placement_and_preserves_shared_timer()
     fields(&mut world, &[(17, 1)])?;
     owner.notify(&world, GameObjectNotification::State, 1_101, &mut random)?;
     assert!(!owner.state().ok_or("state")?.door_collision_eligible());
-    owner.advance_scene(&world, 2_102.0, 2_102.0, &mut random)?;
+    owner.advance_scene(&world, 2_102.0, &mut random)?;
     assert!(owner.state().ok_or("state")?.door_collision_eligible());
-    owner.advance_scene(&world, 3_102.0, 3_102.0, &mut random)?;
+    owner.advance_scene(&world, 3_102.0, &mut random)?;
     assert_eq!(
         playback
             .borrow()
@@ -142,7 +142,7 @@ fn live_pause_and_reversal_keep_fractional_pose() -> Result<(), Box<dyn Error>> 
             .sequence_progress(),
         None
     );
-    owner.advance_scene(&world, 2_001.0, 2_001.0, &mut random)?;
+    owner.advance_scene(&world, 2_001.0, &mut random)?;
     assert_eq!(
         owner
             .take_scene_sample()
@@ -160,7 +160,7 @@ fn live_pause_and_reversal_keep_fractional_pose() -> Result<(), Box<dyn Error>> 
         &mut random,
     )?;
     let rng = random;
-    owner.advance_scene(&world, 3_001.0, 3_001.0, &mut random)?;
+    owner.advance_scene(&world, 3_001.0, &mut random)?;
     assert_eq!(
         owner
             .take_scene_sample()
@@ -180,7 +180,7 @@ fn live_pause_and_reversal_keep_fractional_pose() -> Result<(), Box<dyn Error>> 
     )?;
     owner.notify(&world, GameObjectNotification::State, 3_001, &mut random)?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Closing));
-    owner.advance_scene(&world, 3_002.0, 3_002.0, &mut random)?;
+    owner.advance_scene(&world, 3_002.0, &mut random)?;
     assert_eq!(
         owner
             .take_scene_sample()
@@ -190,7 +190,7 @@ fn live_pause_and_reversal_keep_fractional_pose() -> Result<(), Box<dyn Error>> 
             .animation_time_ms(),
         500.0
     );
-    owner.advance_scene(&world, 3_502.0, 3_502.0, &mut random)?;
+    owner.advance_scene(&world, 3_502.0, &mut random)?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Closed));
     Ok(())
 }
@@ -357,12 +357,12 @@ fn live_door_collision_survives_motion_and_changes_at_completion() -> Result<(),
     assert!(!owner.collision_eligible(0, 0));
     owner.attach_model(&world, 42, &model, Some(moved), 100, &mut random)?;
     assert!(!owner.collision_eligible(0, 0));
-    owner.advance_scene(&world, 1_101., 1_101., &mut random)?;
+    owner.advance_scene(&world, 1_101., &mut random)?;
     assert_eq!(owner.state(), Some(GameObjectAnimationState::Opened));
     fields(&mut world, &[(17, 1)])?;
     owner.notify(&world, GameObjectNotification::State, 1_101, &mut random)?;
     assert!(!owner.collision_eligible(0, 0));
-    owner.advance_scene(&world, 2_102., 2_102., &mut random)?;
+    owner.advance_scene(&world, 2_102., &mut random)?;
     assert!(owner.collision_eligible(0, 0));
     {
         let loaded = owner.model.borrow();
@@ -414,10 +414,10 @@ fn zero_extent_door_completion_flag_is_not_recomputed_by_motion() -> Result<(), 
     assert!(!owner.collision_eligible(0, 0));
     fields(&mut world, &[(17, 0)])?;
     owner.notify(&world, GameObjectNotification::State, 100, &mut random)?;
-    owner.advance_scene(&world, 1_101., 1_101., &mut random)?;
+    owner.advance_scene(&world, 1_101., &mut random)?;
     fields(&mut world, &[(17, 1)])?;
     owner.notify(&world, GameObjectNotification::State, 1_101, &mut random)?;
-    owner.advance_scene(&world, 2_102., 2_102., &mut random)?;
+    owner.advance_scene(&world, 2_102., &mut random)?;
     assert!(owner.collision_eligible(0, 0));
     owner.attach_model(&world, 42, &model, Some(moved), 2_102, &mut random)?;
     assert!(owner.collision_eligible(0, 0));

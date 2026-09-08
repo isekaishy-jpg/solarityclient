@@ -149,11 +149,17 @@ struct PendingUnitAnimation {
 #[derive(Default)]
 pub(super) struct UnitAnimationScene {
     owners: BTreeMap<u64, Rc<UnitAnimationBehavior>>,
+    scene_time_ms: u32,
 }
 
 impl UnitAnimationScene {
     pub fn clear(&mut self) {
         self.owners.clear();
+        self.scene_time_ms = 0;
+    }
+
+    pub fn set_scene_time(&mut self, scene_time_ms: u32) {
+        self.scene_time_ms = scene_time_ms;
     }
 
     pub fn retain_world(&mut self, world: &ActiveWorld) {
@@ -180,6 +186,7 @@ impl UnitAnimationScene {
                     Arc::clone(model),
                     Arc::clone(animations),
                     input,
+                    self.scene_time_ms,
                 )),
             );
         }
@@ -275,6 +282,7 @@ impl UnitAnimationBehavior {
         model: Arc<DecodedM2Model>,
         animations: Arc<AnimationDataCatalog>,
         input: UnitAnimationInput,
+        scene_time_ms: u32,
     ) -> Self {
         Self {
             identity,
@@ -287,7 +295,7 @@ impl UnitAnimationBehavior {
                 event: UnitMovementAnimationEventKind::Changed,
             }])),
             landing: Cell::new(false),
-            playback: Rc::new(RefCell::new(M2Playback::unstarted(0))),
+            playback: Rc::new(RefCell::new(M2Playback::unstarted(0, scene_time_ms))),
             scene_sample: RefCell::new(None),
             body: RefCell::new(UnitBodyPose {
                 controller: UnitBodyOrientation::new(input.facing),
@@ -641,7 +649,6 @@ impl UnitAnimationBehavior {
     pub fn advance_scene(
         &self,
         scene_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.synchronize(scene_time_ms as u32, random)?;
@@ -726,11 +733,10 @@ impl UnitAnimationBehavior {
         let advance = playback.clock_with_completion(
             &self.model,
             scene_time_ms,
-            global_time_ms,
             random,
             Some(&mut completed),
         )?;
-        let event_window = playback.event_window(scene_time_ms, global_time_ms);
+        let event_window = playback.event_window(scene_time_ms);
         *self.scene_sample.borrow_mut() = Some(UnitAnimationSceneSample {
             advance,
             event_window,

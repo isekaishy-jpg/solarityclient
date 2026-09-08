@@ -46,7 +46,7 @@ fn blood_elf_twirl_survives_live_movement_and_pose_sampling() -> TestResult {
         let mut poses = BTreeMap::new();
         let mut selections = BTreeMap::<usize, usize>::new();
         let mut pose = M2BonePose::default();
-        animation.advance_scene(0., 0., &mut random)?;
+        animation.advance_scene(0., &mut random)?;
         if running {
             apply(
                 &mut mover,
@@ -66,7 +66,7 @@ fn blood_elf_twirl_survives_live_movement_and_pose_sampling() -> TestResult {
                     scene.notify_movement(event);
                 }
                 animation.set_input(initial.with_movement(mover.snapshot().1));
-                animation.advance_scene(time as f32, time as f32, &mut random)?;
+                animation.advance_scene(time as f32, &mut random)?;
                 let sample = animation.take_scene_sample().ok_or("scene sample")?;
                 let sequence = sample.advance.clock.sequence();
                 if elapsed == 0 {

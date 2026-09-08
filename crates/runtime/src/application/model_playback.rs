@@ -34,6 +34,8 @@ pub(in crate::application) struct M2Playback {
     pub(in crate::application) previous_event_scene_time_ms: u32,
     script_finished: bool,
     paused_scene_time_ms: u32,
+    /// `CM2Model +0x74`: global-sequence origin, independent of primary seeks.
+    created_scene_time_ms: u32,
 }
 
 /// The native user callback runs before automatic variation selection.
@@ -62,9 +64,7 @@ impl M2Playback {
         scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<Self, RuntimeTerrainFrameError> {
-        let mut playback = Self::unstarted(0);
-        playback.scene_time_ms = scene_time_ms;
-        playback.previous_event_scene_time_ms = scene_time_ms;
+        let mut playback = Self::unstarted(0, scene_time_ms);
         let animations = model.animations();
         if animations.bones().is_empty() || animations.sequences().is_empty() {
             return Ok(playback);
@@ -76,7 +76,7 @@ impl M2Playback {
     }
 
     /// Keeps static geometry and effects alive before a primary sequence exists.
-    pub(in crate::application) fn unstarted(animation_id: u16) -> Self {
+    pub(in crate::application) fn unstarted(animation_id: u16, scene_time_ms: u32) -> Self {
         Self {
             game_object_state: None,
             game_object_request: None,
@@ -92,10 +92,11 @@ impl M2Playback {
             script_timer: None,
             script_blend: None,
             script_mode: M2ModelAnimationMode::Forward,
-            scene_time_ms: 0,
-            previous_event_scene_time_ms: 0,
+            scene_time_ms,
+            previous_event_scene_time_ms: scene_time_ms,
             script_finished: false,
             paused_scene_time_ms: 0,
+            created_scene_time_ms: scene_time_ms,
         }
     }
 
@@ -103,11 +104,12 @@ impl M2Playback {
     pub(in crate::application) fn new(
         model: &DecodedM2Model,
         animation_id: u16,
+        scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<Option<Self>, RuntimeTerrainFrameError> {
         let animations = model.animations();
         if animations.sequences().is_empty() {
-            return Ok(Some(Self::unstarted(animation_id)));
+            return Ok(Some(Self::unstarted(animation_id, scene_time_ms)));
         }
         let sequence = animations
             .sequence_for_variation(animation_id, 0)
@@ -145,10 +147,11 @@ impl M2Playback {
             script_timer: None,
             script_blend: None,
             script_mode: M2ModelAnimationMode::Forward,
-            scene_time_ms: 0,
-            previous_event_scene_time_ms: 0,
+            scene_time_ms,
+            previous_event_scene_time_ms: scene_time_ms,
             script_finished: false,
             paused_scene_time_ms: 0,
+            created_scene_time_ms: scene_time_ms,
         }))
     }
 
@@ -396,10 +399,9 @@ impl M2Playback {
         &mut self,
         model: &DecodedM2Model,
         animation_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        self.clock_with_completion(model, animation_time_ms, global_time_ms, random, None)
+        self.clock_with_completion(model, animation_time_ms, random, None)
     }
 
     /// Advances a model whose gameplay owner registered a primary sequence callback.
@@ -407,11 +409,11 @@ impl M2Playback {
         &mut self,
         model: &DecodedM2Model,
         animation_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
         callback: Option<&mut M2CompletionCallback<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         self.scene_time_ms = animation_time_ms as u32;
+        let global_time_ms = self.global_tick(self.scene_time_ms);
         if let Some(timer) = self.script_timer {
             return self.advance_model_timer(model, timer, global_time_ms, random, callback);
         }
@@ -424,7 +426,7 @@ impl M2Playback {
             // its timer. Bone-relative callbacks from that tail must also use
             // the old sequence's terminal pose, not the newly selected pose.
             expired_variations.push(M2ExpiredVariation {
-                clock: M2AnimationClock::new(
+                clock: M2AnimationClock::new_with_global_tick(
                     self.sequence,
                     self.sequence_duration_ms,
                     global_time_ms,
@@ -470,7 +472,7 @@ impl M2Playback {
         &mut self,
         model: &DecodedM2Model,
         mut timer: M2ModelSequenceTimer,
-        global_time_ms: f32,
+        global_time_ms: u32,
         random: &mut CrtRand,
         mut callback: Option<&mut M2CompletionCallback<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
@@ -494,7 +496,7 @@ impl M2Playback {
                 break;
             };
             expired_variations.push(M2ExpiredVariation {
-                clock: M2AnimationClock::new(
+                clock: M2AnimationClock::new_with_global_tick(
                     self.sequence,
                     timer.animation_time_ms(boundary) as f32,
                     global_time_ms,
@@ -561,7 +563,7 @@ impl M2Playback {
             self.script_finished = false;
         }
         self.script_timer = Some(timer);
-        let mut clock = M2AnimationClock::new(
+        let mut clock = M2AnimationClock::new_with_global_tick(
             self.sequence,
             timer.animation_time_ms(self.scene_time_ms) as f32,
             global_time_ms,
@@ -583,8 +585,8 @@ impl M2Playback {
     pub(in crate::application) fn event_window(
         &mut self,
         animation_time_ms: f32,
-        global_time_ms: f32,
     ) -> M2EventTimeWindow {
+        let global_time_ms = self.global_tick(animation_time_ms as u32) as f32;
         if let Some(timer) = self.script_timer {
             let window = M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false)
                 .with_scene_timer(
@@ -619,6 +621,11 @@ impl M2Playback {
         self.event_timeline_started = true;
         window
     }
+
+    /// Native global tracks keep advancing through primary pauses and seeks.
+    pub(in crate::application) const fn global_tick(&self, scene_time_ms: u32) -> u32 {
+        scene_time_ms.wrapping_sub(self.created_scene_time_ms)
+    }
 }
 
 /// Resolves the immutable duration owned by an alias target.
@@ -641,14 +648,14 @@ fn world_animation_clock(
     sequence: usize,
     duration_ms: f32,
     animation_time_ms: f32,
-    global_time_ms: f32,
+    global_time_ms: u32,
 ) -> M2AnimationClock {
     let animation_time_ms = if duration_ms > 0.0 {
         animation_time_ms.rem_euclid(duration_ms)
     } else {
         0.0
     };
-    M2AnimationClock::new(sequence, animation_time_ms, global_time_ms)
+    M2AnimationClock::new_with_global_tick(sequence, animation_time_ms, global_time_ms)
 }
 
 /// Stable generic behavior request; progress, transition clips, and completion

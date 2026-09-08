@@ -423,7 +423,7 @@ impl ClientServices {
                 &[]
             };
             let model_presented =
-                glue_model.present(&mut renderer, &glue, &frame, 0.0, &mut crt_rand, overlay)?;
+                glue_model.present(&mut renderer, &glue, &frame, &mut crt_rand, overlay)?;
             if !model_presented {
                 frame.present_with_overlay(&mut renderer, overlay)?;
             }
@@ -1215,7 +1215,6 @@ impl ClientServices {
             plan,
             environment,
             camera,
-            global_animation_time_ms,
             liquid_time_ms,
             underwater.is_some(),
             specular_enabled,
@@ -1495,12 +1494,10 @@ impl ClientServices {
             .ok_or_else(|| ApplicationError::NetworkRuntime {
                 message: "Glue frame preparation produced no presentation state".to_owned(),
             })?;
-        let global_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let model_presented = self.glue_model.present(
             &mut self.renderer,
             &self.glue,
             frame,
-            global_time_ms,
             &mut self.crt_rand,
             &self.runtime_overlay_draws,
         )?;
@@ -2458,6 +2455,11 @@ impl ClientServices {
         self.player.set_animation_mouse_turning(
             self.player_movement
                 .animation_mouse_turning(self.gameplay.world()),
+        );
+        self.player.set_animation_scene_time(
+            self.terrain_frame
+                .as_ref()
+                .map_or(0, |frame| frame.m2_animation_time_ms() as u32),
         );
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {

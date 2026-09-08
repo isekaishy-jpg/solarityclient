@@ -63,9 +63,7 @@ fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn 
         let mut time = 0;
         while time < duration {
             time += 33;
-            let clock = playback
-                .clock(model, time as f32, time as f32, &mut random)?
-                .clock;
+            let clock = playback.clock(model, time as f32, &mut random)?.clock;
             let bones =
                 M2BonePose::compose_with_model_view(model.animations(), clock, camera.view())?;
             for (emitter, particle) in model.animations().particles().iter().zip(&mut particles) {

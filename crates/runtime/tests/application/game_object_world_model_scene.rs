@@ -51,7 +51,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     let mut random = CrtRand::new();
     objects
         .frame_input(Some(&world))
-        .advance_scene(2000., 2000., &mut random)?;
+        .advance_scene(2000., &mut random)?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     let identity = world.object_identity(90).ok_or("root lifetime")?;
     let state = objects
@@ -215,7 +215,6 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
         solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
         2700.,
-        2700.,
         M2CameraEffectScale::EXTERNAL_CAMERA,
         &mut random,
         Some(objects.frame_input(Some(&world))),
@@ -259,7 +258,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     assert_color(&restored, camera, Vec3::new(0., 2., 0.), 2)?;
     objects
         .frame_input(Some(&world))
-        .advance_scene(3300., 3300., &mut random)?;
+        .advance_scene(3300., &mut random)?;
     let neighbor_random = random;
     let retained_event_scene_time = first.borrow().previous_event_scene_time_ms;
     add_root(&mut world, 91)?;
@@ -338,7 +337,6 @@ fn capture(
         camera,
         solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
-        time,
         time,
         M2CameraEffectScale::EXTERNAL_CAMERA,
         random,

@@ -127,9 +127,7 @@ impl M2Frame {
                         };
                         M2PlaybackStorage::Shared(playback)
                     } else {
-                        let mut playback = M2Playback::unstarted(0);
-                        playback.scene_time_ms = scene_time_ms as u32;
-                        playback.previous_event_scene_time_ms = scene_time_ms as u32;
+                        let mut playback = M2Playback::unstarted(0, scene_time_ms as u32);
                         playback.select_game_object_state(
                             cpu.model(),
                             game_objects.animations(),

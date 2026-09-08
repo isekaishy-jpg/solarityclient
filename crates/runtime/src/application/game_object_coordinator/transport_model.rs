@@ -142,7 +142,6 @@ impl TransportMapModel {
     pub(super) fn advance_scene(
         &self,
         scene_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.scene_sample.borrow_mut().take();
@@ -154,7 +153,6 @@ impl TransportMapModel {
         let advance = playback.clock_with_completion(
             &current.model,
             scene_time_ms,
-            global_time_ms,
             random,
             Some(&mut |playback, random| {
                 let next = match playback.animation_id {
@@ -185,7 +183,7 @@ impl TransportMapModel {
                     .map(|_| ())
             }),
         )?;
-        let event_window = playback.event_window(scene_time_ms, global_time_ms);
+        let event_window = playback.event_window(scene_time_ms);
         *self.scene_sample.borrow_mut() = Some(GameObjectSceneSample {
             advance,
             event_window,

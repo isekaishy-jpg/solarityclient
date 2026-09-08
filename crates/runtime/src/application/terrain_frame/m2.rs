@@ -1789,7 +1789,6 @@ impl M2Frame {
     pub(in crate::application) fn advance_glue_animation_clock(
         &mut self,
         animation_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<M2AnimationClock, RuntimeTerrainFrameError> {
         let placement = self
@@ -1807,7 +1806,7 @@ impl M2Frame {
             .as_mut()
             .map(M2PlaybackStorage::borrow_mut)
             .ok_or(RuntimeTerrainFrameError::MissingGlueM2Placement)?;
-        let advance = playback.clock(&source.model, animation_time_ms, global_time_ms, random)?;
+        let advance = playback.clock(&source.model, animation_time_ms, random)?;
         let clock = advance.clock;
         self.pending_glue_playback_advance = Some(advance);
         Ok(clock)
@@ -1823,13 +1822,12 @@ impl M2Frame {
         first_transparent_pass: M2TransparentPass,
         fog_color: glam::Vec3,
         animation_time_ms: f32,
-        global_time_ms: f32,
         effect_scale: M2CameraEffectScale,
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         if let Some(game_objects) = game_objects {
-            game_objects.advance_scene(animation_time_ms, global_time_ms, random)?;
+            game_objects.advance_scene(animation_time_ms, random)?;
         }
         self.bone_transforms.clear();
         self.visible_draws.clear();
@@ -1923,7 +1921,7 @@ impl M2Frame {
         for &index in self.placement_visibility.dynamic_indices() {
             let placement = &mut self.placements[index];
             if let Some(animation) = &placement.unit_animation {
-                animation.advance_scene(animation_time_ms, global_time_ms, random)?;
+                animation.advance_scene(animation_time_ms, random)?;
                 placement.transform =
                     placement.local_transform * animation.body_pose().placement_rotation;
             }
@@ -2097,21 +2095,20 @@ impl M2Frame {
                     .and_then(|animation| animation.take_scene_sample())
                     .map(|sample| (sample.advance, sample.event_window))
             };
-            let (advance, prepared_event_window) = if let Some((advance, event_window)) =
-                scene_sample
-            {
-                (advance, Some(event_window))
-            } else {
-                let advance = if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
-                    self.pending_glue_playback_advance.take().map_or_else(
-                        || playback.clock(&source.model, animation_time_ms, global_time_ms, random),
-                        Ok,
-                    )?
+            let (advance, prepared_event_window) =
+                if let Some((advance, event_window)) = scene_sample {
+                    (advance, Some(event_window))
                 } else {
-                    playback.clock(&source.model, animation_time_ms, global_time_ms, random)?
+                    let advance = if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                        self.pending_glue_playback_advance.take().map_or_else(
+                            || playback.clock(&source.model, animation_time_ms, random),
+                            Ok,
+                        )?
+                    } else {
+                        playback.clock(&source.model, animation_time_ms, random)?
+                    };
+                    (advance, None)
                 };
-                (advance, None)
-            };
             let body_pose = placement
                 .unit_animation
                 .as_ref()
@@ -2147,10 +2144,19 @@ impl M2Frame {
                     .model
                     .animations()
                     .sequence_for_variation(15, 0)
-                    .map(|sequence| (M2AnimationClock::new(sequence, 0.0, global_time_ms), hands))
+                    .map(|sequence| {
+                        (
+                            M2AnimationClock::new_with_global_tick(
+                                sequence,
+                                0.0,
+                                playback.global_tick(animation_time_ms as u32),
+                            ),
+                            hands,
+                        )
+                    })
             });
-            let event_window = prepared_event_window
-                .unwrap_or_else(|| playback.event_window(animation_time_ms, global_time_ms));
+            let event_window =
+                prepared_event_window.unwrap_or_else(|| playback.event_window(animation_time_ms));
             drop(playback);
             let model_view = camera.view() * placement.transform;
             let instance_identity = std::ptr::from_ref(&*placement).addr();
@@ -3021,7 +3027,7 @@ fn unit_gpu_placement(
     particle_colors: Option<M2ParticleColorReplacement>,
     random: &mut CrtRand,
 ) -> Result<M2GpuPlacement, RuntimeTerrainFrameError> {
-    let playback = M2Playback::new(model, animation_id, random)?;
+    let playback = M2Playback::new(model, animation_id, scene_time_ms as u32, random)?;
     m2_gpu_placement(
         0,
         transform,

@@ -118,9 +118,7 @@ impl GameObjectBehavior {
         }) {
             return self.synchronize_collision(placement);
         }
-        let mut playback = M2Playback::unstarted(0);
-        playback.scene_time_ms = scene_time_ms;
-        playback.previous_event_scene_time_ms = scene_time_ms;
+        let mut playback = M2Playback::unstarted(0, scene_time_ms);
         self.current_request.set(None);
         self.reselect(
             world,
@@ -188,7 +186,6 @@ impl GameObjectBehavior {
         &self,
         world: &ActiveWorld,
         scene_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.scene_sample.borrow_mut().take();
@@ -197,15 +194,8 @@ impl GameObjectBehavior {
             return Ok(());
         };
         let mut playback = model.playback.borrow_mut();
-        let advance = self.advance(
-            world,
-            &model.model,
-            &mut playback,
-            scene_time_ms,
-            global_time_ms,
-            random,
-        )?;
-        let event_window = playback.event_window(scene_time_ms, global_time_ms);
+        let advance = self.advance(world, &model.model, &mut playback, scene_time_ms, random)?;
+        let event_window = playback.event_window(scene_time_ms);
         *self.scene_sample.borrow_mut() = Some(GameObjectSceneSample {
             advance,
             event_window,
@@ -295,13 +285,11 @@ impl GameObjectBehavior {
         model: &DecodedM2Model,
         playback: &mut M2Playback,
         scene_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
         playback.clock_with_completion(
             model,
             scene_time_ms,
-            global_time_ms,
             random,
             Some(&mut |playback, random| {
                 let Some(current) = self.state.get() else {

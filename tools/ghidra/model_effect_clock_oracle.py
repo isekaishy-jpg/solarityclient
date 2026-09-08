@@ -14,13 +14,19 @@ from unicorn import UC_HOOK_CODE
 from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP
 
 
-def capture(executable, output):
+def capture(executable, output, global_output=None):
     native.initialize(executable)
     uc = native.emulator()
     model, scene, resource, data = [native.HEAP + 0x1000 * i for i in range(4)]
     dispatched = []
+    global_sample = False
     def dependencies(u, address, _size, _data):
         sp = u.reg_read(UC_X86_REG_ESP)
+        if global_sample and address == 0x4c1f00:
+            # Global clock writes precede this camera-matrix operation. Stop
+            # before geometry/bones; no interpolation or particle update runs.
+            u.reg_write(UC_X86_REG_EIP, native.STOP)
+            return
         if address == 0x834540:
             owner = u.reg_read(UC_X86_REG_ECX)
             native.write_words(u, owner + 0x28, native.read_words(u, sp + 4, 1)[0])
@@ -62,11 +68,39 @@ def capture(executable, output):
             rows.append(f'{created} {previous} {sample} {ready} {updated} {bits}')
     Path(output).write_text('\n'.join(rows) + '\n', encoding='utf-8')
     print(f'Captured {len(rows)-1} native model effect updates')
+    if global_output is not None:
+        global_sample = True
+        durations, phases = native.HEAP + 0x4000, native.HEAP + 0x4100
+        globals = ['# 834810 construction -> 82F0F0 unsigned global clocks: creation scene duration phase']
+        for created in [0, 5000, 20_000, 0x1000001, 0xfffffff0]:
+            uc.mem_write(model, bytes(0x400))
+            native.write_words(uc, scene + 0xc, created)
+            uc.reg_write(UC_X86_REG_ECX, model)
+            invoke(uc, 0x834810, [scene, resource, 0, 0])
+            assert native.read_words(uc, model + 0x74, 1)[0] == created
+            native.write_words(uc, model + 0x10, 1)
+            native.write_words(uc, model + 0x70, phases)
+            native.write_words(uc, scene + 0x14, 1)
+            native.write_words(uc, data + 0x10, 4, 1, durations)
+            for elapsed in [0, 1, 16, 33, 667, 0x1000001, 0x7fffffff, 0xffffffff]:
+                now = (created + elapsed) & 0xffffffff
+                native.write_words(uc, scene + 0xc, now)
+                for duration in [0, 1, 667, 1500, 3333, 600_000]:
+                    native.write_words(uc, durations, duration)
+                    native.write_words(uc, phases, 0xdeadbeef)
+                    uc.reg_write(UC_X86_REG_ECX, model)
+                    invoke(uc, 0x82f0f0, [0, 0, 0, 0, 0])
+                    phase = native.read_words(uc, phases, 1)[0]
+                    assert phase != 0xdeadbeef
+                    globals.append(f'{created} {now} {duration} {phase}')
+        Path(global_output).write_text('\n'.join(globals) + '\n', encoding='utf-8')
+        print(f'Captured {len(globals)-1} native global-sequence phases')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable')
     parser.add_argument('output')
+    parser.add_argument('--global-output')
     args = parser.parse_args()
-    capture(args.executable, args.output)
+    capture(args.executable, args.output, args.global_output)

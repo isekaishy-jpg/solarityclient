@@ -436,7 +436,6 @@ fn advance(
         solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
         time,
-        time,
         M2CameraEffectScale::EXTERNAL_CAMERA,
         random,
         None,

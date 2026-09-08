@@ -7,12 +7,14 @@ use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model, Locale,
 };
 use solarity_rendering::{
-    M2AnimationClock, M2BonePose, M2MaterialPose, M2MeshPlan, sample_m2_camera_frame,
+    M2AnimationClock, M2BonePose, M2MaterialPose, M2MeshPlan, M2ParticlePose,
+    sample_m2_camera_frame,
 };
 
 use super::{
-    append_render_camera, append_render_track, m2_array_offset, render_f32_values,
-    render_i16_values, render_m2_bytes, render_skin_bytes,
+    append_render_camera, append_render_particle, append_render_track, m2_array_offset,
+    render_f32_values, render_i16_values, render_m2_bytes, render_skin_bytes,
+    set_render_header_array,
 };
 use crate::support::{Fixture, FixtureFile};
 
@@ -63,6 +65,40 @@ fn load(mut bytes: Vec<u8>) -> Result<DecodedM2Model, Box<dyn Error>> {
         &mut assets,
         &AssetPath::new("Solarity\\Track.m2")?,
     )?)
+}
+
+/// The native fixture gives phases 166 and 218; converting the elapsed tick
+/// to float before modulo would select the neighboring emission keys.
+#[test]
+fn model_global_particle_keys_preserve_integer_phase_and_ignore_primary_blends()
+-> Result<(), Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Track", 1)?;
+    append_render_particle(&mut bytes)?;
+    let particle = m2_array_offset(&bytes, 0x128)?;
+    let track = particle + 0x0b0;
+    append_render_track(
+        &mut bytes,
+        track,
+        &[0, 166, 167, 218, 219],
+        &render_f32_values(&[1.0, 2.0, 3.0, 4.0, 5.0]),
+        4,
+    )?;
+    bytes[track + 2..track + 4].copy_from_slice(&0_i16.to_le_bytes());
+    let duration = bytes.len();
+    bytes.extend_from_slice(&667_u32.to_le_bytes());
+    set_render_header_array(&mut bytes, 0x14, 1, duration)?;
+    let model = load(bytes)?;
+    for (elapsed, expected) in [(0, 1.0), (16_777_217, 2.0), (u32::MAX, 4.0)] {
+        let clock = M2AnimationClock::new_with_global_tick(0, 500.0, elapsed)
+            .with_secondary_sequence(0, 250.0, 1.0);
+        let pose = M2ParticlePose::sample(
+            model.animations(),
+            &model.animations().particles()[0],
+            clock,
+        )?;
+        assert_eq!(pose.emission_rate(), expected, "elapsed {elapsed}");
+    }
+    Ok(())
 }
 
 /// Native 0x0082B460/0x0082B8A0 output at t=1/4, with deliberately distinct

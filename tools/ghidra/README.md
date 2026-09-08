@@ -119,8 +119,13 @@ millisecond conversion execute original instructions. The eight probes cover
 creation at a nonzero tick, repeated ticks, a skipped update, and wraparound.
 They do not test the particle simulator or model visibility admission.
 
+The optional global output executes `0x0082F0F0` through its unsigned global
+sequence writes, stopping before camera/bone evaluation. Its 240 probes vary
+creation and elapsed ticks and authored duration, including zero duration,
+wraparound, and elapsed values beyond exact float representation.
+
 ```text
-python tools/ghidra/model_effect_clock_oracle.py <path-to-Wow.exe> target/model-effect-clock-native.txt
+python tools/ghidra/model_effect_clock_oracle.py <path-to-Wow.exe> target/model-effect-clock-native.txt --global-output target/model-global-clock-native.txt
 ```
 
 ## Default model sequence oracle

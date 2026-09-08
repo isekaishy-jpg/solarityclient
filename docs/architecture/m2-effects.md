@@ -42,6 +42,14 @@ snapshots also include the effect timestamp. Full frame-retirement retention
 and the wider runtime's floating-point scene-clock precision remain separate
 ownership and clock work.
 
+The constructor also stores a distinct global-track origin at `+0x74`.
+Shared playback retains this origin through primary sequence changes and
+pauses; each authored global duration uses the unsigned elapsed remainder.
+This starts a newly admitted effect's burst at its own creation even in an
+older scene. The oracle's optional 240 global-clock probes, decoded emitter
+track sampling, and retained-unit material replacement checks cover this
+boundary; see [M2 animation](m2-animation.md#per-model-global-tracks).
+
 ## Default model sequence
 
 Native load completion (`0x00832EA0`) and scene binding (`0x00834540`)

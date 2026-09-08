@@ -334,7 +334,6 @@ impl ClientServices {
                 self.terrain.resident_mesh_plan(),
                 environment,
                 camera,
-                self.m2_global_clock.elapsed().as_secs_f32() * 1000.,
                 sdl3::timer::ticks() as u32,
                 underwater.is_some(),
                 self.glue.cvar_boolean("specular"),

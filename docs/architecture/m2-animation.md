@@ -100,7 +100,30 @@ widget update/visibility clocks, and retaining hidden instances' GPU effects.
 The existing world playback path still uses elapsed-time windows that collapse
 multiple occurrences of one declaration and discards overdue variation time.
 These Model changes do not establish parity for those callers or FrameXML
-Model rendering. Scene-global track ownership also remains separate work.
+Model rendering.
+
+## Per-model global tracks
+
+The constructor at `0x00834810` stores the scene tick in `CM2Model +0x74`.
+`0x0082F0F0` samples each global sequence using the wrapping unsigned elapsed
+tick modulo its authored duration. This origin is independent of the primary
+sequence and the particle-update timestamp at `+0x8C`; primary seeks, changes,
+and pauses do not restart or stop global tracks.
+
+`M2Playback` now owns that construction tick for Glue, units, equipment,
+game objects, and placed models. CPU unit admission receives the current scene
+tick, and material/GPU rebuilds retain the same playback owner. A replacement
+model or unit lifetime receives a fresh origin. Track sampling computes the
+integer remainder before converting to float, preserving the phase when an
+elapsed tick is too large for exact float representation.
+
+`model_effect_clock_oracle.py --global-output` executes the original constructor
+and global phase instructions. Its 240 committed cases cover nonzero creation,
+scene wrap, zero durations, and large unsigned elapsed ticks. Decoded particle
+track and runtime ownership regressions cover sampling, seeks, pauses, and
+material replacement. The scene-facing runtime API still supplies float
+milliseconds; quantization at that earlier boundary remains a separate clock
+precision gap.
 
 ## Automatic sequence blending
 

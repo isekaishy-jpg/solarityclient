@@ -121,7 +121,10 @@ submission, unit event timing, attachment placement, or completion callbacks.
 Runtime consumption of the unit requests, mouth/root attachment fallback,
 and CEffect model ownership through retirement are still pending. The decision,
 scale, and particle simulation checks do not establish visible runtime or full
-lifecycle parity. The native constructor also starts global-sequence clocks
-at each model's creation tick (`+0x74`), separately from the particle-update
-timestamp (`+0x8C`). Unit effect integration must preserve that origin so a
-new spray starts at its authored burst even after the world has been running.
+lifecycle parity. Shared M2 playback now starts global-sequence clocks at each
+model's creation tick (`+0x74`), separately from the particle-update timestamp
+(`+0x8C`). It preserves that origin through primary sequence changes, pauses,
+and material rebuilds. This gives new effects the authored burst phase even
+after the world has been running. Native unsigned phase fixtures and decoded
+particle-track tests verify this clock boundary; unit effect ownership still
+needs to use it when creating each CEffect model.

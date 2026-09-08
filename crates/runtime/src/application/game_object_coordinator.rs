@@ -201,17 +201,16 @@ impl<'a> GameObjectFrameInput<'a> {
     pub(in crate::application) fn advance_scene(
         self,
         scene_time_ms: f32,
-        global_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.scene_time_ms.set(scene_time_ms as u32);
         if let Some(world) = self.world {
             for instance in self.instances {
                 if let Some(behavior) = instance.behavior() {
-                    behavior.advance_scene(world, scene_time_ms, global_time_ms, random)?;
+                    behavior.advance_scene(world, scene_time_ms, random)?;
                 }
                 if let Some(model) = instance.transport_model() {
-                    model.advance_scene(scene_time_ms, global_time_ms, random)?;
+                    model.advance_scene(scene_time_ms, random)?;
                 }
             }
         }

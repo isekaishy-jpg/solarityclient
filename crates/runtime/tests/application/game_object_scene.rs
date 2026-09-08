@@ -64,7 +64,7 @@ fn game_object_fallback_timers_preserve_state_and_random_order() -> Result<(), B
         let mut store = AssetStore::mount(catalog)?;
         let model = DecodedM2Model::load(&mut store, &AssetPath::new("World\\GameObject.m2")?)?;
         let catalog = AnimationDataCatalog::load(&mut store)?;
-        let mut playback = M2Playback::unstarted(0);
+        let mut playback = M2Playback::unstarted(0, 0);
         let mut random = CrtRand::new();
         let mut expected_random = random;
         let _variation = expected_random.next_u15();
@@ -94,7 +94,7 @@ fn game_object_fallback_timers_preserve_state_and_random_order() -> Result<(), B
             );
             assert_eq!(random, expected_random);
         }
-        let clock = playback.clock(&model, 2_501.0, 2_501.0, &mut random)?.clock;
+        let clock = playback.clock(&model, 2_501.0, &mut random)?.clock;
         assert_eq!(
             clock.animation_time_ms(),
             match mode {
@@ -421,7 +421,6 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
                     camera,
                     solarity_rendering::M2TransparentPass::One,
                     Vec3::ZERO,
-                    2500.,
                     2500.,
                     M2CameraEffectScale::EXTERNAL_CAMERA,
                     random,

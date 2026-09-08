@@ -98,12 +98,8 @@ fn locate<'track, T>(
     if let Some(global) = track.global_sequence() {
         let duration = *animations
             .global_sequence_durations_ms()
-            .get(usize::from(global))? as f32;
-        let time_ms = if duration > 0.0 {
-            clock.global_time_ms().rem_euclid(duration)
-        } else {
-            0.0
-        };
+            .get(usize::from(global))?;
+        let time_ms = clock.global_sequence_time_ms(duration);
         return track
             .channels()
             .first()

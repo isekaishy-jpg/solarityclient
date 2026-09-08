@@ -4,12 +4,17 @@ use solarity_asset::{M2AnimationSet, M2Interpolation, M2Track};
 
 use super::M2BonePoseError;
 
+#[cfg(test)]
+#[path = "../../../tests/support/model_global_clock.rs"]
+mod tests;
+
 /// The local animation and global clocks used by model tracks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2AnimationClock {
     sequence: usize,
     animation_time_ms: f32,
     global_time_ms: f32,
+    global_tick_ms: Option<u32>,
     secondary: Option<SecondaryClock>,
 }
 
@@ -29,6 +34,27 @@ impl M2AnimationClock {
             sequence,
             animation_time_ms,
             global_time_ms,
+            global_tick_ms: None,
+            secondary: None,
+        }
+    }
+
+    /// Creates a model snapshot with the native unsigned global-sequence tick.
+    ///
+    /// The owner subtracts its construction tick with wrapping arithmetic.
+    /// Track sampling takes the integer remainder before converting to float,
+    /// preserving millisecond phases after the float mantissa loses precision.
+    #[must_use]
+    pub const fn new_with_global_tick(
+        sequence: usize,
+        animation_time_ms: f32,
+        global_tick_ms: u32,
+    ) -> Self {
+        Self {
+            sequence,
+            animation_time_ms,
+            global_time_ms: global_tick_ms as f32,
+            global_tick_ms: Some(global_tick_ms),
             secondary: None,
         }
     }
@@ -65,10 +91,20 @@ impl M2AnimationClock {
         self.animation_time_ms
     }
 
-    /// Returns elapsed time on the shared global animation clock.
+    /// Returns elapsed global-sequence time, rounded to float for inspection.
     #[must_use]
     pub const fn global_time_ms(self) -> f32 {
         self.global_time_ms
+    }
+
+    pub(super) fn global_sequence_time_ms(self, duration_ms: u32) -> f32 {
+        if duration_ms == 0 {
+            return 0.0;
+        }
+        self.global_tick_ms.map_or_else(
+            || self.global_time_ms.rem_euclid(duration_ms as f32),
+            |tick| (tick % duration_ms) as f32,
+        )
     }
 
     /// Validates both clocks and replaces aliases with their payload slots.

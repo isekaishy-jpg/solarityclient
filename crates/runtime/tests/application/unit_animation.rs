@@ -37,20 +37,20 @@ fn stock_repeated_jumps_sample_authored_variations() -> Result<(), Box<dyn Error
             let path = AssetPath::new(format!("Character\\{race}\\{gender}\\{race}{gender}.m2"))?;
             let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
             let owner =
-                UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0));
+                UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0), 0);
             let mut random = CrtRand::new();
             let mut time = 100.;
             let mut seen = BTreeMap::<u16, BTreeMap<usize, usize>>::new();
             for _ in 0..128 {
                 owner.set_input(input(0));
-                owner.advance_scene(time, time, &mut random)?;
+                owner.advance_scene(time, &mut random)?;
                 notify(
                     &owner,
                     movement(0x1000, Some(-7.95555)),
                     UnitMovementAnimationEventKind::Jump,
                 );
                 time += 100.;
-                owner.advance_scene(time, time, &mut random)?;
+                owner.advance_scene(time, &mut random)?;
                 for expected in [37, 38] {
                     let playback = owner.playback.borrow();
                     assert_eq!(owner.behavior(&playback), expected, "{path}");
@@ -61,7 +61,7 @@ fn stock_repeated_jumps_sample_authored_variations() -> Result<(), Box<dyn Error
                         .or_default() += 1;
                     time = playback.script_timer.ok_or("jump timer")?.end_time_ms() as f32 + 1.;
                     drop(playback);
-                    owner.advance_scene(time, time, &mut random)?;
+                    owner.advance_scene(time, &mut random)?;
                 }
                 notify(
                     &owner,
@@ -73,7 +73,7 @@ fn stock_repeated_jumps_sample_authored_variations() -> Result<(), Box<dyn Error
                     },
                 );
                 time += 100.;
-                owner.advance_scene(time, time, &mut random)?;
+                owner.advance_scene(time, &mut random)?;
                 time = owner
                     .playback
                     .borrow()
@@ -81,7 +81,7 @@ fn stock_repeated_jumps_sample_authored_variations() -> Result<(), Box<dyn Error
                     .ok_or("land timer")?
                     .end_time_ms() as f32
                     + 1.;
-                owner.advance_scene(time, time, &mut random)?;
+                owner.advance_scene(time, &mut random)?;
                 time += 100.;
             }
             let metadata = owner
@@ -128,46 +128,46 @@ fn mouse_twist_retains_random_state_then_release_selects_procedural_turn()
 -> Result<(), Box<dyn Error>> {
     let owner = owner(POSES, 0)?;
     let mut random = CrtRand::new();
-    owner.advance_scene(1000., 1000., &mut random)?;
+    owner.advance_scene(1000., &mut random)?;
     let initial_random = random;
     let mut facing = input(0);
     facing.controlled = true;
     facing.mouse_turning = true;
     facing.facing = 0.5;
     owner.set_input(facing);
-    owner.advance_scene(1001., 1001., &mut random)?;
+    owner.advance_scene(1001., &mut random)?;
     let twist = owner.body_pose();
     assert_eq!(twist.placement_rotation, body_rotation(-0.5));
     assert_eq!(twist.bone_transforms(), &[(4, body_rotation(0.5))]);
     assert_eq!(owner.playback.borrow().animation_id, 0);
-    owner.advance_scene(1016., 1016., &mut random)?;
+    owner.advance_scene(1016., &mut random)?;
     assert_eq!(
         random, initial_random,
         "mouse twist does not select a variation"
     );
     facing.mouse_turning = false;
     owner.set_input(facing);
-    owner.advance_scene(1017., 1017., &mut random)?;
+    owner.advance_scene(1017., &mut random)?;
     assert_eq!(
         owner.playback.borrow().animation_id,
         0,
         "release resets the facing tick"
     );
-    owner.advance_scene(1018., 1018., &mut random)?;
+    owner.advance_scene(1018., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 11);
     assert_eq!(owner.body_pose().procedural_turn, 0x800);
     let caught_up = owner.body_pose();
     let turn_random = random;
-    owner.advance_scene(1018., 1018., &mut random)?;
+    owner.advance_scene(1018., &mut random)?;
     assert_eq!(
         owner.body_pose().placement_rotation,
         caught_up.placement_rotation,
         "the same scene cannot advance body smoothing twice"
     );
     assert_eq!(random, turn_random);
-    owner.advance_scene(1118., 1118., &mut random)?;
+    owner.advance_scene(1118., &mut random)?;
     assert!(owner.body_pose().bone_transforms().is_empty());
-    owner.advance_scene(1119., 1119., &mut random)?;
+    owner.advance_scene(1119., &mut random)?;
     assert_eq!(
         owner.playback.borrow().animation_id,
         11,
@@ -181,7 +181,7 @@ fn mouse_twist_retains_random_state_then_release_selects_procedural_turn()
         .ok_or("turn timer")?
         .end_time_ms() as f32
         + 1.;
-    owner.advance_scene(end, end, &mut random)?;
+    owner.advance_scene(end, &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 0);
     Ok(())
 }
@@ -309,6 +309,7 @@ fn owner_with_sequence_metadata(
         )?),
         Arc::new(AnimationDataCatalog::load(&mut store)?),
         initial,
+        0,
     ))
 }
 
@@ -435,20 +436,20 @@ fn jump_retains_takeoff_then_loops_and_lands_with_shared_random_and_blend()
 -> Result<(), Box<dyn Error>> {
     let owner = owner(POSES, 0)?;
     let mut random = CrtRand::new();
-    owner.advance_scene(100., 100., &mut random)?;
+    owner.advance_scene(100., &mut random)?;
     notify(
         &owner,
         movement(0x1000, Some(-7.95555)),
         UnitMovementAnimationEventKind::Jump,
     );
-    owner.advance_scene(200., 200., &mut random)?;
+    owner.advance_scene(200., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 37);
     let mut expected = random;
     owner.set_input(input(0).with_movement(movement(0x1001, Some(-7.95555))));
-    owner.advance_scene(300., 300., &mut random)?;
+    owner.advance_scene(300., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 37);
     assert_eq!(random, expected);
-    owner.advance_scene(1500., 1500., &mut random)?;
+    owner.advance_scene(1500., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 38);
     let _variation = expected.next_u15();
     let _cycle = expected.next_u15();
@@ -463,14 +464,14 @@ fn jump_retains_takeoff_then_loops_and_lands_with_shared_random_and_blend()
         },
     );
     owner.set_input(input(0).with_movement(movement(0, None)));
-    owner.advance_scene(1700., 1700., &mut random)?;
+    owner.advance_scene(1700., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 39);
     assert!(owner.playback.borrow().script_blend.is_some());
     expected = random;
-    owner.advance_scene(1800., 1800., &mut random)?;
+    owner.advance_scene(1800., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 39);
     assert_eq!(random, expected);
-    owner.advance_scene(3000., 3000., &mut random)?;
+    owner.advance_scene(3000., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 0);
     Ok(())
 }
@@ -480,7 +481,7 @@ fn running_landing_completes_and_new_movement_can_interrupt_stationary_landing()
 -> Result<(), Box<dyn Error>> {
     let owner = owner(POSES, 0)?;
     let mut random = CrtRand::new();
-    owner.advance_scene(100., 100., &mut random)?;
+    owner.advance_scene(100., &mut random)?;
     notify(
         &owner,
         movement(1, None),
@@ -490,9 +491,9 @@ fn running_landing_completes_and_new_movement_can_interrupt_stationary_landing()
             slow: false,
         },
     );
-    owner.advance_scene(200., 200., &mut random)?;
+    owner.advance_scene(200., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 187);
-    owner.advance_scene(1500., 1500., &mut random)?;
+    owner.advance_scene(1500., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 5);
     notify(
         &owner,
@@ -503,10 +504,10 @@ fn running_landing_completes_and_new_movement_can_interrupt_stationary_landing()
             slow: true,
         },
     );
-    owner.advance_scene(1600., 1600., &mut random)?;
+    owner.advance_scene(1600., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 39);
     owner.set_input(input(0).with_movement(movement(1, None)));
-    owner.advance_scene(1700., 1700., &mut random)?;
+    owner.advance_scene(1700., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 5);
     Ok(())
 }
@@ -523,7 +524,7 @@ fn turn_directions_and_zero_launch_falls_use_distinct_requests() -> Result<(), B
         (5, 0x3000, Some(0.), 40),
     ] {
         owner.set_input(input(0).with_movement(movement(flags, vertical)));
-        owner.advance_scene(index as f32 * 100., index as f32 * 100., &mut random)?;
+        owner.advance_scene(index as f32 * 100., &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, expected);
     }
     Ok(())
@@ -533,7 +534,7 @@ fn turn_directions_and_zero_launch_falls_use_distinct_requests() -> Result<(), B
 fn jump_and_landing_in_one_scene_preserve_both_ordered_requests() -> Result<(), Box<dyn Error>> {
     let owner = owner(POSES, 0)?;
     let mut random = CrtRand::new();
-    owner.advance_scene(100., 100., &mut random)?;
+    owner.advance_scene(100., &mut random)?;
     let mut expected = random;
     notify(
         &owner,
@@ -549,7 +550,7 @@ fn jump_and_landing_in_one_scene_preserve_both_ordered_requests() -> Result<(), 
             slow: true,
         },
     );
-    owner.advance_scene(200., 200., &mut random)?;
+    owner.advance_scene(200., &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 39);
     for _ in 0..4 {
         let _ = expected.next_u15();
@@ -587,17 +588,17 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
             let path = AssetPath::new(format!("Character\\{race}\\{gender}\\{race}{gender}.m2"))?;
             let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
             let owner =
-                UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0));
+                UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0), 0);
             let mut random = CrtRand::new();
             let mut time = 100.;
-            owner.advance_scene(time, time, &mut random)?;
+            owner.advance_scene(time, &mut random)?;
             notify(
                 &owner,
                 movement(0x1000, Some(-7.95555)),
                 UnitMovementAnimationEventKind::Jump,
             );
             time += 100.;
-            owner.advance_scene(time, time, &mut random)?;
+            owner.advance_scene(time, &mut random)?;
             assert_eq!(
                 owner.behavior(&owner.playback.borrow()),
                 37,
@@ -606,7 +607,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
             time += owner.model.animations().sequences()[owner.playback.borrow().sequence]
                 .duration_ms() as f32
                 + 1.;
-            owner.advance_scene(time, time, &mut random)?;
+            owner.advance_scene(time, &mut random)?;
             assert_eq!(
                 owner.behavior(&owner.playback.borrow()),
                 38,
@@ -622,7 +623,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                 },
             );
             time += 100.;
-            owner.advance_scene(time, time, &mut random)?;
+            owner.advance_scene(time, &mut random)?;
             assert_eq!(
                 owner.behavior(&owner.playback.borrow()),
                 39,
@@ -631,7 +632,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
             time += owner.model.animations().sequences()[owner.playback.borrow().sequence]
                 .duration_ms() as f32
                 + 1.;
-            owner.advance_scene(time, time, &mut random)?;
+            owner.advance_scene(time, &mut random)?;
             assert_eq!(
                 owner.behavior(&owner.playback.borrow()),
                 0,
@@ -640,7 +641,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
             for (flags, expected) in [(0x10, 11), (0x20, 12)] {
                 owner.set_input(input(0).with_movement(movement(flags, None)));
                 time += 100.;
-                owner.advance_scene(time, time, &mut random)?;
+                owner.advance_scene(time, &mut random)?;
                 assert_eq!(
                     owner.behavior(&owner.playback.borrow()),
                     expected,
@@ -657,7 +658,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                 },
             );
             time += 100.;
-            owner.advance_scene(time, time, &mut random)?;
+            owner.advance_scene(time, &mut random)?;
             assert_eq!(
                 owner.behavior(&owner.playback.borrow()),
                 187,
@@ -670,7 +671,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                 .ok_or("landing timer")?
                 .end_time_ms() as f32
                 + 1.;
-            owner.advance_scene(time, time, &mut random)?;
+            owner.advance_scene(time, &mut random)?;
             assert_eq!(
                 owner.behavior(&owner.playback.borrow()),
                 5,
@@ -738,7 +739,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                         );
                     }
                 }
-                owner.advance_scene(time, time, &mut random)?;
+                owner.advance_scene(time, &mut random)?;
                 let sample = owner.take_scene_sample().ok_or("locomotion scene sample")?;
                 let pose = solarity_rendering::M2BonePose::compose_with_model_view(
                     owner.model.animations(),
@@ -769,7 +770,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
                 owner.set_input(moving);
                 for _ in 0..24 {
                     time += 1000. / 1200.;
-                    owner.advance_scene(time, time, &mut random)?;
+                    owner.advance_scene(time, &mut random)?;
                     let sample = owner
                         .take_scene_sample()
                         .ok_or("directional scene sample")?;
@@ -815,16 +816,16 @@ fn ordinary_transitions_complete_on_the_cpu_and_retain_the_shared_timer()
     for (stand, down, hold, up) in [(1, 96, 97, 98), (3, 99, 100, 101), (8, 114, 115, 116)] {
         let owner = owner(POSES, 0)?;
         let mut random = CrtRand::new();
-        owner.advance_scene(100.0, 100.0, &mut random)?;
+        owner.advance_scene(100.0, &mut random)?;
         let playback = owner.playback();
         owner.set_input(input(stand));
-        owner.advance_scene(200.0, 200.0, &mut random)?;
+        owner.advance_scene(200.0, &mut random)?;
         assert_eq!(playback.borrow().animation_id, down);
         owner.take_scene_sample();
         let mut expected = random;
         let _ = expected.next_u15();
         let _ = expected.next_u15();
-        owner.advance_scene(1500.0, 1500.0, &mut random)?;
+        owner.advance_scene(1500.0, &mut random)?;
         assert_eq!(playback.borrow().animation_id, hold);
         assert_eq!(
             random, expected,
@@ -844,7 +845,7 @@ fn ordinary_transitions_complete_on_the_cpu_and_retain_the_shared_timer()
         assert!(playback.borrow().script_blend.is_some());
         // GPU consumers can disappear and reconnect without constructing a timer.
         drop(playback);
-        owner.advance_scene(1700.0, 1700.0, &mut random)?;
+        owner.advance_scene(1700.0, &mut random)?;
         let playback = owner.playback();
         assert_eq!(
             playback
@@ -856,9 +857,9 @@ fn ordinary_transitions_complete_on_the_cpu_and_retain_the_shared_timer()
         );
         assert_eq!(random, expected);
         owner.set_input(input(0));
-        owner.advance_scene(1800.0, 1800.0, &mut random)?;
+        owner.advance_scene(1800.0, &mut random)?;
         assert_eq!(playback.borrow().animation_id, up);
-        owner.advance_scene(3000.0, 3000.0, &mut random)?;
+        owner.advance_scene(3000.0, &mut random)?;
         assert_eq!(playback.borrow().animation_id, 0);
     }
     Ok(())
@@ -869,17 +870,17 @@ fn interrupted_sit_uses_latest_posture_and_identical_input_does_not_restart()
 -> Result<(), Box<dyn Error>> {
     let owner = owner(POSES, 1)?;
     let mut random = CrtRand::new();
-    owner.advance_scene(100.0, 100.0, &mut random)?;
+    owner.advance_scene(100.0, &mut random)?;
     let playback = owner.playback();
     let expected = random;
     owner.set_input(input(1));
-    owner.advance_scene(250.0, 250.0, &mut random)?;
+    owner.advance_scene(250.0, &mut random)?;
     assert_eq!(playback.borrow().animation_id, 96);
     assert_eq!(random, expected);
     owner.set_input(input(0));
-    owner.advance_scene(300.0, 300.0, &mut random)?;
+    owner.advance_scene(300.0, &mut random)?;
     assert_eq!(playback.borrow().animation_id, 98);
-    owner.advance_scene(1500.0, 1500.0, &mut random)?;
+    owner.advance_scene(1500.0, &mut random)?;
     assert_eq!(playback.borrow().animation_id, 0);
     Ok(())
 }
@@ -890,19 +891,19 @@ fn chair_loops_preserve_random_state_and_locomotion_overrides_posture() -> Resul
     for (stand, animation) in [(4, 102), (5, 103), (6, 104)] {
         let owner = owner(POSES, stand)?;
         let mut random = CrtRand::new();
-        owner.advance_scene(100.0, 100.0, &mut random)?;
+        owner.advance_scene(100.0, &mut random)?;
         let expected = random;
-        owner.advance_scene(3500.0, 3500.0, &mut random)?;
+        owner.advance_scene(3500.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, animation);
         assert_eq!(random, expected);
         let mut moving = input(stand);
         moving.locomotion = UnitLocomotionAnimation::new(4);
         owner.set_input(moving);
-        owner.advance_scene(3600.0, 3600.0, &mut random)?;
+        owner.advance_scene(3600.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 4);
         moving.mounted = true;
         owner.set_input(moving);
-        owner.advance_scene(3700.0, 3700.0, &mut random)?;
+        owner.advance_scene(3700.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 91);
     }
     Ok(())
@@ -913,11 +914,11 @@ fn unavailable_pose_uses_actual_fallback_behavior_and_failed_request_remains_pen
 -> Result<(), Box<dyn Error>> {
     let owner = owner(&[0], 1)?;
     let mut random = CrtRand::new();
-    owner.advance_scene(100.0, 100.0, &mut random)?;
+    owner.advance_scene(100.0, &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 0);
     assert_eq!(owner.behavior(&owner.playback.borrow()), 0);
     let expected = random;
-    owner.advance_scene(2500.0, 2500.0, &mut random)?;
+    owner.advance_scene(2500.0, &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 0);
     assert_eq!(random, expected);
     let failed = self::owner(&[4], 1)?;
@@ -937,7 +938,7 @@ fn death_entry_completes_through_native_chain_and_preserves_corpse_variation()
         }
         let owner = owner(&ids, 7)?;
         let mut random = CrtRand::new();
-        owner.advance_scene(100.0, 100.0, &mut random)?;
+        owner.advance_scene(100.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 466);
         assert_eq!(
             owner.model.animations().sequences()[owner.playback.borrow().sequence]
@@ -948,16 +949,16 @@ fn death_entry_completes_through_native_chain_and_preserves_corpse_variation()
         let mut moving = input(7);
         moving.locomotion = UnitLocomotionAnimation::new(4);
         owner.set_input(moving);
-        owner.advance_scene(200.0, 200.0, &mut random)?;
+        owner.advance_scene(200.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 466);
-        owner.advance_scene(1500.0, 1500.0, &mut random)?;
+        owner.advance_scene(1500.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 468);
         let mut expected = random;
         if corpse_variants == 1 {
             let _variation = expected.next_u15();
         }
         let _cycle = expected.next_u15();
-        owner.advance_scene(2600.0, 2600.0, &mut random)?;
+        owner.advance_scene(2600.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 472);
         assert_eq!(
             owner.model.animations().sequences()[owner.playback.borrow().sequence]
@@ -965,8 +966,8 @@ fn death_entry_completes_through_native_chain_and_preserves_corpse_variation()
             corpse_variants + 16
         );
         assert_eq!(random, expected);
-        owner.advance_scene(4000.0, 4000.0, &mut random)?;
-        owner.advance_scene(8000.0, 8000.0, &mut random)?;
+        owner.advance_scene(4000.0, &mut random)?;
+        owner.advance_scene(8000.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 472);
         assert_eq!(random, expected, "a completed corpse retains its timer");
     }
@@ -983,11 +984,11 @@ fn swimming_and_fallback_death_use_the_actual_primary_completion() -> Result<(),
         death.movement_flags = if swimming { 0x200000 } else { 0 };
         let owner = owner_with_input(ids, death)?;
         let mut random = CrtRand::new();
-        owner.advance_scene(100.0, 100.0, &mut random)?;
+        owner.advance_scene(100.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, start);
         let mut expected = random;
         let _cycle = expected.next_u15();
-        owner.advance_scene(1500.0, 1500.0, &mut random)?;
+        owner.advance_scene(1500.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, finish);
         assert_eq!(random, expected);
     }
@@ -999,14 +1000,14 @@ fn submerged_entry_finishes_before_hold_and_exit_prefers_standup() -> Result<(),
     for (ids, exit) in [(POSES, 127), (&[0, 201, 202, 224][..], 224)] {
         let owner = owner(ids, 9)?;
         let mut random = CrtRand::new();
-        owner.advance_scene(100.0, 100.0, &mut random)?;
+        owner.advance_scene(100.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 201);
-        owner.advance_scene(1500.0, 1500.0, &mut random)?;
+        owner.advance_scene(1500.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 202);
         owner.set_input(input(0));
-        owner.advance_scene(1600.0, 1600.0, &mut random)?;
+        owner.advance_scene(1600.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, exit);
-        owner.advance_scene(2800.0, 2800.0, &mut random)?;
+        owner.advance_scene(2800.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, 0);
     }
     Ok(())
@@ -1019,15 +1020,15 @@ fn tiered_postures_complete_by_behavior_and_resolve_successor_in_the_same_tier()
     pose.tier = UnitAnimationTier::Fly;
     let owner = owner_with_input(&[0, 300, 301, 302], pose)?;
     let mut random = CrtRand::new();
-    owner.advance_scene(100.0, 100.0, &mut random)?;
+    owner.advance_scene(100.0, &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 300);
-    owner.advance_scene(1500.0, 1500.0, &mut random)?;
+    owner.advance_scene(1500.0, &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 301);
     pose.stand = 0;
     owner.set_input(pose);
-    owner.advance_scene(1600.0, 1600.0, &mut random)?;
+    owner.advance_scene(1600.0, &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 302);
-    owner.advance_scene(2800.0, 2800.0, &mut random)?;
+    owner.advance_scene(2800.0, &mut random)?;
     assert_eq!(owner.playback.borrow().animation_id, 0);
     Ok(())
 }
@@ -1045,14 +1046,14 @@ fn direct_corpse_callbacks_bypass_unit_tiers_and_hold_a_missing_corpse_endpoint(
         death.movement_flags = if swimming { 0x200000 } else { 0 };
         let owner = owner_with_input(ids, death)?;
         let mut random = CrtRand::new();
-        owner.advance_scene(100.0, 100.0, &mut random)?;
+        owner.advance_scene(100.0, &mut random)?;
         let mut expected_random = random;
         let _cycle = expected_random.next_u15();
-        owner.advance_scene(1500.0, 1500.0, &mut random)?;
+        owner.advance_scene(1500.0, &mut random)?;
         assert_eq!(owner.playback.borrow().animation_id, expected_id);
         assert_eq!(owner.playback.borrow().script_mode, mode);
         assert_eq!(random, expected_random);
-        owner.advance_scene(5000.0, 5000.0, &mut random)?;
+        owner.advance_scene(5000.0, &mut random)?;
         assert_eq!(random, expected_random);
     }
     Ok(())

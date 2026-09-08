@@ -1396,6 +1396,11 @@ impl RuntimePlayerPresentation {
         self.animation_mouse_turning = turning;
     }
 
+    /// Binds newly admitted CPU model owners to the current M2 scene tick.
+    pub(super) fn set_animation_scene_time(&mut self, scene_time_ms: u32) {
+        self.unit_animations.set_scene_time(scene_time_ms);
+    }
+
     fn synchronize_local_animation(
         &mut self,
         world: &ActiveWorld,

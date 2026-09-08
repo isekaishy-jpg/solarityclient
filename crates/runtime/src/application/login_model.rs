@@ -1263,7 +1263,6 @@ impl RuntimeGlueModelScene {
         renderer: &mut VulkanRenderer,
         glue: &GlueManager,
         ui: &RuntimeUiFrame,
-        global_time_ms: f32,
         random: &mut CrtRand,
         overlay: &[solarity_rendering::UiPreparedDraw],
     ) -> Result<bool, RuntimeGlueModelError> {
@@ -1277,10 +1276,9 @@ impl RuntimeGlueModelScene {
             ui_extent,
         )?;
         let animation_time_ms = active.frame.animation_time_ms();
-        let clock =
-            active
-                .frame
-                .advance_glue_animation_clock(animation_time_ms, global_time_ms, random)?;
+        let clock = active
+            .frame
+            .advance_glue_animation_clock(animation_time_ms, random)?;
         let (camera, effect_scale) = sample_m2_ui_camera_frame(
             active.model.animations(),
             active.environment.camera,
@@ -1299,7 +1297,6 @@ impl RuntimeGlueModelScene {
             solarity_rendering::M2TransparentPass::One,
             active.environment.fog_color,
             animation_time_ms,
-            global_time_ms,
             effect_scale,
             random,
             None,

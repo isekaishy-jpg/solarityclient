@@ -414,7 +414,7 @@ fn transport_model_completes_primary_phases_without_restarting_unchanged_routes(
     );
     objects
         .frame_input(Some(&world))
-        .advance_scene(1001., 1001., &mut random)?;
+        .advance_scene(1001., &mut random)?;
     assert_eq!(playback.borrow().animation_id, 163);
     let sample = transport.take_scene_sample().ok_or("completion")?;
     assert_eq!(sample.advance.expired_variations.len(), 1);
@@ -434,7 +434,7 @@ fn transport_model_completes_primary_phases_without_restarting_unchanged_routes(
     assert_eq!(playback.borrow().animation_id, 164);
     objects
         .frame_input(Some(&world))
-        .advance_scene(2002., 2002., &mut random)?;
+        .advance_scene(2002., &mut random)?;
     assert_eq!(playback.borrow().animation_id, 0);
     objects.synchronize_animations(Some(&world), &mut random)?;
     assert_eq!(playback.borrow().animation_id, 0);

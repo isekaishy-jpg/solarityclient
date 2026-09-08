@@ -82,7 +82,6 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
         solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
         100.,
-        100.,
         M2CameraEffectScale::EXTERNAL_CAMERA,
         &mut random,
         None,
@@ -175,7 +174,6 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
         1500.0,
-        1500.0,
         M2CameraEffectScale::EXTERNAL_CAMERA,
         &mut random,
         None,
@@ -263,7 +261,6 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
         3000.0,
-        3000.0,
         M2CameraEffectScale::EXTERNAL_CAMERA,
         &mut random,
         None,
@@ -316,6 +313,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
     let fixture = crate::test_support::unit_models::fixture_with_effects()?;
     let mut presentation = unit_presentation(&fixture)?;
+    presentation.set_animation_scene_time(100);
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(0),
         7,
@@ -381,7 +379,6 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
             solarity_rendering::M2TransparentPass::One,
             Vec3::ZERO,
             time,
-            time,
             M2CameraEffectScale::EXTERNAL_CAMERA,
             &mut random,
             None,
@@ -397,6 +394,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
     for state in &before {
+        assert_eq!(state.global_tick_at_400, 300);
         assert!(
             !state.particles.is_empty(),
             "fixture must emit live particles"
@@ -414,6 +412,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
 
     // Texture quality changes rebuild both player atlases. A display alias
     // changes the creature's material generation while retaining its model.
+    presentation.set_animation_scene_time(350);
     presentation.set_component_texture_level(
         solarity_rendering::CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
     );
@@ -439,7 +438,6 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
         solarity_rendering::M2TransparentPass::One,
         Vec3::ZERO,
         350.0,
-        350.0,
         M2CameraEffectScale::EXTERNAL_CAMERA,
         &mut random,
         None,
@@ -461,6 +459,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     publish(&mut frame, &mut renderer, &presentation, &mut random)?;
     for owner in [owners[1], owners[2]] {
         let state = effects(&frame, owner)?;
+        assert_eq!(state.global_tick_at_400, 50);
         assert!(state.particles.is_empty());
         assert!(state.ribbons.is_empty());
     }
@@ -489,6 +488,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
 #[derive(Debug, PartialEq)]
 struct UnitEffectsSnapshot {
     last_update_ms: u32,
+    global_tick_at_400: u32,
     particles: Vec<solarity_rendering::M2ParticleState>,
     particle_allocation: usize,
     ribbons: Vec<solarity_rendering::M2RibbonSection>,
@@ -506,6 +506,12 @@ fn effects(
     let particles = placement.particles[0].simulation.particles();
     Ok(UnitEffectsSnapshot {
         last_update_ms: placement.last_effect_time_ms,
+        global_tick_at_400: placement
+            .playback
+            .as_ref()
+            .ok_or("model playback")?
+            .borrow()
+            .global_tick(400),
         particles: particles.to_vec(),
         particle_allocation: particles.as_ptr().addr(),
         ribbons: placement.ribbons[0].sections().copied().collect(),
@@ -680,6 +686,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
         Arc::clone(&model),
         animations,
         UnitAnimationInput::new(1, UnitAnimationTier::Ground, false, None),
+        0,
     ));
     owner.synchronize(100, &mut random)?;
     let mut turned = UnitAnimationInput::new(1, UnitAnimationTier::Ground, false, None);
@@ -725,7 +732,6 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
             camera,
             solarity_rendering::M2TransparentPass::One,
             Vec3::ZERO,
-            time,
             time,
             M2CameraEffectScale::EXTERNAL_CAMERA,
             &mut random,
