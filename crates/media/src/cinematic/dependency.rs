@@ -1,5 +1,6 @@
 //! FFmpeg demux, DivX decode, and RGBA conversion adapter.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -14,6 +15,7 @@ use ffmpeg::util::frame::audio::Audio;
 use ffmpeg::util::frame::video::Video;
 use ffmpeg_next as ffmpeg;
 
+use super::bitstream::PackedFrameFilter;
 use super::{CinematicAudioFrame, CinematicError, CinematicVideoFrame};
 
 const CINEMATIC_SAMPLE_RATE_HZ: u32 = 44_100;
@@ -103,6 +105,9 @@ pub struct CinematicDecoder {
     video_stream_index: usize,
     video_clock: CinematicFrameClock,
     video: ffmpeg::decoder::Video,
+    video_filter: Option<PackedFrameFilter>,
+    video_packets: VecDeque<ffmpeg::Packet>,
+    input_eof: bool,
     scaler: ScalingContext,
     audio: Option<AudioDecoder>,
     audio_frames: Vec<CinematicAudioFrame>,
@@ -128,7 +133,20 @@ impl CinematicDecoder {
         let video_stream_index = stream.index();
         let video_time_base = stream.time_base();
         let video_clock = CinematicFrameClock::new(&path, video_time_base, stream.rate())?;
-        let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
+        let mut parameters = stream.parameters();
+        let video_filter = if parameters.id() == ffmpeg::codec::Id::MPEG4 {
+            let filter =
+                PackedFrameFilter::new(&parameters, video_time_base).map_err(|source| {
+                    CinematicError::adapter(&path, "initialize MPEG-4 unpacker", source)
+                })?;
+            parameters = filter.parameters().map_err(|source| {
+                CinematicError::adapter(&path, "read unpacked video parameters", source)
+            })?;
+            Some(filter)
+        } else {
+            None
+        };
+        let context = ffmpeg::codec::context::Context::from_parameters(parameters)
             .map_err(|source| CinematicError::adapter(&path, "read video parameters", source))?;
         let video = context
             .decoder()
@@ -186,6 +204,9 @@ impl CinematicDecoder {
             video_stream_index,
             video_clock,
             video,
+            video_filter,
+            video_packets: VecDeque::new(),
+            input_eof: false,
             scaler,
             audio,
             audio_frames: Vec::new(),
@@ -226,6 +247,19 @@ impl CinematicDecoder {
             if self.eof_sent {
                 return Ok(None);
             }
+            if let Some(packet) = self.video_packets.pop_front() {
+                self.video.send_packet(&packet).map_err(|source| {
+                    CinematicError::adapter(&self.path, "submit video packet", source)
+                })?;
+                continue;
+            }
+            if self.input_eof {
+                self.video.send_eof().map_err(|source| {
+                    CinematicError::adapter(&self.path, "finish video stream", source)
+                })?;
+                self.eof_sent = true;
+                continue;
+            }
             let audio_stream_index = self.audio.as_ref().map(|audio| audio.stream_index);
             let packet = self.input.packets().find(|(stream, _packet)| {
                 stream.index() == self.video_stream_index
@@ -233,9 +267,7 @@ impl CinematicDecoder {
             });
             if let Some((stream, packet)) = packet {
                 if stream.index() == self.video_stream_index {
-                    self.video.send_packet(&packet).map_err(|source| {
-                        CinematicError::adapter(&self.path, "submit video packet", source)
-                    })?;
+                    self.filter_video_packet(Some(packet))?;
                 } else if let Some(audio) = self.audio.as_mut() {
                     audio.decoder.send_packet(&packet).map_err(|source| {
                         CinematicError::adapter(&self.path, "submit audio packet", source)
@@ -243,16 +275,41 @@ impl CinematicDecoder {
                     self.receive_audio_frames()?;
                 }
             } else {
-                self.video.send_eof().map_err(|source| {
-                    CinematicError::adapter(&self.path, "finish video stream", source)
-                })?;
+                self.filter_video_packet(None)?;
                 if let Some(audio) = self.audio.as_mut() {
                     audio.decoder.send_eof().map_err(|source| {
                         CinematicError::adapter(&self.path, "finish audio stream", source)
                     })?;
                     self.receive_audio_frames()?;
                 }
-                self.eof_sent = true;
+                self.input_eof = true;
+            }
+        }
+    }
+
+    fn filter_video_packet(
+        &mut self,
+        mut packet: Option<ffmpeg::Packet>,
+    ) -> Result<(), CinematicError> {
+        let Some(filter) = &mut self.video_filter else {
+            self.video_packets.extend(packet);
+            return Ok(());
+        };
+        filter.send(packet.as_mut()).map_err(|source| {
+            CinematicError::adapter(&self.path, "submit packed video packet", source)
+        })?;
+        loop {
+            match filter.receive() {
+                Ok(packet) => self.video_packets.push_back(packet),
+                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
+                Err(ffmpeg::Error::Eof) => return Ok(()),
+                Err(source) => {
+                    return Err(CinematicError::adapter(
+                        &self.path,
+                        "receive unpacked video packet",
+                        source,
+                    ));
+                }
             }
         }
     }

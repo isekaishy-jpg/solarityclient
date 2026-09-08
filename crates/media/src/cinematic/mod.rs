@@ -4,6 +4,7 @@
 //! codec evidence establish this boundary. UI owns the frame widget while this
 //! module owns decoded audio/video streams and their synchronization.
 
+mod bitstream;
 mod dependency;
 mod status;
 mod types;

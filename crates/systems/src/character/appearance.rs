@@ -179,10 +179,9 @@ pub fn resolve_unit_model<'catalog>(
             appearance.facial_hair_style_id(),
         );
         (
-            Some(characters.resolve_player_for_class(
+            Some(characters.resolve_player(
                 u32::from(identity.race_id()),
                 u32::from(identity.gender_id()),
-                identity.class_id(),
                 customization,
             )?),
             Some(identity.class_id()),

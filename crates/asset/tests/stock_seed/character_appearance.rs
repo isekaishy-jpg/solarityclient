@@ -1,4 +1,4 @@
-//! External stock-compatibility tests for class-aware character sections.
+//! External stock-compatibility tests for character sections and creation eligibility.
 
 use std::error::Error;
 
@@ -9,41 +9,34 @@ use solarity_asset::{
 
 use crate::support::{Fixture, FixtureFile};
 
-/// Duplicate player rows select DK textures only for class six.
+/// 0x004F3DD0 fills the render bank in physical order without class filtering.
 #[test]
-fn character_sections_do_not_leak_death_knight_rows_into_other_classes()
+fn character_render_sections_use_last_physical_row_regardless_of_creation_flags()
 -> Result<(), Box<dyn Error>> {
-    let mut strings = vec![0];
-    let normal = append_string(&mut strings, "Character\\Human\\Male\\Normal.blp");
-    let death_knight = append_string(&mut strings, "Character\\Human\\Male\\DeathKnight.blp");
     let mut fields = Vec::new();
-    for (base_section, variation, color) in [(0, 0, 0), (1, 0, 0), (3, 0, 0), (4, 0, 0)] {
-        fields.extend_from_slice(&[
-            100 + base_section,
-            1,
-            0,
-            base_section,
-            normal,
-            0,
-            0,
-            0x01,
-            variation,
-            color,
-        ]);
-        fields.extend_from_slice(&[
-            200 + base_section,
-            1,
-            0,
-            base_section,
-            death_knight,
-            0,
-            0,
-            0x05,
-            variation,
-            color,
-        ]);
+    let cases = include_str!("../fixtures/character_section_bank_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            line.split_whitespace()
+                .map(str::parse::<u32>)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for row in &cases {
+        let [race, gender, base, variation, color, flags, _expected] = row.as_slice() else {
+            return Err("invalid native section fixture".into());
+        };
+        for (id, flags) in [
+            (1000 + base * 32 + color, 1),
+            (2000 + base * 32 + color, *flags),
+        ] {
+            fields.extend_from_slice(&[
+                id, *race, *gender, *base, 0, 0, 0, flags, *variation, *color,
+            ]);
+        }
     }
-    let sections = create_wdbc(8, 10, &fields, &strings);
+    let sections = create_wdbc((cases.len() * 2) as u32, 10, &fields, b"\0");
     let hair = create_wdbc(1, 6, &[1, 1, 0, 0, 1, 1], b"\0");
     let facial = create_wdbc(0, 8, &[], b"\0");
     let fixture = Fixture::new(&[
@@ -68,24 +61,21 @@ fn character_sections_do_not_leak_death_knight_rows_into_other_classes()
         Locale::EnUs,
     )?)?;
     let catalog = CharacterAppearanceCatalog::load(&mut store)?;
-    let customization = CharacterCustomization::new(0, 0, 0, 0, 0);
-
-    let ordinary = catalog.resolve_player_for_class(1, 0, 1, customization)?;
-    let death_knight_character = catalog.resolve_player_for_class(1, 0, 6, customization)?;
-
-    assert_eq!(
-        ordinary.skin().texture_names()[0],
-        "Character\\Human\\Male\\Normal.blp"
-    );
-    assert_eq!(
-        death_knight_character.skin().texture_names()[0],
-        "Character\\Human\\Male\\DeathKnight.blp"
-    );
-    assert_eq!(ordinary.face().map(|section| section.id()), Some(101));
-    assert_eq!(
-        death_knight_character.face().map(|section| section.id()),
-        Some(201)
-    );
+    for color in 0..32 {
+        let customization = CharacterCustomization::new(color, 0, 0, color, 0);
+        let character = catalog.resolve_player(1, 0, customization)?;
+        let expected = |base: usize| cases[base * 32 + color as usize][6];
+        assert_eq!(character.skin().id(), expected(0));
+        assert_eq!(character.hair().map(|row| row.id()), Some(expected(3)));
+        assert_eq!(
+            character.facial_hair().map(|row| row.id()),
+            Some(expected(2))
+        );
+        if color & 8 == 0 {
+            assert_eq!(character.face().map(|row| row.id()), Some(expected(1)));
+            assert_eq!(character.underwear().map(|row| row.id()), Some(expected(4)));
+        }
+    }
     Ok(())
 }
 
@@ -166,11 +156,4 @@ fn create_wdbc(record_count: u32, field_count: u32, fields: &[u32], strings: &[u
     }
     bytes.extend_from_slice(strings);
     bytes
-}
-
-fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
-    let offset = block.len() as u32;
-    block.extend_from_slice(value.as_bytes());
-    block.push(0);
-    offset
 }

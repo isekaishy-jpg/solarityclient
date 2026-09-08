@@ -663,10 +663,9 @@ impl RuntimePlayerPresentation {
             hair_color,
             facial_hair,
         );
-        let appearance = self.characters.resolve_player_for_class(
+        let appearance = self.characters.resolve_player(
             u32::from(preview.race_id()),
             u32::from(preview.gender_id()),
-            preview.class_id(),
             customization,
         )?;
         let mut equipment_items = resolve_creation_equipment(
@@ -796,10 +795,9 @@ impl RuntimePlayerPresentation {
         let [skin, face, hair_style, hair_color, facial_hair] = preview.appearance();
         let customization =
             CharacterCustomization::new(skin, face, hair_style, hair_color, facial_hair);
-        let appearance = self.characters.resolve_player_for_class(
+        let appearance = self.characters.resolve_player(
             u32::from(preview.race_id()),
             u32::from(preview.gender_id()),
-            preview.class_id(),
             customization,
         )?;
         let mut equipment_items = resolve_selection_equipment(preview, &self.item_displays)?;

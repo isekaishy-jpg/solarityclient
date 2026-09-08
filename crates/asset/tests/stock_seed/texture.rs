@@ -120,6 +120,96 @@ fn blp_source_borrows_authored_block_compressed_mips() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+/// A complete narrow DXT mip must retain both horizontal blocks, not pixel-area/16.
+#[test]
+fn blp_narrow_dxt_mips_preserve_every_authored_block() -> Result<(), Box<dyn Error>> {
+    for (alpha, kind, block_size) in [(0, 0, 8), (8, 1, 16), (8, 7, 16)] {
+        let block = |color: [u8; 2]| {
+            let mut bytes = if kind == 1 {
+                vec![255; 8]
+            } else if kind == 7 {
+                vec![255, 255, 0, 0, 0, 0, 0, 0]
+            } else {
+                Vec::new()
+            };
+            bytes.extend_from_slice(&[color[0], color[1], color[0], color[1], 0, 0, 0, 0]);
+            bytes
+        };
+        let mut blocks = block([0, 0xF8]);
+        blocks.extend(block([0xE0, 0x07]));
+        let blp = dxt_blp_mips(2, alpha, kind, &[(8, 2, &blocks)]);
+        let fixture = Fixture::new(&[FixtureFile {
+            archive: "common.MPQ",
+            path: "Textures/Narrow.blp",
+            bytes: &blp,
+        }])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let source = BlpTextureSource::load(&mut store, &AssetPath::new("Textures/Narrow.blp")?)?;
+        let mip = source.block_mip(0).ok_or("missing DXT mip")?;
+        assert_eq!(mip.bytes(), blocks);
+        assert_eq!(mip.upload_byte_count(), block_size * 2);
+        let pixels = source.decode_mip(0)?;
+        for (index, pixel) in pixels.rgba8().as_chunks::<4>().0.iter().enumerate() {
+            assert_eq!(
+                pixel,
+                if index % 8 < 4 {
+                    &[255, 0, 0, 255]
+                } else {
+                    &[0, 255, 0, 255]
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Stock narrow one-block tails are admitted; truncated files and body mips fail.
+#[test]
+fn blp_dxt_tail_validation_distinguishes_authored_sizes_from_truncation()
+-> Result<(), Box<dyn Error>> {
+    let block = [0, 0xF8, 0, 0xF8, 0, 0, 0, 0];
+    let top = block.repeat(4);
+    let good = dxt_blp_mips(2, 0, 0, &[(16, 4, &top), (8, 2, &block)]);
+    let mut truncated = good.clone();
+    truncated.pop();
+    let mut outside = good.clone();
+    outside[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+    let incomplete_top = dxt_blp_mips(2, 0, 0, &[(16, 4, &block)]);
+    let partial_block = dxt_blp_mips(2, 0, 0, &[(16, 4, &top), (8, 2, &block[..7])]);
+    for (bytes, valid) in [
+        (good, true),
+        (truncated, false),
+        (outside, false),
+        (incomplete_top, false),
+        (partial_block, false),
+    ] {
+        let fixture = Fixture::new(&[FixtureFile {
+            archive: "common.MPQ",
+            path: "Textures/Tail.blp",
+            bytes: &bytes,
+        }])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let result = BlpTextureSource::load(&mut store, &AssetPath::new("Textures/Tail.blp")?);
+        if valid {
+            let source = result?;
+            assert_eq!(source.mip_count(), 2);
+            let mip = source.block_mip(1).ok_or("missing narrow tail")?;
+            assert_eq!(mip.bytes(), block);
+            assert_eq!(mip.upload_byte_count(), 16);
+            assert_eq!(source.decode_mip(1)?.rgba8().len(), 8 * 2 * 4);
+        } else {
+            assert!(matches!(result, Err(AssetError::TextureDecode { .. })));
+        }
+    }
+    Ok(())
+}
+
 /// Parsed BLP sources retain compressed authored mips and decode one on demand.
 #[test]
 fn blp_source_decodes_authored_mips_without_top_level_expansion() -> Result<(), Box<dyn Error>> {

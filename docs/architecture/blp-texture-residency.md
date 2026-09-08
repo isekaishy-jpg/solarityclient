@@ -27,8 +27,13 @@ Requests retain their original order, while duplicate and already-resident
 identities resolve to the existing image without another transfer. Registry
 state changes only after the complete batch succeeds.
 
-Stock-compatible undersized DXT tail mips are zero-padded to their
-block-rounded copy footprint, matching the established decoder behavior. The
+The asset boundary recognizes authored one-block DXT tails once an axis falls
+below four pixels, while rejecting incomplete ordinary mips and partial blocks.
+These narrow tails retain the established zero-padding treatment at the
+block-rounded CPU/GPU copy boundary. Complete narrow mips preserve every block
+by rounding each axis separately; rounding pixel area can discard valid data.
+This retains existing short-tail rendering behavior without claiming native
+pixel parity for the absent blocks. The
 batch avoids per-texture submission overhead and capacity-growth copies, while
 direct BC storage prevents HD DXT content from expanding by roughly four to
 eight times in staging and device memory.

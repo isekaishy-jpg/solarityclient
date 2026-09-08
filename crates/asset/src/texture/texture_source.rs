@@ -38,12 +38,16 @@ impl BlpTextureSource {
         if bytes.starts_with(b"BLP2\x01\x00\x00\x00\x03\x08\x02") {
             bytes[10] = 8;
         }
-        let image = wow_blp::parser::load_blp_from_buf(&bytes).map_err(|error| {
-            AssetError::TextureDecode {
-                path: path.clone(),
-                message: error.to_string(),
-            }
-        })?;
+        let image = if let Some(image) = super::dxt_source::parse(path, &bytes)? {
+            image
+        } else {
+            wow_blp::parser::load_blp_from_buf(&bytes).map_err(|error| {
+                AssetError::TextureDecode {
+                    path: path.clone(),
+                    message: error.to_string(),
+                }
+            })?
+        };
 
         Ok(Self {
             path: path.clone(),

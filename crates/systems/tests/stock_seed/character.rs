@@ -92,6 +92,28 @@ fn player_model_resolution_joins_stock_ecs_and_dbc_keys() -> Result<(), Box<dyn 
         "CREATURE\\HORSE\\HORSE.M2"
     );
 
+    // A remote non-DK may carry a DK-only skin byte. The render bank accepts
+    // that authored row; class eligibility applies only to creation choices.
+    let remote = 0x43;
+    let remote_fields = [
+        (23, u32::from_le_bytes([2, 1, 0, 0])),
+        (67, 20_000),
+        (68, 20_000),
+        (153, u32::from_le_bytes([17, 0, 0, 0])),
+        (154, 0),
+    ];
+    world.create_object(remote, ObjectKind::Player, None, remote_fields)?;
+    project_object_fields(&mut world, remote, remote_fields)?;
+    let remote_model = resolve_unit_model(&world, remote, &creatures, &characters)?;
+    assert_eq!(remote_model.player_class_id(), Some(1));
+    let remote_character = remote_model
+        .character()
+        .ok_or("remote composition is absent")?;
+    assert_eq!(remote_character.skin().id(), 10_627);
+    assert_eq!(remote_character.skin().flags(), 5);
+    assert_eq!(remote_character.race_id(), 2);
+    assert_eq!(characters.player_skin_colors_for_class(2, 0, 1), []);
+
     // A later morph value must not reuse the native display or another row.
     let invalid_display = [(67, 99_999)];
     world.update_fields(guid, invalid_display)?;
@@ -297,9 +319,8 @@ fn appearance_tables() -> AppearanceTables {
         hair,
         hair_lower,
         hair_upper,
-        // Preserve the fixture's extra flags while marking this hair row as
-        // player-eligible for the class-aware component lookup.
-        19,
+        // Non-player flags do not exclude a section from the rendering bank.
+        18,
         4,
         5,
         14,
@@ -313,7 +334,15 @@ fn appearance_tables() -> AppearanceTables {
         0,
         2,
     ];
-    let character_sections = create_wdbc(5, 10, &sections, &section_strings);
+    let mut sections = sections.to_vec();
+    for (id, base, texture) in [
+        (10_627, 0, skin),
+        (10_628, 1, face_lower),
+        (10_631, 4, underwear_lower),
+    ] {
+        sections.extend_from_slice(&[id, 2, 0, base, texture, 0, 0, 5, 0, 17]);
+    }
+    let character_sections = create_wdbc(8, 10, &sections, &section_strings);
     let hair_geosets = create_wdbc(1, 6, &[90, 1, 0, 4, 12, 1], b"\0");
     let facial_hair = create_wdbc(1, 8, &[1, 0, 6, 1, 2, 3, 4, 5], b"\0");
     AppearanceTables {

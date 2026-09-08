@@ -62,6 +62,15 @@ by skin cycling, randomization, and model setup, but not by face cycling. This
 allows the Gnome Death Knight selector to cross between faces `7..13` on
 ordinary skins and faces `0,2,3` on exclusive skins in the installed data.
 
+## Rendering selected customization
+
+Creation eligibility does not filter the component rendering bank. Stock
+`0x004F3DD0` includes all `CharSections` rows and overwrites duplicate keys in
+physical order; `0x004F3BA0` looks up race, gender, section, variation, and color
+without a class argument. Selection previews and server-supplied players use
+those exact bytes even when the appearance would not be offered by creation.
+Class-specific equipment and geoset decisions remain independent.
+
 ## Eligible section data
 
 The creation filter is selected by `0x004F3A40` and evaluated by `0x004F39A0`:
