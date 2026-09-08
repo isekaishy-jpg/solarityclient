@@ -2,6 +2,10 @@
 
 use std::cmp::Ordering;
 
+#[cfg(test)]
+#[path = "../../../tests/stock_seed/light_band_native.rs"]
+mod tests;
+
 use glam::Vec3;
 
 use super::catalog::LightCatalog;
@@ -118,9 +122,6 @@ fn weighted_lights(
     });
     for local in locals {
         let weight = local_weight(local);
-        for accumulated in &mut candidates {
-            accumulated.weight *= 1.0 - weight;
-        }
         candidates.push(WeightedLight {
             light: local.light,
             weight,
@@ -144,7 +145,7 @@ fn accumulate(
     candidates: &[WeightedLight<'_>],
     query: WorldLightQuery,
 ) -> Result<WorldLightSample, WorldLightSampleError> {
-    let mut output = Accumulator::default();
+    let mut output = None;
     for candidate in candidates.iter().filter(|candidate| candidate.weight > 0.0) {
         let parameter_id = require_parameter_id(candidate.light, query)?;
         let parameter = catalog.parameters.get(&parameter_id).ok_or(
@@ -153,15 +154,19 @@ fn accumulate(
                 condition: query.condition.value(),
             },
         )?;
-        accumulate_parameter(
-            catalog,
-            &mut output,
-            parameter,
-            candidate.weight,
-            query.half_minutes,
-        )?;
+        let palette = parameter_palette(catalog, parameter, query.half_minutes)?;
+        match &mut output {
+            None => output = Some(palette),
+            Some(output) => output.overlay(palette, candidate.weight),
+        }
     }
-    Ok(output.finish())
+    // Every admitted query starts with its required, full-strength global row.
+    output
+        .map(Accumulator::finish)
+        .ok_or(WorldLightSampleError::MissingGlobalLight {
+            map_id: query.map_id,
+            condition: query.condition.value(),
+        })
 }
 
 /// Samples a complete LightParams override without a Light.dbc volume.
@@ -173,61 +178,43 @@ pub(super) fn sample_parameter(
     let parameter = catalog
         .parameter(parameter_id)
         .ok_or(WorldLightSampleError::MissingParameterId { parameter_id })?;
-    let mut output = Accumulator::default();
-    accumulate_parameter(catalog, &mut output, parameter, 1.0, half_minutes)?;
-    Ok(output.finish())
+    Ok(parameter_palette(catalog, parameter, half_minutes)?.finish())
 }
 
 /// Joins the same bands for world volumes and a liquid's direct parameter.
-fn accumulate_parameter(
+fn parameter_palette(
     catalog: &LightCatalog,
-    output: &mut Accumulator,
     parameter: &LightParameter,
-    weight: f32,
     half_minutes: u32,
-) -> Result<(), WorldLightSampleError> {
+) -> Result<Accumulator, WorldLightSampleError> {
     let parameter_id = parameter.id();
     let color_first = parameter_id * COLOR_BAND_COUNT - (COLOR_BAND_COUNT - 1);
     let float_first = parameter_id * FLOAT_BAND_COUNT - (FLOAT_BAND_COUNT - 1);
 
-    output.total += weight;
-    output.diffuse +=
-        sample_color_at(catalog, color_first + DIRECT_COLOR_CHANNEL, half_minutes)? * weight;
-    output.ambient +=
-        sample_color_at(catalog, color_first + AMBIENT_COLOR_CHANNEL, half_minutes)? * weight;
-    output.fog += sample_color_at(catalog, color_first + FOG_COLOR_CHANNEL, half_minutes)? * weight;
-    output.specular +=
-        sample_color_at(catalog, color_first + SPECULAR_COLOR_CHANNEL, half_minutes)? * weight;
-    for (index, color) in output.sky.iter_mut().enumerate() {
-        *color += sample_color_at(
-            catalog,
-            color_first + SKY_COLOR_FIRST_CHANNEL + index as u32,
-            half_minutes,
-        )? * weight;
+    let mut output = Accumulator::default();
+    for (index, color) in output.colors.iter_mut().enumerate() {
+        *color = sample_packed_color_at(catalog, color_first + index as u32, half_minutes)?;
     }
-    for (index, color) in output.liquid.iter_mut().enumerate() {
-        *color += sample_color_at(
-            catalog,
-            color_first + LIQUID_COLOR_CHANNELS[index],
-            half_minutes,
-        )? * weight;
-    }
-
-    let fog_end = sample_float_at(catalog, float_first, half_minutes)? * CLIENT_COORDINATE_SCALE;
-    output.fog_end += fog_end.max(10.0) * weight;
-    output.fog_ratio +=
-        sample_float_at(catalog, float_first + 1, half_minutes)?.clamp(0.0, 1.0) * weight;
+    output.fog_end = sample_float_at(catalog, float_first, half_minutes)?.max(10.0);
+    output.fog_ratio = sample_float_at(catalog, float_first + 1, half_minutes)?.clamp(-1.0, 1.0);
     for (index, value) in output.sky_floats.iter_mut().enumerate() {
-        *value += sample_float_at(catalog, float_first + 2 + index as u32, half_minutes)? * weight;
+        *value = sample_float_at(catalog, float_first + 2 + index as u32, half_minutes)?;
     }
-    output.highlight_sky += parameter.highlight_sky as f32 * weight;
-    output.glow += parameter.glow * weight;
-    output.liquid_alphas[0] += parameter.ocean_shallow_alpha * weight;
-    output.liquid_alphas[1] += parameter.ocean_deep_alpha * weight;
-    output.liquid_alphas[2] += parameter.river_shallow_alpha * weight;
-    output.liquid_alphas[3] += parameter.river_deep_alpha * weight;
-    add_skybox(&mut output.skyboxes, parameter.skybox_id, weight);
-    Ok(())
+    output.highlight_sky = parameter.highlight_sky as i32 as f32;
+    output.glow = parameter.glow;
+    output.liquid_alphas = [
+        parameter.ocean_shallow_alpha,
+        parameter.ocean_deep_alpha,
+        parameter.river_shallow_alpha,
+        parameter.river_deep_alpha,
+    ];
+    output.skyboxes[0] = SkyboxBlend {
+        id: parameter.skybox_id,
+        weight: 1.0,
+    };
+    output.cloud_type_id = parameter.cloud_type_id;
+    output.cloud_type_weight = 1.0;
+    Ok(output)
 }
 
 /// Returns the selected nonzero parameter ID for one candidate.
@@ -251,6 +238,18 @@ fn sample_color_at(
     band_id: u32,
     half_minutes: u32,
 ) -> Result<Vec3, WorldLightSampleError> {
+    Ok(color_vector(sample_packed_color_at(
+        catalog,
+        band_id,
+        half_minutes,
+    )?))
+}
+
+fn sample_packed_color_at(
+    catalog: &LightCatalog,
+    band_id: u32,
+    half_minutes: u32,
+) -> Result<u32, WorldLightSampleError> {
     let band = catalog
         .color_bands
         .get(&band_id)
@@ -258,14 +257,9 @@ fn sample_color_at(
     if band.entries == 0 {
         // 0x007EB07B returns packed 0xFF000000 for zero-key rows, including
         // underwater specular band 3826. Padded values are not authored keys.
-        return Ok(Vec3::ZERO);
+        return Ok(0xff000000);
     }
-    let color = sample_color_band(band, half_minutes);
-    Ok(Vec3::new(
-        ((color >> 16) & 0xff) as f32,
-        ((color >> 8) & 0xff) as f32,
-        (color & 0xff) as f32,
-    ) / 255.0)
+    Ok(sample_color_band(band, half_minutes))
 }
 
 /// Samples one required scalar band.
@@ -282,7 +276,12 @@ fn sample_float_at(
         // 0x007EAEFB returns FLDZ before interpolation for a zero-key row.
         return Ok(0.0);
     }
-    Ok(sample_float_band(band, half_minutes))
+    let scale = if (band_id - 1).is_multiple_of(FLOAT_BAND_COUNT) {
+        CLIENT_COORDINATE_SCALE
+    } else {
+        1.0
+    };
+    Ok(sample_float_band(band, half_minutes, scale))
 }
 
 /// Finds the cyclic key interval, including the final-to-first midnight wrap.
@@ -308,7 +307,7 @@ fn band_interval<T>(band: &LightBand<T>, half_minutes: u32) -> (usize, usize, f3
         let amount = if end == start {
             0.0
         } else {
-            (adjusted - start) as f32 / (end - start) as f32
+            (f64::from(adjusted - start) / f64::from(end - start)) as f32
         };
         return (current, next, amount);
     }
@@ -318,9 +317,11 @@ fn band_interval<T>(band: &LightBand<T>, half_minutes: u32) -> (usize, usize, f3
 }
 
 /// Linearly samples a scalar band.
-fn sample_float_band(band: &LightBand<f32>, half_minutes: u32) -> f32 {
+fn sample_float_band(band: &LightBand<f32>, half_minutes: u32, scale: f32) -> f32 {
     let (left, right, amount) = band_interval(band, half_minutes);
-    band.values[left] + (band.values[right] - band.values[left]) * amount
+    let left = f64::from(band.values[left]) * f64::from(scale);
+    let right = f64::from(band.values[right]) * f64::from(scale);
+    (left + (right - left) * f64::from(amount)) as f32
 }
 
 /// Interpolates packed colors per channel and applies stock integer rounding.
@@ -329,11 +330,12 @@ fn sample_color_band(band: &LightBand<u32>, half_minutes: u32) -> u32 {
     let left = unpack_color(band.values[left]);
     let right = unpack_color(band.values[right]);
     let component = |index: usize| {
-        (left[index] + (right[index] - left[index]) * amount)
-            .round()
+        ((f64::from(left[index]) + f64::from(right[index] - left[index]) * f64::from(amount))
+            as f32)
+            .round_ties_even()
             .clamp(0.0, 255.0) as u32
     };
-    (component(0) << 16) | (component(1) << 8) | component(2)
+    0xff000000 | (component(0) << 16) | (component(1) << 8) | component(2)
 }
 
 /// Expands one packed 0xRRGGBB value for component interpolation.
@@ -375,41 +377,86 @@ struct WeightedLight<'a> {
 
 #[derive(Default)]
 struct Accumulator {
-    total: f32,
+    colors: [u32; 18],
     fog_end: f32,
     fog_ratio: f32,
-    fog: Vec3,
-    ambient: Vec3,
-    diffuse: Vec3,
-    specular: Vec3,
-    sky: [Vec3; 5],
     highlight_sky: f32,
     glow: f32,
     sky_floats: [f32; 4],
-    liquid: [Vec3; 4],
     liquid_alphas: [f32; 4],
     skyboxes: [SkyboxBlend; 3],
+    cloud_type_id: u32,
+    cloud_type_weight: f32,
 }
 
 impl Accumulator {
-    /// Normalizes independently weighted channels into the public snapshot.
+    /// Native 7ED4C0 blends each admitted local into the current packed palette.
+    fn overlay(&mut self, local: Self, weight: f32) {
+        for (current, next) in self.colors.iter_mut().zip(local.colors) {
+            *current = overlay_color(*current, next, weight);
+        }
+        self.fog_end = overlay_float(self.fog_end, local.fog_end, weight);
+        self.fog_ratio = overlay_float(self.fog_ratio, local.fog_ratio, weight);
+        self.highlight_sky = overlay_float(self.highlight_sky, local.highlight_sky, weight);
+        self.glow = overlay_float(self.glow, local.glow, weight);
+        // Only cloud density is locally blended. Native retains global bands
+        // 2, 4 and 5 (glow-through and two reserved scalars) unchanged.
+        self.sky_floats[1] = overlay_float(self.sky_floats[1], local.sky_floats[1], weight);
+        for (current, next) in self.liquid_alphas.iter_mut().zip(local.liquid_alphas) {
+            *current = overlay_float(*current, next, weight);
+        }
+        add_skybox(&mut self.skyboxes, local.skyboxes[0].id, weight);
+        self.cloud_type_id = local.cloud_type_id;
+        self.cloud_type_weight = weight;
+    }
+
+    /// Expands the final packed channels once, after ordered quantization.
     fn finish(self) -> WorldLightSample {
-        let inverse = 1.0 / self.total;
-        let fog_far = self.fog_end * inverse;
+        let fog_far = self.fog_end;
         WorldLightSample {
-            fog_near: fog_far * self.fog_ratio * inverse,
+            fog_near: fog_far * self.fog_ratio,
             fog_far,
-            fog_color: self.fog * inverse,
-            ambient_color: self.ambient * inverse,
-            diffuse_color: self.diffuse * inverse,
-            specular_color: self.specular * inverse,
-            sky_colors: self.sky.map(|color| color * inverse),
-            highlight_sky: self.highlight_sky * inverse,
-            glow: self.glow * inverse,
-            sky_floats: self.sky_floats.map(|value| value * inverse),
-            liquid_colors: self.liquid.map(|color| color * inverse),
-            liquid_alphas: self.liquid_alphas.map(|alpha| alpha * inverse),
+            fog_color: color_vector(self.colors[FOG_COLOR_CHANNEL as usize]),
+            ambient_color: color_vector(self.colors[AMBIENT_COLOR_CHANNEL as usize]),
+            diffuse_color: color_vector(self.colors[DIRECT_COLOR_CHANNEL as usize]),
+            specular_color: color_vector(self.colors[SPECULAR_COLOR_CHANNEL as usize]),
+            sky_colors: std::array::from_fn(|i| {
+                color_vector(self.colors[SKY_COLOR_FIRST_CHANNEL as usize + i])
+            }),
+            additional_colors: [8, 10, 11, 12, 13].map(|i| color_vector(self.colors[i])),
+            highlight_sky: self.highlight_sky,
+            glow: self.glow,
+            sky_floats: self.sky_floats,
+            liquid_colors: LIQUID_COLOR_CHANNELS.map(|i| color_vector(self.colors[i as usize])),
+            liquid_alphas: self.liquid_alphas,
             skyboxes: self.skyboxes,
+            cloud_type_id: self.cloud_type_id,
+            cloud_type_weight: self.cloud_type_weight,
         }
     }
+}
+
+fn color_vector(color: u32) -> Vec3 {
+    Vec3::from_array(unpack_color(color)) / 255.0
+}
+
+fn overlay_float(current: f32, next: f32, weight: f32) -> f32 {
+    let (current, next, weight) = (f64::from(current), f64::from(next), f64::from(weight));
+    if next < current {
+        (current - (current - next) * weight) as f32
+    } else {
+        (current + (next - current) * weight) as f32
+    }
+}
+
+fn overlay_color(current: u32, next: u32, weight: f32) -> u32 {
+    let channel = |shift: u32| {
+        let from = ((current >> shift) & 255_u32) as f32;
+        let to = ((next >> shift) & 255_u32) as f32;
+        // 7ED2D0 stores the interpolated float, subtracts AF4B78 (0.5),
+        // then FISTP rounds to nearest-even and retains the low byte.
+        let value = f64::from(overlay_float(from, to, weight));
+        ((value - 0.5).round_ties_even() as i32 as u8) as u32
+    };
+    0xff000000 | (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }

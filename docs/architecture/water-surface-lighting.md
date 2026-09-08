@@ -27,3 +27,27 @@ The pre-fix test fails on the first directional component with opposite signs.
 This establishes the exterior directional-light boundary. It does not establish
 local-light registration, fog-policy parity or the missing sky, cloud and
 celestial rendering systems; those remain part of the water/lighting slice.
+
+## Shared day bands and local overlays
+
+`world_light_sampling_oracle.py` captures 575 original records: 272 cyclic
+band samples, four complete parameter inputs, 68 parameter palettes and 231
+ordered local overlays. Only the decoded WDBC band provider is substituted;
+`7EB070`, `7EAEF0`, `7EBFF0`, `7ECD80` and `7ED4C0` execute original code.
+The fixture covers midnight wrapping, single and sixteen-key bands, exact
+keys, half-channel rounding, repeated skyboxes and overlapping local volumes.
+
+Color interpolation stores to float before nearest-even integer conversion.
+Fog distance scales both source keys by the native float `1/36` before
+interpolation. Local volumes then overlay the current packed palette in
+order; reducing earlier weights and summing normalized colors loses each
+intermediate byte quantization. `7ED2D0` also subtracts exactly one half before
+nearest-even conversion, including at full weight. The asset sampler retains
+these boundaries and unpacks colors only after composition.
+
+All eighteen color channels, the cloud-type ID and its independent weight
+are preserved. Local cloud density blends, while the other three sky scalars
+retain the global palette's values. Skybox slots accumulate repeated IDs up
+to one without attenuating earlier slots. This establishes sampling under
+the native default fog mode; camera-distance fog remapping, weather palette
+composition and spatial local-light registration require their own evidence.

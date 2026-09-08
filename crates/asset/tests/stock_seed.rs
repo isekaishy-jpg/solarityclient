@@ -52,5 +52,7 @@ mod terrain;
 mod texture;
 #[path = "stock_seed/world.rs"]
 mod world;
+#[path = "stock_seed/world_light.rs"]
+mod world_light;
 #[path = "stock_seed/world_model.rs"]
 mod world_model;

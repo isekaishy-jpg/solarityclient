@@ -89,6 +89,7 @@ pub struct LightParameter {
     pub(super) id: u32,
     pub(super) highlight_sky: u32,
     pub(super) skybox_id: u32,
+    pub(super) cloud_type_id: u32,
     pub(super) glow: f32,
     pub(super) river_shallow_alpha: f32,
     pub(super) river_deep_alpha: f32,
@@ -113,6 +114,12 @@ impl LightParameter {
     #[must_use]
     pub const fn skybox_id(&self) -> u32 {
         self.skybox_id
+    }
+
+    /// Returns LightParams field three, retained by the native cloud owner.
+    #[must_use]
+    pub const fn cloud_type_id(&self) -> u32 {
+        self.cloud_type_id
     }
 
     /// Returns the authored post-process glow amount.
@@ -258,12 +265,15 @@ pub struct WorldLightSample {
     pub(super) diffuse_color: Vec3,
     pub(super) specular_color: Vec3,
     pub(super) sky_colors: [Vec3; 5],
+    pub(super) additional_colors: [Vec3; 5],
     pub(super) highlight_sky: f32,
     pub(super) glow: f32,
     pub(super) sky_floats: [f32; 4],
     pub(super) liquid_colors: [Vec3; 4],
     pub(super) liquid_alphas: [f32; 4],
     pub(super) skyboxes: [SkyboxBlend; 3],
+    pub(super) cloud_type_id: u32,
+    pub(super) cloud_type_weight: f32,
 }
 
 impl WorldLightSample {
@@ -301,6 +311,30 @@ impl WorldLightSample {
     #[must_use]
     pub const fn sky_colors(self) -> [Vec3; 5] {
         self.sky_colors
+    }
+
+    /// Returns one of the 18 authored LightIntBand channels in DBC order.
+    /// Channels 8 and 10..13 are retained for sky/cloud presentation.
+    #[must_use]
+    pub const fn color_channel(self, channel: usize) -> Option<Vec3> {
+        Some(match channel {
+            0 => self.diffuse_color,
+            1 => self.ambient_color,
+            2..=6 => self.sky_colors[channel - 2],
+            7 => self.fog_color,
+            8 => self.additional_colors[0],
+            9 => self.specular_color,
+            10..=13 => self.additional_colors[channel - 9],
+            14..=17 => self.liquid_colors[channel - 14],
+            _ => return None,
+        })
+    }
+
+    /// Returns the last admitted cloud-type identifier and local contribution.
+    /// Native 7ED4C0 assigns this pair independently of skybox blend slots.
+    #[must_use]
+    pub const fn cloud_type(self) -> (u32, f32) {
+        (self.cloud_type_id, self.cloud_type_weight)
     }
 
     /// Returns the blended highlight-sky value.
