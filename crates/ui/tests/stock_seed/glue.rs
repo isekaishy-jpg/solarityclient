@@ -1829,7 +1829,7 @@ fn glue_manager_bridges_stock_realm_list_globals() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/// Stock shared Lua runtime exports both quit spellings to one ordered process action.
+/// Shared Lua runtime preserves Screenshot and both quit spellings in execution order.
 #[test]
 fn glue_manager_bridges_quit_and_quit_game_to_process_owner() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[
@@ -1841,6 +1841,9 @@ fn glue_manager_bridges_quit_and_quit_game_to_process_owner() -> Result<(), Box<
             path: "Interface\\GlueXML\\Process.xml",
             bytes: br#"<Ui><Frame name="Process"><Scripts><OnLoad>
   Quit()
+  assert(GetCVarDefault("screenshotFormat") == "jpeg")
+  assert(GetCVarDefault("screenshotQuality") == "3")
+  assert(select('#', Screenshot()) == 0)
   QuitGame()
 </OnLoad></Scripts></Frame></Ui>"#,
         },
@@ -1850,6 +1853,10 @@ fn glue_manager_bridges_quit_and_quit_game_to_process_owner() -> Result<(), Box<
     let manager = GlueManager::start(AssetStore::mount(catalog)?, (1920, 1080), false)?;
 
     assert_eq!(manager.take_process_action(), Some(UiProcessAction::Quit));
+    assert_eq!(
+        manager.take_process_action(),
+        Some(UiProcessAction::Screenshot)
+    );
     assert_eq!(manager.take_process_action(), Some(UiProcessAction::Quit));
     assert_eq!(manager.take_process_action(), None);
     Ok(())

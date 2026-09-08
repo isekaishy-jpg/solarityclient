@@ -1794,6 +1794,14 @@ fn register_client_runtime_globals(
     environment: &UiScriptEnvironment,
 ) -> mlua::Result<()> {
     let process = environment.process();
+    let screenshot = process.clone();
+    globals.raw_set(
+        "Screenshot",
+        lua.create_function(move |_, _: Variadic<Value>| {
+            screenshot.borrow_mut().push(UiProcessAction::Screenshot);
+            Ok(())
+        })?,
+    )?;
     let quit = process.clone();
     globals.raw_set(
         "Quit",

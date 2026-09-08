@@ -631,6 +631,13 @@ impl RuntimeWorldUi {
         self.manager.take_process_action()
     }
 
+    /// Delivers the native no-argument screenshot completion event to FrameXML.
+    pub(super) fn screenshot_completed(&mut self, event: &str) -> Result<(), ApplicationError> {
+        self.dirty = true;
+        self.manager.dispatch_event(event, &UiEventPayload::empty())?;
+        Ok(())
+    }
+
     /// Returns the logical UI canvas used by the world compositor.
     pub(super) const fn logical_extent(&self) -> [f32; 2] {
         self.frame.logical_extent()

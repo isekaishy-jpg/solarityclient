@@ -140,6 +140,97 @@ fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// Lua request, composition, GPU copy, worker save and Lua completion all run together.
+#[test]
+fn application_screenshot_returns_success_and_failure_to_lua() -> Result<(), Box<dyn Error>> {
+    let _sdl_test = super::support::SDL_TEST_LOCK
+        .lock()
+        .map_err(|_| "SDL test lock poisoned")?;
+    for fails in [false, true] {
+        let game_object_displays = empty_wdbc(19);
+        let ui_sound_lookups = empty_wdbc(3);
+        let fixture = ClientFixture::with_common_files(&[
+            (
+                "DBFilesClient\\GameObjectDisplayInfo.dbc",
+                &game_object_displays,
+            ),
+            ("DBFilesClient\\UISoundLookups.dbc", &ui_sound_lookups),
+        ])?;
+        let expected = if fails {
+            "GLUE_SCREENSHOT_FAILED"
+        } else {
+            "GLUE_SCREENSHOT_SUCCEEDED"
+        };
+        let script = format!(
+            r#"
+GlueBootstrap:RegisterEvent("GLUE_SCREENSHOT_SUCCEEDED")
+GlueBootstrap:RegisterEvent("GLUE_SCREENSHOT_FAILED")
+SetCVar("screenshotFormat", "tga")
+SetCVar("realmName", "NO_COMPLETION")
+GlueBootstrap:SetScript("OnEvent", function(self, event, ...)
+    assert(event == "{expected}")
+    assert(select('#', ...) == 0)
+    SetCVar("realmName", event)
+    QuitGame()
+end)
+local elapsed = 0
+local requested = false
+GlueBootstrap:SetScript("OnUpdate", function(self, delta)
+    elapsed = elapsed + delta
+    if not requested then requested = true; Screenshot() end
+    if elapsed > 10 then QuitGame() end
+end)
+"#
+        );
+        wow_mpq::ArchiveBuilder::new()
+            .listfile_option(wow_mpq::ListfileOption::Generate)
+            .add_file_data(br#"<Ui><Frame name="GlueBootstrap" setAllPoints="true"><Layers>
+<Layer level="BACKGROUND"><Texture file="Interface\Icons\INV_Misc_QuestionMark" setAllPoints="true"/></Layer>
+</Layers></Frame></Ui>"#.to_vec(), "Interface\\GlueXML\\Bootstrap.xml")
+            .add_file_data(script.into_bytes(), "Interface\\GlueXML\\After.lua")
+            .build(fixture.data_root().join("enUS/patch-enUS-3.MPQ"))?;
+        if fails {
+            std::fs::write(
+                fixture.profile_root().join("Screenshots"),
+                b"existing user file",
+            )?;
+        }
+        let mut application = ClientApplication::start(configuration(&fixture, 0)?)?;
+        let extent = application.vulkan_report().extent();
+        assert_eq!(
+            application.run()?.exit_reason(),
+            ApplicationExitReason::UiQuitRequested
+        );
+        application.shutdown()?;
+        let config = std::fs::read_to_string(fixture.profile_root().join("WTF/Config.wtf"))?;
+        assert!(
+            config.contains(&format!("SET realmName \"{expected}\"")),
+            "{config}"
+        );
+        if fails {
+            assert_eq!(
+                std::fs::read(fixture.profile_root().join("Screenshots"))?,
+                b"existing user file"
+            );
+        } else {
+            let files = std::fs::read_dir(fixture.profile_root().join("Screenshots"))?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(files.len(), 1);
+            let pixels = image::open(files[0].path())?.to_rgba8();
+            assert_eq!(pixels.dimensions(), extent);
+            assert_eq!(
+                pixels.get_pixel(extent.0 / 4, extent.1 / 2).0,
+                [255, 0, 0, 255]
+            );
+            assert_eq!(
+                pixels.get_pixel(3 * extent.0 / 4, extent.1 / 2).0,
+                [0, 255, 0, 255]
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Builds an empty table with the exact record width required at startup.
 fn empty_wdbc(field_count: u32) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(21);

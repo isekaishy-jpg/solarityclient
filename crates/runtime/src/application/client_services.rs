@@ -102,6 +102,7 @@ const STOCK_CHARACTER_BACKDROPS: [&str; 8] = [
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
+    screenshots: super::screenshot::RuntimeScreenshots,
     login_ui: Option<RuntimeUiFrame>,
     /// Second UI slot used as a candidate during an atomic screen transition.
     ///
@@ -470,6 +471,9 @@ impl ClientServices {
         Ok((
             Self {
                 renderer,
+                screenshots: super::screenshot::RuntimeScreenshots::new(
+                    configuration.profile_root(),
+                ),
                 login_ui,
                 pending_login_ui: None,
                 glue_ui_dirty: false,
@@ -918,17 +922,42 @@ impl ClientServices {
 
     /// Takes one process-level action emitted by the currently owned built-in UI.
     pub(crate) fn take_process_action(&mut self) -> Option<UiProcessAction> {
+        loop {
+            let (action, world) = self.take_ui_process_action()?;
+            match action {
+                UiProcessAction::Quit => return Some(action),
+                UiProcessAction::Screenshot => {
+                    let cvar = |name| {
+                        if world {
+                            self.world_ui.as_ref().and_then(|ui| ui.cvar_value(name))
+                        } else {
+                            self.glue.cvar_value(name)
+                        }
+                    };
+                    self.screenshots.request(super::screenshot::ScreenshotRequest::new(
+                        world,
+                        cvar("screenshotFormat").as_deref().unwrap_or("jpeg"),
+                        cvar("screenshotQuality").as_deref().unwrap_or("3"),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn take_ui_process_action(&mut self) -> Option<(UiProcessAction, bool)> {
         if let Some(action) = self
             .world_ui
             .as_ref()
             .and_then(RuntimeWorldUi::take_process_action)
         {
-            return Some(action);
+            return Some((action, true));
         }
         let action = self.glue.take_process_action()?;
         let current_screen = self.glue.current_screen();
-        if glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref()) {
-            Some(action)
+        if action == UiProcessAction::Screenshot
+            || glue_screen_is_presented(&current_screen, self.presented_glue_screen.as_deref())
+        {
+            Some((action, false))
         } else {
             tracing::warn!(
                 ?action,
@@ -940,8 +969,42 @@ impl ClientServices {
         }
     }
 
+    fn service_screenshots(&mut self) -> Result<(), ApplicationError> {
+        let Some(completion) = self.screenshots.poll(&mut self.renderer, &self.cpu) else {
+            return Ok(());
+        };
+        let event = match completion.result {
+            Ok(path) => {
+                tracing::info!(path = %path.display(), "saved screenshot");
+                if completion.world {
+                    "SCREENSHOT_SUCCEEDED"
+                } else {
+                    "GLUE_SCREENSHOT_SUCCEEDED"
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not save screenshot");
+                if completion.world {
+                    "SCREENSHOT_FAILED"
+                } else {
+                    "GLUE_SCREENSHOT_FAILED"
+                }
+            }
+        };
+        if completion.world {
+            if let Some(ui) = self.world_ui.as_mut() {
+                ui.screenshot_completed(event)?;
+            }
+        } else if self.world_ui.is_none() {
+            self.glue_ui_dirty = true;
+            self.glue.dispatch_event(event, &UiEventPayload::empty())?;
+        }
+        Ok(())
+    }
+
     /// Presents one Glue or resident-world frame under the active VSync policy.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        self.service_screenshots()?;
         let mut profile = RuntimeFrameProfile::new("application present");
         let update_time = std::time::Instant::now();
         self.sound.apply_focus_policy(

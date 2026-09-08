@@ -59,6 +59,9 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("readScanning", "-1", -1.0, 1.0),
     ranged("readContest", "-1", -1.0, 1.0),
     value("showToolsUI", "-1"),
+    // 401EE4/401F0C register strings; 4A84A0 clamps quality at the encoder.
+    value("screenshotFormat", "jpeg"),
+    value("screenshotQuality", "3"),
     ranged("useUiScale", "0", 0.0, 1.0),
     ranged("uiScale", "1", 0.64, 1.0),
     ranged("gxVSync", "1", 0.0, 1.0),

@@ -7,6 +7,8 @@ use std::collections::VecDeque;
 pub enum UiProcessAction {
     /// End the client lifetime through the composition root's orderly shutdown path.
     Quit,
+    /// Save the next completed framebuffer through the application renderer.
+    Screenshot,
 }
 
 /// Main-thread mailbox shared by Lua bindings and the application owner.

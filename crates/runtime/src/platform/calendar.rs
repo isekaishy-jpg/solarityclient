@@ -2,6 +2,44 @@
 
 #![allow(unsafe_code)]
 
+/// 86D490 names screenshots using the computer's local calendar, to the second.
+pub(crate) fn screenshot_timestamp() -> Option<String> {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let seconds = i64::try_from(seconds).ok()?;
+    // SAFETY: Zero initializes all fields, which the CRT fills on success.
+    let mut time: libc::tm = unsafe { std::mem::zeroed() };
+    #[cfg(windows)]
+    {
+        unsafe extern "C" {
+            fn _localtime64_s(result: *mut libc::tm, seconds: *const i64) -> i32;
+        }
+        // SAFETY: Both pointers reference initialized values with the CRT ABI.
+        if unsafe { _localtime64_s(&mut time, &seconds) } != 0 {
+            return None;
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let seconds = libc::time_t::try_from(seconds).ok()?;
+        // SAFETY: The CRT writes only to the uniquely borrowed native tm.
+        if unsafe { libc::localtime_r(&seconds, &mut time) }.is_null() {
+            return None;
+        }
+    }
+    Some(format!(
+        "{:02}{:02}{:02}_{:02}{:02}{:02}",
+        time.tm_mon + 1,
+        time.tm_mday,
+        (time.tm_year + 1900) % 100,
+        time.tm_hour,
+        time.tm_min,
+        time.tm_sec
+    ))
+}
+
 /// 76C1F0 converts the realm's local calendar midnight through CRT mktime,
 /// then truncates epoch seconds / 86400. The computer supplies timezone rules,
 /// while the complete date comes from the realm packet and its advancement.

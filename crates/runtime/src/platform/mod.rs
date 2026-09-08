@@ -24,6 +24,7 @@ mod thread_clock;
 mod window_identity;
 
 pub(crate) use calendar::realm_calendar_days;
+pub(crate) use calendar::screenshot_timestamp;
 pub(crate) use clock::client_milliseconds;
 pub use event::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,
