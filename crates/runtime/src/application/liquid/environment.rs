@@ -43,10 +43,13 @@ pub(in crate::application) fn liquid_environment(
     camera: WorldCameraFrame,
 ) -> (LiquidLighting, LiquidFog) {
     let light = environment.light();
+    // 7EEA90 -> 834AE0 -> 834F60 retains the native light-ray direction for
+    // 8A38B0. The shared environment uses surface-to-light for terrain/M2;
+    // liquid's original shader performs its own negation before N.L.
     let lighting = LiquidLighting::new(
         camera
             .view()
-            .transform_vector3(environment.light_direction()),
+            .transform_vector3(-environment.light_direction()),
         light.ambient_color(),
         light.diffuse_color(),
         light.specular_color(),

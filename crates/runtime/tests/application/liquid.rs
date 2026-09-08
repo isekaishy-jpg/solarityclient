@@ -195,6 +195,100 @@ fn liquid_environment_matches_original_dbc_projection_and_depth_images()
     Ok(())
 }
 
+/// Native daylight generation, light normalization and 8A38B0's constant writer
+/// define the ray direction independently of the runtime's surface-to-sun ABI.
+#[test]
+fn liquid_environment_matches_original_daylight_shader_constants() -> Result<(), Box<dyn Error>> {
+    use crate::application::environment_coordinator::RuntimeWorldEnvironment;
+    use crate::time::RealmClock;
+    use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
+    use solarity_network::WorldTimeSpeed;
+    use solarity_rendering::LiquidShaderUniform;
+    let mut colors = [0; 18];
+    colors[0] = 0x80a0c0;
+    colors[1] = 0x406080;
+    colors[7] = 0x203040;
+    colors[9] = 0xc0e0ff;
+    let fixture = ClientFixture::with_common_files(&[
+        (
+            "DBFilesClient\\Light.dbc",
+            &dbc(15, &[1, 571, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0], &[0]),
+        ),
+        (
+            "DBFilesClient\\LightParams.dbc",
+            &dbc(9, &[1, 0, 0, 0, 0, 0, 0, 0, 0], &[0]),
+        ),
+        ("DBFilesClient\\LightSkybox.dbc", &dbc(3, &[], &[0])),
+        ("DBFilesClient\\LightIntBand.dbc", &constant_bands(&colors)),
+        (
+            "DBFilesClient\\LightFloatBand.dbc",
+            &constant_bands(&[3600_f32.to_bits(), 0.2_f32.to_bits(), 0, 0, 0, 0]),
+        ),
+    ])?;
+    let mut environment =
+        RuntimeWorldEnvironment::new(LightCatalog::load(&mut mounted(&fixture)?)?, 8 << 30)?;
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "Water light",
+        Vec3::ZERO,
+        0.,
+    ));
+    let captured = include_bytes!("../fixtures/water_light_uniform.bin");
+    let (records, trailing) = captured.as_chunks::<88>();
+    assert!(trailing.is_empty());
+    assert_eq!(records.len(), 192);
+    for record in records {
+        let half_minutes = u32::from_le_bytes(record[..4].try_into()?);
+        let camera_index = u32::from_le_bytes(record[4..8].try_into()?) as usize;
+        let clock = RealmClock::new(WorldTimeSpeed::new(
+            ((half_minutes / 120) << 6) | ((half_minutes % 120) / 2),
+            0.,
+            0,
+        )?);
+        let frame = environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("environment")?;
+        assert_eq!(frame.half_minutes(), half_minutes);
+        let eye = [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ][camera_index]
+            * 8.;
+        let up = if camera_index < 4 { Vec3::Z } else { Vec3::Y };
+        let camera = WorldCamera::stock(eye, Vec3::ZERO, up, 100.).frame(1.)?;
+        let (lighting, fog) = super::liquid_environment(frame, camera);
+        let uniform = LiquidShaderUniform::new(
+            camera.projection(),
+            camera.view(),
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            lighting,
+            fog,
+        )
+        .to_bytes();
+        for (index, (actual, expected)) in uniform[256..336]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(record[8..].as_chunks::<4>().0)
+            .enumerate()
+        {
+            let actual = f32::from_le_bytes(*actual);
+            let expected = f32::from_le_bytes(*expected);
+            assert!(
+                (actual - expected).abs() < 0.000003,
+                "day {half_minutes}, camera {camera_index}, constant {index}: {actual} vs {expected}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A one-key band returns the captured provider word at every sample time.
 fn constant_bands(values: &[u32]) -> Vec<u8> {
     let fields: Vec<u32> = values
