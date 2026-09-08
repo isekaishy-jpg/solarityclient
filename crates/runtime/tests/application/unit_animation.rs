@@ -14,7 +14,8 @@ const POSES: &[u16] = &[
 
 #[test]
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
-fn stock_drowning_kit_plays_wound_and_returns_to_current_movement() -> Result<(), Box<dyn Error>> {
+fn stock_drowning_kit_and_health_death_complete_and_return_to_current_movement()
+-> Result<(), Box<dyn Error>> {
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(
         ClientDataRoot::new(root)?,
@@ -68,6 +69,47 @@ fn stock_drowning_kit_plays_wound_and_returns_to_current_movement() -> Result<()
                     ordinary,
                     "{path}, flags={flags}"
                 );
+                let mut dying = input(0).with_movement(movement(flags, None));
+                dying.alive = false;
+                owner.set_input(dying);
+                let mut now = end as f32 + 100.0;
+                owner.advance_scene(now, &mut random)?;
+                let entry = owner.behavior(&owner.playback.borrow());
+                assert!(matches!(entry, 1 | 131 | 466), "{path}: {entry}");
+                if flags != 0 {
+                    assert_eq!(entry, 131, "{path}");
+                }
+                owner.request_visual_kit_animation(animation);
+                owner.advance_scene(now + 1.0, &mut random)?;
+                assert_eq!(owner.behavior(&owner.playback.borrow()), entry, "{path}");
+                for _ in 0..3 {
+                    let end = owner
+                        .playback
+                        .borrow()
+                        .script_timer
+                        .ok_or("death timer")?
+                        .end_time_ms();
+                    now = end as f32 + 1.0;
+                    owner.advance_scene(now, &mut random)?;
+                    if matches!(owner.behavior(&owner.playback.borrow()), 6 | 132 | 472)
+                        || owner.playback.borrow().script_mode == M2ModelAnimationMode::HoldEnd
+                    {
+                        break;
+                    }
+                }
+                let playback = owner.playback.borrow();
+                assert!(
+                    matches!(owner.behavior(&playback), 6 | 132 | 472)
+                        || (matches!(owner.behavior(&playback), 1 | 131)
+                            && playback.script_mode == M2ModelAnimationMode::HoldEnd),
+                    "{path}, flags={flags}: behavior={}, mode={:?}",
+                    owner.behavior(&playback),
+                    playback.script_mode
+                );
+                drop(playback);
+                owner.set_input(input(0).with_movement(movement(flags, None)));
+                owner.advance_scene(now + 100.0, &mut random)?;
+                assert_eq!(owner.behavior(&owner.playback.borrow()), ordinary, "{path}");
             }
         }
     }
@@ -324,10 +366,13 @@ fn owner_with_sequence_metadata(
     }
     let skin = models::skin()?;
     let mut dbc = b"WDBC".to_vec();
-    for value in [POSES.len() as u32, 8, 32, 1] {
+    let mut definitions = POSES.iter().chain(ids).copied().collect::<Vec<_>>();
+    definitions.sort_unstable();
+    definitions.dedup();
+    for value in [definitions.len() as u32, 8, 32, 1] {
         dbc.extend_from_slice(&value.to_le_bytes());
     }
-    for id in POSES {
+    for id in &definitions {
         let fallback = match id {
             6 => 1,
             132 => 131,
@@ -987,6 +1032,110 @@ fn unavailable_pose_uses_actual_fallback_behavior_and_failed_request_remains_pen
     assert!(failed.synchronize(100, &mut random).is_err());
     assert_eq!(failed.pending.borrow().len(), 1);
     assert_eq!(failed.processed_stand.get(), 0);
+    Ok(())
+}
+
+#[test]
+fn replicated_death_predicate_and_entry_match_original_executable() -> Result<(), Box<dyn Error>> {
+    let ids = [
+        0, 1, 6, 8, 9, 37, 131, 132, 133, 465, 466, 467, 468, 469, 472, 473,
+    ];
+    let owner = owner(&ids, 0)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    world.create_object(7, solarity_ecs::ObjectKind::Player, None, [])?;
+    let mut cases = 0;
+    for line in include_str!("../fixtures/unit_death_native.txt").lines() {
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        match words.first().copied() {
+            Some("dead") => {
+                let health = u32::from_str_radix(words[1], 16)?;
+                let secondary = u32::from_str_radix(words[2], 16)?;
+                solarity_systems::project_object_fields(
+                    &mut world,
+                    7,
+                    [(24, health), (60, secondary)],
+                )?;
+                let input = input(words[3].parse()?).with_orientation(&world, 7, false, false);
+                assert_eq!(input.dead(), words[4] == "1", "{line}");
+            }
+            Some("entry") => {
+                let mut playback = owner.playback.borrow_mut();
+                playback.animation_id = words[1].parse()?;
+                let mut input = input(0);
+                input.alive = false;
+                input.movement_flags = u32::from_str_radix(words[2], 16)?;
+                let request = owner
+                    .transition_request(input, &playback)
+                    .map_or(-1, i32::from);
+                assert_eq!(request, words[3].parse::<i32>()?, "{line}");
+            }
+            _ => continue,
+        }
+        cases += 1;
+    }
+    assert_eq!(cases, 152);
+    Ok(())
+}
+
+#[test]
+fn replicated_health_drives_death_without_changing_stand_and_prediction_cannot_kill()
+-> Result<(), Box<dyn Error>> {
+    for (flags, entry, corpse) in [(0, 1, 6), (0x200000, 131, 132)] {
+        let mut world = ActiveWorld::enter(WorldBootstrap::new(
+            WorldMapId::new(0),
+            7,
+            "Local",
+            Vec3::ZERO,
+            0.0,
+        ));
+        world.create_object(7, solarity_ecs::ObjectKind::Player, None, [])?;
+        solarity_systems::project_object_fields(&mut world, 7, [(24, 100), (32, 100)])?;
+        let current = || input(0).with_movement(movement(flags, None));
+        let owner = owner_with_input(
+            &[0, 1, 6, 9, 131, 132],
+            current().with_orientation(&world, 7, true, false),
+        )?;
+        let mut random = CrtRand::new();
+        owner.advance_scene(100.0, &mut random)?;
+        let player = world.local_player();
+        world
+            .storage_mut()
+            .add_component(player, (solarity_ecs::UnitHealthPrediction::new(-100),));
+        owner.set_input(current().with_orientation(&world, 7, true, false));
+        owner.advance_scene(200.0, &mut random)?;
+        assert!(owner.processed_alive.get());
+        for health in [0, u32::MAX] {
+            solarity_systems::project_object_fields(&mut world, 7, [(24, health)])?;
+            owner.set_input(current().with_orientation(&world, 7, true, false));
+            owner.advance_scene(300.0, &mut random)?;
+            assert_eq!(owner.playback.borrow().animation_id, entry);
+            assert_eq!(owner.input.get().stand, 0);
+        }
+        let retained = random;
+        owner.request_visual_kit_animation(9);
+        let mut changed = current().with_orientation(&world, 7, true, false);
+        changed.stand = 9;
+        owner.set_input(changed);
+        owner.advance_scene(400.0, &mut random)?;
+        assert_eq!(owner.playback.borrow().animation_id, entry);
+        assert_eq!(random, retained);
+        owner.advance_scene(1500.0, &mut random)?;
+        assert_eq!(owner.playback.borrow().animation_id, corpse);
+        solarity_systems::project_object_fields(&mut world, 7, [(24, 100)])?;
+        owner.set_input(current().with_orientation(&world, 7, true, false));
+        owner.advance_scene(1600.0, &mut random)?;
+        assert!(owner.processed_alive.get());
+        assert!(!matches!(
+            owner.behavior(&owner.playback.borrow()),
+            1 | 6 | 131 | 132
+        ));
+    }
     Ok(())
 }
 

@@ -603,6 +603,7 @@ pub struct UiWorldState {
 struct UiWorldStateInner {
     tutorials: crate::UiTutorialState,
     mirror_timers: RefCell<[super::UiMirrorTimer; 3]>,
+    release_timer: Cell<super::UiPlayerReleaseTimer>,
     player: Cell<Option<UiPlayerState>>,
     player_guid: Cell<Option<u64>>,
     player_identity: RefCell<Option<UiPlayerIdentityState>>,
@@ -641,6 +642,17 @@ impl Default for UiWorldState {
 }
 
 impl UiWorldState {
+    /// Publishes the native timer initialized when the local player dies.
+    pub fn set_release_timer(&self, timer: super::UiPlayerReleaseTimer) {
+        self.inner.release_timer.set(timer);
+    }
+
+    /// Returns the retained timer queried by the stock release-spirit dialog.
+    #[must_use]
+    pub fn release_timer(&self) -> super::UiPlayerReleaseTimer {
+        self.inner.release_timer.get()
+    }
+
     /// Publishes the frame manager's protected-action lockdown state.
     pub fn set_combat_lockdown(&self, locked: bool) {
         self.inner.combat_lockdown.set(locked);

@@ -40,6 +40,7 @@ pub(super) struct UnitAnimationInput {
     pub facing: f32,
     pub turn_rate: f32,
     pub alive: bool,
+    pub feigning_death: bool,
     pub controlled: bool,
     pub mouse_turning: bool,
 }
@@ -63,6 +64,7 @@ impl UnitAnimationInput {
             facing: 0.0,
             turn_rate: std::f32::consts::PI,
             alive: stand != 7,
+            feigning_death: false,
             controlled: false,
             mouse_turning: false,
         };
@@ -97,7 +99,10 @@ impl UnitAnimationInput {
             .map_or(0.0, |value| value.orientation());
         self.alive = world
             .unit_vitals(guid)
-            .is_some_and(|value| value.health() > 0);
+            .is_some_and(|value| (value.health() as i32) > 0);
+        self.feigning_death = world
+            .unit_flags(guid)
+            .is_some_and(|flags| flags.secondary() & 1 != 0);
         self.controlled = controlled;
         self.mouse_turning = mouse_turning;
         self
@@ -105,6 +110,11 @@ impl UnitAnimationInput {
 
     fn direct_facing(self) -> bool {
         self.movement_flags & 0x30 != 0 || self.mouse_turning
+    }
+
+    /// 71F560: replicated signed health, feign death and dead posture.
+    fn dead(self) -> bool {
+        !self.alive || self.feigning_death || self.stand == 7
     }
 
     fn same_primary_request(self, other: Self) -> bool {
@@ -116,6 +126,8 @@ impl UnitAnimationInput {
             && self.secondary_flags == other.secondary_flags
             && self.airborne == other.airborne
             && self.mounted == other.mounted
+            && self.alive == other.alive
+            && self.dead() == other.dead()
     }
 }
 
@@ -235,6 +247,7 @@ pub(super) struct UnitAnimationBehavior {
     animations: Arc<AnimationDataCatalog>,
     input: Cell<UnitAnimationInput>,
     processed_stand: Cell<u8>,
+    processed_alive: Cell<bool>,
     pending: RefCell<VecDeque<PendingUnitAnimation>>,
     landing: Cell<bool>,
     playback: Rc<RefCell<M2Playback>>,
@@ -292,6 +305,7 @@ impl UnitAnimationBehavior {
             animations,
             input: Cell::new(input),
             processed_stand: Cell::new(0),
+            processed_alive: Cell::new(true),
             pending: RefCell::new(VecDeque::from([PendingUnitAnimation {
                 input,
                 event: UnitMovementAnimationEventKind::Changed,
@@ -427,7 +441,7 @@ impl UnitAnimationBehavior {
 
     fn request(&self, input: UnitAnimationInput, playback: &M2Playback) -> Option<u16> {
         // A death posture consumes locomotion changes while the primary dies.
-        if input.stand == 7 {
+        if input.dead() {
             return None;
         }
         if input.mounted {
@@ -481,6 +495,24 @@ impl UnitAnimationBehavior {
     }
 
     fn transition_request(&self, input: UnitAnimationInput, playback: &M2Playback) -> Option<u16> {
+        // 73F330 -> 729220 -> 73AF80 is independent of the stand field.
+        // 71DDE0 protects an already playing death/corpse family from restart.
+        if (!input.alive && self.processed_alive.get())
+            || (input.stand == 7 && self.processed_stand.get() != 7)
+        {
+            return if matches!(self.behavior(playback), 1 | 6 | 131 | 132 | 466..=468 | 472) {
+                None
+            } else {
+                Some(if input.movement_flags & 0x200000 != 0 {
+                    131
+                } else {
+                    466
+                })
+            };
+        }
+        if input.dead() {
+            return None;
+        }
         // 73F060's changed-stand path precedes the general 724500 resolver.
         if input.stand != self.processed_stand.get() {
             match resolve_unit_stand_transition(
@@ -615,8 +647,10 @@ impl UnitAnimationBehavior {
             };
             let input = pending.input;
             let request = match pending.event {
+                // Wound admission 736640 exits through 71F560 before playback.
+                UnitMovementAnimationEventKind::VisualKit(8..=10) if input.dead() => None,
                 UnitMovementAnimationEventKind::VisualKit(animation) => Some(animation),
-                UnitMovementAnimationEventKind::Jump if input.stand != 7 && !input.mounted => {
+                UnitMovementAnimationEventKind::Jump if !input.dead() && !input.mounted => {
                     self.landing.set(false);
                     Some(37)
                 }
@@ -624,7 +658,7 @@ impl UnitAnimationBehavior {
                     previous_flags,
                     forced,
                     slow,
-                } if input.stand != 7 && !input.mounted => {
+                } if !input.dead() && !input.mounted => {
                     self.landing.set(false);
                     match resolve_unit_landing_animation(
                         previous_flags,
@@ -664,6 +698,7 @@ impl UnitAnimationBehavior {
                 );
             }
             self.processed_stand.set(input.stand);
+            self.processed_alive.set(input.alive);
             self.pending.borrow_mut().pop_front();
         }
         Ok(())
@@ -707,7 +742,7 @@ impl UnitAnimationBehavior {
             if matches!(behavior, 39 | 187) {
                 self.landing.set(false);
             }
-            let request = if !input.mounted || input.stand == 7 {
+            let request = if !input.mounted || input.dead() {
                 let movement_completion =
                     resolve_unit_movement_animation_completion(behavior, input.movement_flags);
                 let completion =
@@ -717,7 +752,7 @@ impl UnitAnimationBehavior {
                         resolve_unit_primary_animation_completion(
                             behavior,
                             input.stand,
-                            input.stand == 7,
+                            input.dead(),
                             false,
                         )
                     };

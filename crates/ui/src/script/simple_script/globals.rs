@@ -195,6 +195,7 @@ fn register_frame_globals(
     )?;
     crate::script::movement_intent::register_globals(lua, globals, environment.movement_input())?;
     crate::world::mirror_timer::register_globals(lua, globals, environment)?;
+    crate::world::player_release::register_globals(lua, globals, environment)?;
     crate::feature::register_tutorial_globals(lua, globals, environment.world_state().tutorials())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
