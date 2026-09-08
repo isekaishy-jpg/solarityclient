@@ -1,7 +1,84 @@
 //! External stock-compatibility tests for build-12340 player camera policy.
 
+use std::cell::RefCell;
 use std::convert::Infallible;
 use std::error::Error;
+
+#[test]
+fn camera_volumes_match_original_triangle_clipping() -> Result<(), Box<dyn Error>> {
+    use solarity_systems::{
+        PlayerCameraVolumeError, PlayerCameraVolumeKind, resolve_player_camera_volume,
+    };
+    for (line_number, line) in include_str!("../fixtures/camera-volume-native.txt")
+        .lines()
+        .enumerate()
+    {
+        if line.starts_with('#') {
+            continue;
+        }
+        let groups = line
+            .split('|')
+            .map(|group| {
+                group
+                    .split_whitespace()
+                    .map(|word| u32::from_str_radix(word, 16))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let input = &groups[0];
+        let float = |index| f32::from_bits(input[index]);
+        let vector = |index| Vec3::new(float(index), float(index + 1), float(index + 2));
+        let mut calls = 0;
+        let result = resolve_player_camera_volume(
+            float(6),
+            vector(0),
+            vector(3),
+            float(7),
+            input[8] & 0x20000 != 0,
+            |volume, kind| {
+                let mask = match kind {
+                    PlayerCameraVolumeKind::Water => 0x20000,
+                    PlayerCameraVolumeKind::Solid => 0x100171,
+                };
+                assert_eq!(mask, groups[2][calls * 25], "mask line {}", line_number + 1);
+                for (actual, expected) in volume.corners().iter().flat_map(|p| p.to_array()).zip(
+                    groups[2][calls * 25 + 1..calls * 25 + 25]
+                        .iter()
+                        .map(|word| f32::from_bits(*word)),
+                ) {
+                    assert!(
+                        actual.to_bits() == expected.to_bits()
+                            || (line_number > 320 && (actual - expected).abs() <= 0.000_02),
+                        "corner line {}: {actual} != {expected}",
+                        line_number + 1
+                    );
+                }
+                calls += 1;
+                if input[9] & mask != 0 {
+                    volume.triangle_retreat([vector(10), vector(13), vector(16)])
+                } else {
+                    Ok::<_, PlayerCameraVolumeError>(None)
+                }
+            },
+        )?;
+        assert_eq!(calls * 25, groups[2].len());
+        assert_eq!(
+            result.is_some(),
+            groups[1][0] != 0,
+            "hit line {}",
+            line_number + 1
+        );
+        let actual = result.unwrap_or(float(6));
+        let expected = f32::from_bits(groups[1][1]);
+        assert!(
+            actual.to_bits() == expected.to_bits()
+                || (line_number > 320 && (actual - expected).abs() <= 0.000_02),
+            "distance line {}: {actual} != {expected}",
+            line_number + 1
+        );
+    }
+    Ok(())
+}
 
 use glam::Vec3;
 use solarity_ecs::{PlayerViewState, WorldTransform};
@@ -13,6 +90,94 @@ use solarity_systems::{
     resolve_player_camera_obstruction, resolve_player_camera_pose,
     resolve_player_camera_water_collision,
 };
+
+#[test]
+fn camera_water_classification_and_interface_match_original_execution() -> Result<(), Box<dyn Error>>
+{
+    use solarity_systems::{PlayerCameraLiquidState, resolve_player_camera_water_interface};
+    for (line_number, line) in include_str!("../fixtures/camera-water-native.txt")
+        .lines()
+        .enumerate()
+    {
+        if line.starts_with('#') {
+            continue;
+        }
+        let groups = line[2..]
+            .split('|')
+            .map(|group| {
+                group
+                    .split_whitespace()
+                    .map(|word| u32::from_str_radix(word, 16))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let input = &groups[0];
+        let expected = &groups[1];
+        let float = |index| f32::from_bits(input[index]);
+        let vector = |index| Vec3::new(float(index), float(index + 1), float(index + 2));
+        if line.starts_with('C') {
+            let state = PlayerCameraLiquidState::sample(
+                float(0),
+                float(2),
+                (input[3] != 0).then(|| float(1)),
+            )?;
+            let (depth, flags) = match state {
+                PlayerCameraLiquidState::Absent => (0.0, 0),
+                PlayerCameraLiquidState::Surface { depth } => (depth, 0x100000),
+                PlayerCameraLiquidState::Submerged { depth } => (depth, 0x200000),
+            };
+            assert_eq!(
+                [depth.to_bits(), (input[4] & !0x300000) | flags],
+                expected.as_slice(),
+                "line {}",
+                line_number + 1
+            );
+        } else {
+            let calls = RefCell::new(Vec::new());
+            let eye = resolve_player_camera_water_interface(
+                vector(0),
+                vector(3),
+                vector(6),
+                float(9),
+                |start, end| {
+                    calls.borrow_mut().extend(
+                        [1].into_iter()
+                            .chain(start.to_array().map(f32::to_bits))
+                            .chain(end.to_array().map(f32::to_bits)),
+                    );
+                    Ok::<_, Infallible>((input[10] != 0).then(|| vector(11)))
+                },
+                |distance, contact, pivot| {
+                    calls.borrow_mut().extend(
+                        [2, distance.to_bits()]
+                            .into_iter()
+                            .chain(contact.to_array().map(f32::to_bits))
+                            .chain(pivot.to_array().map(f32::to_bits)),
+                    );
+                    if input[14] != 0 {
+                        calls.borrow_mut().push(3);
+                        Ok(Some(float(15)))
+                    } else {
+                        Ok(None)
+                    }
+                },
+            )?;
+            assert_eq!(
+                eye.to_array().map(f32::to_bits),
+                expected[..3],
+                "line {}",
+                line_number + 1
+            );
+            assert_eq!(
+                *calls.borrow(),
+                groups[2],
+                "trace order/arguments line {}",
+                line_number + 1
+            );
+        }
+    }
+    Ok(())
+}
 
 /// The default saved view produces stock's distinct eye, target, pivot, and subject.
 #[test]

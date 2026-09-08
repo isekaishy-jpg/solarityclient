@@ -57,11 +57,17 @@ pub use movement::{
 pub use camera::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
     CameraSubjectHeightSource, MountCameraGeometry, MountCameraHeightError,
-    PlayerCameraHeightSample, PlayerCameraHeightState, PlayerCameraObstructionError,
-    PlayerCameraPose, PlayerCameraPoseError, PlayerCameraWaterError, resolve_camera_subject_height,
+    PLAYER_CAMERA_WATER_CLEARANCE, PlayerCameraHeightSample, PlayerCameraHeightState,
+    PlayerCameraLiquidState, PlayerCameraLiquidStateError, PlayerCameraObstructionError,
+    PlayerCameraPose, PlayerCameraPoseError, PlayerCameraWaterError,
+    PlayerCameraWaterInterfaceError, resolve_camera_subject_height,
     resolve_model_camera_subject_height, resolve_mounted_player_camera_pose,
     resolve_player_camera_obstruction, resolve_player_camera_pose,
-    resolve_player_camera_water_collision,
+    resolve_player_camera_water_collision, resolve_player_camera_water_interface,
+};
+pub use camera::{
+    PlayerCameraVolume, PlayerCameraVolumeError, PlayerCameraVolumeKind,
+    PlayerCameraVolumeQueryError, resolve_player_camera_volume,
 };
 pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
 pub use collision::{
