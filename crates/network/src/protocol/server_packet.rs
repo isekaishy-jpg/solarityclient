@@ -36,6 +36,15 @@ pub struct WorldServerPacket {
 }
 
 impl WorldServerPacket {
+    /// Decodes authoritative full/delta aura slot updates.
+    ///
+    /// # Errors
+    /// Rejects a packet ending inside a slot's conditional fields.
+    pub fn unit_auras(
+        &self,
+    ) -> Result<Option<super::WorldUnitAuraUpdate>, super::WorldUnitAuraPacketError> {
+        super::WorldUnitAuraUpdate::decode(self.opcode, &self.payload)
+    }
     /// Decodes the attack GUID lifecycle handled by native 756800.
     ///
     /// # Errors

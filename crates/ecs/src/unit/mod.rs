@@ -5,6 +5,8 @@
 //! execute combat rules.
 
 mod unit_attack;
+mod unit_aura;
+pub use unit_aura::{UnitAura, UnitAuras};
 mod unit_c;
 mod unit_flags;
 mod unit_presentation;

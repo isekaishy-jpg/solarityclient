@@ -34,6 +34,15 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::DeathAction(action) => {
+                self.world.queue_death_action(action);
+                Ok(())
+            }
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::PlayerAuras => {
+                self.dirty = true;
+                self.manager.dispatch_event("UNIT_AURA", &UiEventPayload::new([UiEventArgument::String("player".into())]))?;
+                Ok(())
+            }
             crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Attack(started) => {
                 self.dirty = true;
                 self.manager.dispatch_event(if started { "PLAYER_ENTER_COMBAT" } else { "PLAYER_LEAVE_COMBAT" }, &UiEventPayload::empty())?;

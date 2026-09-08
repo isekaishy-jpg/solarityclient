@@ -216,11 +216,13 @@ The popup/query and explicit spell-button path is implemented; this is not a
 claim of complete resurrection support. Native inventory fallback (`6D6640`,
 `6D6560`) finds usable item spells with effect 94. Aura type 314 builds the
 restriction used by `727860`, and spell attribute `08000000` can bypass it.
-Live inventory-item selection, aura restriction construction, battlefield
-activation and world cinematic ownership still need their respective session
-providers. Their current empty state has no item, restriction, active arena or
-world cinematic. Provider inputs are not established by the death-dialog oracle.
+Live inventory-item selection, battlefield activation and world cinematic
+ownership still need their respective session providers. Their current empty
+state has no item, active arena or world cinematic. Aura restriction construction
+and the authored self-resurrection bypass now use the session-owned aura bank;
+see [unit-auras.md](unit-auras.md) for the original-code and encrypted tests.
 
-Corpse recovery, resurrection offers, other cursor-mode side effects, and the
-unit's forced-release flag remain in the life-system audit. Lighting and sky
-remain the final water-slice work.
+The unit's forced-release flag now enters the same ordered encrypted writer,
+after native timer initialization and before the death combat record. Corpse
+recovery, resurrection offers and other cursor-mode side effects remain in the
+life-system audit. Lighting and sky remain the final water-slice work.

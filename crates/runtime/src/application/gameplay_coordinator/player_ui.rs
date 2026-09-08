@@ -57,6 +57,8 @@ pub(in crate::application) struct TimedMirrorTimerUpdate {
 /// Shared ordering prevents a later flag packet changing an earlier timer trigger.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::application) enum RuntimePlayerUiNotification {
+    DeathAction(solarity_ui::UiPlayerDeathAction),
+    PlayerAuras,
     Attack(bool),
     UnitDeath(super::unit_death::RuntimeUnitDeathSnapshot),
     Resurrection(RuntimePlayerResurrectionSnapshot),
@@ -81,6 +83,8 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
 pub(in crate::application) struct RuntimePlayerResurrectionSnapshot {
     flags: u32,
     spell: u32,
+    blocked: bool,
+    bypass_blocker: bool,
 }
 
 impl RuntimePlayerResurrectionSnapshot {
@@ -92,6 +96,8 @@ impl RuntimePlayerResurrectionSnapshot {
         let mut state = world.resurrection_state();
         state.out_of_bounds = self.flags & 0x4000 != 0;
         state.self_resurrection_spell = self.spell;
+        state.blocked = self.blocked;
+        state.bypass_blocker = self.bypass_blocker;
         state.self_resurrection_name =
             (self.spell != 0).then(|| spells.name(self.spell).unwrap_or("UNKNOWN").to_owned());
         world.set_resurrection_state(state);
@@ -108,6 +114,7 @@ pub(in crate::application) enum RuntimePlayerLifeEvent {
 /// Retained independently of UI residency and cleared by native world exit.
 #[derive(Default)]
 pub(in crate::application) struct RuntimePlayerUiState {
+    spells: Option<std::rc::Rc<solarity_asset::SpellEffectCatalog>>,
     slots: [Option<TimedMirrorTimerUpdate>; 3],
     tutorial_flags: Vec<u8>,
     in_combat: bool,
@@ -120,6 +127,26 @@ pub(in crate::application) struct RuntimePlayerUiState {
 }
 
 impl RuntimePlayerUiState {
+    pub(super) fn set_spells(
+        &mut self,
+        spells: Option<std::rc::Rc<solarity_asset::SpellEffectCatalog>>,
+    ) {
+        self.spells = spells;
+    }
+
+    pub(super) fn receive_auras(
+        &mut self,
+        world: &mut solarity_ecs::ActiveWorld,
+        update: solarity_network::WorldUnitAuraUpdate,
+        receipt_ms: u32,
+    ) {
+        let local = world.local_player_guid().ok() == Some(update.guid);
+        if super::unit_auras::apply(world, update, receipt_ms) && local {
+            self.refresh_resurrection(world);
+            self.pending
+                .push_back(RuntimePlayerUiNotification::PlayerAuras);
+        }
+    }
     pub(in crate::application) fn resurrection(&self) -> RuntimePlayerResurrectionSnapshot {
         self.resurrection
     }
@@ -134,6 +161,17 @@ impl RuntimePlayerUiState {
         let snapshot = RuntimePlayerResurrectionSnapshot {
             flags: fields.get(150) & 0x4000,
             spell: fields.get(1199),
+            blocked: self.spells.as_ref().is_some_and(|spells| {
+                world
+                    .storage()
+                    .get::<&solarity_ecs::UnitAuras>(world.local_player())
+                    .is_ok_and(|auras| solarity_systems::unit_has_aura_type(&auras, spells, 314))
+            }),
+            bypass_blocker: self
+                .spells
+                .as_ref()
+                .and_then(|spells| spells.spell(fields.get(1199)))
+                .is_some_and(|spell| spell.resurrection_bypass),
         };
         if snapshot != self.resurrection {
             self.resurrection = snapshot;
@@ -176,6 +214,9 @@ impl RuntimePlayerUiState {
         let entered_death = matches!(notification,
             crate::application::gameplay_session::UnitFieldNotification::Health { previous }
             if (previous as i32) > 0 && world.unit_vitals(identity.guid()).is_some_and(|vitals| (vitals.health() as i32) <= 0));
+        if local {
+            self.refresh_resurrection(world);
+        }
         // 729220 calls 6DC0F0 before 7561E0 constructs the combat record.
         if local
             && entered_death
@@ -186,6 +227,19 @@ impl RuntimePlayerUiState {
                 .is_ok_and(|fields| fields.get(79) & 0x20 == 0)
         {
             self.initialize_release_timer(world, timestamp_ms);
+            // 6DC0F0 requests byte-zero release after timer setup, before the
+            // death combat record. Admission belongs to this packet's aura image.
+            if world
+                .storage()
+                .get::<&solarity_ecs::ObjectFields>(world.local_player())
+                .is_ok_and(|fields| fields.get(59) & 0x100000 != 0)
+                && (!self.resurrection.blocked || self.resurrection.bypass_blocker)
+            {
+                self.pending
+                    .push_back(RuntimePlayerUiNotification::DeathAction(
+                        solarity_ui::UiPlayerDeathAction::ReleaseSpirit { automatic: false },
+                    ));
+            }
         }
         if entered_death
             && let Some(mut death) = super::unit_death::RuntimeUnitDeathSnapshot::admit(
@@ -205,7 +259,6 @@ impl RuntimePlayerUiState {
         if !local {
             return;
         }
-        self.refresh_resurrection(world);
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
         };

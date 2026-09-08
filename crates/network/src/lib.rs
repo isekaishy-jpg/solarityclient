@@ -49,6 +49,7 @@ pub use protocol::{WorldEnvironmentalDamage, WorldEnvironmentalDamagePacketError
 pub use protocol::{WorldMirrorTimerPacketError, WorldMirrorTimerUpdate};
 pub use protocol::{WorldStatePacketError, WorldStateUpdate};
 pub use protocol::{WorldUnitAttack, WorldUnitAttackPacketError};
+pub use protocol::{WorldUnitAura, WorldUnitAuraPacketError, WorldUnitAuraUpdate};
 pub use realm::{RealmCategory, RealmDirectory, RealmEntry, RealmRecommendation, RealmType};
 pub use session::{WorldSessionError, WorldSessionStage};
 pub use transport::{TcpEndpoint, TcpTransport, TransportError};

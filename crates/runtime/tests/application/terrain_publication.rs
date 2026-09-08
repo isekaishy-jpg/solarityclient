@@ -160,6 +160,7 @@ fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
     root.texture_flags = Some(wow_adt::chunks::MtxfChunk { flags: vec![0] });
     let adt = wow_adt::builder::BuiltAdt::from_root_adt(*root, None).to_bytes()?;
     ClientFixture::with_common_files(&[
+        ("DBFilesClient\\Spell.dbc", &dbc(234, &[], b"\0")),
         ("DBFilesClient\\Map.dbc", &dbc(66, &map, b"\0Northrend\0")),
         (
             "DBFilesClient\\GameObjectDisplayInfo.dbc",

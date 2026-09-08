@@ -453,6 +453,8 @@ fn water_tutorials_preserve_server_order_native_callbacks_and_wire_acknowledgeme
             match notification {
 RuntimePlayerUiNotification::UnitDeath(snapshot) => super::super::environmental_damage::dispatch_unit_death(&mut manager, &world, snapshot)?,
                 RuntimePlayerUiNotification::Resurrection(snapshot) => snapshot.publish(&world, &names),
+                RuntimePlayerUiNotification::DeathAction(action) => world.queue_death_action(action),
+                RuntimePlayerUiNotification::PlayerAuras => { manager.dispatch_event("UNIT_AURA", &solarity_ui::UiEventPayload::new([solarity_ui::UiEventArgument::String("player".into())]))?; }
                 RuntimePlayerUiNotification::Life {snapshot,event,release_timer} => super::dispatch_life(&mut manager,&world,snapshot,event,release_timer)?,
                 RuntimePlayerUiNotification::Combat(in_combat) => manager.player_combat_changed(in_combat)?,
                 RuntimePlayerUiNotification::EnvironmentalDamage(impact) => super::super::environmental_damage::dispatch_environmental_damage(&mut manager,impact)?,

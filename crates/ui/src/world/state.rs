@@ -690,7 +690,8 @@ impl UiWorldState {
         self.inner.falling.get()
     }
 
-    pub(super) fn queue_death_action(&self, action: super::UiPlayerDeathAction) {
+    /// Retains an already admitted native Lua or session death request.
+    pub fn queue_death_action(&self, action: super::UiPlayerDeathAction) {
         self.inner.death_actions.borrow_mut().push_back(action);
     }
 

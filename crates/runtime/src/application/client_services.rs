@@ -207,6 +207,7 @@ impl ClientServices {
         let terrain_catalog = catalog.clone();
         let world_ui_catalog = catalog.clone();
         let mut assets = AssetStore::mount(catalog.clone())?;
+        let spells = std::rc::Rc::new(solarity_asset::SpellEffectCatalog::load(&mut assets)?);
         let environmental = Arc::new(solarity_asset::EnvironmentalDamageCatalog::load(
             &mut assets,
         )?);
@@ -482,6 +483,7 @@ impl ClientServices {
                 login,
                 world,
                 gameplay: RuntimeGameplayCoordinator::new()
+                    .with_spells(spells)
                     .with_factions(character_metadata.faction_catalog()),
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
                 area_triggers,

@@ -76,7 +76,14 @@ fn unit_death_log_observes_native_timer_before_player_dead() -> Result<(), TestE
             UnitFieldNotification::Health { previous: 100 },
             1000,
         );
-        let Some(RuntimePlayerUiNotification::UnitDeath(death)) = state.take_notification() else {
+        let mut notification = state.take_notification();
+        if matches!(
+            notification,
+            Some(RuntimePlayerUiNotification::Resurrection(_))
+        ) {
+            notification = state.take_notification();
+        }
+        let Some(RuntimePlayerUiNotification::UnitDeath(death)) = notification else {
             return Err("death log must precede life callbacks".into());
         };
         let (health, timer) = death.player_ui.ok_or("death UI snapshot")?;

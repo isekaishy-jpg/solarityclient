@@ -5,6 +5,7 @@ pub(in crate::application) mod environmental_damage;
 mod game_object_cache;
 pub(in crate::application) mod player_ui;
 mod template_cache;
+mod unit_auras;
 pub(in crate::application) mod unit_death;
 
 use creature_cache::CreatureTemplateCache;
@@ -20,6 +21,9 @@ mod creature_template_tests;
 #[cfg(test)]
 #[path = "../../tests/application/unit_attack.rs"]
 mod unit_attack_tests;
+#[cfg(test)]
+#[path = "../../tests/application/unit_auras.rs"]
+mod unit_aura_tests;
 #[cfg(test)]
 #[path = "../../tests/application/unit_death_log.rs"]
 mod unit_death_log_tests;
@@ -127,6 +131,9 @@ pub enum RuntimeGameplayError {
     /// An attack start/stop notification was malformed.
     #[error(transparent)]
     UnitAttack(#[from] solarity_network::WorldUnitAttackPacketError),
+    /// An authoritative aura record was truncated.
+    #[error(transparent)]
+    UnitAura(#[from] solarity_network::WorldUnitAuraPacketError),
     /// A native unit-control or local stand-state packet was malformed.
     #[error(transparent)]
     PlayerControl(#[from] solarity_network::WorldPlayerControlPacketError),
@@ -162,6 +169,7 @@ pub struct RuntimeGameplayCoordinator {
     action_buttons: Option<WorldActionButtons>,
     player_ui: player_ui::RuntimePlayerUiState,
     factions: Option<std::rc::Rc<solarity_asset::CharacterFactionCatalog>>,
+    spells: Option<std::rc::Rc<solarity_asset::SpellEffectCatalog>>,
     player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     /// Packet dispatch yields to the composition root at each transfer packet.
@@ -171,6 +179,14 @@ pub struct RuntimeGameplayCoordinator {
 }
 
 impl RuntimeGameplayCoordinator {
+    pub(in crate::application) fn with_spells(
+        mut self,
+        spells: std::rc::Rc<solarity_asset::SpellEffectCatalog>,
+    ) -> Self {
+        self.spells = Some(spells.clone());
+        self.player_ui.set_spells(Some(spells));
+        self
+    }
     pub(in crate::application) fn with_factions(
         mut self,
         factions: std::rc::Rc<solarity_asset::CharacterFactionCatalog>,
@@ -200,6 +216,7 @@ impl RuntimeGameplayCoordinator {
             action_buttons: None,
             player_ui: player_ui::RuntimePlayerUiState::default(),
             factions: None,
+            spells: None,
             player_control: None,
             unhandled_packets: VecDeque::new(),
             transfer: None,
@@ -243,6 +260,7 @@ impl RuntimeGameplayCoordinator {
         let mut realm_clock = None;
         let mut action_buttons = None;
         let mut player_ui = player_ui::RuntimePlayerUiState::default();
+        player_ui.set_spells(self.spells.clone());
         let mut game_object_templates = GameObjectTemplateCache::new();
         let mut creature_templates = CreatureTemplateCache::new();
         for packet in setup_packets {
@@ -826,6 +844,7 @@ impl RuntimeGameplayCoordinator {
     /// Aborts packet I/O and drops active ECS state.
     pub fn disconnect(&mut self) {
         self.player_ui = player_ui::RuntimePlayerUiState::default();
+        self.player_ui.set_spells(self.spells.clone());
         self.game_object_templates.clear();
         self.creature_templates.clear();
         if let Some(active) = self.active.take() {
@@ -1210,6 +1229,10 @@ fn apply_state_packet(
     packet: &WorldServerPacket,
     player_ui: &mut player_ui::RuntimePlayerUiState,
 ) -> Result<bool, RuntimeGameplayError> {
+    if let Some(auras) = packet.unit_auras()? {
+        player_ui.receive_auras(world, auras, crate::platform::client_milliseconds());
+        return Ok(true);
+    }
     if let Some(attack) = packet.unit_attack()? {
         player_ui.receive_attack(world, attack);
         return Ok(true);

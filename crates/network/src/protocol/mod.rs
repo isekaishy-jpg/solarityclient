@@ -21,6 +21,8 @@ mod movement_message;
 mod movement_spline;
 mod remote_movement;
 mod unit_attack;
+mod unit_aura;
+pub use unit_aura::{WorldUnitAura, WorldUnitAuraPacketError, WorldUnitAuraUpdate};
 
 pub use remote_movement::{
     MonsterMove, MonsterMovePath, MonsterMoveTransport, MovementPacketError, RemoteMovement,
