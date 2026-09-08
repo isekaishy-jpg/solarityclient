@@ -13,6 +13,7 @@ const AUTHORED_SHADOW_OPACITY: u8 = 85;
 /// One decoded 64-by-64 terrain shadow-opacity plane.
 pub struct TerrainShadowMap {
     opacity: Box<[u8; TERRAIN_SHADOW_MAP_BYTE_COUNT]>,
+    authored: Box<[u8; PACKED_SHADOW_MAP_BYTE_COUNT]>,
 }
 
 impl TerrainShadowMap {
@@ -32,13 +33,26 @@ impl TerrainShadowMap {
         if !do_not_fix_edges {
             fix_shadow_edges(&mut opacity);
         }
-        Self { opacity }
+        Self {
+            opacity,
+            authored: Box::new(*bytes),
+        }
     }
 
     /// Returns the stable shader-ready R8 payload.
     #[must_use]
     pub fn opacity(&self) -> &[u8; TERRAIN_SHADOW_MAP_BYTE_COUNT] {
         &self.opacity
+    }
+
+    /// Reads the original MCSH bit, before the GPU edge correction.
+    /// Native entity lighting queries this authored bitmap rather than opacity.
+    #[must_use]
+    pub fn authored_shadow_at(&self, column: usize, row: usize) -> Option<bool> {
+        if column >= TERRAIN_SHADOW_MAP_WIDTH || row >= TERRAIN_SHADOW_MAP_WIDTH {
+            return None;
+        }
+        Some(self.authored[row * 8 + column / 8] & (1 << (column & 7)) != 0)
     }
 }
 

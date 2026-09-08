@@ -127,6 +127,7 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(7), "DBFilesClient\\SpellVisualEffectName.dbc");
         builder = builder.add_file_data(empty_wdbc(3), "DBFilesClient\\EnvironmentalDamage.dbc");
         builder = builder.add_file_data(empty_wdbc(38), "DBFilesClient\\SpellVisualKit.dbc");
+        builder = builder.add_file_data(empty_wdbc(234), "DBFilesClient\\Spell.dbc");
         builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\AreaTrigger.dbc");
         builder = builder.add_file_data(empty_wdbc(11), "DBFilesClient\\TaxiPathNode.dbc");
         builder = builder.add_file_data(empty_wdbc(11), "DBFilesClient\\TransportPhysics.dbc");
@@ -140,6 +141,7 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\WorldStateZoneSounds.dbc");
         builder = builder.add_file_data(empty_wdbc(66), "DBFilesClient\\Map.dbc");
         builder = builder.add_file_data(empty_wdbc(15), "DBFilesClient\\Light.dbc");
+        builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\Weather.dbc");
         builder = builder.add_file_data(empty_wdbc(30), "DBFilesClient\\SoundEntries.dbc");
         builder = builder.add_file_data(empty_wdbc(24), "DBFilesClient\\SoundEntriesAdvanced.dbc");
         builder = builder.add_file_data(empty_wdbc(38), "DBFilesClient\\CreatureSoundData.dbc");

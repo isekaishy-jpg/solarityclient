@@ -159,8 +159,8 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     if let Some(path) = std::env::var_os("SOLARITY_WMO_DOODAD_CAPTURE") {
         std::fs::write(path, initial.rgba8())?;
     }
-    assert_color(&initial, camera, Vec3::new(0., 2., 0.), 2)?;
-    assert_color(&initial, camera, Vec3::new(0., -2., 0.), 0)?;
+    assert_unlit_doodad(&initial, camera, Vec3::new(0., 2., 0.))?;
+    assert_unlit_doodad(&initial, camera, Vec3::new(0., -2., 0.))?;
     let event_scene_time = first.borrow().previous_event_scene_time_ms;
     assert_eq!(event_scene_time, 2500);
     let random_before_motion = random;
@@ -191,7 +191,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
         2600.,
         &mut random,
     )?;
-    assert_color(&moved, camera, Vec3::new(0., 2.5, 0.), 2)?;
+    assert_unlit_doodad(&moved, camera, Vec3::new(0., 2.5, 0.))?;
     world.remove_object(99)?;
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
@@ -255,7 +255,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
         2800.,
         &mut random,
     )?;
-    assert_color(&restored, camera, Vec3::new(0., 2., 0.), 2)?;
+    assert_unlit_doodad(&restored, camera, Vec3::new(0., 2., 0.))?;
     objects
         .frame_input(Some(&world))
         .advance_scene(3300., &mut random)?;
@@ -383,11 +383,10 @@ fn capture(
         .ok_or_else(|| "missing captured frame".into())
 }
 
-fn assert_color(
+fn assert_unlit_doodad(
     capture: &solarity_rendering::CapturedFrame,
     camera: WorldCameraFrame,
     point: Vec3,
-    channel: usize,
 ) -> Result<(), Box<dyn Error>> {
     let clip = camera.view_projection() * point.extend(1.);
     let x = ((clip.x / clip.w * 0.5 + 0.5) * 128.) as usize;
@@ -397,10 +396,9 @@ fn assert_color(
         .get((y * 128 + x) * 4..)
         .and_then(|bytes| bytes.get(..4))
         .ok_or("pixel")?;
-    assert!(
-        pixel[channel] > 200 && pixel[(channel + 1) % 3] < 180 && pixel[(channel + 2) % 3] < 180,
-        "authored doodad tint missing at {point:?}: {pixel:?}"
-    );
+    // MODD colors belong to the lighting callback; this unlit fixture keeps
+    // its white mesh while parent movement still determines the exact pixels.
+    assert_eq!(pixel, &[255; 4], "unlit doodad missing at {point:?}");
     Ok(())
 }
 

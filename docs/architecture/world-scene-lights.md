@@ -69,6 +69,14 @@ Any exterior group reference keeps a doodad exterior (`7BF7F0`). MODD color is
 lighting data: it does not tint the mesh or make it transparent through alpha.
 Static and replicated WMO owners both use the current registered root.
 
+Exterior entities in the current baked-shadow rendering mode also sample
+`7A06A0`'s full-resolution terrain shadow bitmap. The decoded MCSH bits are
+retained separately from the edge-corrected GPU opacity texture. Native map
+bounds, coordinate rounding, tile/chunk selection and bit addressing determine
+whether `7A1BC0` targets half directional intensity. Unit registration excludes
+selected WMO floors from this terrain rule. The existing retained transition
+smooths entry and exit; movement and terrain publication invalidate the sample.
+
 The pinned `7B5D00` initializer clears every placed MOLT light slot; the traced
 `7BDE50` path constructs groups rather than populating those slots. This work
 does not synthesize runtime point lights from MOLT records. Animated M2 sources
@@ -93,9 +101,15 @@ continue to use the independently verified graphics-scene publication path.
   MODD splits, including alpha endpoints and random packed colors.
 - A decoded WDT/WMO/MODD runtime fixture verifies distinct creature/doodad GPU
   uniforms, the retained ambient transition and MODD mesh-color handling.
+- `world_entity_terrain_shadow_oracle.py`: 650 native map/chunk/texel and bitmap
+  captures. A decoded ADT runtime fixture checks movement into/out of shade,
+  stationary transition reuse and world-unload invalidation.
 
 This covers graphics-scene M2 source publication, model/water consumers and
 the ordinary entity/doodad color callbacks. It does not establish the separate
-`7C10C0` projected shadow plane, the terrain-shadow intensity gate in `7A1BC0`,
-or every specialized map-entity callback. Camera fog and sky have separate coverage in
+`7C10C0` projected shadow plane, dynamic shadow-map modes, or every specialized
+map-entity callback. Native visibility passes also choose an ordinary/WMO fog
+bank per model (`793270`/`7C1730`); portal-aware routing of those separate banks
+remains distinct from the shared camera fog implemented here. Camera fog and sky
+have separate coverage in
 [world fog](world-fog.md) and [world sky](world-sky.md).

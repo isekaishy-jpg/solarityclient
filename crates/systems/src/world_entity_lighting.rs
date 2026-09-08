@@ -117,6 +117,14 @@ impl WorldEntityLightState {
         };
     }
 
+    /// The renderer's baked-shadow mode uses 7A1BC0's 0.5 exterior target in
+    /// authored MCSH shadows. Interior targets are independent of terrain.
+    pub fn set_terrain_shadow(&mut self, shadowed: bool) {
+        if !self.interior {
+            self.target_intensity = if shadowed { 0.5 } else { 2.5 };
+        }
+    }
+
     /// Advances 7A1E90 once per scene tick, including its one-byte minimum step.
     pub fn advance(&mut self, seconds: f32, environment: WorldEntityLightEnvironment) {
         let step = ((f64::from(seconds.max(0.)) * 2. * 255.) as i32).max(1);

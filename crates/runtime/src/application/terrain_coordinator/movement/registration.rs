@@ -338,17 +338,17 @@ impl RuntimeTerrainCoordinator {
         model: Option<&PlacedM2Collision>,
         scratch: &mut RuntimeMovementRegistrationQuery,
     ) -> Result<
-        (bool, Option<solarity_systems::WorldModelFloorLight>),
+        (bool, Option<solarity_systems::WorldModelFloorLight>, bool),
         RuntimeMovementRegistrationError,
     > {
         let Some(active) = self.active.as_mut() else {
-            return Ok((false, None));
+            return Ok((false, None, false));
         };
         let selection = if let Some(model) = model {
             scratch.clear();
             active.register_game_object_movement(model, MovementBspCacheMode::Enabled, scratch)?;
             let Some(selection) = scratch.selection() else {
-                return Ok((false, None));
+                return Ok((false, None, false));
             };
             selection
         } else {
@@ -358,10 +358,25 @@ impl RuntimeTerrainCoordinator {
             .selected()
             .is_some_and(|candidate| candidate.hit().is_interior())
         {
-            return Ok((false, None));
+            // 7A1BC0 applies baked terrain shadows only outside interiors.
+            // Unit registration also excludes a selected exterior WMO through
+            // +C bit 0x200; MapObject registration does not set that bit.
+            let shadow = (model.is_some() || selection.selected().is_none())
+                && solarity_systems::WorldEntityTerrainShadowPoint::new(position)
+                    .and_then(|point| {
+                        let tile = active.tile_at(point.tile())?;
+                        let chunk = tile
+                            .decoded
+                            .chunks()
+                            .iter()
+                            .find(|chunk| chunk.index() == point.chunk())?;
+                        Some(point.is_shadowed(chunk.shadow_map()?))
+                    })
+                    .unwrap_or(false);
+            return Ok((false, None, shadow));
         }
         let Some(candidate) = selection.fallback().into_iter().flatten().next() else {
-            return Ok((false, None));
+            return Ok((false, None, false));
         };
         let reference = active
             .movement
@@ -403,6 +418,7 @@ impl RuntimeTerrainCoordinator {
             } else {
                 None
             },
+            false,
         ))
     }
 

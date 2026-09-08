@@ -9,10 +9,12 @@ mod camera;
 mod character;
 mod collision;
 mod world_entity_lighting;
+mod world_entity_terrain_shadow;
 
 pub use world_entity_lighting::{
     WorldEntityLightEnvironment, WorldEntityLightSample, WorldEntityLightState,
 };
+pub use world_entity_terrain_shadow::WorldEntityTerrainShadowPoint;
 mod combat;
 mod currency;
 mod dance;

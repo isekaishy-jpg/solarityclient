@@ -6,6 +6,122 @@ use solarity_asset::{AssetStoreHandle, MapCatalog};
 use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
 
 #[test]
+fn authored_terrain_shadow_reaches_retained_entity_lighting() -> Result<(), Box<dyn Error>> {
+    let mut manifest = wow_wdt::WdtFile::new(wow_wdt::version::WowVersion::WotLK);
+    manifest.mwmo = Some(wow_wdt::chunks::MwmoChunk::new());
+    manifest
+        .main
+        .get_mut(32, 32)
+        .ok_or("tile")?
+        .set_has_adt(true);
+    let mut wdt = Vec::new();
+    wow_wdt::WdtWriter::new(&mut wdt).write(&manifest)?;
+    let adt = wow_adt::builder::AdtBuilder::new()
+        .with_version(wow_adt::AdtVersion::WotLK)
+        .add_texture("tileset/fixture/grass.blp")
+        .build()?
+        .to_bytes()?;
+    let wow_adt::ParsedAdt::Root(mut root) = wow_adt::parse_adt(&mut std::io::Cursor::new(adt))?
+    else {
+        return Err("root ADT".into());
+    };
+    root.texture_flags = Some(wow_adt::chunks::MtxfChunk { flags: vec![0] });
+    for chunk in &mut root.mcnk_chunks {
+        chunk.header.position = [
+            17_066.666_f32 - (512 + chunk.header.index_y) as f32 * 33.333_332,
+            17_066.666_f32 - (512 + chunk.header.index_x) as f32 * 33.333_332,
+            0.,
+        ];
+        chunk.header.flags.value |= 1;
+        chunk.header.size_shadow = 512;
+        chunk.shadow = Some(wow_adt::McshChunk {
+            shadow_map: (0..512)
+                .map(|byte| if byte % 8 < 4 { 255 } else { 0 })
+                .collect(),
+        });
+        chunk.heights.as_mut().ok_or("heights")?.heights.fill(0.);
+    }
+    let adt = wow_adt::builder::BuiltAdt::from_root_adt(*root, None).to_bytes()?;
+    let fixture = ClientFixture::with_common_files(&[
+        ("DBFilesClient\\Map.dbc", &fixture_files().3),
+        ("World\\Maps\\Light\\Light.wdt", &wdt),
+        ("World\\Maps\\Light\\Light_32_32.adt", &adt),
+        (
+            "tileset\\fixture\\grass.blp",
+            &crate::test_support::bootstrap_texture_blp(),
+        ),
+        ("Receiver.m2", &game_object_models::model()?),
+        ("Receiver00.skin", &game_object_models::skin()?),
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let model = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Receiver.m2")?,
+    )?);
+    let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps);
+    let shadowed = Vec3::new(-4., -4., 1.);
+    let clear = Vec3::new(-4., -24., 1.);
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "Light",
+        shadowed,
+        0.,
+    ));
+    terrain.synchronize(Some(&world))?;
+    let mut light = entity_lighting::EntityLighting::default();
+    let environment = solarity_systems::WorldEntityLightEnvironment::new(
+        Vec3::splat(0.2),
+        Vec3::splat(0.8),
+        -Vec3::Z,
+        -Vec3::Z,
+    );
+    for (time, position, gain) in [
+        (0., shadowed, 1.),
+        (1000., shadowed, 0.5),
+        (2000., clear, 1.),
+        (3000., shadowed, 0.5),
+    ] {
+        let sample = light
+            .sample(
+                M2GpuPlacementOwner::CreatureBody { guid: 99 },
+                &model,
+                Mat4::from_translation(position),
+                [255; 4],
+                time,
+                &mut terrain,
+                environment,
+            )?
+            .ok_or("entity callback")?;
+        assert!(
+            (sample.diffuse() - Vec3::splat(0.8 * gain))
+                .abs()
+                .max_element()
+                < 0.000001,
+            "time {time}"
+        );
+    }
+    terrain.disconnect();
+    let sample = light
+        .sample(
+            M2GpuPlacementOwner::CreatureBody { guid: 99 },
+            &model,
+            Mat4::from_translation(shadowed),
+            [255; 4],
+            4000.,
+            &mut terrain,
+            environment,
+        )?
+        .ok_or("disconnected callback")?;
+    assert!((sample.diffuse() - Vec3::splat(0.8)).abs().max_element() < 0.000001);
+    Ok(())
+}
+
+#[test]
 #[allow(unsafe_code)]
 fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn Error>> {
     let (root, group, wdt, map) = fixture_files();
@@ -48,8 +164,10 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
     let unit_position = unit_transform.w_axis.truncate();
     let mut scratch =
         crate::application::terrain_coordinator::RuntimeMovementRegistrationQuery::new();
-    let (interior, floor) = terrain.model_floor_light(unit_position, None, &mut scratch)?;
+    let (interior, floor, terrain_shadow) =
+        terrain.model_floor_light(unit_position, None, &mut scratch)?;
     assert!(interior);
+    assert!(!terrain_shadow);
     let floor = floor.ok_or("floor color")?;
     let native =
         include_bytes!("../../../systems/tests/fixtures/world_model_floor_light_native.bin")

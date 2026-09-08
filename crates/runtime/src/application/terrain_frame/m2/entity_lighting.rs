@@ -9,7 +9,7 @@ use solarity_systems::{WorldEntityLightEnvironment, WorldEntityLightState, World
 
 #[derive(Default)]
 pub(super) struct EntityLighting {
-    cached: Option<(Mat4, u64, bool, Option<WorldModelFloorLight>)>,
+    cached: Option<(Mat4, u64, bool, Option<WorldModelFloorLight>, bool)>,
     state: Option<WorldEntityLightState>,
     last_time_ms: Option<f32>,
     scratch: RuntimeMovementRegistrationQuery,
@@ -49,17 +49,18 @@ impl EntityLighting {
             _ => None,
         };
         let sample = if let Some((root, index)) = doodad {
-            if self.cached.is_none_or(|(_, old, _, _)| old != revision) {
+            if self.cached.is_none_or(|(_, old, _, _, _)| old != revision) {
                 self.cached = Some((
                     transform,
                     revision,
                     terrain.doodad_interior_lighting(root, index)?,
                     None,
+                    false,
                 ));
             }
             WorldEntityLightState::doodad(
                 color,
-                self.cached.is_some_and(|(_, _, interior, _)| interior),
+                self.cached.is_some_and(|(_, _, interior, _, _)| interior),
                 environment,
             )
         } else if matches!(
@@ -73,7 +74,7 @@ impl EntityLighting {
         ) {
             if self
                 .cached
-                .is_none_or(|(matrix, old, _, _)| old != revision || matrix != transform)
+                .is_none_or(|(matrix, old, _, _, _)| old != revision || matrix != transform)
             {
                 let collision = if matches!(owner, M2GpuPlacementOwner::GameObject { .. }) {
                     Some(solarity_systems::PlacedM2Collision::prepare_transform(
@@ -83,18 +84,19 @@ impl EntityLighting {
                 } else {
                     None
                 };
-                let (interior, floor) = terrain.model_floor_light(
+                let (interior, floor, terrain_shadow) = terrain.model_floor_light(
                     transform.w_axis.truncate(),
                     collision.as_ref(),
                     &mut self.scratch,
                 )?;
-                self.cached = Some((transform, revision, interior, floor));
+                self.cached = Some((transform, revision, interior, floor, terrain_shadow));
             }
             let state = self
                 .state
                 .get_or_insert_with(|| WorldEntityLightState::new(environment));
-            if let Some((_, _, interior, floor)) = self.cached {
+            if let Some((_, _, interior, floor, terrain_shadow)) = self.cached {
                 state.set_floor(interior, floor, environment);
+                state.set_terrain_shadow(terrain_shadow);
             }
             let seconds = self
                 .last_time_ms
