@@ -232,6 +232,7 @@ fn water_tutorials_preserve_server_order_native_callbacks_and_wire_acknowledgeme
         while let Some(notification)=state.take_notification() {
             match notification {
                 RuntimePlayerUiNotification::Combat(in_combat) => manager.player_combat_changed(in_combat)?,
+                RuntimePlayerUiNotification::Health {snapshot,health_changed,maximum_changed} => super::dispatch_health(&mut manager,&world,snapshot,health_changed,maximum_changed)?,
                 RuntimePlayerUiNotification::TutorialFlags(flags) => tutorials.replace_flags(&flags),
                 RuntimePlayerUiNotification::MirrorTimer(timer) => super::dispatch_notification(&mut manager,&world,&names,timer)?,
             }

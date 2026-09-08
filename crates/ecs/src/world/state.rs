@@ -252,6 +252,16 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns retained client health prediction for a loaded unit.
+    #[must_use]
+    pub fn unit_health_prediction(&self, guid: u64) -> Option<crate::UnitHealthPrediction> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&crate::UnitHealthPrediction>(entity)
+            .map(|health| **health)
+            .ok()
+    }
+
     /// Returns the common presentation fields for any visible object.
     #[must_use]
     pub fn object_presentation(&self, guid: u64) -> Option<ObjectPresentation> {

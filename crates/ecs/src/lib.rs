@@ -32,8 +32,8 @@ pub use player::{
     VisibleEquipmentItem,
 };
 pub use unit::{
-    UNIT_PRIMARY_STAT_COUNT, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,
-    UnitSheathState, UnitStats, UnitVitals,
+    UNIT_PRIMARY_STAT_COUNT, UnitAnimationTier, UnitFlags, UnitHealthPrediction, UnitIdentity,
+    UnitPresentation, UnitSheathState, UnitStats, UnitVitals,
 };
 pub use view::PlayerViewState;
 pub use world::WorldStateValues;

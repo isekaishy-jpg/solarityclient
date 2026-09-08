@@ -8,6 +8,10 @@ mod tests;
 #[path = "../../../tests/application/water_tutorial.rs"]
 mod tutorial_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/application/player_health.rs"]
+mod health_tests;
+
 use solarity_network::WorldMirrorTimerUpdate;
 use solarity_ui::{UiEventArgument, UiEventPayload, UiMirrorTimer};
 
@@ -22,6 +26,10 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Health { snapshot, health_changed, maximum_changed } => {
+                self.dirty = true;
+                dispatch_health(&mut self.manager, &self.world, snapshot, health_changed, maximum_changed)
+            }
             crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Combat(in_combat) => {
                 self.dirty = true;
                 self.manager.player_combat_changed(in_combat)?;
@@ -72,6 +80,26 @@ impl RuntimeWorldUi {
             notification,
         )
     }
+}
+
+fn dispatch_health(
+    manager: &mut solarity_ui::FrameManager,
+    world: &solarity_ui::UiWorldState,
+    snapshot: crate::application::gameplay_coordinator::player_ui::RuntimePlayerHealthSnapshot,
+    health_changed: bool,
+    maximum_changed: bool,
+) -> Result<(), ApplicationError> {
+    snapshot.publish(world);
+    let payload = UiEventPayload::new(vec![UiEventArgument::String("player".into())]);
+    // Native field callbacks 60C240/60BF10: offsets 48/68 map to events 18/26.
+    // Prediction-only changes are polled by UnitFrameHealthBar_OnUpdate.
+    if health_changed {
+        manager.dispatch_event("UNIT_HEALTH", &payload)?;
+    }
+    if maximum_changed {
+        manager.dispatch_event("UNIT_MAXHEALTH", &payload)?;
+    }
+    Ok(())
 }
 
 fn dispatch_notification(

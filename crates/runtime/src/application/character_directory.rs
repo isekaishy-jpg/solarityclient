@@ -361,6 +361,11 @@ impl RuntimeCharacterMetadata {
             max_powers[power_index],
             power_type,
         ));
+        if let Some(health) =
+            super::gameplay_coordinator::player_ui::RuntimePlayerHealthSnapshot::from_world(active)
+        {
+            health.publish(target);
+        }
         target.set_player_stats(UiPlayerStatsState::new(
             stats.values(),
             stats.positive_modifiers(),

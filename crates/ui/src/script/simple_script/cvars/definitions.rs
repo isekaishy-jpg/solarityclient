@@ -299,6 +299,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("chatStyle", "im"),
     ranged("colorblindMode", "0", 0.0, 1.0),
     ranged("combatDamage", "1", 0.0, 1.0),
+    // 51F0F7 registers these query selectors with the stock true scalar.
+    ranged("predictedHealth", "1", 0.0, 1.0),
     ranged("combatHealing", "1", 0.0, 1.0),
     ranged("combatLogPeriodicSpells", "1", 0.0, 1.0),
     ranged("combatLogOn", "1", 0.0, 1.0),

@@ -328,7 +328,13 @@ fn register_frame_globals(
             Ok(values)
         })?,
     )?;
-    register_unit_relation_globals(lua, globals, world.clone(), environment.assets())?;
+    register_unit_relation_globals(
+        lua,
+        globals,
+        world.clone(),
+        environment.assets(),
+        environment.cvars(),
+    )?;
     globals.raw_set(
         "GetNumFriends",
         lua.create_function(move |_, ()| {
@@ -523,6 +529,7 @@ fn register_unit_relation_globals(
     globals: &Table,
     world: crate::UiWorldState,
     assets: Option<solarity_asset::AssetStoreHandle>,
+    health_cvars: super::cvars::UiCVarRegistry,
 ) -> mlua::Result<()> {
     let classes = world.clone();
     globals.raw_set(
@@ -566,14 +573,15 @@ fn register_unit_relation_globals(
     globals.raw_set(
         "UnitHealth",
         lua.create_function(move |_, unit: String| {
-            Ok(unit_vitals(&health, &unit).map_or(0, crate::UiPlayerVitalsState::health))
+            let predicted = health_cvars.number("predictedHealth").unwrap_or(1.0) != 0.0;
+            Ok(unit_vitals(&health, &unit).map_or(0, |vitals| vitals.displayed_health(predicted)))
         })?,
     )?;
     let max_health = world.clone();
     globals.raw_set(
         "UnitHealthMax",
         lua.create_function(move |_, unit: String| {
-            Ok(unit_vitals(&max_health, &unit).map_or(0, crate::UiPlayerVitalsState::max_health))
+            Ok(unit_vitals(&max_health, &unit).map_or(0, |vitals| vitals.max_health() as i32))
         })?,
     )?;
     for name in ["UnitMana", "UnitPower"] {

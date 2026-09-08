@@ -184,6 +184,7 @@ impl UiUnitPowerType {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiPlayerVitalsState {
     health: u32,
+    predicted_health: i32,
     max_health: u32,
     power: u32,
     max_power: u32,
@@ -247,12 +248,13 @@ impl UiPlayerVitalsState {
     ) -> Self {
         Self {
             health,
+            predicted_health: health as i32,
             max_health,
             power,
             max_power,
             power_type,
             connected: true,
-            dead: false,
+            dead: (health as i32) <= 0,
             ghost: false,
             threat_situation: None,
         }
@@ -262,6 +264,33 @@ impl UiPlayerVitalsState {
     #[must_use]
     pub const fn health(self) -> u32 {
         self.health
+    }
+
+    /// Replaces health presentation while retaining the other unit resources.
+    #[must_use]
+    pub const fn with_health(
+        mut self,
+        health: u32,
+        maximum: u32,
+        predicted: i32,
+        ghost: bool,
+    ) -> Self {
+        self.health = health;
+        self.max_health = maximum;
+        self.predicted_health = predicted;
+        self.dead = (health as i32) <= 0;
+        self.ghost = ghost;
+        self
+    }
+
+    /// Selects the native signed health query through the predictedHealth CVar.
+    #[must_use]
+    pub const fn displayed_health(self, predicted: bool) -> i32 {
+        if predicted {
+            self.predicted_health
+        } else {
+            self.health as i32
+        }
     }
     /// Returns maximum health.
     #[must_use]

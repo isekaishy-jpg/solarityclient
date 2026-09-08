@@ -42,6 +42,8 @@ mod vehicle;
 mod water_ripple;
 mod world;
 
+pub use combat::predict_unit_health;
+
 pub use effect::{UnitBreathEnvironment, UnitBreathState, UnitWaterEffect, UnitWaterSprayInput};
 pub use effect::{UnitEffectScale, unit_player_inebriation, unit_world_effect_factor};
 

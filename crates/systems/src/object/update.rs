@@ -164,6 +164,7 @@ where
         .map(|component| **component)
         .ok();
     let mut vitals_changed = false;
+    let mut health_changed = false;
     let unit_vitals_state = unit_vitals.unwrap_or_default();
     let mut health = unit_vitals_state.health();
     let mut max_health = unit_vitals_state.max_health();
@@ -284,6 +285,7 @@ where
                 identity_changed = true;
             }
             UNIT_FIELD_HEALTH if is_unit(kind) => {
+                health_changed |= health != value;
                 health = value;
                 vitals_changed = true;
             }
@@ -430,6 +432,14 @@ where
             world.storage_mut().add_component(
                 entity,
                 (UnitVitals::new(health, max_health, powers, max_powers),),
+            );
+        }
+        // 73F330 reconciles FB0 when replicated health changes; unrelated
+        // resource updates must retain prediction from admitted combat logs.
+        if unit_vitals.is_none() || health_changed {
+            world.storage_mut().add_component(
+                entity,
+                (solarity_ecs::UnitHealthPrediction::new(health as i32),),
             );
         }
         if unit_presentation.is_none() || presentation_changed {

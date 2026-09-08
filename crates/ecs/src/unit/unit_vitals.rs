@@ -2,6 +2,26 @@
 
 use shipyard::Component;
 
+/// The client's retained health prediction, separate from replicated health.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
+pub struct UnitHealthPrediction {
+    health: i32,
+}
+
+impl UnitHealthPrediction {
+    /// Creates the native signed prediction image.
+    #[must_use]
+    pub const fn new(health: i32) -> Self {
+        Self { health }
+    }
+
+    /// Returns the value selected by the predictedHealth CVar.
+    #[must_use]
+    pub const fn health(self) -> i32 {
+        self.health
+    }
+}
+
 /// Authoritative current and maximum resource values for one unit.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Component)]
 pub struct UnitVitals {

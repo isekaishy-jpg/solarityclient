@@ -6,3 +6,5 @@
 
 mod unit_combat_c;
 mod unit_combat_log_c;
+
+pub use unit_combat_c::predict_unit_health;

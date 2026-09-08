@@ -4,6 +4,48 @@ use std::collections::VecDeque;
 
 use solarity_network::WorldMirrorTimerUpdate;
 
+/// Native replicated health, retained prediction and player ghost flag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::application) struct RuntimePlayerHealthSnapshot {
+    pub health: u32,
+    pub maximum: u32,
+    pub predicted: i32,
+    pub ghost: bool,
+}
+
+impl RuntimePlayerHealthSnapshot {
+    pub(in crate::application) fn from_world(world: &solarity_ecs::ActiveWorld) -> Option<Self> {
+        let vitals = world.local_player_vitals()?;
+        let predicted = world
+            .unit_health_prediction(world.local_player_guid().ok()?)
+            .map_or(
+                vitals.health() as i32,
+                solarity_ecs::UnitHealthPrediction::health,
+            );
+        let ghost = world
+            .storage()
+            .get::<&solarity_ecs::ObjectFields>(world.local_player())
+            .is_ok_and(|fields| fields.get(150) & 0x10 != 0);
+        Some(Self {
+            health: vitals.health(),
+            maximum: vitals.max_health(),
+            predicted,
+            ghost,
+        })
+    }
+
+    pub(in crate::application) fn publish(self, world: &solarity_ui::UiWorldState) {
+        if let Some(vitals) = world.player_vitals() {
+            world.set_player_vitals(vitals.with_health(
+                self.health,
+                self.maximum,
+                self.predicted,
+                self.ghost,
+            ));
+        }
+    }
+}
+
 /// One notification anchored to the same clock used by `GetMirrorTimerProgress`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::application) struct TimedMirrorTimerUpdate {
@@ -17,6 +59,11 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
     MirrorTimer(TimedMirrorTimerUpdate),
     TutorialFlags(Vec<u8>),
     Combat(bool),
+    Health {
+        snapshot: RuntimePlayerHealthSnapshot,
+        health_changed: bool,
+        maximum_changed: bool,
+    },
 }
 
 /// Retained independently of UI residency and cleared by native world exit.
@@ -25,10 +72,27 @@ pub(in crate::application) struct RuntimePlayerUiState {
     slots: [Option<TimedMirrorTimerUpdate>; 3],
     tutorial_flags: Vec<u8>,
     in_combat: bool,
+    health: Option<RuntimePlayerHealthSnapshot>,
     pending: VecDeque<RuntimePlayerUiNotification>,
 }
 
 impl RuntimePlayerUiState {
+    pub(in crate::application) fn observe_health(&mut self, world: &solarity_ecs::ActiveWorld) {
+        let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
+            return;
+        };
+        if self.health != Some(snapshot) {
+            self.pending.push_back(RuntimePlayerUiNotification::Health {
+                snapshot,
+                health_changed: self.health.is_none_or(|old| old.health != snapshot.health),
+                maximum_changed: self
+                    .health
+                    .is_none_or(|old| old.maximum != snapshot.maximum),
+            });
+            self.health = Some(snapshot);
+        }
+    }
+
     pub(in crate::application) fn observe_combat(&mut self, world: &solarity_ecs::ActiveWorld) {
         let in_combat = world
             .local_player_guid()
@@ -53,6 +117,7 @@ impl RuntimePlayerUiState {
     }
     pub(in crate::application) fn clear_for_world_leave(&mut self) {
         self.in_combat = false;
+        self.health = None;
         self.slots = [None; 3];
         self.pending.clear();
     }

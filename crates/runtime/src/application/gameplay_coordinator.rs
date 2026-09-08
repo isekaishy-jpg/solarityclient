@@ -249,6 +249,7 @@ impl RuntimeGameplayCoordinator {
                 notify,
             )?;
             player_ui.observe_combat(gameplay.world());
+            player_ui.observe_health(gameplay.world());
         }
         let (network, world) = gameplay.into_parts();
         let map_id = world.map_id().value();
@@ -361,6 +362,7 @@ impl RuntimeGameplayCoordinator {
                                 crate::platform::client_milliseconds(),
                             )?;
                             self.player_ui.observe_combat(world);
+                            self.player_ui.observe_health(world);
                             Ok(changed)
                         });
                     match result {
