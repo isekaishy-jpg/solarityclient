@@ -3,6 +3,11 @@
 use super::sky::cyclic;
 use glam::Vec3;
 
+mod mesh;
+pub use mesh::WorldCelestialMesh;
+mod frame;
+pub use frame::{WorldCelestialDraw, WorldCelestialFrame, WorldCelestialLighting};
+
 const SUN_POLAR: [[f32; 2]; 5] = [
     [0.229_166_67, 1.745_329_3],
     [0.496_527_8, 0.087_266_47],

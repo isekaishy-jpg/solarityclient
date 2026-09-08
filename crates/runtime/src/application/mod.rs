@@ -28,6 +28,7 @@ mod player_coordinator;
 mod player_movement;
 mod realm_directory;
 mod run;
+mod sky_resources;
 mod sound_coordinator;
 mod terrain_coordinator;
 mod terrain_frame;

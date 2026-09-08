@@ -121,5 +121,43 @@ tests cover weather updates, underwater lighting, direct overrides and reset.
 Weather particle rendering, particle drainage during resource-type switches,
 and weather ambient audio are not implemented by this lighting owner. Its
 current type follows accepted weather updates; particle residency must replace
-that input when the precipitation owner is introduced. Celestial textures,
-stars, authored skybox models and WMO sky visibility remain in this slice.
+that input when the precipitation owner is introduced. Stars, authored skybox
+models and WMO sky visibility remain in this slice.
+
+The three celestial texture requests now use `Textures/sunCenter.blp`,
+`Textures/moon.blp` and `Textures/moon02.blp`, as in `9AD0B0`. Their parsed
+sources and GPU handles survive world replacement. All three installed assets
+decode successfully through the archive stack (128x128, 128x128 and 64x64).
+Sampler row one selects linear min/mag, no mip sampling, and clamped edges.
+
+`7EDBE0` constructs six local Y/Z vertices and a four-index strip. `7EDEE0`
+clips that strip at the camera-relative horizon, carrying the intersection into
+the V coordinate. It inserts two vertices when the strip crosses the 0.4-unit
+fade band, then substitutes per-vertex opacity below that band. This opacity
+replaces weather alpha. `9ABB60` builds the positive-forward billboard basis,
+including its original axis-aligned fallback. `9AC660` adds the body-minus-eye
+translation and multiplies by the translation-free view before projection.
+
+`WorldCelestialLighting` retains the native constructor and update behavior:
+sun and first moon receive LightIntBand channel nine, while the second moon
+retains its zero constructor RGB. Nonzero weather replaces all three alphas;
+clear weather refreshes only the first two colors. The process owner keeps
+that state across map replacement. This is deliberate native behavior rather
+than an inferred bright second-moon tint.
+
+Each retired frame slot owns three six-vertex PCT banks and texture descriptors.
+The draws precede the additive gradient and alpha-blended clouds, using native
+source-alpha/inverse-source-alpha blending, reserved sky depth and no depth
+writes. Ordinary world depth continues to occlude all sky layers. Both gameplay
+and benchmark presentation submit the same celestial frames.
+
+`world_celestial_mesh_oracle.py` executes both geometry functions and the basis
+without hooks: 1,912 mesh cases cover horizon/fade thresholds, world heights,
+sizes and alpha; 267 bases cover axes, poles and the fallback threshold. Packed
+colors and topology compare exactly. Geometric x87 rounding ties allow one
+final float ULP; every captured basis matches bit-for-bit. The color oracle
+executes `9D0760` and the unmodified `7F36EF..7F3809` update block for the
+constructor and 48 ordered weather/color changes. These join the existing
+1,250 ephemeris cases. The hidden Vulkan test checks 16 textured frames against
+a scalar perspective-correct sampler, changing descriptors across slot reuse,
+the horizon split, gradient composition and opaque-world occlusion.

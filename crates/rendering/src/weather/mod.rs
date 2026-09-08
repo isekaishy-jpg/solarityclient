@@ -2,7 +2,10 @@
 
 mod celestial;
 mod cloud;
-pub use celestial::{WorldCelestialBody, WorldCelestials};
+pub use celestial::{
+    WorldCelestialBody, WorldCelestialDraw, WorldCelestialFrame, WorldCelestialLighting,
+    WorldCelestialMesh, WorldCelestials,
+};
 mod sky;
 mod types;
 

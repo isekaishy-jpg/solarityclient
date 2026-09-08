@@ -16,6 +16,7 @@ mod gfx_singleton_manager;
 mod m2_model_orientation;
 mod status;
 mod vulkan_capture;
+mod vulkan_celestial;
 mod vulkan_character_atlas;
 mod vulkan_cloud;
 mod vulkan_frame;

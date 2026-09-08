@@ -8,6 +8,7 @@ use vk_mem::Alloc;
 
 use crate::device::VulkanError;
 use crate::device::capacity::geometric_capacity;
+use crate::device::vulkan_celestial::CelestialFrameResources;
 use crate::device::vulkan_cloud::CloudFrameResources;
 use crate::device::vulkan_liquid::LiquidFrameResources;
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
@@ -164,6 +165,7 @@ pub(super) struct WorldFrameSlot {
     pub(super) underwater: UnderwaterFrameResources,
     pub(super) sky: SkyFrameResources,
     pub(super) clouds: CloudFrameResources,
+    pub(super) celestials: [CelestialFrameResources; 3],
     buffer: vk::Buffer,
     buffer_allocation: Option<vk_mem::Allocation>,
     layout: FrameBufferLayout,
@@ -618,6 +620,9 @@ impl WorldFrameSlot {
         self.underwater.destroy(device, allocator);
         self.sky.destroy(allocator);
         self.clouds.destroy(device, allocator);
+        for body in &mut self.celestials {
+            body.destroy(device, allocator);
+        }
         // SAFETY: The caller idles the device before destruction/rebuild.
         unsafe {
             if self.fence != vk::Fence::null() {
@@ -660,6 +665,7 @@ impl WorldFrameSlot {
             underwater: UnderwaterFrameResources::empty(),
             sky: SkyFrameResources::empty(),
             clouds: CloudFrameResources::empty(),
+            celestials: [const { CelestialFrameResources::empty() }; 3],
             buffer: vk::Buffer::null(),
             buffer_allocation: None,
             layout,

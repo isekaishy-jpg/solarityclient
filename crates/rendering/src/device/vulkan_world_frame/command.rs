@@ -6,6 +6,7 @@ use ash::{Device, vk};
 
 use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
+use crate::device::vulkan_celestial::CelestialFrameResources;
 use crate::device::vulkan_cloud::CloudFrameResources;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
@@ -72,6 +73,9 @@ pub(super) struct RecordContext<'a> {
     pub(super) underwater_pipeline: &'a PctPipeline,
     pub(super) underwater_resources: &'a UnderwaterFrameResources,
     pub(super) underwater_frame: Option<UnderwaterParticleFrame<'a>>,
+    pub(super) celestial_pipeline: &'a PctPipeline,
+    pub(super) celestial_resources: &'a [CelestialFrameResources; 3],
+    pub(super) celestial_frame: Option<crate::WorldCelestialFrame<'a>>,
     pub(super) cloud_pipeline: &'a PctPipeline,
     pub(super) cloud_resources: &'a CloudFrameResources,
     pub(super) cloud_frame: Option<crate::WorldCloudFrame<'a>>,
@@ -198,6 +202,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
     let mut bindings = WorldCommandBindings::default();
+    record_celestials(&context, &mut bindings);
     record_sky(&context, &mut bindings);
     record_clouds(&context, &mut bindings);
     for draw in context.terrain_draws.iter().copied() {
@@ -344,6 +349,57 @@ fn record_sky(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) 
         context
             .device
             .cmd_draw_indexed(context.command_buffer, 300, 1, 0, 0, 0);
+    }
+}
+
+fn record_celestials(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) {
+    let Some(frame) = context.celestial_frame else {
+        return;
+    };
+    let (pipeline, layout) = context.celestial_pipeline.raw();
+    for (draw, resources) in frame.draws().into_iter().zip(context.celestial_resources) {
+        if draw.mesh().indices().is_empty() {
+            continue;
+        }
+        bindings.bind_pipeline(context, pipeline);
+        bindings.bind_vertex(context, resources.vertex_buffer());
+        bindings.bind_index(context, resources.index_buffer(), vk::IndexType::UINT16);
+        let mut pushes = [0_u8; 64];
+        for (word, value) in pushes
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(draw.view_projection().to_cols_array())
+        {
+            *word = value.to_le_bytes();
+        }
+        // SAFETY: Slot retirement precedes the six-vertex write and descriptor update;
+        // the matching PCT pipeline consumes the complete 64-byte matrix range.
+        unsafe {
+            context.device.cmd_bind_descriptor_sets(
+                context.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                0,
+                &[resources.descriptor()],
+                &[],
+            );
+            context.device.cmd_push_constants(
+                context.command_buffer,
+                layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                &pushes,
+            );
+            context.device.cmd_draw_indexed(
+                context.command_buffer,
+                draw.mesh().indices().len() as u32,
+                1,
+                0,
+                0,
+                0,
+            );
+        }
     }
 }
 

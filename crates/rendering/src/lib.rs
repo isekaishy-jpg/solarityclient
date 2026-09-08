@@ -19,7 +19,8 @@ mod weather;
 mod world_text;
 
 pub use weather::{
-    WorldCelestialBody, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,
+    WorldCelestialBody, WorldCelestialDraw, WorldCelestialFrame, WorldCelestialLighting,
+    WorldCelestialMesh, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,
     WorldClouds, WorldSkyDome, WorldSkyFrame,
 };
 

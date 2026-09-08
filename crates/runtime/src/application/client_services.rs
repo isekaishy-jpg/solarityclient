@@ -154,6 +154,7 @@ pub(crate) struct ClientServices {
     water_ripples: super::water_ripples::RuntimeWaterRipples,
     unit_effects: super::unit_effects::RuntimeUnitEffects,
     underwater_particles: super::underwater_particles::RuntimeUnderwaterParticles,
+    sky_resources: super::sky_resources::RuntimeSkyResources,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
     developer_console: RuntimeDeveloperConsole,
@@ -244,6 +245,7 @@ impl ClientServices {
         let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
         let underwater_particles =
             super::underwater_particles::RuntimeUnderwaterParticles::load(&mut assets)?;
+        let sky_resources = super::sky_resources::RuntimeSkyResources::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -532,6 +534,7 @@ impl ClientServices {
                 water_ripples,
                 unit_effects,
                 underwater_particles,
+                sky_resources,
                 fps,
                 developer_console,
                 runtime_overlay_draws: Vec::new(),
@@ -1206,6 +1209,9 @@ impl ClientServices {
             global_animation_time_ms * 0.001,
         )?;
         let ripples = self.water_ripples.frame(camera, footstep_bias)?;
+        let celestial_resources = self
+            .sky_resources
+            .prepare(&mut self.renderer, environment)?;
         let underwater_particles =
             self.underwater_particles
                 .frame(camera, &self.liquids, environment.light())?;
@@ -1264,6 +1270,7 @@ impl ClientServices {
             specular_enabled,
             Some(ripples),
             underwater_particles,
+            celestial_resources,
             sources,
             Some(&mut unit_effect_callback),
             &mut self.crt_rand,

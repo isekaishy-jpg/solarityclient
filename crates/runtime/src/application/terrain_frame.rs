@@ -649,6 +649,7 @@ impl TerrainFrame {
         specular_enabled: bool,
         ripples: Option<solarity_rendering::WaterRippleFrame<'_>>,
         underwater_particles: Option<solarity_rendering::UnderwaterParticleFrame<'_>>,
+        celestial_resources: super::sky_resources::RuntimeCelestialResources,
         unit_effect_sources: Option<Arc<m2::unit_effects::M2UnitEffectSources>>,
         unit_effect_callback: Option<&mut m2::unit_effects::UnitEffectEventCallback<'_>>,
         random: &mut CrtRand,
@@ -718,7 +719,12 @@ impl TerrainFrame {
         )?;
         profile.mark("liquid packets");
         let light = environment.light();
-        self.sky.update(environment, camera, liquid_time_ms);
+        self.sky.update(
+            environment,
+            camera,
+            liquid_time_ms,
+            celestial_resources.colors,
+        );
         let terrain_scene = TerrainSceneUniform::new(
             camera.view_projection(),
             light.ambient_color(),
@@ -783,6 +789,10 @@ impl TerrainFrame {
         profile.mark("M2 packets");
         let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));
         let mut scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
+            .with_celestials(
+                self.sky
+                    .celestial_frame(camera, celestial_resources.textures),
+            )
             .with_sky(self.sky.gradient_frame(camera))
             .with_clouds(self.sky.cloud_frame(camera))
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);

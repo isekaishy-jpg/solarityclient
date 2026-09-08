@@ -68,6 +68,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) underwater_pipeline: &'a PctPipeline,
     pub(in crate::device) sky_pipeline: &'a PctPipeline,
     pub(in crate::device) cloud_pipeline: &'a PctPipeline,
+    pub(in crate::device) celestial_pipeline: &'a PctPipeline,
     pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
     pub(in crate::device) liquid_textures: &'a BlpTextureRegistry,
     pub(in crate::device) maximum_sampler_anisotropy: f32,
@@ -213,6 +214,9 @@ impl WorldFrameRenderer {
             && scene.liquids().is_none_or(|frame| frame.draws().is_empty())
             && scene.sky().is_none()
             && scene.clouds().is_none()
+            && scene
+                .celestials()
+                .is_none_or(|frame| frame.draw_count() == 0)
         {
             return Err(VulkanError::EmptyWorldFrame);
         }
@@ -310,6 +314,23 @@ impl WorldFrameRenderer {
         let (acquired, wait_write_elapsed, acquire_elapsed) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
+            if let Some(frame) = scene.celestials() {
+                for (resources, draw) in slot.celestials.iter_mut().zip(frame.draws()) {
+                    if !draw.mesh().indices().is_empty() {
+                        resources.ensure(
+                            context.device,
+                            context.allocator,
+                            context.celestial_pipeline.descriptor_layout(),
+                        )?;
+                        resources.write(
+                            context.device,
+                            context.allocator,
+                            context.liquid_textures,
+                            draw,
+                        )?;
+                    }
+                }
+            }
             if let Some(frame) = scene.clouds() {
                 slot.clouds.ensure(
                     context.device,
@@ -428,6 +449,9 @@ impl WorldFrameRenderer {
             underwater_pipeline: context.underwater_pipeline,
             underwater_resources: &slot.underwater,
             underwater_frame: scene.underwater(),
+            celestial_pipeline: context.celestial_pipeline,
+            celestial_resources: &slot.celestials,
+            celestial_frame: scene.celestials(),
             cloud_pipeline: context.cloud_pipeline,
             cloud_resources: &slot.clouds,
             cloud_frame: scene.clouds(),
@@ -507,6 +531,7 @@ impl WorldFrameRenderer {
             ribbon_vertices.len(),
             bone_transforms.len(),
         )
+        .with_celestial_draw_count(scene.celestials().map_or(0, |frame| frame.draw_count()))
         .with_sky_draw_count(usize::from(scene.sky().is_some()))
         .with_ripple_draw_count(scene.ripples().map_or(0, |frame| frame.draw_count()))
         .with_underwater_draw_count(scene.underwater().map_or(0, |frame| frame.draw_count())))

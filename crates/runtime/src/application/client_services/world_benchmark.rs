@@ -329,6 +329,10 @@ impl ClientServices {
             .world_ui
             .as_ref()
             .ok_or(WorldBenchmarkError::State("missing FrameXML"))?;
+        let celestial_resources = self
+            .sky_resources
+            .prepare(&mut self.renderer, environment)
+            .map_err(ApplicationError::from)?;
         frame
             .present(
                 &mut self.renderer,
@@ -340,6 +344,7 @@ impl ClientServices {
                 self.glue.cvar_boolean("specular"),
                 None,
                 None,
+                celestial_resources,
                 None,
                 None,
                 &mut self.crt_rand,

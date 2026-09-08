@@ -16,6 +16,9 @@ use solarity_rendering::{
 
 use crate::support::{Fixture, FixtureFile};
 
+#[path = "celestial_frame.rs"]
+mod celestial;
+
 /// Surface alpha zero isolates native depth alpha while opaque magma supplies
 /// the destination. Repeated changing frames exercise each slot and growth.
 #[test]

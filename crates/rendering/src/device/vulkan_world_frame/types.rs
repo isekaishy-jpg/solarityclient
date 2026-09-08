@@ -18,6 +18,7 @@ pub struct WorldFrameScene<'a> {
     underwater: Option<UnderwaterParticleFrame<'a>>,
     sky: Option<WorldSkyFrame<'a>>,
     clouds: Option<WorldCloudFrame<'a>>,
+    celestials: Option<crate::WorldCelestialFrame<'a>>,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -39,7 +40,18 @@ impl<'a> WorldFrameScene<'a> {
             underwater: None,
             sky: None,
             clouds: None,
+            celestials: None,
         }
+    }
+
+    /// Adds the native sun/moon strips before the additive sky gradient.
+    #[must_use]
+    pub const fn with_celestials(mut self, frame: crate::WorldCelestialFrame<'a>) -> Self {
+        self.celestials = Some(frame);
+        self
+    }
+    pub(in crate::device) const fn celestials(self) -> Option<crate::WorldCelestialFrame<'a>> {
+        self.celestials
     }
 
     /// Adds the native procedural cloud dome after the sky gradient.
@@ -148,6 +160,7 @@ pub struct WorldFrameReport {
     ripple_draw_count: usize,
     underwater_draw_count: usize,
     sky_draw_count: usize,
+    celestial_draw_count: usize,
     terrain_draw_count: usize,
     liquid_draw_count: usize,
     world_model_draw_count: usize,
@@ -179,6 +192,7 @@ impl WorldFrameReport {
             ripple_draw_count: 0,
             underwater_draw_count: 0,
             sky_draw_count: 0,
+            celestial_draw_count: 0,
             liquid_draw_count,
             world_model_draw_count,
             m2_draw_count,
@@ -189,6 +203,16 @@ impl WorldFrameReport {
             ribbon_vertex_count,
             bone_transform_count,
         }
+    }
+
+    pub(super) const fn with_celestial_draw_count(mut self, count: usize) -> Self {
+        self.celestial_draw_count = count;
+        self
+    }
+    /// Returns the number of native sun/moon strips submitted before the gradient.
+    #[must_use]
+    pub const fn celestial_draw_count(self) -> usize {
+        self.celestial_draw_count
     }
 
     pub(super) const fn with_sky_draw_count(mut self, count: usize) -> Self {
