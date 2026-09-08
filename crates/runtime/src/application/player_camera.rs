@@ -3,7 +3,9 @@
 use solarity_ecs::PlayerViewState;
 
 mod follow;
+mod water;
 pub(super) use follow::FollowSettings as PlayerCameraFollowSettings;
+pub(super) use water::WaterSettings as PlayerCameraWaterSettings;
 
 #[derive(Clone, Copy)]
 pub(super) struct PlayerCameraZoomSettings {
@@ -166,6 +168,7 @@ pub(super) struct PlayerCameraMouseSettings {
 /// Free look retains a world-space yaw while the subject can turn independently.
 #[derive(Clone, Copy)]
 pub(super) struct PlayerCameraInput {
+    liquid: solarity_systems::PlayerCameraLiquidState,
     view_slot: u8,
     zoom: CameraZoom,
     flags: u32,
@@ -176,6 +179,7 @@ pub(super) struct PlayerCameraInput {
 impl PlayerCameraInput {
     pub(super) fn new(view: PlayerViewState, facing: f32) -> Self {
         Self {
+            liquid: solarity_systems::PlayerCameraLiquidState::Absent,
             view_slot: view.view(),
             zoom: CameraZoom::new(view.distance()),
             flags: 0,

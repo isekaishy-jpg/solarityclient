@@ -20,6 +20,20 @@ pub struct PlayerCameraPose {
 }
 
 impl PlayerCameraPose {
+    /// Moves the resolved eye while retaining view orientation and subject anchors.
+    ///
+    /// # Errors
+    /// Rejects a non-finite eye or resulting target.
+    pub fn with_eye(mut self, eye: Vec3) -> Result<Self, PlayerCameraPoseError> {
+        let target = eye + (self.target - self.eye);
+        if !eye.is_finite() || !target.is_finite() {
+            return Err(PlayerCameraPoseError::NonFiniteTransform);
+        }
+        self.eye = eye;
+        self.target = target;
+        Ok(self)
+    }
+
     pub(super) const fn new(
         eye: Vec3,
         target: Vec3,
@@ -245,6 +259,9 @@ impl MountCameraGeometry {
 /// Invalid time or marker geometry at the mounted-camera boundary.
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum MountCameraHeightError {
+    /// The primary camera collision height is not finite.
+    #[error("camera collision height is not finite")]
+    NonFiniteCollisionHeight,
     /// The caller supplied a non-finite process time.
     #[error("mount camera time is not finite")]
     NonFiniteTime,

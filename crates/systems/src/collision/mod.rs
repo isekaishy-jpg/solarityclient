@@ -13,6 +13,7 @@ mod world_model_liquid;
 mod world_model_portal;
 mod world_model_registration;
 mod world_model_registration_scene;
+mod world_model_water_ray;
 
 pub use collide::{
     MovementCollisionPlane, MovementCollisionTriangle, MovementCollisionVolume,

@@ -173,7 +173,7 @@ def floor_tree(topology):
     return [(topology,1,2,1. if topology == 2 else 0.), (4,-1,-1,0.), (4,-1,-1,0.)], {1:LEAVES[0],2:LEAVES[1]}
 
 
-def floor_probe(start,end,profile=0,maximum=1.05,cached=False,geometry=0,topology=0,secondary=1.05,registration=None):
+def floor_probe(start,end,profile=0,maximum=1.05,cached=False,geometry=0,topology=0,secondary=1.05,registration=None,scene_camera=False,face_flags=None):
     uc=emulator()
     model,nodes,refs,mopy,movi,vertices,segment,primary,fallback,pface,fface = [HEAP+v for v in (0,0x1000,0x1100,0x1200,0x1300,0x1400,0x1500,0x1600,0x1610,0x1620,0x1630)]
     write_words(uc,model+0x68,nodes,refs)
@@ -181,6 +181,7 @@ def floor_probe(start,end,profile=0,maximum=1.05,cached=False,geometry=0,topolog
     write_floats(uc,model+0xb0,[-16.,-16.,-16.,16.,16.,16.])
     node_defs,leaves = floor_tree(topology)
     points = floor_geometry(geometry)
+    source_flags = FLAGS[profile] if face_flags is None else [face_flags]*len(FACES)
     offset=0
     for i,(flags,negative,positive,plane) in enumerate(node_defs):
         faces = leaves.get(i, [])
@@ -188,7 +189,7 @@ def floor_probe(start,end,profile=0,maximum=1.05,cached=False,geometry=0,topolog
         for j,face in enumerate(faces): uc.mem_write(refs+(offset+j)*2,struct.pack('<H',face))
         offset+=len(faces)
     for i,face in enumerate(FACES): uc.mem_write(movi+i*6,struct.pack('<3H',*face))
-    for i,flag in enumerate(FLAGS[profile]): uc.mem_write(mopy+i*2,bytes([flag,255]))
+    for i,flag in enumerate(source_flags): uc.mem_write(mopy+i*2,bytes([flag,255]))
     for i,vertex in enumerate(points): write_floats(uc,vertices+i*12,vertex)
     write_floats(uc,segment,start+end)
     write_floats(uc,primary,[maximum]);write_floats(uc,fallback,[secondary])
@@ -204,7 +205,7 @@ def floor_probe(start,end,profile=0,maximum=1.05,cached=False,geometry=0,topolog
             uc.mem_write(cache+0x18a4,struct.pack('<H',len(faces)))
             for j,face in enumerate(faces):
                 uc.mem_write(cache+0x18a6+j*6,struct.pack('<3H',*FACES[face]))
-                uc.mem_write(cache+0x1fae+j*2,struct.pack('<H',FLAGS[profile][face]))
+                uc.mem_write(cache+0x1fae+j*2,struct.pack('<H',source_flags[face]))
                 uc.mem_write(cache+0x2206+j*2,struct.pack('<H',face))
         def cache_provider(uc,address,size,user):
             sp=uc.reg_read(UC_X86_REG_ESP)
@@ -215,6 +216,11 @@ def floor_probe(start,end,profile=0,maximum=1.05,cached=False,geometry=0,topolog
         uc.hook_add(UC_HOOK_CODE,cache_provider,begin=0x79b1f0,end=0x79b1f0)
     if registration is not None:
         return registration_probe(uc,model,segment,maximum,secondary,**registration)
+    if scene_camera:
+        write_words(uc,model+0x18c,HEAP+0x28000)
+        uc.reg_write(UC_X86_REG_ECX,model)
+        invoke(uc,0x7cb2f0,[segment,primary,0x100171,0x82,pface])
+        return [uc.reg_read(UC_X86_REG_EAX)&0xff,read_words(uc,primary,1)[0],read_words(uc,pface,1)[0]]
     uc.reg_write(UC_X86_REG_ECX,model)
     invoke(uc,0x7cb260,[segment,primary,pface,fallback,fface])
     return [read_words(uc,p,1)[0] for p in (primary,pface,fallback,fface)]

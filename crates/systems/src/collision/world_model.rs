@@ -40,6 +40,7 @@ pub struct PlacedWorldModelCollision {
     pub(super) transform: Mat4,
     pub(super) inverse_transform: Mat4,
     pub(super) root_bounds: [Vec3; 2],
+    pub(super) liquid_ray_meshes: Vec<Option<super::world_model_water_ray::LiquidRayMesh>>,
     group_bounds: Vec<[Vec3; 2]>,
     camera_bounds: Option<[Vec3; 2]>,
     movement_group_bounds: Vec<[Vec3; 2]>,
@@ -51,6 +52,46 @@ pub struct PlacedWorldModelCollision {
 }
 
 impl PlacedWorldModelCollision {
+    /// Runs the solid 77F310 WMO branch over native MOGI group admission.
+    /// Camera mask 0x100171 excludes MOPY 0x82 and includes the distance limit.
+    /// The retained native BSP scratch is shared with floor
+    /// registration, with separate face admission and result channels.
+    ///
+    /// # Errors
+    /// Rejects invalid endpoints, fractions, or selected BSP geometry.
+    pub fn trace_solid_camera(
+        &mut self,
+        start: Vec3,
+        end: Vec3,
+        maximum: f32,
+    ) -> Result<Option<f32>, WorldModelCollisionError> {
+        if !start.is_finite() || !end.is_finite() {
+            return Err(WorldModelCollisionError::NonFiniteSegment);
+        }
+        if !maximum.is_finite() || !(0.0..=1.0).contains(&maximum) {
+            return Err(WorldModelCollisionError::InvalidMaximumFraction);
+        }
+        let start = super::movement_collection::transform_point(self.inverse_transform, start);
+        let end = super::movement_collection::transform_point(self.inverse_transform, end);
+        let mut nearest = maximum;
+        let mut hit = false;
+        for index in 0..self.model.groups().len() {
+            let bounds = self.model.group_info()[index]
+                .bounds()
+                .map(Vec3::from_array);
+            if super::world_model_water_ray::clipped_segment(start, end, bounds).is_none() {
+                continue;
+            }
+            if let Some(contact) =
+                self.probe_scene_camera_group_floor(index, start, end, nearest)?
+            {
+                nearest = contact.fraction();
+                hit = true;
+            }
+        }
+        Ok(hit.then_some(nearest))
+    }
+
     /// Creates a placement in the server/ECS Z-up world basis.
     ///
     /// Static MODF callers pass unit scale. Replicated game-object WMOs may
@@ -128,7 +169,17 @@ impl PlacedWorldModelCollision {
             .collect::<Result<Vec<_>, _>>()?;
         let movement_cached_leaves = model.groups().iter().map(cached_leaf_eligibility).collect();
         let camera_bounds = union_bounds(&group_bounds);
+        let liquid_ray_meshes = model
+            .groups()
+            .iter()
+            .map(|group| {
+                group
+                    .liquid()
+                    .map(super::world_model_water_ray::LiquidRayMesh::new)
+            })
+            .collect();
         Ok(Self {
+            liquid_ray_meshes,
             model,
             transform,
             inverse_transform,

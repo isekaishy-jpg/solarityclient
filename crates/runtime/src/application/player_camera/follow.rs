@@ -135,7 +135,14 @@ impl FollowAngle {
         self.duration = 0.;
     }
 
-    fn request(&mut self, goal: f32, delay: f32, factor: f32, speed: f32, time: u32) -> bool {
+    pub(super) fn request(
+        &mut self,
+        goal: f32,
+        delay: f32,
+        factor: f32,
+        speed: f32,
+        time: u32,
+    ) -> bool {
         let current = nearest(goal, self.current);
         self.current = current as f32;
         let close = |a: f32, b: f32| (f64::from(a) - f64::from(b)).abs() < f64::from(0.001_f32);

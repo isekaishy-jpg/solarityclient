@@ -53,6 +53,37 @@ pub(in crate::collision) struct MovementBspQuery {
 }
 
 impl PlacedWorldModelCollision {
+    /// Collects 7CB180 camera-volume faces with the native `0x82` exclusion.
+    ///
+    /// Camera volume collection has no BSP leaf cache and does not substitute
+    /// renderability or movement's `0x04` exclusion for `F_NOCAMCOLLIDE`.
+    ///
+    /// # Errors
+    /// Rejects invalid transformed geometry or cyclic BSP traversal.
+    pub fn append_camera_volume(
+        &mut self,
+        volume: &crate::PlayerCameraVolume,
+        output: &mut Vec<MovementCollisionTriangle>,
+    ) -> Result<(), MovementCollectionError> {
+        let corners = volume
+            .corners()
+            .map(|point| super::transform_point(self.inverse_transform, point));
+        let minimum = corners
+            .iter()
+            .copied()
+            .fold(Vec3::splat(f32::INFINITY), Vec3::min);
+        let maximum = corners
+            .iter()
+            .copied()
+            .fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
+        self.append_selected_faces(
+            MovementCollisionBounds::new(minimum, maximum)?,
+            MovementBspCacheMode::Disabled,
+            0x82,
+            output,
+        )
+    }
+
     /// Appends ordinary movement faces in root-group and native BSP order.
     ///
     /// MOPY `0x04` excludes movement; `0x02` only excludes the camera. The
@@ -76,6 +107,16 @@ impl PlacedWorldModelCollision {
         }) {
             return Ok(());
         }
+        self.append_selected_faces(local, cache_mode, 0x84, output)
+    }
+
+    fn append_selected_faces(
+        &mut self,
+        local: MovementCollisionBounds,
+        cache_mode: MovementBspCacheMode,
+        exclusions: u8,
+        output: &mut Vec<MovementCollisionTriangle>,
+    ) -> Result<(), MovementCollectionError> {
         for (group_index, group) in self.model.groups().iter().enumerate() {
             if group.flags() & 0x80 != 0 || group.bsp_nodes().is_empty() {
                 continue;
@@ -117,12 +158,17 @@ impl PlacedWorldModelCollision {
                     let start = node.first_face() as usize;
                     for &face in &group.bsp_faces()[start..start + usize::from(node.face_count())] {
                         let face = usize::from(face);
-                        if self.movement_faces[face] || group.polygons()[face].flags() & 0x84 != 0 {
+                        if self.movement_faces[face]
+                            || group.polygons()[face].flags() & exclusions != 0
+                        {
                             continue;
                         }
                         self.movement_faces[face] = true;
                         selected += 1;
                         if selected > 8_192 {
+                            if exclusions == 0x82 {
+                                break;
+                            }
                             return Err(MovementCollectionError::WorldModelFaceLimit);
                         }
                         let vertices = std::array::from_fn(|i| {

@@ -11,6 +11,8 @@ impl ClientServices {
     pub(super) fn resolved_world_camera(
         &mut self,
     ) -> Result<Option<WorldCameraFrame>, ApplicationError> {
+        let now = crate::platform::client_milliseconds();
+        self.player.sample_camera_collision(now)?;
         let (Some(environment), Some(pose)) =
             (self.environment.current(), self.player.camera_pose())
         else {
@@ -18,15 +20,19 @@ impl ClientServices {
         };
         let (width, height) = self.platform.pixel_extent();
         let aspect_ratio = width as f32 / height as f32;
-        // Registered camera collision defaults, pending the live settings owner.
-        let now = crate::platform::client_milliseconds();
+        let mut resolved_height = None;
         let pose = self.terrain.resolve_player_camera_with_feedback(
             pose,
             aspect_ratio,
-            true,
-            true,
-            |distance| self.player_movement.camera_obstructed(distance, now),
+            self.player_movement.camera_collision_settings(),
+            |distance, height| {
+                self.player_movement.camera_obstructed(distance, now);
+                resolved_height = Some(height);
+            },
         )?;
+        if let Some(height) = resolved_height {
+            self.player.camera_height_obstructed(height, now)?;
+        }
         Ok(Some(
             WorldCamera::stock_following(
                 pose.eye(),

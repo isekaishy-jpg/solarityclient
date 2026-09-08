@@ -85,10 +85,9 @@ use solarity_ecs::{PlayerViewState, WorldTransform};
 use solarity_systems::{
     CameraSubjectGeometry, CameraSubjectHeightError, CameraSubjectHeightSource,
     MountCameraGeometry, MountCameraHeightError, PlayerCameraHeightState,
-    PlayerCameraObstructionError, PlayerCameraPoseError, PlayerCameraWaterError,
+    PlayerCameraObstructionError, PlayerCameraObstructionSettings, PlayerCameraPoseError,
     resolve_camera_subject_height, resolve_mounted_player_camera_pose,
     resolve_player_camera_obstruction, resolve_player_camera_pose,
-    resolve_player_camera_water_collision,
 };
 
 #[test]
@@ -361,34 +360,7 @@ fn invalid_mount_camera_geometry_has_no_fallback() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/// Center obstruction retreats the eye while smart pivot preserves view direction.
-#[test]
-fn camera_obstruction_resolves_the_stock_swept_volume() -> Result<(), Box<dyn Error>> {
-    let transform = WorldTransform::new(Vec3::new(10.0, 20.0, 30.0), 0.0);
-    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(Some(1.75), 2.0, 1.0))?;
-    let pose = resolve_player_camera_pose(transform, PlayerViewState::STOCK_VIEW_2, height)?;
-    let requested_direction = pose.target() - pose.eye();
-    let mut trace_count = 0;
-    let resolved = resolve_player_camera_obstruction(
-        pose,
-        16.0 / 9.0,
-        true,
-        |_start, _end, _maximum| -> Result<Option<f32>, Infallible> {
-            trace_count += 1;
-            Ok((trace_count == 1).then_some(0.5))
-        },
-    )?;
-
-    let ray_length = (pose.eye() - pose.orbit_pivot()).length();
-    let expected_fraction = 0.5 - 0.111_111_11 / ray_length;
-    let expected_eye = pose.orbit_pivot() + (pose.eye() - pose.orbit_pivot()) * expected_fraction;
-    assert_eq!(trace_count, 9);
-    assert!(resolved.eye().abs_diff_eq(expected_eye, 0.000_001));
-    assert!((resolved.target() - resolved.eye()).abs_diff_eq(requested_direction, 0.000_001));
-    Ok(())
-}
-
-/// Trace providers cannot return fractions outside the requested interval.
+/// Invalid scene fractions must not enter camera transforms.
 #[test]
 fn camera_obstruction_rejects_invalid_provider_fraction() -> Result<(), Box<dyn Error>> {
     let height = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 2.0, 1.0))?;
@@ -400,10 +372,9 @@ fn camera_obstruction_rejects_invalid_provider_fraction() -> Result<(), Box<dyn 
     let result = resolve_player_camera_obstruction(
         pose,
         1.0,
-        true,
-        |_start, _end, maximum| -> Result<Option<f32>, Infallible> { Ok(Some(maximum + 0.1)) },
+        PlayerCameraObstructionSettings::default(),
+        |_| -> Result<Option<f32>, Infallible> { Ok(Some(1.1)) },
     );
-
     assert!(matches!(
         result,
         Err(PlayerCameraObstructionError::InvalidTraceFraction)
@@ -411,90 +382,31 @@ fn camera_obstruction_rejects_invalid_provider_fraction() -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// Water collision keeps the final eye on the followed pivot's side of water.
 #[test]
-fn camera_water_collision_applies_stock_clearance() -> Result<(), Box<dyn Error>> {
+fn first_person_keeps_zero_distance_through_water_camera() -> Result<(), Box<dyn Error>> {
     let height = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 2.0, 1.0))?;
     let pose = resolve_player_camera_pose(
         WorldTransform::new(Vec3::ZERO, 0.0),
-        PlayerViewState::STOCK_VIEW_2,
+        PlayerViewState::new(0.0, 0.3, 0.0, 1),
         height,
     )?;
-    let requested_direction = pose.target() - pose.eye();
-    let mut query = 0;
-    let dry = resolve_player_camera_water_collision(
+    assert_eq!(pose.eye(), pose.orbit_pivot());
+    let obstruction = resolve_player_camera_obstruction(
         pose,
-        true,
-        true,
-        |_x, _y, reference| -> Result<Option<f32>, Infallible> {
-            query += 1;
-            Ok(Some(if query == 1 {
-                reference - 1.0
-            } else {
-                reference + 2.0
-            }))
-        },
+        1.0,
+        PlayerCameraObstructionSettings::default(),
+        |_| Ok::<_, Infallible>(None),
     )?;
-    assert_eq!(query, 2);
-    assert!((dry.eye().z - (pose.eye().z + 2.05)).abs() < 0.000_001);
-    assert!((dry.target() - dry.eye()).abs_diff_eq(requested_direction, 0.000_001));
-
-    query = 0;
-    let submerged = resolve_player_camera_water_collision(
-        pose,
-        true,
-        false,
-        |_x, _y, reference| -> Result<Option<f32>, Infallible> {
-            query += 1;
-            Ok(Some(if query == 1 {
-                reference + 1.0
-            } else {
-                reference - 2.0
-            }))
-        },
+    assert_eq!(obstruction.distance(), 0.0);
+    let pose = obstruction.pose();
+    let eye = solarity_systems::resolve_player_camera_water_interface(
+        pose.eye(),
+        pose.orbit_pivot(),
+        (pose.target() - pose.eye()).normalize(),
+        obstruction.distance(),
+        |_, _| -> Result<Option<Vec3>, Infallible> { panic!("first person traced water") },
+        |_, _, _| -> Result<Option<f32>, Infallible> { panic!("first person swept water") },
     )?;
-    assert!((submerged.eye().z - (pose.eye().z - 2.05)).abs() < 0.000_001);
-    assert!(
-        (submerged.target() - submerged.eye())
-            .normalize()
-            .abs_diff_eq(
-                (pose.orbit_pivot() - submerged.eye()).normalize(),
-                0.000_001
-            )
-    );
-    Ok(())
-}
-
-/// Disabled water collision is inert and invalid provider heights are rejected.
-#[test]
-fn camera_water_collision_has_no_surface_fallback() -> Result<(), Box<dyn Error>> {
-    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(None, 2.0, 1.0))?;
-    let pose = resolve_player_camera_pose(
-        WorldTransform::new(Vec3::ZERO, 0.0),
-        PlayerViewState::STOCK_VIEW_2,
-        height,
-    )?;
-    let mut query_count = 0;
-    let disabled = resolve_player_camera_water_collision(
-        pose,
-        false,
-        true,
-        |_x, _y, _z| -> Result<Option<f32>, Infallible> {
-            query_count += 1;
-            Ok(Some(f32::NAN))
-        },
-    )?;
-    assert_eq!(disabled, pose);
-    assert_eq!(query_count, 0);
-
-    assert!(matches!(
-        resolve_player_camera_water_collision(
-            pose,
-            true,
-            true,
-            |_x, _y, _z| -> Result<Option<f32>, Infallible> { Ok(Some(f32::NAN)) },
-        ),
-        Err(PlayerCameraWaterError::InvalidSurfaceHeight)
-    ));
+    assert_eq!(eye, pose.eye());
     Ok(())
 }

@@ -36,8 +36,8 @@ impl CameraProfile {
             terrain_mean_us = mean[0],
             world_model_mean_us = mean[1],
             m2_mean_us = mean[2],
-            terrain_liquid_mean_us = mean[3],
-            world_model_liquid_mean_us = mean[4],
+            liquid_ray_mean_us = mean[3],
+            camera_volume_mean_us = mean[4],
             maximum_us = ?self.maxima.map(|value| value.as_micros()),
             "profiled camera collision providers"
         );

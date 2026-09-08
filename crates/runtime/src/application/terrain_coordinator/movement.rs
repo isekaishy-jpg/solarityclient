@@ -1,6 +1,7 @@
 //! Ordered static and replicated geometry over resident ADT/WMO generations.
 
 mod cache;
+mod camera;
 mod dynamic;
 mod liquid;
 mod map_models;
@@ -8,6 +9,7 @@ mod registration;
 mod world_model;
 
 pub use cache::{RuntimeMovementGeometry, RuntimeMovementGeometryFailure};
+pub(super) use camera::CameraGeometry;
 use dynamic::{DynamicMovementContext, ResidentDynamicMovement};
 pub use dynamic::{RuntimeMovementOwner, RuntimeMovementQuery};
 pub use world_model::RuntimeWorldModelMovementOwner;

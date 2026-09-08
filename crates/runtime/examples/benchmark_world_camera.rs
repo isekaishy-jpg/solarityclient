@@ -79,29 +79,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             let resolved = match terrain.resolve_player_camera(
                 black_box(pose),
                 16. / 9.,
-                true,
-                true,
+                solarity_systems::PlayerCameraObstructionSettings::default(),
             ) {
                 Ok(resolved) => resolved,
                 Err(error) => {
                     eprintln!("scenario={name} sample={index} yaw={yaw:?} pose={pose:?}");
-                    let _ = solarity_systems::resolve_player_camera_obstruction(
-                        pose,
-                        16. / 9.,
-                        true,
-                        |start, end, maximum| {
-                            let adt = terrain
-                                .trace_collision(start, end, 0., maximum)
-                                .map(|hit| hit.map(|hit| hit.fraction()));
-                            let wmo = terrain.trace_world_model_camera(start, end, maximum);
-                            let m2 = terrain.trace_m2_camera(start, end, maximum);
-                            eprintln!(
-                                "trace start={start:?} end={end:?} maximum={maximum:?} adt={adt:?} wmo={wmo:?} m2={m2:?}"
-                            );
-                            let selected = [adt?, wmo?, m2?].into_iter().flatten().reduce(f32::min);
-                            Ok::<_, Box<dyn Error>>(selected)
-                        },
-                    );
                     return Err(error.into());
                 }
             };

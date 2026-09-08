@@ -12,11 +12,11 @@ use solarity_rendering::{
     WorldFrustum,
 };
 use solarity_systems::{
-    M2CollisionError, M2CollisionScene, PlayerCameraObstructionError, PlayerCameraPose,
-    PlayerCameraWaterError, TerrainCollisionError, TerrainCollisionHit, TerrainCollisionMesh,
-    TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample, WorldModelCollisionError,
-    WorldModelCollisionScene, WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
-    resolve_player_camera_obstruction, resolve_player_camera_water_collision,
+    M2CollisionError, M2CollisionScene, PlayerCameraObstructionError,
+    PlayerCameraWaterInterfaceError, TerrainCollisionError, TerrainCollisionHit,
+    TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh, TerrainLiquidSample,
+    WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
+    WorldModelLiquidSample, WorldModelLiquidScene,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,6 +26,7 @@ use crate::application::liquid::{
     LiquidAssetCache, ResidentTerrainLiquidBatch, RuntimeLiquidAssetError, prepare_terrain_liquids,
 };
 
+mod camera;
 mod camera_profile;
 pub(in crate::application) mod m2_residency;
 mod movement;
@@ -134,6 +135,21 @@ pub enum RuntimeTerrainError {
 /// Failure from one concrete resident-world camera query provider.
 #[derive(Debug, Error)]
 pub enum RuntimeCameraSceneError {
+    /// Liquid triangle tracing rejected malformed geometry.
+    #[error(transparent)]
+    WaterSegment(#[from] solarity_systems::PlayerCameraWaterSegmentError),
+    /// Camera-volume clipping rejected malformed geometry.
+    #[error(transparent)]
+    Volume(#[from] solarity_systems::PlayerCameraVolumeError),
+    /// A camera triangle collector rejected malformed geometry.
+    #[error(transparent)]
+    Collection(#[from] solarity_systems::MovementCollectionError),
+    /// A retained placement reference could not supply camera geometry.
+    #[error(transparent)]
+    StaticGeometry(#[from] RuntimeStaticMovementError),
+    /// A registered WMO root could not supply camera geometry.
+    #[error(transparent)]
+    Registration(#[from] RuntimeMovementRegistrationError),
     /// Resident ADT collision rejected the trace.
     #[error(transparent)]
     TerrainCollision(#[from] TerrainCollisionError),
@@ -154,12 +170,18 @@ pub enum RuntimeCameraSceneError {
 /// Failure while composing the stock camera against the resident world scene.
 #[derive(Debug, Error)]
 pub enum RuntimeCameraError {
+    /// The final resolved camera contains a non-finite vector.
+    #[error(transparent)]
+    Pose(#[from] solarity_systems::PlayerCameraPoseError),
     /// Terrain, placed-WMO, or placed-M2 obstruction resolution failed.
     #[error(transparent)]
     Obstruction(#[from] PlayerCameraObstructionError<RuntimeCameraSceneError>),
     /// Terrain or placed-WMO waterline resolution failed.
     #[error(transparent)]
-    Water(#[from] PlayerCameraWaterError<RuntimeCameraSceneError>),
+    Water(#[from] PlayerCameraWaterInterfaceError<RuntimeCameraSceneError>),
+    /// A camera-owned geometry query failed.
+    #[error(transparent)]
+    Scene(#[from] RuntimeCameraSceneError),
 }
 
 /// Observable result of one main-thread terrain synchronization pass.
@@ -216,6 +238,7 @@ pub struct RuntimeTerrainCoordinator {
     pending_stream: Option<PendingTerrainGeneration>,
     failed_stream: std::collections::HashSet<TerrainTileIndex>,
     camera_profile: Option<camera_profile::CameraProfile>,
+    camera_geometry: movement::CameraGeometry,
 }
 
 impl RuntimeTerrainCoordinator {
@@ -251,6 +274,7 @@ impl RuntimeTerrainCoordinator {
             pending_stream: None,
             failed_stream: std::collections::HashSet::new(),
             camera_profile: camera_profile::CameraProfile::from_environment(),
+            camera_geometry: movement::CameraGeometry::default(),
         }
     }
 
@@ -1067,28 +1091,8 @@ impl RuntimeTerrainCoordinator {
         start: glam::Vec3,
         end: glam::Vec3,
         maximum_fraction: f32,
-    ) -> Result<Option<f32>, WorldModelCollisionError> {
-        let Some(active) = self.active.as_mut() else {
-            return Ok(None);
-        };
-        let mut selected = None;
-        for collision in active
-            .tile
-            .iter_mut()
-            .chain(&mut active.nearby)
-            .map(|tile| &mut tile.world_model_collision)
-            .chain(
-                active
-                    .global_world_model
-                    .iter_mut()
-                    .map(|global| &mut global.world_model_collision),
-            )
-        {
-            let candidate =
-                collision.trace_camera(start, end, selected.unwrap_or(maximum_fraction))?;
-            selected = nearest_fraction(selected, candidate);
-        }
-        Ok(selected)
+    ) -> Result<Option<f32>, RuntimeCameraSceneError> {
+        self.camera_world_model_fraction(start, end, maximum_fraction)
     }
 
     /// Samples the preferred resident placed-WMO liquid surface.
@@ -1136,105 +1140,6 @@ impl RuntimeTerrainCoordinator {
             }
         }
         Ok(selected)
-    }
-
-    /// Resolves one final player camera against all resident static providers.
-    ///
-    /// The caller supplies the current stock CVar state explicitly. This owner
-    /// contributes only admitted ADT, WMO, and MDDF-owned M2 geometry.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeCameraError`] for invalid camera policy/input or a
-    /// rejected terrain/WMO/M2 query.
-    pub fn resolve_player_camera(
-        &mut self,
-        pose: PlayerCameraPose,
-        aspect_ratio: f32,
-        smart_pivot: bool,
-        water_collision: bool,
-    ) -> Result<PlayerCameraPose, RuntimeCameraError> {
-        self.resolve_player_camera_with_feedback(
-            pose,
-            aspect_ratio,
-            smart_pivot,
-            water_collision,
-            |_| {},
-        )
-    }
-
-    /// Reports the distance collision before the separate waterline correction.
-    pub(super) fn resolve_player_camera_with_feedback(
-        &mut self,
-        pose: PlayerCameraPose,
-        aspect_ratio: f32,
-        smart_pivot: bool,
-        water_collision: bool,
-        feedback: impl FnOnce(f32),
-    ) -> Result<PlayerCameraPose, RuntimeCameraError> {
-        let requested_distance = (pose.eye() - pose.orbit_pivot()).length();
-        // The flying-mount offset lies along camera up. Its contribution must
-        // not become ordinary zoom distance when feeding the collision back.
-        let orbit_distance =
-            (pose.orbit_pivot() - pose.eye()).dot((pose.target() - pose.eye()).normalize());
-        let mut profile = self
-            .camera_profile
-            .as_ref()
-            .map(|_| [std::time::Duration::ZERO; 5]);
-        let pose = resolve_player_camera_obstruction(
-            pose,
-            aspect_ratio,
-            smart_pivot,
-            |start, end, maximum_fraction| {
-                let terrain = camera_profile::measure(&mut profile, 0, || {
-                    self.trace_collision(start, end, 0.0, maximum_fraction)
-                })?
-                .map(|hit| hit.fraction());
-                let world_model = camera_profile::measure(&mut profile, 1, || {
-                    self.trace_world_model_camera(start, end, maximum_fraction)
-                })?;
-                let m2 = camera_profile::measure(&mut profile, 2, || {
-                    self.trace_m2_camera(start, end, maximum_fraction)
-                })?;
-                Ok::<_, RuntimeCameraSceneError>(nearest_fraction(
-                    nearest_fraction(terrain, world_model),
-                    m2,
-                ))
-            },
-        )?;
-        let resolved_distance = (pose.eye() - pose.orbit_pivot()).length();
-        feedback(
-            orbit_distance
-                * if requested_distance > 0. {
-                    (resolved_distance / requested_distance).min(1.)
-                } else {
-                    1.
-                },
-        );
-        let pose = resolve_player_camera_water_collision(
-            pose,
-            water_collision,
-            smart_pivot,
-            |world_x, world_y, reference_height| {
-                let terrain = camera_profile::measure(&mut profile, 3, || {
-                    self.sample_liquid(world_x, world_y, Some(reference_height))
-                })?
-                .map(TerrainLiquidSample::height);
-                let world_model = camera_profile::measure(&mut profile, 4, || {
-                    self.sample_world_model_liquid(world_x, world_y, Some(reference_height))
-                })?
-                .map(WorldModelLiquidSample::height);
-                Ok::<_, RuntimeCameraSceneError>(preferred_surface(
-                    terrain,
-                    world_model,
-                    reference_height,
-                ))
-            },
-        )?;
-        if let (Some(profiler), Some(profile)) = (&mut self.camera_profile, profile) {
-            profiler.record(profile);
-        }
-        Ok(pose)
     }
 
     /// Releases map and tile residency on world disconnect.

@@ -2123,6 +2123,31 @@ impl RuntimePlayerPresentation {
             .and_then(|resident| resident.camera_pose)
     }
 
+    pub(super) fn sample_camera_collision(&mut self, now: u32) -> Result<(), RuntimePlayerError> {
+        let Some(resident) = self.resident.as_mut() else {
+            return Ok(());
+        };
+        let heights = resident.camera_height_state.sample_collision(now);
+        resident.camera_height = heights.subject_height();
+        resident.camera_pose = Some(resolve_mounted_player_camera_pose(
+            resident.world_transform,
+            resident.view,
+            heights,
+        )?);
+        Ok(())
+    }
+
+    pub(super) fn camera_height_obstructed(
+        &mut self,
+        height: f32,
+        now: u32,
+    ) -> Result<(), RuntimePlayerError> {
+        if let Some(resident) = self.resident.as_mut() {
+            resident.camera_height_state.obstructed(height, now)?;
+        }
+        Ok(())
+    }
+
     /// Applies markers sampled from the current rendered mount bone pose.
     ///
     /// The renderer owns the precise animation clock and therefore publishes

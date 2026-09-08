@@ -531,6 +531,83 @@ fn floor_probe_matches_original_primary_fallback_cache_and_bsp_order() -> Result
     Ok(())
 }
 
+#[test]
+fn scene_camera_bsp_matches_native_face_masks_and_endpoint_rounding() -> Result<(), Box<dyn Error>>
+{
+    let mut placements = std::collections::HashMap::new();
+    for line in include_str!("../fixtures/camera-wmo-solid-native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let groups = line
+            .split('|')
+            .map(|group| {
+                group
+                    .split_whitespace()
+                    .map(|word| u32::from_str_radix(word, 16))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let v = &groups[0];
+        let key = (v[8], v[9], v[10]);
+        if let std::collections::hash_map::Entry::Vacant(entry) = placements.entry(key) {
+            let (root, _, adjacent) = portal_fixture([0., 0., 1.], 0., 1, false, 2);
+            let mut group = floor_fixture(5, v[8] as usize, v[9] as usize);
+            let header = chunk_data_mut(&mut group, *b"PGOM");
+            for polygon in chunk_data_mut(&mut header[68..], *b"YPOM")
+                .as_chunks_mut::<2>()
+                .0
+            {
+                polygon[0] = v[10] as u8;
+            }
+            let fixture = Fixture::new(&[
+                FixtureFile {
+                    path: "World\\Portals.wmo",
+                    bytes: &root,
+                },
+                FixtureFile {
+                    path: "World\\Portals_000.wmo",
+                    bytes: &group,
+                },
+                FixtureFile {
+                    path: "World\\Portals_001.wmo",
+                    bytes: &adjacent,
+                },
+            ])?;
+            let mut store = AssetStore::mount(ArchiveCatalog::discover(
+                ClientDataRoot::new(fixture.data_root())?,
+                Locale::EnUs,
+            )?)?;
+            let model = Arc::new(DecodedWorldModel::load(
+                &mut store,
+                &AssetPath::new("World\\Portals.wmo")?,
+            )?);
+            entry.insert(PlacedWorldModelCollision::prepare_transform(
+                model,
+                Mat4::IDENTITY,
+            )?);
+        }
+        let placement = placements.get_mut(&key).ok_or("missing camera fixture")?;
+        let point = |offset: usize| {
+            Vec3::new(
+                f32::from_bits(v[offset]),
+                f32::from_bits(v[offset + 1]),
+                f32::from_bits(v[offset + 2]),
+            )
+        };
+        for _ in 0..2 {
+            let hit = placement.trace_solid_camera(point(0), point(3), f32::from_bits(v[6]))?;
+            assert_eq!(hit.is_some(), groups[1][0] != 0, "{line}");
+            assert_eq!(
+                hit.unwrap_or(f32::from_bits(v[6])).to_bits(),
+                groups[1][1],
+                "{line}"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn floor_fixture(profile: usize, geometry: usize, topology: usize) -> Vec<u8> {
     let positions: [[f32; 3]; 8] = [
         [-3., -3., 0.],

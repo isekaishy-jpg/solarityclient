@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 
 use super::player_camera::{
     PlayerCameraFollowSettings, PlayerCameraInput, PlayerCameraMouseSettings,
-    PlayerCameraZoomSettings,
+    PlayerCameraWaterSettings, PlayerCameraZoomSettings,
 };
 use super::player_control::PlayerControlEvent;
 use super::unit_animation::{UnitMovementAnimationEvent, UnitMovementAnimationEventKind};
@@ -42,6 +42,9 @@ use crate::input::{PlayerInputAdmission, PlayerInputEffect, PlayerInputState};
 /// A local movement interval or notification failed admission.
 #[derive(Debug, Error)]
 pub enum RuntimePlayerMovementError {
+    /// Registered unit water state cannot classify the camera subject.
+    #[error(transparent)]
+    CameraLiquid(#[from] solarity_systems::PlayerCameraLiquidStateError),
     /// A remote server path failed geometry or timeline admission.
     #[error(transparent)]
     Spline(#[from] solarity_systems::MovementSplineError),
@@ -156,6 +159,8 @@ impl MovementCommand {
 
 #[derive(Default)]
 pub(super) struct RuntimePlayerMovement {
+    camera_water_settings: PlayerCameraWaterSettings,
+    camera_collision_settings: solarity_systems::PlayerCameraObstructionSettings,
     water_sample: Option<super::unit_water::UnitWaterSample>,
     camera_zoom_settings: PlayerCameraZoomSettings,
     camera_follow_settings: PlayerCameraFollowSettings,
@@ -317,6 +322,11 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    pub(super) fn camera_collision_settings(
+        &self,
+    ) -> solarity_systems::PlayerCameraObstructionSettings {
+        self.camera_collision_settings
+    }
     /// Samples the live camera after this frame's collision feedback.
     pub(super) fn camera_view(&self) -> Option<solarity_ecs::PlayerViewState> {
         self.owner
@@ -356,6 +366,8 @@ impl RuntimePlayerMovement {
             return;
         }
         self.camera_cvar_revision = Some(revision);
+        self.camera_water_settings = PlayerCameraWaterSettings::read(&number);
+        self.camera_collision_settings.water_collision = self.camera_water_settings.collision;
         self.camera_follow_settings = PlayerCameraFollowSettings::read(&number);
         self.set_camera_zoom_settings(PlayerCameraZoomSettings {
             speed: number("cameradistancemovespeed").unwrap_or(8.33),
@@ -580,9 +592,22 @@ impl RuntimePlayerMovement {
             }
         }
         let immersion = terrain.unit_submerged_liquid(owner.world_position(), liquids)?;
+        self.camera_collision_settings.subject_liquid =
+            solarity_systems::PlayerCameraLiquidState::sample(
+                owner.world_position().z,
+                dimensions[1],
+                immersion.map(|liquid| liquid.surface_height),
+            )?;
+        self.camera_collision_settings.minimum_subject_height = Some(dimensions[1] * 0.75);
         let splash = owner.queue_immersion(immersion, dimensions[1], world, &mut self.commands)?;
         owner.camera.sample_zoom(now_ms, self.camera_zoom_settings);
         owner.camera.sample_follow(now_ms);
+        owner.camera.water_transition(
+            self.camera_collision_settings.subject_liquid,
+            self.camera_water_settings,
+            self.camera_follow_settings.speed[0],
+            now_ms,
+        );
         let (transform, movement) = owner.snapshot();
         self.water_sample = Some(super::unit_water::UnitWaterSample {
             identity: owner.identity,
@@ -613,6 +638,8 @@ impl RuntimePlayerMovement {
     }
 
     pub(super) fn reset(&mut self) {
+        self.camera_collision_settings =
+            solarity_systems::PlayerCameraObstructionSettings::default();
         self.water_sample = None;
         self.owner = None;
         self.input = PlayerInputState::default();

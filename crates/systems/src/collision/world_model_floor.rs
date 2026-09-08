@@ -13,6 +13,7 @@ const REGION_TOLERANCE: f64 = 0.01_f32 as f64;
 enum FloorProbeKind {
     Unit,
     Camera,
+    SceneCamera,
 }
 
 /// One authored face selected by the registration floor ray.
@@ -60,6 +61,25 @@ struct NodeQuery {
 }
 
 impl PlacedWorldModelCollision {
+    pub(super) fn probe_scene_camera_group_floor(
+        &mut self,
+        group_index: usize,
+        start: Vec3,
+        end: Vec3,
+        maximum: f32,
+    ) -> Result<Option<WorldModelFloorHit>, WorldModelCollisionError> {
+        Ok(self
+            .floor_probe
+            .probe(
+                &self.model.groups()[group_index],
+                &self.movement_cached_leaves[group_index],
+                [start, end],
+                [maximum; 2],
+                MovementBspCacheMode::Enabled,
+                FloorProbeKind::SceneCamera,
+            )?
+            .primary)
+    }
     /// Probes one admitted group's BSP in WMO-local coordinates.
     ///
     /// Each result has its own maximum fraction; stock registration initially
@@ -176,7 +196,7 @@ impl FloorProbeScratch {
                     let index = usize::from(face);
                     let flags = group.polygons()[index].flags();
                     let exclusion = match kind {
-                        FloorProbeKind::Unit => 0x82,
+                        FloorProbeKind::Unit | FloorProbeKind::SceneCamera => 0x82,
                         FloorProbeKind::Camera => 0x80,
                     };
                     if self.visited[index] || flags & exclusion != 0 || selected == 8192 {
@@ -203,13 +223,16 @@ impl FloorProbeScratch {
                     if distance < 0.0 {
                         continue;
                     }
-                    let channels = if matches!(kind, FloorProbeKind::Camera) || flags & 0x20 != 0 {
-                        [true, true]
-                    } else if flags & 8 != 0 {
-                        [true, false]
-                    } else {
-                        [false, flags & 4 != 0]
-                    };
+                    let channels =
+                        if matches!(kind, FloorProbeKind::Camera | FloorProbeKind::SceneCamera)
+                            || flags & 0x20 != 0
+                        {
+                            [true, true]
+                        } else if flags & 8 != 0 {
+                            [true, false]
+                        } else {
+                            [false, flags & 4 != 0]
+                        };
                     for channel in 0..2 {
                         if channels[channel] && distance <= nearest[channel] {
                             nearest[channel] = distance;

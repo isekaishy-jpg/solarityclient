@@ -16,9 +16,6 @@ const CAMERA_PITCH_MAXIMUM_RADIANS: f32 = 1.553_343;
 /// Final stock cap after the distance CVar and its factor are combined.
 const CAMERA_DISTANCE_MAXIMUM: f32 = 50.0;
 
-/// Logical first person retains a direction inside the stock near plane.
-const CAMERA_ORBIT_DISTANCE_MINIMUM: f32 = 0.01;
-
 /// The orbit builder does not admit a pivot directly on or below the unit.
 const CAMERA_PIVOT_HEIGHT_MINIMUM: f32 = 0.1;
 
@@ -108,16 +105,15 @@ fn resolve_player_camera_pose_with_flying_mount_height(
         .pitch_radians()
         .clamp(CAMERA_PITCH_MINIMUM_RADIANS, CAMERA_PITCH_MAXIMUM_RADIANS);
     let distance = view.distance().clamp(0.0, CAMERA_DISTANCE_MAXIMUM);
-    let orbit_distance = distance.max(CAMERA_ORBIT_DISTANCE_MINIMUM);
     let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
-    let horizontal_distance = orbit_distance * pitch.cos();
+    let horizontal_distance = distance * pitch.cos();
     let orbit_pivot = subject
         + Vec3::new(
             0.0,
             0.0,
             subject_height.value().max(CAMERA_PIVOT_HEIGHT_MINIMUM),
         );
-    let eye = orbit_pivot - facing * horizontal_distance + Vec3::Z * (orbit_distance * pitch.sin());
+    let eye = orbit_pivot - facing * horizontal_distance + Vec3::Z * (distance * pitch.sin());
     let up = facing * pitch.sin() + Vec3::Z * pitch.cos();
     // `CGCamera` leaves logical first person untouched. In third person the
     // subsequent obstruction interpolation scales this complete displacement,

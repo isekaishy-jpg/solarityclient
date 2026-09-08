@@ -9,6 +9,35 @@ use super::admits_height;
 use crate::collision::{MovementCollisionTriangle, PlacedWorldModelCollision};
 
 impl PlacedWorldModelCollision {
+    /// Collects 7CAB70 liquid cells from the camera's oriented local volume.
+    /// Camera admission excludes MOGP 0x80; movement's 0x400000 exclusion
+    /// does not apply to 7AF0F0.
+    ///
+    /// # Errors
+    /// Rejects invalid transformed geometry.
+    pub fn append_liquid_camera_volume(
+        &self,
+        volume: &crate::PlayerCameraVolume,
+        output: &mut Vec<MovementCollisionTriangle>,
+    ) -> Result<(), MovementCollectionError> {
+        let corners = volume
+            .corners()
+            .map(|point| super::super::transform_point(self.inverse_transform, point));
+        let minimum = corners
+            .iter()
+            .copied()
+            .fold(Vec3::splat(f32::INFINITY), Vec3::min);
+        let maximum = corners
+            .iter()
+            .copied()
+            .fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
+        self.append_liquid_selected(
+            MovementCollisionBounds::new(minimum, maximum)?,
+            0x80,
+            output,
+        )
+    }
+
     /// Appends water-only faces in root-group and row-major cell order. Native
     /// collision uses regular MLIQ cells, including render-portal-clipped tiles.
     /// The caller inverts the completed bank's planes before swimming sweeps.
@@ -30,8 +59,18 @@ impl PlacedWorldModelCollision {
         }) {
             return Ok(());
         }
+        self.append_liquid_selected(local, 0x40_0080, output)
+    }
+
+    fn append_liquid_selected(
+        &self,
+        local: MovementCollisionBounds,
+        excluded_groups: u32,
+        output: &mut Vec<MovementCollisionTriangle>,
+    ) -> Result<(), MovementCollectionError> {
         for (index, group) in self.model.groups().iter().enumerate() {
-            if group.flags() & 0x40_0080 != 0 || group.resolve_liquid_type(self.model.flags()) == 0
+            if group.flags() & excluded_groups != 0
+                || group.resolve_liquid_type(self.model.flags()) == 0
             {
                 continue;
             }

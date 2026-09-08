@@ -109,8 +109,12 @@ impl PlayerCameraVolume {
                 let current_outside = current_distance.is_sign_negative();
                 if previous_outside != current_outside {
                     let difference = previous_distance - current_distance;
-                    let fraction =
-                        previous_distance / if difference == 0.0 { 1.0 } else { difference };
+                    let fraction = previous_distance
+                        / if difference == 0.0 {
+                            0.0001
+                        } else {
+                            difference
+                        };
                     scratch[next_count] = (previous.as_dvec3()
                         + (current.as_dvec3() - previous.as_dvec3()) * f64::from(fraction))
                     .as_vec3();

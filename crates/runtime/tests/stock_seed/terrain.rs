@@ -1449,8 +1449,20 @@ fn terrain_residency_admits_referenced_world_models() -> Result<(), Box<dyn Erro
         PlayerViewState::new(2.0, 0.174_532_92, 0.0, 2),
         height,
     )?;
-    let resolved = terrain.resolve_player_camera(pose, 1.0, true, true)?;
-    assert!((resolved.eye().z - 1.95).abs() < 0.001);
+    let resolved = terrain.resolve_player_camera(
+        pose,
+        1.0,
+        solarity_systems::PlayerCameraObstructionSettings::default(),
+    )?;
+    // Native 6059E0 over this MLIQ quad, followed by the one-ninth retreat,
+    // gives distance 0.26489076 and eye Z 1.8932198. This synthetic group
+    // omits MOGP 0x1000: volumes admit the mesh, while water rays skip it.
+    assert!(
+        resolved
+            .eye()
+            .abs_diff_eq(Vec3::new(-0.260_866_46, 0.0, 1.893_219_8), 0.000_02),
+        "{resolved:?}"
+    );
 
     terrain.disconnect();
     assert_eq!(terrain.resident_world_model_count(), 0);

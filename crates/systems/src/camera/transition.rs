@@ -26,6 +26,7 @@ struct CameraHeightTransition {
     target: f32,
     started_ms: f32,
     duration_ms: f32,
+    collision_started: Option<u32>,
 }
 
 impl CameraHeightTransition {
@@ -36,10 +37,14 @@ impl CameraHeightTransition {
             target: value,
             started_ms: 0.0,
             duration_ms: 0.0,
+            collision_started: None,
         }
     }
 
     fn advance(&mut self, now_ms: f32) {
+        if self.collision_started.is_some() {
+            return;
+        }
         if self.duration_ms <= 0.0 {
             self.current = self.target;
             return;
@@ -63,6 +68,43 @@ impl CameraHeightTransition {
         self.target = target;
         self.started_ms = now_ms;
         self.duration_ms = factor * (target - self.current).abs() / speed * 1_000.0;
+        self.collision_started = None;
+    }
+
+    fn obstructed(&mut self, height: f32, now_ms: u32) {
+        if f64::from(self.current) - f64::from(height) > f64::from(0.111_111_11_f32) {
+            self.current = height + 0.111_112_066_f32;
+            self.start = self.current;
+            self.collision_started = Some(now_ms);
+            self.duration_ms = 2_000.0;
+        }
+    }
+
+    fn advance_collision(&mut self, now_ms: u32) {
+        let Some(started) = self.collision_started else {
+            return;
+        };
+        if (f64::from(self.target) - f64::from(self.current)).abs() < f64::from(f32::EPSILON * 2.0)
+        {
+            self.target = self.current;
+            self.collision_started = None;
+            self.duration_ms = 0.0;
+            return;
+        }
+        let elapsed = now_ms.wrapping_sub(started);
+        if (elapsed as i32) < 0 {
+            return;
+        }
+        let fraction = f64::from(elapsed) * f64::from(0.001_f32) / 2.0;
+        self.current = if fraction < 1.0 {
+            let fraction = f64::from(fraction as f32);
+            ((1.0 - (fraction * f64::from(PI)).cos())
+                * 0.5
+                * (f64::from(self.target) - f64::from(self.start))
+                + f64::from(self.start)) as f32
+        } else {
+            self.target
+        };
     }
 }
 
@@ -85,6 +127,29 @@ pub struct PlayerCameraHeightState {
 }
 
 impl PlayerCameraHeightState {
+    /// Applies 606F90's primary anchor feedback to the existing height target.
+    /// Recovery uses the wrapping client clock, independently of M2 pose time.
+    ///
+    /// # Errors
+    /// Rejects non-finite resolved heights.
+    pub fn obstructed(&mut self, height: f32, now_ms: u32) -> Result<(), MountCameraHeightError> {
+        if !height.is_finite() {
+            return Err(MountCameraHeightError::NonFiniteCollisionHeight);
+        }
+        self.principal.obstructed(height, now_ms);
+        Ok(())
+    }
+
+    /// Advances 603D30's two-second collision recovery before camera queries.
+    #[must_use]
+    pub fn sample_collision(&mut self, now_ms: u32) -> PlayerCameraHeightSample {
+        self.principal.advance_collision(now_ms);
+        PlayerCameraHeightSample::new(
+            CameraSubjectHeight::new(self.principal.current, self.source),
+            self.flying_offset.current,
+        )
+    }
+
     /// Starts from the already validated body-model camera height.
     #[must_use]
     pub const fn new(base: CameraSubjectHeight) -> Self {
@@ -245,5 +310,53 @@ fn validate_time(now_ms: f32) -> Result<(), MountCameraHeightError> {
         Ok(())
     } else {
         Err(MountCameraHeightError::NonFiniteTime)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_height_recovery_matches_original_histories() -> Result<(), Box<dyn std::error::Error>>
+    {
+        for row in include_str!("../../tests/fixtures/camera-height-recovery-native.txt")
+            .lines()
+            .filter(|row| !row.starts_with('#') && !row.is_empty())
+        {
+            let groups = row
+                .split('|')
+                .map(|part| {
+                    part.split_whitespace()
+                        .map(|value| u32::from_str_radix(value, 16))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut state = CameraHeightTransition::new(f32::from_bits(groups[0][0]));
+            for (action, expected) in groups[1]
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(groups[2].as_chunks::<5>().0)
+            {
+                if action[0] == 1 {
+                    state.obstructed(f32::from_bits(action[2]), action[1]);
+                } else {
+                    state.advance_collision(action[1]);
+                }
+                assert_eq!(state.current.to_bits(), expected[0], "{row}");
+                assert_eq!(state.target.to_bits(), expected[1], "{row}");
+                assert_eq!(
+                    u32::from(state.collision_started.is_some()),
+                    expected[2],
+                    "{row}"
+                );
+                assert_eq!(state.collision_started.unwrap_or(0), expected[3], "{row}");
+                if state.collision_started.is_some() {
+                    assert_eq!(state.start.to_bits(), expected[4], "{row}");
+                }
+            }
+        }
+        Ok(())
     }
 }

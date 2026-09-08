@@ -8,14 +8,17 @@ mod obstruction;
 mod transition;
 mod types;
 mod volume;
-mod water;
 mod water_interface;
+pub(crate) mod water_segment;
 
 pub use controller::{
     resolve_camera_subject_height, resolve_model_camera_subject_height,
     resolve_mounted_player_camera_pose, resolve_player_camera_pose,
 };
-pub use obstruction::{PlayerCameraObstructionError, resolve_player_camera_obstruction};
+pub use obstruction::{
+    PlayerCameraObstruction, PlayerCameraObstructionError, PlayerCameraObstructionSettings,
+    PlayerCameraSceneQuery, resolve_player_camera_obstruction,
+};
 pub use transition::PlayerCameraHeightState;
 pub use types::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
@@ -26,8 +29,8 @@ pub use volume::{
     PlayerCameraVolume, PlayerCameraVolumeError, PlayerCameraVolumeKind,
     PlayerCameraVolumeQueryError, resolve_player_camera_volume,
 };
-pub use water::{PlayerCameraWaterError, resolve_player_camera_water_collision};
 pub use water_interface::{
     PLAYER_CAMERA_WATER_CLEARANCE, PlayerCameraLiquidState, PlayerCameraLiquidStateError,
     PlayerCameraWaterInterfaceError, resolve_player_camera_water_interface,
 };
+pub use water_segment::{PlayerCameraWaterSegment, PlayerCameraWaterSegmentError};

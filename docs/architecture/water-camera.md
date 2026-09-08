@@ -2,9 +2,8 @@
 
 The source is the locally owned build-12340 image with SHA-256
 `aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8`.
-The portable Systems boundaries below are implemented and tested. Runtime
-integration is still in progress; the older nine-ray obstruction and 0.05
-water clamp do not establish these native behaviors.
+The Systems boundaries below are integrated into the runtime camera. They
+replace the previous nine-ray obstruction and fixed 0.05-unit water clamp.
 
 ## Subject state and final eye
 
@@ -55,19 +54,57 @@ bit-identical corners and distances; rotated cases allow 0.00002 world units
 for the remaining extended-precision differences. Tiny distances and thin,
 large, partly clipped, water-only and solid-only triangles are included.
 
-## Remaining integration
+## Primary obstruction and scene admission
 
-The runtime must use the dedicated `77F330` volume geometry admission, the
+The runtime uses dedicated `77F330` volume geometry admission, the
 water-inclusive primary traces and vertical anchor constraints from `605D60`,
 and the final `6061D0` stage. `77F330` is distinct from movement's `77F340`:
 it visits terrain/MDDF chunks before placed WMO roots. WMO volume admission
 uses `7AE140`'s camera mask (`0x82` after the transient visited bit), not
 movement's `0x84` face exclusion. The old renderability-based camera face
-predicate is insufficient evidence for this collector.
+predicate is insufficient for this collector. Solid WMO volumes transform the
+eight oriented corners into root-local space before BSP selection. Liquid
+volumes use those same local bounds and exclude group flag 0x80, without
+movement's additional 0x400000 exclusion. MLIQ ray admission separately
+requires group flag 0x1000; volume admission does not.
+
+The primary vertical anchor uses the subject's surface/submerged registration,
+the unit-height minimum, and the separate mounted obstruction offset. Its
+center ray precedes the swept volume and one-ninth retreat. The final interface
+stage retains the camera's forward direction. First person keeps an exact zero
+distance and therefore does not run the final interface trace.
+
+`camera_primary_oracle.py` compares 508 complete native primary calculations.
+Dedicated water-segment, WMO clipping/grid, and terrain-grid captures cover
+526, 526, 436, and 636 cases respectively. Water rays retain native mesh
+coordinates, cell traversal, triangle order and strict fraction comparison.
+Solid WMO rays use native BSP traversal, MOPY admission, and an inclusive
+distance limit; converting the accepted distance back to a fraction can round
+below that limit. `camera_wmo_solid_oracle.py` covers all 256 face-byte values
+with and without cached leaves, plus varied geometry and endpoint cases, for
+768 comparisons.
+
+Primary distance and local anchor height feed the persistent camera state
+before final eye correction. Collision feedback retains the requested height,
+adds the original one-ninth-plus-epsilon cushion, and restarts a two-second
+cosine recovery. It shares the principal height target with mounted `$CMA`
+changes. `camera_height_recovery_oracle.py` captures 36 histories, including
+repeated obstruction and wrapping client timestamps, with exact float results.
+
+## Water pitch and control modes
 
 `606F90` requests pitch changes at surfaced/submerged transitions while
 `cameraWaterCollision` is enabled. Both `cameraSurfaceFinalPitch` and
-`cameraSubmergeFinalPitch` default to 5 degrees. `cameraDive` defaults to 1,
-`cameraSurfacePitch` to 0 and `cameraSubmergePitch` to 18. Their input and
-timed-pitch owners remain to be connected and tested before claiming the
-runtime water camera complete.
+`cameraSubmergeFinalPitch` default to 5 degrees. These transitions now request
+the existing timed pitch owner, or assign pitch immediately during free look.
+`camera_water_pitch_oracle.py` compares 144 original transition blocks across
+liquid states, collision settings, free look and custom/zero final pitches.
+
+`cameraDive` defaults to 1, `cameraSurfacePitch` to 0 and
+`cameraSubmergePitch` to 18. The original automatic movement-pitch block also
+requires `721F90` to return false. For the ordinary locally controlled subject
+it returns true, except in control mode 13; consequently that block is skipped
+in the runtime's current ordinary-player mode. The CVars are registered, but
+mode 13 and nonlocal camera-subject automatic dive behavior remain outside
+the currently implemented control modes. They must use the native movement
+pitch owner when those modes are added.

@@ -277,6 +277,11 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("cameraSmoothTrackingStyle", "4"),
     value("cameraTerrainTilt", "0"),
     value("cameraWaterCollision", "1"),
+    value("cameraDive", "1"),
+    ranged("cameraSurfacePitch", "0", -89.0, 89.0),
+    ranged("cameraSubmergePitch", "18", -89.0, 89.0),
+    ranged("cameraSurfaceFinalPitch", "5", -89.0, 89.0),
+    ranged("cameraSubmergeFinalPitch", "5", -89.0, 89.0),
     ranged("cameraYawMoveSpeed", "180", 0.1, 360.0),
     value("cameraYawSmoothSpeed", "180"),
     // FUN_0051D9B0 registers both inversion toggles against the stock false
