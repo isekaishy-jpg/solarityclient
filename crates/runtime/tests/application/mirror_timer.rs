@@ -116,6 +116,31 @@ fn stock_mirror_timer_frames_show_count_refill_pause_and_hide()
         manager.localized_text("VISIBLE")?.as_deref(),
         Some("BREATH,Breath,59.75,60|EXHAUSTION,Fatigue,30,60")
     );
+    for timer in 1..=2 {
+        let bar_name = format!("MirrorTimer{timer}StatusBar");
+        let text_name = format!("MirrorTimer{timer}Text");
+        let bar = manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .find(|member| manager.object_name(member.owner_index()) == Some(bar_name.as_str()))
+            .ok_or("missing timer fill quad")?;
+        let mesh = manager.render_plan().mesh();
+        let bar_position = mesh
+            .object_indices()
+            .iter()
+            .position(|index| *index == bar.object_index())
+            .ok_or("missing timer fill in mesh")?;
+        let text_position = mesh
+            .object_indices()
+            .iter()
+            .position(|index| manager.object_name(*index) == Some(text_name.as_str()))
+            .ok_or("missing timer label glyphs in mesh")?;
+        assert!(
+            bar_position < text_position,
+            "{text_name} must render above its lowered status bar: fill={bar_position}, text={text_position}"
+        );
+    }
     dispatch_notification(&mut manager, &world, &names, start(1, 10000, 10, 0))?;
     manager.update(0.25)?;
     manager.invoke_binding("CHECK", true)?;

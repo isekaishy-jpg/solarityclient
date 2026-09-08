@@ -77,13 +77,37 @@ impl UiMinimapPresentation {
 }
 
 /// Exact back-to-front packet ordering recovered from stock presentation state.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiPresentationPacketKey {
     strata: UiFrameStrata,
     frame_level: i32,
-    frame_sequence: usize,
     draw_rank: i16,
     draw_sub_level: i16,
+    frame_sequence: usize,
+}
+
+impl Ord for UiPresentationPacketKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // 00494AF0 walks draw layers first, then frames at this level. Region
+        // sublevels and widget skin ordering apply within each frame's layer.
+        let order = |key: &Self| {
+            (
+                key.strata,
+                key.frame_level,
+                key.draw_rank / 10,
+                key.frame_sequence,
+                key.draw_rank % 10,
+                key.draw_sub_level,
+            )
+        };
+        order(self).cmp(&order(other))
+    }
+}
+
+impl PartialOrd for UiPresentationPacketKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl UiPresentationPacketKey {
@@ -1575,3 +1599,7 @@ const fn draw_rank(layer: UiDrawLayer, role: UiObjectRole) -> i16 {
         _ => base,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/render/presentation_order.rs"]
+mod presentation_order_tests;

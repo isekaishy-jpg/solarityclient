@@ -11,6 +11,37 @@ use solarity_ui::{GlueManager, UiBlendMode, UiFrameStrata, UiPointerButton, UiTe
 use crate::support::{Fixture, FixtureFile};
 
 #[test]
+fn xml_font_layers_survive_static_and_dynamic_inheritance() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface/GlueXML/GlueXML.toc",
+            bytes: b"Layers.xml\n",
+        },
+        FixtureFile {
+            path: "Interface/GlueXML/Layers.xml",
+            bytes: br#"<Ui>
+<Frame name="LayerTemplate" virtual="true"><Layers>
+<Layer level="BACKGROUND"><FontString name="$parentBackground"/></Layer>
+<Layer level="OVERLAY"><FontString name="$parentText" subLevel="3"/></Layer>
+</Layers></Frame>
+<Frame name="Static" inherits="LayerTemplate"/>
+<Frame name="Check"><Scripts><OnLoad>
+  assert(StaticBackground:GetDrawLayer() == "BACKGROUND")
+  assert(StaticText:GetDrawLayer() == "OVERLAY")
+  CreateFrame("Frame", "Dynamic", nil, "LayerTemplate")
+  assert(DynamicBackground:GetDrawLayer() == "BACKGROUND")
+  assert(DynamicText:GetDrawLayer() == "OVERLAY")
+</OnLoad></Scripts></Frame>
+</Ui>"#,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    GlueManager::start(AssetStore::mount(catalog)?, (1024, 768), false)?;
+    Ok(())
+}
+
+#[test]
 fn ui_mask_requests_deduplicate_and_promote_shared_residency() -> Result<(), Box<dyn Error>> {
     use solarity_asset::AssetPath;
     use solarity_rendering::{UiMeshPlan, UiRenderMask, UiRenderQuad};

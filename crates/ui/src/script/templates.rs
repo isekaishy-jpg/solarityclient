@@ -299,6 +299,11 @@ impl UiRuntimeTemplatePlan {
                 let button = initial_button(object);
                 let texture = initial_texture(&tree, &texture_states, local_index)
                     .map_err(|error| template_error(template_name, error))?;
+                let (draw_layer, draw_sub_level) = if object.kind() == UiObjectKind::FontString {
+                    super::simple_script::initial_font_draw_order(object)
+                } else {
+                    (texture.draw_layer, texture.draw_sub_level)
+                };
                 plan.nodes.push(UiRuntimeTemplateNode {
                     name: runtime_name(template_name, object.name()),
                     kind: object.kind(),
@@ -349,8 +354,8 @@ impl UiRuntimeTemplatePlan {
                     horizontal_tiling: texture.horizontal_tiling,
                     vertical_tiling: texture.vertical_tiling,
                     non_blocking: texture.non_blocking,
-                    draw_layer: texture.draw_layer,
-                    draw_sub_level: texture.draw_sub_level,
+                    draw_layer,
+                    draw_sub_level,
                     frame_id: frame_states
                         .state(local_index)
                         .map_or(0, crate::UiFrameState::id),

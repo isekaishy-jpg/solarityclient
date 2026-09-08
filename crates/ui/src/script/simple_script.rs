@@ -3307,8 +3307,11 @@ impl UiScriptRuntime {
                     message: format!("font string {node_index} has no initial font state"),
                 })?;
             if object.kind() == UiObjectKind::FontString {
+                let (layer, sublevel) = initial_font_draw_order(object);
                 table
-                    .raw_set(auto_text_width_key(), dimensions.0 == 0.0)
+                    .raw_set(draw_layer_key(), layer)
+                    .and_then(|()| table.raw_set(draw_sub_level_key(), sublevel))
+                    .and_then(|()| table.raw_set(auto_text_width_key(), dimensions.0 == 0.0))
                     .and_then(|()| table.raw_set(auto_text_height_key(), dimensions.1 == 0.0))
                     .map_err(|error| execution_error("object registration", error))?;
             }
@@ -9022,6 +9025,22 @@ fn registered_event(
 
 fn event_table(object: &Table) -> mlua::Result<Table> {
     object.raw_get(events_key())
+}
+
+pub(super) fn initial_font_draw_order(node: &UiObjectNode<'_>) -> (&'static str, i16) {
+    let mut layer = UiDrawLayer::Artwork;
+    let mut sublevel = 0;
+    for source in node.layers() {
+        if let Some(value) = source.draw_layer() {
+            layer = value;
+        }
+        if let Some(value) =
+            xml_attribute(source.element(), "subLevel").and_then(|value| value.parse::<i16>().ok())
+        {
+            sublevel = value;
+        }
+    }
+    (draw_layer_name(layer), sublevel)
 }
 
 fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<InitialFont> {
