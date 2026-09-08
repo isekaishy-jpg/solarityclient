@@ -4,6 +4,10 @@
 #[path = "../../../tests/application/game_object_scene.rs"]
 mod game_object_scene_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/application/unit_effect_models.rs"]
+mod unit_effect_model_tests;
+
 mod character_residency;
 mod game_objects;
 mod playback;

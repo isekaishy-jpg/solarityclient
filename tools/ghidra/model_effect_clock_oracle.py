@@ -2,7 +2,8 @@
 
 Executes 834810 and 828A00. Hooks replace scene registration, shared-data
 reference/load work, and particle dispatch. The original timestamp stores,
-unsigned subtraction, and millisecond conversion remain unmodified. This does
+unsigned subtraction, and millisecond conversion remain unmodified. Also checks
+the independent global-sequence origin at model +0x74. This does
 not exercise particle simulation, resource loading, or visibility admission.
 """
 import argparse
@@ -47,6 +48,7 @@ def capture(executable, output):
         uc.reg_write(UC_X86_REG_ECX, model)
         invoke(uc, 0x834810, [scene, resource, 0, 0])
         assert native.read_words(uc, model + 0x8c, 1)[0] == created
+        assert native.read_words(uc, model + 0x74, 1)[0] == created
         for sample, ready in samples:
             previous = native.read_words(uc, model + 0x8c, 1)[0]
             native.write_words(uc, scene + 0xc, sample)
@@ -54,6 +56,7 @@ def capture(executable, output):
             dispatched.clear()
             uc.reg_write(UC_X86_REG_ECX, model)
             invoke(uc, 0x828a00, [])
+            assert native.read_words(uc, model + 0x74, 1)[0] == created
             updated = native.read_words(uc, model + 0x8c, 1)[0]
             bits = f'{dispatched[0]:08x}' if dispatched else '-'
             rows.append(f'{created} {previous} {sample} {ready} {updated} {bits}')

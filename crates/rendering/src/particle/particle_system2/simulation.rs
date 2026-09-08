@@ -60,6 +60,7 @@ pub struct M2ParticleSimulation {
     next_pool_slot: usize,
     capacity: usize,
     emission_remainder: f32,
+    emission_enabled: bool,
     seed: u32,
     random: M2ParticleRandom,
     previous_follow_position: Option<Vec3>,
@@ -121,6 +122,7 @@ impl M2ParticleSimulation {
             next_pool_slot: 0,
             capacity: 0,
             emission_remainder: 0.0,
+            emission_enabled: true,
             seed,
             random: M2ParticleRandom::new(seed),
             previous_follow_position: None,
@@ -150,6 +152,17 @@ impl M2ParticleSimulation {
         self.random = M2ParticleRandom::new(self.seed);
         self.previous_follow_position = None;
         self.inherited_motion = InheritedEmitterMotion::default();
+    }
+
+    /// Sets the model-owned emission switch independently of the authored track.
+    ///
+    /// Build 12340's `CM2Model` method at `0x008279F0` changes emitter runtime
+    /// bit 2. CEffect retirement clears it, leaving existing particles alive.
+    /// Updates still advance motion, lifetime, and the rate-variation random
+    /// sample, but retain the emission remainder without accumulating births.
+    /// Resetting discontinuous simulation history does not change this switch.
+    pub fn set_emission_enabled(&mut self, enabled: bool) {
+        self.emission_enabled = enabled;
     }
 
     /// Reserves the largest pool implied by an emitter's authored rate and
@@ -448,7 +461,19 @@ impl M2ParticleSimulation {
         if unsupported != 0 {
             return Err(M2ParticleSimulationError::BehaviorFlags(unsupported));
         }
-        self.grow_stock_capacity(emitter, pose)?;
+        // `0x0097DD20` returns before capacity, PRNG, or live-pool work when
+        // the elapsed slice is zero. This also covers the terminal remainder
+        // of an exact 100 ms subdivision and repeated renders in one scene tick.
+        if elapsed_seconds == 0.0 {
+            return Ok(M2ParticleSimulationReport {
+                emitted: 0,
+                deaths: 0,
+                live: self.particles.len(),
+            });
+        }
+        if self.emission_enabled && pose.enabled() {
+            self.grow_stock_capacity(emitter, pose)?;
+        }
 
         // The executable samples rate variation once per update before testing
         // whether emission is enabled, preserving PRNG call order across keys.
@@ -475,7 +500,7 @@ impl M2ParticleSimulation {
         // `0x0097D8C0` before walking the active pool. Newborns therefore
         // participate in this same slice's age, wind, and ballistic update.
         let mut emitted = 0;
-        if pose.enabled() {
+        if self.emission_enabled && pose.enabled() {
             self.emission_remainder += varied_rate * elapsed_seconds;
             // Build-12340 CParticleEmitter::Update adds one half and truncates
             // the accumulated count. This can leave a negative residual after

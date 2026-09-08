@@ -332,6 +332,21 @@ pseudocode does not mean nearest-even here. Regression coverage checks both
 emitter types, negative-to-positive interpolation, fractional pool estimates,
 and continued aging of existing particles when the rate falls to zero.
 
+`CM2Model::SetEmission` at `0x008279F0` changes runtime emitter bit 2,
+independently of the authored enabled track's bit 1. The placement-local
+simulation exposes that switch for CEffect retirement. Clearing it prevents
+births and capacity growth without killing existing particles or changing the
+fractional emission remainder. Positive-time updates still consume the rate
+variation draw and advance live particles. Resetting discontinuous particle
+history preserves this model-owned switch.
+
+`CParticleEmitter::Update` at `0x0097DD20` returns before capacity, randomness,
+or live-pool work when its elapsed slice is zero. Repeated presentations within
+one scene millisecond and zero remainders after exact 100 ms subdivisions now
+preserve the random stream. Both emitter shapes have regression coverage for
+repeated ticks, disabling births, continued motion, full lifetime expiry, and
+resuming emission with the retained random and fractional-count history.
+
 `validate_world_particles` replays sequence zero for sixty seconds at 60 Hz
 across the selected ADT's 3-by-3 neighborhood, including active WMO doodad sets.
 It uses fixed seeds, identity emitter matrices, and full density to exercise

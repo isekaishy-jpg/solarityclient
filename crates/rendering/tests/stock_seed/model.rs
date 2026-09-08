@@ -1605,8 +1605,8 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
     let mut simulation = M2ParticleSimulation::new(0x0029_4823);
     let initial = simulation.advance_planar(emitter, initial_pose, 0.0, Mat4::IDENTITY, 1.0)?;
     assert_eq!(initial.live(), 0);
-    // The executable truncates its extended-precision capacity estimate.
-    assert_eq!(simulation.capacity(), 11);
+    // The native inner update returns before allocation or PRNG work at zero dt.
+    assert_eq!(simulation.capacity(), 0);
     let report = simulation.advance_planar(
         emitter,
         pose,
@@ -1629,7 +1629,6 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         .first()
         .ok_or("first emitted particle is absent")?;
     let mut stock_random = M2ParticleRandom::new(0x0029_4823);
-    let _initial_rate_variation = stock_random.next_signed();
     let _rate_variation = stock_random.next_signed();
     let initial_age = stock_random.next_unit() * 0.2;
     let random_word = stock_random.next_u32() as u16;
@@ -1667,10 +1666,7 @@ fn m2_planar_particle_simulation_grows_stock_capacity() -> Result<(), Box<dyn Er
         simulation.particles().iter().all(|particle| {
             particle.position().is_finite()
                 && particle.velocity().is_finite()
-                && particle.position().x >= 7.0
-                && particle.position().x <= 13.0
-                && particle.position().y >= 16.0
-                && particle.position().y <= 24.0
+                && (0.2..0.4).contains(&particle.age_seconds())
         }),
         "{:?}",
         simulation.particles()

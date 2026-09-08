@@ -16,6 +16,117 @@ use super::{
 };
 use crate::support::{Fixture, FixtureFile};
 
+/// Model retirement gates births independently of the sampled track, preserving
+/// live motion and the random/remainder history used if emission resumes.
+#[test]
+fn retired_particle_emitters_drain_without_births_or_resetting_history()
+-> Result<(), Box<dyn Error>> {
+    for emitter_type in [1_u8, 2] {
+        let mut bytes = render_m2_bytes("Particle.blp", 1)?;
+        let offset = m2_array_offset(&bytes, 0x128)?;
+        bytes[offset + 0x29] = emitter_type;
+        let mut disabled_bytes = bytes.clone();
+        append_render_track(&mut disabled_bytes, offset + 0x1c8, &[0], &[0], 1)?;
+        let skin = render_skin_bytes()?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "Creature\\Solarity\\Retired.m2",
+                bytes: &bytes,
+            },
+            FixtureFile {
+                path: "Creature\\Solarity\\Retired00.skin",
+                bytes: &skin,
+            },
+            FixtureFile {
+                path: "Creature\\Solarity\\TrackDisabled.m2",
+                bytes: &disabled_bytes,
+            },
+            FixtureFile {
+                path: "Creature\\Solarity\\TrackDisabled00.skin",
+                bytes: &skin,
+            },
+        ])?;
+        let mut assets = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let model = DecodedM2Model::load(
+            &mut assets,
+            &AssetPath::new("Creature\\Solarity\\Retired.m2")?,
+        )?;
+        let disabled_model = DecodedM2Model::load(
+            &mut assets,
+            &AssetPath::new("Creature\\Solarity\\TrackDisabled.m2")?,
+        )?;
+        let emitter = &model.animations().particles()[0];
+        let clock = M2AnimationClock::new(0, 500.0, 0.0);
+        let pose = M2ParticlePose::sample(model.animations(), emitter, clock)?;
+        let disabled_pose = M2ParticlePose::sample(
+            disabled_model.animations(),
+            &disabled_model.animations().particles()[0],
+            clock,
+        )?;
+        assert!(pose.enabled());
+        assert!(!disabled_pose.enabled());
+        let advance = |simulation: &mut M2ParticleSimulation, pose, delta| {
+            if emitter_type == 1 {
+                simulation.advance_planar_bounded(emitter, pose, delta, Mat4::IDENTITY, 1.0)
+            } else {
+                simulation.advance_sphere_bounded(emitter, pose, delta, Mat4::IDENTITY, 1.0)
+            }
+        };
+        let mut simulation = M2ParticleSimulation::new(0x0029_4823);
+        assert_eq!(advance(&mut simulation, pose, 0.07)?.emitted(), 1);
+        let mut authored_gate = simulation.clone();
+        let original = simulation.particles()[0];
+        let remainder = simulation.emission_remainder();
+        assert_ne!(remainder, 0.0);
+        // Several presentations within one native millisecond must not change
+        // the next birth's random history or revisit existing particles.
+        for _ in 0..8 {
+            let report = advance(&mut simulation, pose, 0.0)?;
+            assert_eq!(
+                (report.emitted(), report.deaths(), report.live()),
+                (0, 0, 1)
+            );
+            assert_eq!(simulation.particles(), authored_gate.particles());
+            assert_eq!(simulation.emission_remainder(), remainder);
+        }
+        simulation.set_emission_enabled(false);
+        let report = advance(&mut simulation, pose, 0.1)?;
+        assert_eq!((report.emitted(), report.live()), (0, 1));
+        assert_eq!(simulation.emission_remainder(), remainder);
+        assert!(simulation.particles()[0].age_seconds() > original.age_seconds());
+        assert_ne!(simulation.particles()[0].position(), original.position());
+        advance(&mut authored_gate, disabled_pose, 0.1)?;
+        simulation.set_emission_enabled(true);
+        assert_eq!(
+            advance(&mut simulation, pose, 0.07)?,
+            advance(&mut authored_gate, pose, 0.07)?
+        );
+        assert_eq!(simulation.particles(), authored_gate.particles());
+        assert_eq!(
+            simulation.emission_remainder(),
+            authored_gate.emission_remainder()
+        );
+
+        simulation.set_emission_enabled(false);
+        let live_count = simulation.particles().len();
+        let remainder = simulation.emission_remainder();
+        let report = advance(&mut simulation, pose, 20.0)?;
+        assert_eq!(report.emitted(), 0);
+        assert_eq!(report.deaths(), live_count);
+        assert!(simulation.particles().is_empty());
+        assert_eq!(simulation.emission_remainder(), remainder);
+        simulation.reset();
+        assert_eq!(advance(&mut simulation, pose, 0.1)?.emitted(), 0);
+        assert_eq!(simulation.capacity(), 0);
+        simulation.set_emission_enabled(true);
+        assert!(advance(&mut simulation, pose, 0.1)?.emitted() > 0);
+    }
+    Ok(())
+}
+
 /// `0x0097A390` divides local head axes by one shared X-axis length, retaining
 /// nonuniform proportions. Head and tail lighting use view-transformed world Z.
 #[test]

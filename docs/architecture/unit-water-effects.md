@@ -105,9 +105,23 @@ depth/distance boundaries, clock wraparound, suppression, and scale clamps.
 The opt-in archive test resolves and decodes all five effect models and
 their authored texture dependencies.
 
-Runtime consumption of these requests, mouth/root attachment fallback,
-and CEffect model retirement are still pending. Native completion stops
-emission and retains already-live particles until they expire; the
-generic M2 placement lifetime must support that before these requests are
-published as finished visible effects. The decision and scale fixtures
-do not establish runtime rendering or lifecycle parity.
+The particle simulator now supports CEffect's model-owned emission switch:
+native completion clears emitter runtime bit 2 through `0x008279F0`, while
+already-live particles continue moving and aging. It retains the fractional
+birth count and advances the rate-variation random stream on positive-time
+updates. Zero-length updates leave the live pool and random stream unchanged.
+
+The opt-in runtime test prepares all five models through the shared resident
+M2 loader and shader compiler, samples camera-aware bones, builds particle
+geometry with the shared twinkle table, and drains each emitter after disabling
+births. Inebriated bubbles also contain two mesh draws, so they require the full
+M2 scene path. This test runs without a window; it does not exercise GPU
+submission, unit event timing, attachment placement, or completion callbacks.
+
+Runtime consumption of the unit requests, mouth/root attachment fallback,
+and CEffect model ownership through retirement are still pending. The decision,
+scale, and particle simulation checks do not establish visible runtime or full
+lifecycle parity. The native constructor also starts global-sequence clocks
+at each model's creation tick (`+0x74`), separately from the particle-update
+timestamp (`+0x8C`). Unit effect integration must preserve that origin so a
+new spray starts at its authored burst even after the world has been running.
