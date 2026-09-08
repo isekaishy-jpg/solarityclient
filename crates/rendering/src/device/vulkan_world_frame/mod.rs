@@ -66,6 +66,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) liquid_pipelines: &'a LiquidPipelines,
     pub(in crate::device) ripple_pipeline: &'a PctPipeline,
     pub(in crate::device) underwater_pipeline: &'a PctPipeline,
+    pub(in crate::device) sky_pipeline: &'a PctPipeline,
     pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
     pub(in crate::device) liquid_textures: &'a BlpTextureRegistry,
     pub(in crate::device) maximum_sampler_anisotropy: f32,
@@ -209,6 +210,7 @@ impl WorldFrameRenderer {
             && particle_draws.is_empty()
             && ribbon_draws.is_empty()
             && scene.liquids().is_none_or(|frame| frame.draws().is_empty())
+            && scene.sky().is_none()
         {
             return Err(VulkanError::EmptyWorldFrame);
         }
@@ -306,6 +308,9 @@ impl WorldFrameRenderer {
         let (acquired, wait_write_elapsed, acquire_elapsed) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
+            if let Some(frame) = scene.sky() {
+                slot.sky.write(context.allocator, frame.dome())?;
+            }
             if let Some(frame) = scene.liquids().filter(|frame| !frame.draws().is_empty()) {
                 slot.liquids.ensure(LiquidFrameCreateContext {
                     device: context.device,
@@ -413,6 +418,9 @@ impl WorldFrameRenderer {
             underwater_pipeline: context.underwater_pipeline,
             underwater_resources: &slot.underwater,
             underwater_frame: scene.underwater(),
+            sky_pipeline: context.sky_pipeline,
+            sky_resources: &slot.sky,
+            sky_frame: scene.sky(),
             liquid_draws: scene.liquids().map_or(&[], |frame| frame.draws()),
             liquid_scene_order: scene
                 .liquids()
@@ -483,6 +491,7 @@ impl WorldFrameRenderer {
             ribbon_vertices.len(),
             bone_transforms.len(),
         )
+        .with_sky_draw_count(usize::from(scene.sky().is_some()))
         .with_ripple_draw_count(scene.ripples().map_or(0, |frame| frame.draw_count()))
         .with_underwater_draw_count(scene.underwater().map_or(0, |frame| frame.draw_count())))
     }

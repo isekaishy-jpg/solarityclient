@@ -210,6 +210,7 @@ pub struct VulkanRenderer {
     liquid_pipelines: LiquidPipelines,
     ripple_pipeline: PctPipeline,
     underwater_pipeline: PctPipeline,
+    sky_pipeline: PctPipeline,
     terrain_materials: TerrainMaterialRegistry,
     terrain_pipelines: TerrainPipelineRegistry,
     terrain_frames: TerrainFrameRenderer,
@@ -296,6 +297,7 @@ impl VulkanRenderer {
             liquid_pipelines: LiquidPipelines::default(),
             ripple_pipeline: PctPipeline::default(),
             underwater_pipeline: PctPipeline::default(),
+            sky_pipeline: PctPipeline::default(),
             terrain_retirements: std::collections::VecDeque::new(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -2236,6 +2238,14 @@ impl VulkanRenderer {
                 PctPipelineKind::Underwater,
             )?;
         }
+        if scene.sky().is_some() {
+            self.sky_pipeline.prepare(
+                &self.device,
+                self.color_format,
+                self.depth_format,
+                PctPipelineKind::Sky,
+            )?;
+        }
         let report = self.world_frames.present(
             WorldFrameContext {
                 device: &self.device,
@@ -2258,6 +2268,7 @@ impl VulkanRenderer {
                 liquid_pipelines: &self.liquid_pipelines,
                 ripple_pipeline: &self.ripple_pipeline,
                 underwater_pipeline: &self.underwater_pipeline,
+                sky_pipeline: &self.sky_pipeline,
                 liquid_meshes: &self.liquid_meshes,
                 liquid_textures: &self.blp_textures,
                 maximum_sampler_anisotropy: if self.sampler_anisotropy {
@@ -2605,6 +2616,7 @@ impl Drop for VulkanRenderer {
         self.liquid_pipelines.destroy(&self.device);
         self.ripple_pipeline.destroy(&self.device);
         self.underwater_pipeline.destroy(&self.device);
+        self.sky_pipeline.destroy(&self.device);
         self.world_model_pipelines.destroy(&self.device);
         self.m2_particle_pipelines.destroy(&self.device);
         self.m2_ribbon_pipelines.destroy(&self.device);

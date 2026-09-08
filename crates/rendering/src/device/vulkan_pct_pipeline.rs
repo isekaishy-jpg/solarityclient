@@ -11,6 +11,7 @@ use crate::{UnderwaterParticleVertex, VulkanError};
 pub(in crate::device) enum PctPipelineKind {
     Ripple,
     Underwater,
+    Sky,
 }
 
 /// Renderer-lifetime ownership of one PCT pipeline and descriptor ABI.
@@ -62,6 +63,7 @@ impl PctPipeline {
             .size(match kind {
                 PctPipelineKind::Ripple => 68,
                 PctPipelineKind::Underwater => 96,
+                PctPipelineKind::Sky => 64,
             })];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
@@ -130,8 +132,13 @@ fn create_pipeline(
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&bindings)
         .vertex_attribute_descriptions(&attributes);
-    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
-        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default().topology(
+        if matches!(kind, PctPipelineKind::Sky) {
+            vk::PrimitiveTopology::TRIANGLE_STRIP
+        } else {
+            vk::PrimitiveTopology::TRIANGLE_LIST
+        },
+    );
     let viewport = vk::PipelineViewportStateCreateInfo::default()
         .viewport_count(1)
         .scissor_count(1);
@@ -151,6 +158,7 @@ fn create_pipeline(
     let destination = match kind {
         PctPipelineKind::Ripple => vk::BlendFactor::ONE,
         PctPipelineKind::Underwater => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        PctPipelineKind::Sky => vk::BlendFactor::ONE,
     };
     let attachments = [vk::PipelineColorBlendAttachmentState::default()
         .blend_enable(true)
@@ -240,6 +248,10 @@ impl<'a> ShaderModules<'a> {
             PctPipelineKind::Underwater => (
                 include_bytes!(concat!(env!("OUT_DIR"), "/underwater.vert.spv")),
                 include_bytes!(concat!(env!("OUT_DIR"), "/underwater.frag.spv")),
+            ),
+            PctPipelineKind::Sky => (
+                include_bytes!(concat!(env!("OUT_DIR"), "/sky.vert.spv")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/sky.frag.spv")),
             ),
         };
         let vertex = create(vertex_bytes)?;

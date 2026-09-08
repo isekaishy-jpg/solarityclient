@@ -2,7 +2,7 @@
 
 use crate::{
     LiquidFrame, M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, UnderwaterParticleFrame,
-    WaterRippleFrame, WorldModelSceneUniform,
+    WaterRippleFrame, WorldModelSceneUniform, WorldSkyFrame,
 };
 
 /// One coherent terrain, WMO, M2, and M2-effect scene snapshot for a world frame.
@@ -16,6 +16,7 @@ pub struct WorldFrameScene<'a> {
     liquids: Option<LiquidFrame<'a>>,
     ripples: Option<WaterRippleFrame<'a>>,
     underwater: Option<UnderwaterParticleFrame<'a>>,
+    sky: Option<WorldSkyFrame<'a>>,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -35,7 +36,19 @@ impl<'a> WorldFrameScene<'a> {
             liquids: None,
             ripples: None,
             underwater: None,
+            sky: None,
         }
+    }
+
+    /// Adds the native sky background at the same camera and environment sample.
+    #[must_use]
+    pub const fn with_sky(mut self, frame: WorldSkyFrame<'a>) -> Self {
+        self.sky = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn sky(self) -> Option<WorldSkyFrame<'a>> {
+        self.sky
     }
 
     /// Adds retained liquid draws and the procedural colors sampled for this frame.
@@ -121,6 +134,7 @@ impl<'a> WorldFrameScene<'a> {
 pub struct WorldFrameReport {
     ripple_draw_count: usize,
     underwater_draw_count: usize,
+    sky_draw_count: usize,
     terrain_draw_count: usize,
     liquid_draw_count: usize,
     world_model_draw_count: usize,
@@ -151,6 +165,7 @@ impl WorldFrameReport {
             terrain_draw_count,
             ripple_draw_count: 0,
             underwater_draw_count: 0,
+            sky_draw_count: 0,
             liquid_draw_count,
             world_model_draw_count,
             m2_draw_count,
@@ -161,6 +176,17 @@ impl WorldFrameReport {
             ribbon_vertex_count,
             bone_transform_count,
         }
+    }
+
+    pub(super) const fn with_sky_draw_count(mut self, count: usize) -> Self {
+        self.sky_draw_count = count;
+        self
+    }
+
+    /// Returns the native sky dome submission count (zero or one).
+    #[must_use]
+    pub const fn sky_draw_count(self) -> usize {
+        self.sky_draw_count
     }
 
     pub(super) const fn with_ripple_draw_count(mut self, count: usize) -> Self {

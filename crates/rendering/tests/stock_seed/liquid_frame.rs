@@ -493,6 +493,109 @@ fn underwater_particle_frames_preserve_native_blend_depth_mips_and_slot_reuse()
     Ok(())
 }
 
+/// Native background covers the viewport, follows the camera and yields to world geometry.
+#[test]
+#[allow(unsafe_code)] // SDL transfers the hidden surface to Vulkan ownership.
+fn sky_frames_cover_background_reuse_slots_and_preserve_world_depth() -> Result<(), Box<dyn Error>>
+{
+    use solarity_rendering::{WorldCamera, WorldSkyDome, WorldSkyFrame};
+    let _sdl_test = crate::support::sdl_test_lock();
+    let sdl = sdl3::init()?;
+    let video = sdl.video()?;
+    let window = video
+        .window("Solarity sky frame test", 256, 256)
+        .vulkan()
+        .hidden()
+        .build()?;
+    let bootstrap = VulkanBootstrap::start(&window.vulkan_instance_extensions()?)?;
+    // SAFETY: Bootstrap owns extensions for this live window's surface.
+    let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
+    // SAFETY: The window outlives the renderer, which assumes surface ownership.
+    let mut renderer = unsafe { bootstrap.attach_surface(surface, (256, 256), 0) }?;
+    let white = renderer.upload_stock_m2_white()?;
+    let mesh = renderer.upload_liquid_mesh(&triangle(0.8, [255, 0, 0, 255]), &[0, 1, 2])?;
+    let uniform = LiquidShaderUniform::new(
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        LiquidLighting::new(-Vec3::Z, Vec3::ONE, Vec3::ZERO, Vec3::ZERO),
+        LiquidFog::new(Vec3::new(0., 1., 1.), Vec3::ZERO),
+    );
+    let draws = [renderer.prepare_liquid_draw(mesh, LiquidDrawMaterial::Magma, white, uniform)?];
+    let depth = LiquidDepthTexture::prepare(LiquidDepthTextureKind::River, [0; 2], [0; 2]);
+    let mut dome = WorldSkyDome::new();
+    for (case, (eye, direction)) in [
+        (Vec3::ZERO, Vec3::X),
+        (Vec3::new(12000., -3000., 100.), Vec3::X),
+        (Vec3::ZERO, Vec3::Y),
+        (Vec3::ZERO, Vec3::new(1., 0., 0.75)),
+        (Vec3::ZERO, Vec3::new(1., 0., -0.75)),
+        (Vec3::ZERO, -Vec3::X),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let camera = WorldCamera::stock(eye, eye + direction, Vec3::Z, 777.).frame(1.)?;
+        let rgb = if case % 2 == 0 {
+            [32, 96, 160]
+        } else {
+            [160, 64, 32]
+        };
+        let color = Vec3::from_array(rgb.map(|c| c as f32 / 255.));
+        dome.update_colors([color; 5], color, 0., 0., camera);
+        let mut frame = scene().with_sky(WorldSkyFrame::new(&dome, camera));
+        if case == 4 {
+            frame = frame.with_liquids(LiquidFrame::new(&draws, &depth, &depth, &depth, 0));
+        }
+        renderer.request_frame_capture()?;
+        let report =
+            renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        assert_eq!(report.sky_draw_count(), 1);
+        let capture = renderer
+            .take_captured_frame()?
+            .ok_or("missing sky capture")?;
+        let expected = if case == 4 { [255, 0, 0] } else { rgb };
+        for pixel in capture.rgba8().as_chunks::<4>().0 {
+            for (actual, expected) in pixel[..3].iter().zip(expected) {
+                assert!(
+                    (i32::from(*actual) - expected).abs() <= 1,
+                    "sky case {case}: {pixel:?} expected {expected}"
+                );
+            }
+        }
+    }
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 777.).frame(1.)?;
+    let colors = [
+        [16., 32., 96.],
+        [32., 96., 192.],
+        [64., 128., 224.],
+        [160., 192., 240.],
+        [192., 208., 240.],
+    ]
+    .map(|c| Vec3::from_array(c) / 255.);
+    dome.update_colors(colors, Vec3::new(96., 128., 160.) / 255., 0.5, 0., camera);
+    let frame = scene().with_sky(WorldSkyFrame::new(&dome, camera));
+    renderer.request_frame_capture()?;
+    renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+    let capture = renderer
+        .take_captured_frame()?
+        .ok_or("missing sky gradient capture")?;
+    let top = &capture.rgba8()[128 * 4..128 * 4 + 4];
+    let bottom = &capture.rgba8()[(255 * 256 + 128) * 4..(255 * 256 + 128) * 4 + 4];
+    assert!(top[2] > top[0] + 50, "top sky band is missing: {top:?}");
+    assert_eq!(
+        &bottom[..3],
+        &[96, 128, 160],
+        "lower hemisphere must match fog"
+    );
+    if let Some(path) = std::env::var_os("SOLARITY_SKY_CAPTURE_RGBA") {
+        std::fs::write(path, capture.rgba8())?;
+    }
+    renderer.retire_liquid_meshes(&[mesh])?;
+    Ok(())
+}
+
 /// A full-frame triangle has constant depth UVs away from the river tail/WMO split.
 fn triangle(depth: f32, color: [u8; 4]) -> [LiquidRenderVertex; 3] {
     [[-1.0, -1.0, depth], [3.0, -1.0, depth], [-1.0, 3.0, depth]].map(|position| {

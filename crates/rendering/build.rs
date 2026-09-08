@@ -114,6 +114,14 @@ fn main() {
             &[],
         );
     }
+    for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+        compile(
+            &format!("src/shader/sky_spirv/source/sky.{stage}.glsl"),
+            kind,
+            &output.join(format!("sky.{stage}.spv")),
+            &[],
+        );
+    }
     for unified in 0..=1 {
         for shader in 0..=6 {
             let unified_value = unified.to_string();

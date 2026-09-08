@@ -12,6 +12,7 @@ use crate::device::vulkan_liquid::LiquidFrameResources;
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
 use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::device::vulkan_ripple::RippleFrameResources;
+use crate::device::vulkan_sky::SkyFrameResources;
 use crate::device::vulkan_underwater::UnderwaterFrameResources;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
@@ -160,6 +161,7 @@ pub(super) struct WorldFrameSlot {
     pub(super) liquids: LiquidFrameResources,
     pub(super) ripples: RippleFrameResources,
     pub(super) underwater: UnderwaterFrameResources,
+    pub(super) sky: SkyFrameResources,
     buffer: vk::Buffer,
     buffer_allocation: Option<vk_mem::Allocation>,
     layout: FrameBufferLayout,
@@ -612,6 +614,7 @@ impl WorldFrameSlot {
         self.liquids.destroy(device, allocator);
         self.ripples.destroy(device, allocator);
         self.underwater.destroy(device, allocator);
+        self.sky.destroy(allocator);
         // SAFETY: The caller idles the device before destruction/rebuild.
         unsafe {
             if self.fence != vk::Fence::null() {
@@ -652,6 +655,7 @@ impl WorldFrameSlot {
             liquids: LiquidFrameResources::empty(),
             ripples: RippleFrameResources::empty(),
             underwater: UnderwaterFrameResources::empty(),
+            sky: SkyFrameResources::empty(),
             buffer: vk::Buffer::null(),
             buffer_allocation: None,
             layout,

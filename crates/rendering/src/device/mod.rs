@@ -35,6 +35,7 @@ mod vulkan_renderer;
 mod vulkan_ripple;
 mod vulkan_sampler;
 mod vulkan_selection;
+mod vulkan_sky;
 mod vulkan_terrain_draw;
 mod vulkan_terrain_frame;
 mod vulkan_terrain_material;

@@ -51,3 +51,8 @@ retain the global palette's values. Skybox slots accumulate repeated IDs up
 to one without attenuating earlier slots. This establishes sampling under
 the native default fog mode; camera-distance fog remapping, weather palette
 composition and spatial local-light registration require their own evidence.
+
+The shared palette now also drives the [native sky dome](world-sky.md), including
+the fog-colored lower hemisphere. The Vulkan background and camera-relative
+geometry are present; clouds, celestial and authored skybox layers remain in
+the final lighting stage.

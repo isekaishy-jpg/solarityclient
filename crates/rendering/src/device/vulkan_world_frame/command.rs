@@ -22,6 +22,7 @@ use crate::device::vulkan_m2_texture_set::M2TextureSetRegistry;
 use crate::device::vulkan_mesh::M2MeshRegistry;
 use crate::device::vulkan_pct_pipeline::PctPipeline;
 use crate::device::vulkan_ripple::{RippleFrameResources, WaterRippleFrame};
+use crate::device::vulkan_sky::SkyFrameResources;
 use crate::device::vulkan_terrain_draw::TerrainPreparedDraw;
 use crate::device::vulkan_terrain_mesh::TerrainMeshRegistry;
 use crate::device::vulkan_terrain_pipeline::TerrainPipelineRegistry;
@@ -70,6 +71,9 @@ pub(super) struct RecordContext<'a> {
     pub(super) underwater_pipeline: &'a PctPipeline,
     pub(super) underwater_resources: &'a UnderwaterFrameResources,
     pub(super) underwater_frame: Option<UnderwaterParticleFrame<'a>>,
+    pub(super) sky_pipeline: &'a PctPipeline,
+    pub(super) sky_resources: &'a SkyFrameResources,
+    pub(super) sky_frame: Option<crate::WorldSkyFrame<'a>>,
     pub(super) liquid_draws: &'a [LiquidPreparedDraw],
     pub(super) liquid_scene_order: u32,
     pub(super) world_model_pipelines: &'a WorldModelPipelineRegistry,
@@ -185,6 +189,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
     let mut bindings = WorldCommandBindings::default();
+    record_sky(&context, &mut bindings);
     for draw in context.terrain_draws.iter().copied() {
         record_terrain(&context, draw, &mut bindings)?;
     }
@@ -299,6 +304,39 @@ enum LiquidQueue {
 }
 
 /// Native 790A80 places 79D5E0 directly after the transparent water queue.
+fn record_sky(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) {
+    let Some(frame) = context.sky_frame else {
+        return;
+    };
+    let (pipeline, layout) = context.sky_pipeline.raw();
+    bindings.bind_pipeline(context, pipeline);
+    bindings.bind_vertex(context, context.sky_resources.vertex_buffer());
+    bindings.bind_index(
+        context,
+        context.sky_resources.index_buffer(),
+        vk::IndexType::UINT16,
+    );
+    let matrix = frame.view_projection().to_cols_array();
+    let mut pushes = [0_u8; 64];
+    for (word, value) in pushes.as_chunks_mut::<4>().0.iter_mut().zip(matrix) {
+        *word = value.to_le_bytes();
+    }
+    // SAFETY: The retired slot owns all 122 vertices and six 50-index strips;
+    // the prepared pipeline has the matching 64-byte push range and no sampled inputs.
+    unsafe {
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &pushes,
+        );
+        context
+            .device
+            .cmd_draw_indexed(context.command_buffer, 300, 1, 0, 0, 0);
+    }
+}
+
 fn record_ripples(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) {
     let Some(frame) = context.ripple_frame.filter(|frame| frame.draw_count() != 0) else {
         return;

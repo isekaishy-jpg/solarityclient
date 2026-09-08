@@ -43,6 +43,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     map_id: u32,
     position: Vec3,
     half_minutes: u32,
+    day_fraction: f32,
     view_distance: WorldViewDistance,
     light: WorldLightSample,
     light_direction: Vec3,
@@ -65,6 +66,12 @@ impl RuntimeWorldEnvironmentFrame {
     #[must_use]
     pub const fn half_minutes(self) -> u32 {
         self.half_minutes
+    }
+
+    /// Returns the continuous server-derived day sample used by sky effects.
+    #[must_use]
+    pub const fn day_fraction(self) -> f32 {
+        self.day_fraction
     }
 
     /// Returns the map- and hardware-clamped world viewing distance.
@@ -167,7 +174,8 @@ impl RuntimeWorldEnvironment {
         // 4F8501 uses the camera's followed object's position for light volumes;
         // normal player-follow cameras therefore retain player-space volume weights.
         let position = world.local_player_transform()?.position();
-        let half_minutes = clock.half_minutes();
+        let half_minutes_fraction = clock.half_minutes_fraction();
+        let half_minutes = half_minutes_fraction as u32;
         let view_distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
             self.requested_view_distance,
             map_id,
@@ -180,6 +188,7 @@ impl RuntimeWorldEnvironment {
             map_id: map_id.value(),
             position,
             half_minutes,
+            day_fraction: half_minutes_fraction / 2880.0,
             view_distance,
             light,
             light_direction: exterior_light_direction(half_minutes),

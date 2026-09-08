@@ -39,6 +39,12 @@ impl RealmClock {
         self.half_minutes_after(self.received_at.elapsed())
     }
 
+    /// Returns the continuous cyclic time used by the sky's executable day tables.
+    #[must_use]
+    pub fn half_minutes_fraction(&self) -> f32 {
+        self.half_minutes_fraction_after(self.received_at.elapsed())
+    }
+
     /// Advances the clock by an explicit real duration.
     ///
     /// This pure-duration boundary also lets deterministic systems and external
