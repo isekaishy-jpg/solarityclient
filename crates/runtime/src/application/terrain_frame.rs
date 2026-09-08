@@ -45,6 +45,9 @@ pub enum RuntimeTerrainFrameError {
     /// A current scene light or receiving model has invalid spatial data.
     #[error(transparent)]
     SceneLight(#[from] solarity_rendering::ScenePointLightError),
+    /// Model interior light registration could not resolve its resident geometry.
+    #[error(transparent)]
+    SceneLightRegistration(#[from] super::terrain_coordinator::RuntimeMovementRegistrationError),
     /// An authored liquid scroll rate cannot form a native clock divisor.
     #[error(transparent)]
     LiquidScroll(#[from] solarity_rendering::LiquidScrollError),
@@ -644,8 +647,9 @@ impl TerrainFrame {
     pub(super) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
-        plan: Option<&TerrainTileMeshPlan>,
+        plan: Option<TerrainTileIndex>,
         environment: RuntimeWorldEnvironmentFrame,
+        terrain: &mut super::terrain_coordinator::RuntimeTerrainCoordinator,
         camera: WorldCameraFrame,
         liquid_time_ms: u32,
         camera_submerged: bool,
@@ -667,7 +671,7 @@ impl TerrainFrame {
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
         let mut profile =
             crate::application::frame_profile::RuntimeFrameProfile::new("World scene preparation");
-        match (self.tile, plan.map(TerrainTileMeshPlan::tile)) {
+        match (self.tile, plan) {
             (Some(frame), Some(plan)) if frame != plan => {
                 return Err(RuntimeTerrainFrameError::TileMismatch {
                     frame_x: frame.x(),
@@ -764,6 +768,15 @@ impl TerrainFrame {
                     -environment.light_direction(),
                     light.ambient_color(),
                     light.diffuse_color(),
+                ),
+            )),
+            Some((
+                terrain,
+                solarity_systems::WorldEntityLightEnvironment::new(
+                    light.ambient_color(),
+                    light.diffuse_color(),
+                    -environment.light_direction(),
+                    solarity_asset::exterior_light_ray_at(environment.day_fraction()),
                 ),
             )),
         )?;

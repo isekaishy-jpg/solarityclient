@@ -1197,7 +1197,10 @@ impl ClientServices {
                 &mut self.blizzard_rand.borrow_mut(),
             )?;
         }
-        let plan = self.terrain.resident_mesh_plan();
+        let plan = self
+            .terrain
+            .resident_mesh_plan()
+            .map(solarity_rendering::TerrainTileMeshPlan::tile);
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let specular_enabled = self.glue.cvar_boolean("specular");
         let footstep_bias = self
@@ -1269,6 +1272,7 @@ impl ClientServices {
             &mut self.renderer,
             plan,
             environment,
+            &mut self.terrain,
             camera,
             liquid_time_ms,
             underwater.is_some(),

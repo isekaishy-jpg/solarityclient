@@ -219,39 +219,9 @@ fn fixed_vertex_colors(
     root_flags: u16,
     group: &solarity_asset::DecodedWorldModelGroup,
 ) -> Vec<[u8; 4]> {
-    let mut colors = group
-        .vertex_colors()
-        .first()
-        .cloned()
-        .unwrap_or_else(|| vec![[255; 4]; group.vertices().len()]);
-    // CWmoGroup::Load at 0x007D7CE6 invokes FixColorVertexAlpha at
-    // 0x007D7380 unless MOHD bit 0x8 requests the already-authored values.
-    if root_flags & 0x8 != 0 {
-        return colors;
-    }
-    let transition_count = usize::from(group.batch_counts()[0]);
-    let interior_start = if transition_count != 0 && transition_count <= group.batches().len() {
-        usize::from(group.batches()[transition_count - 1].vertex_range()[1]) + 1
-    } else {
-        0
-    }
-    .min(colors.len());
-    for (index, color) in colors.iter_mut().enumerate() {
-        if index < interior_start {
-            color[0] >>= 1;
-            color[1] >>= 1;
-            color[2] >>= 1;
-            continue;
-        }
-        let alpha = u32::from(color[3]);
-        for channel in &mut color[..3] {
-            let source = u32::from(*channel);
-            // The explicit clamp proves the narrowing conversion is lossless.
-            *channel = ((source + ((source * alpha) >> 6)) >> 1).min(255) as u8;
-        }
-        color[3] = 255;
-    }
-    colors
+    (0..group.vertices().len())
+        .filter_map(|index| group.fixed_vertex_color(root_flags, index))
+        .collect()
 }
 
 const fn bgra(value: [u8; 4]) -> [f32; 4] {

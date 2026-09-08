@@ -3,6 +3,9 @@
 use super::*;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models};
 
+#[path = "interior_scene_lighting.rs"]
+mod interior;
+
 #[test]
 fn directional_reenable_order_matches_native_and_attached_receivers_inherit()
 -> Result<(), Box<dyn Error>> {
@@ -228,6 +231,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
             None,
             None,
             Some((base, exterior)),
+            None,
         )?;
         assert_eq!(
             visible.draws.len(),

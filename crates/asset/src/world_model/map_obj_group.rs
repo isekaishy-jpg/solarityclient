@@ -219,6 +219,40 @@ impl DecodedWorldModelGroup {
         &self.vertex_colors
     }
 
+    /// Returns one BGRA color after native 7D7380's shared render/floor fixup.
+    /// Missing MOCV uses the renderer's opaque-white default.
+    #[must_use]
+    pub fn fixed_vertex_color(&self, root_flags: u16, index: usize) -> Option<[u8; 4]> {
+        if index >= self.vertices.len() {
+            return None;
+        }
+        let mut color = self
+            .vertex_colors
+            .first()
+            .map_or([255; 4], |colors| colors[index]);
+        if root_flags & 8 != 0 {
+            return Some(color);
+        }
+        let transition_count = usize::from(self.batch_counts()[0]);
+        let interior_start = transition_count
+            .checked_sub(1)
+            .and_then(|batch| self.batches.get(batch))
+            .map_or(0, |batch| usize::from(batch.vertex_range()[1]) + 1);
+        if index < interior_start {
+            for channel in &mut color[..3] {
+                *channel >>= 1;
+            }
+        } else {
+            let alpha = u32::from(color[3]);
+            for channel in &mut color[..3] {
+                let source = u32::from(*channel);
+                *channel = ((source + ((source * alpha) >> 6)) >> 1).min(255) as u8;
+            }
+            color[3] = 255;
+        }
+        Some(color)
+    }
+
     /// Returns the direct triangle-list MOVI stream.
     #[must_use]
     pub fn indices(&self) -> &[u16] {

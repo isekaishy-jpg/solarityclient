@@ -325,6 +325,122 @@ impl ResidentTerrainMap {
 }
 
 impl RuntimeTerrainCoordinator {
+    pub(in crate::application) fn model_light_revision(&self) -> u64 {
+        self.active
+            .as_ref()
+            .map_or(0, |active| active.movement.lighting_revision)
+    }
+
+    /// Uses the native Unit/MapObject registration's fallback face for floor color.
+    pub(in crate::application) fn model_floor_light(
+        &mut self,
+        position: Vec3,
+        model: Option<&PlacedM2Collision>,
+        scratch: &mut RuntimeMovementRegistrationQuery,
+    ) -> Result<
+        (bool, Option<solarity_systems::WorldModelFloorLight>),
+        RuntimeMovementRegistrationError,
+    > {
+        let Some(active) = self.active.as_mut() else {
+            return Ok((false, None));
+        };
+        let selection = if let Some(model) = model {
+            scratch.clear();
+            active.register_game_object_movement(model, MovementBspCacheMode::Enabled, scratch)?;
+            let Some(selection) = scratch.selection() else {
+                return Ok((false, None));
+            };
+            selection
+        } else {
+            active.unit_registration(position)?
+        };
+        if !selection
+            .selected()
+            .is_some_and(|candidate| candidate.hit().is_interior())
+        {
+            return Ok((false, None));
+        }
+        let Some(candidate) = selection.fallback().into_iter().flatten().next() else {
+            return Ok((false, None));
+        };
+        let reference = active
+            .movement
+            .roots
+            .iter()
+            .find(|reference| reference.owner() == candidate.owner())
+            .copied()
+            .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
+        let placement = active.registration_root_mut(reference)?;
+        let hit = candidate.hit();
+        let group = placement
+            .model()
+            .groups()
+            .get(hit.group_index())
+            .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
+        let interior = group.flags() & 0x48 == 0;
+        // 7C2A70/7C2E70 reconstruct XY at the entity center. The dominant-axis
+        // interpolation consumes this point; the native Z omits the start bias.
+        let (center, start_z) = model.map_or((position, position.z + 0.1), |model| {
+            let center = model.collision_center();
+            (
+                center,
+                (f64::from(center.z) + 4.)
+                    .min(f64::from(model.render_bounds().maximum().z) + f64::from(0.1_f32))
+                    as f32,
+            )
+        });
+        let point = Vec3::new(
+            center.x,
+            center.y,
+            (f64::from(center.z)
+                - (f64::from(center.z - 1000.) - f64::from(start_z)) * f64::from(hit.fraction()))
+                as f32,
+        );
+        Ok((
+            interior,
+            if interior {
+                placement.sample_group_floor_light(hit.group_index(), hit.face(), point)?
+            } else {
+                None
+            },
+        ))
+    }
+
+    /// MODD remains exterior if any registered group is exterior (7BF7F0).
+    pub(in crate::application) fn doodad_interior_lighting(
+        &mut self,
+        owner: RuntimeWorldModelMovementOwner,
+        doodad_index: usize,
+    ) -> Result<bool, RuntimeMovementRegistrationError> {
+        let Some(active) = self.active.as_mut() else {
+            return Ok(false);
+        };
+        let Some(reference) = active
+            .movement
+            .roots
+            .iter()
+            .find(|root| root.owner() == owner)
+            .copied()
+        else {
+            return Ok(false);
+        };
+        let placement = active.registration_root_mut(reference)?;
+        let mut interior = false;
+        for group in placement.model().groups() {
+            if group
+                .doodad_references()
+                .iter()
+                .any(|&index| usize::from(index) == doodad_index)
+            {
+                if group.flags() & 0x48 != 0 {
+                    return Ok(false);
+                }
+                interior = true;
+            }
+        }
+        Ok(interior)
+    }
+
     /// Resolves 7A1640's WMO tuple from the same floor/portal banks as Unit_C.
     pub(in crate::application) fn unit_world_model_location(
         &mut self,

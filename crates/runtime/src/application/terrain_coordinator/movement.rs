@@ -208,6 +208,7 @@ struct WorldModelReference {
 /// Native append-order MODF registrations, independent of the primary tile.
 #[derive(Default)]
 pub(super) struct ResidentMovementScene {
+    lighting_revision: u64,
     world_models: Vec<WorldModelReference>,
     dynamic: ResidentDynamicMovement,
     roots: Vec<MovementRootReference>,
@@ -283,6 +284,7 @@ impl ResidentMovementReferences {
 impl ResidentTerrainMap {
     /// Reconciles references only when a complete static generation changes.
     pub(super) fn synchronize_movement_owners(&mut self) {
+        self.movement.lighting_revision = self.movement.lighting_revision.wrapping_add(1);
         self.movement.dynamic.invalidate();
         let scenes = self
             .global_world_model

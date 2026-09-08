@@ -80,6 +80,7 @@ pub use light::{
     LightCatalog, LightDefinition, LightParameter, LightSkybox, ModelLightColors, SkyboxBlend,
     WorldFogContext, WorldFogSample, WorldLightCondition, WorldLightQuery, WorldLightSample,
     WorldLightSampleError, exterior_light_direction, exterior_light_direction_at,
+    exterior_light_ray_at,
 };
 pub use liquid_material::{LiquidMaterialCatalog, LiquidMaterialDefinition};
 pub use loading_screen::{LoadingScreenCatalog, LoadingScreenDefinition};

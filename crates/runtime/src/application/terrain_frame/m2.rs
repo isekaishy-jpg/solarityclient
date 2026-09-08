@@ -9,6 +9,7 @@ mod game_object_scene_tests;
 mod unit_effect_model_tests;
 
 mod character_residency;
+mod entity_lighting;
 mod game_objects;
 mod playback;
 mod portrait;
@@ -168,6 +169,7 @@ struct M2GpuPlacement {
     owner: M2GpuPlacementOwner,
     flags: u16,
     color: [u8; 4],
+    entity_lighting: entity_lighting::EntityLighting,
     opacity: f32,
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2PlaybackStorage>,
@@ -880,6 +882,7 @@ impl M2Frame {
             placements: vec![M2GpuPlacement {
                 sound_lifetime: Default::default(),
                 light_lifetime: Default::default(),
+                entity_lighting: Default::default(),
                 placement_valid: true,
                 world_model_state: None,
                 source_index: 0,
@@ -1160,6 +1163,7 @@ impl M2Frame {
             self.placements.push(M2GpuPlacement {
                 sound_lifetime: Default::default(),
                 light_lifetime: Default::default(),
+                entity_lighting: Default::default(),
                 placement_valid: true,
                 source_index,
                 ..placement
@@ -1320,6 +1324,7 @@ impl M2Frame {
             self.placements.push(M2GpuPlacement {
                 sound_lifetime: Default::default(),
                 light_lifetime: Default::default(),
+                entity_lighting: Default::default(),
                 placement_valid: true,
                 source_index,
                 ..placement
@@ -1874,6 +1879,7 @@ impl M2Frame {
             game_objects,
             None,
             None,
+            None,
         )
     }
 
@@ -1911,6 +1917,10 @@ impl M2Frame {
         world_lighting: Option<(
             solarity_rendering::M2SceneUniform,
             solarity_rendering::M2DirectionalLight,
+        )>,
+        mut spatial_lighting: Option<(
+            &mut crate::application::terrain_coordinator::RuntimeTerrainCoordinator,
+            solarity_systems::WorldEntityLightEnvironment,
         )>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         if let Some(game_objects) = game_objects {
@@ -2392,7 +2402,7 @@ impl M2Frame {
                 )?;
                 self.scene_lighting.publish(
                     placement.light_lifetime.get_or_init(|| Rc::new(())),
-                    placement_color(placement.color).w * placement.opacity,
+                    placement_mesh_color(placement.owner, placement.color).w * placement.opacity,
                 )?;
             }
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
@@ -2497,10 +2507,27 @@ impl M2Frame {
                 // 831AF0 queries matrix F4's translation at +124 with radius
                 // zero. Authored mesh bounds do not move the lighting center.
                 let center = placement.transform.w_axis.truncate();
-                Some(self.scene_lighting.receiver(
+                let parent = self.placement_visibility.light_parent(placement_index);
+                let callback = if parent.is_none()
+                    && let Some((terrain, environment)) = spatial_lighting.as_mut()
+                {
+                    placement.entity_lighting.sample(
+                        placement.owner,
+                        &source.model,
+                        placement.transform,
+                        placement.color,
+                        animation_time_ms,
+                        terrain,
+                        *environment,
+                    )?
+                } else {
+                    None
+                };
+                Some(self.scene_lighting.receiver_with_light(
                     placement_index,
-                    self.placement_visibility.light_parent(placement_index),
+                    parent,
                     center,
+                    callback,
                 )?)
             } else {
                 None
@@ -2642,7 +2669,8 @@ impl M2Frame {
                         camera,
                         particle_to_world,
                         inherited_scale,
-                        placement_color(placement.color).w * placement.opacity,
+                        placement_mesh_color(placement.owner, placement.color).w
+                            * placement.opacity,
                         &self.particle_twinkle,
                         placement.particle_colors.as_ref(),
                         &mut self.particle_sort_indices,
@@ -2699,7 +2727,7 @@ impl M2Frame {
             )?;
             self.bone_transforms
                 .extend_from_slice(bone_pose.transforms());
-            let mut instance_color = placement_color(placement.color);
+            let mut instance_color = placement_mesh_color(placement.owner, placement.color);
             if let Some(animation) = &placement.unit_animation {
                 instance_color *= placement_color(animation.model_color().to_le_bytes());
             }
@@ -3319,6 +3347,7 @@ fn m2_gpu_placement(
     Ok(M2GpuPlacement {
         sound_lifetime: Default::default(),
         light_lifetime: Default::default(),
+        entity_lighting: Default::default(),
         placement_valid: true,
         world_model_state: None,
         source_index,
@@ -3457,6 +3486,14 @@ fn section_distance_key(
 }
 
 /// Converts MODD's BGRA bytes to shader RGBA; MDDF already stores white.
+fn placement_mesh_color(owner: M2GpuPlacementOwner, color: [u8; 4]) -> glam::Vec4 {
+    if entity_lighting::is_doodad(owner) {
+        glam::Vec4::ONE
+    } else {
+        placement_color(color)
+    }
+}
+
 fn placement_color(color: [u8; 4]) -> glam::Vec4 {
     const BYTE_TO_UNIT: f32 = 1.0 / 255.0;
     glam::Vec4::new(

@@ -13,7 +13,7 @@ mod status;
 mod types;
 
 pub use catalog::LightCatalog;
-pub use direction::{exterior_light_direction, exterior_light_direction_at};
+pub use direction::{exterior_light_direction, exterior_light_direction_at, exterior_light_ray_at};
 pub use fog::{WorldFogContext, WorldFogSample};
 pub use status::WorldLightSampleError;
 pub use types::{

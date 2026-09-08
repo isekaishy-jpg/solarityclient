@@ -18,6 +18,13 @@ pub fn exterior_light_direction(half_minutes: u32) -> Vec3 {
 /// Samples the continuous native day table shared with the sky ephemeris.
 #[must_use]
 pub fn exterior_light_direction_at(day_fraction: f32) -> Vec3 {
+    -exterior_light_ray_at(day_fraction).normalize()
+}
+
+/// Returns 7EEA90's stored ray before scene-light normalization.
+/// Interior entity callbacks blend this raw palette direction before normalizing.
+#[must_use]
+pub fn exterior_light_ray_at(day_fraction: f32) -> Vec3 {
     const THETA: f32 = 3.926_991;
     let phi = directional_phi(day_fraction);
     let sin_phi = stock_periodic_approximation(phi * INVERSE_PI - 0.5);
@@ -26,7 +33,7 @@ pub fn exterior_light_direction_at(day_fraction: f32) -> Vec3 {
     let cos_theta = stock_periodic_approximation(THETA * INVERSE_PI);
     // Stock shaders negate their stored ray before N.L. The shared contract
     // stores surface-to-light and performs that conversion exactly once.
-    Vec3::new(-sin_phi * cos_theta, -sin_phi * sin_theta, -cos_phi).normalize()
+    Vec3::new(sin_phi * cos_theta, sin_phi * sin_theta, cos_phi)
 }
 
 /// Reproduces the small cubic periodic approximation in the native sky path.

@@ -141,6 +141,7 @@ pub(super) fn static_gpu_placement(
     Ok(M2GpuPlacement {
         sound_lifetime: Default::default(),
         light_lifetime: Default::default(),
+        entity_lighting: Default::default(),
         placement_valid: true,
         world_model_state: None,
         source_index,

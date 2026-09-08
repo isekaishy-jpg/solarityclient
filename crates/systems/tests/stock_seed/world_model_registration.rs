@@ -282,6 +282,95 @@ fn scene_floor_fixture(flag: u8, height: f32) -> (Vec<u8>, Vec<u8>) {
 }
 
 #[test]
+fn placed_floor_light_uses_decoded_colors_face_fallback_and_current_transform()
+-> Result<(), Box<dyn Error>> {
+    let records = include_bytes!("../fixtures/world_model_floor_light_native.bin")
+        .as_chunks::<92>()
+        .0;
+    let transforms = [
+        Mat4::IDENTITY,
+        Mat4::from_translation(Vec3::new(40., -20., 10.)),
+        Mat4::from_cols_array(&[
+            0., -2., 0., 0., 2., 0., 0., 0., 0., 0., 2., 0., -20., 40., -10., 1.,
+        ]),
+    ];
+    for flags in [0u16, 2] {
+        let (mut root, mut group) = scene_floor_fixture(9, 0.);
+        let root_header = chunk_data_mut(&mut root, *b"DHOM");
+        word(root_header, 28, 0x743b2511);
+        short(root_header, 60, flags | 8);
+        word(chunk_data_mut(&mut group, *b"PGOM"), 8, 1);
+        let vertices = chunk_data_mut(&mut group[88..], *b"TVOM");
+        for (index, point) in [[0., 0., 0.], [4., 0., 0.], [0., 4., 0.]]
+            .into_iter()
+            .enumerate()
+        {
+            vector(vertices, index * 12, point);
+        }
+        chunk(
+            &mut group,
+            *b"VCOM",
+            &[0xff102030u32, 0x40205070, 0x8090a0b0]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        let group_length = group.len() as u32 - 20;
+        word(&mut group, 16, group_length);
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "World\\FloorLight.wmo",
+                bytes: &root,
+            },
+            FixtureFile {
+                path: "World\\FloorLight_000.wmo",
+                bytes: &group,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let model = Arc::new(DecodedWorldModel::load(
+            &mut store,
+            &AssetPath::new("World\\FloorLight.wmo")?,
+        )?);
+        for transform in transforms {
+            let placement =
+                PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), transform)?;
+            for point in 0..8 {
+                for fallback in 0..2 {
+                    let record = records[point * 12 + usize::from(flags != 0) * 6 + 2 + fallback];
+                    let words: Vec<_> = record
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|word| u32::from_le_bytes(*word))
+                        .collect();
+                    let position = Vec3::from_array(std::array::from_fn(|axis| {
+                        f32::from_bits(words[9 + axis])
+                    }));
+                    let sample = placement
+                        .sample_group_floor_light(
+                            0,
+                            (fallback == 0).then_some(0),
+                            transform.transform_point3(position),
+                        )?
+                        .ok_or("interior floor light")?;
+                    assert_eq!(sample.color(), words[19].to_le_bytes());
+                    assert_eq!(sample.blends_exterior(), fallback == 0);
+                    assert_eq!(
+                        sample.split(),
+                        [words[20].to_le_bytes(), words[21].to_le_bytes()]
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn floor_probe_rejects_selected_cycles_invalid_axes_and_negative_children()
 -> Result<(), Box<dyn Error>> {
     for variant in 0..3 {

@@ -8,6 +8,11 @@ mod calendar;
 mod camera;
 mod character;
 mod collision;
+mod world_entity_lighting;
+
+pub use world_entity_lighting::{
+    WorldEntityLightEnvironment, WorldEntityLightSample, WorldEntityLightState,
+};
 mod combat;
 mod currency;
 mod dance;
@@ -96,8 +101,8 @@ pub use collision::{
     TerrainCollisionHit, TerrainCollisionMesh, TerrainLiquidError, TerrainLiquidMesh,
     TerrainLiquidSample, TerrainRegistrationPoint, WorldModelCameraRegistration,
     WorldModelCameraRegistrationQuery, WorldModelCollisionError, WorldModelCollisionScene,
-    WorldModelFloorHit, WorldModelFloorHits, WorldModelFogEnvironment, WorldModelLiquidError,
-    WorldModelLiquidSample, WorldModelLiquidScene, WorldModelPortalHit,
+    WorldModelFloorHit, WorldModelFloorHits, WorldModelFloorLight, WorldModelFogEnvironment,
+    WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene, WorldModelPortalHit,
     WorldModelRegistrationCandidate, WorldModelRegistrationHit, WorldModelRegistrationHits,
     WorldModelRegistrationKind, WorldModelRegistrationQuery, WorldModelRegistrationSelection,
     append_terrain_liquid_movement, probe_world_model_portals,

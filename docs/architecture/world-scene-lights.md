@@ -24,7 +24,7 @@ without conflating replacement instances or moving placement storage.
 `831AF0` queries the translation at matrix `F4 + 30 = 124`, with zero radius.
 It does not query the authored mesh bounding-sphere center. Attached models
 inherit their parent's query through the same cached hierarchy used for pose
-and transparency inheritance. The world callback adds the exterior directional
+and transparency inheritance. The world callback adds the owner's directional
 contribution, then `SetupSunlight` produces slot zero. Up to three selected point
 lights occupy the remaining slots. The separate base ambient/diffuse terms are
 zero in these world uniforms to avoid adding the sun twice.
@@ -46,6 +46,34 @@ not run M2's merged-sun finalizer. Interior WMO water supplies its private sun
 before scene-light collection. The runtime builds liquid packets after all M2
 sources have published.
 
+## Interior model lighting
+
+Units and ordinary M2 GameObjects use the existing native spatial-registration
+banks to select their interior group and fallback floor face. `7C7FE0` samples
+the face's corrected MOCV values in the current WMO transform. Its dominant-axis
+barycentric calculation, fixed integer weights, boundary redistribution and
+MOHD ambient addition are preserved. Missing faces use root ambient; missing
+MOCV preserves the previous light targets. Rendering and floor sampling share
+the same decoded vertex-color correction.
+
+`7A0D60` splits the floor color into diffuse/ambient targets with the original
+168/96 thresholds. MOPY's daylight flag blends those targets using floor alpha.
+Each owner retains `7A1E90`'s ambient and intensity transition state; `7C1730`
+supplies its current colors and interior ray, including the alpha blend toward
+the raw daylight ray. Spatial samples are reused until the placement transform
+or resident WMO generation changes. Attached models inherit this callback along
+with their parent's scene-light query.
+
+WMO doodads instead use MODD's 112/96 split and immediate interior lighting.
+Any exterior group reference keeps a doodad exterior (`7BF7F0`). MODD color is
+lighting data: it does not tint the mesh or make it transparent through alpha.
+Static and replicated WMO owners both use the current registered root.
+
+The pinned `7B5D00` initializer clears every placed MOLT light slot; the traced
+`7BDE50` path constructs groups rather than populating those slots. This work
+does not synthesize runtime point lights from MOLT records. Animated M2 sources
+continue to use the independently verified graphics-scene publication path.
+
 ## Evidence and remaining work
 
 - `scene_point_light_oracle.py`: 468 original publication/query captures,
@@ -58,11 +86,16 @@ sources have published.
 - Runtime coverage: offscreen bone-animated sources affect two independent
   receivers and disappear when visibility changes; attached receivers inherit
   the parent query; directional re-enable order matches original linked lists.
+- `world_model_floor_light_oracle.py`: 768 native interpolation/split captures,
+  plus 96 decoded placement cases covering transforms and absent floor faces.
+- `world_entity_light_oracle.py`: 432 native transition and callback captures.
+- `world_entity_floor_target_oracle.py`: 384 native daylight target blends and
+  MODD splits, including alpha endpoints and random packed colors.
+- A decoded WDT/WMO/MODD runtime fixture verifies distinct creature/doodad GPU
+  uniforms, the retained ambient transition and MODD mesh-color handling.
 
-This covers graphics-scene M2 source publication and its model/water consumers.
-It does not establish complete interior entity lighting: MOLT/spatial light
-registration, baked floor-light sampling and `7C1730`'s per-entity ambient,
-diffuse and shadow-plane callbacks still need their own retained world state
-and native coverage. World models currently receive the exterior callback
-colors at this boundary. Camera fog and sky have separate coverage in
+This covers graphics-scene M2 source publication, model/water consumers and
+the ordinary entity/doodad color callbacks. It does not establish the separate
+`7C10C0` projected shadow plane, the terrain-shadow intensity gate in `7A1BC0`,
+or every specialized map-entity callback. Camera fog and sky have separate coverage in
 [world fog](world-fog.md) and [world sky](world-sky.md).

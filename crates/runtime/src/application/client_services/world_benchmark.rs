@@ -337,8 +337,11 @@ impl ClientServices {
         frame
             .present(
                 &mut self.renderer,
-                self.terrain.resident_mesh_plan(),
+                self.terrain
+                    .resident_mesh_plan()
+                    .map(solarity_rendering::TerrainTileMeshPlan::tile),
                 environment,
+                &mut self.terrain,
                 camera,
                 sdl3::timer::ticks() as u32,
                 underwater.is_some(),

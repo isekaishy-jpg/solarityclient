@@ -26,6 +26,8 @@ pub(super) struct SceneLighting {
     retained_directionals: Vec<RetainedDirectional>,
     centers: Vec<Vec3>,
     placement_centers: Vec<Option<Vec3>>,
+    receiver_lights: Vec<Option<M2DirectionalLight>>,
+    placement_lights: Vec<Option<M2DirectionalLight>>,
 }
 
 impl SceneLighting {
@@ -42,6 +44,8 @@ impl SceneLighting {
         }
         self.centers.clear();
         self.placement_centers.clear();
+        self.receiver_lights.clear();
+        self.placement_lights.clear();
     }
 
     pub fn publish(
@@ -81,17 +85,34 @@ impl SceneLighting {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn receiver(
         &mut self,
         placement_index: usize,
         parent: Option<usize>,
         center: Vec3,
     ) -> Result<u32, RuntimeTerrainFrameError> {
+        self.receiver_with_light(placement_index, parent, center, None)
+    }
+
+    pub fn receiver_with_light(
+        &mut self,
+        placement_index: usize,
+        parent: Option<usize>,
+        center: Vec3,
+        light: Option<M2DirectionalLight>,
+    ) -> Result<u32, RuntimeTerrainFrameError> {
         let center = parent
             .and_then(|index| self.placement_centers.get(index).copied().flatten())
             .unwrap_or(center);
         self.placement_centers.resize(placement_index + 1, None);
         self.placement_centers[placement_index] = Some(center);
+        let light = parent
+            .and_then(|index| self.placement_lights.get(index).copied().flatten())
+            .or(light);
+        self.placement_lights.resize(placement_index + 1, None);
+        self.placement_lights[placement_index] = light;
+        self.receiver_lights.push(light);
         let index = u32::try_from(self.centers.len())
             .map_err(|_| solarity_rendering::VulkanError::WorldFrameCapacity)?;
         self.centers.push(center);
@@ -112,8 +133,11 @@ impl SceneLighting {
                 .map(|entry| entry.light),
         );
         self.directional.push(exterior);
-        let sunlight = merge_wotlk_directional_lights(&self.directional);
-        for center in &self.centers {
+        for (center, light) in self.centers.iter().zip(&self.receiver_lights) {
+            if let Some(last) = self.directional.last_mut() {
+                *last = light.unwrap_or(exterior);
+            }
+            let sunlight = merge_wotlk_directional_lights(&self.directional);
             let mut lights = [M2LocalLightState::disabled(); 4];
             if let Some(sunlight) = sunlight {
                 lights[0] = sunlight.local_light_state();
