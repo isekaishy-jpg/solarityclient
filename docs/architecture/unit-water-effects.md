@@ -1,4 +1,4 @@
-# Unit water notifications
+# Unit water effects
 
 Build 12340's `0x00730D10` evaluates registered surface depth after unit position
 publication. Its immediate unit state and splash notifications are independent
@@ -41,3 +41,73 @@ through a real WDBC table. The opt-in archive audio test decodes and mixes the
 race-authored splash in both character and camera listener modes, checking its
 entry and exact position alongside the existing jump, land, foley, and footstep
 callbacks.
+
+## Authored breath and foot-contact models
+
+`SpellVisualEffectCatalog` loads the seven fields of
+`SpellVisualEffectName.dbc`: identifier, name, model, area-effect size, scale,
+minimum scale, and maximum scale. CEffect initialization at `0x006F7520`
+matches names case-sensitively and lets the last physical matching row win.
+The identifier is data, not a hardcoded model choice. The installed table
+also contains unused absolute developer export paths; the catalog retains
+their names and validates archive-relative paths only when requested.
+
+The relevant native slots are:
+
+| Slot | Exact name after `HARDCODED ` | Attachment |
+| --- | --- | --- |
+| 0 | Footstep Water Run Spray | Positioned |
+| 1 | Footstep Water Walk Spray | Positioned |
+| 2 | Breath Underwater | 17, falling back to 19 if missing |
+| 3 | Breath Cold | 17, falling back to 19 if missing |
+| 7 | Inebriated Bubbles | 17, falling back to 19 if missing |
+
+`UnitBreathState` implements `0x0071FA90` and the `$BTH` branch of
+`0x00732650`. It refreshes on unit registration and on the signed, wrapping
+ten-second deadline checked by `0x0073DAB0`, before position/model updates.
+The scaled model-height product first spills to float. Underwater breath
+requires **scaled height + 5.0 < liquid surface - unit origin Z**; 5.0 is
+the actual constant at `0x009EBF34`. Otherwise the registration's cold-area
+flag selects cold breath. Camera immersion and movement swimming flags do
+not replace this retained unit state. An authored `$BTH` event emits only
+with a model row whose flags bit 1 is clear and object-manager context mode other than
+one. For a player, inebriation at least 0.5 takes precedence over either
+environment effect. `0x004F7290` compares actual and fake inebriation as
+signed values, caps the percentage at 100, and multiplies by the original
+0.01 float constant without spilling its return. Consequently a percentage
+of 50 is slightly below 0.5; bubble selection begins at 51. The helper
+`unit_player_inebriation` retains that precision.
+
+`UnitWaterSprayInput` implements the liquid branch of `0x00723A50`.
+Mounted, transported, hovering, ghost, or non-colliding flight units are
+rejected, as are backward movement, model flags bit 0, and disabled
+`showfootprintparticles`. The authored foot must be within 25 units of the
+camera. The liquid identifier must be nonzero and registered depth must
+be strictly below half the retained model height. The position is foot
+X/Y and **foot Z + registered depth**, preserving the animation offset.
+`0x00716FA0` selects slot zero at or below twice walk speed and slot one
+above it, despite the apparently reversed authored Run/Walk names.
+
+`UnitEffectScale` preserves the separate placement paths. Positioned
+effects (`0x006F8AE0`) use `0x006F7950`'s horizontal model extent, the
+CreatureModelData world-effect scale, and owner scale before the authored
+clamp. A nonpositive final positioned scale falls back to one. Attached
+effects (`0x006F8C50`) first spill the product of CreatureModelData's
+attached-effect scale and the authored multiplier, then clamp its product
+with the animated attachment scale by correcting the *local* multiplier.
+Near-zero attached products skip division; that path does not introduce
+the positioned fallback. Area-effect size is independent of these scales.
+
+The original-instruction fixtures contain 1,380 breath/spray decisions and
+384 scale cases. They execute the fingerprinted build-12340 routines with
+controlled registration, camera, model, and factory providers, including
+depth/distance boundaries, clock wraparound, suppression, and scale clamps.
+The opt-in archive test resolves and decodes all five effect models and
+their authored texture dependencies.
+
+Runtime consumption of these requests, mouth/root attachment fallback,
+and CEffect model retirement are still pending. Native completion stops
+emission and retains already-live particles until they expire; the
+generic M2 placement lifetime must support that before these requests are
+published as finished visible effects. The decision and scale fixtures
+do not establish runtime rendering or lifecycle parity.

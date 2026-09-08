@@ -42,6 +42,9 @@ mod vehicle;
 mod water_ripple;
 mod world;
 
+pub use effect::{UnitBreathEnvironment, UnitBreathState, UnitWaterEffect, UnitWaterSprayInput};
+pub use effect::{UnitEffectScale, unit_player_inebriation, unit_world_effect_factor};
+
 pub use water_ripple::{
     WaterRipple, WaterRippleClock, WaterRippleEmission, WaterRippleEnvelope,
     WaterRippleEnvelopeError, WaterRippleError, WaterRippleOwner, WaterRipplePool, WaterRippleUnit,

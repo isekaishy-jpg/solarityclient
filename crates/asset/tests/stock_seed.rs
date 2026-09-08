@@ -22,6 +22,8 @@ mod database_game_object;
 mod database_movement_sound;
 #[path = "stock_seed/database_sound_environment.rs"]
 mod database_sound_environment;
+#[path = "stock_seed/database_spell_visual_effect.rs"]
+mod database_spell_visual_effect;
 #[path = "stock_seed/database_transport.rs"]
 mod database_transport;
 #[path = "stock_seed/database_ui_sound.rs"]

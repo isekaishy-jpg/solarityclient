@@ -4,4 +4,12 @@
 //! responsibility cluster. Renderer synchronization is emitted through a
 //! boundary rather than mutating rendering internals.
 
+mod model_scale;
 mod object_effect;
+mod unit_water;
+
+pub use model_scale::{UnitEffectScale, unit_world_effect_factor};
+pub use unit_water::{
+    UnitBreathEnvironment, UnitBreathState, UnitWaterEffect, UnitWaterSprayInput,
+    unit_player_inebriation,
+};
