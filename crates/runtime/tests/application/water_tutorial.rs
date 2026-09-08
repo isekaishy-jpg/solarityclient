@@ -12,6 +12,11 @@ use crate::application::gameplay_coordinator::player_ui::{
 };
 use crate::test_network::{TestError, WorldServer};
 
+thread_local! { static STOCK_NOW: std::cell::Cell<u32> = const { std::cell::Cell::new(1000) }; }
+fn stock_now() -> u32 {
+    STOCK_NOW.get()
+}
+
 #[test]
 fn water_tutorial_combat_lockdown_matches_original_callbacks()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -102,7 +107,9 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         ClientDataRoot::new(root)?,
         Locale::EnUs,
     )?)?;
-    let environment = UiScriptEnvironment::new(1920, 1080, false)?;
+    STOCK_NOW.set(1000);
+    let environment = UiScriptEnvironment::new(1920, 1080, false)?
+        .with_client_clock(solarity_ui::UiClientClock::from_source(stock_now));
     let world = environment.world_state();
     world.enter_player(UiPlayerState::new(0));
     world.set_player_guid(1);
@@ -182,6 +189,73 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
     assert!(!world.tutorials().is_flagged(28));
     assert_eq!(world.tutorials().pending_action(), None);
     manager.update(1.0 / 60.0)?;
+    let mut active = solarity_ecs::ActiveWorld::enter(solarity_ecs::WorldBootstrap::new(
+        solarity_ecs::WorldMapId::new(0),
+        1,
+        "WaterTutorialTest",
+        glam::Vec3::ZERO,
+        0.0,
+    ));
+    active.create_object(
+        1,
+        solarity_ecs::ObjectKind::Player,
+        None,
+        [(24, 100), (32, 100)],
+    )?;
+    let mut state = RuntimePlayerUiState::default();
+    for (kind, amount, absorbed, resisted) in [
+        (1, 20, 0, 0),
+        (0, 20, 0, 0),
+        (3, 5, 0, 0),
+        (4, 5, 0, 0),
+        (1, 0, 10, 0),
+        (1, 0, 0, 10),
+    ] {
+        STOCK_NOW.set(1000);
+        state.receive_environmental_damage(
+            &mut active,
+            solarity_network::WorldEnvironmentalDamage {
+                guid: 1,
+                kind,
+                amount,
+                absorbed,
+                resisted,
+            },
+            Some("WaterTutorialTest".into()),
+            None,
+            1000,
+        );
+        while let Some(notification) = state.take_notification() {
+            match notification {
+                RuntimePlayerUiNotification::Health {
+                    snapshot,
+                    health_changed,
+                    maximum_changed,
+                } => super::dispatch_health(
+                    &mut manager,
+                    &world,
+                    snapshot,
+                    health_changed,
+                    maximum_changed,
+                )?,
+                RuntimePlayerUiNotification::EnvironmentalDamage(impact) => {
+                    super::super::environmental_damage::dispatch_environmental_damage(
+                        &mut manager,
+                        impact,
+                    )?
+                }
+                _ => return Err("unexpected damage notification".into()),
+            }
+        }
+        assert_eq!(manager.region_is_shown("PlayerHitIndicator"), Some(true));
+        STOCK_NOW.set(1200);
+        manager.update(0.2)?;
+        assert_eq!(manager.region_is_shown("PlayerHitIndicator"), Some(true));
+        assert!(manager.take_callback_failure().is_none());
+        STOCK_NOW.set(2201);
+        manager.update(1.001)?;
+        assert_eq!(manager.region_is_shown("PlayerHitIndicator"), Some(false));
+    }
     assert!(manager.take_callback_failure().is_none());
     Ok(())
 }
@@ -232,6 +306,7 @@ fn water_tutorials_preserve_server_order_native_callbacks_and_wire_acknowledgeme
         while let Some(notification)=state.take_notification() {
             match notification {
                 RuntimePlayerUiNotification::Combat(in_combat) => manager.player_combat_changed(in_combat)?,
+                RuntimePlayerUiNotification::EnvironmentalDamage(impact) => super::super::environmental_damage::dispatch_environmental_damage(&mut manager,impact)?,
                 RuntimePlayerUiNotification::Health {snapshot,health_changed,maximum_changed} => super::dispatch_health(&mut manager,&world,snapshot,health_changed,maximum_changed)?,
                 RuntimePlayerUiNotification::TutorialFlags(flags) => tutorials.replace_flags(&flags),
                 RuntimePlayerUiNotification::MirrorTimer(timer) => super::dispatch_notification(&mut manager,&world,&names,timer)?,

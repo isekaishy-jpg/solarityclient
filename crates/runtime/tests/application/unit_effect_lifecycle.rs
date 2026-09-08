@@ -83,7 +83,11 @@ fn completion_uses_authored_despawn_or_pins_the_terminal_pose() -> Result<(), Bo
         placement.unit_effect = Some(UnitEffectPlacement {
             identity: world.object_identity(1).ok_or("unit identity")?,
             lifetime: Rc::downgrade(&lifetime),
-            kind: UnitWaterEffect::RunSpray,
+            kind: UnitWaterEffect::RunSpray.into(),
+            kit: None,
+            sound_entry: 0,
+            definition_id: 1,
+            sound_lifetime: None,
             binding: UnitEffectBinding::Positioned {
                 position: Vec3::ZERO,
                 world_factor: 1.,

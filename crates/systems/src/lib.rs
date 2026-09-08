@@ -42,10 +42,16 @@ mod vehicle;
 mod water_ripple;
 mod world;
 
-pub use combat::predict_unit_health;
+pub use combat::{
+    CombatLogObjectClassification, combat_log_object_flags, faction_template_reaction,
+    is_player_guid,
+};
+pub use combat::{EnvironmentalDamageKind, predict_unit_health};
 
 pub use effect::{UnitBreathEnvironment, UnitBreathState, UnitWaterEffect, UnitWaterSprayInput};
-pub use effect::{UnitEffectScale, unit_player_inebriation, unit_world_effect_factor};
+pub use effect::{
+    UnitEffectScale, UnitModelTint, unit_player_inebriation, unit_world_effect_factor,
+};
 
 pub use water_ripple::{
     WaterRipple, WaterRippleClock, WaterRippleEmission, WaterRippleEnvelope,

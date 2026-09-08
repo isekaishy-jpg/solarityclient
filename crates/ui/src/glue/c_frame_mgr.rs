@@ -24,6 +24,7 @@ pub struct FrameManager {
     movement_input: crate::script::UiMovementInput,
     tutorials: crate::UiTutorialState,
     world: crate::UiWorldState,
+    combat_log: crate::UiCombatLogState,
     media_intent: Rc<RefCell<crate::UiGlueMediaIntent>>,
 }
 
@@ -104,6 +105,7 @@ impl FrameManager {
         let movement_input = environment.movement_input();
         let tutorials = environment.world_state().tutorials();
         let world = environment.world_state();
+        let combat_log = environment.combat_log_state();
         let media_intent = environment.media_intent();
         let owner = GlueManager::start_shared_frame(assets, environment)?;
         let mut binding_functions = HashMap::new();
@@ -131,6 +133,7 @@ impl FrameManager {
             movement_input,
             tutorials,
             world,
+            combat_log,
             media_intent,
         })
     }
@@ -348,6 +351,12 @@ impl FrameManager {
         entry: crate::UiCombatLogEntry,
     ) -> Result<(), UiEventError> {
         self.owner.append_combat_log(entry)
+    }
+
+    /// Returns the GUID retained by the stock combat-text unit selector.
+    #[must_use]
+    pub fn active_combat_text_unit(&self) -> Option<u64> {
+        self.combat_log.active_text_unit()
     }
 
     /// Advances visible FrameXML `OnUpdate` handlers.

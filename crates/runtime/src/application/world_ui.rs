@@ -19,6 +19,7 @@ use super::player_coordinator::{ResidentPlayerFrameInput, UnitPresentationGenera
 use super::terrain_frame::TerrainFrame;
 use crate::time::RealmClock;
 
+mod environmental_damage;
 mod minimap;
 mod mirror_timer;
 use minimap::RuntimeMinimapScene;

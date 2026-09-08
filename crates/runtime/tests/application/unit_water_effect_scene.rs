@@ -7,17 +7,128 @@ use super::*;
 use solarity_systems::UnitWaterEffect;
 
 #[test]
+#[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
+fn environmental_packets_select_live_unit_kits_and_reject_replaced_units()
+-> Result<(), Box<dyn Error>> {
+    use crate::application::terrain_frame::m2::unit_effects::UnitEffectResource;
+    use crate::application::{
+        gameplay_coordinator::player_ui::RuntimePlayerUiState, unit_effects::RuntimeUnitEffects,
+    };
+    let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
+    let archive = ArchiveCatalog::discover(ClientDataRoot::new(root)?, Locale::EnUs)?;
+    let catalog = Arc::new(solarity_asset::EnvironmentalDamageCatalog::load(
+        &mut AssetStore::mount(archive.clone())?,
+    )?);
+    let fixture = crate::test_support::unit_models::fixture_with_water_effects(17)?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
+    presentation.synchronize_creatures(Some(&world))?;
+    let mut effects = RuntimeUnitEffects::new(archive, Arc::clone(&catalog));
+    effects.synchronize_world(Some(&world));
+    let mut ui = RuntimePlayerUiState::default();
+    for kind in 0..6 {
+        effects.synchronize_world(Some(&world));
+        // Even a zero-damage packet still invokes the visual kit.
+        ui.receive_environmental_damage(
+            &mut world,
+            solarity_network::WorldEnvironmentalDamage {
+                guid: 30,
+                kind,
+                amount: 0,
+                absorbed: 0,
+                resisted: 0,
+            },
+            Some("Effect target".into()),
+            None,
+            1000,
+        );
+        assert!(ui.take_notification().is_none());
+        let impact = ui.take_environmental_impact().ok_or("impact")?;
+        let requests = effects.environmental_impact(
+            &impact,
+            &world,
+            &presentation,
+            presentation.sound_catalogs().0,
+        );
+        let kit = catalog.visual_kit(kind).ok_or("kit")?;
+        assert_eq!(requests.len(), kit.effects().count());
+        for (index, (request, (attachment, id))) in requests.iter().zip(kit.effects()).enumerate() {
+            assert_eq!(request.identity, impact.identity);
+            assert_eq!(request.kind, UnitEffectResource::Visual(id));
+            assert_eq!(request.kit, Some(kit.id()));
+            assert_eq!(
+                request.sound_entry,
+                if index == 0 { kit.sound_entry_id() } else { 0 }
+            );
+            let UnitEffectBinding::Attached {
+                owner,
+                attachment: actual,
+                ..
+            } = &request.binding
+            else {
+                return Err("attached impact".into());
+            };
+            assert_eq!(*actual, attachment as u32);
+            assert!(owner.upgrade().is_some());
+        }
+        if kind == 0 {
+            assert_eq!(
+                presentation
+                    .unit_effect_owner(impact.identity)
+                    .ok_or("owner")?
+                    .model_color(),
+                0xffdce89b
+            );
+        }
+        effects.synchronize_world(None);
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.lifetime.strong_count() == 0)
+        );
+        let other = ActiveWorld::enter(WorldBootstrap::new(
+            WorldMapId::new(0),
+            7,
+            "Next world",
+            Vec3::ZERO,
+            0.0,
+        ));
+        assert!(
+            effects
+                .environmental_impact(
+                    &impact,
+                    &other,
+                    &presentation,
+                    presentation.sound_catalogs().0
+                )
+                .is_empty()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<(), Box<dyn Error>> {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
-    for attachment in [17, 19] {
+    for attachment in [17, 19, 34] {
         let fixture = crate::test_support::unit_models::fixture_with_water_effects(attachment)?;
         let mut store = AssetStore::mount(ArchiveCatalog::discover(
             ClientDataRoot::new(fixture.data_root())?,
             Locale::EnUs,
         )?)?;
-        let effects = ResidentUnitEffect::load(&mut store)?;
+        let effects = ResidentUnitEffect::load(
+            &mut store,
+            &solarity_asset::EnvironmentalDamageCatalog::default(),
+        )?;
         assert_eq!(effects.len(), 5);
         let mut warmup = M2UnitEffectWarmup::new(effects);
         while !warmup.service_one(&mut renderer)? {}
@@ -70,7 +181,9 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
                 Some(UnitEffectRequest {
                     identity,
                     lifetime: Rc::downgrade(&lifetime),
-                    kind: UnitWaterEffect::UnderwaterBreath,
+                    kind: UnitWaterEffect::UnderwaterBreath.into(),
+                    kit: None,
+                    sound_entry: 0,
                     binding: UnitEffectBinding::Attached {
                         owner: Rc::downgrade(owner),
                         model_scale: 1.,
@@ -90,16 +203,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
                 None,
                 Some(&mut callback),
             )?;
-            assert_eq!(
-                draws.draws.len(),
-                if now == 1. {
-                    1
-                } else if now == 221. && attachment == 19 {
-                    3
-                } else {
-                    2
-                }
-            );
+            assert_eq!(draws.draws.len(), if now == 1. { 1 } else { 2 });
             let effects: Vec<_> = frame
                 .placements
                 .iter()
@@ -137,13 +241,12 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
                 );
             }
             if now == 221. {
-                assert_eq!(
+                assert!(
                     effects[0]
                         .unit_effect
                         .as_ref()
                         .ok_or("old effect")?
-                        .retiring(),
-                    attachment == 17
+                        .retiring()
                 );
                 assert!(
                     !effects[1]
@@ -206,7 +309,9 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
                 UnitEffectRequest {
                     identity,
                     lifetime: Rc::downgrade(lifetime),
-                    kind: UnitWaterEffect::RunSpray,
+                    kind: UnitWaterEffect::RunSpray.into(),
+                    kit: None,
+                    sound_entry: 0,
                     binding: UnitEffectBinding::Positioned {
                         position: Vec3::new(0.5, 0., 0.),
                         world_factor: 1.,

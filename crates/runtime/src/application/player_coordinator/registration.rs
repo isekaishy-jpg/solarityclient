@@ -8,6 +8,14 @@ use solarity_systems::{MovementCollectionError, MovementCollisionBounds};
 use super::{ResidentPlayerModel, RuntimePlayerPresentation};
 
 impl RuntimePlayerPresentation {
+    pub(in crate::application) fn unit_effect_owner(
+        &self,
+        identity: WorldObjectIdentity,
+    ) -> Option<&std::rc::Rc<super::super::unit_animation::UnitAnimationBehavior>> {
+        self.unit_animations
+            .get(identity.guid())
+            .filter(|owner| owner.identity() == identity)
+    }
     /// Borrows each CPU-resident body without tying unit effects to GPU uploads.
     pub(in crate::application) fn unit_effect_models(
         &self,

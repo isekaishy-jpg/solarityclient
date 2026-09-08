@@ -260,9 +260,10 @@ impl TextMeasurement {
                 "FontString extent requires a mounted stock asset store",
             ));
         };
-        let pixel_height = (f64::from(line_height) * self.pixels_per_ui_unit)
-            .round()
-            .max(1.0) as u32;
+        let line_height = font_string
+            .raw_get::<Option<f64>>(super::font_height_key())?
+            .unwrap_or(f64::from(line_height));
+        let pixel_height = (line_height * self.pixels_per_ui_unit).round().max(1.0) as u32;
         let rasterization = if definition.monochrome().unwrap_or(false) {
             FontRasterization::Monochrome
         } else {

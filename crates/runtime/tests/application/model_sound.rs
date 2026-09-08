@@ -58,6 +58,57 @@ fn model_loop_options_match_native_callbacks() -> Result<(), Box<dyn Error>> {
 
 struct Cvars;
 
+#[test]
+fn environmental_sound_options_match_original_submissions() -> Result<(), Box<dyn Error>> {
+    let mut submitted = 0;
+    let mut suppressed = 0;
+    for line in include_str!("../fixtures/environmental_sound_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let fields = line.split('|').collect::<Vec<_>>();
+        let inputs = fields[0].split_whitespace().collect::<Vec<_>>();
+        let kit = inputs[0] == "kit";
+        let local = inputs[1] == "1";
+        let centered = local && inputs[2] == "1";
+        if fields[1] == "none" {
+            assert!(kit && (inputs[3] == "0" || inputs[4] == "1"));
+            suppressed += 1;
+            continue;
+        }
+        assert_eq!(fields[2] == "centered", centered);
+        let request = super::unit_effect_request(fields[1].parse()?, kit, local);
+        let options = if fields[3] == "default" {
+            vec![0, 0xbf800000, 0x3f800000, u32::MAX, 0, 0, 2, 0, u32::MAX, 0]
+        } else {
+            fields[3]
+                .split_whitespace()
+                .map(|word| u32::from_str_radix(word, 16))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        assert_eq!(u32::from(request.channel().value()), options[0]);
+        assert_eq!(super::unit_effect_gain(centered).to_bits(), options[2]);
+        assert_eq!(request.variation_mode() as u32, options[6]);
+        assert_eq!(
+            request.loop_mode(),
+            if options[7] == 2 {
+                SoundLoopMode::Once
+            } else {
+                SoundLoopMode::Entry
+            }
+        );
+        assert_eq!(
+            request.priority(),
+            solarity_media::SoundVoicePriority::new(options[8] as i32)
+        );
+        assert_eq!(options[9], 0);
+        assert_eq!(request.concurrency_mode(), SoundConcurrencyMode::Entry);
+        submitted += 1;
+    }
+    assert_eq!((submitted, suppressed), (20, 12));
+    Ok(())
+}
+
 impl SoundCvarSource for Cvars {
     fn sound_cvar(&self, _name: &str) -> Option<String> {
         Some("1".into())
@@ -131,9 +182,91 @@ fn stock_model_loops_obey_callback_and_model_lifetimes() -> Result<(), Box<dyn E
     for kind in [M2SoundKind::Doodad, M2SoundKind::GameObject] {
         exercise_loop(&mut sound, &cpu, camera, &mut random, kind)?;
     }
+    exercise_environmental_sounds(&mut sound, &cpu, camera, &mut random)?;
     exercise_glue_world_handoff(&mut sound, &mut random)?;
     sound.shutdown()?;
     cpu.shutdown()?;
+    Ok(())
+}
+
+fn exercise_environmental_sounds(
+    sound: &mut RuntimeSoundCoordinator,
+    cpu: &CpuExecutor,
+    camera: WorldCameraFrame,
+    random: &mut BlizzardRand,
+) -> Result<(), Box<dyn Error>> {
+    let creatures = solarity_asset::CreatureCatalog::load(&mut sound.assets.borrow_mut())?;
+    let items = solarity_asset::ItemDefinitionCatalog::load(&mut sound.assets.borrow_mut())?;
+    let races = solarity_asset::CharacterRaceCatalog::load(&mut sound.assets.borrow_mut())?;
+    let world = solarity_ecs::ActiveWorld::enter(solarity_ecs::WorldBootstrap::new(
+        solarity_ecs::WorldMapId::new(0),
+        1,
+        "Damage target",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let context = super::super::UnitSoundContext {
+        world: &world,
+        creatures: &creatures,
+        items: &items,
+        races: &races,
+        cvars: &Cvars,
+    };
+    let listener = solarity_media::AdvancedSoundListener::from_world_camera(camera);
+    for entry in [5736, 1484, 3373] {
+        let owner = Rc::new(M2SoundKind::UnitEffect);
+        let event = RuntimeM2Event::new(*b"$SND", entry, Vec3::ZERO, Some(1))
+            .with_sound_owner(M2SoundOwner::new(&owner))
+            .with_effect_kit_sound();
+        sound.play_unit_effect_sounds(std::slice::from_ref(&event), &context, listener, random)?;
+        assert_eq!(
+            sound.play_m2_events(std::slice::from_ref(&event), camera, random)?,
+            0
+        );
+        finish_loads(sound, cpu)?;
+        assert_eq!(sound.model_sounds.len(), 1);
+        assert!(!sound.model_sounds[0].looping);
+        let ModelPlayback::Playing(first_voice) = sound.model_sounds[0].playback else {
+            return Err("effect did not load".into());
+        };
+        sound.play_unit_effect_sounds(std::slice::from_ref(&event), &context, listener, random)?;
+        assert!(matches!(
+            sound
+                .engine
+                .with_engine(|engine| engine.voice_state(first_voice)),
+            Ok(SoundVoiceState::Stopped) | Err(SoundEngineError::UnknownVoice)
+        ));
+        finish_loads(sound, cpu)?;
+        assert_eq!(sound.model_sounds.len(), 1, "one handle per CEffect");
+        let ModelPlayback::Playing(voice) = sound.model_sounds[0].playback else {
+            return Err("effect did not load".into());
+        };
+        assert_eq!(
+            sound
+                .engine
+                .with_engine(|engine| engine.voice_state(voice))?,
+            SoundVoiceState::Playing
+        );
+        drop(owner);
+        sound.collect_model_sounds()?;
+        assert!(
+            sound.model_sounds[0].owner.is_none(),
+            "one-shot effect sound must finish after model retirement"
+        );
+        assert_eq!(
+            sound
+                .engine
+                .with_engine(|engine| engine.voice_state(voice))?,
+            SoundVoiceState::Playing
+        );
+        let mut samples = vec![0; 44_100 * 4 * 10];
+        sound
+            .engine
+            .with_engine_mut(|engine| engine.generate(&mut samples))?;
+        assert!(samples.iter().any(|sample| *sample != 0), "entry {entry}");
+        sound.collect_model_sounds()?;
+        assert!(sound.model_sounds.is_empty(), "entry {entry} must end");
+    }
     Ok(())
 }
 

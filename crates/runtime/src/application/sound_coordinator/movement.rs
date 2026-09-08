@@ -176,6 +176,7 @@ impl RuntimeSoundCoordinator {
             .unwrap_or_else(|| AdvancedSoundListener::from_world_camera(camera));
         let at_character = boolean(context.cvars, "Sound_ListenerAtCharacter")?;
         self.update_unit_vocals(context.world, listener)?;
+        self.play_unit_effect_sounds(events, &context, listener, random)?;
         while let Some(event) = self.water_splashes.pop_front() {
             if context.world.object_identity(event.identity.guid()) != Some(event.identity) {
                 continue;

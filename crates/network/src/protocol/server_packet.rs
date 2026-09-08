@@ -36,6 +36,17 @@ pub struct WorldServerPacket {
 }
 
 impl WorldServerPacket {
+    /// Decodes the environmental impact consumed by native 756800.
+    ///
+    /// # Errors
+    /// Returns an error for a body that differs from the exact wire layout.
+    pub fn environmental_damage(
+        &self,
+    ) -> Result<Option<super::WorldEnvironmentalDamage>, super::WorldEnvironmentalDamagePacketError>
+    {
+        super::WorldEnvironmentalDamage::decode(self.opcode, &self.payload)
+    }
+
     pub(crate) const fn new(opcode: u16, payload: Vec<u8>) -> Self {
         Self { opcode, payload }
     }
@@ -68,6 +79,7 @@ impl WorldServerPacket {
             0x1da => Some("SMSG_PAUSE_MIRROR_TIMER"),
             0x1db => Some("SMSG_STOP_MIRROR_TIMER"),
             0xfd => Some("SMSG_TUTORIAL_FLAGS"),
+            0x1fc => Some("SMSG_ENVIRONMENTALDAMAGELOG"),
             0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
             SMSG_LOGIN_VERIFY_WORLD => Some("SMSG_LOGIN_VERIFY_WORLD"),

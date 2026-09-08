@@ -16,6 +16,8 @@ mod database;
 mod database_area_trigger;
 #[path = "stock_seed/database_creature_family.rs"]
 mod database_creature_family;
+#[path = "stock_seed/database_environmental_damage.rs"]
+mod database_environmental_damage;
 #[path = "stock_seed/database_game_object.rs"]
 mod database_game_object;
 #[path = "stock_seed/database_movement_sound.rs"]

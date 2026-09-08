@@ -6,7 +6,9 @@
 
 mod model_scale;
 mod object_effect;
+mod unit_tint;
 mod unit_water;
+pub use unit_tint::UnitModelTint;
 
 pub use model_scale::{UnitEffectScale, unit_world_effect_factor};
 pub use unit_water::{

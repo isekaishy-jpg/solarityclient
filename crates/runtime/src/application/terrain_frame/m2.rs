@@ -594,6 +594,7 @@ pub(in crate::application) struct RuntimeM2Event {
     owner_guid: Option<u64>,
     sound_owner: Option<sound::M2SoundOwner>,
     sound_kind: Option<sound::M2SoundKind>,
+    effect_kit_sound: bool,
 }
 
 /// Camera markers sampled from the controlled player's current mount pose.
@@ -632,6 +633,7 @@ impl RuntimeM2Event {
             owner_guid,
             sound_owner: None,
             sound_kind: None,
+            effect_kit_sound: false,
         }
     }
 
@@ -663,6 +665,14 @@ impl RuntimeM2Event {
 
     pub(in crate::application) const fn sound_kind(&self) -> Option<sound::M2SoundKind> {
         self.sound_kind
+    }
+
+    pub(in crate::application) fn with_effect_kit_sound(mut self) -> Self {
+        self.effect_kit_sound = true;
+        self
+    }
+    pub(in crate::application) const fn is_effect_kit_sound(&self) -> bool {
+        self.effect_kit_sound
     }
 }
 
@@ -1857,6 +1867,16 @@ impl M2Frame {
         self.unit_effects.sources = Some(sources);
     }
 
+    pub(in crate::application) fn emit_unit_effect(
+        &mut self,
+        request: unit_effects::UnitEffectRequest,
+        now: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.unit_effects
+            .emit(request, &self.animations, now, random)
+    }
+
     /// Unit callbacks construct CEffect models before this frame's effect pass.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare_visible_draws_with_unit_effects(
@@ -2043,6 +2063,11 @@ impl M2Frame {
             }
             let placement = &mut self.placements[placement_index];
             self.unit_effects.prepare_attachment(placement);
+            if let Some(effect) = &mut placement.unit_effect
+                && let Some(event) = effect.take_ready_sound(placement.transform.w_axis.truncate())
+            {
+                self.triggered_events.push(event);
+            }
             if !placement.placement_valid {
                 continue;
             }
@@ -2229,6 +2254,9 @@ impl M2Frame {
                     &self.bone_pose_scratch,
                     expired.event_window,
                 )?;
+                if let Some(effect) = &placement.unit_effect {
+                    effect.bind_sound_events(&mut self.triggered_events[first_event..]);
+                }
                 if let Some(callback) = unit_effect_callback.as_mut()
                     && let Some(animation) = &placement.unit_animation
                 {
@@ -2291,6 +2319,9 @@ impl M2Frame {
                 bone_pose,
                 event_window,
             )?;
+            if let Some(effect) = &placement.unit_effect {
+                effect.bind_sound_events(&mut self.triggered_events[first_event..]);
+            }
             if let Some(callback) = unit_effect_callback.as_mut()
                 && let Some(animation) = &placement.unit_animation
             {
@@ -2606,6 +2637,9 @@ impl M2Frame {
             self.bone_transforms
                 .extend_from_slice(bone_pose.transforms());
             let mut instance_color = placement_color(placement.color);
+            if let Some(animation) = &placement.unit_animation {
+                instance_color *= placement_color(animation.model_color().to_le_bytes());
+            }
             instance_color.w *= placement.opacity;
             if let Some(mesh) = source.mesh
                 && !effect_retiring

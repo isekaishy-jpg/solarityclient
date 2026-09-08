@@ -18,6 +18,7 @@ mod creature;
 mod db_cache;
 mod db_cache_instances;
 mod db_client;
+mod environmental_damage;
 mod game_object;
 mod item;
 mod light;
@@ -53,7 +54,9 @@ pub use character::{
     CharacterAppearanceCatalog, CharacterFacialHairStyle, CharacterHairGeoset, CharacterSection,
 };
 pub use character_base::{CharacterBaseCatalog, CharacterBaseInfo};
-pub use character_faction::{CharacterFactionCatalog, CharacterFactionGroup};
+pub use character_faction::{
+    CharacterFactionCatalog, CharacterFactionGroup, FactionTemplateDefinition,
+};
 pub use character_outfit::{
     CharacterStartOutfit, CharacterStartOutfitCatalog, CharacterStartOutfitItem,
 };
@@ -62,6 +65,7 @@ pub use creature::{
     CreatureCatalog, CreatureDisplayInfo, CreatureDisplayInfoExtra, CreatureFamilyCatalog,
     CreatureFamilyDefinition, CreatureModelData,
 };
+pub use environmental_damage::{EnvironmentalDamageCatalog, EnvironmentalVisualKit};
 pub use game_object::{GameObjectDisplayCatalog, GameObjectDisplayInfo};
 pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,

@@ -3,7 +3,7 @@
 use glam::Vec3;
 
 /// Slots in CEffect's named model bank, not SpellVisualEffectName identifiers.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum UnitWaterEffect {
     /// Native slot zero (selected at or below twice the unit's walk speed).

@@ -22,12 +22,15 @@ use thiserror::Error;
 pub(crate) struct RuntimeCharacterMetadata {
     races: CharacterRaceCatalog,
     classes: CharacterClassCatalog,
-    factions: CharacterFactionCatalog,
+    factions: std::rc::Rc<CharacterFactionCatalog>,
     areas: AreaTableCatalog,
     world_model_areas: solarity_asset::WorldModelAreaCatalog,
 }
 
 impl RuntimeCharacterMetadata {
+    pub(in crate::application) fn faction_catalog(&self) -> std::rc::Rc<CharacterFactionCatalog> {
+        self.factions.clone()
+    }
     /// `78F1F0` prefers the interior group's AreaTable relation, then its root.
     /// Flag 2 keeps local climate; otherwise the immediate parent's flags win.
     pub(in crate::application) fn cold_area_at(
@@ -158,7 +161,7 @@ impl RuntimeCharacterMetadata {
         Ok(Self {
             races: CharacterRaceCatalog::load(store)?,
             classes: CharacterClassCatalog::load(store)?,
-            factions: CharacterFactionCatalog::load(store)?,
+            factions: std::rc::Rc::new(CharacterFactionCatalog::load(store)?),
             areas: AreaTableCatalog::load(store)?,
             world_model_areas: solarity_asset::WorldModelAreaCatalog::load(store)?,
         })

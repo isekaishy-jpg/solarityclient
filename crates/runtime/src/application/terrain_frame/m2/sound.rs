@@ -9,6 +9,7 @@ use super::M2GpuPlacementOwner;
 pub(in crate::application) enum M2SoundKind {
     Doodad,
     GameObject,
+    UnitEffect,
 }
 
 impl M2SoundKind {
@@ -16,6 +17,7 @@ impl M2SoundKind {
         match self {
             Self::Doodad => 3.0,
             Self::GameObject => 1.0,
+            Self::UnitEffect => 0.0,
         }
     }
 
@@ -23,6 +25,7 @@ impl M2SoundKind {
         match self {
             Self::Doodad => 0.0,
             Self::GameObject => 1.0,
+            Self::UnitEffect => 0.15,
         }
     }
 
@@ -31,6 +34,7 @@ impl M2SoundKind {
             M2GpuPlacementOwner::Static(_)
             | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. } => Some(Self::Doodad),
             M2GpuPlacementOwner::GameObject { .. } => Some(Self::GameObject),
+            M2GpuPlacementOwner::UnitEffect { .. } => Some(Self::UnitEffect),
             _ => None,
         }
     }

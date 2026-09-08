@@ -1,6 +1,7 @@
 //! Persistent active-world packet pump and main-thread ECS dispatch.
 
 mod creature_cache;
+pub(in crate::application) mod environmental_damage;
 mod game_object_cache;
 pub(in crate::application) mod player_ui;
 mod template_cache;
@@ -112,6 +113,9 @@ pub enum RuntimeGameplayError {
     /// A server-owned mirror-timer notification was malformed.
     #[error(transparent)]
     MirrorTimer(#[from] solarity_network::WorldMirrorTimerPacketError),
+    /// A server-authored environmental impact was malformed.
+    #[error(transparent)]
+    EnvironmentalDamage(#[from] solarity_network::WorldEnvironmentalDamagePacketError),
     /// A native unit-control or local stand-state packet was malformed.
     #[error(transparent)]
     PlayerControl(#[from] solarity_network::WorldPlayerControlPacketError),
@@ -146,6 +150,7 @@ pub struct RuntimeGameplayCoordinator {
     realm_clock: Option<RealmClock>,
     action_buttons: Option<WorldActionButtons>,
     player_ui: player_ui::RuntimePlayerUiState,
+    factions: Option<std::rc::Rc<solarity_asset::CharacterFactionCatalog>>,
     player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     /// Packet dispatch yields to the composition root at each transfer packet.
@@ -155,6 +160,13 @@ pub struct RuntimeGameplayCoordinator {
 }
 
 impl RuntimeGameplayCoordinator {
+    pub(in crate::application) fn with_factions(
+        mut self,
+        factions: std::rc::Rc<solarity_asset::CharacterFactionCatalog>,
+    ) -> Self {
+        self.factions = Some(factions);
+        self
+    }
     #[cfg(test)]
     pub(super) fn with_test_world(world: ActiveWorld) -> Self {
         let mut coordinator = Self::new();
@@ -176,6 +188,7 @@ impl RuntimeGameplayCoordinator {
             realm_clock: None,
             action_buttons: None,
             player_ui: player_ui::RuntimePlayerUiState::default(),
+            factions: None,
             player_control: None,
             unhandled_packets: VecDeque::new(),
             transfer: None,
@@ -222,6 +235,26 @@ impl RuntimeGameplayCoordinator {
         let mut game_object_templates = GameObjectTemplateCache::new();
         let mut creature_templates = CreatureTemplateCache::new();
         for packet in setup_packets {
+            if let Some(damage) = packet.environmental_damage()? {
+                let active = gameplay.world();
+                let name = if active.local_player_guid().ok() == Some(damage.guid) {
+                    active
+                        .local_player_identity()
+                        .map(|player| player.name().to_owned())
+                } else {
+                    active
+                        .object_identity(damage.guid)
+                        .and_then(|identity| creature_templates.name(identity))
+                };
+                player_ui.receive_environmental_damage(
+                    gameplay.world_mut(),
+                    damage,
+                    name,
+                    self.factions.as_deref(),
+                    crate::platform::client_milliseconds(),
+                );
+                continue;
+            }
             if let Some(flags) = packet.tutorial_flags() {
                 player_ui.receive_tutorial_flags(flags);
                 continue;
@@ -331,6 +364,25 @@ impl RuntimeGameplayCoordinator {
                         .game_object_query()
                         .map_err(RuntimeGameplayError::from)
                         .and_then(|response| {
+                            if let Some(damage) = packet.environmental_damage()? {
+                                let name = if world.local_player_guid().ok() == Some(damage.guid) {
+                                    world
+                                        .local_player_identity()
+                                        .map(|player| player.name().to_owned())
+                                } else {
+                                    world
+                                        .object_identity(damage.guid)
+                                        .and_then(|identity| self.creature_templates.name(identity))
+                                };
+                                self.player_ui.receive_environmental_damage(
+                                    world,
+                                    damage,
+                                    name,
+                                    self.factions.as_deref(),
+                                    crate::platform::client_milliseconds(),
+                                );
+                                return Ok(false);
+                            }
                             if let Some(flags) = packet.tutorial_flags() {
                                 self.player_ui.receive_tutorial_flags(flags);
                                 return Ok(false);

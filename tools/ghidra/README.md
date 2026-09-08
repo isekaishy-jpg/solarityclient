@@ -152,3 +152,36 @@ resource admission, and map registration are outside this probe.
 ```text
 python tools/ghidra/transport_initial_oracle.py <path-to-Wow.exe> crates/systems/tests/fixtures/transport-pose-native.txt target/transport-initial-native.txt
 ```
+
+## Environmental damage and feedback oracles
+
+`environmental_damage_oracle.py` executes the original `756800` packet receiver,
+combat-log allocation/classification/formatting, predicted-health reducer and
+unit-combat dispatch. Resident identity/name providers, allocation, Lua output
+and visual submission are controlled boundaries. The JSON output also writes a
+text fixture beside it. Visual kits are verified separately against installed
+DBC/model assets and runtime scene tests.
+
+`combat_classification_oracle.py` executes `74DCB0` and `715440`. Controlled
+group, directed reaction and selection providers cover the flag branches;
+owner resolution, GUID family tests and faction-table fallback execute native
+code. It writes classification rows and a sibling `.factions.txt` fixture.
+
+`environmental_tint_oracle.py` executes `7265C0`, `71A9A0`, `6ACC50` and
+`720DB0` with resident model access. It captures special-effect 13's float
+conversion, packed color, hold/fade boundaries and timestamp wraparound.
+
+`environmental_sound_oracle.py` executes `6F9840`, `6F7B00`, `4C5990` and
+the original attachment/scale chain. Resident model/unit/setting providers and
+audio submission are controlled. Its 32 probes cover model readiness, the
+kit suppression flag, local priority, listener centering and one-shot versus
+entry-authored looping. Mixer tests cover retained handles and audible tails.
+These tools map only the fingerprinted PE into Unicorn; no client or OS entry
+point runs.
+
+```text
+python tools/ghidra/environmental_damage_oracle.py <path-to-Wow.exe> target/environmental_damage_native.json
+python tools/ghidra/combat_classification_oracle.py <path-to-Wow.exe> target/combat_classification_native.txt
+python tools/ghidra/environmental_tint_oracle.py <path-to-Wow.exe> target/environmental_tint_native.txt
+python tools/ghidra/environmental_sound_oracle.py <path-to-Wow.exe> target/environmental_sound_native.txt
+```

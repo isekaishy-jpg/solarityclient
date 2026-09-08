@@ -263,6 +263,14 @@ impl<'output> SoundEngine<'output> {
             .map(|entry| entry.id())
     }
 
+    /// Returns the loop flag used when a retained effect admits an Entry-mode sound.
+    #[must_use]
+    pub fn sound_entry_loops(&self, entry_id: u32) -> bool {
+        self.catalog
+            .sound_entry(entry_id)
+            .is_some_and(|entry| super::SoundLoopMode::Entry.is_looping(entry.flags()))
+    }
+
     /// Selects and starts one sound through its stock shared variation state.
     ///
     /// Disabled global/category policy returns [`SoundPlayback::Suppressed`]

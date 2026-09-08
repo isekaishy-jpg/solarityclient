@@ -38,14 +38,79 @@ impl CharacterFactionGroup {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FactionTemplateGroup {
+/// Complete faction-template inputs to the native directed reaction query.
+pub struct FactionTemplateDefinition {
     id: u32,
+    faction_id: u32,
+    flags: u32,
     group_mask: u32,
+    friend_mask: u32,
+    enemy_mask: u32,
+    enemies: [u32; 4],
+    friends: [u32; 4],
+}
+
+impl FactionTemplateDefinition {
+    /// Creates the complete fourteen-word build-12340 faction template.
+    #[must_use]
+    pub const fn from_words(words: [u32; 14]) -> Self {
+        Self {
+            id: words[0],
+            faction_id: words[1],
+            flags: words[2],
+            group_mask: words[3],
+            friend_mask: words[4],
+            enemy_mask: words[5],
+            enemies: [words[6], words[7], words[8], words[9]],
+            friends: [words[10], words[11], words[12], words[13]],
+        }
+    }
+
+    /// Returns the primary template key.
+    #[must_use]
+    pub const fn id(self) -> u32 {
+        self.id
+    }
+    /// Returns the referenced Faction.dbc key.
+    #[must_use]
+    pub const fn faction_id(self) -> u32 {
+        self.faction_id
+    }
+    /// Returns the native faction policy flags.
+    #[must_use]
+    pub const fn flags(self) -> u32 {
+        self.flags
+    }
+    /// Returns this template's group membership mask.
+    #[must_use]
+    pub const fn group_mask(self) -> u32 {
+        self.group_mask
+    }
+    /// Returns the friendly group mask.
+    #[must_use]
+    pub const fn friend_mask(self) -> u32 {
+        self.friend_mask
+    }
+    /// Returns the hostile group mask.
+    #[must_use]
+    pub const fn enemy_mask(self) -> u32 {
+        self.enemy_mask
+    }
+    /// Returns ordered hostile faction keys, terminated by the first zero.
+    #[must_use]
+    pub const fn enemies(&self) -> &[u32; 4] {
+        &self.enemies
+    }
+    /// Returns ordered friendly faction keys, terminated by the first zero.
+    #[must_use]
+    pub const fn friends(&self) -> &[u32; 4] {
+        &self.friends
+    }
 }
 
 /// Exact faction-template to faction-group projection used by creation Glue.
 pub struct CharacterFactionCatalog {
-    templates: Vec<FactionTemplateGroup>,
+    templates: Vec<FactionTemplateDefinition>,
     groups: Vec<CharacterFactionGroup>,
 }
 
@@ -61,10 +126,11 @@ impl CharacterFactionCatalog {
         require_layout(&template_table, 14, "FactionTemplate.dbc")?;
         let mut templates = Vec::with_capacity(template_table.header().record_count() as usize);
         for row in 0..template_table.header().record_count() {
-            templates.push(FactionTemplateGroup {
-                id: field(&template_table, row, 0)?,
-                group_mask: field(&template_table, row, 3)?,
-            });
+            let mut words = [0; 14];
+            for (index, word) in words.iter_mut().enumerate() {
+                *word = field(&template_table, row, index as u32)?;
+            }
+            templates.push(FactionTemplateDefinition::from_words(words));
         }
         templates.sort_unstable_by_key(|template| template.id);
         if let Some(duplicate) = templates.windows(2).find(|pair| pair[0].id == pair[1].id) {
@@ -106,6 +172,15 @@ impl CharacterFactionCatalog {
         self.groups
             .iter()
             .find(|group| group.mask_id != 0 && mask & (1_u32 << group.mask_id) != 0)
+    }
+
+    /// Resolves the complete template used by native unit-reaction queries.
+    #[must_use]
+    pub fn template(&self, id: u32) -> Option<&FactionTemplateDefinition> {
+        self.templates
+            .binary_search_by_key(&id, |template| template.id)
+            .ok()
+            .map(|index| &self.templates[index])
     }
 }
 

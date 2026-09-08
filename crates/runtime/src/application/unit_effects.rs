@@ -20,7 +20,7 @@ use super::character_directory::RuntimeCharacterMetadata;
 use super::terrain_frame::RuntimeM2Event;
 use super::terrain_frame::m2::unit_effects::{
     M2UnitEffectSources, M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding,
-    UnitEffectRequest,
+    UnitEffectRequest, UnitEffectResource,
 };
 use super::unit_animation::UnitAnimationBehavior;
 use super::unit_water::UnitWaterSample;
@@ -43,18 +43,24 @@ struct UnitState {
     position: Vec3,
     surface: Option<f32>,
     breath: UnitBreathState,
+    tint: solarity_systems::UnitModelTint,
 }
 
 pub(super) struct RuntimeUnitEffects {
     sources: Option<Sources>,
+    environmental: Arc<solarity_asset::EnvironmentalDamageCatalog>,
     world: Option<WorldObjectIdentity>,
     units: HashMap<WorldObjectIdentity, UnitState>,
 }
 
 impl RuntimeUnitEffects {
-    pub(super) fn new(catalog: ArchiveCatalog) -> Self {
+    pub(super) fn new(
+        catalog: ArchiveCatalog,
+        environmental: Arc<solarity_asset::EnvironmentalDamageCatalog>,
+    ) -> Self {
         Self {
             sources: Some(Sources::Deferred(catalog)),
+            environmental,
             world: None,
             units: HashMap::new(),
         }
@@ -73,8 +79,9 @@ impl RuntimeUnitEffects {
                 .ok_or(ApplicationError::UnitEffectPreparationFailed)?
             {
                 Sources::Deferred(catalog) if cpu.can_admit_speculative()? => {
+                    let environmental = Arc::clone(&self.environmental);
                     Sources::Running(cpu.try_submit(move || {
-                        ResidentUnitEffect::load(&mut AssetStore::mount(catalog)?)
+                        ResidentUnitEffect::load(&mut AssetStore::mount(catalog)?, &environmental)
                     })?)
                 }
                 Sources::Running(task) if task.is_finished() => {
@@ -159,6 +166,9 @@ impl RuntimeUnitEffects {
         };
         for (identity, model) in player.unit_effect_models() {
             let state = self.units.entry(identity).or_default();
+            if let Some(owner) = player.unit_effect_owner(identity) {
+                owner.set_model_color(state.tint.sample(now, u32::MAX));
+            }
             if !std::ptr::eq(state.model.as_ptr(), Arc::as_ptr(model)) {
                 if state.sample.is_none()
                     && let Some(transform) = world.object_transform(identity.guid())
@@ -173,6 +183,56 @@ impl RuntimeUnitEffects {
             }
         }
         Ok(())
+    }
+
+    pub(super) fn environmental_impact(
+        &mut self,
+        impact: &super::gameplay_coordinator::environmental_damage::RuntimeEnvironmentalDamageSnapshot,
+        world: &ActiveWorld,
+        player: &RuntimePlayerPresentation,
+        creatures: &CreatureCatalog,
+    ) -> Vec<UnitEffectRequest> {
+        if world.object_identity(impact.identity.guid()) != Some(impact.identity) {
+            return Vec::new();
+        }
+        let Some(kit) = self.environmental.visual_kit(impact.packet.kind) else {
+            return Vec::new();
+        };
+        let state = self.units.entry(impact.identity).or_default();
+        for (kind, parameters) in kit.special_effects() {
+            if kind == 13 {
+                state.tint.apply(impact.timestamp_ms, parameters);
+            }
+        }
+        let Some(owner) = player.unit_effect_owner(impact.identity) else {
+            return Vec::new();
+        };
+        owner.set_model_color(state.tint.sample(impact.timestamp_ms, u32::MAX));
+        if let Ok(animation) = u16::try_from(kit.animation()) {
+            owner.request_visual_kit_animation(animation);
+        }
+        let definition = world
+            .unit_presentation(impact.identity.guid())
+            .and_then(|unit| creatures.display(unit.display_id()))
+            .and_then(|display| creatures.model(display.model_id()));
+        kit.effects()
+            .enumerate()
+            .filter_map(|(index, (attachment, id))| {
+                let attachment = u32::try_from(attachment).ok()?;
+                Some(UnitEffectRequest {
+                    identity: impact.identity,
+                    lifetime: Rc::downgrade(&state.lifetime),
+                    kind: UnitEffectResource::Visual(id),
+                    kit: Some(kit.id()),
+                    sound_entry: if index == 0 { kit.sound_entry_id() } else { 0 },
+                    binding: UnitEffectBinding::Attached {
+                        owner: Rc::downgrade(owner),
+                        model_scale: definition.map_or(1.0, |model| model.attached_effect_scale()),
+                        attachment,
+                    },
+                })
+            })
+            .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -261,7 +321,9 @@ impl RuntimeUnitEffects {
         Some(UnitEffectRequest {
             identity,
             lifetime: Rc::downgrade(&state.lifetime),
-            kind,
+            kind: kind.into(),
+            kit: None,
+            sound_entry: 0,
             binding,
         })
     }

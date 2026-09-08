@@ -13,6 +13,68 @@ const POSES: &[u16] = &[
 ];
 
 #[test]
+#[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
+fn stock_drowning_kit_plays_wound_and_returns_to_current_movement() -> Result<(), Box<dyn Error>> {
+    let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(root)?,
+        Locale::EnUs,
+    )?)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let kits = solarity_asset::EnvironmentalDamageCatalog::load(&mut store)?;
+    let animation = u16::try_from(kits.visual_kit(1).ok_or("drowning kit")?.animation())?;
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    let identity = world.object_identity(7).ok_or("identity")?;
+    for race in [
+        "Human", "Orc", "Dwarf", "NightElf", "Scourge", "Tauren", "Gnome", "Troll", "BloodElf",
+        "Draenei",
+    ] {
+        for gender in ["Male", "Female"] {
+            let path = AssetPath::new(format!("Character/{race}/{gender}/{race}{gender}.m2"))?;
+            let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+            for flags in [0, 0x200000] {
+                let owner = UnitAnimationBehavior::new(
+                    identity,
+                    Arc::clone(&model),
+                    Arc::clone(&animations),
+                    input(0).with_movement(movement(flags, None)),
+                    0,
+                );
+                let mut random = CrtRand::new();
+                owner.advance_scene(100.0, &mut random)?;
+                let ordinary = owner.behavior(&owner.playback.borrow());
+                owner.request_visual_kit_animation(animation);
+                owner.advance_scene(101.0, &mut random)?;
+                assert_eq!(
+                    owner.behavior(&owner.playback.borrow()),
+                    9,
+                    "{path}, flags={flags}"
+                );
+                let end = owner
+                    .playback
+                    .borrow()
+                    .script_timer
+                    .ok_or("wound timer")?
+                    .end_time_ms();
+                owner.advance_scene(end as f32 + 1.0, &mut random)?;
+                assert_eq!(
+                    owner.behavior(&owner.playback.borrow()),
+                    ordinary,
+                    "{path}, flags={flags}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with the user's 3.3.5a archives"]
 fn stock_repeated_jumps_sample_authored_variations() -> Result<(), Box<dyn Error>> {
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;

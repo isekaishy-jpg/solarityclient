@@ -69,6 +69,12 @@ impl CreatureTemplateCache {
         self.cache.complete(entry, template);
     }
 
+    pub(super) fn name(&self, identity: WorldObjectIdentity) -> Option<String> {
+        let template = self.units.get(&identity)?.binding.template()?;
+        let bytes = &template.strings()[0];
+        (!bytes.is_empty()).then(|| String::from_utf8_lossy(bytes).into_owned())
+    }
+
     pub(super) fn pending_request(&self) -> Option<(u32, u64)> {
         self.cache.pending_request()
     }

@@ -12,6 +12,10 @@ mod tutorial_tests;
 #[path = "../../../tests/application/player_health.rs"]
 mod health_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/application/environmental_damage.rs"]
+mod environmental_damage_tests;
+
 use solarity_network::WorldMirrorTimerUpdate;
 use solarity_ui::{UiEventArgument, UiEventPayload, UiMirrorTimer};
 
@@ -26,6 +30,10 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::EnvironmentalDamage(impact) => {
+                self.dirty=true;
+                super::environmental_damage::dispatch_environmental_damage(&mut self.manager,impact)
+            }
             crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Health { snapshot, health_changed, maximum_changed } => {
                 self.dirty = true;
                 dispatch_health(&mut self.manager, &self.world, snapshot, health_changed, maximum_changed)

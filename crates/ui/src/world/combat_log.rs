@@ -96,7 +96,8 @@ impl UiCombatLogEntry {
                         UiEventArgument::String(name.clone())
                     }),
             );
-            arguments.push(UiEventArgument::Integer(i64::from(object.flags)));
+            // 74E290 uses lua_pushinteger on the signed native 32-bit flags.
+            arguments.push(UiEventArgument::Integer(i64::from(object.flags as i32)));
         }
         if let Some(spell) = self.spell.as_ref().filter(|spell| spell.id != 0) {
             arguments.push(UiEventArgument::Integer(i64::from(spell.id)));

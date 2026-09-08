@@ -12,6 +12,7 @@ mod character_deletion;
 mod character_directory;
 mod character_rename;
 mod creature_query;
+mod environmental_damage;
 mod game_object_query;
 mod liveness;
 mod mirror_timer;
@@ -49,6 +50,7 @@ pub use character_rename::{
     CharacterNameResult, CharacterRename, CharacterRenameError, CharacterRenameResult,
 };
 pub use creature_query::{CreatureQueryPacketError, CreatureQueryResponse, CreatureTemplate};
+pub use environmental_damage::{WorldEnvironmentalDamage, WorldEnvironmentalDamagePacketError};
 pub use game_object_query::{
     GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate,
 };

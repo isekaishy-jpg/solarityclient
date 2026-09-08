@@ -516,6 +516,14 @@ pub(super) struct TerrainFrame {
 }
 
 impl TerrainFrame {
+    pub(super) fn emit_unit_effect(
+        &mut self,
+        request: m2::unit_effects::UnitEffectRequest,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.m2
+            .emit_unit_effect(request, self.m2_animation_time_ms(), random)
+    }
     /// Captures the published player appearance without changing its live pose.
     pub(super) fn render_player_portrait(
         &self,

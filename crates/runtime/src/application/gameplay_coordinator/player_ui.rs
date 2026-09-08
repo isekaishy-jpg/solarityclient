@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 
+use super::environmental_damage::{RuntimeCombatLogClock, RuntimeEnvironmentalDamageSnapshot};
 use solarity_network::WorldMirrorTimerUpdate;
 
 /// Native replicated health, retained prediction and player ghost flag.
@@ -59,6 +60,7 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
     MirrorTimer(TimedMirrorTimerUpdate),
     TutorialFlags(Vec<u8>),
     Combat(bool),
+    EnvironmentalDamage(RuntimeEnvironmentalDamageSnapshot),
     Health {
         snapshot: RuntimePlayerHealthSnapshot,
         health_changed: bool,
@@ -73,10 +75,54 @@ pub(in crate::application) struct RuntimePlayerUiState {
     tutorial_flags: Vec<u8>,
     in_combat: bool,
     health: Option<RuntimePlayerHealthSnapshot>,
+    combat_clock: RuntimeCombatLogClock,
+    impacts: VecDeque<RuntimeEnvironmentalDamageSnapshot>,
     pending: VecDeque<RuntimePlayerUiNotification>,
 }
 
 impl RuntimePlayerUiState {
+    pub(in crate::application) fn receive_environmental_damage(
+        &mut self,
+        world: &mut solarity_ecs::ActiveWorld,
+        packet: solarity_network::WorldEnvironmentalDamage,
+        name: Option<String>,
+        factions: Option<&solarity_asset::CharacterFactionCatalog>,
+        timestamp_ms: u32,
+    ) {
+        if let Some(snapshot) = RuntimeEnvironmentalDamageSnapshot::admit(
+            world,
+            packet,
+            name,
+            factions,
+            timestamp_ms,
+            self.combat_clock,
+        ) {
+            if snapshot.has_combat_event() {
+                self.observe_health(world);
+                self.pending
+                    .push_back(RuntimePlayerUiNotification::EnvironmentalDamage(
+                        snapshot.clone(),
+                    ));
+            }
+            self.impacts.push_back(snapshot);
+        }
+    }
+
+    pub(in crate::application) fn take_environmental_impact(
+        &mut self,
+    ) -> Option<RuntimeEnvironmentalDamageSnapshot> {
+        self.impacts.pop_front()
+    }
+
+    #[cfg(test)]
+    pub(in crate::application) fn with_combat_clock(
+        mut self,
+        clock: RuntimeCombatLogClock,
+    ) -> Self {
+        self.combat_clock = clock;
+        self
+    }
+
     pub(in crate::application) fn observe_health(&mut self, world: &solarity_ecs::ActiveWorld) {
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
@@ -118,6 +164,7 @@ impl RuntimePlayerUiState {
     pub(in crate::application) fn clear_for_world_leave(&mut self) {
         self.in_combat = false;
         self.health = None;
+        self.impacts.clear();
         self.slots = [None; 3];
         self.pending.clear();
     }

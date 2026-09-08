@@ -30,6 +30,9 @@ pub(super) struct ModelSound {
     entry_id: u32,
     position: Vec3,
     listener: AdvancedSoundListener,
+    unit: Option<solarity_ecs::WorldObjectIdentity>,
+    centered: bool,
+    looping: bool,
 }
 
 impl ModelSound {
@@ -79,11 +82,122 @@ impl ModelSound {
 }
 
 impl RuntimeSoundCoordinator {
+    /// 6F9840 / 6F7B00 keep a CEffect sound handle and bind it to its unit.
+    pub(super) fn play_unit_effect_sounds(
+        &mut self,
+        events: &[RuntimeM2Event],
+        context: &super::UnitSoundContext<'_>,
+        listener: AdvancedSoundListener,
+        random: &mut BlizzardRand,
+    ) -> Result<(), RuntimeSoundError> {
+        self.collect_model_sounds()?;
+        for sound in &mut self.model_sounds {
+            let Some(identity) = sound.unit else {
+                continue;
+            };
+            if sound.centered || context.world.object_identity(identity.guid()) != Some(identity) {
+                continue;
+            }
+            if let Some(transform) = context.world.object_transform(identity.guid()) {
+                sound.position = transform.position();
+                self.engine.with_engine_mut(|engine| match sound.playback {
+                    ModelPlayback::Playing(voice) => engine.set_voice_world_position(
+                        voice,
+                        sound.entry_id,
+                        listener,
+                        sound.position,
+                    ),
+                    ModelPlayback::Loading(load) => engine
+                        .set_load_world_position(load, sound.entry_id, listener, sound.position)
+                        .map(|_| ()),
+                })?;
+            }
+        }
+        for event in events.iter().filter(|event| {
+            event.sound_kind() == Some(M2SoundKind::UnitEffect) && event.identifier() == *b"$SND"
+        }) {
+            let Some(owner) = event.sound_owner().filter(|owner| owner.is_live()) else {
+                continue;
+            };
+            let Some(identity) = event
+                .owner_guid()
+                .and_then(|guid| context.world.object_identity(guid))
+            else {
+                continue;
+            };
+            let local = context.world.local_player_guid().ok() == Some(identity.guid());
+            let centered = local && super::boolean(context.cvars, "Sound_ListenerAtCharacter")?;
+            let request = unit_effect_request(event.data(), event.is_effect_kit_sound(), local)
+                .with_gain_multiplier(unit_effect_gain(centered))?;
+            let result = self.engine.with_engine_mut(|engine| {
+                let looping =
+                    !event.is_effect_kit_sound() && engine.sound_entry_loops(event.data());
+                let load = if centered {
+                    engine.begin_load(request, &mut || random.next_u32())?
+                } else {
+                    engine.begin_positioned_load(
+                        request,
+                        listener,
+                        event.position(),
+                        &mut || random.next_u32(),
+                    )?
+                };
+                Ok::<_, SoundEngineError>((load, looping))
+            });
+            match result {
+                Ok((Some(load), looping)) => {
+                    // 4C6A40 checks admission before immediately replacing
+                    // the retained handle (4C6390 / 879840), even a one-shot.
+                    if let Some(index) = self.model_sounds.iter().position(|sound| {
+                        sound
+                            .owner
+                            .as_ref()
+                            .is_some_and(|current| current.same_model(owner))
+                    }) {
+                        let mut sound = self.model_sounds.remove(index);
+                        sound.owner = None;
+                        self.engine.with_engine_mut(|engine| sound.stop(engine))?;
+                    }
+                    self.model_sounds.push(ModelSound {
+                        owner: Some(owner.clone()),
+                        playback: ModelPlayback::Loading(load.handle()),
+                        entry_id: event.data(),
+                        position: event.position(),
+                        listener,
+                        unit: Some(identity),
+                        centered,
+                        looping,
+                    });
+                    self.loader.queue(load);
+                }
+                Ok((None, _))
+                | Err(
+                    SoundEngineError::ExclusiveEntryActive { .. }
+                    | SoundEngineError::ChannelCapacity { .. },
+                ) => {}
+                Err(error) => {
+                    tracing::warn!(sound_entry_id = event.data(), %error, "unit effect sound could not play")
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Cancels pending bytes or retires the retained handle when its model dies.
     pub(super) fn collect_model_sounds(&mut self) -> Result<(), RuntimeSoundError> {
         self.engine.with_engine_mut(|engine| {
             let mut index = 0;
             while index < self.model_sounds.len() {
+                let sound = &mut self.model_sounds[index];
+                if !sound.looping
+                    && sound.owner.as_ref().is_some_and(|owner| {
+                        owner.kind() == M2SoundKind::UnitEffect && !owner.is_live()
+                    })
+                {
+                    // 6F87C0 releases a one-shot handle without stopping its tail.
+                    sound.owner = None;
+                    sound.unit = None;
+                }
                 if self.model_sounds[index].is_live(engine)? {
                     index += 1;
                 } else {
@@ -122,6 +236,9 @@ impl RuntimeSoundCoordinator {
         let sound = &mut self.model_sounds[index];
         sound.playback = ModelPlayback::Playing(voice);
         self.engine.with_engine_mut(|engine| {
+            if sound.centered {
+                return Ok(());
+            }
             // 8793C0 copies the event's world position; it is not a bone pointer.
             engine.set_voice_world_position(
                 voice,
@@ -147,6 +264,9 @@ impl RuntimeSoundCoordinator {
             .unwrap_or_else(|| AdvancedSoundListener::from_world_camera(camera));
         let mut dispatched = 0;
         for event in events {
+            if event.sound_kind() == Some(M2SoundKind::UnitEffect) {
+                continue;
+            }
             let owner = match &event.identifier() {
                 b"$DSL" => {
                     let Some(owner) = event.sound_owner().filter(|owner| owner.is_live()) else {
@@ -205,11 +325,14 @@ impl RuntimeSoundCoordinator {
             match result {
                 Ok(Some(load)) => {
                     self.model_sounds.push(ModelSound {
+                        looping: owner.is_some(),
                         owner,
                         playback: ModelPlayback::Loading(load.handle()),
                         entry_id: event.data(),
                         position: event.position(),
                         listener,
+                        unit: None,
+                        centered: false,
                     });
                     self.loader.queue(load);
                 }
@@ -248,4 +371,27 @@ fn callback_request(entry_id: u32, kind: Option<M2SoundKind>) -> SoundPlayReques
         },
         SoundConcurrencyMode::Entry,
     )
+}
+
+fn unit_effect_gain(centered: bool) -> f32 {
+    if centered { 0.65 } else { 1.0 }
+}
+
+fn unit_effect_request(entry: u32, kit: bool, local: bool) -> SoundPlayRequest {
+    SoundPlayRequest::new(
+        entry,
+        SoundChannel::SFX,
+        SoundVariationMode::Random,
+        if kit {
+            SoundLoopMode::Once
+        } else {
+            SoundLoopMode::Entry
+        },
+        SoundConcurrencyMode::Entry,
+    )
+    .with_priority(if local {
+        solarity_media::SoundVoicePriority::new(110)
+    } else {
+        solarity_media::SoundVoicePriority::DEFAULT
+    })
 }

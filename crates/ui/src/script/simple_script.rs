@@ -5096,10 +5096,18 @@ fn register_font_string_methods(
             let font = resolve_font_object(lua, value).ok_or_else(|| {
                 mlua::Error::runtime("Usage: FontString:SetFontObject(fontObject)")
             })?;
+            // 485160 leaves local text properties intact for the same font.
+            if font_string
+                .raw_get::<Option<Table>>(font_object_key())?
+                .is_some_and(|previous| previous.to_pointer() == font.to_pointer())
+            {
+                return Ok(());
+            }
             let color: Table = font.raw_get(text_color_key())?;
             let shadow_offset: Table = font.raw_get(font_shadow_offset_key())?;
             let shadow_color: Table = font.raw_get(font_shadow_color_key())?;
             font_string.raw_set(font_object_key(), font)?;
+            font_string.raw_set(font_height_key(), Value::Nil)?;
             font_string.raw_set(text_color_key(), color)?;
             font_string.raw_set(font_shadow_offset_key(), shadow_offset)?;
             font_string.raw_set(font_shadow_color_key(), shadow_color)?;
@@ -5126,9 +5134,40 @@ fn register_font_string_methods(
             };
             Ok((
                 font.raw_get::<Option<String>>(font_face_key())?,
-                font.raw_get::<Option<f64>>(font_height_key())?,
+                font_string
+                    .raw_get::<Option<f64>>(font_height_key())?
+                    .or(font.raw_get::<Option<f64>>(font_height_key())?),
                 font.raw_get::<Option<String>>(font_flags_key())?,
             ))
+        })?,
+    )?;
+    let height_measurement = measurement.clone();
+    methods.raw_set(
+        "SetTextHeight",
+        lua.create_function(move |lua, (font_string, value): (Table, Value)| {
+            // 48DDB0 accepts Lua numeric coercion and rejects <= FLT_EPSILON.
+            let name = font_string
+                .raw_get::<Option<String>>(name_key())?
+                .unwrap_or_else(|| "<unnamed>".into());
+            let height = lua.coerce_number(value)?.ok_or_else(|| {
+                mlua::Error::runtime(format!("Usage: {name}:SetTextHeight(pixelHeight)"))
+            })?;
+            if height.is_nan() || height <= f64::from(f32::EPSILON) {
+                return Err(mlua::Error::runtime(format!(
+                    "{name}:SetTextHeight(): invalid texHeight: {:.6}, height must be > 0",
+                    height as f32
+                )));
+            }
+            let height = f64::from(height as f32);
+            if font_string.raw_get::<Option<f64>>(font_height_key())? == Some(height) {
+                return Ok(());
+            }
+            font_string.raw_set(font_height_key(), height)?;
+            if let Some(measurement) = &height_measurement {
+                measurement.update_auto_font_string_size(&font_string)?;
+            }
+            refresh_owning_scroll_frame(lua, &font_string, ui_extent)?;
+            mark_object_state_changed(lua, &font_string, DIRTY_TEXT)
         })?,
     )?;
     let set_text_measurement = measurement.clone();

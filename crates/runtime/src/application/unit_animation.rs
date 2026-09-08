@@ -122,6 +122,7 @@ impl UnitAnimationInput {
 #[derive(Clone, Copy)]
 pub(super) enum UnitMovementAnimationEventKind {
     Changed,
+    VisualKit(u16),
     Jump,
     Land {
         previous_flags: u32,
@@ -239,6 +240,7 @@ pub(super) struct UnitAnimationBehavior {
     playback: Rc<RefCell<M2Playback>>,
     scene_sample: RefCell<Option<UnitAnimationSceneSample>>,
     body: RefCell<UnitBodyPose>,
+    model_color: Cell<u32>,
 }
 
 /// Instance state survives GPU rebuilds alongside the primary sequence owner.
@@ -297,6 +299,7 @@ impl UnitAnimationBehavior {
             landing: Cell::new(false),
             playback: Rc::new(RefCell::new(M2Playback::unstarted(0, scene_time_ms))),
             scene_sample: RefCell::new(None),
+            model_color: Cell::new(u32::MAX),
             body: RefCell::new(UnitBodyPose {
                 controller: UnitBodyOrientation::new(input.facing),
                 last_scene_time: None,
@@ -314,6 +317,25 @@ impl UnitAnimationBehavior {
 
     pub fn matches(&self, identity: WorldObjectIdentity, model: &DecodedM2Model) -> bool {
         self.identity == identity && self.model.path() == model.path()
+    }
+
+    pub fn identity(&self) -> WorldObjectIdentity {
+        self.identity
+    }
+
+    pub fn set_model_color(&self, color: u32) {
+        self.model_color.set(color);
+    }
+    pub fn model_color(&self) -> u32 {
+        self.model_color.get()
+    }
+
+    /// 73B140 routes the environmental phase's animation through 7385C0.
+    pub fn request_visual_kit_animation(&self, animation: u16) {
+        self.pending.borrow_mut().push_back(PendingUnitAnimation {
+            input: self.input.get(),
+            event: UnitMovementAnimationEventKind::VisualKit(animation),
+        });
     }
 
     pub fn set_input(&self, input: UnitAnimationInput) {
@@ -593,6 +615,7 @@ impl UnitAnimationBehavior {
             };
             let input = pending.input;
             let request = match pending.event {
+                UnitMovementAnimationEventKind::VisualKit(animation) => Some(animation),
                 UnitMovementAnimationEventKind::Jump if input.stand != 7 && !input.mounted => {
                     self.landing.set(false);
                     Some(37)

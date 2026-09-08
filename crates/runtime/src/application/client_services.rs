@@ -206,8 +206,11 @@ impl ClientServices {
         let transport_catalog = catalog.clone();
         let terrain_catalog = catalog.clone();
         let world_ui_catalog = catalog.clone();
-        let unit_effects = super::unit_effects::RuntimeUnitEffects::new(catalog.clone());
-        let mut assets = AssetStore::mount(catalog)?;
+        let mut assets = AssetStore::mount(catalog.clone())?;
+        let environmental = Arc::new(solarity_asset::EnvironmentalDamageCatalog::load(
+            &mut assets,
+        )?);
+        let unit_effects = super::unit_effects::RuntimeUnitEffects::new(catalog, environmental);
         let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
@@ -478,7 +481,8 @@ impl ClientServices {
                 network: Some(network),
                 login,
                 world,
-                gameplay: RuntimeGameplayCoordinator::new(),
+                gameplay: RuntimeGameplayCoordinator::new()
+                    .with_factions(character_metadata.faction_catalog()),
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
                 area_triggers,
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
@@ -2583,6 +2587,21 @@ impl ClientServices {
             &self.liquids,
             crate::platform::client_milliseconds(),
         )?;
+        while let Some(impact) = self.gameplay.player_ui_mut().take_environmental_impact() {
+            if let Some(world) = self.gameplay.world() {
+                let requests = self.unit_effects.environmental_impact(
+                    &impact,
+                    world,
+                    &self.player,
+                    self.player.sound_catalogs().0,
+                );
+                if let Some(frame) = self.terrain_frame.as_mut() {
+                    for request in requests {
+                        frame.emit_unit_effect(request, &mut self.crt_rand)?;
+                    }
+                }
+            }
+        }
         if self.game_objects.scene_revision() != previous_game_object_revision
             && let Some(frame) = self.terrain_frame.as_mut()
         {

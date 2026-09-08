@@ -169,7 +169,8 @@ fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn 
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
 fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Error>> {
     use super::unit_effects::{
-        M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding, UnitEffectRequest, WATER_EFFECTS,
+        M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding, UnitEffectRequest,
+        UnitEffectResource, WATER_EFFECTS,
     };
     use crate::configuration::{WindowConfiguration, WindowMode};
     use crate::platform::SdlPlatform;
@@ -186,8 +187,22 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
         Locale::EnUs,
     )?)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
-    let sources = ResidentUnitEffect::load(&mut assets)?;
-    assert_eq!(sources.len(), 5);
+    let environmental = solarity_asset::EnvironmentalDamageCatalog::load(&mut assets)?;
+    assert_eq!(
+        (0..6)
+            .map(|kind| environmental.visual_kit(kind).map(|kit| kit.id()))
+            .collect::<Vec<_>>(),
+        vec![
+            Some(871),
+            Some(870),
+            Some(1066),
+            Some(1064),
+            Some(1065),
+            Some(1067)
+        ]
+    );
+    let sources = ResidentUnitEffect::load(&mut assets, &environmental)?;
+    assert_eq!(sources.len(), 9);
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
     let mut warmup = M2UnitEffectWarmup::new(sources);
@@ -210,12 +225,26 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
     ));
     let identity = world.object_identity(1).ok_or("unit identity")?;
     let lifetime = Rc::new(());
-    for kind in WATER_EFFECTS {
+    let requests = WATER_EFFECTS
+        .into_iter()
+        .map(|kind| (kind.into(), None, 0))
+        .chain(environmental.visual_kits().flat_map(|kit| {
+            kit.effects().enumerate().map(move |(index, (_, id))| {
+                (
+                    UnitEffectResource::Visual(id),
+                    Some(kit.id()),
+                    if index == 0 { kit.sound_entry_id() } else { 0 },
+                )
+            })
+        }));
+    for (kind, kit, sound_entry) in requests {
         frame.unit_effects.emit(
             UnitEffectRequest {
                 identity,
                 lifetime: Rc::downgrade(&lifetime),
                 kind,
+                kit,
+                sound_entry,
                 binding: UnitEffectBinding::Positioned {
                     position: Vec3::ZERO,
                     world_factor: 1.,
@@ -230,6 +259,7 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
     let camera = WorldCamera::stock(Vec3::new(0., -5., 2.), Vec3::ZERO, Vec3::Z, 100.).frame(1.)?;
     let mut particle_draws = 0;
     let mut mesh_draws = 0;
+    let mut sounds = Vec::new();
     for now in (0..15_000).step_by(33) {
         let draws = frame.prepare_visible_draws(
             &renderer,
@@ -247,10 +277,17 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
         if now == 0 {
             assert_eq!(
                 frame.placements.len(),
-                5,
+                12,
                 "particle-only models need scene admission"
             );
         }
+        sounds.extend(
+            frame
+                .drain_triggered_events()
+                .into_iter()
+                .filter(|event| event.is_effect_kit_sound())
+                .map(|event| event.data()),
+        );
     }
     assert!(particle_draws > 0);
     assert!(
@@ -259,8 +296,10 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
     );
     assert!(frame.placements.is_empty());
     assert!(frame.sources.is_empty());
+    sounds.sort_unstable();
+    assert_eq!(sounds, vec![1484, 1484, 3373, 5736]);
     println!(
-        "five archived GPU effect sources: particle_draws={particle_draws}, mesh_draws={mesh_draws}; all drained"
+        "nine archived GPU effect sources: particle_draws={particle_draws}, mesh_draws={mesh_draws}; all twelve instances drained"
     );
     Ok(())
 }

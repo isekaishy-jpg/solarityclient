@@ -1328,6 +1328,10 @@ fn snapshot_text(
     else {
         return Ok(None);
     };
+    let height = table
+        .raw_get::<Option<f64>>(font_height_key())
+        .map_err(|error| snapshot_error(format!("object {lua_index} text height"), error))?
+        .unwrap_or(height);
     if !height.is_finite() || height <= 0.0 {
         return Err(UiScriptError::Plan {
             message: format!("live UI text {lua_index} has invalid font height {height}"),

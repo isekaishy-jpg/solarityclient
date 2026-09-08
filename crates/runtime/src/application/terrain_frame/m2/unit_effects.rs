@@ -7,13 +7,14 @@ mod tests;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use glam::{Mat4, Vec3};
 use solarity_asset::{
-    AssetStore, BlpTextureCache, M2ModelAnimationMode, M2ModelCache, SpellVisualEffectCatalog,
-    SpellVisualEffectDefinition,
+    AssetStore, BlpTextureCache, EnvironmentalDamageCatalog, M2ModelAnimationMode, M2ModelCache,
+    SpellVisualEffectCatalog, SpellVisualEffectDefinition,
 };
 use solarity_ecs::WorldObjectIdentity;
 use solarity_rendering::{M2ModelOrientation, M2SequenceStartPhase};
 use solarity_systems::UnitEffectScale;
 use solarity_systems::UnitWaterEffect;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -33,9 +34,21 @@ pub(in crate::application) const WATER_EFFECTS: [UnitWaterEffect; 5] = [
     UnitWaterEffect::InebriatedBubbles,
 ];
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(in crate::application) enum UnitEffectResource {
+    Water(UnitWaterEffect),
+    Visual(u32),
+}
+
+impl From<UnitWaterEffect> for UnitEffectResource {
+    fn from(kind: UnitWaterEffect) -> Self {
+        Self::Water(kind)
+    }
+}
+
 /// Worker-owned declarations, textures, mesh plans, and compiled programs.
 pub(in crate::application) struct ResidentUnitEffect {
-    kind: UnitWaterEffect,
+    kind: UnitEffectResource,
     definition: SpellVisualEffectDefinition,
     source: ResidentM2Source,
 }
@@ -43,13 +56,25 @@ pub(in crate::application) struct ResidentUnitEffect {
 impl ResidentUnitEffect {
     pub(in crate::application) fn load(
         store: &mut AssetStore,
+        environmental: &EnvironmentalDamageCatalog,
     ) -> Result<Vec<Self>, RuntimeTerrainError> {
         let catalog = SpellVisualEffectCatalog::load(store)?;
         let mut models = M2ModelCache::new();
         let mut textures = BlpTextureCache::new();
         let mut effects = Vec::with_capacity(WATER_EFFECTS.len());
-        for kind in WATER_EFFECTS {
-            let Some(definition) = catalog.named(kind.name()) else {
+        let visuals = environmental
+            .visual_kits()
+            .flat_map(|kit| kit.effects().map(|(_, id)| id))
+            .collect::<BTreeSet<_>>();
+        for kind in WATER_EFFECTS
+            .into_iter()
+            .map(UnitEffectResource::Water)
+            .chain(visuals.into_iter().map(UnitEffectResource::Visual))
+        {
+            let Some(definition) = (match kind {
+                UnitEffectResource::Water(water) => catalog.named(water.name()),
+                UnitEffectResource::Visual(id) => catalog.definition(id),
+            }) else {
                 continue;
             };
             let Some(path) = definition.model_path()? else {
@@ -62,7 +87,7 @@ impl ResidentUnitEffect {
                     source,
                 }),
                 Err(error) => {
-                    tracing::warn!(effect = kind.name(), %path, %error, "unit effect model request failed");
+                    tracing::warn!(effect = definition.id(), %path, %error, "unit effect model request failed");
                 }
             }
         }
@@ -73,7 +98,7 @@ impl ResidentUnitEffect {
 /// Prewarmed immutable GPU generations survive changes to the world frame.
 #[derive(Default)]
 pub(in crate::application) struct M2UnitEffectSources {
-    entries: [Option<M2UnitEffectSource>; 8],
+    entries: HashMap<UnitEffectResource, M2UnitEffectSource>,
 }
 
 struct M2UnitEffectSource {
@@ -85,7 +110,9 @@ struct M2UnitEffectSource {
 pub(in crate::application) struct UnitEffectRequest {
     pub identity: WorldObjectIdentity,
     pub lifetime: Weak<()>,
-    pub kind: UnitWaterEffect,
+    pub kind: UnitEffectResource,
+    pub kit: Option<u32>,
+    pub sound_entry: u32,
     pub binding: UnitEffectBinding,
 }
 
@@ -113,13 +140,47 @@ pub(in crate::application) enum UnitEffectBinding {
 pub(super) struct UnitEffectPlacement {
     identity: WorldObjectIdentity,
     lifetime: Weak<()>,
-    kind: UnitWaterEffect,
+    kind: UnitEffectResource,
+    definition_id: u32,
+    kit: Option<u32>,
+    sound_entry: u32,
+    sound_lifetime: Option<Rc<super::sound::M2SoundKind>>,
     binding: UnitEffectBinding,
     scale: UnitEffectScale,
     phase: UnitEffectPhase,
 }
 
 impl UnitEffectPlacement {
+    pub(super) fn take_ready_sound(&mut self, position: Vec3) -> Option<super::RuntimeM2Event> {
+        if self.retiring() {
+            self.sound_lifetime = None;
+            return None;
+        }
+        let entry = std::mem::take(&mut self.sound_entry);
+        (entry != 0)
+            .then(|| self.sound_event(entry, position))
+            .flatten()
+            .map(super::RuntimeM2Event::with_effect_kit_sound)
+    }
+
+    fn sound_event(&self, entry: u32, position: Vec3) -> Option<super::RuntimeM2Event> {
+        Some(
+            super::RuntimeM2Event::new(*b"$SND", entry, position, Some(self.identity.guid()))
+                .with_sound_owner(super::sound::M2SoundOwner::new(
+                    self.sound_lifetime.as_ref()?,
+                )),
+        )
+    }
+
+    pub(super) fn bind_sound_events(&self, events: &mut [super::RuntimeM2Event]) {
+        for event in events {
+            if event.identifier() == *b"$SND"
+                && let Some(sound) = self.sound_event(event.data(), event.position())
+            {
+                *event = sound;
+            }
+        }
+    }
     pub(super) fn attached_to(&self, owner: &Rc<UnitAnimationBehavior>) -> bool {
         matches!(&self.binding, UnitEffectBinding::Attached { owner: parent, .. } if std::ptr::eq(parent.as_ptr(), Rc::as_ptr(owner)))
     }
@@ -135,7 +196,11 @@ impl UnitEffectPlacement {
         now: f32,
         random: &mut CrtRand,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
-        self.phase.advance(playback, model, now, random)
+        let result = self.phase.advance(playback, model, now, random);
+        if self.retiring() {
+            self.sound_lifetime = None;
+        }
+        result
     }
 }
 
@@ -150,7 +215,7 @@ pub(super) struct M2UnitEffectScene {
     next_serial: u64,
     pending: std::collections::VecDeque<PendingUnitEffect>,
     loading: std::collections::VecDeque<(UnitEffectRequest, u32)>,
-    anchors: std::collections::HashMap<usize, Option<Mat4>>,
+    anchors: HashMap<usize, HashMap<u32, Option<Mat4>>>,
 }
 
 impl M2UnitEffectScene {
@@ -167,11 +232,14 @@ impl M2UnitEffectScene {
         });
         let changed = previous != placements.len();
         if changed {
-            self.anchors.retain(|key, _| placements.iter().any(|placement| {
-                placement.unit_effect.as_ref().is_some_and(|effect| {
-                    matches!(&effect.binding, UnitEffectBinding::Attached { owner, .. } if owner.as_ptr().addr() == *key)
-                })
-            }));
+            self.anchors.retain(|parent, attachments| {
+                attachments.retain(|id, _| placements.iter().any(|placement| {
+                    placement.unit_effect.as_ref().is_some_and(|effect| {
+                        matches!(&effect.binding, UnitEffectBinding::Attached { owner, attachment, .. } if owner.as_ptr().addr() == *parent && *attachment == *id)
+                    })
+                }));
+                !attachments.is_empty()
+            });
         }
         changed
     }
@@ -211,7 +279,7 @@ impl M2UnitEffectScene {
         let Some(source) = self
             .sources
             .as_ref()
-            .and_then(|sources| sources.entries[request.kind as usize].as_ref())
+            .and_then(|sources| sources.entries.get(&request.kind))
         else {
             return Ok(());
         };
@@ -225,8 +293,14 @@ impl M2UnitEffectScene {
                 Mat4::from_translation(*position)
                     * Mat4::from_scale(Vec3::splat(scale.positioned(*world_factor, *unit_scale)))
             }
-            UnitEffectBinding::Attached { owner, .. } => {
-                self.anchors.entry(owner.as_ptr().addr()).or_insert(None);
+            UnitEffectBinding::Attached {
+                owner, attachment, ..
+            } => {
+                self.anchors
+                    .entry(owner.as_ptr().addr())
+                    .or_default()
+                    .entry(*attachment)
+                    .or_insert(None);
                 Mat4::IDENTITY
             }
         };
@@ -250,6 +324,10 @@ impl M2UnitEffectScene {
             identity: request.identity,
             lifetime: request.lifetime,
             kind: request.kind,
+            definition_id: source.definition.id(),
+            kit: request.kit,
+            sound_entry: request.sound_entry,
+            sound_lifetime: Some(Rc::new(super::sound::M2SoundKind::UnitEffect)),
             binding: request.binding,
             scale,
             phase: UnitEffectPhase::Playing,
@@ -262,7 +340,9 @@ impl M2UnitEffectScene {
     }
 
     pub(super) fn begin_frame(&mut self) {
-        self.anchors.values_mut().for_each(|anchor| *anchor = None);
+        for attachments in self.anchors.values_mut() {
+            attachments.values_mut().for_each(|anchor| *anchor = None);
+        }
     }
 
     pub(super) fn publish_loaded(
@@ -293,8 +373,7 @@ impl M2UnitEffectScene {
         Ok(())
     }
 
-    /// Native mouth selection uses 17, then root attachment 19. Its matrix
-    /// inherits the current animated parent bone and the model placement.
+    /// Each requested attachment inherits its current parent bone and placement.
     pub(super) fn update_anchor(
         &mut self,
         owner: &Rc<UnitAnimationBehavior>,
@@ -302,18 +381,20 @@ impl M2UnitEffectScene {
         bones: &solarity_rendering::M2BonePose,
         transform: Mat4,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let Some(anchor) = self.anchors.get_mut(&Rc::as_ptr(owner).addr()) else {
+        let Some(attachments) = self.anchors.get_mut(&Rc::as_ptr(owner).addr()) else {
             return Ok(());
         };
-        if let Some(attachment) = model.attachment(17).or_else(|| model.attachment(19)) {
-            let bone = bones
-                .transforms()
-                .get(usize::from(attachment.bone_index()))
-                .ok_or(solarity_rendering::M2BonePoseError::AttachmentBoneIndex {
-                    requested: attachment.bone_index(),
-                    available: bones.transforms().len(),
-                })?;
-            *anchor = Some(transform * *bone * Mat4::from_translation(attachment.position()));
+        for (id, anchor) in attachments {
+            if let Some(attachment) = model.attachment(*id) {
+                let bone = bones
+                    .transforms()
+                    .get(usize::from(attachment.bone_index()))
+                    .ok_or(solarity_rendering::M2BonePoseError::AttachmentBoneIndex {
+                        requested: attachment.bone_index(),
+                        available: bones.transforms().len(),
+                    })?;
+                *anchor = Some(transform * *bone * Mat4::from_translation(attachment.position()));
+            }
         }
         Ok(())
     }
@@ -328,12 +409,19 @@ impl M2UnitEffectScene {
             effect.phase = UnitEffectPhase::Retiring;
         }
         let UnitEffectBinding::Attached {
-            owner, model_scale, ..
+            owner,
+            model_scale,
+            attachment,
         } = &effect.binding
         else {
             return;
         };
-        let anchor = self.anchors.get(&owner.as_ptr().addr()).copied().flatten();
+        let anchor = self
+            .anchors
+            .get(&owner.as_ptr().addr())
+            .and_then(|attachments| attachments.get(attachment))
+            .copied()
+            .flatten();
         if owner.strong_count() == 0 || anchor.is_none() {
             effect.phase = UnitEffectPhase::Retiring;
         } else if let Some(anchor) = anchor {
@@ -361,8 +449,9 @@ impl M2UnitEffectScene {
                     .filter_map(|placement| placement.unit_effect.as_mut())
                 {
                     if old.identity == new.identity
-                        && old.kind == new.kind
-                        && matches!(&old.binding, UnitEffectBinding::Attached { attachment, .. } if Some(*attachment) == new.kind.attachment())
+                        && old.definition_id == new.definition_id
+                        && (old.kit.is_none() || old.kit == new.kit)
+                        && matches!((&old.binding, &new.binding), (UnitEffectBinding::Attached { attachment: a, .. }, UnitEffectBinding::Attached { attachment: b, .. }) if a == b)
                     {
                         old.phase = UnitEffectPhase::Retiring;
                     }
@@ -427,10 +516,13 @@ impl M2UnitEffectWarmup {
             return Ok(false);
         }
         if let Some(gpu) = prepare_source(renderer, &effect.source)? {
-            self.sources.entries[effect.kind as usize] = Some(M2UnitEffectSource {
-                definition: effect.definition.clone(),
-                gpu,
-            });
+            self.sources.entries.insert(
+                effect.kind,
+                M2UnitEffectSource {
+                    definition: effect.definition.clone(),
+                    gpu,
+                },
+            );
         }
         self.pending.pop_front();
         self.current = None;
