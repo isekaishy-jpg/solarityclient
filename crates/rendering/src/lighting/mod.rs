@@ -13,3 +13,4 @@ pub use m2_light::{
     merge_wotlk_directional_lights,
 };
 pub use m2_light_override::M2LightOverride;
+pub use world_scene::{ScenePointLightError, ScenePointLightSelection, ScenePointLights};

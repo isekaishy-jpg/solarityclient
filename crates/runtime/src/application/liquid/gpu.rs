@@ -173,6 +173,10 @@ impl LiquidGpuBatch {
         fog: LiquidFog,
         time_ms: u32,
         specular_enabled: bool,
+        scene_lights: Option<(
+            &solarity_rendering::ScenePointLights,
+            &[solarity_rendering::M2DirectionalLight],
+        )>,
     ) -> Result<Option<LiquidPreparedDraw>, RuntimeTerrainFrameError> {
         self.prepare_transformed_draw(
             renderer,
@@ -183,6 +187,7 @@ impl LiquidGpuBatch {
             fog,
             time_ms,
             specular_enabled,
+            scene_lights,
         )
     }
 
@@ -198,6 +203,10 @@ impl LiquidGpuBatch {
         fog: LiquidFog,
         time_ms: u32,
         specular_enabled: bool,
+        scene_lights: Option<(
+            &solarity_rendering::ScenePointLights,
+            &[solarity_rendering::M2DirectionalLight],
+        )>,
     ) -> Result<Option<LiquidPreparedDraw>, RuntimeTerrainFrameError> {
         let center = transform.transform_point3((self.minimum + self.maximum) * 0.5 - self.origin);
         let half = (self.maximum - self.minimum) * 0.5;
@@ -220,6 +229,17 @@ impl LiquidGpuBatch {
                 Vec3::ONE,
                 Vec3::ZERO,
             ),
+        };
+        let lighting = if let Some((scene_points, directionals)) = scene_lights {
+            let radius = half.length() * transform.x_axis.truncate().length();
+            scene_points.liquid_lighting(
+                center,
+                radius,
+                camera.view(),
+                lighting.with_scene_directional_lights(camera.view(), directionals),
+            )?
+        } else {
+            lighting
         };
         let (material, surface_transform, depth_transform) = match self.material.source.shader {
             ResidentLiquidShader::Water {

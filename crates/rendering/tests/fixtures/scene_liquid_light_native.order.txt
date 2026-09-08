@@ -1,0 +1,13 @@
+# enabled mask followed by native directional linked-list source IDs
+3 1 0
+3 1 0
+2 1
+3 0 1
+7 2 0 1
+5 2 0
+13 3 2 0
+15 1 3 2 0
+10 1 3
+15 2 0 1 3
+0
+15 3 2 1 0

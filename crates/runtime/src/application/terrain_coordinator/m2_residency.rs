@@ -55,7 +55,7 @@ impl ResidentM2Source {
         texture_cache: &mut BlpTextureCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
-        Self::load_with_lights(path, cache, texture_cache, store, M2LocalLightCount::Zero)
+        Self::load_with_lights(path, cache, texture_cache, store, M2LocalLightCount::Four)
     }
 
     /// Loads a separate scene model with its bounded local-light shader bank.

@@ -33,6 +33,7 @@ pub(super) struct FrameCreateContext<'a> {
     pub(super) slot_count: usize,
     pub(super) world_model_draw_capacity: usize,
     pub(super) m2_draw_capacity: usize,
+    pub(super) m2_scene_capacity: usize,
     pub(super) bone_capacity: usize,
     pub(super) particle_vertex_capacity: usize,
     pub(super) particle_index_capacity: usize,
@@ -89,7 +90,12 @@ impl FrameBufferLayout {
             uniform_alignment,
         )?;
         let m2_scene_stride = align_up(M2SceneUniform::BYTE_SIZE as u64, uniform_alignment)?;
-        let m2_scene_bytes = ((M2SceneLightBank::COUNT + 4) as u64)
+        let scene_count = context
+            .m2_scene_capacity
+            .checked_add(M2SceneLightBank::COUNT + 4)
+            .ok_or(VulkanError::WorldFrameCapacity)?;
+        validate_dynamic_range(scene_count, m2_scene_stride)?;
+        let m2_scene_bytes = (scene_count as u64)
             .checked_mul(m2_scene_stride)
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let bone_offset = align_up(
@@ -229,6 +235,10 @@ impl WorldFrameSlot {
         self.layout.world_model_material_stride
     }
 
+    pub(super) const fn m2_scene_stride(&self) -> vk::DeviceSize {
+        self.layout.m2_scene_stride
+    }
+
     pub(super) const fn m2_material_stride(&self) -> vk::DeviceSize {
         self.layout.m2_material_stride
     }
@@ -330,6 +340,18 @@ impl WorldFrameSlot {
                         light_bank.index(),
                     )?,
                     &scene.m2(light_bank).to_bytes(),
+                    self.layout.total_bytes,
+                )?;
+            }
+            for (index, instance) in scene.m2_instance_scenes().iter().enumerate() {
+                copy_bytes(
+                    destination,
+                    indexed_offset(
+                        self.layout.m2_scene_offset,
+                        self.layout.m2_scene_stride,
+                        index + 7,
+                    )?,
+                    &instance.to_bytes(),
                     self.layout.total_bytes,
                 )?;
             }
@@ -479,10 +501,10 @@ impl WorldFrameSlot {
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(9),
+                .descriptor_count(2),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .descriptor_count(2),
+                .descriptor_count(9),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1),
@@ -570,15 +592,15 @@ impl WorldFrameSlot {
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-            vk::DescriptorType::UNIFORM_BUFFER,
-            vk::DescriptorType::UNIFORM_BUFFER,
-            vk::DescriptorType::UNIFORM_BUFFER,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             vk::DescriptorType::STORAGE_BUFFER,
             M2_MATERIAL_DESCRIPTOR_TYPE,
-            vk::DescriptorType::UNIFORM_BUFFER,
-            vk::DescriptorType::UNIFORM_BUFFER,
-            vk::DescriptorType::UNIFORM_BUFFER,
-            vk::DescriptorType::UNIFORM_BUFFER,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
         ];
         for index in 0..DESCRIPTOR_SET_COUNT {
             let buffer_infos = [infos[index]];
@@ -746,6 +768,7 @@ pub(super) struct WorldFrameResources {
     next_slot: usize,
     world_model_draw_capacity: usize,
     m2_draw_capacity: usize,
+    m2_scene_capacity: usize,
     bone_capacity: usize,
     particle_vertex_capacity: usize,
     particle_index_capacity: usize,
@@ -758,6 +781,7 @@ impl WorldFrameResources {
         if !self.slots.is_empty()
             && self.slots.len() == context.slot_count
             && self.world_model_draw_capacity >= context.world_model_draw_capacity
+            && self.m2_scene_capacity >= context.m2_scene_capacity
             && self.m2_draw_capacity >= context.m2_draw_capacity
             && self.bone_capacity >= context.bone_capacity
             && self.particle_vertex_capacity >= context.particle_vertex_capacity
@@ -778,6 +802,8 @@ impl WorldFrameResources {
             context.world_model_draw_capacity,
         );
         let m2_draw_capacity = geometric_capacity(self.m2_draw_capacity, context.m2_draw_capacity);
+        let m2_scene_capacity =
+            geometric_capacity(self.m2_scene_capacity, context.m2_scene_capacity);
         let bone_capacity = geometric_capacity(self.bone_capacity, context.bone_capacity);
         let particle_vertex_capacity = geometric_capacity(
             self.particle_vertex_capacity,
@@ -798,6 +824,7 @@ impl WorldFrameResources {
             required_ribbon_vertices = context.ribbon_vertex_capacity,
             world_model_draw_capacity,
             m2_draw_capacity,
+            m2_scene_capacity,
             bone_capacity,
             particle_vertex_capacity,
             particle_index_capacity,
@@ -808,6 +835,7 @@ impl WorldFrameResources {
         let expanded = FrameCreateContext {
             world_model_draw_capacity,
             m2_draw_capacity,
+            m2_scene_capacity,
             bone_capacity,
             particle_vertex_capacity,
             particle_index_capacity,
@@ -857,6 +885,7 @@ impl WorldFrameResources {
         self.present_semaphores = present_semaphores;
         self.world_model_draw_capacity = world_model_draw_capacity;
         self.m2_draw_capacity = m2_draw_capacity;
+        self.m2_scene_capacity = m2_scene_capacity;
         self.bone_capacity = bone_capacity;
         self.particle_vertex_capacity = particle_vertex_capacity;
         self.particle_index_capacity = particle_index_capacity;
@@ -901,6 +930,7 @@ impl WorldFrameResources {
         self.next_slot = 0;
         self.world_model_draw_capacity = 0;
         self.m2_draw_capacity = 0;
+        self.m2_scene_capacity = 0;
         self.bone_capacity = 0;
         self.particle_vertex_capacity = 0;
         self.particle_index_capacity = 0;

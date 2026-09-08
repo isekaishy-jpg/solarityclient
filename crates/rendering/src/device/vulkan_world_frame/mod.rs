@@ -301,6 +301,14 @@ impl WorldFrameRenderer {
                 available: bone_count,
             });
         }
+        if all_draws()
+            .filter_map(|draw| draw.scene_index())
+            .chain(particle_draws.iter().filter_map(|draw| draw.scene_index()))
+            .chain(ribbon_draws.iter().filter_map(|draw| draw.scene_index()))
+            .any(|index| index as usize >= scene.m2_instance_scenes().len())
+        {
+            return Err(VulkanError::WorldFrameCapacity);
+        }
         self.resources.ensure(FrameCreateContext {
             device: context.device,
             allocator: context.allocator,
@@ -313,6 +321,7 @@ impl WorldFrameRenderer {
                 .checked_add(sky_draw_count)
                 .ok_or(VulkanError::WorldFrameCapacity)?,
             bone_capacity: bone_count,
+            m2_scene_capacity: scene.m2_instance_scenes().len(),
             particle_vertex_capacity: particle_vertices
                 .len()
                 .max(scene.particle_vertex_capacity()),
@@ -452,6 +461,7 @@ impl WorldFrameRenderer {
             frame_sets: slot.descriptor_sets(),
             world_model_material_stride: slot.world_model_material_stride(),
             m2_material_stride: slot.m2_material_stride(),
+            m2_scene_stride: slot.m2_scene_stride(),
             terrain_pipelines: context.terrain_pipelines,
             terrain_meshes: context.terrain_meshes,
             terrain_texture_sets: context.terrain_texture_sets,

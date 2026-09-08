@@ -11,6 +11,7 @@ pub struct WorldFrameScene<'a> {
     terrain: TerrainSceneUniform,
     world_model: WorldModelSceneUniform,
     m2: [M2SceneUniform; M2SceneLightBank::COUNT],
+    m2_instance_scenes: &'a [M2SceneUniform],
     particle_vertex_capacity: usize,
     particle_index_capacity: usize,
     liquids: Option<LiquidFrame<'a>>,
@@ -34,6 +35,7 @@ impl<'a> WorldFrameScene<'a> {
             terrain,
             world_model,
             m2: [m2; M2SceneLightBank::COUNT],
+            m2_instance_scenes: &[],
             particle_vertex_capacity: 0,
             particle_index_capacity: 0,
             liquids: None,
@@ -44,6 +46,17 @@ impl<'a> WorldFrameScene<'a> {
             celestials: None,
             sky_models: None,
         }
+    }
+
+    /// Supplies independent lighting for world model instances and their effects.
+    #[must_use]
+    pub const fn with_m2_instance_scenes(mut self, scenes: &'a [M2SceneUniform]) -> Self {
+        self.m2_instance_scenes = scenes;
+        self
+    }
+
+    pub(super) const fn m2_instance_scenes(self) -> &'a [M2SceneUniform] {
+        self.m2_instance_scenes
     }
 
     /// Adds camera-relative authored models in the two native sky queues.

@@ -264,7 +264,7 @@ fn record_draw(
             layout,
             0,
             &descriptor_sets,
-            &[dynamic_offset],
+            &[0, dynamic_offset],
         );
         context.device.cmd_push_constants(
             context.command_buffer,

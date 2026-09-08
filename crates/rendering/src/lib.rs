@@ -55,8 +55,9 @@ pub use device::{
     WorldModelTextureSetInfo, WorldSkyModelBatch, WorldSkyModelFrame,
 };
 pub use lighting::{
-    M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, glue_character_sunlight,
-    glue_ghost_sunlight, merge_wotlk_directional_lights,
+    M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, ScenePointLightError,
+    ScenePointLightSelection, ScenePointLights, glue_character_sunlight, glue_ghost_sunlight,
+    merge_wotlk_directional_lights,
 };
 pub use liquid::{
     LiquidDepthCoordinates, LiquidDepthTexture, LiquidDepthTextureKind, LiquidFog, LiquidLighting,
@@ -85,7 +86,8 @@ pub use model::{
     PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
     WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
     WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
-    sample_m2_lights_into, sample_m2_ui_camera_frame, triggered_m2_event_indices,
+    sample_m2_lights_into, sample_m2_scene_lights_into, sample_m2_ui_camera_frame,
+    triggered_m2_event_indices,
 };
 pub use model::{compare_m2_transparent, m2_model_distance_key, m2_section_distance_key};
 pub use particle::{

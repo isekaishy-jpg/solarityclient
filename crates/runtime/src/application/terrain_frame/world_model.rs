@@ -94,6 +94,10 @@ impl WorldModelFrame {
         fog: LiquidFog,
         time_ms: u32,
         specular_enabled: bool,
+        scene_lights: Option<(
+            &solarity_rendering::ScenePointLights,
+            &[solarity_rendering::M2DirectionalLight],
+        )>,
         output: &mut Vec<LiquidPreparedDraw>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         for placement in &self.placements {
@@ -116,6 +120,7 @@ impl WorldModelFrame {
                     fog,
                     time_ms,
                     specular_enabled,
+                    scene_lights,
                 )? {
                     output.push(draw);
                 }

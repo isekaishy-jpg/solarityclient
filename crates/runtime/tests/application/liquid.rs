@@ -75,6 +75,7 @@ fn liquid_resident_terrain_reaches_the_world_frame() -> Result<(), Box<dyn Error
                 LiquidFog::new(Vec3::new(0.0, 1.0, 1.0), Vec3::ZERO),
                 700,
                 false,
+                None,
             )
         })
         .collect::<Result<Vec<_>, _>>()?
@@ -271,11 +272,14 @@ fn liquid_environment_matches_original_daylight_shader_constants() -> Result<(),
             fog,
         )
         .to_bytes();
-        for (index, (actual, expected)) in uniform[256..336]
+        // The oracle injects fixed 20/100 fog distances. Runtime fog now follows
+        // the separately captured native day/far-clip policy, so compare the
+        // directional registers here, independently of that supplied fog bank.
+        for (index, (actual, expected)) in uniform[272..336]
             .as_chunks::<4>()
             .0
             .iter()
-            .zip(record[8..].as_chunks::<4>().0)
+            .zip(record[24..].as_chunks::<4>().0)
             .enumerate()
         {
             let actual = f32::from_le_bytes(*actual);

@@ -348,7 +348,7 @@ impl M2FrameSlot {
     fn create_descriptors(&mut self, context: &FrameCreateContext<'_>) -> Result<(), VulkanError> {
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::UNIFORM_BUFFER)
+                .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                 .descriptor_count(1),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
@@ -397,7 +397,7 @@ impl M2FrameSlot {
         let writes = [
             descriptor_write(
                 self.descriptor_sets[0],
-                vk::DescriptorType::UNIFORM_BUFFER,
+                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
                 &scene_infos,
             ),
             descriptor_write(

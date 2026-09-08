@@ -61,6 +61,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) frame_sets: [vk::DescriptorSet; 12],
     pub(super) world_model_material_stride: vk::DeviceSize,
     pub(super) m2_material_stride: vk::DeviceSize,
+    pub(super) m2_scene_stride: vk::DeviceSize,
     pub(super) terrain_pipelines: &'a TerrainPipelineRegistry,
     pub(super) terrain_meshes: &'a TerrainMeshRegistry,
     pub(super) terrain_texture_sets: &'a TerrainTextureSetRegistry,
@@ -627,7 +628,12 @@ fn record_particle(
         .m2_texture_sets
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    let sets = [m2_scene_set(context, draw.light_bank()), texture];
+    let (scene_set, scene_offset) = instance_scene(
+        context,
+        draw.scene_index(),
+        m2_scene_set(context, draw.light_bank()),
+    )?;
+    let sets = [scene_set, texture];
     // SAFETY: The prepared packet proves compatible renderer-local handles;
     // frame validation proves every UINT32 index addresses the PNC0T0 stream.
     unsafe {
@@ -644,7 +650,7 @@ fn record_particle(
             layout,
             0,
             &sets,
-            &[],
+            &[scene_offset],
         );
         context.device.cmd_draw_indexed(
             context.command_buffer,
@@ -671,7 +677,12 @@ fn record_ribbon(
         .m2_texture_sets
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    let sets = [m2_scene_set(context, draw.light_bank()), texture];
+    let (scene_set, scene_offset) = instance_scene(
+        context,
+        draw.scene_index(),
+        m2_scene_set(context, draw.light_bank()),
+    )?;
+    let sets = [scene_set, texture];
     // SAFETY: The prepared packet proves compatible renderer-local handles and
     // its range was checked against the slot's mapped PCT0 stream.
     unsafe {
@@ -683,7 +694,7 @@ fn record_ribbon(
             layout,
             0,
             &sets,
-            &[],
+            &[scene_offset],
         );
         context.device.cmd_draw(
             context.command_buffer,
@@ -840,6 +851,7 @@ fn record_m2(
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
     let dynamic_offset = dynamic_offset(draw_index, context.m2_material_stride)?;
+    let (scene_set, scene_offset) = instance_scene(context, draw.scene_index(), scene_set)?;
     let sets = [
         scene_set,
         context.frame_sets[6],
@@ -857,7 +869,7 @@ fn record_m2(
             layout,
             0,
             &sets,
-            &[dynamic_offset],
+            &[scene_offset, dynamic_offset],
         );
         context.device.cmd_push_constants(
             context.command_buffer,
@@ -884,6 +896,20 @@ fn m2_scene_set(
     light_bank: crate::M2SceneLightBank,
 ) -> vk::DescriptorSet {
     context.frame_sets[3 + light_bank.index()]
+}
+
+fn instance_scene(
+    context: &RecordContext<'_>,
+    index: Option<u32>,
+    fixed: vk::DescriptorSet,
+) -> Result<(vk::DescriptorSet, u32), VulkanError> {
+    match index {
+        Some(index) => Ok((
+            context.frame_sets[3],
+            dynamic_offset(index as usize + 7, context.m2_scene_stride)?,
+        )),
+        None => Ok((fixed, 0)),
+    }
 }
 
 fn dynamic_offset(index: usize, stride: u64) -> Result<u32, VulkanError> {

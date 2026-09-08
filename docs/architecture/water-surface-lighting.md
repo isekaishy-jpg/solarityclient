@@ -24,9 +24,10 @@ test loads authored WDBC colors, constructs the realm clock and final camera,
 then compares the actual liquid descriptor's direction, color and fog words.
 The pre-fix test fails on the first directional component with opposite signs.
 
-This establishes the exterior directional-light boundary. It does not establish
-local-light registration, fog-policy parity or the missing sky, cloud and
-celestial rendering systems; those remain part of the water/lighting slice.
+This establishes the exterior directional-light boundary. Animated scene lights
+now have separate registration, query and upload coverage in
+[world scene lights](world-scene-lights.md). Fog policy and sky composition are
+covered separately in [world fog](world-fog.md) and [world sky](world-sky.md).
 
 ## Shared day bands and local overlays
 
@@ -50,10 +51,10 @@ are preserved. Local cloud density blends, while the other three sky scalars
 retain the global palette's values. Skybox slots accumulate repeated IDs up
 to one without attenuating earlier slots. This establishes sampling under
 the native default fog mode; camera-distance fog remapping and spatial
-local-light registration require their own evidence. Weather palette composition
+local-light registration have separate evidence in the linked documents. Weather palette composition
 now has separate native captures and runtime coverage in [world sky](world-sky.md).
 
 The shared palette now also drives the [native sky dome](world-sky.md), including
 the fog-colored lower hemisphere. The Vulkan background and camera-relative
-geometry and procedural clouds are present; celestial and authored skybox layers remain in
-the final lighting stage.
+geometry, procedural clouds, celestial strips, stars and authored skyboxes are
+present in their native compositor queues.

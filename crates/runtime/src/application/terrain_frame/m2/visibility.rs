@@ -8,6 +8,7 @@ use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, placement_bounding
 pub(super) struct M2PlacementVisibility {
     bounds: Vec<Option<(glam::Vec3, f32)>>,
     dynamic_indices: Vec<usize>,
+    light_parents: Vec<Option<usize>>,
 }
 
 impl M2PlacementVisibility {
@@ -18,7 +19,10 @@ impl M2PlacementVisibility {
     ) {
         self.bounds.clear();
         self.dynamic_indices.clear();
+        self.light_parents.clear();
         for (index, placement) in placements.iter().enumerate() {
+            self.light_parents
+                .push(super::placement_parent_index(placements, index, placement));
             let bounds = if matches!(placement.owner, M2GpuPlacementOwner::Static(_)) {
                 sources[placement.source_index]
                     .as_ref()
@@ -37,5 +41,9 @@ impl M2PlacementVisibility {
 
     pub(super) fn dynamic_indices(&self) -> &[usize] {
         &self.dynamic_indices
+    }
+
+    pub(super) fn light_parent(&self, index: usize) -> Option<usize> {
+        self.light_parents[index]
     }
 }

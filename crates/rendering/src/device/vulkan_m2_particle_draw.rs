@@ -17,12 +17,26 @@ pub struct M2ParticlePreparedDraw {
     first_index: u32,
     index_count: u32,
     light_bank: M2SceneLightBank,
+    scene_index: Option<u32>,
     order: M2EffectOrder,
     blend_order: u8,
     scene_order: u32,
 }
 
 impl M2ParticlePreparedDraw {
+    /// Selects the world instance scene supplied in `WorldFrameScene`.
+    #[must_use]
+    pub const fn with_scene_index(mut self, index: Option<u32>) -> Self {
+        self.scene_index = index;
+        self
+    }
+
+    /// Returns the world instance scene, or the fixed Glue/sky bank.
+    #[must_use]
+    pub const fn scene_index(self) -> Option<u32> {
+        self.scene_index
+    }
+
     /// Assigns the stock Glue light bank used by unified-frame presentation.
     #[must_use]
     pub const fn with_light_bank(mut self, light_bank: M2SceneLightBank) -> Self {
@@ -139,6 +153,7 @@ pub(in crate::device) fn prepare_draw(
         first_index,
         index_count,
         light_bank: M2SceneLightBank::Environment,
+        scene_index: None,
         order,
         blend_order: blending_type,
         scene_order: u32::MAX,

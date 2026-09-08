@@ -81,12 +81,66 @@ pub fn sample_m2_lights_into(
     directional: &mut Vec<M2DirectionalLight>,
     points: &mut Vec<M2PointLight>,
 ) -> Result<(), M2BonePoseError> {
-    let clock = clock.resolve(animations)?;
     directional.clear();
     points.clear();
     directional.reserve(animations.lights().len());
     points.reserve(animations.lights().len());
-    for light in animations.lights() {
+    sample_lights_with(
+        animations,
+        pose,
+        clock,
+        model_transform,
+        |_, light| directional.push(light),
+        |light| points.push(light),
+    )?;
+    let origin = model_transform.transform_point3(Vec3::ZERO);
+    points.sort_by(|left, right| {
+        left.position()
+            .distance_squared(origin)
+            .total_cmp(&right.position().distance_squared(origin))
+    });
+    Ok(())
+}
+
+/// Samples current lights in authored order for native scene-grid publication.
+/// Both destinations are cleared and retain their allocations. Spatial queries
+/// choose light order independently for each receiving model. Directional pairs
+/// retain their authored index so visibility changes preserve scene list order.
+///
+/// # Errors
+/// Returns the same clock and bone failures as [`sample_m2_lights_into`].
+pub fn sample_m2_scene_lights_into(
+    animations: &M2AnimationSet,
+    pose: &M2BonePose,
+    clock: M2AnimationClock,
+    model_transform: Mat4,
+    directional: &mut Vec<(usize, M2DirectionalLight)>,
+    points: &mut Vec<M2PointLight>,
+) -> Result<(), M2BonePoseError> {
+    directional.clear();
+    points.clear();
+    directional.reserve(animations.lights().len());
+    points.reserve(animations.lights().len());
+    sample_lights_with(
+        animations,
+        pose,
+        clock,
+        model_transform,
+        |index, light| directional.push((index, light)),
+        |light| points.push(light),
+    )
+}
+
+fn sample_lights_with(
+    animations: &M2AnimationSet,
+    pose: &M2BonePose,
+    clock: M2AnimationClock,
+    model_transform: Mat4,
+    mut directional: impl FnMut(usize, M2DirectionalLight),
+    mut points: impl FnMut(M2PointLight),
+) -> Result<(), M2BonePoseError> {
+    let clock = clock.resolve(animations)?;
+    for (index, light) in animations.lights().iter().enumerate() {
         let visible = sample_discrete(animations, light.visibility(), clock, 1_u8);
         if visible == 0 {
             continue;
@@ -105,7 +159,7 @@ pub fn sample_m2_lights_into(
         if light.kind() == M2LightKind::Point {
             let position =
                 model_transform.transform_point3(bone.transform_point3(light.position()));
-            points.push(M2PointLight::new(position, ambient, diffuse));
+            points(M2PointLight::new(position, ambient, diffuse));
         } else {
             // 0x00828B07 takes the negative bone Z column, ignoring the light
             // position. Placement transforms it as a vector, not a point.
@@ -115,15 +169,9 @@ pub fn sample_m2_lights_into(
             if direction.length_squared() > f32::from_bits(0x3480_0000) {
                 direction = direction.normalize();
             }
-            directional.push(M2DirectionalLight::new(direction, ambient, diffuse));
+            directional(index, M2DirectionalLight::new(direction, ambient, diffuse));
         }
     }
-    let origin = model_transform.transform_point3(Vec3::ZERO);
-    points.sort_by(|left, right| {
-        left.position()
-            .distance_squared(origin)
-            .total_cmp(&right.position().distance_squared(origin))
-    });
     Ok(())
 }
 

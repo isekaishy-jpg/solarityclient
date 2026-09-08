@@ -10,6 +10,8 @@ mod particle_fog;
 mod particle_frame;
 #[path = "model/portrait.rs"]
 mod portrait;
+#[path = "model/scene_lights.rs"]
+mod scene_lights;
 #[path = "model/sequence_blend.rs"]
 mod sequence_blend;
 #[path = "model/sequence_timer.rs"]

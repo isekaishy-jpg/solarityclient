@@ -55,6 +55,23 @@ impl LiquidLighting {
         self.point_count = count as u32;
         self
     }
+
+    /// Replays scene directional collection after the liquid provider's sun.
+    /// Native 834F60 sums ambient but 834DC0 retains the last diffuse/direction;
+    /// water's 8A38B0 upload does not run M2's merged-sun finalizer.
+    #[must_use]
+    pub fn with_scene_directional_lights(
+        mut self,
+        view: Mat4,
+        lights: &[crate::M2DirectionalLight],
+    ) -> Self {
+        for light in lights {
+            self.ambient += light.ambient();
+            self.diffuse = light.diffuse();
+            self.direction = view.transform_vector3(light.direction());
+        }
+        self
+    }
 }
 
 /// Native vertex fog coefficients and the post-pixel-shader fog color.

@@ -116,6 +116,7 @@ fn replicated_world_model_water_moves_shares_and_retires_its_mesh() -> Result<()
         fog(),
         0,
         false,
+        None,
         &mut hidden,
     )?;
     assert!(hidden.is_empty(), "moved factory leaves the old view");
@@ -203,6 +204,7 @@ fn capture(
         fog(),
         0,
         false,
+        None,
         &mut draws,
     )?;
     assert_eq!(draws.len(), 1);

@@ -17,6 +17,7 @@ pub struct M2PreparedDraw {
     push_constants: M2DrawPushConstants,
     required_bone_transforms: usize,
     light_bank: M2SceneLightBank,
+    scene_index: Option<u32>,
     priority_plane: i16,
     effect_interleave: bool,
     scene_order: u32,
@@ -47,10 +48,24 @@ impl M2PreparedDraw {
             push_constants,
             required_bone_transforms,
             light_bank: M2SceneLightBank::Environment,
+            scene_index: None,
             priority_plane,
             effect_interleave,
             scene_order: u32::MAX,
         }
+    }
+
+    /// Selects the world instance scene supplied in `WorldFrameScene`.
+    #[must_use]
+    pub const fn with_scene_index(mut self, index: Option<u32>) -> Self {
+        self.scene_index = index;
+        self
+    }
+
+    /// Returns the world instance scene, or the fixed Glue/sky bank.
+    #[must_use]
+    pub const fn scene_index(self) -> Option<u32> {
+        self.scene_index
     }
 
     /// Assigns the stock Glue light bank used by unified-frame presentation.

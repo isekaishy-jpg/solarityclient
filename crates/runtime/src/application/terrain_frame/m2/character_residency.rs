@@ -165,7 +165,7 @@ pub(super) fn prepare_character_gpu(
             mount.model(),
             &resolved,
             None,
-            M2LocalLightCount::Zero,
+            M2LocalLightCount::Four,
             M2ModelOrientation::Authored,
         )?;
         let owner = match body_owner {
@@ -204,7 +204,7 @@ pub(super) fn prepare_character_gpu(
         input.model(),
         &resolved,
         Some(M2GeosetSelection::Character(input.geosets())),
-        M2LocalLightCount::Zero,
+        M2LocalLightCount::Four,
         M2ModelOrientation::Authored,
     )?;
     let mut body = if let Some(animation) = input.unit_animation() {
@@ -311,7 +311,7 @@ pub(super) fn prepare_character_gpu(
                 attachment.model(),
                 &resolved,
                 None,
-                M2LocalLightCount::Zero,
+                M2LocalLightCount::Four,
                 orientation,
             )?;
             let mut placement = default_gpu_placement(
@@ -351,7 +351,7 @@ pub(super) fn prepare_character_gpu(
                 effect.model(),
                 &resolved,
                 None,
-                M2LocalLightCount::Zero,
+                M2LocalLightCount::Four,
                 orientation,
             )?;
             let placement = default_gpu_placement(

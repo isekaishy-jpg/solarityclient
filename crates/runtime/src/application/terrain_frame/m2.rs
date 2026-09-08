@@ -63,6 +63,10 @@ use crate::application::terrain_coordinator::m2_residency::{
 use crate::random::CrtRand;
 
 use super::RuntimeTerrainFrameError;
+mod scene_lighting;
+#[cfg(test)]
+#[path = "../../../tests/application/scene_lighting.rs"]
+mod scene_lighting_tests;
 
 /// Build 12340's highest-capability external SKIN selection.
 ///
@@ -150,6 +154,7 @@ enum M2TransparentDrawIndex {
 /// Exact per-instance state required by later animation and material assembly.
 struct M2GpuPlacement {
     sound_lifetime: std::cell::OnceCell<Rc<sound::M2SoundKind>>,
+    light_lifetime: std::cell::OnceCell<Rc<()>>,
     placement_valid: bool,
     world_model_state: Option<Rc<GameObjectWorldModelState>>,
     source_index: usize,
@@ -699,6 +704,7 @@ pub(in crate::application) struct M2Frame {
     ribbon_draws: Vec<M2RibbonPreparedDraw>,
     triggered_events: Vec<RuntimeM2Event>,
     mount_camera_sample: Option<RuntimeMountCameraSample>,
+    scene_lighting: scene_lighting::SceneLighting,
     glue_directional_lights: Vec<solarity_rendering::M2DirectionalLight>,
     glue_point_lights: Vec<solarity_rendering::M2PointLight>,
     requested_items: Vec<(u64, CharacterAttachmentPoint)>,
@@ -716,6 +722,10 @@ pub(in crate::application) struct M2Frame {
 
 /// Borrowed dynamic streams assembled for one unified world submission.
 pub(in crate::application) struct M2VisibleFrame<'frame> {
+    pub(in crate::application) instance_scenes: &'frame [solarity_rendering::M2SceneUniform],
+    pub(in crate::application) scene_points: &'frame solarity_rendering::ScenePointLights,
+    pub(in crate::application) scene_directionals:
+        &'frame [solarity_rendering::M2DirectionalLight],
     /// Native liquid queue one belongs between the two transparent model passes.
     pub(in crate::application) water_scene_order: u32,
     pub(in crate::application) bone_transforms: &'frame [Mat4],
@@ -784,6 +794,7 @@ impl M2Frame {
             ribbon_draws: Vec::new(),
             triggered_events: Vec::new(),
             mount_camera_sample: None,
+            scene_lighting: scene_lighting::SceneLighting::default(),
             glue_directional_lights: Vec::new(),
             glue_point_lights: Vec::new(),
             requested_items: Vec::new(),
@@ -868,6 +879,7 @@ impl M2Frame {
             sources: vec![Some(source)],
             placements: vec![M2GpuPlacement {
                 sound_lifetime: Default::default(),
+                light_lifetime: Default::default(),
                 placement_valid: true,
                 world_model_state: None,
                 source_index: 0,
@@ -907,6 +919,7 @@ impl M2Frame {
             ribbon_draws: Vec::new(),
             triggered_events: Vec::new(),
             mount_camera_sample: None,
+            scene_lighting: scene_lighting::SceneLighting::default(),
             glue_directional_lights: Vec::new(),
             glue_point_lights: Vec::new(),
             requested_items: Vec::new(),
@@ -1146,6 +1159,7 @@ impl M2Frame {
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
                 sound_lifetime: Default::default(),
+                light_lifetime: Default::default(),
                 placement_valid: true,
                 source_index,
                 ..placement
@@ -1265,7 +1279,7 @@ impl M2Frame {
                 input.model(),
                 &resolved,
                 input.geosets().map(M2GeosetSelection::from),
-                M2LocalLightCount::Zero,
+                M2LocalLightCount::Four,
                 M2ModelOrientation::Authored,
             )?;
             let transform =
@@ -1305,6 +1319,7 @@ impl M2Frame {
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
                 sound_lifetime: Default::default(),
+                light_lifetime: Default::default(),
                 placement_valid: true,
                 source_index,
                 ..placement
@@ -1858,6 +1873,7 @@ impl M2Frame {
             random,
             game_objects,
             None,
+            None,
         )
     }
 
@@ -1892,6 +1908,10 @@ impl M2Frame {
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
         mut unit_effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
+        world_lighting: Option<(
+            solarity_rendering::M2SceneUniform,
+            solarity_rendering::M2DirectionalLight,
+        )>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, random)?;
@@ -1908,6 +1928,7 @@ impl M2Frame {
         self.mount_camera_sample = None;
         self.glue_directional_lights.clear();
         self.glue_point_lights.clear();
+        self.scene_lighting.clear();
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
         self.unit_effects
@@ -2056,8 +2077,13 @@ impl M2Frame {
             }
             let placement_index = next_placement;
             next_placement += 1;
+            let publishes_lights = world_lighting.is_some()
+                && self.sources[self.placements[placement_index].source_index]
+                    .as_ref()
+                    .is_some_and(|source| !source.model.animations().lights().is_empty());
             let bounds = self.placement_visibility.bounds()[placement_index];
             if let Some((center, radius)) = bounds
+                && !publishes_lights
                 && !frustum.contains_sphere(center, radius)?
             {
                 continue;
@@ -2177,7 +2203,8 @@ impl M2Frame {
             if matches!(
                 owner,
                 M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
-            ) {
+            ) && !publishes_lights
+            {
                 let (center, radius) =
                     placement_bounding_sphere(&source.model, placement.transform);
                 if !frustum.contains_sphere(center, radius)? {
@@ -2354,6 +2381,20 @@ impl M2Frame {
                     placement.transform,
                 )?;
             }
+            if publishes_lights {
+                solarity_rendering::sample_m2_scene_lights_into(
+                    source.model.animations(),
+                    bone_pose,
+                    clock,
+                    placement.transform,
+                    &mut self.scene_lighting.sample_directional,
+                    &mut self.scene_lighting.sample_points,
+                )?;
+                self.scene_lighting.publish(
+                    placement.light_lifetime.get_or_init(|| Rc::new(())),
+                    placement_color(placement.color).w * placement.opacity,
+                )?;
+            }
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
                 sample_m2_lights_into(
                     source.model.animations(),
@@ -2452,7 +2493,20 @@ impl M2Frame {
                         .push((guid, point, *effect_point, transform));
                 }
             }
-            if !static_visibility_resolved {
+            let scene_index = if world_lighting.is_some() {
+                // 831AF0 queries matrix F4's translation at +124 with radius
+                // zero. Authored mesh bounds do not move the lighting center.
+                let center = placement.transform.w_axis.truncate();
+                Some(self.scene_lighting.receiver(
+                    placement_index,
+                    self.placement_visibility.light_parent(placement_index),
+                    center,
+                )?)
+            } else {
+                None
+            };
+            if !static_visibility_resolved || (publishes_lights && placement.unit_effect.is_none())
+            {
                 let (center, radius) =
                     placement_bounding_sphere(&source.model, placement.transform);
                 if !frustum.contains_sphere(center, radius)? {
@@ -2609,7 +2663,8 @@ impl M2Frame {
                         vertex_count,
                         index_count,
                     )?
-                    .with_light_bank(light_bank);
+                    .with_light_bank(light_bank)
+                    .with_scene_index(scene_index);
                 let prepared_index = self.particle_draws.len();
                 self.particle_draws.push(prepared);
                 self.transparent_elements.push(M2TransparentElement {
@@ -2702,7 +2757,8 @@ impl M2Frame {
                             bone_offset,
                             0,
                         )?
-                        .with_light_bank(light_bank);
+                        .with_light_bank(light_bank)
+                        .with_scene_index(scene_index);
                     if draw.transparent_sort_unit()
                         || alpha_state == M2ElementAlphaState::Translucent
                     {
@@ -2774,7 +2830,8 @@ impl M2Frame {
                             first_vertex,
                             vertex_count,
                         )?
-                        .with_light_bank(light_bank);
+                        .with_light_bank(light_bank)
+                        .with_scene_index(scene_index);
                     let prepared_index = self.ribbon_draws.len();
                     self.ribbon_draws.push(prepared);
                     self.transparent_elements.push(M2TransparentElement {
@@ -2847,7 +2904,13 @@ impl M2Frame {
         self.visible_draws.sort_by_key(|draw| draw.scene_order());
         self.particle_draws.sort_by_key(|draw| draw.scene_order());
         self.ribbon_draws.sort_by_key(|draw| draw.scene_order());
+        if let Some((base, exterior)) = world_lighting {
+            self.scene_lighting.finish(base, exterior)?;
+        }
         Ok(M2VisibleFrame {
+            instance_scenes: &self.scene_lighting.scenes,
+            scene_points: &self.scene_lighting.points,
+            scene_directionals: self.scene_lighting.directionals(),
             water_scene_order,
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,
@@ -3255,6 +3318,7 @@ fn m2_gpu_placement(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(M2GpuPlacement {
         sound_lifetime: Default::default(),
+        light_lifetime: Default::default(),
         placement_valid: true,
         world_model_state: None,
         source_index,
@@ -3429,7 +3493,7 @@ fn prepare_source(
     renderer: &mut VulkanRenderer,
     source: &ResidentM2Source,
 ) -> Result<Option<M2GpuSource>, RuntimeTerrainFrameError> {
-    prepare_source_with_lights(renderer, source, M2LocalLightCount::Zero)
+    prepare_source_with_lights(renderer, source, M2LocalLightCount::Four)
 }
 
 fn prepare_source_with_lights(

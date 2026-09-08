@@ -42,6 +42,9 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// A current scene light or receiving model has invalid spatial data.
+    #[error(transparent)]
+    SceneLight(#[from] solarity_rendering::ScenePointLightError),
     /// An authored liquid scroll rate cannot form a native clock divisor.
     #[error(transparent)]
     LiquidScroll(#[from] solarity_rendering::LiquidScrollError),
@@ -693,32 +696,6 @@ impl TerrainFrame {
             }
         }
         profile.mark("terrain culling");
-        let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera);
-        self.liquid_draws.clear();
-        for batch in self.tiles.iter().flat_map(|tile| &tile.liquids) {
-            if let Some(draw) = batch.prepare_draw(
-                renderer,
-                frustum,
-                camera,
-                liquid_lighting,
-                liquid_fog,
-                liquid_time_ms,
-                specular_enabled,
-            )? {
-                self.liquid_draws.push(draw);
-            }
-        }
-        self.world_models.prepare_liquid_draws(
-            renderer,
-            frustum,
-            camera,
-            liquid_lighting,
-            liquid_fog,
-            liquid_time_ms,
-            specular_enabled,
-            &mut self.liquid_draws,
-        )?;
-        profile.mark("liquid packets");
         let light = environment.light();
         self.sky.update(
             environment,
@@ -748,21 +725,14 @@ impl TerrainFrame {
             camera.view_projection(),
             camera.view(),
             camera.camera().position(),
-            light.ambient_color(),
-            light.diffuse_color(),
+            glam::Vec3::ZERO,
+            glam::Vec3::ZERO,
             environment.light_direction(),
             fog_parameters,
             fog.color(),
             [M2LocalLightState::disabled(); 4],
         )
         .with_specular_enabled(specular_enabled);
-        let world_model_draws = self.world_models.prepare_visible_draws(
-            renderer,
-            frustum,
-            environment.world_model_emissive(),
-            fog.color(),
-        )?;
-        profile.mark("WMO packets");
         self.m2
             .update_player_state(player, local_animation_time_ms, random)?;
         self.m2
@@ -788,8 +758,52 @@ impl TerrainFrame {
             random,
             Some(game_objects),
             unit_effect_callback,
+            Some((
+                m2_scene,
+                solarity_rendering::M2DirectionalLight::new(
+                    -environment.light_direction(),
+                    light.ambient_color(),
+                    light.diffuse_color(),
+                ),
+            )),
         )?;
         profile.mark("M2 packets");
+        let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera);
+        self.liquid_draws.clear();
+        for batch in self.tiles.iter().flat_map(|tile| &tile.liquids) {
+            if let Some(draw) = batch.prepare_draw(
+                renderer,
+                frustum,
+                camera,
+                liquid_lighting,
+                liquid_fog,
+                liquid_time_ms,
+                specular_enabled,
+                Some((m2.scene_points, m2.scene_directionals)),
+            )? {
+                self.liquid_draws.push(draw);
+            }
+        }
+        self.world_models.prepare_liquid_draws(
+            renderer,
+            frustum,
+            camera,
+            liquid_lighting,
+            liquid_fog,
+            liquid_time_ms,
+            specular_enabled,
+            Some((m2.scene_points, m2.scene_directionals)),
+            &mut self.liquid_draws,
+        )?;
+        profile.mark("liquid packets");
+        let world_model_draws = self.world_models.prepare_visible_draws(
+            renderer,
+            frustum,
+            environment.world_model_emissive(),
+            fog.color(),
+        )?;
+        profile.mark("WMO packets");
+
         let (default_sky, sky_models) = sky_resources.prepare_models(
             renderer,
             camera,
@@ -800,6 +814,7 @@ impl TerrainFrame {
         )?;
         let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));
         let mut scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
+            .with_m2_instance_scenes(m2.instance_scenes)
             .with_sky_models(sky_models)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
         if default_sky {

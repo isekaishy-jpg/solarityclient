@@ -29,7 +29,7 @@ impl M2PipelineLayout {
         let bindings = [
             vec![descriptor_binding(
                 0,
-                vk::DescriptorType::UNIFORM_BUFFER,
+                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             )],
             vec![descriptor_binding(
