@@ -77,7 +77,7 @@ pub use item::{
 pub use light::{
     LightCatalog, LightDefinition, LightParameter, LightSkybox, ModelLightColors, SkyboxBlend,
     WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
-    exterior_light_direction,
+    exterior_light_direction, exterior_light_direction_at,
 };
 pub use liquid_material::{LiquidMaterialCatalog, LiquidMaterialDefinition};
 pub use loading_screen::{LoadingScreenCatalog, LoadingScreenDefinition};

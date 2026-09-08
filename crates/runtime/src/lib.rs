@@ -31,7 +31,7 @@ pub(crate) mod test_network;
 
 pub use build_identity::{CLIENT_BUILD, ClientBuild};
 pub use random::{BlizzardRand, CrtRand};
-pub use time::RealmClock;
+pub use time::{RealmClock, RealmSkyTime};
 
 pub use application::{
     ApplicationError, ApplicationExitReason, ApplicationRunReport, CharacterProjectionError,

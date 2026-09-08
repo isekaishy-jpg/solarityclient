@@ -55,9 +55,19 @@ pub struct MapDefinition {
     entrance: [f32; 2],
     expansion_id: u32,
     maximum_players: u32,
+    time_of_day_override: i32,
 }
 
 impl MapDefinition {
+    /// Returns the native minute-of-day override, or `None` for realm time.
+    #[must_use]
+    pub const fn time_of_day_override(&self) -> Option<i32> {
+        if self.time_of_day_override == -1 {
+            None
+        } else {
+            Some(self.time_of_day_override)
+        }
+    }
     /// Returns the identifier used by world-login and transfer packets.
     #[must_use]
     pub const fn id(&self) -> u32 {
@@ -158,6 +168,7 @@ impl MapCatalog {
                 ],
                 expansion_id: field(&table, row, 63)?,
                 maximum_players: field(&table, row, 65)?,
+                time_of_day_override: field(&table, row, 62)? as i32,
             });
         }
         maps.sort_unstable_by_key(MapDefinition::id);

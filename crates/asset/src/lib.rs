@@ -48,7 +48,7 @@ pub use database::{
     WdbcTable, WorldChunkSoundKey, WorldLightCondition, WorldLightQuery, WorldLightSample,
     WorldLightSampleError, WorldModelAreaCatalog, WorldModelAreaDefinition, WorldModelAreaKey,
     WorldStateZoneSound, ZoneIntroMusicDefinition, ZoneMusicDefinition, ZoneSoundCatalog,
-    ZoneSoundOverrideCatalog, exterior_light_direction,
+    ZoneSoundOverrideCatalog, exterior_light_direction, exterior_light_direction_at,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
 pub use model::{

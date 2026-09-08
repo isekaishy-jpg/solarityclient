@@ -54,5 +54,5 @@ composition and spatial local-light registration require their own evidence.
 
 The shared palette now also drives the [native sky dome](world-sky.md), including
 the fog-colored lower hemisphere. The Vulkan background and camera-relative
-geometry are present; clouds, celestial and authored skybox layers remain in
+geometry and procedural clouds are present; celestial and authored skybox layers remain in
 the final lighting stage.

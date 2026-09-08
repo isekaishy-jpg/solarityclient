@@ -313,6 +313,16 @@ impl WorldLightSample {
         self.sky_colors
     }
 
+    /// Returns ambient, diffuse and emissive cloud colors (bands 11, 10 and 12).
+    #[must_use]
+    pub const fn cloud_colors(self) -> [Vec3; 3] {
+        [
+            self.additional_colors[2],
+            self.additional_colors[1],
+            self.additional_colors[3],
+        ]
+    }
+
     /// Returns one of the 18 authored LightIntBand channels in DBC order.
     /// Channels 8 and 10..13 are retained for sky/cloud presentation.
     #[must_use]

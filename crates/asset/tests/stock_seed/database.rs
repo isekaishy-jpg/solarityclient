@@ -1335,6 +1335,7 @@ fn map_catalog_decodes_build_12340_world_identity() -> Result<(), Box<dyn Error>
     fields[59] = u32::MAX;
     fields[60] = 0.0_f32.to_bits();
     fields[61] = 0.0_f32.to_bits();
+    fields[62] = 360;
     fields[63] = 2;
     fields[65] = 0;
     let table = create_wdbc(1, 66, &fields, &strings);
@@ -1356,6 +1357,7 @@ fn map_catalog_decodes_build_12340_world_identity() -> Result<(), Box<dyn Error>
     assert_eq!(map.entrance(), None);
     assert_eq!(map.expansion_id(), 2);
     assert_eq!(map.maximum_players(), 0);
+    assert_eq!(map.time_of_day_override(), Some(360));
     assert_eq!(catalog.map(572), None);
     Ok(())
 }

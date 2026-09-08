@@ -11,6 +11,7 @@ ash.workspace = true
 egui.workspace = true
 egui_console.workspace = true
 glam.workspace = true
+libc.workspace = true
 sdl3.workspace = true
 solarity-asset.workspace = true
 solarity-cpu.workspace = true

@@ -4318,6 +4318,7 @@ dependencies = [
  "egui",
  "egui_console",
  "glam",
+ "libc",
  "sdl3",
  "shipyard",
  "solarity-asset",

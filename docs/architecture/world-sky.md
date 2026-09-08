@@ -67,6 +67,31 @@ bilinear texture sample and blend of the native mesh and pixels. The complete
 five-test sky/liquid/ripple/underwater frame group and rendering library checks
 pass, along with Clippy for all rendering targets.
 
-The runtime currently submits the base gradient. Cloud runtime composition,
-celestial textures, stars, authored skybox models, weather overrides and
-WMO-specific sky visibility remain in the lighting/sky slice.
+The active runtime now retains and submits both gradient and procedural cloud
+domes. It samples cloud lighting from the native sun/first-moon positions and
+the completed environment's cloud bands, including the camera's liquid bank.
+The simulation advances once per world frame on the client millisecond clock.
+The earlier native cloud static constructor consumes 256 CRT random values;
+the client-thread random stream now accounts for this before M2Initialize's
+twinkle seed and later Glue/world emitters.
+
+`RealmSkyTime` samples `76CFF0`'s unsigned millisecond progression in extended
+precision, with the native minute-to-day multiplier and day wrap. Band time
+uses the original float store and nearest-even conversion after subtracting
+one half. The exterior ray samples this continuous time, avoiding half-minute
+steps. `realm_sky_clock_oracle.py` supplies only the monotonic tick provider;
+330 captures compare the complete native clock and normalized exterior ray.
+The existing water-light uniform tests continue to pass.
+
+The second-moon calendar provider uses CRT local-calendar midnight divided by
+86,400, as in `76C1F0`. The realm supplies the date; the platform supplies its
+timezone/DST conversion. `Map.dbc` column 62 retains minute-of-day overrides:
+`-1` uses realm time, valid overrides reset the lunar calendar index to zero,
+and invalid minute ranges select the original noon fallback. Calendar tests
+cover leap-day rollover, while clock captures cover fractional and multi-day
+progression. Production startup supplies the complete map override catalog.
+
+Celestial textures, stars, authored skybox models, weather transitions and
+WMO-specific sky visibility remain in the lighting/sky slice. Until the weather
+receiver is connected, the runtime retains the native initial clear-weather
+attenuation value.

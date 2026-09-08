@@ -35,6 +35,7 @@ mlua = { version = "=0.12.0", default-features = false, features = [
     "lua51",
     "vendored",
 ] }
+libc = { version = "=0.2.189", default-features = false }
 quick-xml = { version = "=0.42.0", default-features = false }
 rayon = { version = "=1.12.0" }
 sdl3 = { version = "=0.18.4", default-features = false, features = [

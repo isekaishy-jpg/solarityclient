@@ -335,6 +335,11 @@ impl ClientServices {
         // M2Initialize consumes these before any ordinary or Glue emitter is
         // constructed. The resulting table remains process-wide.
         let mut crt_rand = CrtRand::new();
+        // The earlier 9D0740 static initializer builds the 256-entry cloud
+        // noise table through 7F04B0 -> 7ED250 before M2Initialize runs.
+        for _ in 0..256 {
+            let _ = crt_rand.next_u15();
+        }
         let first = u32::from(crt_rand.next_u15());
         let second = u32::from(crt_rand.next_u15());
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
@@ -487,7 +492,8 @@ impl ClientServices {
                     .with_factions(character_metadata.faction_catalog()),
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
                 area_triggers,
-                environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?,
+                environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?
+                    .with_map_time_overrides(&maps),
                 player_movement: super::player_movement::RuntimePlayerMovement::default(),
                 remote_movement: super::player_movement::remote::RuntimeRemoteMovement::default(),
                 player: RuntimePlayerPresentation::new(

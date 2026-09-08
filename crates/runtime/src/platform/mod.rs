@@ -7,6 +7,7 @@
 mod lcd;
 
 mod blizzard_cursor;
+mod calendar;
 mod clock;
 mod cursor;
 mod event;
@@ -22,6 +23,7 @@ mod status;
 mod thread_clock;
 mod window_identity;
 
+pub(crate) use calendar::realm_calendar_days;
 pub(crate) use clock::client_milliseconds;
 pub use event::{
     ButtonState, KeyCode, KeyModifiers, KeyStateEvent, MouseButton, MouseButtonEvent,

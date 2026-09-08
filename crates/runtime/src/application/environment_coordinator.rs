@@ -2,8 +2,8 @@
 
 use glam::Vec3;
 use solarity_asset::{
-    LightCatalog, LiquidTypeCatalog, WorldLightCondition, WorldLightQuery, WorldLightSample,
-    WorldLightSampleError, exterior_light_direction,
+    LightCatalog, LiquidTypeCatalog, MapCatalog, WorldLightCondition, WorldLightQuery,
+    WorldLightSample, WorldLightSampleError, exterior_light_direction_at,
 };
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_systems::{
@@ -17,6 +17,9 @@ use crate::time::RealmClock;
 /// A failure while deriving one complete stock exterior environment.
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum RuntimeWorldEnvironmentError {
+    /// The platform CRT could not convert the authoritative realm calendar.
+    #[error("world environment cannot convert the realm calendar")]
+    Calendar,
     /// Platform startup did not supply a usable physical-memory report.
     #[error("world environment requires a positive physical-memory report")]
     MissingPhysicalMemory,
@@ -44,12 +47,24 @@ pub struct RuntimeWorldEnvironmentFrame {
     position: Vec3,
     half_minutes: u32,
     day_fraction: f32,
+    calendar_days: i32,
+    weather_blend: f32,
     view_distance: WorldViewDistance,
     light: WorldLightSample,
     light_direction: Vec3,
 }
 
 impl RuntimeWorldEnvironmentFrame {
+    /// Returns the native precipitation palette and cloud-light attenuation.
+    #[must_use]
+    pub const fn weather_blend(self) -> f32 {
+        self.weather_blend
+    }
+    /// Returns the native calendar-day provider for the second moon's phase.
+    #[must_use]
+    pub const fn calendar_days(self) -> i32 {
+        self.calendar_days
+    }
     /// Returns the active Map.dbc identifier.
     #[must_use]
     pub const fn map_id(self) -> u32 {
@@ -127,9 +142,23 @@ pub struct RuntimeWorldEnvironment {
     total_physical_memory_bytes: u64,
     requested_view_distance: f32,
     current: Option<RuntimeWorldEnvironmentFrame>,
+    map_time_overrides: Vec<(u32, i32)>,
 }
 
 impl RuntimeWorldEnvironment {
+    /// Retains authored map clock overrides before their catalog enters streaming.
+    #[must_use]
+    pub fn with_map_time_overrides(mut self, maps: &MapCatalog) -> Self {
+        self.map_time_overrides = maps
+            .maps()
+            .iter()
+            .filter_map(|map| {
+                map.time_of_day_override()
+                    .map(|minutes| (map.id(), minutes))
+            })
+            .collect();
+        self
+    }
     /// Creates an environment owner with stock's registered `farclip` value.
     ///
     /// # Errors
@@ -148,6 +177,7 @@ impl RuntimeWorldEnvironment {
             total_physical_memory_bytes,
             requested_view_distance: DEFAULT_WORLD_VIEW_DISTANCE,
             current: None,
+            map_time_overrides: Vec::new(),
         })
     }
 
@@ -174,8 +204,16 @@ impl RuntimeWorldEnvironment {
         // 4F8501 uses the camera's followed object's position for light volumes;
         // normal player-follow cameras therefore retain player-space volume weights.
         let position = world.local_player_transform()?.position();
-        let half_minutes_fraction = clock.half_minutes_fraction();
-        let half_minutes = half_minutes_fraction as u32;
+        let mut sky_time = clock
+            .sky_time()
+            .ok_or(RuntimeWorldEnvironmentError::Calendar)?;
+        if let Ok(index) = self
+            .map_time_overrides
+            .binary_search_by_key(&map_id.value(), |entry| entry.0)
+        {
+            sky_time = sky_time.with_map_time_override(self.map_time_overrides[index].1);
+        }
+        let half_minutes = sky_time.half_minutes();
         let view_distance = resolve_world_view_distance(WorldViewDistanceRequest::new(
             self.requested_view_distance,
             map_id,
@@ -188,10 +226,12 @@ impl RuntimeWorldEnvironment {
             map_id: map_id.value(),
             position,
             half_minutes,
-            day_fraction: half_minutes_fraction / 2880.0,
+            day_fraction: sky_time.day_fraction(),
+            calendar_days: sky_time.calendar_days(),
+            weather_blend: 0.0,
             view_distance,
             light,
-            light_direction: exterior_light_direction(half_minutes),
+            light_direction: exterior_light_direction_at(sky_time.day_fraction()),
         };
         self.current = Some(current);
         Ok(Some(current))

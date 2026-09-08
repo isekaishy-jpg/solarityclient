@@ -31,6 +31,7 @@ use crate::application::terrain_coordinator::world_model_residency::ResidentWorl
 use crate::random::CrtRand;
 
 pub(in crate::application) mod m2;
+mod sky;
 mod streaming;
 mod world_model;
 
@@ -511,7 +512,7 @@ pub(super) struct TerrainFrame {
     liquid_materials: LiquidGpuMaterialCache,
     liquid_filtering: WorldModelTextureFiltering,
     liquid_draws: Vec<solarity_rendering::LiquidPreparedDraw>,
-    sky: solarity_rendering::WorldSkyDome,
+    sky: sky::WorldSky,
     m2: M2Frame,
     world_models: WorldModelFrame,
 }
@@ -582,7 +583,7 @@ impl TerrainFrame {
             visible_draws: Vec::with_capacity(plan.chunks().len()),
             liquid_materials,
             liquid_filtering: world_model_filtering,
-            sky: solarity_rendering::WorldSkyDome::new(),
+            sky: sky::WorldSky::new(),
             liquid_draws: Vec::new(),
             m2,
             world_models,
@@ -624,7 +625,7 @@ impl TerrainFrame {
             visible_draws: Vec::new(),
             liquid_materials: LiquidGpuMaterialCache::default(),
             liquid_filtering: world_model_filtering,
-            sky: solarity_rendering::WorldSkyDome::new(),
+            sky: sky::WorldSky::new(),
             liquid_draws: Vec::new(),
             m2,
             world_models,
@@ -717,13 +718,7 @@ impl TerrainFrame {
         )?;
         profile.mark("liquid packets");
         let light = environment.light();
-        self.sky.update_colors(
-            light.sky_colors(),
-            light.fog_color(),
-            environment.day_fraction(),
-            light.highlight_sky(),
-            camera,
-        );
+        self.sky.update(environment, camera, liquid_time_ms);
         let terrain_scene = TerrainSceneUniform::new(
             camera.view_projection(),
             light.ambient_color(),
@@ -788,7 +783,8 @@ impl TerrainFrame {
         profile.mark("M2 packets");
         let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));
         let mut scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
-            .with_sky(solarity_rendering::WorldSkyFrame::new(&self.sky, camera))
+            .with_sky(self.sky.gradient_frame(camera))
+            .with_clouds(self.sky.cloud_frame(camera))
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
         if let Some([river, ocean, world_model]) = &depths {
             scene = scene.with_liquids(

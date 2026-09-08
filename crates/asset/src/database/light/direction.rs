@@ -12,8 +12,14 @@ const INVERSE_PI: f32 = 0.318_309_87;
 /// the client's 2,880-unit day.
 #[must_use]
 pub fn exterior_light_direction(half_minutes: u32) -> Vec3 {
+    exterior_light_direction_at((half_minutes % DAY_HALF_MINUTES) as f32 / DAY_HALF_MINUTES as f32)
+}
+
+/// Samples the continuous native day table shared with the sky ephemeris.
+#[must_use]
+pub fn exterior_light_direction_at(day_fraction: f32) -> Vec3 {
     const THETA: f32 = 3.926_991;
-    let phi = directional_phi(half_minutes);
+    let phi = directional_phi(day_fraction);
     let sin_phi = stock_periodic_approximation(phi * INVERSE_PI - 0.5);
     let cos_phi = stock_periodic_approximation(phi * INVERSE_PI);
     let sin_theta = stock_periodic_approximation(THETA * INVERSE_PI - 0.5);
@@ -39,9 +45,9 @@ fn stock_periodic_approximation(value: f32) -> f32 {
 }
 
 /// Interpolates the executable's four alternating polar-angle keys.
-fn directional_phi(half_minutes: u32) -> f32 {
+fn directional_phi(day_fraction: f32) -> f32 {
     const VALUES: [f32; 4] = [2.216_568_2, 1.919_862_3, 2.216_568_2, 1.919_862_3];
-    let cycle = (half_minutes % DAY_HALF_MINUTES) as f32 / DAY_HALF_MINUTES as f32;
+    let cycle = day_fraction.clamp(0.0, 1.0);
     let scaled = cycle * 4.0;
     let left = scaled as usize % VALUES.len();
     let right = (left + 1) % VALUES.len();
