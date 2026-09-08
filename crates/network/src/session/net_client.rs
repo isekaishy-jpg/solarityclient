@@ -371,6 +371,22 @@ where
             .await
     }
 
+    /// Sends the explicit Lua release-spirit request from native 6D2950.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_release_spirit(&mut self) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x15a, &[0]).await
+    }
+
+    /// Sends native 51ADD0's replicated self-resurrection spell request.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_self_resurrect(&mut self) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x2b3, &[]).await
+    }
+
     /// Acknowledges one zero-based tutorial (`CMSG_TUTORIAL_FLAG`).
     ///
     /// # Errors

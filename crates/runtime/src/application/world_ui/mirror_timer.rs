@@ -34,6 +34,10 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Resurrection(snapshot) => {
+                snapshot.publish(&self.world, &self.spell_names);
+                Ok(())
+            }
             crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Life { snapshot, event, release_timer } => {
                 self.dirty = true;
                 dispatch_life(&mut self.manager, &self.world, snapshot, event, release_timer)

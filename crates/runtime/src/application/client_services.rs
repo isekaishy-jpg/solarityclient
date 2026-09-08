@@ -1111,7 +1111,7 @@ impl ClientServices {
                 self.platform.set_text_input_active(false);
             }
             self.persist_active_cvars()?;
-            self.send_tutorial_actions()?;
+            self.send_world_ui_actions()?;
             profile.mark("world FrameXML update and upload");
         }
         let Some(environment) = self.environment.current() else {
@@ -2458,6 +2458,7 @@ impl ClientServices {
         }
         if let Some(ui) = &self.world_ui {
             ui.set_swimming(self.player_movement.is_swimming());
+            ui.set_falling(self.player_movement.is_falling());
         }
         self.area_triggers.service(
             &self.gameplay,
@@ -2677,11 +2678,17 @@ impl ClientServices {
         Ok(())
     }
 
-    fn send_tutorial_actions(&self) -> Result<(), ApplicationError> {
+    fn send_world_ui_actions(&self) -> Result<(), ApplicationError> {
         let Some(ui) = self.world_ui.as_ref() else {
             return Ok(());
         };
         let state = ui.tutorial_state();
+        while let Some(action) = ui.pending_death_action() {
+            if !self.gameplay.send_player_death_action(action)? {
+                break;
+            }
+            ui.accept_death_action();
+        }
         while let Some(action) = state.pending_action() {
             if !self.gameplay.send_tutorial_action(action)? {
                 break;

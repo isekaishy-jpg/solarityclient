@@ -117,6 +117,70 @@ loads the complete original FrameXML manifest and checks combat deferral,
 opening/completion of swimming, and pending breath/fatigue prompts. The badge
 remains hidden because build 12340 disables it in `TutorialFrame_CheckBadge`.
 
-The remaining water UI audit includes `SMSG_ENVIRONMENTALDAMAGELOG` (`1FC`):
-the receiver and its combat-log/floating-text/impact effects are not yet wired
-through the runtime. Timer and tutorial validation does not cover that path.
+## Environmental damage and death
+
+`SMSG_ENVIRONMENTALDAMAGELOG` (`1FC`) now drives signed health prediction,
+combat-log and floating-text delivery, stock hit feedback, visual kits, unit
+animation and sound. Replicated health remains distinct from prediction; see
+[player health presentation](player-health-presentation.md). The full FrameXML
+test covers drowning, fatigue, lava, slime, absorption and resistance feedback.
+
+Native unit callbacks read the final packet image and the last old-field mirror
+captured for the unit. Health callback `73F330` reconciles prediction before the
+per-unit health UI observer. Positive-to-nonpositive raw health produces
+`PLAYER_DEAD`; the inverse produces `PLAYER_ALIVE`. `6E0FD0` produces
+`PLAYER_FLAGS_CHANGED` with `player`, and local ghost-bit clearing subsequently
+produces `PLAYER_UNGHOST`. Packet `37A` refreshes the release timer and emits the
+current life event even without a raw-health transition. Runtime notifications
+retain the health, ghost and timer image seen by each callback.
+
+`6DC070` initializes the retained release timer using the low byte of absolute
+private field 1197 and `PLAYER_FLAGS`. `GetReleaseTimeRemaining` (`516210`)
+preserves the native signed countdown, clock wrapping, inactive zero and
+no-timer `-1`. It is not derived from the breath/fatigue timer or predicted
+health. The 216-case original-code timer fixture covers these distinctions.
+
+The original `StaticPopup.lua` owns the death dialog, labels, falling gate and
+button visibility. The Lua dependencies have explicit state:
+
+- `IsFalling` uses movement `1000` without `800`; `IsOutOfBounds` uses player
+  flag `4000`.
+- `HasSoulstone` requires signed raw health at or below zero. Replicated
+  self-resurrection spell field 1199 supplies its localized label. An unknown
+  nonzero ID returns the executable's literal `UNKNOWN` string.
+- `CannotBeResurrected` reads the resurrection restriction projection.
+- `IsActiveBattlefieldArena` returns independent numeric-one/nil results for
+  native battlefield kind four and the current slot's registered-match flag.
+- `InCinematic` reads the in-world cinematic flag; it is separate from Glue
+  movie playback.
+
+`RepopMe` invokes `6D2950`. The player constructor installs vtable `A326C8`;
+slot `128` points to `6DAC10`, which admits signed nonpositive health **or a
+ghost**, regardless of stand animation. After restriction admission the explicit
+Lua request sends `15A` with one zero byte. `UseSoulstone`'s replicated-spell
+branch (`51ADD0`) checks the restriction but has no health/ghost gate; it sends
+`2B3` with an empty body. Both actions enter the sole encrypted writer in order,
+retaining pending requests under backpressure and clearing them on world exit.
+
+`player_death_dialog_oracle.py` executes the original Lua wrappers, release
+function and real player virtual predicate for 190 cases. Lookup, inventory
+name, restriction-provider and datastore boundaries are documented in the
+script. The archive-dependent complete FrameXML test opens the death dialog,
+checks falling disables release, clicks each real button and verifies both
+encrypted packet bodies. It does not replace authored popup scripts.
+
+### Remaining life-system work
+
+The popup/query and explicit spell-button path is implemented; this is not a
+claim of complete resurrection support. Native inventory fallback (`6D6640`,
+`6D6560`) finds usable item spells with effect 94. Aura type 314 builds the
+restriction used by `727860`, and spell attribute `08000000` can bypass it.
+Live inventory-item selection, aura restriction construction, battlefield
+activation and world cinematic ownership still need their respective session
+providers. Their current empty state has no item, restriction, active arena or
+world cinematic. Provider inputs are not established by the death-dialog oracle.
+
+The initial-world path also needs `528010`'s automatic release request (byte
+one) and `6E7F50`'s life event after world entry. Death cursor cancellation,
+`UNIT_DIED` combat-log delivery, corpse recovery and resurrection offers remain
+in the life-system audit. Lighting and sky remain the final water-slice work.

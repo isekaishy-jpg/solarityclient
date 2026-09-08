@@ -664,6 +664,24 @@ impl RuntimeGameplayCoordinator {
         }
     }
 
+    pub(in crate::application) fn send_player_death_action(
+        &self,
+        action: solarity_ui::UiPlayerDeathAction,
+    ) -> Result<bool, RuntimeGameplayError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(RuntimeGameplayError::TaskEnded)?;
+        match active
+            .commands
+            .try_send(WorldWriterCommand::PlayerDeath(action))
+        {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(RuntimeGameplayError::TaskEnded),
+        }
+    }
+
     /// Returns the authoritative active ECS world.
     #[must_use]
     pub const fn world(&self) -> Option<&ActiveWorld> {
@@ -925,6 +943,10 @@ where
                     WorldWriterCommand::StandState(state) => {
                         writer.send_stand_state(state).await?;
                     }
+                    WorldWriterCommand::PlayerDeath(action) => match action {
+                        solarity_ui::UiPlayerDeathAction::ReleaseSpirit => writer.send_release_spirit().await?,
+                        solarity_ui::UiPlayerDeathAction::SelfResurrect => writer.send_self_resurrect().await?,
+                    },
                     WorldWriterCommand::Tutorial(action) => match action {
                         solarity_ui::UiTutorialAction::Flag(index) => writer.send_tutorial_flag(index).await?,
                         solarity_ui::UiTutorialAction::Clear => writer.send_tutorial_clear().await?,
@@ -968,6 +990,7 @@ enum WorldWriterCommand {
     },
     StandState(u32),
     Tutorial(solarity_ui::UiTutorialAction),
+    PlayerDeath(solarity_ui::UiPlayerDeathAction),
     ActiveMover(u64),
     GameObjectQuery {
         entry: u32,

@@ -73,6 +73,18 @@ impl RuntimeWorldUi {
         self.world.set_swimming(swimming);
     }
 
+    pub(super) fn set_falling(&self, falling: bool) {
+        self.world.set_falling(falling);
+    }
+
+    pub(super) fn pending_death_action(&self) -> Option<solarity_ui::UiPlayerDeathAction> {
+        self.world.pending_death_action()
+    }
+
+    pub(super) fn accept_death_action(&self) {
+        self.world.accept_death_action();
+    }
+
     pub(super) fn set_modifier_keys(&self, keys: solarity_ui::UiModifierKeys) {
         self.manager.set_modifier_keys(keys);
     }
@@ -258,6 +270,7 @@ impl RuntimeWorldUi {
             )]);
 
         let spell_names = solarity_asset::SpellNameCatalog::load(&mut assets.borrow_mut())?;
+        player_ui.resurrection().publish(&world, &spell_names);
         for (index, notification) in player_ui.slots().iter().enumerate() {
             if let Some(notification) = notification {
                 world.set_mirror_timer(

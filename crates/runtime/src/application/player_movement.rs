@@ -427,6 +427,13 @@ impl RuntimePlayerMovement {
         self.owner.as_ref().is_some_and(|owner| owner.is_swimming)
     }
 
+    /// Native 612430: far-fall bit without the ordinary falling bit.
+    pub(super) fn is_falling(&self) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| owner.flags & 0x1800 == 0x1000)
+    }
+
     /// Drains each unit-water crossing once after movement registration.
     pub(super) fn take_water_splash(&mut self) -> Option<super::unit_water::UnitWaterSplash> {
         self.owner.as_mut()?.water_splashes.pop_front()

@@ -604,6 +604,10 @@ struct UiWorldStateInner {
     tutorials: crate::UiTutorialState,
     mirror_timers: RefCell<[super::UiMirrorTimer; 3]>,
     release_timer: Cell<super::UiPlayerReleaseTimer>,
+    resurrection: RefCell<super::UiPlayerResurrectionState>,
+    death_actions: RefCell<std::collections::VecDeque<super::UiPlayerDeathAction>>,
+    falling: Cell<bool>,
+    cinematic: Cell<bool>,
     player: Cell<Option<UiPlayerState>>,
     player_guid: Cell<Option<u64>>,
     player_identity: RefCell<Option<UiPlayerIdentityState>>,
@@ -642,6 +646,53 @@ impl Default for UiWorldState {
 }
 
 impl UiWorldState {
+    /// Publishes native GameUI's in-world cinematic flag (BD07FC).
+    pub fn set_in_cinematic(&self, active: bool) {
+        self.inner.cinematic.set(active);
+    }
+
+    /// Reports whether the in-world camera sequence is active.
+    #[must_use]
+    pub fn in_cinematic(&self) -> bool {
+        self.inner.cinematic.get()
+    }
+    /// Replaces the live inputs used by the stock death dialog.
+    pub fn set_resurrection_state(&self, state: super::UiPlayerResurrectionState) {
+        *self.inner.resurrection.borrow_mut() = state;
+    }
+
+    /// Reads the current spell, bounds and resurrection restrictions.
+    #[must_use]
+    pub fn resurrection_state(&self) -> super::UiPlayerResurrectionState {
+        self.inner.resurrection.borrow().clone()
+    }
+
+    /// Publishes immediate movement flags for native 612430.
+    pub fn set_falling(&self, falling: bool) {
+        self.inner.falling.set(falling);
+    }
+
+    /// Reads the current falling predicate.
+    #[must_use]
+    pub fn is_falling(&self) -> bool {
+        self.inner.falling.get()
+    }
+
+    pub(super) fn queue_death_action(&self, action: super::UiPlayerDeathAction) {
+        self.inner.death_actions.borrow_mut().push_back(action);
+    }
+
+    /// Retains each admitted request until the bounded session writer accepts it.
+    #[must_use]
+    pub fn pending_death_action(&self) -> Option<super::UiPlayerDeathAction> {
+        self.inner.death_actions.borrow().front().copied()
+    }
+
+    /// Acknowledges one request accepted by the session writer.
+    pub fn accept_death_action(&self) {
+        self.inner.death_actions.borrow_mut().pop_front();
+    }
+
     /// Publishes the native timer initialized when the local player dies.
     pub fn set_release_timer(&self, timer: super::UiPlayerReleaseTimer) {
         self.inner.release_timer.set(timer);
@@ -786,6 +837,10 @@ impl UiWorldState {
 
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
+        *self.inner.resurrection.borrow_mut() = super::UiPlayerResurrectionState::default();
+        self.inner.death_actions.borrow_mut().clear();
+        self.inner.cinematic.set(false);
+        self.inner.falling.set(false);
         *self.inner.mirror_timers.borrow_mut() =
             std::array::from_fn(|_| super::UiMirrorTimer::default());
         self.inner.player.set(None);

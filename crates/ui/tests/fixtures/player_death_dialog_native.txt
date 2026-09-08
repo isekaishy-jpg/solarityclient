@@ -1,0 +1,191 @@
+# Original death dialog; fixture providers described by player_death_dialog_oracle.py.
+repop 0 00000000 00000000 0 none
+repop 0 00000000 00000000 1 none
+repop 0 00000000 00000010 0 none
+repop 0 00000000 00000010 1 none
+repop 0 00000000 00004000 0 none
+repop 0 00000000 00004000 1 none
+repop 0 00000000 00004010 0 none
+repop 0 00000000 00004010 1 none
+repop 0 00000001 00000000 0 none
+repop 0 00000001 00000000 1 none
+repop 0 00000001 00000010 0 none
+repop 0 00000001 00000010 1 none
+repop 0 00000001 00004000 0 none
+repop 0 00000001 00004000 1 none
+repop 0 00000001 00004010 0 none
+repop 0 00000001 00004010 1 none
+repop 0 00000064 00000000 0 none
+repop 0 00000064 00000000 1 none
+repop 0 00000064 00000010 0 none
+repop 0 00000064 00000010 1 none
+repop 0 00000064 00004000 0 none
+repop 0 00000064 00004000 1 none
+repop 0 00000064 00004010 0 none
+repop 0 00000064 00004010 1 none
+repop 0 7fffffff 00000000 0 none
+repop 0 7fffffff 00000000 1 none
+repop 0 7fffffff 00000010 0 none
+repop 0 7fffffff 00000010 1 none
+repop 0 7fffffff 00004000 0 none
+repop 0 7fffffff 00004000 1 none
+repop 0 7fffffff 00004010 0 none
+repop 0 7fffffff 00004010 1 none
+repop 0 80000000 00000000 0 none
+repop 0 80000000 00000000 1 none
+repop 0 80000000 00000010 0 none
+repop 0 80000000 00000010 1 none
+repop 0 80000000 00004000 0 none
+repop 0 80000000 00004000 1 none
+repop 0 80000000 00004010 0 none
+repop 0 80000000 00004010 1 none
+repop 0 ffffffff 00000000 0 none
+repop 0 ffffffff 00000000 1 none
+repop 0 ffffffff 00000010 0 none
+repop 0 ffffffff 00000010 1 none
+repop 0 ffffffff 00004000 0 none
+repop 0 ffffffff 00004000 1 none
+repop 0 ffffffff 00004010 0 none
+repop 0 ffffffff 00004010 1 none
+selfres 0 00000000 0 0 none
+selfres 0 00000000 0 1 none
+selfres 0 00000000 7 0 none
+selfres 0 00000000 7 1 none
+selfres 0 00000064 0 0 none
+selfres 0 00000064 0 1 none
+selfres 0 00000064 7 0 none
+selfres 0 00000064 7 1 none
+falling 0 00000000 nil
+falling 0 00000800 nil
+falling 0 00001000 nil
+falling 0 00001800 nil
+falling 0 00200000 nil
+falling 0 00201000 nil
+blocked 0 00 nil
+blocked 0 04 nil
+blocked 0 ff nil
+bounds 0 00000000 nil
+bounds 0 00000010 nil
+bounds 0 00004000 nil
+bounds 0 ffffffff nil
+soulstone 0 00000000 0 0 0 nil
+soulstone 0 00000000 0 0 1 nil
+soulstone 0 00000000 7 1 0 nil
+soulstone 0 00000000 7 0 1 nil
+soulstone 0 00000001 0 0 0 nil
+soulstone 0 00000001 0 0 1 nil
+soulstone 0 00000001 7 1 0 nil
+soulstone 0 00000001 7 0 1 nil
+soulstone 0 ffffffff 0 0 0 nil
+soulstone 0 ffffffff 0 0 1 nil
+soulstone 0 ffffffff 7 1 0 nil
+soulstone 0 ffffffff 7 0 1 nil
+repop 1 00000000 00000000 0 none
+repop 1 00000000 00000000 1 15a,0
+repop 1 00000000 00000010 0 none
+repop 1 00000000 00000010 1 15a,0
+repop 1 00000000 00004000 0 none
+repop 1 00000000 00004000 1 15a,0
+repop 1 00000000 00004010 0 none
+repop 1 00000000 00004010 1 15a,0
+repop 1 00000001 00000000 0 none
+repop 1 00000001 00000000 1 none
+repop 1 00000001 00000010 0 none
+repop 1 00000001 00000010 1 15a,0
+repop 1 00000001 00004000 0 none
+repop 1 00000001 00004000 1 none
+repop 1 00000001 00004010 0 none
+repop 1 00000001 00004010 1 15a,0
+repop 1 00000064 00000000 0 none
+repop 1 00000064 00000000 1 none
+repop 1 00000064 00000010 0 none
+repop 1 00000064 00000010 1 15a,0
+repop 1 00000064 00004000 0 none
+repop 1 00000064 00004000 1 none
+repop 1 00000064 00004010 0 none
+repop 1 00000064 00004010 1 15a,0
+repop 1 7fffffff 00000000 0 none
+repop 1 7fffffff 00000000 1 none
+repop 1 7fffffff 00000010 0 none
+repop 1 7fffffff 00000010 1 15a,0
+repop 1 7fffffff 00004000 0 none
+repop 1 7fffffff 00004000 1 none
+repop 1 7fffffff 00004010 0 none
+repop 1 7fffffff 00004010 1 15a,0
+repop 1 80000000 00000000 0 none
+repop 1 80000000 00000000 1 15a,0
+repop 1 80000000 00000010 0 none
+repop 1 80000000 00000010 1 15a,0
+repop 1 80000000 00004000 0 none
+repop 1 80000000 00004000 1 15a,0
+repop 1 80000000 00004010 0 none
+repop 1 80000000 00004010 1 15a,0
+repop 1 ffffffff 00000000 0 none
+repop 1 ffffffff 00000000 1 15a,0
+repop 1 ffffffff 00000010 0 none
+repop 1 ffffffff 00000010 1 15a,0
+repop 1 ffffffff 00004000 0 none
+repop 1 ffffffff 00004000 1 15a,0
+repop 1 ffffffff 00004010 0 none
+repop 1 ffffffff 00004010 1 15a,0
+selfres 1 00000000 0 0 none
+selfres 1 00000000 0 1 none
+selfres 1 00000000 7 0 none
+selfres 1 00000000 7 1 2b3
+selfres 1 00000064 0 0 none
+selfres 1 00000064 0 1 none
+selfres 1 00000064 7 0 none
+selfres 1 00000064 7 1 2b3
+falling 1 00000000 nil
+falling 1 00000800 nil
+falling 1 00001000 1
+falling 1 00001800 nil
+falling 1 00200000 nil
+falling 1 00201000 1
+blocked 1 00 nil
+blocked 1 04 1
+blocked 1 ff 1
+bounds 1 00000000 nil
+bounds 1 00000010 nil
+bounds 1 00004000 1
+bounds 1 ffffffff 1
+soulstone 1 00000000 0 0 0 nil
+soulstone 1 00000000 0 0 1 Inventory_resurrection
+soulstone 1 00000000 7 1 0 Self_resurrection
+soulstone 1 00000000 7 0 1 UNKNOWN
+soulstone 1 00000001 0 0 0 nil
+soulstone 1 00000001 0 0 1 nil
+soulstone 1 00000001 7 1 0 nil
+soulstone 1 00000001 7 0 1 nil
+soulstone 1 ffffffff 0 0 0 nil
+soulstone 1 ffffffff 0 0 1 Inventory_resurrection
+soulstone 1 ffffffff 7 1 0 Self_resurrection
+soulstone 1 ffffffff 7 0 1 UNKNOWN
+arena 0 00000000 0 nil,nil
+arena 0 00000000 1 nil,1
+arena 0 00000001 0 nil,nil
+arena 0 00000001 1 nil,1
+arena 0 00000002 0 nil,nil
+arena 0 00000002 1 nil,nil
+arena 0 ffffffff 0 nil,nil
+arena 0 ffffffff 1 nil,nil
+arena 3 00000000 0 nil,nil
+arena 3 00000000 1 nil,1
+arena 3 00000001 0 nil,nil
+arena 3 00000001 1 nil,1
+arena 3 00000002 0 nil,nil
+arena 3 00000002 1 nil,nil
+arena 3 ffffffff 0 nil,nil
+arena 3 ffffffff 1 nil,nil
+arena 4 00000000 0 1,nil
+arena 4 00000000 1 1,1
+arena 4 00000001 0 1,nil
+arena 4 00000001 1 1,1
+arena 4 00000002 0 1,nil
+arena 4 00000002 1 1,nil
+arena 4 ffffffff 0 1,nil
+arena 4 ffffffff 1 1,nil
+cinematic 00000000 nil
+cinematic 00000001 1
+cinematic 00000002 1
+cinematic ffffffff 1

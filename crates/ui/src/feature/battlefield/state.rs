@@ -188,9 +188,35 @@ pub struct UiBattlefieldQueueState {
     world_pvp: Rc<RefCell<UiWorldPvpQueueSlot>>,
     battleground_types: Rc<RefCell<Vec<UiBattlegroundType>>>,
     selected_battleground: Rc<Cell<usize>>,
+    active_kind: Rc<Cell<u32>>,
+    active_slot: Rc<Cell<Option<usize>>>,
 }
 
 impl UiBattlefieldQueueState {
+    /// Publishes native BEA570's battlefield kind and the current queue index.
+    /// The slot is zero-based; an out-of-range slot has no rated-match flag.
+    pub fn set_active_battlefield(&self, kind: u32, slot: Option<usize>) {
+        self.active_kind.set(kind);
+        self.active_slot.set(slot);
+    }
+
+    /// Native 549AD0 returns independent arena and registered-match predicates.
+    #[must_use]
+    pub fn active_arena(&self) -> (bool, bool) {
+        (
+            self.active_kind.get() == 4,
+            self.active_slot
+                .get()
+                .and_then(|index| {
+                    self.slots
+                        .borrow()
+                        .get(index)
+                        .map(UiBattlefieldSlot::registered_match)
+                })
+                .unwrap_or(false),
+        )
+    }
+
     /// Creates the pre-queue world-session state.
     #[must_use]
     pub fn new() -> Self {

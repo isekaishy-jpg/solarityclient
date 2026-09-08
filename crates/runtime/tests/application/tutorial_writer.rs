@@ -39,5 +39,15 @@ fn water_tutorial_acknowledgements_retain_order_under_backpressure() -> Result<(
         assert_eq!(writer.try_recv()?, WorldWriterCommand::Tutorial(action));
     }
     assert_eq!(state.pending_action(), None);
+    let actions = [
+        solarity_ui::UiPlayerDeathAction::ReleaseSpirit,
+        solarity_ui::UiPlayerDeathAction::SelfResurrect,
+    ];
+    for action in actions {
+        assert!(gameplay.send_player_death_action(action)?);
+        assert!(!gameplay.send_player_death_action(actions[0])?);
+        assert_eq!(writer.try_recv()?, WorldWriterCommand::PlayerDeath(action));
+        assert!(writer.try_recv().is_err());
+    }
     Ok(())
 }

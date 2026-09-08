@@ -14,7 +14,7 @@ pub use combat_log::{
 };
 pub use language::UiPlayerLanguage;
 pub use mirror_timer::UiMirrorTimer;
-pub use player_release::UiPlayerReleaseTimer;
+pub use player_release::{UiPlayerDeathAction, UiPlayerReleaseTimer, UiPlayerResurrectionState};
 pub use realm_date::{UiRealmDate, UiRealmDateError};
 pub use realm_time::{UiRealmTime, UiRealmTimeError};
 pub use state::{

@@ -45,11 +45,8 @@ pub(crate) fn register_globals(
     globals.raw_set(
         "IsActiveBattlefieldArena",
         lua.create_function(move |_, ()| {
-            Ok((1..=MAX_BATTLEFIELD_QUEUES).any(|index| {
-                active_arena.slot(index).is_ok_and(|slot| {
-                    slot.status() == UiBattlefieldQueueStatus::Active && slot.team_size() != 0
-                })
-            }))
+            let (arena, registered) = active_arena.active_arena();
+            Ok((arena.then_some(1), registered.then_some(1)))
         })?,
     )?;
     globals.raw_set(

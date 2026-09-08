@@ -57,6 +57,7 @@ pub(in crate::application) struct TimedMirrorTimerUpdate {
 /// Shared ordering prevents a later flag packet changing an earlier timer trigger.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::application) enum RuntimePlayerUiNotification {
+    Resurrection(RuntimePlayerResurrectionSnapshot),
     Life {
         snapshot: RuntimePlayerHealthSnapshot,
         event: RuntimePlayerLifeEvent,
@@ -71,6 +72,28 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
         health_changed: bool,
         maximum_changed: bool,
     },
+}
+
+/// Replicated death-dialog inputs captured before their associated life event.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::application) struct RuntimePlayerResurrectionSnapshot {
+    flags: u32,
+    spell: u32,
+}
+
+impl RuntimePlayerResurrectionSnapshot {
+    pub(in crate::application) fn publish(
+        self,
+        world: &solarity_ui::UiWorldState,
+        spells: &solarity_asset::SpellNameCatalog,
+    ) {
+        let mut state = world.resurrection_state();
+        state.out_of_bounds = self.flags & 0x4000 != 0;
+        state.self_resurrection_spell = self.spell;
+        state.self_resurrection_name =
+            (self.spell != 0).then(|| spells.name(self.spell).unwrap_or("UNKNOWN").to_owned());
+        world.set_resurrection_state(state);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,12 +111,34 @@ pub(in crate::application) struct RuntimePlayerUiState {
     in_combat: bool,
     health: Option<RuntimePlayerHealthSnapshot>,
     release_timer: solarity_ui::UiPlayerReleaseTimer,
+    resurrection: RuntimePlayerResurrectionSnapshot,
     combat_clock: RuntimeCombatLogClock,
     impacts: VecDeque<RuntimeEnvironmentalDamageSnapshot>,
     pending: VecDeque<RuntimePlayerUiNotification>,
 }
 
 impl RuntimePlayerUiState {
+    pub(in crate::application) fn resurrection(&self) -> RuntimePlayerResurrectionSnapshot {
+        self.resurrection
+    }
+
+    fn refresh_resurrection(&mut self, world: &solarity_ecs::ActiveWorld) {
+        let Ok(fields) = world
+            .storage()
+            .get::<&solarity_ecs::ObjectFields>(world.local_player())
+        else {
+            return;
+        };
+        let snapshot = RuntimePlayerResurrectionSnapshot {
+            flags: fields.get(150) & 0x4000,
+            spell: fields.get(1199),
+        };
+        if snapshot != self.resurrection {
+            self.resurrection = snapshot;
+            self.pending
+                .push_back(RuntimePlayerUiNotification::Resurrection(snapshot));
+        }
+    }
     pub(in crate::application) fn release_timer(&self) -> solarity_ui::UiPlayerReleaseTimer {
         self.release_timer
     }
@@ -108,6 +153,7 @@ impl RuntimePlayerUiState {
         if world.local_player_guid().ok() != Some(identity.guid()) {
             return;
         }
+        self.refresh_resurrection(world);
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
         };
@@ -180,6 +226,7 @@ impl RuntimePlayerUiState {
         world: &solarity_ecs::ActiveWorld,
         timestamp_ms: u32,
     ) {
+        self.refresh_resurrection(world);
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
         };
@@ -239,6 +286,7 @@ impl RuntimePlayerUiState {
     /// Publish the polled image without inventing a native field callback.
     /// A later raw block may have overwritten the packet's watched old mirror.
     pub(in crate::application) fn refresh_health(&mut self, world: &solarity_ecs::ActiveWorld) {
+        self.refresh_resurrection(world);
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
         };
@@ -275,6 +323,7 @@ impl RuntimePlayerUiState {
         &self.tutorial_flags
     }
     pub(in crate::application) fn clear_for_world_leave(&mut self) {
+        self.resurrection = RuntimePlayerResurrectionSnapshot::default();
         self.in_combat = false;
         self.health = None;
         self.impacts.clear();

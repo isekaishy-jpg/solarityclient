@@ -103,10 +103,11 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         UiZoneState,
     };
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
-    let store = AssetStore::mount(ArchiveCatalog::discover(
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
         ClientDataRoot::new(root)?,
         Locale::EnUs,
     )?)?;
+    let spell_names = SpellNameCatalog::load(&mut store)?;
     STOCK_NOW.set(1000);
     let environment = UiScriptEnvironment::new(1920, 1080, false)?
         .with_client_clock(solarity_ui::UiClientClock::from_source(stock_now));
@@ -262,6 +263,124 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         assert_eq!(manager.region_is_shown("PlayerHitIndicator"), Some(false));
     }
     assert!(manager.take_callback_failure().is_none());
+    // Fatal replicated health opens the original FrameXML death dialog.
+    active.update_fields(1, [(24, 0), (1197, 8)])?;
+    solarity_systems::project_object_fields(&mut active, 1, [(24, 0), (1197, 8)])?;
+    state.receive_unit_field(
+        &active,
+        active.object_identity(1).ok_or("player identity")?,
+        crate::application::gameplay_session::UnitFieldNotification::Health { previous: 100 },
+        2201,
+    );
+    while let Some(notification) = state.take_notification() {
+        match notification {
+            RuntimePlayerUiNotification::Life {
+                snapshot,
+                event,
+                release_timer,
+            } => super::dispatch_life(&mut manager, &world, snapshot, event, release_timer)?,
+            RuntimePlayerUiNotification::Health {
+                snapshot,
+                health_changed,
+                maximum_changed,
+            } => super::dispatch_health(
+                &mut manager,
+                &world,
+                snapshot,
+                health_changed,
+                maximum_changed,
+            )?,
+            _ => return Err("unexpected death notification".into()),
+        }
+    }
+    assert_eq!(manager.take_callback_failure(), None);
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(true));
+    assert_eq!(manager.region_is_shown("StaticPopup1Button2"), Some(false));
+    let click_button =
+        |manager: &mut FrameManager, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let index = (0..manager.geometry().region_count())
+                .find(|&i| manager.object_name(i) == Some(name))
+                .ok_or("release button")?;
+            let bounds = manager
+                .geometry()
+                .region(index)
+                .ok_or("release bounds")?
+                .presentation_bounds();
+            let point = (
+                (bounds.left() + bounds.right()) / 2.,
+                (bounds.bottom() + bounds.top()) / 2.,
+            );
+            manager.pointer_button(point, solarity_ui::UiPointerButton::Left, true)?;
+            manager.pointer_button(point, solarity_ui::UiPointerButton::Left, false)?;
+            Ok(())
+        };
+    world.set_falling(true);
+    manager.update(0.1)?;
+    click_button(&mut manager, "StaticPopup1Button1")?;
+    assert!(world.pending_death_action().is_none());
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(true));
+    world.set_falling(false);
+    manager.update(0.1)?;
+    click_button(&mut manager, "StaticPopup1Button1")?;
+    assert_eq!(manager.take_callback_failure(), None);
+    assert!(world.pending_death_action().is_some());
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(false));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let (server, session) = WorldServer::connect().await?;
+            let (_, mut writer) = session.split();
+            let received = server.exchange_raw(vec![], 1).await?;
+            writer.send_release_spirit().await?;
+            world.accept_death_action();
+            assert_eq!(received.await??, vec![(0x15a, vec![0])]);
+            Ok::<_, TestError>(())
+        })
+        .map_err(|error| error.to_string())?;
+    assert!(world.pending_death_action().is_none());
+    active.update_fields(1, [(1199, 21169)])?;
+    state.receive_death_notice(&active, 2201);
+    while let Some(notification) = state.take_notification() {
+        match notification {
+            RuntimePlayerUiNotification::Resurrection(snapshot) => {
+                snapshot.publish(&world, &spell_names)
+            }
+            RuntimePlayerUiNotification::Life {
+                snapshot,
+                event,
+                release_timer,
+            } => super::dispatch_life(&mut manager, &world, snapshot, event, release_timer)?,
+            _ => return Err("unexpected self-resurrection notification".into()),
+        }
+    }
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(true));
+    assert_eq!(manager.region_is_shown("StaticPopup1Button2"), Some(true));
+    assert_eq!(
+        world.resurrection_state().self_resurrection_name.as_deref(),
+        spell_names.name(21169)
+    );
+    manager.update(0.1)?;
+    click_button(&mut manager, "StaticPopup1Button2")?;
+    assert_eq!(
+        world.pending_death_action(),
+        Some(solarity_ui::UiPlayerDeathAction::SelfResurrect)
+    );
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(false));
+    assert_eq!(manager.take_callback_failure(), None);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let (server, session) = WorldServer::connect().await?;
+            let (_, mut writer) = session.split();
+            let received = server.exchange_raw(vec![], 1).await?;
+            writer.send_self_resurrect().await?;
+            world.accept_death_action();
+            assert_eq!(received.await??, vec![(0x2b3, vec![])]);
+            Ok::<_, TestError>(())
+        })
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -310,6 +429,7 @@ fn water_tutorials_preserve_server_order_native_callbacks_and_wire_acknowledgeme
         sent.await??;
         while let Some(notification)=state.take_notification() {
             match notification {
+                RuntimePlayerUiNotification::Resurrection(snapshot) => snapshot.publish(&world, &names),
                 RuntimePlayerUiNotification::Life {snapshot,event,release_timer} => super::dispatch_life(&mut manager,&world,snapshot,event,release_timer)?,
                 RuntimePlayerUiNotification::Combat(in_combat) => manager.player_combat_changed(in_combat)?,
                 RuntimePlayerUiNotification::EnvironmentalDamage(impact) => super::super::environmental_damage::dispatch_environmental_damage(&mut manager,impact)?,

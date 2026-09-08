@@ -93,7 +93,11 @@ fn battlefield_status_reads_authoritative_two_slot_state() -> Result<(), Box<dyn
             true,
         )?,
     )?;
-    assert!(is_active_arena.call::<bool>(())?);
+    battlefield.set_active_battlefield(4, Some(0));
+    assert_eq!(
+        is_active_arena.call::<(Option<u32>, Option<u32>)>(())?,
+        (Some(1), Some(1))
+    );
     assert_eq!(globals.get::<String>("STATUS1")?, "confirm");
     assert_eq!(globals.get::<String>("MAP1")?, "Nagrand Arena");
     assert_eq!(globals.get::<u32>("INSTANCE1")?, 17);
