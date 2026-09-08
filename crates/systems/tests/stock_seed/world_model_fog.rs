@@ -96,7 +96,7 @@ fn world_model_fog_portals_match_original_depth_flags_and_placement() -> Result<
     Ok(())
 }
 
-fn graph(mogp: &[u32], mogi: &[u32], edges: &[[u32; 2]]) -> (Vec<u8>, Vec<Vec<u8>>) {
+pub(super) fn graph(mogp: &[u32], mogi: &[u32], edges: &[[u32; 2]]) -> (Vec<u8>, Vec<Vec<u8>>) {
     let mut root = Vec::new();
     chunk(&mut root, *b"REVM", &17u32.to_le_bytes());
     let mut header = vec![0; 64];

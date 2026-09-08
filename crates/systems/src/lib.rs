@@ -107,6 +107,7 @@ pub use collision::{
     WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene, WorldModelPortalHit,
     WorldModelRegistrationCandidate, WorldModelRegistrationHit, WorldModelRegistrationHits,
     WorldModelRegistrationKind, WorldModelRegistrationQuery, WorldModelRegistrationSelection,
+    WorldModelVisibilityError, WorldModelVisibilityQuery, WorldModelVisibilityVisit,
     append_terrain_liquid_movement, probe_world_model_portals,
 };
 pub use equipment::{

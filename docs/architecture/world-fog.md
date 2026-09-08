@@ -109,3 +109,14 @@ range and exponent. The capture now records 2,016 bank outputs, and the runtime
 fixture verifies their distinct colors in dry and submerged interiors. Selecting
 those banks per visible model still requires the native portal visibility pass;
 the current presentation continues to use the camera bank.
+
+`WorldModelVisibilityQuery` now reproduces `7AC060`'s ordered traversal from
+an initial camera group using supplied projected portal rectangles. It retains
+the current bank until a visited MOGP has `0x48`, skips adjacent MOGI `0x10008`
+groups, checks authored portal sides, and preserves the native depth cutoff and
+screen-window intersection. MOGP and MOGI flags remain independent. Its reusable
+work stack preserves repeated visits and authored reference order. A further
+1,440 original-code queries verify those rules on decoded graphs, including
+cycles and nearly empty intersections. Polygon projection, exterior-root
+admission, per-model visibility and renderer routing remain to be connected;
+these traversal tests do not establish those separate stages.

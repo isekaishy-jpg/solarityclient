@@ -89,6 +89,8 @@ mod world;
 mod world_model_fog;
 #[path = "stock_seed/world_model_registration.rs"]
 mod world_model_registration;
+#[path = "stock_seed/world_model_visibility.rs"]
+mod world_model_visibility;
 
 #[path = "stock_seed/movement_swimming.rs"]
 mod movement_swimming;
