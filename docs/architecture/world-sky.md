@@ -35,6 +35,38 @@ translation, rotations, color changes across slot reuse and world occlusion;
 an additional gradient frame checks the horizon's fog color and is available
 for visual inspection through `SOLARITY_SKY_CAPTURE_RGBA`.
 
-This adds the base gradient renderer. Procedural clouds, celestial textures,
-stars, authored skybox models, weather overrides and WMO-specific sky visibility
-remain separate portions of the lighting/sky slice.
+The cloud backend now follows `7F20E0`, `7EFD00`, `7F1010` and `9ACD40`.
+Its dome has 177 positions, radial UVs, white colors with horizon alpha falloff,
+and one 374-index strip. The procedural texture uses the original CRT noise
+table, cosine smoothing, four octaves, grain lookup, approximate reciprocal
+square root, color quantization and first-column retention behavior. Eight
+rows update per frame; a complete initial refresh and the original two-bank
+switch determine the displayed image. Sampler row one uses linear min/mag,
+no mip filtering and clamp addressing. Clouds draw after the gradient with
+source-alpha/inverse-source-alpha blending and the same reserved depth range.
+
+Each retired Vulkan slot owns its mesh, staging buffer, 128-square BGRA image,
+sampler and descriptor. Content changes trigger uploads; the cache remains
+dirty until submission succeeds, including acquisition failure before recording.
+`WorldCloudLighting::sample` ports the original celestial ray/sphere projection
+and cloud color provider. Its final argument is the precipitation attenuation
+scalar (`D38B88`), not liquid depth: `4F8410` reads it from the weather owner.
+The native daytime sun-selection interval includes both boundaries.
+
+`WorldCelestials` ports `7EECC0`: cyclic polar/azimuth/size tables, cubic
+trigonometry, camera-centered radius 12, first-moon size multiplier 1.75, and
+the second moon's 1.7-day cycle with native 16-bit calendar-phase rounding.
+The native provider must supply both cyclic time and calendar day index.
+
+The cloud oracle compares every pixel across 39 original updates, all noise
+and grain tables, geometry and 56 lighting-provider samples. The celestial
+oracle executes the entire ephemeris unchanged for 1,250 camera/day/calendar
+samples, including neighboring floats at table boundaries. The hidden GPU
+cloud test compares 20 captured frames against an independent scalar projection,
+bilinear texture sample and blend of the native mesh and pixels. The complete
+five-test sky/liquid/ripple/underwater frame group and rendering library checks
+pass, along with Clippy for all rendering targets.
+
+The runtime currently submits the base gradient. Cloud runtime composition,
+celestial textures, stars, authored skybox models, weather overrides and
+WMO-specific sky visibility remain in the lighting/sky slice.

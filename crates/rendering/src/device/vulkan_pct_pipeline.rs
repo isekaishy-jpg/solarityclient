@@ -12,6 +12,7 @@ pub(in crate::device) enum PctPipelineKind {
     Ripple,
     Underwater,
     Sky,
+    Cloud,
 }
 
 /// Renderer-lifetime ownership of one PCT pipeline and descriptor ABI.
@@ -63,7 +64,7 @@ impl PctPipeline {
             .size(match kind {
                 PctPipelineKind::Ripple => 68,
                 PctPipelineKind::Underwater => 96,
-                PctPipelineKind::Sky => 64,
+                PctPipelineKind::Sky | PctPipelineKind::Cloud => 64,
             })];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
@@ -133,7 +134,7 @@ fn create_pipeline(
         .vertex_binding_descriptions(&bindings)
         .vertex_attribute_descriptions(&attributes);
     let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default().topology(
-        if matches!(kind, PctPipelineKind::Sky) {
+        if matches!(kind, PctPipelineKind::Sky | PctPipelineKind::Cloud) {
             vk::PrimitiveTopology::TRIANGLE_STRIP
         } else {
             vk::PrimitiveTopology::TRIANGLE_LIST
@@ -157,7 +158,9 @@ fn create_pipeline(
     // alpha. Neither enables separate alpha blending (A2F964/A2F994).
     let destination = match kind {
         PctPipelineKind::Ripple => vk::BlendFactor::ONE,
-        PctPipelineKind::Underwater => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        PctPipelineKind::Underwater | PctPipelineKind::Cloud => {
+            vk::BlendFactor::ONE_MINUS_SRC_ALPHA
+        }
         PctPipelineKind::Sky => vk::BlendFactor::ONE,
     };
     let attachments = [vk::PipelineColorBlendAttachmentState::default()
@@ -248,6 +251,10 @@ impl<'a> ShaderModules<'a> {
             PctPipelineKind::Underwater => (
                 include_bytes!(concat!(env!("OUT_DIR"), "/underwater.vert.spv")),
                 include_bytes!(concat!(env!("OUT_DIR"), "/underwater.frag.spv")),
+            ),
+            PctPipelineKind::Cloud => (
+                include_bytes!(concat!(env!("OUT_DIR"), "/cloud.vert.spv")),
+                include_bytes!(concat!(env!("OUT_DIR"), "/cloud.frag.spv")),
             ),
             PctPipelineKind::Sky => (
                 include_bytes!(concat!(env!("OUT_DIR"), "/sky.vert.spv")),

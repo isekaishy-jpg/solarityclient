@@ -6,6 +6,7 @@ use ash::{Device, vk};
 
 use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
+use crate::device::vulkan_cloud::CloudFrameResources;
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_liquid::{
@@ -71,6 +72,9 @@ pub(super) struct RecordContext<'a> {
     pub(super) underwater_pipeline: &'a PctPipeline,
     pub(super) underwater_resources: &'a UnderwaterFrameResources,
     pub(super) underwater_frame: Option<UnderwaterParticleFrame<'a>>,
+    pub(super) cloud_pipeline: &'a PctPipeline,
+    pub(super) cloud_resources: &'a CloudFrameResources,
+    pub(super) cloud_frame: Option<crate::WorldCloudFrame<'a>>,
     pub(super) sky_pipeline: &'a PctPipeline,
     pub(super) sky_resources: &'a SkyFrameResources,
     pub(super) sky_frame: Option<crate::WorldSkyFrame<'a>>,
@@ -111,6 +115,11 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
         context
             .liquid_resources
             .record_uploads(context.device, context.command_buffer);
+    }
+    if context.cloud_frame.is_some() {
+        context
+            .cloud_resources
+            .record_upload(context.device, context.command_buffer);
     }
     transition_attachments(&context);
     let color = vk::RenderingAttachmentInfo::default()
@@ -190,6 +199,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     }
     let mut bindings = WorldCommandBindings::default();
     record_sky(&context, &mut bindings);
+    record_clouds(&context, &mut bindings);
     for draw in context.terrain_draws.iter().copied() {
         record_terrain(&context, draw, &mut bindings)?;
     }
@@ -303,7 +313,7 @@ enum LiquidQueue {
     Transparent,
 }
 
-/// Native 790A80 places 79D5E0 directly after the transparent water queue.
+/// The sky occupies the reserved far depth range.
 fn record_sky(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) {
     let Some(frame) = context.sky_frame else {
         return;
@@ -334,6 +344,47 @@ fn record_sky(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) 
         context
             .device
             .cmd_draw_indexed(context.command_buffer, 300, 1, 0, 0, 0);
+    }
+}
+
+fn record_clouds(context: &RecordContext<'_>, bindings: &mut WorldCommandBindings) {
+    let Some(frame) = context.cloud_frame else {
+        return;
+    };
+    let (pipeline, layout) = context.cloud_pipeline.raw();
+    bindings.bind_pipeline(context, pipeline);
+    bindings.bind_vertex(context, context.cloud_resources.vertex_buffer());
+    bindings.bind_index(
+        context,
+        context.cloud_resources.index_buffer(),
+        vk::IndexType::UINT16,
+    );
+    let matrix = frame.view_projection().to_cols_array();
+    let mut pushes = [0_u8; 64];
+    for (word, value) in pushes.as_chunks_mut::<4>().0.iter_mut().zip(matrix) {
+        *word = value.to_le_bytes();
+    }
+    // SAFETY: The retired slot owns all 177 vertices and one 374-index strip;
+    // the prepared pipeline has the matching 64-byte push range and a resident procedural texture.
+    unsafe {
+        context.device.cmd_bind_descriptor_sets(
+            context.command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            layout,
+            0,
+            &[context.cloud_resources.descriptor()],
+            &[],
+        );
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &pushes,
+        );
+        context
+            .device
+            .cmd_draw_indexed(context.command_buffer, 374, 1, 0, 0, 0);
     }
 }
 

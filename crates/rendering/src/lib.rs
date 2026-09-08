@@ -18,7 +18,10 @@ mod ui;
 mod weather;
 mod world_text;
 
-pub use weather::{WorldSkyDome, WorldSkyFrame};
+pub use weather::{
+    WorldCelestialBody, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,
+    WorldClouds, WorldSkyDome, WorldSkyFrame,
+};
 
 pub use camera::{
     WORLD_DEPTH_MAXIMUM, WORLD_DEPTH_MINIMUM, WORLD_NEAR_CLIP,

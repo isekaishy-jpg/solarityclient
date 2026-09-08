@@ -596,6 +596,149 @@ fn sky_frames_cover_background_reuse_slots_and_preserve_world_depth() -> Result<
     Ok(())
 }
 
+/// Native texels, perspective-correct radial UVs, alpha fade and per-slot uploads.
+#[test]
+#[allow(unsafe_code)] // SDL transfers the hidden surface to Vulkan ownership.
+fn cloud_frames_sample_native_pixels_blend_and_reuse_slots() -> Result<(), Box<dyn Error>> {
+    use solarity_rendering::{
+        WorldCamera, WorldCloudDome, WorldCloudFrame, WorldCloudLighting, WorldClouds,
+        WorldSkyDome, WorldSkyFrame,
+    };
+    let _sdl_test = crate::support::sdl_test_lock();
+    let sdl = sdl3::init()?;
+    let video = sdl.video()?;
+    let window = video
+        .window("Solarity cloud frame test", 256, 256)
+        .vulkan()
+        .hidden()
+        .build()?;
+    let bootstrap = VulkanBootstrap::start(&window.vulkan_instance_extensions()?)?;
+    // SAFETY: Bootstrap enabled the live window's required surface extensions.
+    let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
+    // SAFETY: The window outlives the renderer's sole surface ownership.
+    let mut renderer = unsafe { bootstrap.attach_surface(surface, (256, 256), 0) }?;
+    let dome = WorldCloudDome::new();
+    let mut clouds = WorldClouds::new(1);
+    let mut sky = WorldSkyDome::new();
+    let background = Vec3::new(24., 48., 96.);
+    for case in 0..20 {
+        let eye = if case % 2 == 0 {
+            Vec3::ZERO
+        } else {
+            Vec3::new(12345., -6789., 100.)
+        };
+        let direction = if case < 10 {
+            Vec3::new(1., 0., 0.7)
+        } else {
+            Vec3::new(0., 1., 0.7)
+        };
+        let camera = WorldCamera::stock(eye, eye + direction, Vec3::Z, 777.).frame(1.)?;
+        if case % 5 == 0 {
+            clouds.invalidate();
+            clouds.update(
+                0.5,
+                if case < 10 { 0.7 } else { 0.9 },
+                WorldCloudLighting::new(
+                    [0.2, 0.3, 0.4],
+                    [0.1, 0.2, 0.3],
+                    [0.1, 0.05, 0.0],
+                    [85.333336, 64., 64.],
+                    1.,
+                ),
+            );
+        }
+        sky.update_colors([background / 255.; 5], background / 255., 0., 0., camera);
+        let cloud_frame = WorldCloudFrame::new(&dome, &clouds, camera);
+        let frame = scene()
+            .with_sky(WorldSkyFrame::new(&sky, camera))
+            .with_clouds(cloud_frame);
+        renderer.request_frame_capture()?;
+        renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let capture = renderer
+            .take_captured_frame()?
+            .ok_or("missing cloud capture")?;
+        let mut visible = 0;
+        for (x, y) in [(64, 64), (128, 96), (180, 120), (100, 160), (128, 220)] {
+            let source = cloud_sample(cloud_frame, x, y);
+            visible += usize::from(source.w > 0.05);
+            let expected =
+                (source.truncate() * source.w + background / 255. * (1. - source.w)) * 255.;
+            let pixel = &capture.rgba8()[(y * 256 + x) * 4..(y * 256 + x) * 4 + 3];
+            for (actual, expected) in pixel.iter().zip(expected.to_array()) {
+                assert!(
+                    (f32::from(*actual) - expected).abs() < 2.,
+                    "case {case}, pixel {x},{y}: {pixel:?}, expected {expected}, source {source}"
+                );
+            }
+        }
+        assert!(visible >= 2, "test must exercise actual cloud texels");
+        if case == 0
+            && let Some(path) = std::env::var_os("SOLARITY_CLOUD_CAPTURE_RGBA")
+        {
+            std::fs::write(path, capture.rgba8())?;
+        }
+    }
+    Ok(())
+}
+
+/// Independent scalar reference for the original mesh's PCT fixed-function draw.
+fn cloud_sample(frame: solarity_rendering::WorldCloudFrame<'_>, x: usize, y: usize) -> Vec4 {
+    use glam::Vec2;
+    let point = Vec2::new((x as f32 + 0.5) / 128. - 1., 1. - (y as f32 + 0.5) / 128.);
+    let dome = frame.dome();
+    for strip in dome.indices().windows(3) {
+        let ids = [strip[0] as usize, strip[1] as usize, strip[2] as usize];
+        let clip =
+            ids.map(|i| frame.view_projection() * Vec3::from_array(dome.positions()[i]).extend(1.));
+        if clip.iter().any(|v| v.w <= 0.) {
+            continue;
+        }
+        let p = clip.map(|v| v.truncate().truncate() / v.w);
+        let area = (p[1] - p[0]).perp_dot(p[2] - p[0]);
+        if area.abs() < 1e-8 {
+            continue;
+        }
+        let b = [
+            (p[1] - point).perp_dot(p[2] - point) / area,
+            (p[2] - point).perp_dot(p[0] - point) / area,
+            (p[0] - point).perp_dot(p[1] - point) / area,
+        ];
+        if b.iter().any(|v| *v < 0.) {
+            continue;
+        }
+        let q = [b[0] / clip[0].w, b[1] / clip[1].w, b[2] / clip[2].w];
+        let sum = q.iter().sum::<f32>();
+        let uv = (0..3)
+            .map(|i| Vec2::from_array(dome.coordinates()[ids[i]]) * q[i])
+            .sum::<Vec2>()
+            / sum;
+        let alpha = (0..3)
+            .map(|i| (dome.colors()[ids[i]] >> 24) as f32 * q[i])
+            .sum::<f32>()
+            / (sum * 255.);
+        let texel = uv * 128. - Vec2::splat(0.5);
+        let origin = texel.floor();
+        let blend = texel - origin;
+        let pixel = |dx: i32, dy: i32| {
+            let tx = (origin.x as i32 + dx).clamp(0, 127) as usize;
+            let ty = (origin.y as i32 + dy).clamp(0, 127) as usize;
+            let bytes = &frame.bgra8()[(ty * 128 + tx) * 4..(ty * 128 + tx) * 4 + 4];
+            Vec4::new(
+                f32::from(bytes[2]),
+                f32::from(bytes[1]),
+                f32::from(bytes[0]),
+                f32::from(bytes[3]),
+            ) / 255.
+        };
+        let mut sample = pixel(0, 0)
+            .lerp(pixel(1, 0), blend.x)
+            .lerp(pixel(0, 1).lerp(pixel(1, 1), blend.x), blend.y);
+        sample.w *= alpha;
+        return sample;
+    }
+    Vec4::ZERO
+}
+
 /// A full-frame triangle has constant depth UVs away from the river tail/WMO split.
 fn triangle(depth: f32, color: [u8; 4]) -> [LiquidRenderVertex; 3] {
     [[-1.0, -1.0, depth], [3.0, -1.0, depth], [-1.0, 3.0, depth]].map(|position| {

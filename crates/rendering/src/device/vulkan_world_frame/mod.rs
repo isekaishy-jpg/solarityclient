@@ -67,6 +67,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) ripple_pipeline: &'a PctPipeline,
     pub(in crate::device) underwater_pipeline: &'a PctPipeline,
     pub(in crate::device) sky_pipeline: &'a PctPipeline,
+    pub(in crate::device) cloud_pipeline: &'a PctPipeline,
     pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
     pub(in crate::device) liquid_textures: &'a BlpTextureRegistry,
     pub(in crate::device) maximum_sampler_anisotropy: f32,
@@ -211,6 +212,7 @@ impl WorldFrameRenderer {
             && ribbon_draws.is_empty()
             && scene.liquids().is_none_or(|frame| frame.draws().is_empty())
             && scene.sky().is_none()
+            && scene.clouds().is_none()
         {
             return Err(VulkanError::EmptyWorldFrame);
         }
@@ -308,6 +310,14 @@ impl WorldFrameRenderer {
         let (acquired, wait_write_elapsed, acquire_elapsed) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
+            if let Some(frame) = scene.clouds() {
+                slot.clouds.ensure(
+                    context.device,
+                    context.allocator,
+                    context.cloud_pipeline.descriptor_layout(),
+                )?;
+                slot.clouds.write(context.allocator, frame)?;
+            }
             if let Some(frame) = scene.sky() {
                 slot.sky.write(context.allocator, frame.dome())?;
             }
@@ -418,6 +428,9 @@ impl WorldFrameRenderer {
             underwater_pipeline: context.underwater_pipeline,
             underwater_resources: &slot.underwater,
             underwater_frame: scene.underwater(),
+            cloud_pipeline: context.cloud_pipeline,
+            cloud_resources: &slot.clouds,
+            cloud_frame: scene.clouds(),
             sky_pipeline: context.sky_pipeline,
             sky_resources: &slot.sky,
             sky_frame: scene.sky(),
@@ -466,6 +479,9 @@ impl WorldFrameRenderer {
             image_index,
             self.profiler.is_some(),
         )?;
+        if scene.clouds().is_some() {
+            slot.clouds.submitted();
+        }
         if let Some(profiler) = self.profiler.as_mut() {
             let submit_timings = submit_timings.ok_or_else(|| {
                 VulkanError::operation("profile world frame", "queue timings are unavailable")

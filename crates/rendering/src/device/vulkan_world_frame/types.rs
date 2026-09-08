@@ -2,7 +2,7 @@
 
 use crate::{
     LiquidFrame, M2SceneLightBank, M2SceneUniform, TerrainSceneUniform, UnderwaterParticleFrame,
-    WaterRippleFrame, WorldModelSceneUniform, WorldSkyFrame,
+    WaterRippleFrame, WorldCloudFrame, WorldModelSceneUniform, WorldSkyFrame,
 };
 
 /// One coherent terrain, WMO, M2, and M2-effect scene snapshot for a world frame.
@@ -17,6 +17,7 @@ pub struct WorldFrameScene<'a> {
     ripples: Option<WaterRippleFrame<'a>>,
     underwater: Option<UnderwaterParticleFrame<'a>>,
     sky: Option<WorldSkyFrame<'a>>,
+    clouds: Option<WorldCloudFrame<'a>>,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -37,7 +38,19 @@ impl<'a> WorldFrameScene<'a> {
             ripples: None,
             underwater: None,
             sky: None,
+            clouds: None,
         }
+    }
+
+    /// Adds the native procedural cloud dome after the sky gradient.
+    #[must_use]
+    pub const fn with_clouds(mut self, frame: WorldCloudFrame<'a>) -> Self {
+        self.clouds = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn clouds(self) -> Option<WorldCloudFrame<'a>> {
+        self.clouds
     }
 
     /// Adds the native sky background at the same camera and environment sample.

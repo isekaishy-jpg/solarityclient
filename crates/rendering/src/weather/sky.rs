@@ -207,7 +207,7 @@ fn view_azimuth(forward: Vec3) -> f32 {
     angle as f32
 }
 
-fn cyclic(table: &[[f32; 2]], phase: f32) -> f64 {
+pub(super) fn cyclic(table: &[[f32; 2]], phase: f32) -> f64 {
     let phase = f64::from(phase.clamp(0.0, 1.0));
     let right = table
         .iter()

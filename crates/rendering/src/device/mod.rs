@@ -17,6 +17,7 @@ mod m2_model_orientation;
 mod status;
 mod vulkan_capture;
 mod vulkan_character_atlas;
+mod vulkan_cloud;
 mod vulkan_frame;
 mod vulkan_glow;
 mod vulkan_instance;
