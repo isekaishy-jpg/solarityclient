@@ -57,6 +57,11 @@ pub(in crate::application) struct TimedMirrorTimerUpdate {
 /// Shared ordering prevents a later flag packet changing an earlier timer trigger.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::application) enum RuntimePlayerUiNotification {
+    Life {
+        snapshot: RuntimePlayerHealthSnapshot,
+        event: RuntimePlayerLifeEvent,
+        release_timer: solarity_ui::UiPlayerReleaseTimer,
+    },
     MirrorTimer(TimedMirrorTimerUpdate),
     TutorialFlags(Vec<u8>),
     Combat(bool),
@@ -68,6 +73,13 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::application) enum RuntimePlayerLifeEvent {
+    Dead,
+    Alive,
+    Flags { unghost: bool },
+}
+
 /// Retained independently of UI residency and cleared by native world exit.
 #[derive(Default)]
 pub(in crate::application) struct RuntimePlayerUiState {
@@ -75,12 +87,113 @@ pub(in crate::application) struct RuntimePlayerUiState {
     tutorial_flags: Vec<u8>,
     in_combat: bool,
     health: Option<RuntimePlayerHealthSnapshot>,
+    release_timer: solarity_ui::UiPlayerReleaseTimer,
     combat_clock: RuntimeCombatLogClock,
     impacts: VecDeque<RuntimeEnvironmentalDamageSnapshot>,
     pending: VecDeque<RuntimePlayerUiNotification>,
 }
 
 impl RuntimePlayerUiState {
+    pub(in crate::application) fn release_timer(&self) -> solarity_ui::UiPlayerReleaseTimer {
+        self.release_timer
+    }
+
+    pub(in crate::application) fn receive_unit_field(
+        &mut self,
+        world: &solarity_ecs::ActiveWorld,
+        identity: solarity_ecs::WorldObjectIdentity,
+        notification: crate::application::gameplay_session::UnitFieldNotification,
+        timestamp_ms: u32,
+    ) {
+        if world.local_player_guid().ok() != Some(identity.guid()) {
+            return;
+        }
+        let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
+            return;
+        };
+        use crate::application::gameplay_session::UnitFieldNotification;
+        match notification {
+            UnitFieldNotification::Health { previous } => {
+                // Global 73F330 runs before the per-unit 60C240 UI observer.
+                if (previous as i32) > 0 && (snapshot.health as i32) <= 0 {
+                    if world
+                        .storage()
+                        .get::<&solarity_ecs::ObjectFields>(world.local_player())
+                        .is_ok_and(|fields| fields.get(79) & 0x20 == 0)
+                    {
+                        self.initialize_release_timer(world, timestamp_ms);
+                    }
+                    self.life(snapshot, RuntimePlayerLifeEvent::Dead);
+                } else if (previous as i32) <= 0 && (snapshot.health as i32) > 0 {
+                    self.life(snapshot, RuntimePlayerLifeEvent::Alive);
+                }
+                self.pending.push_back(RuntimePlayerUiNotification::Health {
+                    snapshot,
+                    health_changed: true,
+                    maximum_changed: false,
+                });
+                self.health = Some(snapshot);
+            }
+            UnitFieldNotification::MaximumHealth => {
+                self.pending.push_back(RuntimePlayerUiNotification::Health {
+                    snapshot,
+                    health_changed: false,
+                    maximum_changed: true,
+                });
+                self.health = Some(snapshot);
+            }
+            UnitFieldNotification::PlayerFlags { previous } => {
+                self.life(
+                    snapshot,
+                    RuntimePlayerLifeEvent::Flags {
+                        unghost: previous & 0x10 != 0 && !snapshot.ghost,
+                    },
+                );
+            }
+        }
+    }
+
+    fn life(&mut self, snapshot: RuntimePlayerHealthSnapshot, event: RuntimePlayerLifeEvent) {
+        self.pending.push_back(RuntimePlayerUiNotification::Life {
+            snapshot,
+            event,
+            release_timer: self.release_timer,
+        });
+    }
+
+    fn initialize_release_timer(&mut self, world: &solarity_ecs::ActiveWorld, timestamp_ms: u32) {
+        if let Ok(fields) = world
+            .storage()
+            .get::<&solarity_ecs::ObjectFields>(world.local_player())
+        {
+            self.release_timer = solarity_ui::UiPlayerReleaseTimer::on_death(
+                fields.get(1197) as u8,
+                fields.get(150),
+                timestamp_ms,
+            );
+        }
+    }
+
+    /// Native 6E2E90's 37A notice refreshes the timer even without a field change.
+    pub(in crate::application) fn receive_death_notice(
+        &mut self,
+        world: &solarity_ecs::ActiveWorld,
+        timestamp_ms: u32,
+    ) {
+        let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
+            return;
+        };
+        self.initialize_release_timer(world, timestamp_ms);
+        self.life(
+            snapshot,
+            if (snapshot.health as i32) <= 0 {
+                RuntimePlayerLifeEvent::Dead
+            } else {
+                RuntimePlayerLifeEvent::Alive
+            },
+        );
+    }
+
     pub(in crate::application) fn receive_environmental_damage(
         &mut self,
         world: &mut solarity_ecs::ActiveWorld,
@@ -98,7 +211,7 @@ impl RuntimePlayerUiState {
             self.combat_clock,
         ) {
             if snapshot.has_combat_event() {
-                self.observe_health(world);
+                self.refresh_health(world);
                 self.pending
                     .push_back(RuntimePlayerUiNotification::EnvironmentalDamage(
                         snapshot.clone(),
@@ -123,17 +236,17 @@ impl RuntimePlayerUiState {
         self
     }
 
-    pub(in crate::application) fn observe_health(&mut self, world: &solarity_ecs::ActiveWorld) {
+    /// Publish the polled image without inventing a native field callback.
+    /// A later raw block may have overwritten the packet's watched old mirror.
+    pub(in crate::application) fn refresh_health(&mut self, world: &solarity_ecs::ActiveWorld) {
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
         };
         if self.health != Some(snapshot) {
             self.pending.push_back(RuntimePlayerUiNotification::Health {
                 snapshot,
-                health_changed: self.health.is_none_or(|old| old.health != snapshot.health),
-                maximum_changed: self
-                    .health
-                    .is_none_or(|old| old.maximum != snapshot.maximum),
+                health_changed: false,
+                maximum_changed: false,
             });
             self.health = Some(snapshot);
         }

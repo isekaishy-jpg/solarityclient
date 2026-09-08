@@ -251,14 +251,15 @@ fn player_health_reconciles_only_changed_health_and_retains_notification_order()
     world.create_object(1, solarity_ecs::ObjectKind::Player, None, [])?;
     solarity_systems::project_object_fields(&mut world, 1, [(24, 500), (32, 1000)])?;
     let mut state = RuntimePlayerUiState::default();
-    state.observe_health(&world);
+    state.refresh_health(&world);
     state.discard_published_notifications();
     let entity = world.local_player();
     world
         .storage_mut()
         .add_component(entity, (solarity_ecs::UnitHealthPrediction::new(400),));
-    state.observe_health(&world);
+    state.refresh_health(&world);
     for fields in [vec![(25, 60)], vec![(24, 500)], vec![(32, 1200)]] {
+        let maximum_changed = fields[0].0 == 32;
         solarity_systems::project_object_fields(&mut world, 1, fields)?;
         assert_eq!(
             world
@@ -267,7 +268,15 @@ fn player_health_reconciles_only_changed_health_and_retains_notification_order()
                 .health(),
             400
         );
-        state.observe_health(&world);
+        if maximum_changed {
+            state.receive_unit_field(
+                &world,
+                world.object_identity(1).ok_or("identity")?,
+                crate::application::gameplay_session::UnitFieldNotification::MaximumHealth,
+                0,
+            );
+        }
+        state.refresh_health(&world);
     }
     solarity_systems::project_object_fields(&mut world, 1, [(24, 380)])?;
     assert_eq!(
@@ -277,7 +286,13 @@ fn player_health_reconciles_only_changed_health_and_retains_notification_order()
             .health(),
         380
     );
-    state.observe_health(&world);
+    state.receive_unit_field(
+        &world,
+        world.object_identity(1).ok_or("identity")?,
+        crate::application::gameplay_session::UnitFieldNotification::Health { previous: 500 },
+        0,
+    );
+    state.refresh_health(&world);
     let mut result = Vec::new();
     while let Some(notification) = state.take_notification() {
         let RuntimePlayerUiNotification::Health {

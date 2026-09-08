@@ -229,6 +229,7 @@ impl RuntimeWorldUi {
         }
         let world = environment.world_state();
         world.tutorials().replace_flags(player_ui.tutorial_flags());
+        world.set_release_timer(player_ui.release_timer());
         metadata.publish_active_player(active, &world)?;
 
         world.set_zone(zone.clone());

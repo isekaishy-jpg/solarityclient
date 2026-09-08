@@ -106,6 +106,34 @@ pub fn project_object_fields<I>(
 where
     I: IntoIterator<Item = (u16, u32)>,
 {
+    project_fields(world, guid, fields, false)
+}
+
+/// Projects raw packet fields before deferred mirror callbacks reconcile health.
+/// New unit components still receive their initial prediction from raw health.
+///
+/// # Errors
+/// Returns [`ObjectProjectionError`] for an unknown or malformed object.
+pub fn project_object_fields_deferred<I>(
+    world: &mut ActiveWorld,
+    guid: u64,
+    fields: I,
+) -> Result<(), ObjectProjectionError>
+where
+    I: IntoIterator<Item = (u16, u32)>,
+{
+    project_fields(world, guid, fields, true)
+}
+
+fn project_fields<I>(
+    world: &mut ActiveWorld,
+    guid: u64,
+    fields: I,
+    defer_health: bool,
+) -> Result<(), ObjectProjectionError>
+where
+    I: IntoIterator<Item = (u16, u32)>,
+{
     let entity = world
         .entity_by_guid(guid)
         .ok_or(ObjectProjectionError::UnknownObject { guid })?;
@@ -436,7 +464,7 @@ where
         }
         // 73F330 reconciles FB0 when replicated health changes; unrelated
         // resource updates must retain prediction from admitted combat logs.
-        if unit_vitals.is_none() || health_changed {
+        if unit_vitals.is_none() || (health_changed && !defer_health) {
             world.storage_mut().add_component(
                 entity,
                 (solarity_ecs::UnitHealthPrediction::new(health as i32),),

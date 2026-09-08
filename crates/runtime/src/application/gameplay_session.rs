@@ -3,6 +3,10 @@
 mod game_object_notifications;
 mod monster;
 mod movement;
+mod unit_notifications;
+
+pub(in crate::application) use unit_notifications::UnitFieldNotification;
+use unit_notifications::{UnitFieldImage, UnitFieldMirrors};
 
 pub(crate) use monster::apply_monster_move;
 pub(crate) use monster::prepare_monster_move;
@@ -21,7 +25,7 @@ use solarity_network::{
     InWorldSession, ObjectMovementUpdate, WorldObjectKind, WorldObjectUpdate,
     WorldObjectUpdateBatch,
 };
-use solarity_systems::{ObjectProjectionError, project_object_fields};
+use solarity_systems::{ObjectProjectionError, project_object_fields_deferred};
 use thiserror::Error;
 
 /// Failure while applying an authoritative object-update batch to ECS state.
@@ -184,15 +188,45 @@ pub(crate) fn apply_object_updates_with<E: From<GameplayUpdateError>>(
         GameObjectNotification,
     ) -> Result<(), E>,
 ) -> Result<(), E> {
+    apply_object_updates_with_units(world, batch, receipt_ms, notify, &mut |_, _, _| {})
+}
+
+pub(in crate::application) fn apply_object_updates_with_units<E: From<GameplayUpdateError>>(
+    world: &mut ActiveWorld,
+    batch: &WorldObjectUpdateBatch,
+    receipt_ms: u32,
+    notify: &mut impl FnMut(
+        &mut ActiveWorld,
+        solarity_ecs::WorldObjectIdentity,
+        GameObjectNotification,
+    ) -> Result<(), E>,
+    notify_unit: &mut impl FnMut(&ActiveWorld, solarity_ecs::WorldObjectIdentity, UnitFieldNotification),
+) -> Result<(), E> {
     let mut mirrors = GameObjectUpdateMirrors::default();
+    let mut units = UnitFieldMirrors::default();
     for update in batch.updates() {
+        let old_unit = match update {
+            WorldObjectUpdate::Values { guid, .. } | WorldObjectUpdate::Create { guid, .. } => {
+                Some((
+                    *guid,
+                    UnitFieldImage::read(world, *guid),
+                    world.entity_by_guid(*guid).is_none(),
+                ))
+            }
+            _ => None,
+        };
         if let Some(identity) =
             apply_object_update_raw(world, update, receipt_ms, &mut mirrors).map_err(E::from)?
         {
             notify(world, identity, GameObjectNotification::Initialize)?;
         }
+        if let Some((guid, previous, created)) = old_unit {
+            units.record(world, guid, previous, created);
+        }
     }
-    mirrors.dispatch(world, batch, notify)
+    mirrors.dispatch(world, batch, notify)?;
+    units.dispatch(world, batch, notify_unit);
+    Ok(())
 }
 
 /// Admit one raw block and identify a new GameObject requiring its constructor.
@@ -209,7 +243,7 @@ fn apply_object_update_raw(
                 *guid,
                 fields.iter().map(|field| (field.index(), field.value())),
             )?;
-            project_object_fields(
+            project_object_fields_deferred(
                 world,
                 *guid,
                 fields.iter().map(|field| (field.index(), field.value())),
@@ -266,7 +300,7 @@ fn apply_object_update_raw(
                     game_object_movement(movement, receipt_ms),
                 )?;
             }
-            project_object_fields(
+            project_object_fields_deferred(
                 world,
                 *guid,
                 fields.iter().map(|field| (field.index(), field.value())),

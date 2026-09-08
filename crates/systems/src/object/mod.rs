@@ -25,4 +25,4 @@ pub use transport_animation::{
     TransportAnimationTrack,
 };
 pub use transport_pose::game_object_transport_pose;
-pub use update::{ObjectProjectionError, project_object_fields};
+pub use update::{ObjectProjectionError, project_object_fields, project_object_fields_deferred};

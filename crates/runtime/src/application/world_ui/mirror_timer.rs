@@ -13,6 +13,10 @@ mod tutorial_tests;
 mod health_tests;
 
 #[cfg(test)]
+#[path = "../../../tests/application/player_life.rs"]
+mod life_tests;
+
+#[cfg(test)]
 #[path = "../../../tests/application/environmental_damage.rs"]
 mod environmental_damage_tests;
 
@@ -30,6 +34,10 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Life { snapshot, event, release_timer } => {
+                self.dirty = true;
+                dispatch_life(&mut self.manager, &self.world, snapshot, event, release_timer)
+            }
             crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::EnvironmentalDamage(impact) => {
                 self.dirty=true;
                 super::environmental_damage::dispatch_environmental_damage(&mut self.manager,impact)
@@ -88,6 +96,36 @@ impl RuntimeWorldUi {
             notification,
         )
     }
+}
+
+fn dispatch_life(
+    manager: &mut solarity_ui::FrameManager,
+    world: &solarity_ui::UiWorldState,
+    snapshot: crate::application::gameplay_coordinator::player_ui::RuntimePlayerHealthSnapshot,
+    event: crate::application::gameplay_coordinator::player_ui::RuntimePlayerLifeEvent,
+    release_timer: solarity_ui::UiPlayerReleaseTimer,
+) -> Result<(), ApplicationError> {
+    snapshot.publish(world);
+    world.set_release_timer(release_timer);
+    use crate::application::gameplay_coordinator::player_ui::RuntimePlayerLifeEvent;
+    match event {
+        RuntimePlayerLifeEvent::Dead => {
+            manager.dispatch_event("PLAYER_DEAD", &UiEventPayload::empty())?;
+        }
+        RuntimePlayerLifeEvent::Alive => {
+            manager.dispatch_event("PLAYER_ALIVE", &UiEventPayload::empty())?;
+        }
+        RuntimePlayerLifeEvent::Flags { unghost } => {
+            manager.dispatch_event(
+                "PLAYER_FLAGS_CHANGED",
+                &UiEventPayload::new(vec![UiEventArgument::String("player".into())]),
+            )?;
+            if unghost {
+                manager.dispatch_event("PLAYER_UNGHOST", &UiEventPayload::empty())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn dispatch_health(

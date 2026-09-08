@@ -136,7 +136,8 @@ pub use object::{
     GameObjectPlacementError, GameObjectPlacementResolver, ObjectProjectionError,
     TransportAnimationClock, TransportAnimationError, TransportAnimationSample,
     TransportAnimationTrack, game_object_reversed_progress, game_object_sequence_offset,
-    game_object_transport_pose, project_object_fields, unpack_game_object_rotation,
+    game_object_transport_pose, project_object_fields, project_object_fields_deferred,
+    unpack_game_object_rotation,
 };
 pub use world::{
     AreaTriggerVolume, DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,

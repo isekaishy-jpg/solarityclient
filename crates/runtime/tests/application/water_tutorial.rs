@@ -227,6 +227,11 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         );
         while let Some(notification) = state.take_notification() {
             match notification {
+                RuntimePlayerUiNotification::Life {
+                    snapshot,
+                    event,
+                    release_timer,
+                } => super::dispatch_life(&mut manager, &world, snapshot, event, release_timer)?,
                 RuntimePlayerUiNotification::Health {
                     snapshot,
                     health_changed,
@@ -305,6 +310,7 @@ fn water_tutorials_preserve_server_order_native_callbacks_and_wire_acknowledgeme
         sent.await??;
         while let Some(notification)=state.take_notification() {
             match notification {
+                RuntimePlayerUiNotification::Life {snapshot,event,release_timer} => super::dispatch_life(&mut manager,&world,snapshot,event,release_timer)?,
                 RuntimePlayerUiNotification::Combat(in_combat) => manager.player_combat_changed(in_combat)?,
                 RuntimePlayerUiNotification::EnvironmentalDamage(impact) => super::super::environmental_damage::dispatch_environmental_damage(&mut manager,impact)?,
                 RuntimePlayerUiNotification::Health {snapshot,health_changed,maximum_changed} => super::dispatch_health(&mut manager,&world,snapshot,health_changed,maximum_changed)?,

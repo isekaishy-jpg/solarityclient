@@ -56,7 +56,7 @@ use tokio::time::Instant;
 use super::player_control::{PlayerControlEvent, RuntimePlayerControl};
 use crate::application::game_object_behavior::GameObjectNotification;
 use crate::application::gameplay_session::{
-    GameplaySession, GameplayUpdateError, apply_object_updates_with,
+    GameplaySession, GameplayUpdateError, apply_object_updates_with_units,
 };
 use crate::time::RealmClock;
 
@@ -280,9 +280,10 @@ impl RuntimeGameplayCoordinator {
                 &mut retained,
                 self.path_distance_tolerance,
                 notify,
+                &mut player_ui,
             )?;
             player_ui.observe_combat(gameplay.world());
-            player_ui.observe_health(gameplay.world());
+            player_ui.refresh_health(gameplay.world());
         }
         let (network, world) = gameplay.into_parts();
         let map_id = world.map_id().value();
@@ -412,9 +413,10 @@ impl RuntimeGameplayCoordinator {
                                 self.path_distance_tolerance,
                                 notify,
                                 crate::platform::client_milliseconds(),
+                                &mut self.player_ui,
                             )?;
                             self.player_ui.observe_combat(world);
-                            self.player_ui.observe_health(world);
+                            self.player_ui.refresh_health(world);
                             Ok(changed)
                         });
                     match result {
@@ -992,8 +994,13 @@ fn dispatch_setup_packet<S>(
     unhandled: &mut VecDeque<WorldServerPacket>,
     path_distance_tolerance: f32,
     notify: &mut GameObjectObserver<'_>,
+    player_ui: &mut player_ui::RuntimePlayerUiState,
 ) -> Result<(), RuntimeGameplayError> {
     let timestamp_ms = crate::platform::client_milliseconds();
+    if packet.opcode() == 0x37a {
+        player_ui.receive_death_notice(gameplay.world(), timestamp_ms);
+        return Ok(());
+    }
     if let Some(message) = packet.remote_movement()? {
         crate::application::player_movement::remote::receive(
             gameplay.world_mut(),
@@ -1036,11 +1043,14 @@ fn dispatch_setup_packet<S>(
         return Ok(());
     }
     if let Some(updates) = packet.object_updates()? {
-        apply_object_updates_with(
+        apply_object_updates_with_units(
             gameplay.world_mut(),
             &updates,
             timestamp_ms,
             &mut |world, identity, event| notify(world, identity, event, timestamp_ms),
+            &mut |world, identity, event| {
+                player_ui.receive_unit_field(world, identity, event, timestamp_ms)
+            },
         )?;
         player_control.synchronize(gameplay.world(), timestamp_ms);
         return Ok(());
@@ -1066,7 +1076,12 @@ fn dispatch_world_packet(
     path_distance_tolerance: f32,
     notify: &mut GameObjectObserver<'_>,
     timestamp_ms: u32,
+    player_ui: &mut player_ui::RuntimePlayerUiState,
 ) -> Result<bool, RuntimeGameplayError> {
+    if packet.opcode() == 0x37a {
+        player_ui.receive_death_notice(world, timestamp_ms);
+        return Ok(false);
+    }
     if let Some(message) = packet.remote_movement()? {
         return Ok(crate::application::player_movement::remote::receive(
             world,
@@ -1107,11 +1122,14 @@ fn dispatch_world_packet(
         return Ok(false);
     }
     if let Some(updates) = packet.object_updates()? {
-        apply_object_updates_with(
+        apply_object_updates_with_units(
             world,
             &updates,
             timestamp_ms,
             &mut |world, identity, event| notify(world, identity, event, timestamp_ms),
+            &mut |world, identity, event| {
+                player_ui.receive_unit_field(world, identity, event, timestamp_ms)
+            },
         )?;
         player_control.synchronize(world, timestamp_ms);
         return Ok(true);

@@ -195,7 +195,7 @@ if event=='COMBAT_LOG_EVENT' then LOG=Capture(...);HEALTH_AT_LOG=tostring(UnitHe
             active.create_object(1,solarity_ecs::ObjectKind::Player,None,[])?;
             solarity_systems::project_object_fields(&mut active,1,[(24,500),(32,1000)])?;
             let mut state=RuntimePlayerUiState::default().with_combat_clock(RuntimeCombatLogClock {unix_seconds:1_700_000_000,milliseconds:1000});
-            state.observe_health(&active);state.discard_published_notifications();
+            state.refresh_health(&active);state.discard_published_notifications();
             let packet=reader.receive_packet().await?;
             assert_eq!(packet.name(),Some("SMSG_ENVIRONMENTALDAMAGELOG"));
             let packet=packet.environmental_damage()?.ok_or("damage packet")?;
