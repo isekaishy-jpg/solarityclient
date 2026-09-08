@@ -37,6 +37,10 @@ mod unit_death_log_tests;
 #[path = "../../tests/application/tutorial_writer.rs"]
 mod tutorial_writer_tests;
 
+#[cfg(test)]
+#[path = "../../tests/application/weather_receiver.rs"]
+mod weather_receiver_tests;
+
 pub(in crate::application) use game_object_cache::{
     GameObjectTemplateBinding, GameObjectTemplateCache,
 };
@@ -130,6 +134,9 @@ pub enum RuntimeGameplayError {
     /// A server-owned mirror-timer notification was malformed.
     #[error(transparent)]
     MirrorTimer(#[from] solarity_network::WorldMirrorTimerPacketError),
+    /// An authoritative weather packet was malformed.
+    #[error(transparent)]
+    Weather(#[from] solarity_network::WorldWeatherPacketError),
     /// A server-authored environmental impact was malformed.
     #[error(transparent)]
     EnvironmentalDamage(#[from] solarity_network::WorldEnvironmentalDamagePacketError),
@@ -186,6 +193,7 @@ pub struct RuntimeGameplayCoordinator {
     spells: Option<std::rc::Rc<solarity_asset::SpellEffectCatalog>>,
     player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
+    weather_updates: VecDeque<(solarity_network::WorldWeatherUpdate, u32)>,
     /// Packet dispatch yields to the composition root at each transfer packet.
     transfer: Option<WorldTransfer>,
     /// Native Unit_C short-stop CVar, refreshed before packet dispatch.
@@ -233,6 +241,7 @@ impl RuntimeGameplayCoordinator {
             spells: None,
             player_control: None,
             unhandled_packets: VecDeque::new(),
+            weather_updates: VecDeque::new(),
             transfer: None,
             path_distance_tolerance: 1.0,
         }
@@ -271,6 +280,7 @@ impl RuntimeGameplayCoordinator {
             .ok_or(RuntimeGameplayError::MissingPlayerIdentity)?;
         let mut player_control = RuntimePlayerControl::new(player_identity);
         let mut retained = VecDeque::new();
+        let mut weather_updates = VecDeque::new();
         let mut realm_clock = None;
         let mut action_buttons = None;
         let mut player_ui = player_ui::RuntimePlayerUiState::default();
@@ -278,6 +288,10 @@ impl RuntimeGameplayCoordinator {
         let mut game_object_templates = GameObjectTemplateCache::new();
         let mut creature_templates = CreatureTemplateCache::new();
         for packet in setup_packets {
+            if let Some(update) = packet.weather()? {
+                weather_updates.push_back((update, crate::platform::client_milliseconds()));
+                continue;
+            }
             if let Some(damage) = packet.environmental_damage()? {
                 let active = gameplay.world();
                 let name = if active.local_player_guid().ok() == Some(damage.guid) {
@@ -357,6 +371,7 @@ impl RuntimeGameplayCoordinator {
         self.player_ui = player_ui;
         self.player_control = Some(player_control);
         self.unhandled_packets = retained;
+        self.weather_updates = weather_updates;
         tracing::info!(
             map_id,
             setup_packet_count,
@@ -412,6 +427,11 @@ impl RuntimeGameplayCoordinator {
                         .game_object_query()
                         .map_err(RuntimeGameplayError::from)
                         .and_then(|response| {
+                            if let Some(update) = packet.weather()? {
+                                self.weather_updates
+                                    .push_back((update, crate::platform::client_milliseconds()));
+                                return Ok(true);
+                            }
                             if let Some(damage) = packet.environmental_damage()? {
                                 let name = if world.local_player_guid().ok() == Some(damage.guid) {
                                     world
@@ -480,6 +500,7 @@ impl RuntimeGameplayCoordinator {
                             self.realm_clock = None;
                             self.action_buttons = None;
                             self.unhandled_packets.clear();
+                            self.weather_updates.clear();
                             self.game_object_templates.clear();
                             self.creature_templates.clear();
                             return Err(error);
@@ -492,6 +513,7 @@ impl RuntimeGameplayCoordinator {
                     self.realm_clock = None;
                     self.action_buttons = None;
                     self.unhandled_packets.clear();
+                    self.weather_updates.clear();
                     self.game_object_templates.clear();
                     self.creature_templates.clear();
                     return Err(error);
@@ -505,6 +527,7 @@ impl RuntimeGameplayCoordinator {
                     self.realm_clock = None;
                     self.action_buttons = None;
                     self.unhandled_packets.clear();
+                    self.weather_updates.clear();
                     self.game_object_templates.clear();
                     self.creature_templates.clear();
                     return Err(RuntimeGameplayError::TaskEnded);
@@ -521,6 +544,11 @@ impl RuntimeGameplayCoordinator {
     /// Takes the transfer packet that paused main-thread dispatch.
     pub fn take_world_transfer(&mut self) -> Option<WorldTransfer> {
         self.transfer.take()
+    }
+
+    /// Takes authoritative weather updates in packet order with receive times.
+    pub fn take_weather_update(&mut self) -> Option<(solarity_network::WorldWeatherUpdate, u32)> {
+        self.weather_updates.pop_front()
     }
 
     /// Gives model admission the session-owned cache without exposing network state.
@@ -639,6 +667,7 @@ impl RuntimeGameplayCoordinator {
     ///
     /// Returns [`RuntimeGameplayError`] if the selected player identity is absent.
     pub fn replace_world(&mut self, location: WorldLocation) -> Result<(), RuntimeGameplayError> {
+        self.weather_updates.clear();
         let world = self
             .world
             .as_ref()
@@ -910,6 +939,7 @@ impl RuntimeGameplayCoordinator {
 
     /// Aborts packet I/O and drops active ECS state.
     pub fn disconnect(&mut self) {
+        self.weather_updates.clear();
         self.player_ui = player_ui::RuntimePlayerUiState::default();
         self.player_ui.set_spells(self.spells.clone());
         self.game_object_templates.clear();

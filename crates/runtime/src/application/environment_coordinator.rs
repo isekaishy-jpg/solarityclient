@@ -1,5 +1,7 @@
 //! Active-world view distance and authored exterior-light composition.
 
+mod weather;
+
 use glam::Vec3;
 use solarity_asset::{
     LightCatalog, LiquidTypeCatalog, MapCatalog, WorldLightCondition, WorldLightQuery,
@@ -143,9 +145,27 @@ pub struct RuntimeWorldEnvironment {
     requested_view_distance: f32,
     current: Option<RuntimeWorldEnvironmentFrame>,
     map_time_overrides: Vec<(u32, i32)>,
+    weather_catalog: solarity_asset::WeatherCatalog,
+    weather: weather::WeatherTransition,
 }
 
 impl RuntimeWorldEnvironment {
+    /// Retains the installed Weather.dbc selections for server updates.
+    #[must_use]
+    pub fn with_weather(mut self, catalog: solarity_asset::WeatherCatalog) -> Self {
+        self.weather_catalog = catalog;
+        self
+    }
+
+    /// Applies the original weather receiver's unknown-row fallback and anchors.
+    pub fn receive_weather(&mut self, update: solarity_network::WorldWeatherUpdate, now: u32) {
+        let definition = self.weather_catalog.definition(update.weather_id);
+        let kind = definition.map_or(0, solarity_asset::WeatherDefinition::precipitation_type);
+        let weight = definition.map_or(1., solarity_asset::WeatherDefinition::light_weight);
+        self.weather
+            .receive(kind, update.grade, update.instant, weight, now);
+    }
+
     /// Retains authored map clock overrides before their catalog enters streaming.
     #[must_use]
     pub fn with_map_time_overrides(mut self, maps: &MapCatalog) -> Self {
@@ -178,6 +198,8 @@ impl RuntimeWorldEnvironment {
             requested_view_distance: DEFAULT_WORLD_VIEW_DISTANCE,
             current: None,
             map_time_overrides: Vec::new(),
+            weather_catalog: solarity_asset::WeatherCatalog::default(),
+            weather: weather::WeatherTransition::default(),
         })
     }
 
@@ -219,16 +241,18 @@ impl RuntimeWorldEnvironment {
             map_id,
             self.total_physical_memory_bytes,
         ))?;
-        let light =
-            self.lights
-                .sample(WorldLightQuery::new(map_id.value(), position, half_minutes))?;
+        let weather_blend = self.weather.sample(crate::platform::client_milliseconds());
+        let light = self.lights.sample(
+            WorldLightQuery::new(map_id.value(), position, half_minutes)
+                .with_weather(weather_blend),
+        )?;
         let current = RuntimeWorldEnvironmentFrame {
             map_id: map_id.value(),
             position,
             half_minutes,
             day_fraction: sky_time.day_fraction(),
             calendar_days: sky_time.calendar_days(),
-            weather_blend: 0.0,
+            weather_blend,
             view_distance,
             light,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),
@@ -265,7 +289,8 @@ impl RuntimeWorldEnvironment {
         let light = if liquid.light_id() == 0 {
             self.lights.sample(
                 WorldLightQuery::new(frame.map_id, frame.position, frame.half_minutes)
-                    .with_condition(WorldLightCondition::UNDERWATER),
+                    .with_condition(WorldLightCondition::UNDERWATER)
+                    .with_weather(frame.weather_blend),
             )?
         } else {
             self.lights
@@ -278,5 +303,6 @@ impl RuntimeWorldEnvironment {
     /// Clears world-dependent state while retaining immutable DBC tables.
     pub fn disconnect(&mut self) {
         self.current = None;
+        self.weather = weather::WeatherTransition::default();
     }
 }

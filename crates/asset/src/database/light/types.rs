@@ -204,6 +204,7 @@ pub struct WorldLightQuery {
     pub(super) half_minutes: u32,
     pub(super) condition: WorldLightCondition,
     pub(super) light_id_override: Option<u32>,
+    pub(super) weather_blend: f32,
 }
 
 impl WorldLightQuery {
@@ -216,7 +217,16 @@ impl WorldLightQuery {
             half_minutes,
             condition: WorldLightCondition::EXTERIOR,
             light_id_override: None,
+            weather_blend: 0.0,
         }
+    }
+
+    /// Blends the exterior/underwater precipitation bank before local overlays.
+    /// Finite values are clamped to zero through one during sampling.
+    #[must_use]
+    pub const fn with_weather(mut self, weight: f32) -> Self {
+        self.weather_blend = weight;
+        self
     }
 
     /// Selects one of the seven alternate authored environment conditions.

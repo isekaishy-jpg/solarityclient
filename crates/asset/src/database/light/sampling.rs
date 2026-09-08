@@ -51,6 +51,9 @@ pub(super) fn sample(
     if !query.position.is_finite() {
         return Err(WorldLightSampleError::NonFinitePosition);
     }
+    if !query.weather_blend.is_finite() {
+        return Err(WorldLightSampleError::NonFiniteWeather);
+    }
     let candidates = weighted_lights(catalog, query)?;
     accumulate(catalog, &candidates, query)
 }
@@ -154,7 +157,21 @@ fn accumulate(
                 condition: query.condition.value(),
             },
         )?;
-        let palette = parameter_palette(catalog, parameter, query.half_minutes)?;
+        let mut palette = parameter_palette(catalog, parameter, query.half_minutes)?;
+        if query.weather_blend > 0.0 && query.condition.index() < 2 {
+            let condition = query.condition.index() + 2;
+            let parameter = catalog
+                .parameters
+                .get(&candidate.light.parameter_ids[condition])
+                .ok_or(WorldLightSampleError::MissingParameter {
+                    light_id: candidate.light.id,
+                    condition: condition as u8,
+                })?;
+            palette.weather(
+                parameter_palette(catalog, parameter, query.half_minutes)?,
+                query.weather_blend.min(1.0),
+            );
+        }
         match &mut output {
             None => output = Some(palette),
             Some(output) => output.overlay(palette, candidate.weight),
@@ -390,6 +407,31 @@ struct Accumulator {
 }
 
 impl Accumulator {
+    /// Native 7EC220 quantizes weather opacity before integer RGB blending.
+    fn weather(&mut self, other: Self, weight: f32) {
+        let alpha = (weight * 255.0).round_ties_even() as i32;
+        for (current, next) in self.colors.iter_mut().zip(other.colors) {
+            if alpha == 255 {
+                *current = (*current & 0xff000000) | (next & 0xffffff);
+            } else if alpha != 0 {
+                let mut blended = *current & 0xff000000;
+                for shift in [0, 8, 16] {
+                    let from = ((*current >> shift) & 255) as i32;
+                    let to = ((next >> shift) & 255) as i32;
+                    blended |= ((from + (((to - from) * alpha) >> 8)) as u32 & 255) << shift;
+                }
+                *current = blended;
+            }
+        }
+        self.fog_end = overlay_float(self.fog_end, other.fog_end, weight);
+        self.fog_ratio = overlay_float(self.fog_ratio, other.fog_ratio, weight);
+        self.glow = overlay_float(self.glow, other.glow, weight);
+        self.sky_floats[1] = overlay_float(self.sky_floats[1], other.sky_floats[1], weight);
+        for (current, next) in self.liquid_alphas.iter_mut().zip(other.liquid_alphas) {
+            *current = overlay_float(*current, next, weight);
+        }
+    }
+
     /// Native 7ED4C0 blends each admitted local into the current packed palette.
     fn overlay(&mut self, local: Self, weight: f32) {
         for (current, next) in self.colors.iter_mut().zip(local.colors) {

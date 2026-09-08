@@ -50,6 +50,7 @@ pub use database::{
     WorldStateZoneSound, ZoneIntroMusicDefinition, ZoneMusicDefinition, ZoneSoundCatalog,
     ZoneSoundOverrideCatalog, exterior_light_direction, exterior_light_direction_at,
 };
+pub use database::{WeatherCatalog, WeatherDefinition};
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
 pub use model::{
     DecodedM2Model, M2AnimationSet, M2Attachment, M2Batch, M2BlendMode, M2Bone, M2Camera,

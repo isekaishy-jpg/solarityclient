@@ -38,6 +38,10 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
     ]);
     // The fallback deliberately differs from map 571's global and locals.
     rows.extend([1, 0, 0, 0, 0, 0, 0, 5, 2, 0, 0, 0, 0, 0, 0]);
+    for row in rows.as_chunks_mut::<15>().0 {
+        row[9] = if row[0] == 14 { 1 } else { 3 };
+        row[10] = if row[0] == 14 { 2 } else { 4 };
+    }
     let mut parameters = Vec::new();
     let mut colors = Vec::new();
     let mut floats = Vec::new();
@@ -64,6 +68,10 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         liquids.extend(row);
     }
     let fixture = ClientFixture::with_common_files(&[
+        (
+            "DBFilesClient\\Weather.dbc",
+            &table(8, &[7, 9, 1, 1_f32.to_bits(), 0, 0, 0, 0]),
+        ),
         ("DBFilesClient\\Light.dbc", &table(15, &rows)),
         ("DBFilesClient\\LightParams.dbc", &table(9, &parameters)),
         ("DBFilesClient\\LightIntBand.dbc", &table(34, &colors)),
@@ -75,7 +83,8 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         Locale::EnUs,
     )?)?;
     let liquids = LiquidTypeCatalog::load(&mut store)?;
-    let mut environment = RuntimeWorldEnvironment::new(LightCatalog::load(&mut store)?, 8 << 30)?;
+    let mut environment = RuntimeWorldEnvironment::new(LightCatalog::load(&mut store)?, 8 << 30)?
+        .with_weather(solarity_asset::WeatherCatalog::load(&mut store)?);
     let clock = RealmClock::new(WorldTimeSpeed::new(0, 0., 0)?);
     for (position, exterior, underwater) in [
         (Vec3::new(10., 20., 30.), 64., 128.),
@@ -187,6 +196,68 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         assert_eq!(underwater.light().ambient_color(), Vec3::splat(32. / 255.));
         assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
     }
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "Weather",
+        Vec3::new(1000., 20., 30.),
+        0.,
+    ));
+    environment.receive_weather(
+        solarity_network::WorldWeatherUpdate {
+            weather_id: 7,
+            grade: 1.,
+            instant: true,
+        },
+        0,
+    );
+    let frame = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("weather frame")?;
+    assert_eq!(frame.weather_blend(), 1.);
+    assert_eq!(frame.light().ambient_color(), Vec3::splat(64. / 255.));
+    for (liquid_type, expected) in [(1, 128.), (2, 240.)] {
+        let resolved = environment.resolve_liquid(
+            frame,
+            Some(SubmergedLiquid {
+                liquid_type,
+                surface_height: 30.,
+                depth: 0.,
+            }),
+            &liquids,
+        )?;
+        assert_eq!(
+            resolved.light().ambient_color(),
+            Vec3::splat(expected / 255.)
+        );
+    }
+    environment.receive_weather(
+        solarity_network::WorldWeatherUpdate {
+            weather_id: 999,
+            grade: 0.,
+            instant: true,
+        },
+        0,
+    );
+    let clear = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("clear frame")?;
+    assert_eq!(clear.weather_blend(), 0.);
+    assert_eq!(clear.light().ambient_color(), Vec3::splat(16. / 255.));
+    environment.receive_weather(
+        solarity_network::WorldWeatherUpdate {
+            weather_id: 7,
+            grade: 1.,
+            instant: true,
+        },
+        0,
+    );
+    environment.disconnect();
+    let cleared = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("reset frame")?;
+    assert_eq!(cleared.weather_blend(), 0.);
+    assert_eq!(cleared.light(), clear.light());
     Ok(())
 }
 

@@ -8,6 +8,10 @@ mod world_state_tests;
 #[path = "../../tests/protocol/mirror_timer.rs"]
 mod mirror_timer_tests;
 
+#[cfg(test)]
+#[path = "../../tests/protocol/weather.rs"]
+mod weather_tests;
+
 use super::{
     AddonPolicyError, CharacterCreationError, CharacterCreationResult, CharacterDeletionError,
     CharacterDeletionResult, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
@@ -36,6 +40,15 @@ pub struct WorldServerPacket {
 }
 
 impl WorldServerPacket {
+    /// Decodes the authoritative weather selection and transition flag.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid nine-byte body or non-finite grade.
+    pub fn weather(
+        &self,
+    ) -> Result<Option<super::WorldWeatherUpdate>, super::WorldWeatherPacketError> {
+        super::WorldWeatherUpdate::decode(self.opcode, &self.payload)
+    }
     /// Decodes the source-name cache response used by deferred resurrection offers.
     ///
     /// # Errors
@@ -124,6 +137,7 @@ impl WorldServerPacket {
             0x02AE => Some("SMSG_MONSTER_MOVE_TRANSPORT"),
             SMSG_PONG => Some("SMSG_PONG"),
             0x1d9 => Some("SMSG_START_MIRROR_TIMER"),
+            0x2f4 => Some("SMSG_WEATHER"),
             0x1da => Some("SMSG_PAUSE_MIRROR_TIMER"),
             0x1db => Some("SMSG_STOP_MIRROR_TIMER"),
             0xfd => Some("SMSG_TUTORIAL_FLAGS"),

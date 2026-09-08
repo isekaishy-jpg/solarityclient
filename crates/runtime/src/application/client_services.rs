@@ -239,6 +239,7 @@ impl ClientServices {
         };
         let loading_directory = LoadingScreenDirectory::new(&maps, loading_screens);
         let lights = LightCatalog::load(&mut assets)?;
+        let weather = solarity_asset::WeatherCatalog::load(&mut assets)?;
         let liquids = solarity_asset::LiquidTypeCatalog::load(&mut assets)?;
         let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
         let underwater_particles =
@@ -493,7 +494,8 @@ impl ClientServices {
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
                 area_triggers,
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?
-                    .with_map_time_overrides(&maps),
+                    .with_map_time_overrides(&maps)
+                    .with_weather(weather),
                 player_movement: super::player_movement::RuntimePlayerMovement::default(),
                 remote_movement: super::player_movement::remote::RuntimeRemoteMovement::default(),
                 player: RuntimePlayerPresentation::new(
@@ -2352,6 +2354,9 @@ impl ClientServices {
             (self.world_ui.as_mut(), self.gameplay.action_buttons())
         {
             world_ui.synchronize_action_buttons(buttons)?;
+        }
+        while let Some((update, time)) = self.gameplay.take_weather_update() {
+            self.environment.receive_weather(update, time);
         }
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;

@@ -91,7 +91,35 @@ and invalid minute ranges select the original noon fallback. Calendar tests
 cover leap-day rollover, while clock captures cover fractional and multi-day
 progression. Production startup supplies the complete map override catalog.
 
-Celestial textures, stars, authored skybox models, weather transitions and
-WMO-specific sky visibility remain in the lighting/sky slice. Until the weather
-receiver is connected, the runtime retains the native initial clear-weather
-attenuation value.
+Weather lighting now consumes `SMSG_WEATHER` (`0x2F4`, receiver `526530`):
+an exact nine-byte weather ID, intensity and instant flag. `WeatherCatalog`
+loads all eight authored fields; unknown IDs select native clear weather with
+weight one. The installed table contains 32 records, and all 715 installed
+light volumes have both precipitation banks. Queued updates retain packet
+order and receive times, and world replacement/disconnect clear old weather.
+
+`7846A0` anchors new transitions from the previous target, including interrupted
+fades. `784850` separately interpolates precipitation grade, lighting grade
+capped at one quarter, and the authored weight. The palette/cloud attenuation
+is the product of stored lighting grade and stored weight, multiplied by four
+and capped at one. Float stores, unsigned elapsed time, instant changes and
+`78D170`'s small-change threshold are retained. The transition oracle runs
+248 native setter calls, 672 interpolator calls and 144 complete threshold frames.
+Resource type and nonempty texture lookup are controlled inputs; the threshold
+frames omit player/camera and particle advancement through explicit boundaries.
+
+`7EC220` blends weather banks two/three into normal banks zero/one before each
+global/local palette enters spatial composition. Its RGB opacity is a rounded
+byte, with integer arithmetic for intermediate colors and exact replacement
+at 255. The sky-highlight flag, skybox/cloud-type IDs and three unrelated sky
+scalars retain the normal palette values. The oracle compares 392 palettes,
+including ordered local overlays and opacity rounding boundaries; every result
+is checked through both exterior and underwater WDBC queries. LiquidType's
+direct LightParams override bypasses weather palette selection. Live environment
+tests cover weather updates, underwater lighting, direct overrides and reset.
+
+Weather particle rendering, particle drainage during resource-type switches,
+and weather ambient audio are not implemented by this lighting owner. Its
+current type follows accepted weather updates; particle residency must replace
+that input when the precipitation owner is introduced. Celestial textures,
+stars, authored skybox models and WMO sky visibility remain in this slice.

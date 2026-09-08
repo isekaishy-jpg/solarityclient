@@ -43,7 +43,9 @@ mod spell_visual_effect;
 mod transport;
 mod ui_sound;
 mod w_data_store;
+mod weather;
 mod wow_client_db;
+pub use weather::{WeatherCatalog, WeatherDefinition};
 
 pub use animation::{AnimationDataCatalog, AnimationDataDefinition};
 pub use appearance::{

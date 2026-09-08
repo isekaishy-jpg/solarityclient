@@ -5,6 +5,9 @@ use thiserror::Error;
 /// Authored environment state cannot produce a complete stock light sample.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum WorldLightSampleError {
+    /// The precipitation palette weight contains NaN or infinity.
+    #[error("world light weather weight is not finite")]
+    NonFiniteWeather,
     /// The query position contains NaN or infinity.
     #[error("world light query position is not finite")]
     NonFinitePosition,

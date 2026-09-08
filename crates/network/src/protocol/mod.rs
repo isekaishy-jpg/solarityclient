@@ -16,6 +16,8 @@ mod environmental_damage;
 mod game_object_query;
 mod liveness;
 mod mirror_timer;
+mod weather;
+pub use weather::{WorldWeatherPacketError, WorldWeatherUpdate};
 mod movement;
 mod movement_message;
 mod movement_spline;

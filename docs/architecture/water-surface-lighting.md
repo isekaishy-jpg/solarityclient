@@ -49,8 +49,9 @@ All eighteen color channels, the cloud-type ID and its independent weight
 are preserved. Local cloud density blends, while the other three sky scalars
 retain the global palette's values. Skybox slots accumulate repeated IDs up
 to one without attenuating earlier slots. This establishes sampling under
-the native default fog mode; camera-distance fog remapping, weather palette
-composition and spatial local-light registration require their own evidence.
+the native default fog mode; camera-distance fog remapping and spatial
+local-light registration require their own evidence. Weather palette composition
+now has separate native captures and runtime coverage in [world sky](world-sky.md).
 
 The shared palette now also drives the [native sky dome](world-sky.md), including
 the fog-colored lower hemisphere. The Vulkan background and camera-relative

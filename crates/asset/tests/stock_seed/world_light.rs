@@ -147,6 +147,26 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
             ]);
         }
     }
+    for map in [4, 5] {
+        light_words.extend([map * 100, map, 0, 0, 0, 0, 0, 1, 1, 2, 2, 0, 0, 0, 0]);
+    }
+    light_words.extend([
+        501,
+        5,
+        614400_f32.to_bits(),
+        0,
+        614400_f32.to_bits(),
+        0,
+        (256_f32 * 36.).to_bits(),
+        3,
+        3,
+        4,
+        4,
+        0,
+        0,
+        0,
+        0,
+    ]);
     let light_bytes = light_words
         .into_iter()
         .flat_map(u32::to_le_bytes)
@@ -172,8 +192,11 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
         Locale::EnUs,
     )?)?;
     let lights = LightCatalog::load(&mut store)?;
-    let mut counts = [0; 2];
-    for line in fixture_text.lines() {
+    let mut counts = [0; 3];
+    for line in fixture_text
+        .lines()
+        .chain(include_str!("../fixtures/world_weather_palette_native.txt").lines())
+    {
         let row = line.split_ascii_whitespace().collect::<Vec<_>>();
         match row.first().copied() {
             Some("sample") => {
@@ -196,9 +219,30 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
                 compare(sample, &unhex(row[4])?, line);
                 counts[1] += 1;
             }
+            Some("weather") => {
+                let time = row[1].parse()?;
+                let weight = f32::from_bits(u32::from_str_radix(row[2], 16)?);
+                let numerator: f32 = row[3].parse()?;
+                for condition in [
+                    solarity_asset::WorldLightCondition::EXTERIOR,
+                    solarity_asset::WorldLightCondition::UNDERWATER,
+                ] {
+                    let sample = lights.sample(
+                        WorldLightQuery::new(
+                            if numerator == 0. { 4 } else { 5 },
+                            Vec3::new(256. - numerator, 0., 0.),
+                            time,
+                        )
+                        .with_condition(condition)
+                        .with_weather(weight),
+                    )?;
+                    compare(sample, &unhex(row[4])?, line);
+                }
+                counts[2] += 1;
+            }
             _ => {}
         }
     }
-    assert_eq!(counts, [68, 231]);
+    assert_eq!(counts, [68, 231, 392]);
     Ok(())
 }
