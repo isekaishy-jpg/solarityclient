@@ -194,6 +194,7 @@ fn register_frame_globals(
         })?,
     )?;
     crate::script::movement_intent::register_globals(lua, globals, environment.movement_input())?;
+    crate::world::mirror_timer::register_globals(lua, globals, environment)?;
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();
@@ -909,18 +910,6 @@ fn register_unit_relation_globals(
         lua.create_function(|_, ()| {
             // Script_GetPVPRankProgress at 0x00608560 is a constant zero.
             Ok(0.0_f64)
-        })?,
-    )?;
-    globals.raw_set(
-        "GetMirrorTimerInfo",
-        lua.create_function(|_, timer: u32| {
-            if !(1..=3).contains(&timer) {
-                return Err(mlua::Error::runtime("Usage: GetMirrorTimerInfo(\"timer\")"));
-            }
-            // The build-12340 mirror-timer initializer writes kind 3 to all
-            // three slots at 0x00BD0B60..0x00BD0BB8; FUN_00513E00 maps that
-            // inactive sentinel to `UNKNOWN`.
-            Ok(("UNKNOWN", 0_i32, 0_i32, 0_i32, 0_i32, ""))
         })?,
     )?;
     for name in [

@@ -14,6 +14,7 @@ mod character_rename;
 mod creature_query;
 mod game_object_query;
 mod liveness;
+mod mirror_timer;
 mod movement;
 mod movement_message;
 mod movement_spline;
@@ -52,6 +53,7 @@ pub use game_object_query::{
     GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate,
 };
 pub use liveness::WorldLivenessPacketError;
+pub use mirror_timer::{WorldMirrorTimerPacketError, WorldMirrorTimerUpdate};
 pub use movement::{ObjectMovementContext, ObjectMovementFall, ObjectMovementTransport};
 pub use movement_message::{
     WorldMovementEncodeError, WorldMovementField, WorldMovementKind, WorldMovementMessage,

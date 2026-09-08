@@ -2,6 +2,7 @@
 
 mod creature_cache;
 mod game_object_cache;
+pub(in crate::application) mod mirror_timer;
 mod template_cache;
 
 use creature_cache::CreatureTemplateCache;
@@ -104,6 +105,9 @@ pub enum RuntimeGameplayError {
     /// An authoritative action-button image was malformed.
     #[error(transparent)]
     ActionButtons(#[from] WorldActionButtonPacketError),
+    /// A server-owned mirror-timer notification was malformed.
+    #[error(transparent)]
+    MirrorTimer(#[from] solarity_network::WorldMirrorTimerPacketError),
     /// A native unit-control or local stand-state packet was malformed.
     #[error(transparent)]
     PlayerControl(#[from] solarity_network::WorldPlayerControlPacketError),
@@ -137,6 +141,7 @@ pub struct RuntimeGameplayCoordinator {
     world: Option<ActiveWorld>,
     realm_clock: Option<RealmClock>,
     action_buttons: Option<WorldActionButtons>,
+    mirror_timers: mirror_timer::RuntimeMirrorTimers,
     player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     /// Packet dispatch yields to the composition root at each transfer packet.
@@ -166,6 +171,7 @@ impl RuntimeGameplayCoordinator {
             world: None,
             realm_clock: None,
             action_buttons: None,
+            mirror_timers: mirror_timer::RuntimeMirrorTimers::default(),
             player_control: None,
             unhandled_packets: VecDeque::new(),
             transfer: None,
@@ -208,9 +214,14 @@ impl RuntimeGameplayCoordinator {
         let mut retained = VecDeque::new();
         let mut realm_clock = None;
         let mut action_buttons = None;
+        let mut mirror_timers = mirror_timer::RuntimeMirrorTimers::default();
         let mut game_object_templates = GameObjectTemplateCache::new();
         let mut creature_templates = CreatureTemplateCache::new();
         for packet in setup_packets {
+            if let Some(update) = packet.mirror_timer()? {
+                mirror_timers.receive(update, crate::platform::client_milliseconds());
+                continue;
+            }
             if let Some(response) = packet.creature_query()? {
                 creature_templates.receive(response);
                 continue;
@@ -252,6 +263,7 @@ impl RuntimeGameplayCoordinator {
             .synchronize_world(self.world.as_ref());
         self.realm_clock = realm_clock;
         self.action_buttons = action_buttons;
+        self.mirror_timers = mirror_timers;
         self.player_control = Some(player_control);
         self.unhandled_packets = retained;
         tracing::info!(
@@ -309,6 +321,11 @@ impl RuntimeGameplayCoordinator {
                         .game_object_query()
                         .map_err(RuntimeGameplayError::from)
                         .and_then(|response| {
+                            if let Some(update) = packet.mirror_timer()? {
+                                self.mirror_timers
+                                    .receive(update, crate::platform::client_milliseconds());
+                                return Ok(false);
+                            }
                             if let Some(response) = response {
                                 self.game_object_templates.receive(response);
                                 return Ok(false);
@@ -665,6 +682,16 @@ impl RuntimeGameplayCoordinator {
         self.action_buttons.as_ref()
     }
 
+    pub(in crate::application) fn mirror_timers(&self) -> &mirror_timer::RuntimeMirrorTimers {
+        &self.mirror_timers
+    }
+
+    pub(in crate::application) fn mirror_timers_mut(
+        &mut self,
+    ) -> &mut mirror_timer::RuntimeMirrorTimers {
+        &mut self.mirror_timers
+    }
+
     /// Returns unsupported packets retained for their future owning subsystem.
     #[must_use]
     pub fn unhandled_packets(&self) -> &VecDeque<WorldServerPacket> {
@@ -673,6 +700,7 @@ impl RuntimeGameplayCoordinator {
 
     /// Aborts packet I/O and drops active ECS state.
     pub fn disconnect(&mut self) {
+        self.mirror_timers = mirror_timer::RuntimeMirrorTimers::default();
         self.game_object_templates.clear();
         self.creature_templates.clear();
         if let Some(active) = self.active.take() {

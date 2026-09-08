@@ -4,6 +4,10 @@
 #[path = "../../tests/protocol/world_state.rs"]
 mod world_state_tests;
 
+#[cfg(test)]
+#[path = "../../tests/protocol/mirror_timer.rs"]
+mod mirror_timer_tests;
+
 use super::{
     AddonPolicyError, CharacterCreationError, CharacterCreationResult, CharacterDeletionError,
     CharacterDeletionResult, CharacterDirectory, CharacterDirectoryError, CharacterLoginRejection,
@@ -60,6 +64,9 @@ impl WorldServerPacket {
             0x00DD => Some("SMSG_MONSTER_MOVE"),
             0x02AE => Some("SMSG_MONSTER_MOVE_TRANSPORT"),
             SMSG_PONG => Some("SMSG_PONG"),
+            0x1d9 => Some("SMSG_START_MIRROR_TIMER"),
+            0x1da => Some("SMSG_PAUSE_MIRROR_TIMER"),
+            0x1db => Some("SMSG_STOP_MIRROR_TIMER"),
             0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
             SMSG_LOGIN_VERIFY_WORLD => Some("SMSG_LOGIN_VERIFY_WORLD"),
@@ -79,6 +86,16 @@ impl WorldServerPacket {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// Decodes the three native mirror-timer notifications.
+    ///
+    /// # Errors
+    /// Rejects truncated or trailing fields before publishing any event.
+    pub fn mirror_timer(
+        &self,
+    ) -> Result<Option<super::WorldMirrorTimerUpdate>, super::WorldMirrorTimerPacketError> {
+        super::WorldMirrorTimerUpdate::decode(self.opcode, &self.payload)
     }
 
     /// Decodes the complete native creature template or missing-entry reply.

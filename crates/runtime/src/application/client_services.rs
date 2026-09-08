@@ -2330,6 +2330,7 @@ impl ClientServices {
         }
         profile.mark("scene GPU publication");
         self.prepare_world_ui_if_ready()?;
+        self.publish_mirror_timer_notifications()?;
         if let (Some(world_ui), Some(clock)) = (self.world_ui.as_mut(), self.gameplay.realm_clock())
         {
             world_ui.synchronize_realm_clock(clock)?;
@@ -2641,6 +2642,16 @@ impl ClientServices {
         Ok(())
     }
 
+    /// Delivers timer packets before a following transfer can publish world exit.
+    fn publish_mirror_timer_notifications(&mut self) -> Result<(), ApplicationError> {
+        if let Some(world_ui) = self.world_ui.as_mut() {
+            while let Some(notification) = self.gameplay.mirror_timers_mut().take_notification() {
+                world_ui.mirror_timer_notification(notification)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Builds the independently retained FrameXML owner behind the loading card.
     fn prepare_world_ui_if_ready(&mut self) -> Result<(), ApplicationError> {
         if self.world_ui.is_some()
@@ -2678,6 +2689,7 @@ impl ClientServices {
             zone,
             self.gameplay.realm_clock(),
             self.gameplay.action_buttons(),
+            self.gameplay.mirror_timers(),
             general_tab_name,
             self.sound.output_names(),
         )?;
@@ -2690,6 +2702,9 @@ impl ClientServices {
             "loaded stock FrameXML and published world-entry events"
         );
         self.world_ui = Some(world_ui);
+        self.gameplay
+            .mirror_timers_mut()
+            .discard_published_notifications();
         self.publish_ui_modifier_keys();
         Ok(())
     }

@@ -35,6 +35,7 @@ mod realm;
 mod sound;
 mod sound_advanced;
 mod sound_environment;
+mod spell_name;
 mod spell_visual_effect;
 mod transport;
 mod ui_sound;
@@ -92,6 +93,7 @@ pub use sound_environment::{
     WorldModelAreaDefinition, WorldModelAreaKey, WorldStateZoneSound, ZoneIntroMusicDefinition,
     ZoneMusicDefinition, ZoneSoundCatalog, ZoneSoundOverrideCatalog,
 };
+pub use spell_name::SpellNameCatalog;
 pub use spell_visual_effect::{SpellVisualEffectCatalog, SpellVisualEffectDefinition};
 pub use transport::{
     TaxiPathNode, TransportAnimationNode, TransportCatalog, TransportPhysicsRecord,

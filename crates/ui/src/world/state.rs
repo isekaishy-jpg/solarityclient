@@ -572,6 +572,7 @@ pub struct UiWorldState {
 /// Individually addressable values avoid copying unrelated UI state per query.
 #[derive(Debug, Default)]
 struct UiWorldStateInner {
+    mirror_timers: RefCell<[super::UiMirrorTimer; 3]>,
     player: Cell<Option<UiPlayerState>>,
     player_guid: Cell<Option<u64>>,
     player_identity: RefCell<Option<UiPlayerIdentityState>>,
@@ -609,6 +610,28 @@ impl Default for UiWorldState {
 }
 
 impl UiWorldState {
+    /// Replaces the native mirror-timer slot after its event was delivered.
+    pub fn set_mirror_timer(&self, index: usize, timer: super::UiMirrorTimer) {
+        if let Some(slot) = self.inner.mirror_timers.borrow_mut().get_mut(index) {
+            *slot = timer;
+        }
+    }
+
+    /// Returns a zero-based native timer slot, including its inactive sentinel.
+    #[must_use]
+    pub fn mirror_timer(&self, index: usize) -> Option<super::UiMirrorTimer> {
+        self.inner.mirror_timers.borrow().get(index).cloned()
+    }
+
+    /// Samples a native timer without copying or allocating its label.
+    #[must_use]
+    pub fn mirror_timer_progress(&self, index: usize, timestamp_ms: u32) -> Option<i32> {
+        self.inner
+            .mirror_timers
+            .borrow()
+            .get(index)
+            .map(|timer| timer.progress(timestamp_ms))
+    }
     /// Creates a world boundary with no active player.
     #[must_use]
     pub fn new() -> Self {
@@ -704,6 +727,8 @@ impl UiWorldState {
 
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
+        *self.inner.mirror_timers.borrow_mut() =
+            std::array::from_fn(|_| super::UiMirrorTimer::default());
         self.inner.player.set(None);
         self.inner.player_guid.set(None);
         *self.inner.player_identity.borrow_mut() = None;

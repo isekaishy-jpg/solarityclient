@@ -41,13 +41,13 @@ pub use database::{
     ParticleColorDefinition, RealmCategoryCatalog, RealmCategoryDefinition, RealmConfiguration,
     RealmConfigurationCatalog, SkyboxBlend, SoundAmbienceDefinition, SoundAsset,
     SoundEmitterCatalog, SoundEmitterDefinition, SoundEntry, SoundEntryCatalog,
-    SpellItemEnchantment, SpellVisualEffectCatalog, SpellVisualEffectDefinition, TaxiPathNode,
-    TransportAnimationNode, TransportCatalog, TransportPhysicsRecord, TransportRotationNode,
-    UiSoundLookup, UiSoundLookupCatalog, WdbcHeader, WdbcTable, WorldChunkSoundKey,
-    WorldLightCondition, WorldLightQuery, WorldLightSample, WorldLightSampleError,
-    WorldModelAreaCatalog, WorldModelAreaDefinition, WorldModelAreaKey, WorldStateZoneSound,
-    ZoneIntroMusicDefinition, ZoneMusicDefinition, ZoneSoundCatalog, ZoneSoundOverrideCatalog,
-    exterior_light_direction,
+    SpellItemEnchantment, SpellNameCatalog, SpellVisualEffectCatalog, SpellVisualEffectDefinition,
+    TaxiPathNode, TransportAnimationNode, TransportCatalog, TransportPhysicsRecord,
+    TransportRotationNode, UiSoundLookup, UiSoundLookupCatalog, WdbcHeader, WdbcTable,
+    WorldChunkSoundKey, WorldLightCondition, WorldLightQuery, WorldLightSample,
+    WorldLightSampleError, WorldModelAreaCatalog, WorldModelAreaDefinition, WorldModelAreaKey,
+    WorldStateZoneSound, ZoneIntroMusicDefinition, ZoneMusicDefinition, ZoneSoundCatalog,
+    ZoneSoundOverrideCatalog, exterior_light_direction,
 };
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
 pub use model::{

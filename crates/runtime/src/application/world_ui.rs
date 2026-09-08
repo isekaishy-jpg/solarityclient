@@ -20,6 +20,7 @@ use super::terrain_frame::TerrainFrame;
 use crate::time::RealmClock;
 
 mod minimap;
+mod mirror_timer;
 use minimap::RuntimeMinimapScene;
 
 /// A world UI could not be formed from authoritative entry state.
@@ -59,6 +60,7 @@ pub(super) struct RuntimeWorldUi {
     zone: UiZoneState,
     action_bar: UiActionBarState,
     action_slots: [u32; 144],
+    spell_names: solarity_asset::SpellNameCatalog,
     /// Stock ChatFrame.cpp's monotonic line identifier for admitted messages.
     chat_line_id: u32,
     dirty: bool,
@@ -171,7 +173,8 @@ impl RuntimeWorldUi {
             .dispatch_event("PLAYER_LEAVING_WORLD", &UiEventPayload::empty())
             .map(|_| ())
             .map_err(ApplicationError::from);
-        release.and(leave)
+        let timers = self.stop_world_mirror_timers();
+        release.and(leave).and(timers)
     }
 
     /// Refreshes the new replicated player before the repeatable entry event.
@@ -203,6 +206,7 @@ impl RuntimeWorldUi {
         zone: UiZoneState,
         realm_clock: Option<&RealmClock>,
         action_buttons: Option<&WorldActionButtons>,
+        mirror_timers: &super::gameplay_coordinator::mirror_timer::RuntimeMirrorTimers,
         general_tab_name: String,
         sound_output_names: Option<Vec<String>>,
     ) -> Result<(Self, Vec<ApplicationError>), ApplicationError> {
@@ -242,6 +246,15 @@ impl RuntimeWorldUi {
                 0,
             )]);
 
+        let spell_names = solarity_asset::SpellNameCatalog::load(&mut assets.borrow_mut())?;
+        for (index, notification) in mirror_timers.slots().iter().enumerate() {
+            if let Some(notification) = notification {
+                world.set_mirror_timer(
+                    index,
+                    mirror_timer::project_timer(&spell_names, *notification),
+                );
+            }
+        }
         let mut manager =
             FrameManager::start_shared(assets.clone(), environment, cvar_values, addon_catalog)?;
         let mut startup_errors = Vec::new();
@@ -287,6 +300,7 @@ impl RuntimeWorldUi {
                 zone,
                 action_bar,
                 action_slots: slots,
+                spell_names,
                 chat_line_id: 0,
                 dirty: false,
             },
