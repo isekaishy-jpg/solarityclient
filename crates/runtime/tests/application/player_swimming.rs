@@ -143,6 +143,8 @@ fn immersion_queues_entry_after_fall_and_exit_after_leaving_the_surface() -> Tes
     assert!(matches!(mover.phase, MovementPhase::Fall(_)));
     let mut input = PlayerInputState::default();
     assert!(mover.is_swimming);
+    assert_eq!(mover.tutorials.pop_front(), Some(27));
+    assert!(mover.tutorials.is_empty());
     let splash = mover.water_splashes.pop_front().ok_or("entry splash")?;
     assert_eq!(splash.identity, mover.identity);
     assert_eq!(splash.position, mover.world_position());
@@ -158,6 +160,7 @@ fn immersion_queues_entry_after_fall_and_exit_after_leaving_the_surface() -> Tes
     assert_eq!(mover.flags & 0x203000, 0x200000);
     mover.queue_immersion(None, 2., &world, &mut commands)?;
     // 730D10 retains IsSwimming until the deferred leave clears movement flags.
+    assert!(mover.tutorials.is_empty());
     assert!(mover.is_swimming);
     assert!(mover.water_splashes.is_empty());
     mover.command(

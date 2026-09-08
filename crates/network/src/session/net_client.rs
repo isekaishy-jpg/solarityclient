@@ -371,6 +371,31 @@ where
             .await
     }
 
+    /// Acknowledges one zero-based tutorial (`CMSG_TUTORIAL_FLAG`).
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_tutorial_flag(&mut self, index: u32) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0xfe, &index.to_le_bytes())
+            .await
+    }
+
+    /// Completes all tutorial flags (`CMSG_TUTORIAL_CLEAR`).
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_tutorial_clear(&mut self) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0xff, &[]).await
+    }
+
+    /// Resets tutorial flags (`CMSG_TUTORIAL_RESET`).
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_tutorial_reset(&mut self) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x100, &[]).await
+    }
+
     /// Selects a client-owned mover using `0x026A`'s full, unpacked GUID.
     ///
     /// # Errors

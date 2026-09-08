@@ -44,8 +44,9 @@ pub use feature::{
     UiQuestLogEntry, UiQuestLogQuest, UiQuestLogState, UiRune, UiRuneState, UiRuneType,
     UiShapeshiftForm, UiSkillLine, UiSkillLineSkill, UiSkillLineState, UiSocialQueryState,
     UiSpellBookState, UiSpellBookTab, UiStanceState, UiSupportState, UiTabardState,
-    UiTrackingCategory, UiTrackingError, UiTrackingType, UiVoiceChatState, UiWorldMapState,
-    UiWorldPvpQueueSlot, UiWorldStateIndicator, UiWorldStateUiState,
+    UiTrackingCategory, UiTrackingError, UiTrackingType, UiTutorialAction, UiTutorialState,
+    UiVoiceChatState, UiWorldMapState, UiWorldPvpQueueSlot, UiWorldStateIndicator,
+    UiWorldStateUiState,
 };
 pub use feature::{
     UI_ACTION_SLOT_COUNT, UI_PET_ACTION_SLOT_COUNT, UI_RUNE_SLOT_COUNT, UiActionBarPageError,

@@ -1107,6 +1107,7 @@ impl ClientServices {
                 self.platform.set_text_input_active(false);
             }
             self.persist_active_cvars()?;
+            self.send_tutorial_actions()?;
             profile.mark("world FrameXML update and upload");
         }
         let Some(environment) = self.environment.current() else {
@@ -2330,7 +2331,7 @@ impl ClientServices {
         }
         profile.mark("scene GPU publication");
         self.prepare_world_ui_if_ready()?;
-        self.publish_mirror_timer_notifications()?;
+        self.publish_player_ui_notifications()?;
         if let (Some(world_ui), Some(clock)) = (self.world_ui.as_mut(), self.gameplay.realm_clock())
         {
             world_ui.synchronize_realm_clock(clock)?;
@@ -2425,6 +2426,11 @@ impl ClientServices {
             crate::platform::client_milliseconds(),
         )?;
         profile.mark("player movement");
+        if let Some(ui) = self.world_ui.as_mut() {
+            while let Some(index) = self.player_movement.take_tutorial() {
+                ui.trigger_tutorial(index)?;
+            }
+        }
         while let Some(event) = self.player_movement.take_water_splash() {
             self.sound.notify_water_splash(event);
         }
@@ -2643,11 +2649,25 @@ impl ClientServices {
     }
 
     /// Delivers timer packets before a following transfer can publish world exit.
-    fn publish_mirror_timer_notifications(&mut self) -> Result<(), ApplicationError> {
+    fn publish_player_ui_notifications(&mut self) -> Result<(), ApplicationError> {
         if let Some(world_ui) = self.world_ui.as_mut() {
-            while let Some(notification) = self.gameplay.mirror_timers_mut().take_notification() {
-                world_ui.mirror_timer_notification(notification)?;
+            while let Some(notification) = self.gameplay.player_ui_mut().take_notification() {
+                world_ui.player_ui_notification(notification)?;
             }
+        }
+        Ok(())
+    }
+
+    fn send_tutorial_actions(&self) -> Result<(), ApplicationError> {
+        let Some(ui) = self.world_ui.as_ref() else {
+            return Ok(());
+        };
+        let state = ui.tutorial_state();
+        while let Some(action) = state.pending_action() {
+            if !self.gameplay.send_tutorial_action(action)? {
+                break;
+            }
+            state.accept_action();
         }
         Ok(())
     }
@@ -2689,7 +2709,7 @@ impl ClientServices {
             zone,
             self.gameplay.realm_clock(),
             self.gameplay.action_buttons(),
-            self.gameplay.mirror_timers(),
+            self.gameplay.player_ui(),
             general_tab_name,
             self.sound.output_names(),
         )?;
@@ -2703,7 +2723,7 @@ impl ClientServices {
         );
         self.world_ui = Some(world_ui);
         self.gameplay
-            .mirror_timers_mut()
+            .player_ui_mut()
             .discard_published_notifications();
         self.publish_ui_modifier_keys();
         Ok(())

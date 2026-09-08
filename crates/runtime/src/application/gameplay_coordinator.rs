@@ -2,7 +2,7 @@
 
 mod creature_cache;
 mod game_object_cache;
-pub(in crate::application) mod mirror_timer;
+pub(in crate::application) mod player_ui;
 mod template_cache;
 
 use creature_cache::CreatureTemplateCache;
@@ -14,6 +14,10 @@ mod game_object_template_tests;
 #[cfg(test)]
 #[path = "../../tests/application/creature_templates.rs"]
 mod creature_template_tests;
+
+#[cfg(test)]
+#[path = "../../tests/application/tutorial_writer.rs"]
+mod tutorial_writer_tests;
 
 pub(in crate::application) use game_object_cache::{
     GameObjectTemplateBinding, GameObjectTemplateCache,
@@ -141,7 +145,7 @@ pub struct RuntimeGameplayCoordinator {
     world: Option<ActiveWorld>,
     realm_clock: Option<RealmClock>,
     action_buttons: Option<WorldActionButtons>,
-    mirror_timers: mirror_timer::RuntimeMirrorTimers,
+    player_ui: player_ui::RuntimePlayerUiState,
     player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     /// Packet dispatch yields to the composition root at each transfer packet.
@@ -171,7 +175,7 @@ impl RuntimeGameplayCoordinator {
             world: None,
             realm_clock: None,
             action_buttons: None,
-            mirror_timers: mirror_timer::RuntimeMirrorTimers::default(),
+            player_ui: player_ui::RuntimePlayerUiState::default(),
             player_control: None,
             unhandled_packets: VecDeque::new(),
             transfer: None,
@@ -214,12 +218,16 @@ impl RuntimeGameplayCoordinator {
         let mut retained = VecDeque::new();
         let mut realm_clock = None;
         let mut action_buttons = None;
-        let mut mirror_timers = mirror_timer::RuntimeMirrorTimers::default();
+        let mut player_ui = player_ui::RuntimePlayerUiState::default();
         let mut game_object_templates = GameObjectTemplateCache::new();
         let mut creature_templates = CreatureTemplateCache::new();
         for packet in setup_packets {
+            if let Some(flags) = packet.tutorial_flags() {
+                player_ui.receive_tutorial_flags(flags);
+                continue;
+            }
             if let Some(update) = packet.mirror_timer()? {
-                mirror_timers.receive(update, crate::platform::client_milliseconds());
+                player_ui.receive(update, crate::platform::client_milliseconds());
                 continue;
             }
             if let Some(response) = packet.creature_query()? {
@@ -240,6 +248,7 @@ impl RuntimeGameplayCoordinator {
                 self.path_distance_tolerance,
                 notify,
             )?;
+            player_ui.observe_combat(gameplay.world());
         }
         let (network, world) = gameplay.into_parts();
         let map_id = world.map_id().value();
@@ -263,7 +272,7 @@ impl RuntimeGameplayCoordinator {
             .synchronize_world(self.world.as_ref());
         self.realm_clock = realm_clock;
         self.action_buttons = action_buttons;
-        self.mirror_timers = mirror_timers;
+        self.player_ui = player_ui;
         self.player_control = Some(player_control);
         self.unhandled_packets = retained;
         tracing::info!(
@@ -321,8 +330,12 @@ impl RuntimeGameplayCoordinator {
                         .game_object_query()
                         .map_err(RuntimeGameplayError::from)
                         .and_then(|response| {
+                            if let Some(flags) = packet.tutorial_flags() {
+                                self.player_ui.receive_tutorial_flags(flags);
+                                return Ok(false);
+                            }
                             if let Some(update) = packet.mirror_timer()? {
-                                self.mirror_timers
+                                self.player_ui
                                     .receive(update, crate::platform::client_milliseconds());
                                 return Ok(false);
                             }
@@ -334,7 +347,7 @@ impl RuntimeGameplayCoordinator {
                                 self.creature_templates.receive(response);
                                 return Ok(false);
                             }
-                            dispatch_world_packet(
+                            let changed = dispatch_world_packet(
                                 world,
                                 packet,
                                 &mut self.realm_clock,
@@ -346,7 +359,9 @@ impl RuntimeGameplayCoordinator {
                                 self.path_distance_tolerance,
                                 notify,
                                 crate::platform::client_milliseconds(),
-                            )
+                            )?;
+                            self.player_ui.observe_combat(world);
+                            Ok(changed)
                         });
                     match result {
                         Ok(true) => applied += 1,
@@ -575,6 +590,24 @@ impl RuntimeGameplayCoordinator {
         }
     }
 
+    pub(in crate::application) fn send_tutorial_action(
+        &self,
+        action: solarity_ui::UiTutorialAction,
+    ) -> Result<bool, RuntimeGameplayError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(RuntimeGameplayError::TaskEnded)?;
+        match active
+            .commands
+            .try_send(WorldWriterCommand::Tutorial(action))
+        {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(RuntimeGameplayError::TaskEnded),
+        }
+    }
+
     /// Returns the authoritative active ECS world.
     #[must_use]
     pub const fn world(&self) -> Option<&ActiveWorld> {
@@ -682,14 +715,12 @@ impl RuntimeGameplayCoordinator {
         self.action_buttons.as_ref()
     }
 
-    pub(in crate::application) fn mirror_timers(&self) -> &mirror_timer::RuntimeMirrorTimers {
-        &self.mirror_timers
+    pub(in crate::application) fn player_ui(&self) -> &player_ui::RuntimePlayerUiState {
+        &self.player_ui
     }
 
-    pub(in crate::application) fn mirror_timers_mut(
-        &mut self,
-    ) -> &mut mirror_timer::RuntimeMirrorTimers {
-        &mut self.mirror_timers
+    pub(in crate::application) fn player_ui_mut(&mut self) -> &mut player_ui::RuntimePlayerUiState {
+        &mut self.player_ui
     }
 
     /// Returns unsupported packets retained for their future owning subsystem.
@@ -700,7 +731,7 @@ impl RuntimeGameplayCoordinator {
 
     /// Aborts packet I/O and drops active ECS state.
     pub fn disconnect(&mut self) {
-        self.mirror_timers = mirror_timer::RuntimeMirrorTimers::default();
+        self.player_ui = player_ui::RuntimePlayerUiState::default();
         self.game_object_templates.clear();
         self.creature_templates.clear();
         if let Some(active) = self.active.take() {
@@ -838,6 +869,11 @@ where
                     WorldWriterCommand::StandState(state) => {
                         writer.send_stand_state(state).await?;
                     }
+                    WorldWriterCommand::Tutorial(action) => match action {
+                        solarity_ui::UiTutorialAction::Flag(index) => writer.send_tutorial_flag(index).await?,
+                        solarity_ui::UiTutorialAction::Clear => writer.send_tutorial_clear().await?,
+                        solarity_ui::UiTutorialAction::Reset => writer.send_tutorial_reset().await?,
+                    },
                     WorldWriterCommand::ActiveMover(guid) => {
                         writer.send_active_mover(guid).await?;
                     }
@@ -875,6 +911,7 @@ enum WorldWriterCommand {
         milliseconds: u32,
     },
     StandState(u32),
+    Tutorial(solarity_ui::UiTutorialAction),
     ActiveMover(u64),
     GameObjectQuery {
         entry: u32,

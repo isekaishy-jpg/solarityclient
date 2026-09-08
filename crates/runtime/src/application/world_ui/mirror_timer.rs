@@ -4,15 +4,49 @@
 #[path = "../../../tests/application/mirror_timer.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "../../../tests/application/water_tutorial.rs"]
+mod tutorial_tests;
+
 use solarity_network::WorldMirrorTimerUpdate;
 use solarity_ui::{UiEventArgument, UiEventPayload, UiMirrorTimer};
 
 use super::RuntimeWorldUi;
 use crate::application::{
-    ApplicationError, gameplay_coordinator::mirror_timer::TimedMirrorTimerUpdate,
+    ApplicationError, gameplay_coordinator::player_ui::TimedMirrorTimerUpdate,
 };
 
 impl RuntimeWorldUi {
+    pub(in crate::application) fn player_ui_notification(
+        &mut self,
+        notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
+    ) -> Result<(), ApplicationError> {
+        match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::Combat(in_combat) => {
+                self.dirty = true;
+                self.manager.player_combat_changed(in_combat)?;
+                Ok(())
+            }
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::MirrorTimer(timer) => self.mirror_timer_notification(timer),
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::TutorialFlags(flags) => {
+                self.world.tutorials().replace_flags(&flags);
+                Ok(())
+            }
+        }
+    }
+
+    pub(in crate::application) fn tutorial_state(&self) -> solarity_ui::UiTutorialState {
+        self.world.tutorials()
+    }
+
+    pub(in crate::application) fn trigger_tutorial(
+        &mut self,
+        index: u32,
+    ) -> Result<(), ApplicationError> {
+        self.dirty = true;
+        self.manager.trigger_tutorial(index)?;
+        Ok(())
+    }
     pub(super) fn stop_world_mirror_timers(&mut self) -> Result<(), ApplicationError> {
         let mut first_error = None;
         for timer in 0..3 {
@@ -76,6 +110,15 @@ fn dispatch_notification(
     // 519A50 invokes Lua before changing the record. Even a contained Lua
     // failure must not prevent the server-owned anchor from being stored.
     let event = manager.dispatch_event(name, &UiEventPayload::new(arguments));
+    let tutorial = if matches!(notification.update, WorldMirrorTimerUpdate::Start { .. }) {
+        match timer {
+            0 => manager.trigger_tutorial(26),
+            1 => manager.trigger_tutorial(28),
+            _ => Ok(()),
+        }
+    } else {
+        Ok(())
+    };
     match notification.update {
         WorldMirrorTimerUpdate::Start { .. } => {
             if timer < 3 {
@@ -88,6 +131,7 @@ fn dispatch_notification(
         WorldMirrorTimerUpdate::Pause { .. } => {}
     }
     event?;
+    tutorial?;
     Ok(())
 }
 

@@ -22,6 +22,9 @@ pub struct FrameManager {
     binding_assignments: Rc<RefCell<UiBindingAssignments>>,
     binding_functions: HashMap<String, mlua::Function>,
     movement_input: crate::script::UiMovementInput,
+    tutorials: crate::UiTutorialState,
+    world: crate::UiWorldState,
+    media_intent: Rc<RefCell<crate::UiGlueMediaIntent>>,
 }
 
 impl FrameManager {
@@ -99,6 +102,9 @@ impl FrameManager {
                     message: "missing attached binding assignments".to_owned(),
                 })?;
         let movement_input = environment.movement_input();
+        let tutorials = environment.world_state().tutorials();
+        let world = environment.world_state();
+        let media_intent = environment.media_intent();
         let owner = GlueManager::start_shared_frame(assets, environment)?;
         let mut binding_functions = HashMap::new();
         for binding in catalog.bindings() {
@@ -123,6 +129,9 @@ impl FrameManager {
             binding_assignments,
             binding_functions,
             movement_input,
+            tutorials,
+            world,
+            media_intent,
         })
     }
 
@@ -133,6 +142,51 @@ impl FrameManager {
         resolve: impl FnOnce(&UiBindingAssignments, &UiBindingCatalog) -> T,
     ) -> T {
         resolve(&self.binding_assignments.borrow(), &self.binding_catalog)
+    }
+
+    /// Publishes 524600's regeneration event and asymmetric lockdown ordering.
+    ///
+    /// # Errors
+    /// Returns a callback error after retaining the new lockdown state.
+    pub fn player_combat_changed(&mut self, in_combat: bool) -> Result<(), UiEventError> {
+        if !in_combat {
+            self.world.set_combat_lockdown(false);
+        }
+        let event = self.dispatch_event(
+            if in_combat {
+                "PLAYER_REGEN_DISABLED"
+            } else {
+                "PLAYER_REGEN_ENABLED"
+            },
+            &UiEventPayload::empty(),
+        );
+        self.world.set_combat_lockdown(in_combat);
+        event.map(|_| ())
+    }
+
+    /// Runs the native discovery gate for a zero-based tutorial identifier.
+    /// Sound precedes the event; discovery is marked after Lua returns.
+    ///
+    /// # Errors
+    /// Returns a UI callback or presentation error after retaining discovery.
+    pub fn trigger_tutorial(&mut self, index: u32) -> Result<(), UiEventError> {
+        if !self.tutorials.needs_trigger(index) {
+            return Ok(());
+        }
+        if self.cvar_number("showTutorials").unwrap_or(1.0) == 0.0 {
+            self.tutorials.mark_triggered(index);
+            self.tutorials.flag(index);
+            return Ok(());
+        }
+        self.media_intent
+            .borrow_mut()
+            .play_sound_entry("TutorialPopup".into());
+        let event = self.dispatch_event(
+            "TUTORIAL_TRIGGER",
+            &UiEventPayload::new([crate::UiEventArgument::Integer(i64::from(index) + 1)]),
+        );
+        self.tutorials.mark_triggered(index);
+        event.map(|_| ())
     }
 
     /// Publishes the source input clock before any focused handlers or bindings.

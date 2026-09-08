@@ -195,6 +195,7 @@ fn register_frame_globals(
     )?;
     crate::script::movement_intent::register_globals(lua, globals, environment.movement_input())?;
     crate::world::mirror_timer::register_globals(lua, globals, environment)?;
+    crate::feature::register_tutorial_globals(lua, globals, environment.world_state().tutorials())?;
     let world = environment.world_state();
     let unit_xp = world.clone();
     let unit_xp_max = world.clone();
@@ -217,6 +218,11 @@ fn register_frame_globals(
     let threat_warnings = environment.cvars();
     let resting = world.clone();
     let swimming = world.clone();
+    let combat_lockdown = world.clone();
+    globals.raw_set(
+        "InCombatLockdown",
+        lua.create_function(move |_, ()| Ok(combat_lockdown.in_combat_lockdown().then_some(1_u8)))?,
+    )?;
     globals.raw_set(
         "IsSwimming",
         lua.create_function(move |_, ()| Ok(swimming.is_swimming().then_some(1_u8)))?,
@@ -3206,15 +3212,9 @@ fn register_sound_globals(
         "PlaySound",
         lua.create_function(move |lua, (value, _extra): (Value, Variadic<Value>)| {
             let sound = required_string(lua, value, "sound resource")?;
-            let mut intent = state.borrow_mut();
             // 4C6A40 rejects a null-position SoundEntries request while
             // FrameXML construction or world-entry dispatch holds 4CFB80.
-            if intent.sound_entries_suppressed {
-                return Ok(());
-            }
-            intent
-                .actions
-                .push_back(UiGlueMediaAction::PlaySound(sound));
+            state.borrow_mut().play_sound_entry(sound);
             Ok(())
         })?,
     )?;

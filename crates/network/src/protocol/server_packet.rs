@@ -67,6 +67,7 @@ impl WorldServerPacket {
             0x1d9 => Some("SMSG_START_MIRROR_TIMER"),
             0x1da => Some("SMSG_PAUSE_MIRROR_TIMER"),
             0x1db => Some("SMSG_STOP_MIRROR_TIMER"),
+            0xfd => Some("SMSG_TUTORIAL_FLAGS"),
             0x01F6 => Some("SMSG_COMPRESSED_UPDATE_OBJECT"),
             0x01EE => Some("SMSG_AUTH_RESPONSE"),
             SMSG_LOGIN_VERIFY_WORLD => Some("SMSG_LOGIN_VERIFY_WORLD"),
@@ -96,6 +97,13 @@ impl WorldServerPacket {
         &self,
     ) -> Result<Option<super::WorldMirrorTimerUpdate>, super::WorldMirrorTimerPacketError> {
         super::WorldMirrorTimerUpdate::decode(self.opcode, &self.payload)
+    }
+
+    /// Returns the complete tutorial bit image consumed by native `530920`.
+    /// The body length determines the native bit count, including an empty image.
+    #[must_use]
+    pub fn tutorial_flags(&self) -> Option<&[u8]> {
+        (self.opcode == 0xfd).then_some(self.payload.as_slice())
     }
 
     /// Decodes the complete native creature template or missing-entry reply.

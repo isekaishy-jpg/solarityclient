@@ -130,6 +130,13 @@ impl LocalMovement {
                     timestamp_ms: self.time_ms,
                 },
             );
+            // 730DE8 -> 721210 queues the swim command, then discovers the
+            // swimming tutorial only for the selected player's full GUID.
+            if transition == MovementSwimTransition::Enter
+                && world.local_player_guid()? == self.identity.guid()
+            {
+                self.tutorials.push_back(27);
+            }
         }
         Ok(update.splash)
     }

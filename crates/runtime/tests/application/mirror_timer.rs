@@ -9,7 +9,7 @@ use solarity_asset::{
 use solarity_ui::{AddonCatalog, FrameManager, UiClientClock, UiScriptEnvironment};
 
 use super::{dispatch_notification, project_timer};
-use crate::application::gameplay_coordinator::mirror_timer::RuntimeMirrorTimers;
+use crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiState;
 use crate::test_network::{TestError, WorldServer};
 use crate::test_support::ClientFixture;
 
@@ -84,7 +84,7 @@ fn stock_mirror_timer_frames_show_count_refill_pause_and_hide()
         &AddonCatalog::default(),
     )?;
     let start = |timer, value, scale, paused| {
-        crate::application::gameplay_coordinator::mirror_timer::TimedMirrorTimerUpdate {
+        crate::application::gameplay_coordinator::player_ui::TimedMirrorTimerUpdate {
             update: solarity_network::WorldMirrorTimerUpdate::Start {
                 timer,
                 value,
@@ -136,7 +136,7 @@ fn stock_mirror_timer_frames_show_count_refill_pause_and_hide()
             &mut manager,
             &world,
             &names,
-            crate::application::gameplay_coordinator::mirror_timer::TimedMirrorTimerUpdate {
+            crate::application::gameplay_coordinator::player_ui::TimedMirrorTimerUpdate {
                 update: solarity_network::WorldMirrorTimerUpdate::Stop { timer },
                 timestamp_ms: 0,
             },
@@ -185,7 +185,7 @@ fn mirror_timers_match_original_receiver_events_and_lua_progress() -> Result<(),
                 .collect();
             let (server, mut network) = WorldServer::connect().await?;
             let sent = server.exchange(packets, 0).await?;
-            let mut timers = RuntimeMirrorTimers::default();
+            let mut timers = RuntimePlayerUiState::default();
             for (case, record) in captures.iter().enumerate() {
                 let timestamp = word(record, 0);
                 NOW.set(timestamp);
@@ -195,7 +195,8 @@ fn mirror_timers_match_original_receiver_events_and_lua_progress() -> Result<(),
                     .mirror_timer()?
                     .ok_or("timer packet")?;
                 timers.receive(update, timestamp);
-                let notification = timers.take_notification().ok_or("ordered timer event")?;
+            let notification = timers.take_notification().ok_or("ordered timer event")?;
+            let crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::MirrorTimer(notification) = notification else { return Err("expected mirror timer".into()); };
                 dispatch_notification(&mut manager, &world, &names, notification)?;
                 assert_eq!(
                     manager.localized_text("EVENT")?.as_deref(),
@@ -321,7 +322,9 @@ fn fixture() -> Result<ClientFixture, Box<dyn std::error::Error>> {
     fixture_with(&[])
 }
 
-fn fixture_with(extra: &[(&str, &[u8])]) -> Result<ClientFixture, Box<dyn std::error::Error>> {
+pub(super) fn fixture_with(
+    extra: &[(&str, &[u8])],
+) -> Result<ClientFixture, Box<dyn std::error::Error>> {
     let mut spell = [0; 234];
     spell[0] = 5384;
     spell[136] = 1;

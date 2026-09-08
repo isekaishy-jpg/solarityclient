@@ -334,6 +334,11 @@ impl RuntimeCharacterMetadata {
 
         target.enter_player(UiPlayerState::new(money.copper()));
         target.set_player_guid(guid);
+        target.set_combat_lockdown(
+            active
+                .unit_flags(guid)
+                .is_some_and(|flags| flags.primary() & 0x80000 != 0),
+        );
         target.set_player_identity(UiPlayerIdentityState::new(player.name(), level));
         target.set_player_class(UiPlayerClassState::new(
             class.display_name(identity.gender_id()),

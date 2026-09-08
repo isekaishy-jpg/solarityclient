@@ -168,13 +168,21 @@ impl RuntimeWorldUi {
             crate::KeyModifiers::NONE,
             true,
         );
+        // 6E50D2 releases combat before 528C30 emits PLAYER_LEAVING_WORLD.
+        let combat = if self.world.in_combat_lockdown() {
+            self.manager
+                .player_combat_changed(false)
+                .map_err(ApplicationError::from)
+        } else {
+            Ok(())
+        };
         let leave = self
             .manager
             .dispatch_event("PLAYER_LEAVING_WORLD", &UiEventPayload::empty())
             .map(|_| ())
             .map_err(ApplicationError::from);
         let timers = self.stop_world_mirror_timers();
-        release.and(leave).and(timers)
+        release.and(combat).and(leave).and(timers)
     }
 
     /// Refreshes the new replicated player before the repeatable entry event.
@@ -206,7 +214,7 @@ impl RuntimeWorldUi {
         zone: UiZoneState,
         realm_clock: Option<&RealmClock>,
         action_buttons: Option<&WorldActionButtons>,
-        mirror_timers: &super::gameplay_coordinator::mirror_timer::RuntimeMirrorTimers,
+        player_ui: &super::gameplay_coordinator::player_ui::RuntimePlayerUiState,
         general_tab_name: String,
         sound_output_names: Option<Vec<String>>,
     ) -> Result<(Self, Vec<ApplicationError>), ApplicationError> {
@@ -219,6 +227,7 @@ impl RuntimeWorldUi {
             environment.set_sound_output_devices(names);
         }
         let world = environment.world_state();
+        world.tutorials().replace_flags(player_ui.tutorial_flags());
         metadata.publish_active_player(active, &world)?;
 
         world.set_zone(zone.clone());
@@ -247,7 +256,7 @@ impl RuntimeWorldUi {
             )]);
 
         let spell_names = solarity_asset::SpellNameCatalog::load(&mut assets.borrow_mut())?;
-        for (index, notification) in mirror_timers.slots().iter().enumerate() {
+        for (index, notification) in player_ui.slots().iter().enumerate() {
             if let Some(notification) = notification {
                 world.set_mirror_timer(
                     index,

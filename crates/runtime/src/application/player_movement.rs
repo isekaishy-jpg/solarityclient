@@ -181,6 +181,7 @@ struct LocalMovement {
     blend: Option<solarity_systems::RemoteMovementBlend>,
     animation_events: VecDeque<UnitMovementAnimationEvent>,
     water_splashes: VecDeque<super::unit_water::UnitWaterSplash>,
+    tutorials: VecDeque<u32>,
     camera: PlayerCameraInput,
     initial_contact_pending: bool,
     active: bool,
@@ -429,6 +430,10 @@ impl RuntimePlayerMovement {
     /// Drains each unit-water crossing once after movement registration.
     pub(super) fn take_water_splash(&mut self) -> Option<super::unit_water::UnitWaterSplash> {
         self.owner.as_mut()?.water_splashes.pop_front()
+    }
+
+    pub(super) fn take_tutorial(&mut self) -> Option<u32> {
+        self.owner.as_mut()?.tutorials.pop_front()
     }
 
     /// The composition root calls this before presentation samples ECS.
@@ -841,6 +846,7 @@ impl LocalMovement {
             blend: None,
             animation_events: VecDeque::new(),
             water_splashes: VecDeque::new(),
+            tutorials: VecDeque::new(),
             camera: PlayerCameraInput::new(
                 solarity_ecs::PlayerViewState::default(),
                 transform.orientation(),

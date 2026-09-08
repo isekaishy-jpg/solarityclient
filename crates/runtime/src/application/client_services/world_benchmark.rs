@@ -154,7 +154,7 @@ impl ClientServices {
             zone,
             Some(clock),
             None,
-            &super::super::gameplay_coordinator::mirror_timer::RuntimeMirrorTimers::default(),
+            &super::super::gameplay_coordinator::player_ui::RuntimePlayerUiState::default(),
             general,
             self.sound.output_names(),
         )?;

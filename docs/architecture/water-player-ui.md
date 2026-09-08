@@ -68,5 +68,55 @@ cleanup without launching the client or opening a window.
 `6124A0` exposes unit `A30` bit `200000` through `IsSwimming`; this is already
 published from immediate unit immersion independently of deferred movement flags.
 The native water path also reaches tutorials: `721210` triggers swimming (28),
-while `519A50` triggers fatigue (27) and breath (29). Tutorial state and its
-server synchronization are being traced separately from the mirror-timer owner.
+while `519A50` triggers fatigue (27) and breath (29).
+
+## Tutorial discovery and completion
+
+The shared tutorial owner preserves the two native bit banks (seen and
+completed), 60-entry local completion history, and outstanding acknowledgements.
+`530920` replaces both banks with the entire `SMSG_TUTORIAL_FLAGS` (`FD`)
+payload; it does not clear history. The runtime queues flags and timer packets
+in receive order, so a later flags packet cannot alter an earlier timer trigger.
+Initial flags enter the UI before synchronous FrameXML construction. World
+replacement retains tutorial state while resetting mirror timers.
+
+`530840` gates discovery on the received bank and the seen bit. With
+`showTutorials` enabled it requests `TutorialPopup`, dispatches
+`TUTORIAL_TRIGGER` with the one-based ID, then marks discovery. With the CVar
+disabled it marks discovery and completion without a sound or Lua event.
+`FlagTutorial`, `ClearTutorials`, and `ResetTutorials` queue `FE` (zero-based
+u32), `FF` (empty), and `100` (empty) respectively through the sole encrypted
+writer; queue backpressure retains the pending action.
+
+The Lua globals preserve the original numeric coercions, nil versus zero
+return counts, usage text, and misspelled `GetNextCompleatedTutorial` and
+`GetPrevCompleatedTutorial` names. Traversal also preserves native boundary
+behavior: next ID 60 is the nil sentinel, and previous traversal includes the
+adjacent seen-bank bit count slot. Clear fills flags before checking history;
+it does not invent completion history for already flagged entries.
+
+Swimming discovery follows the immediate entry transition for the local-player
+GUID. Mirror-start discovery follows `MIRROR_TIMER_START` and precedes the
+new timer record, including on repeated starts; the shared seen bank deduplicates
+the tutorial itself. A controlled non-player unit does not discover swimming.
+
+The stock tutorial checks `InCombatLockdown`. Native `728F70` responds to
+changes in player `UNIT_FIELD_FLAGS` bit `80000` through `524600`:
+`PLAYER_REGEN_DISABLED` precedes setting lockdown, while clearing lockdown
+precedes `PLAYER_REGEN_ENABLED`. `511CC0` returns numeric one or nil. The
+runtime queues these changes alongside timer/tutorial notifications and releases
+combat before world exit. This implements the query/event dependency; it does
+not establish the separate secure-frame mutation enforcement system.
+
+`tutorial_state_oracle.py` captures 122 native receiver, discovery, completion,
+history and Lua-result cases. `player_combat_lockdown_oracle.py` executes the
+original flag callback, event owner and Lua query for seven state transitions.
+Regression tests compare these fixtures, encrypted acknowledgement bodies,
+receive order, and writer backpressure. The archive-dependent tutorial test
+loads the complete original FrameXML manifest and checks combat deferral,
+opening/completion of swimming, and pending breath/fatigue prompts. The badge
+remains hidden because build 12340 disables it in `TutorialFrame_CheckBadge`.
+
+The remaining water UI audit includes `SMSG_ENVIRONMENTALDAMAGELOG` (`1FC`):
+the receiver and its combat-log/floating-text/impact effects are not yet wired
+through the runtime. Timer and tutorial validation does not cover that path.

@@ -44,7 +44,7 @@ impl ClientServices {
                         .map_err(Into::into)
                 },
             )?;
-            self.publish_mirror_timer_notifications()?;
+            self.publish_player_ui_notifications()?;
             let Some(transfer) = self.gameplay.take_world_transfer() else {
                 break;
             };
@@ -178,7 +178,7 @@ impl ClientServices {
             .as_mut()
             .map(|ui| ui.leave_world())
             .transpose();
-        self.gameplay.mirror_timers_mut().clear_for_world_leave();
+        self.gameplay.player_ui_mut().clear_for_world_leave();
         self.input.clear_held();
         self.environment.disconnect();
         self.player.disconnect();

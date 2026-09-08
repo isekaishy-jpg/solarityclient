@@ -567,6 +567,11 @@ impl UiGlueMovieRequest {
 }
 
 impl UiGlueMediaIntent {
+    pub(crate) fn play_sound_entry(&mut self, sound: String) {
+        if !self.sound_entries_suppressed {
+            self.actions.push_back(UiGlueMediaAction::PlaySound(sound));
+        }
+    }
     /// Returns the most recently requested Glue music resource.
     #[must_use]
     pub fn music(&self) -> Option<&str> {

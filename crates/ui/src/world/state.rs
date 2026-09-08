@@ -572,6 +572,7 @@ pub struct UiWorldState {
 /// Individually addressable values avoid copying unrelated UI state per query.
 #[derive(Debug, Default)]
 struct UiWorldStateInner {
+    tutorials: crate::UiTutorialState,
     mirror_timers: RefCell<[super::UiMirrorTimer; 3]>,
     player: Cell<Option<UiPlayerState>>,
     player_guid: Cell<Option<u64>>,
@@ -595,6 +596,7 @@ struct UiWorldStateInner {
     area_resurrection_available: Cell<bool>,
     resting: Cell<bool>,
     swimming: Cell<bool>,
+    combat_lockdown: Cell<bool>,
     friend_counts: Cell<UiFriendCounts>,
 }
 
@@ -610,6 +612,22 @@ impl Default for UiWorldState {
 }
 
 impl UiWorldState {
+    /// Publishes the frame manager's protected-action lockdown state.
+    pub fn set_combat_lockdown(&self, locked: bool) {
+        self.inner.combat_lockdown.set(locked);
+    }
+
+    /// Reads the native frame manager state queried by InCombatLockdown.
+    #[must_use]
+    pub fn in_combat_lockdown(&self) -> bool {
+        self.inner.combat_lockdown.get()
+    }
+
+    /// Returns session tutorial flags, completion history, and pending commands.
+    #[must_use]
+    pub fn tutorials(&self) -> crate::UiTutorialState {
+        self.inner.tutorials.clone()
+    }
     /// Replaces the native mirror-timer slot after its event was delivered.
     pub fn set_mirror_timer(&self, index: usize, timer: super::UiMirrorTimer) {
         if let Some(slot) = self.inner.mirror_timers.borrow_mut().get_mut(index) {
@@ -749,6 +767,7 @@ impl UiWorldState {
         self.inner.area_resurrection_available.set(false);
         self.inner.resting.set(false);
         self.inner.swimming.set(false);
+        self.inner.combat_lockdown.set(false);
     }
 
     /// Returns the current player projection when one is authoritative.
