@@ -21,7 +21,7 @@ mod world_text;
 pub use weather::{
     WorldCelestialBody, WorldCelestialDraw, WorldCelestialFrame, WorldCelestialLighting,
     WorldCelestialMesh, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,
-    WorldClouds, WorldSkyDome, WorldSkyFrame,
+    WorldClouds, WorldSkyDome, WorldSkyFrame, world_stars_alpha,
 };
 
 pub use camera::{
@@ -52,7 +52,7 @@ pub use device::{
     WorldModelPipelineInfo, WorldModelPreparedDraw, WorldModelSampledTexture,
     WorldModelSamplerHandle, WorldModelSamplerInfo, WorldModelTextureAddressMode,
     WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
-    WorldModelTextureSetInfo,
+    WorldModelTextureSetInfo, WorldSkyModelFrame,
 };
 pub use lighting::{
     M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, glue_character_sunlight,

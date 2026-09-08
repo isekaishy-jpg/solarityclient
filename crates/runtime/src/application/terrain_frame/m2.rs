@@ -12,6 +12,7 @@ mod character_residency;
 mod game_objects;
 mod playback;
 mod portrait;
+pub(in crate::application) mod sky;
 pub(in crate::application) mod sound;
 mod streaming;
 pub(in crate::application) mod unit_effects;

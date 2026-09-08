@@ -43,7 +43,7 @@ use crate::{M2ParticleRenderVertex, M2RibbonRenderVertex};
 use command::{RecordContext, record, submit_and_present};
 use resource::{FrameCreateContext, WorldFrameResources};
 
-pub use types::{WorldFrameReport, WorldFrameScene};
+pub use types::{WorldFrameReport, WorldFrameScene, WorldSkyModelFrame};
 
 pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) device: &'a Device,
@@ -191,7 +191,7 @@ impl WorldFrameRenderer {
     pub(in crate::device) fn present(
         &mut self,
         context: WorldFrameContext<'_>,
-        descriptor_layouts: [vk::DescriptorSetLayout; 8],
+        descriptor_layouts: [vk::DescriptorSetLayout; 9],
         scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],
@@ -206,9 +206,22 @@ impl WorldFrameRenderer {
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
         let ensure_started = std::time::Instant::now();
+        let sky_models = scene.sky_models();
+        let sky_bones = sky_models.map_or(&[][..], |frame| frame.bones);
+        let sky_draw_count = sky_models.map_or(0, |frame| frame.draw_count());
+        let all_draws = || {
+            m2_draws
+                .iter()
+                .chain(sky_models.into_iter().flat_map(|frame| frame.draws()))
+        };
+        let bone_count = bone_transforms
+            .len()
+            .checked_add(sky_bones.len())
+            .ok_or(VulkanError::WorldFrameCapacity)?;
         if terrain_draws.is_empty()
             && world_model_draws.is_empty()
             && m2_draws.is_empty()
+            && sky_draw_count == 0
             && particle_draws.is_empty()
             && ribbon_draws.is_empty()
             && scene.liquids().is_none_or(|frame| frame.draws().is_empty())
@@ -270,7 +283,7 @@ impl WorldFrameRenderer {
         }) {
             return Err(VulkanError::M2ParticleDrawIndexRange);
         }
-        if m2_draws.iter().any(|draw| {
+        if all_draws().any(|draw| {
             context
                 .m2_pipelines
                 .info(draw.pipeline())
@@ -278,15 +291,14 @@ impl WorldFrameRenderer {
         }) {
             return Err(VulkanError::M2ShadowResourcesUnavailable);
         }
-        let required_bones = m2_draws
-            .iter()
+        let required_bones = all_draws()
             .map(|draw| draw.required_bone_transforms())
             .max()
             .unwrap_or(0);
-        if required_bones > bone_transforms.len() {
+        if required_bones > bone_count {
             return Err(VulkanError::M2FrameBoneTransforms {
                 required: required_bones,
-                available: bone_transforms.len(),
+                available: bone_count,
             });
         }
         self.resources.ensure(FrameCreateContext {
@@ -296,8 +308,11 @@ impl WorldFrameRenderer {
             graphics_queue_family: context.graphics_queue_family,
             slot_count: context.swapchain_images.len(),
             world_model_draw_capacity: world_model_draws.len(),
-            m2_draw_capacity: m2_draws.len(),
-            bone_capacity: bone_transforms.len(),
+            m2_draw_capacity: m2_draws
+                .len()
+                .checked_add(sky_draw_count)
+                .ok_or(VulkanError::WorldFrameCapacity)?,
+            bone_capacity: bone_count,
             particle_vertex_capacity: particle_vertices
                 .len()
                 .max(scene.particle_vertex_capacity()),
@@ -475,6 +490,7 @@ impl WorldFrameRenderer {
             terrain_draws,
             world_model_draws,
             m2_draws,
+            sky_models,
             particle_draws,
             ribbon_draws,
             particle_vertex_buffer: slot.particle_vertex_buffer(),
@@ -529,8 +545,9 @@ impl WorldFrameRenderer {
             particle_indices.len(),
             ribbon_draws.len(),
             ribbon_vertices.len(),
-            bone_transforms.len(),
+            bone_count,
         )
+        .with_sky_model_draw_count(sky_draw_count)
         .with_celestial_draw_count(scene.celestials().map_or(0, |frame| frame.draw_count()))
         .with_sky_draw_count(usize::from(scene.sky().is_some()))
         .with_ripple_draw_count(scene.ripples().map_or(0, |frame| frame.draw_count()))

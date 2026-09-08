@@ -7,7 +7,9 @@ pub use celestial::{
     WorldCelestialMesh, WorldCelestials,
 };
 mod sky;
+mod stars;
 mod types;
 
 pub use cloud::{WorldCloudDome, WorldCloudFrame, WorldCloudLighting, WorldClouds};
 pub use sky::{WorldSkyDome, WorldSkyFrame};
+pub use stars::world_stars_alpha;

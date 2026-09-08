@@ -19,6 +19,7 @@ pub struct WorldFrameScene<'a> {
     sky: Option<WorldSkyFrame<'a>>,
     clouds: Option<WorldCloudFrame<'a>>,
     celestials: Option<crate::WorldCelestialFrame<'a>>,
+    sky_models: Option<WorldSkyModelFrame<'a>>,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -41,7 +42,19 @@ impl<'a> WorldFrameScene<'a> {
             sky: None,
             clouds: None,
             celestials: None,
+            sky_models: None,
         }
+    }
+
+    /// Adds camera-relative authored models in the two native sky queues.
+    #[must_use]
+    pub const fn with_sky_models(mut self, frame: WorldSkyModelFrame<'a>) -> Self {
+        self.sky_models = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn sky_models(self) -> Option<WorldSkyModelFrame<'a>> {
+        self.sky_models
     }
 
     /// Adds the native sun/moon strips before the additive sky gradient.
@@ -154,6 +167,44 @@ impl<'a> WorldFrameScene<'a> {
     }
 }
 
+/// Separate native sky M2 scene, sharing retained mesh resources with world M2s.
+/// Bone offsets in these packets start after the ordinary frame's bone palette.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldSkyModelFrame<'a> {
+    pub(in crate::device) scene: M2SceneUniform,
+    pub(in crate::device) bones: &'a [glam::Mat4],
+    pub(in crate::device) stars: &'a [crate::M2PreparedDraw],
+    pub(in crate::device) skyboxes: &'a [crate::M2PreparedDraw],
+}
+
+impl<'a> WorldSkyModelFrame<'a> {
+    /// Stars precede celestial strips; authored skyboxes follow the clouds.
+    #[must_use]
+    pub const fn new(
+        scene: M2SceneUniform,
+        bones: &'a [glam::Mat4],
+        stars: &'a [crate::M2PreparedDraw],
+        skyboxes: &'a [crate::M2PreparedDraw],
+    ) -> Self {
+        Self {
+            scene,
+            bones,
+            stars,
+            skyboxes,
+        }
+    }
+
+    /// Returns the total submitted authored-model material batches.
+    #[must_use]
+    pub const fn draw_count(self) -> usize {
+        self.stars.len() + self.skyboxes.len()
+    }
+
+    pub(in crate::device) fn draws(self) -> impl Iterator<Item = &'a crate::M2PreparedDraw> {
+        self.stars.iter().chain(self.skyboxes)
+    }
+}
+
 /// Draw and bone counts accepted by one unified presentation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorldFrameReport {
@@ -161,6 +212,7 @@ pub struct WorldFrameReport {
     underwater_draw_count: usize,
     sky_draw_count: usize,
     celestial_draw_count: usize,
+    sky_model_draw_count: usize,
     terrain_draw_count: usize,
     liquid_draw_count: usize,
     world_model_draw_count: usize,
@@ -193,6 +245,7 @@ impl WorldFrameReport {
             underwater_draw_count: 0,
             sky_draw_count: 0,
             celestial_draw_count: 0,
+            sky_model_draw_count: 0,
             liquid_draw_count,
             world_model_draw_count,
             m2_draw_count,
@@ -203,6 +256,16 @@ impl WorldFrameReport {
             ribbon_vertex_count,
             bone_transform_count,
         }
+    }
+
+    pub(super) const fn with_sky_model_draw_count(mut self, count: usize) -> Self {
+        self.sky_model_draw_count = count;
+        self
+    }
+    /// Returns the stars and authored skybox material submission count.
+    #[must_use]
+    pub const fn sky_model_draw_count(self) -> usize {
+        self.sky_model_draw_count
     }
 
     pub(super) const fn with_celestial_draw_count(mut self, count: usize) -> Self {

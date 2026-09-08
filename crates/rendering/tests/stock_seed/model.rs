@@ -14,6 +14,8 @@ mod portrait;
 mod sequence_blend;
 #[path = "model/sequence_timer.rs"]
 mod sequence_timer;
+#[path = "model/sky_frame.rs"]
+mod sky_frame;
 #[path = "model/track_sampling.rs"]
 mod track_sampling;
 #[path = "model/wound.rs"]

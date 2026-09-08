@@ -58,7 +58,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) depth_view: vk::ImageView,
     pub(super) extent: (u32, u32),
     pub(super) screen_window: crate::WorldScreenWindow,
-    pub(super) frame_sets: [vk::DescriptorSet; 8],
+    pub(super) frame_sets: [vk::DescriptorSet; 9],
     pub(super) world_model_material_stride: vk::DeviceSize,
     pub(super) m2_material_stride: vk::DeviceSize,
     pub(super) terrain_pipelines: &'a TerrainPipelineRegistry,
@@ -95,6 +95,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) terrain_draws: &'a [TerrainPreparedDraw],
     pub(super) world_model_draws: &'a [WorldModelPreparedDraw],
     pub(super) m2_draws: &'a [M2PreparedDraw],
+    pub(super) sky_models: Option<super::WorldSkyModelFrame<'a>>,
     pub(super) particle_draws: &'a [M2ParticlePreparedDraw],
     pub(super) ribbon_draws: &'a [M2RibbonPreparedDraw],
     pub(super) particle_vertex_buffer: (vk::Buffer, vk::DeviceSize),
@@ -202,9 +203,11 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
     let mut bindings = WorldCommandBindings::default();
+    record_sky_models(&context, false, &mut bindings)?;
     record_celestials(&context, &mut bindings);
     record_sky(&context, &mut bindings);
     record_clouds(&context, &mut bindings);
+    record_sky_models(&context, true, &mut bindings)?;
     for draw in context.terrain_draws.iter().copied() {
         record_terrain(&context, draw, &mut bindings)?;
     }
@@ -284,7 +287,13 @@ fn record_m2_scene_elements(
                     .get(next_m2)
                     .copied()
                     .ok_or(VulkanError::WorldFrameCapacity)?;
-                record_m2(context, next_m2, draw, bindings)?;
+                record_m2(
+                    context,
+                    next_m2,
+                    draw,
+                    m2_scene_set(context, draw.light_bank()),
+                    bindings,
+                )?;
                 next_m2 += 1;
             }
             Some(1) => {
@@ -778,10 +787,37 @@ fn record_world_model(
     Ok(())
 }
 
+/// Each native sky model scene completes before the next sky compositor layer.
+fn record_sky_models(
+    context: &RecordContext<'_>,
+    skyboxes: bool,
+    bindings: &mut WorldCommandBindings,
+) -> Result<(), VulkanError> {
+    let Some(frame) = context.sky_models else {
+        return Ok(());
+    };
+    let (draws, offset) = if skyboxes {
+        (frame.skyboxes, frame.stars.len())
+    } else {
+        (frame.stars, 0)
+    };
+    for (index, draw) in draws.iter().copied().enumerate() {
+        record_m2(
+            context,
+            context.m2_draws.len() + offset + index,
+            draw,
+            context.frame_sets[8],
+            bindings,
+        )?;
+    }
+    Ok(())
+}
+
 fn record_m2(
     context: &RecordContext<'_>,
     draw_index: usize,
     draw: M2PreparedDraw,
+    scene_set: vk::DescriptorSet,
     bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
@@ -798,7 +834,7 @@ fn record_m2(
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
     let dynamic_offset = dynamic_offset(draw_index, context.m2_material_stride)?;
     let sets = [
-        m2_scene_set(context, draw.light_bank()),
+        scene_set,
         context.frame_sets[6],
         context.frame_sets[7],
         texture,

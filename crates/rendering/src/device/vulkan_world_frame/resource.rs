@@ -22,7 +22,7 @@ use crate::{
     TerrainSceneUniform, WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
-const DESCRIPTOR_SET_COUNT: usize = 8;
+const DESCRIPTOR_SET_COUNT: usize = 9;
 const BONE_TRANSFORM_BYTES: vk::DeviceSize = 64;
 
 pub(super) struct FrameCreateContext<'a> {
@@ -89,7 +89,7 @@ impl FrameBufferLayout {
             uniform_alignment,
         )?;
         let m2_scene_stride = align_up(M2SceneUniform::BYTE_SIZE as u64, uniform_alignment)?;
-        let m2_scene_bytes = (M2SceneLightBank::COUNT as u64)
+        let m2_scene_bytes = ((M2SceneLightBank::COUNT + 1) as u64)
             .checked_mul(m2_scene_stride)
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let bone_offset = align_up(
@@ -333,7 +333,20 @@ impl WorldFrameSlot {
                     self.layout.total_bytes,
                 )?;
             }
-            if bone_transforms.is_empty() {
+            let sky_models = scene.sky_models();
+            let sky_bones = sky_models.map_or(&[][..], |frame| frame.bones);
+            copy_bytes(
+                destination,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 3,
+                &sky_models
+                    .map_or_else(
+                        || scene.m2(M2SceneLightBank::Environment),
+                        |frame| frame.scene,
+                    )
+                    .to_bytes(),
+                self.layout.total_bytes,
+            )?;
+            if bone_transforms.is_empty() && sky_bones.is_empty() {
                 copy_bytes(
                     destination,
                     self.layout.bone_offset,
@@ -341,7 +354,9 @@ impl WorldFrameSlot {
                     self.layout.total_bytes,
                 )?;
             } else {
-                for (index, transform) in bone_transforms.iter().copied().enumerate() {
+                for (index, transform) in
+                    bone_transforms.iter().chain(sky_bones).copied().enumerate()
+                {
                     copy_bytes(
                         destination,
                         indexed_offset(self.layout.bone_offset, BONE_TRANSFORM_BYTES, index)?,
@@ -362,7 +377,12 @@ impl WorldFrameSlot {
                     self.layout.total_bytes,
                 )?;
             }
-            for (index, draw) in m2_draws.iter().copied().enumerate() {
+            for (index, draw) in m2_draws
+                .iter()
+                .chain(sky_models.into_iter().flat_map(|frame| frame.draws()))
+                .copied()
+                .enumerate()
+            {
                 copy_bytes(
                     destination,
                     indexed_offset(
@@ -446,7 +466,7 @@ impl WorldFrameSlot {
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(5),
+                .descriptor_count(6),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                 .descriptor_count(2),
@@ -512,6 +532,11 @@ impl WorldFrameSlot {
                 self.layout.m2_material_offset,
                 M2MaterialUniform::BYTE_SIZE,
             ),
+            buffer_info(
+                self.buffer,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 3,
+                M2SceneUniform::BYTE_SIZE,
+            ),
         ];
         let descriptor_types = [
             vk::DescriptorType::UNIFORM_BUFFER,
@@ -522,6 +547,7 @@ impl WorldFrameSlot {
             vk::DescriptorType::UNIFORM_BUFFER,
             vk::DescriptorType::STORAGE_BUFFER,
             M2_MATERIAL_DESCRIPTOR_TYPE,
+            vk::DescriptorType::UNIFORM_BUFFER,
         ];
         for index in 0..DESCRIPTOR_SET_COUNT {
             let buffer_infos = [infos[index]];

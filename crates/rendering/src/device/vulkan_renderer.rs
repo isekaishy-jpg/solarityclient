@@ -2206,6 +2206,7 @@ impl VulkanRenderer {
             m2_layouts[0],
             m2_layouts[1],
             m2_layouts[2],
+            m2_layouts[0],
         ];
         if glow.is_some() {
             self.glow.ensure(

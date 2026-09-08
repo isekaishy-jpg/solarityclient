@@ -345,6 +345,7 @@ impl ClientServices {
                 None,
                 None,
                 celestial_resources,
+                &mut self.sky_resources,
                 None,
                 None,
                 &mut self.crt_rand,

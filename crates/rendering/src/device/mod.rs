@@ -106,7 +106,7 @@ pub use vulkan_ui_texture_set::{
 pub use vulkan_underwater::{
     UnderwaterParticleFog, UnderwaterParticleFrame, UnderwaterParticleFrameError,
 };
-pub use vulkan_world_frame::{WorldFrameReport, WorldFrameScene};
+pub use vulkan_world_frame::{WorldFrameReport, WorldFrameScene, WorldSkyModelFrame};
 pub use vulkan_world_model_draw::WorldModelPreparedDraw;
 pub use vulkan_world_model_mesh::{WorldModelMeshHandle, WorldModelMeshResourceInfo};
 pub use vulkan_world_model_pipeline::{WorldModelPipelineHandle, WorldModelPipelineInfo};

@@ -121,8 +121,8 @@ tests cover weather updates, underwater lighting, direct overrides and reset.
 Weather particle rendering, particle drainage during resource-type switches,
 and weather ambient audio are not implemented by this lighting owner. Its
 current type follows accepted weather updates; particle residency must replace
-that input when the precipitation owner is introduced. Stars, authored skybox
-models and WMO sky visibility remain in this slice.
+that input when the precipitation owner is introduced. Authored skybox
+selection and WMO sky visibility remain in this slice.
 
 The three celestial texture requests now use `Textures/sunCenter.blp`,
 `Textures/moon.blp` and `Textures/moon02.blp`, as in `9AD0B0`. Their parsed
@@ -161,3 +161,31 @@ constructor and 48 ordered weather/color changes. These join the existing
 1,250 ephemeris cases. The hidden Vulkan test checks 16 textured frames against
 a scalar perspective-correct sampler, changing descriptors across slot reuse,
 the horizon split, gradient composition and opaque-world occlusion.
+
+
+The stars now use the original `Environments/Stars/stars.mdl` request, resolved
+through the ordinary M2/SKIN/BLP owners. `7EE0D0` samples keys at 0.125, 0.1875,
+0.9375 and 1.0, then truncates `254 * value + 1` to a byte. `9ABD50` submits only
+above byte one, with opacity scaled by the stored float `1/255`. Weather does
+not independently attenuate this curve. The unmodified native oracle covers
+4,442 times, including adjacent floats at curve and alpha boundaries.
+
+`WorldSkyModelFrame` adds separate stars and authored-skybox queues around the
+existing celestial/gradient/cloud passes. It has a camera-relative M2 scene
+uniform; bones and materials share the ordinary frame slot's fence-retired
+storage with explicit offsets. The reserved sky depth is applied to the sky
+projection. Meshes, shader permutations, textures and ordinary model sequence
+playback reuse the existing M2 implementation. Stars retain their scene clock
+across map replacement, and skipped daytime intervals are included when the
+model next advances. Their independent scene has no environment fog or local
+lights (`834900` clears the model environment, and `81FB10` disables fog when
+its `+0xB0` field is zero).
+
+A hidden Vulkan test checks twelve frames of separate sky/world uniforms,
+changing bone prefixes, stars/gradient/skybox blending, native depth writes and
+world occlusion. The real-archive runtime test submits all seven installed
+stars materials over ten frames, verifies exact invariance under camera
+translation, and checks opacity changes. The installed stars sequence has
+static geometry and material tracks; the retained ordinary clock does not
+invent motion. Its two textures render the authored star field. The six
+existing liquid, ripple, underwater and other sky GPU tests also pass.

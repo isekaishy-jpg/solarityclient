@@ -245,7 +245,8 @@ impl ClientServices {
         let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
         let underwater_particles =
             super::underwater_particles::RuntimeUnderwaterParticles::load(&mut assets)?;
-        let sky_resources = super::sky_resources::RuntimeSkyResources::load(&mut assets)?;
+        let sky_resources =
+            super::sky_resources::RuntimeSkyResources::load(&mut assets, Arc::clone(&animations))?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -1271,6 +1272,7 @@ impl ClientServices {
             Some(ripples),
             underwater_particles,
             celestial_resources,
+            &mut self.sky_resources,
             sources,
             Some(&mut unit_effect_callback),
             &mut self.crt_rand,
