@@ -81,6 +81,10 @@ impl RuntimeWorldUi {
         self.world.pending_death_action()
     }
 
+    pub(super) fn resurrection_offer(&self) -> solarity_ui::UiPlayerResurrectionOffer {
+        self.world.resurrection_offer()
+    }
+
     pub(super) fn accept_death_action(&self) {
         self.world.accept_death_action();
     }
@@ -208,6 +212,8 @@ impl RuntimeWorldUi {
     ) -> Result<(), ApplicationError> {
         metadata.publish_active_player(active, &self.world)?;
         self.world.set_release_timer(player_ui.release_timer());
+        self.world.set_resurrection_offer(player_ui.offer());
+        self.world.set_corpse_state(player_ui.corpse());
         player_ui
             .resurrection()
             .publish(&self.world, &self.spell_names);
@@ -278,6 +284,8 @@ impl RuntimeWorldUi {
 
         let spell_names = solarity_asset::SpellNameCatalog::load(&mut assets.borrow_mut())?;
         player_ui.resurrection().publish(&world, &spell_names);
+        world.set_resurrection_offer(player_ui.offer());
+        world.set_corpse_state(player_ui.corpse());
         for (index, notification) in player_ui.slots().iter().enumerate() {
             if let Some(notification) = notification {
                 world.set_mirror_timer(

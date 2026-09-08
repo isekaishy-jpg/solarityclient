@@ -2386,6 +2386,7 @@ impl ClientServices {
             .synchronize_templates(self.gameplay.game_object_templates_mut());
         self.gameplay.send_game_object_queries()?;
         self.gameplay.send_creature_queries()?;
+        self.gameplay.send_player_name_queries()?;
         self.game_objects.synchronize_transport_passengers(
             self.player_movement
                 .passenger_transport(self.gameplay.world())

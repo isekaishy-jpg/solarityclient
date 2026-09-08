@@ -223,6 +223,10 @@ and the authored self-resurrection bypass now use the session-owned aura bank;
 see [unit-auras.md](unit-auras.md) for the original-code and encrypted tests.
 
 The unit's forced-release flag now enters the same ordered encrypted writer,
-after native timer initialization and before the death combat record. Corpse
-recovery, resurrection offers and other cursor-mode side effects remain in the
-life-system audit. Lighting and sky remain the final water-slice work.
+after native timer initialization and before the death combat record.
+[Resurrection offers](player-resurrection-offers.md) now retain their flags and
+source GUID, resolve missing source names, run the independent recovery clock,
+and send the original accept/decline packets. The full stock dialogs cover
+countdowns and decline's charm/summon query. Corpse identity/range and other
+cursor-mode side effects remain in the life-system audit. Lighting and sky
+remain the final water-slice work.

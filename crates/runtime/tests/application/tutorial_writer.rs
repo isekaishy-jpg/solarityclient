@@ -42,6 +42,11 @@ fn water_tutorial_acknowledgements_retain_order_under_backpressure() -> Result<(
     let actions = [
         solarity_ui::UiPlayerDeathAction::ReleaseSpirit { automatic: false },
         solarity_ui::UiPlayerDeathAction::SelfResurrect,
+        solarity_ui::UiPlayerDeathAction::ResurrectionResponse {
+            guid: 7,
+            accept: true,
+        },
+        solarity_ui::UiPlayerDeathAction::ReclaimCorpse { guid: 8 },
     ];
     for action in actions {
         assert!(gameplay.send_player_death_action(action)?);
@@ -49,5 +54,27 @@ fn water_tutorial_acknowledgements_retain_order_under_backpressure() -> Result<(
         assert_eq!(writer.try_recv()?, WorldWriterCommand::PlayerDeath(action));
         assert!(writer.try_recv().is_err());
     }
+    let guid = 0x1234567800000009;
+    assert_eq!(gameplay.player_ui.names.request_for_offer(guid), None);
+    assert_eq!(gameplay.player_ui.names.request_for_offer(guid), None);
+    gameplay
+        .active
+        .as_ref()
+        .ok_or("active writer")?
+        .commands
+        .try_send(WorldWriterCommand::ActiveMover(8))?;
+    gameplay.send_player_name_queries()?;
+    assert_eq!(gameplay.player_ui.names.pending_request(), Some(guid));
+    assert_eq!(writer.try_recv()?, WorldWriterCommand::ActiveMover(8));
+    gameplay.send_player_name_queries()?;
+    assert_eq!(gameplay.player_ui.names.pending_request(), None);
+    assert_eq!(
+        writer.try_recv()?,
+        WorldWriterCommand::PlayerNameQuery(guid)
+    );
+    assert!(
+        writer.try_recv().is_err(),
+        "duplicate callbacks share one query"
+    );
     Ok(())
 }

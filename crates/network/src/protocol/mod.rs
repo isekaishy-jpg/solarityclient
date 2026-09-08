@@ -19,9 +19,15 @@ mod mirror_timer;
 mod movement;
 mod movement_message;
 mod movement_spline;
+mod player_name_query;
+mod player_resurrection;
 mod remote_movement;
 mod unit_attack;
 mod unit_aura;
+pub use player_name_query::{
+    WorldPlayerName, WorldPlayerNamePacketError, WorldPlayerNameResponse, WorldPlayerNameResult,
+};
+pub use player_resurrection::{WorldPlayerResurrection, WorldPlayerResurrectionPacketError};
 pub use unit_aura::{WorldUnitAura, WorldUnitAuraPacketError, WorldUnitAuraUpdate};
 
 pub use remote_movement::{

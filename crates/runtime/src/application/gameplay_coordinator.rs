@@ -3,6 +3,10 @@
 mod creature_cache;
 pub(in crate::application) mod environmental_damage;
 mod game_object_cache;
+mod player_names;
+#[cfg(test)]
+#[path = "../../tests/application/player_resurrection_offer.rs"]
+mod player_resurrection_offer_tests;
 pub(in crate::application) mod player_ui;
 mod template_cache;
 mod unit_auras;
@@ -134,6 +138,12 @@ pub enum RuntimeGameplayError {
     /// An authoritative aura record was truncated.
     #[error(transparent)]
     UnitAura(#[from] solarity_network::WorldUnitAuraPacketError),
+    /// A resurrection offer or recovery deadline was malformed.
+    #[error(transparent)]
+    Resurrection(#[from] solarity_network::WorldPlayerResurrectionPacketError),
+    /// A deferred source-name response was malformed.
+    #[error(transparent)]
+    PlayerName(#[from] solarity_network::WorldPlayerNamePacketError),
     /// A native unit-control or local stand-state packet was malformed.
     #[error(transparent)]
     PlayerControl(#[from] solarity_network::WorldPlayerControlPacketError),
@@ -529,6 +539,25 @@ impl RuntimeGameplayCoordinator {
                 .try_send(WorldWriterCommand::CreatureQuery { entry, guid })
             {
                 Ok(()) => self.creature_templates.request_admitted(),
+                Err(TrySendError::Full(_)) => break,
+                Err(TrySendError::Closed(_)) => return Err(RuntimeGameplayError::TaskEnded),
+            }
+        }
+        Ok(())
+    }
+
+    pub(in crate::application) fn send_player_name_queries(
+        &mut self,
+    ) -> Result<(), RuntimeGameplayError> {
+        let Some(active) = self.active.as_ref() else {
+            return Ok(());
+        };
+        while let Some(guid) = self.player_ui.names.pending_request() {
+            match active
+                .commands
+                .try_send(WorldWriterCommand::PlayerNameQuery(guid))
+            {
+                Ok(()) => self.player_ui.names.request_admitted(),
                 Err(TrySendError::Full(_)) => break,
                 Err(TrySendError::Closed(_)) => return Err(RuntimeGameplayError::TaskEnded),
             }
@@ -985,6 +1014,8 @@ where
                     WorldWriterCommand::PlayerDeath(action) => match action {
                         solarity_ui::UiPlayerDeathAction::ReleaseSpirit { automatic } => writer.send_release_spirit(automatic).await?,
                         solarity_ui::UiPlayerDeathAction::SelfResurrect => writer.send_self_resurrect().await?,
+                        solarity_ui::UiPlayerDeathAction::ResurrectionResponse { guid, accept } => writer.send_resurrection_response(guid, accept).await?,
+                        solarity_ui::UiPlayerDeathAction::ReclaimCorpse { guid } => writer.send_reclaim_corpse(guid).await?,
                     },
                     WorldWriterCommand::Tutorial(action) => match action {
                         solarity_ui::UiTutorialAction::Flag(index) => writer.send_tutorial_flag(index).await?,
@@ -1000,6 +1031,7 @@ where
                     WorldWriterCommand::CreatureQuery { entry, guid } => {
                         writer.send_creature_query(entry, guid).await?;
                     }
+                    WorldWriterCommand::PlayerNameQuery(guid) => writer.send_player_name_query(guid).await?,
                     WorldWriterCommand::AreaTrigger { heartbeat, trigger_id } => {
                         writer.send_movement(&heartbeat).await?;
                         writer.send_area_trigger(trigger_id).await?;
@@ -1030,6 +1062,7 @@ enum WorldWriterCommand {
     StandState(u32),
     Tutorial(solarity_ui::UiTutorialAction),
     PlayerDeath(solarity_ui::UiPlayerDeathAction),
+    PlayerNameQuery(u64),
     ActiveMover(u64),
     GameObjectQuery {
         entry: u32,
@@ -1229,6 +1262,14 @@ fn apply_state_packet(
     packet: &WorldServerPacket,
     player_ui: &mut player_ui::RuntimePlayerUiState,
 ) -> Result<bool, RuntimeGameplayError> {
+    if let Some(update) = packet.player_resurrection()? {
+        player_ui.receive_resurrection(world, update, crate::platform::client_milliseconds());
+        return Ok(true);
+    }
+    if let Some(response) = packet.player_name_query()? {
+        player_ui.receive_player_name(world, response);
+        return Ok(true);
+    }
     if let Some(auras) = packet.unit_auras()? {
         player_ui.receive_auras(world, auras, crate::platform::client_milliseconds());
         return Ok(true);

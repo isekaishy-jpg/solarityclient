@@ -102,10 +102,11 @@ pub use widget::{
 pub use world::{
     UiCombatLogEntry, UiCombatLogEventError, UiCombatLogObject, UiCombatLogSpell, UiCombatLogState,
     UiFactionGroup, UiFriendCounts, UiInstanceType, UiMirrorTimer, UiPlayerClassState,
-    UiPlayerDeathAction, UiPlayerFactionState, UiPlayerIdentityState, UiPlayerLanguage,
-    UiPlayerProgressionState, UiPlayerRaceState, UiPlayerReleaseTimer, UiPlayerResurrectionState,
-    UiPlayerState, UiPlayerStatsState, UiPlayerVitalsState, UiRealmDate, UiRealmDateError,
-    UiRealmTime, UiRealmTimeError, UiUnitPowerType, UiWorldState, UiZonePvpType, UiZoneState,
+    UiPlayerCorpseState, UiPlayerDeathAction, UiPlayerFactionState, UiPlayerIdentityState,
+    UiPlayerLanguage, UiPlayerProgressionState, UiPlayerRaceState, UiPlayerReleaseTimer,
+    UiPlayerResurrectionOffer, UiPlayerResurrectionState, UiPlayerState, UiPlayerStatsState,
+    UiPlayerVitalsState, UiRealmDate, UiRealmDateError, UiRealmTime, UiRealmTimeError,
+    UiUnitPowerType, UiWorldState, UiZonePvpType, UiZoneState,
 };
 pub use xml::{
     LuaSource, UiBundle, UiLoadAction, UiLoadError, UiManifest, UiManifestEntry,

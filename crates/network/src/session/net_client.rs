@@ -388,6 +388,38 @@ where
         self.send_local_movement_auxiliary(0x2b3, &[]).await
     }
 
+    /// Answers the offer GUID admitted by the native resurrection Lua API.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_resurrection_response(
+        &mut self,
+        guid: u64,
+        accept: bool,
+    ) -> Result<(), WorldSessionError> {
+        let mut body = guid.to_le_bytes().to_vec();
+        body.push(u8::from(accept));
+        self.send_local_movement_auxiliary(0x15c, &body).await
+    }
+
+    /// Reclaims the corpse GUID captured by RetrieveCorpse.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_reclaim_corpse(&mut self, guid: u64) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x1d2, &guid.to_le_bytes())
+            .await
+    }
+
+    /// Requests a source name using 668CE0's full GUID body and opcode 50.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_player_name_query(&mut self, guid: u64) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x50, &guid.to_le_bytes())
+            .await
+    }
+
     /// Acknowledges one zero-based tutorial (`CMSG_TUTORIAL_FLAG`).
     ///
     /// # Errors

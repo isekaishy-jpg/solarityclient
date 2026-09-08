@@ -229,6 +229,23 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         );
         while let Some(notification) = state.take_notification() {
             match notification {
+                RuntimePlayerUiNotification::ResurrectionOffer { offer, name } => {
+                    world.set_resurrection_offer(offer);
+                    if let Some(name) = name {
+                        manager.dispatch_event(
+                            "RESURRECT_REQUEST",
+                            &solarity_ui::UiEventPayload::new([
+                                solarity_ui::UiEventArgument::String(name),
+                            ]),
+                        )?;
+                    }
+                }
+                RuntimePlayerUiNotification::CorpseRecovery(corpse) => {
+                    world.set_corpse_state(corpse);
+                    if let Some(event) = corpse.range_event() {
+                        manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
+                    }
+                }
                 RuntimePlayerUiNotification::UnitDeath(snapshot) => {
                     super::super::environmental_damage::dispatch_unit_death(
                         &mut manager,
@@ -403,6 +420,96 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
             Ok::<_, TestError>(())
         })
         .map_err(|error| error.to_string())?;
+    for (index, sickness, timer, delay) in [(0, 1, 1, 1000), (1, 0, 1, 1000), (2, 0, 0, 30000)] {
+        STOCK_NOW.set(10_000);
+        state.receive_resurrection(
+            &active,
+            solarity_network::WorldPlayerResurrection::RecoveryDelay(delay),
+            STOCK_NOW.get(),
+        );
+        state.receive_resurrection(
+            &active,
+            solarity_network::WorldPlayerResurrection::Offer {
+                guid: 0x1234567800000009 + index,
+                name: "Water Healer".into(),
+                sickness,
+                timer,
+            },
+            STOCK_NOW.get(),
+        );
+        while let Some(notification) = state.take_notification() {
+            match notification {
+                RuntimePlayerUiNotification::CorpseRecovery(corpse) => {
+                    world.set_corpse_state(corpse)
+                }
+                RuntimePlayerUiNotification::ResurrectionOffer {
+                    offer,
+                    name: Some(name),
+                } => {
+                    world.set_resurrection_offer(offer);
+                    manager.dispatch_event(
+                        "RESURRECT_REQUEST",
+                        &solarity_ui::UiEventPayload::new([solarity_ui::UiEventArgument::String(
+                            name,
+                        )]),
+                    )?;
+                }
+                _ => return Err("resurrection notification".into()),
+            }
+        }
+        manager.update(0.1)?;
+        assert_eq!(manager.region_is_shown("StaticPopup1"), Some(true));
+        assert_eq!(manager.region_is_shown("StaticPopup1Button2"), Some(true));
+        click_button(&mut manager, "StaticPopup1Button1")?;
+        if sickness != 0 || timer != 0 {
+            assert!(
+                world.pending_death_action().is_none(),
+                "stock accept button waits for recovery"
+            );
+            STOCK_NOW.set(12_000);
+            manager.update(2.0)?;
+            click_button(&mut manager, "StaticPopup1Button1")?;
+        }
+        assert_eq!(
+            world.pending_death_action(),
+            Some(solarity_ui::UiPlayerDeathAction::ResurrectionResponse {
+                guid: 0x1234567800000009 + index,
+                accept: true
+            })
+        );
+        world.accept_death_action();
+        assert_eq!(world.resurrection_offer().guid, 0);
+        assert_eq!(manager.region_is_shown("StaticPopup1"), Some(false));
+        assert_eq!(manager.take_callback_failure(), None);
+    }
+    world.set_resurrection_offer(solarity_ui::UiPlayerResurrectionOffer {
+        guid: 14,
+        sickness: 0,
+        timer: 0,
+    });
+    manager.dispatch_event(
+        "RESURRECT_REQUEST",
+        &solarity_ui::UiEventPayload::new([solarity_ui::UiEventArgument::String(
+            "Another Healer".into(),
+        )]),
+    )?;
+    manager.update(0.1)?;
+    click_button(&mut manager, "StaticPopup1Button2")?;
+    assert_eq!(
+        world.pending_death_action(),
+        Some(solarity_ui::UiPlayerDeathAction::ResurrectionResponse {
+            guid: 14,
+            accept: false
+        })
+    );
+    world.accept_death_action();
+    assert_eq!(world.resurrection_offer().guid, 0);
+    assert_eq!(
+        manager.region_is_shown("StaticPopup2"),
+        Some(true),
+        "decline restores the original death dialog"
+    );
+    assert_eq!(manager.take_callback_failure(), None);
     Ok(())
 }
 
@@ -462,6 +569,14 @@ RuntimePlayerUiNotification::UnitDeath(snapshot) => super::super::environmental_
                 RuntimePlayerUiNotification::TutorialFlags(flags) => tutorials.replace_flags(&flags),
                 RuntimePlayerUiNotification::MirrorTimer(timer) => super::dispatch_notification(&mut manager,&world,&names,timer)?,
                 RuntimePlayerUiNotification::Attack(started) => { manager.dispatch_event(if started { "PLAYER_ENTER_COMBAT" } else { "PLAYER_LEAVE_COMBAT" }, &solarity_ui::UiEventPayload::empty())?; }
+                RuntimePlayerUiNotification::ResurrectionOffer { offer, name } => {
+                    world.set_resurrection_offer(offer);
+                    if let Some(name) = name { manager.dispatch_event("RESURRECT_REQUEST", &solarity_ui::UiEventPayload::new([solarity_ui::UiEventArgument::String(name)]))?; }
+                }
+                RuntimePlayerUiNotification::CorpseRecovery(corpse) => {
+                    world.set_corpse_state(corpse);
+                    if let Some(event) = corpse.range_event() { manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?; }
+                }
             }
         }
         assert_eq!(manager.localized_text("LOG")?.as_deref(),Some("mirror:BREATH;mirror:BREATH;tutorial:29:nil:nil;mirror:BREATH;mirror:EXHAUSTION;tutorial:27:nil:nil;"));

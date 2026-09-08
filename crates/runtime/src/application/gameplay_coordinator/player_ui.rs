@@ -57,6 +57,11 @@ pub(in crate::application) struct TimedMirrorTimerUpdate {
 /// Shared ordering prevents a later flag packet changing an earlier timer trigger.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::application) enum RuntimePlayerUiNotification {
+    ResurrectionOffer {
+        offer: solarity_ui::UiPlayerResurrectionOffer,
+        name: Option<String>,
+    },
+    CorpseRecovery(solarity_ui::UiPlayerCorpseState),
     DeathAction(solarity_ui::UiPlayerDeathAction),
     PlayerAuras,
     Attack(bool),
@@ -81,6 +86,7 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
 /// Replicated death-dialog inputs captured before their associated life event.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(in crate::application) struct RuntimePlayerResurrectionSnapshot {
+    controlling: bool,
     flags: u32,
     spell: u32,
     blocked: bool,
@@ -94,6 +100,7 @@ impl RuntimePlayerResurrectionSnapshot {
         spells: &solarity_asset::SpellNameCatalog,
     ) {
         let mut state = world.resurrection_state();
+        state.controlling = self.controlling;
         state.out_of_bounds = self.flags & 0x4000 != 0;
         state.self_resurrection_spell = self.spell;
         state.blocked = self.blocked;
@@ -114,6 +121,7 @@ pub(in crate::application) enum RuntimePlayerLifeEvent {
 /// Retained independently of UI residency and cleared by native world exit.
 #[derive(Default)]
 pub(in crate::application) struct RuntimePlayerUiState {
+    pub(super) names: super::player_names::RuntimePlayerNameCache,
     spells: Option<std::rc::Rc<solarity_asset::SpellEffectCatalog>>,
     slots: [Option<TimedMirrorTimerUpdate>; 3],
     tutorial_flags: Vec<u8>,
@@ -121,12 +129,104 @@ pub(in crate::application) struct RuntimePlayerUiState {
     health: Option<RuntimePlayerHealthSnapshot>,
     release_timer: solarity_ui::UiPlayerReleaseTimer,
     resurrection: RuntimePlayerResurrectionSnapshot,
+    offer: solarity_ui::UiPlayerResurrectionOffer,
+    corpse: solarity_ui::UiPlayerCorpseState,
     combat_clock: RuntimeCombatLogClock,
     impacts: VecDeque<RuntimeEnvironmentalDamageSnapshot>,
     pending: VecDeque<RuntimePlayerUiNotification>,
 }
 
 impl RuntimePlayerUiState {
+    pub(in crate::application) fn receive_resurrection(
+        &mut self,
+        world: &solarity_ecs::ActiveWorld,
+        update: solarity_network::WorldPlayerResurrection,
+        now_ms: u32,
+    ) {
+        match update {
+            solarity_network::WorldPlayerResurrection::Offer {
+                guid,
+                name,
+                sickness,
+                timer,
+            } => {
+                self.offer = solarity_ui::UiPlayerResurrectionOffer {
+                    guid,
+                    sickness,
+                    timer,
+                };
+                let display_name = if name.is_empty() {
+                    RuntimePlayerHealthSnapshot::from_world(world)
+                        .and_then(|_| self.names.request_for_offer(guid))
+                } else {
+                    Some(name)
+                };
+                let dead = RuntimePlayerHealthSnapshot::from_world(world)
+                    .is_some_and(|v| v.health as i32 <= 0 || v.ghost);
+                self.pending
+                    .push_back(RuntimePlayerUiNotification::ResurrectionOffer {
+                        offer: self.offer,
+                        name: display_name.filter(|name| dead && !name.is_empty()),
+                    });
+            }
+            solarity_network::WorldPlayerResurrection::RecoveryDelay(delay) => {
+                self.corpse.set_delay(delay, now_ms);
+                self.pending
+                    .push_back(RuntimePlayerUiNotification::CorpseRecovery(self.corpse));
+            }
+        }
+    }
+
+    pub(in crate::application) fn offer(&self) -> solarity_ui::UiPlayerResurrectionOffer {
+        self.offer
+    }
+    pub(in crate::application) fn corpse(&self) -> solarity_ui::UiPlayerCorpseState {
+        self.corpse
+    }
+
+    pub(in crate::application) fn receive_player_name(
+        &mut self,
+        world: &solarity_ecs::ActiveWorld,
+        response: solarity_network::WorldPlayerNameResponse,
+    ) {
+        for _ in 0..self.names.receive(response) {
+            self.complete_offer_name(world);
+        }
+    }
+
+    pub(super) fn complete_offer_name(&mut self, world: &solarity_ecs::ActiveWorld) {
+        // 6DBC60 deliberately queries the CURRENT offer, regardless of which
+        // request completed. A miss clears all offer globals, even while alive.
+        let name = self.names.lookup(self.offer.guid).map(str::to_owned);
+        if name.is_none() {
+            self.offer = solarity_ui::UiPlayerResurrectionOffer::default();
+        }
+        let dead = RuntimePlayerHealthSnapshot::from_world(world)
+            .is_some_and(|v| v.health as i32 <= 0 || v.ghost);
+        self.pending
+            .push_back(RuntimePlayerUiNotification::ResurrectionOffer {
+                offer: self.offer,
+                name: name.filter(|name| dead && !name.is_empty()),
+            });
+    }
+
+    pub(in crate::application) fn synchronize_consumed_offer(
+        &mut self,
+        ui: solarity_ui::UiPlayerResurrectionOffer,
+    ) {
+        // Input callbacks consume the GUID even while the writer is full. Do
+        // this before the next packet batch, keeping unpublished offers intact.
+        if ui.guid == 0
+            && self.offer.sickness == ui.sickness
+            && self.offer.timer == ui.timer
+            && !self
+                .pending
+                .iter()
+                .any(|n| matches!(n, RuntimePlayerUiNotification::ResurrectionOffer { .. }))
+        {
+            self.offer.guid = 0;
+        }
+    }
     pub(super) fn set_spells(
         &mut self,
         spells: Option<std::rc::Rc<solarity_asset::SpellEffectCatalog>>,
@@ -159,6 +259,7 @@ impl RuntimePlayerUiState {
             return;
         };
         let snapshot = RuntimePlayerResurrectionSnapshot {
+            controlling: (6..10).any(|index| fields.get(index) != 0),
             flags: fields.get(150) & 0x4000,
             spell: fields.get(1199),
             blocked: self.spells.as_ref().is_some_and(|spells| {
@@ -439,6 +540,8 @@ impl RuntimePlayerUiState {
         &self.tutorial_flags
     }
     pub(in crate::application) fn clear_for_world_leave(&mut self) {
+        self.offer = solarity_ui::UiPlayerResurrectionOffer::default();
+        self.corpse = solarity_ui::UiPlayerCorpseState::default();
         self.resurrection = RuntimePlayerResurrectionSnapshot::default();
         self.in_combat = false;
         self.health = None;

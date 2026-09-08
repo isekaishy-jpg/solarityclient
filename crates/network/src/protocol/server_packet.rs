@@ -36,6 +36,25 @@ pub struct WorldServerPacket {
 }
 
 impl WorldServerPacket {
+    /// Decodes the source-name cache response used by deferred resurrection offers.
+    ///
+    /// # Errors
+    /// Rejects truncated fields and invalid bounded UTF-8 C strings.
+    pub fn player_name_query(
+        &self,
+    ) -> Result<Option<super::WorldPlayerNameResponse>, super::WorldPlayerNamePacketError> {
+        super::WorldPlayerNameResponse::decode(self.opcode, &self.payload)
+    }
+    /// Decodes a resurrection offer or corpse-recovery delay.
+    ///
+    /// # Errors
+    /// Rejects truncated fields and unterminated or invalid UTF-8 names.
+    pub fn player_resurrection(
+        &self,
+    ) -> Result<Option<super::WorldPlayerResurrection>, super::WorldPlayerResurrectionPacketError>
+    {
+        super::WorldPlayerResurrection::decode(self.opcode, &self.payload)
+    }
     /// Decodes authoritative full/delta aura slot updates.
     ///
     /// # Errors

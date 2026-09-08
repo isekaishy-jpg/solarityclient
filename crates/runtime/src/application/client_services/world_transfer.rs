@@ -30,6 +30,11 @@ impl ClientServices {
         if let Some(replacement) = self.world_transfer.take_deferred_replacement() {
             return self.begin_world_replacement(replacement);
         }
+        if let Some(ui) = self.world_ui.as_ref() {
+            self.gameplay
+                .player_ui_mut()
+                .synchronize_consumed_offer(ui.resurrection_offer());
+        }
         loop {
             self.gameplay.service_with_game_objects(
                 &mut |world, identity, notification, receipt_ms| {

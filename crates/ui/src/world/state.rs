@@ -605,6 +605,8 @@ struct UiWorldStateInner {
     mirror_timers: RefCell<[super::UiMirrorTimer; 3]>,
     release_timer: Cell<super::UiPlayerReleaseTimer>,
     resurrection: RefCell<super::UiPlayerResurrectionState>,
+    resurrection_offer: Cell<super::UiPlayerResurrectionOffer>,
+    corpse: Cell<super::UiPlayerCorpseState>,
     death_actions: RefCell<std::collections::VecDeque<super::UiPlayerDeathAction>>,
     falling: Cell<bool>,
     cinematic: Cell<bool>,
@@ -677,6 +679,40 @@ impl UiWorldState {
     #[must_use]
     pub fn resurrection_state(&self) -> super::UiPlayerResurrectionState {
         self.inner.resurrection.borrow().clone()
+    }
+
+    /// Publishes the offer before its associated RESURRECT_REQUEST callback.
+    pub fn set_resurrection_offer(&self, offer: super::UiPlayerResurrectionOffer) {
+        self.inner.resurrection_offer.set(offer);
+    }
+
+    /// Reads the retained offer; its flags survive accept and decline.
+    #[must_use]
+    pub fn resurrection_offer(&self) -> super::UiPlayerResurrectionOffer {
+        self.inner.resurrection_offer.get()
+    }
+
+    /// Publishes resident corpse identity, range and recovery deadline.
+    pub fn set_corpse_state(&self, corpse: super::UiPlayerCorpseState) {
+        self.inner.corpse.set(corpse);
+    }
+
+    /// Reads the corpse used by RetrieveCorpse and GetCorpseRecoveryDelay.
+    #[must_use]
+    pub fn corpse_state(&self) -> super::UiPlayerCorpseState {
+        self.inner.corpse.get()
+    }
+
+    pub(crate) fn respond_to_resurrection(&self, accept: bool) {
+        let mut offer = self.resurrection_offer();
+        if self.player().is_some() && offer.guid != 0 {
+            self.queue_death_action(super::UiPlayerDeathAction::ResurrectionResponse {
+                guid: offer.guid,
+                accept,
+            });
+            offer.guid = 0;
+            self.set_resurrection_offer(offer);
+        }
     }
 
     /// Publishes immediate movement flags for native 612430.
@@ -868,6 +904,10 @@ impl UiWorldState {
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
         *self.inner.resurrection.borrow_mut() = super::UiPlayerResurrectionState::default();
+        self.inner
+            .resurrection_offer
+            .set(super::UiPlayerResurrectionOffer::default());
+        self.inner.corpse.set(super::UiPlayerCorpseState::default());
         self.inner.death_actions.borrow_mut().clear();
         self.inner.cinematic.set(false);
         self.inner.falling.set(false);

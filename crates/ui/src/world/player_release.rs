@@ -53,6 +53,17 @@ pub(crate) fn register_globals(
     globals: &mlua::Table,
     environment: &crate::UiScriptEnvironment,
 ) -> mlua::Result<()> {
+    super::player_resurrection::register_globals(lua, globals, environment)?;
+    let world = environment.world_state();
+    globals.raw_set(
+        "UnitIsControlling",
+        lua.create_function(move |_, unit: String| {
+            Ok((unit.eq_ignore_ascii_case("player")
+                && world.player().is_some()
+                && world.resurrection_state().controlling)
+                .then_some(1))
+        })?,
+    )?;
     let world = environment.world_state();
     globals.raw_set(
         "CursorHasItem",
@@ -137,6 +148,8 @@ pub(crate) fn register_globals(
 /// Inputs used by the stock death dialog and 727860 release admission.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UiPlayerResurrectionState {
+    /// Either UNIT_FIELD_CHARM or UNIT_FIELD_SUMMON is nonzero (613C90).
+    pub controlling: bool,
     /// PLAYER_SELF_RES_SPELL (absolute field 1199), including unknown IDs.
     pub self_resurrection_spell: u32,
     /// Localized self-resurrection spell or usable inventory item name.
@@ -159,6 +172,18 @@ pub enum UiPlayerDeathAction {
     },
     /// Use the replicated self-resurrection spell; opcode 2B3, empty body.
     SelfResurrect,
+    /// 6D1D30 consumes the current offered GUID before returning to Lua.
+    ResurrectionResponse {
+        /// Full offered GUID frozen when Lua admits the response.
+        guid: u64,
+        /// Accept (one) or decline (zero).
+        accept: bool,
+    },
+    /// RetrieveCorpse always writes the current resident corpse GUID.
+    ReclaimCorpse {
+        /// Full corpse GUID, including the zero sentinel.
+        guid: u64,
+    },
 }
 
 impl UiPlayerResurrectionState {

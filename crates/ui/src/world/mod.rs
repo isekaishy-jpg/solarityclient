@@ -5,6 +5,7 @@ mod game_ui;
 mod language;
 pub(crate) mod mirror_timer;
 pub(crate) mod player_release;
+pub(crate) mod player_resurrection;
 mod realm_date;
 mod realm_time;
 mod state;
@@ -15,6 +16,7 @@ pub use combat_log::{
 pub use language::UiPlayerLanguage;
 pub use mirror_timer::UiMirrorTimer;
 pub use player_release::{UiPlayerDeathAction, UiPlayerReleaseTimer, UiPlayerResurrectionState};
+pub use player_resurrection::{UiPlayerCorpseState, UiPlayerResurrectionOffer};
 pub use realm_date::{UiRealmDate, UiRealmDateError};
 pub use realm_time::{UiRealmTime, UiRealmTimeError};
 pub use state::{
