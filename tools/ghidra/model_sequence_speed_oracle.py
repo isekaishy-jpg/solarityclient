@@ -24,7 +24,7 @@ def bits(value):
     return struct.unpack('<I', struct.pack('<f', value))[0]
 
 
-def capture(executable, output):
+def capture(executable, output, seek_output=None):
     native.initialize(executable)
     uc = native.emulator()
     model, resource, data, scene, sequence, bone = [native.HEAP + i * 0x1000 for i in range(6)]
@@ -90,6 +90,7 @@ def capture(executable, output):
         assert uc.reg_read(UC_X86_REG_EIP) == 0x8310dc
         return uc.reg_read(UC_X86_REG_EDI)
 
+    seek_rows = ['# duration mode speedBits offset scene phase seekScene seekOffset -> start end speedBits inverseBits initial cycles']
     rows = ['# setup duration mode speedBits offset scene phase -> start end speedBits inverseBits initial cycles',
             '# update duration mode speedBits offset scene phase newScene newSpeedBits -> same timer words',
             '# pose duration mode speedBits offset scene phase time -> primary time',
@@ -108,6 +109,16 @@ def capture(executable, output):
                     invoke(uc, 0x826b00, [0, mode << 16, offset & 0xffffffff, bits(speed), bone + 0x40])
                     key = f'{duration} {mode} {bits(speed)} {offset} {now} {phase}'
                     rows.append(f'setup {key} {timer_words()}')
+                    if seek_output:
+                        saved = bytes(uc.mem_read(bone + 0x48, 32))
+                        for seek_offset in [0, 999, -1, 16777217, -2147483648, 2147483647]:
+                            seek_scene = (now + 437) & 0xffffffff
+                            native.write_words(uc, scene + 12, seek_scene)
+                            uc.reg_write(UC_X86_REG_ECX, model)
+                            invoke(uc, 0x826ed0, [0xffffffff, seek_offset & 0xffffffff])
+                            seek_rows.append(f'{key} {seek_scene} {seek_offset} {timer_words()}')
+                            uc.mem_write(bone + 0x48, saved)
+                        native.write_words(uc, scene + 12, now)
                     original = bytes(uc.mem_read(bone + 0x48, 28))
                     if duration < 2000:
                         for flags in [0x20, 0x21]:
@@ -150,10 +161,14 @@ def capture(executable, output):
                     rows.append(f'variation {key} {new_scene} 333 {timer_words()}')
     Path(output).write_text('\n'.join(rows) + '\n', encoding='utf-8')
     print(f'Captured {sum(not row.startswith("#") for row in rows)} original M2 speed cases')
+    if seek_output:
+        Path(seek_output).write_text('\n'.join(seek_rows) + '\n', encoding='utf-8')
+        print(f'Captured {len(seek_rows) - 1} original M2 seek cases')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable'); parser.add_argument('output')
+    parser.add_argument('--seek-output')
     args = parser.parse_args()
-    capture(args.executable, args.output)
+    capture(args.executable, args.output, args.seek_output)

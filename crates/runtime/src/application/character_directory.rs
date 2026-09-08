@@ -1,5 +1,9 @@
 //! Projection of protocol character rows through client-authored DBC metadata.
 
+#[cfg(test)]
+#[path = "../../tests/application/unit_cold_area.rs"]
+mod cold_area_tests;
+
 use solarity_asset::{
     AreaTableCatalog, AssetError, AssetStore, CharacterClassCatalog, CharacterFactionCatalog,
     CharacterRaceCatalog,
@@ -24,6 +28,47 @@ pub(crate) struct RuntimeCharacterMetadata {
 }
 
 impl RuntimeCharacterMetadata {
+    /// `78F1F0` prefers the interior group's AreaTable relation, then its root.
+    /// Flag 2 keeps local climate; otherwise the immediate parent's flags win.
+    pub(in crate::application) fn cold_area_at(
+        &self,
+        terrain_area: Option<u32>,
+        world_model: Option<super::terrain_coordinator::UnitWorldModelLocation>,
+    ) -> bool {
+        let area = if let Some(location) = world_model.filter(|location| location.world_model_only)
+        {
+            // 7A1640 reports success only when both WMOAreaTable rows exist.
+            let Some(group) = self.world_model_areas.area(location.key) else {
+                return false;
+            };
+            let Some(root) = self
+                .world_model_areas
+                .area(solarity_asset::WorldModelAreaKey {
+                    group_id: -1,
+                    ..location.key
+                })
+            else {
+                return false;
+            };
+            self.areas
+                .area(group.area_id())
+                .or_else(|| self.areas.area(root.area_id()))
+        } else {
+            self.area_id(terrain_area, world_model)
+                .and_then(|id| self.areas.area(id))
+        };
+        area.is_some_and(|area| {
+            let flags = if area.flags() & 2 == 0 {
+                self.areas
+                    .area(area.parent_area_id())
+                    .map_or(area.flags(), |parent| parent.flags())
+            } else {
+                area.flags()
+            };
+            flags & 1 != 0
+        })
+    }
+
     /// Applies the native liquid substitution using the same area catalog as zone text.
     pub(in crate::application) fn liquid_flags_at(
         &self,

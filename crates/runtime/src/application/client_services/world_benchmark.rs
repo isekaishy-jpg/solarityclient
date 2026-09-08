@@ -339,6 +339,8 @@ impl ClientServices {
                 self.glue.cvar_boolean("specular"),
                 None,
                 None,
+                None,
+                None,
                 &mut self.crt_rand,
                 player,
                 &[],

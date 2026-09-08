@@ -89,6 +89,12 @@ pub enum ApplicationError {
     /// Registered unit surface effects could not enter the world frame.
     #[error(transparent)]
     WaterRipple(#[from] super::RuntimeWaterRippleError),
+    /// The native unit foot-contact particle setting was not registered.
+    #[error("showfootprintparticles CVar is unavailable")]
+    FootprintParticlesCvar,
+    /// A prior unit-effect source preparation failed before publication.
+    #[error("unit effect source preparation previously failed")]
+    UnitEffectPreparationFailed,
     /// The camera-relative underwater effect could not enter the world frame.
     #[error(transparent)]
     UnderwaterParticle(#[from] super::RuntimeUnderwaterParticleError),

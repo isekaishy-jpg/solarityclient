@@ -12,6 +12,7 @@ use solarity_rendering::{
 };
 use solarity_systems::UnitWaterEffect;
 
+use super::unit_effects::UnitEffectPhase;
 use super::{M2Playback, ResidentM2Source, stock_particle_simulations};
 use crate::random::CrtRand;
 
@@ -46,7 +47,15 @@ fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn 
         )?;
         let model = source.model();
         let mut random = CrtRand::new();
-        let mut playback = M2Playback::default_sequence(model, &animations, 0, &mut random)?;
+        let mut playback = M2Playback::unit_effect_default_sequence(
+            model,
+            &animations,
+            0,
+            0,
+            solarity_rendering::M2SequenceStartPhase::DuringSceneUpdate,
+            &mut random,
+        )?;
+        let mut phase = UnitEffectPhase::Playing;
         let mut particles = stock_particle_simulations(model);
         assert!(!particles.is_empty(), "{}", effect.name());
         assert!(
@@ -61,9 +70,12 @@ fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn 
         let mut emitted = 0;
         let mut vertices = 0;
         let mut time = 0;
-        while time < duration {
+        while phase != UnitEffectPhase::Retiring {
             time += 33;
-            let clock = playback.clock(model, time as f32, &mut random)?.clock;
+            assert!(time < 60_000, "{} did not complete", effect.name());
+            let clock = phase
+                .advance(&mut playback, model, time as f32, &mut random)?
+                .clock;
             let bones =
                 M2BonePose::compose_with_model_view(model.animations(), clock, camera.view())?;
             for (emitter, particle) in model.animations().particles().iter().zip(&mut particles) {
@@ -109,11 +121,9 @@ fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn 
         );
         // Retirement pins the animation pose and clears model emission. Continue
         // the actual emitter lifecycle until every retained particle expires.
-        let terminal = solarity_rendering::M2AnimationClock::new(
-            playback.sequence,
-            duration.saturating_sub(1) as f32,
-            time as f32,
-        );
+        let terminal = phase
+            .advance(&mut playback, model, time as f32, &mut random)?
+            .clock;
         let bones =
             M2BonePose::compose_with_model_view(model.animations(), terminal, camera.view())?;
         for (emitter, particle) in model.animations().particles().iter().zip(&mut particles) {
@@ -140,11 +150,117 @@ fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn 
             );
         }
         println!(
-            "{}: duration={duration}, births={emitted}, vertices={vertices}, mesh_draws={}, bounds={:?}",
+            "{}: duration={duration}, births={emitted}, vertices={vertices}, mesh_draws={}, bounds={:?}, events={:?}",
             effect.name(),
             source.cpu_source().plan.draws().len(),
             model.bounds(),
+            model
+                .animations()
+                .events()
+                .iter()
+                .map(|event| event.identifier())
+                .collect::<Vec<_>>(),
         );
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
+fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Error>> {
+    use super::unit_effects::{
+        M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding, UnitEffectRequest, WATER_EFFECTS,
+    };
+    use crate::configuration::{WindowConfiguration, WindowMode};
+    use crate::platform::SdlPlatform;
+    use solarity_rendering::{
+        M2CameraEffectScale, M2TransparentPass, WorldFrustum, WorldScreenWindow,
+    };
+    use std::{rc::Rc, sync::Arc};
+    let _sdl_guard = crate::test_support::SDL_TEST_LOCK
+        .lock()
+        .map_err(|_| "SDL test lock poisoned")?;
+    let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
+    let mut assets = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(root)?,
+        Locale::EnUs,
+    )?)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
+    let sources = ResidentUnitEffect::load(&mut assets)?;
+    assert_eq!(sources.len(), 5);
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
+    let mut warmup = M2UnitEffectWarmup::new(sources);
+    while !warmup.service_one(&mut renderer)? {}
+    let mut random = CrtRand::new();
+    let mut frame = super::M2Frame::prepare(
+        &mut renderer,
+        &super::ResidentM2Scene::default(),
+        animations,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    frame.set_unit_effect_sources(Arc::new(warmup.into_sources()));
+    let world = solarity_ecs::ActiveWorld::enter(solarity_ecs::WorldBootstrap::new(
+        solarity_ecs::WorldMapId::new(0),
+        1,
+        "Effect owner",
+        Vec3::ZERO,
+        0.,
+    ));
+    let identity = world.object_identity(1).ok_or("unit identity")?;
+    let lifetime = Rc::new(());
+    for kind in WATER_EFFECTS {
+        frame.unit_effects.emit(
+            UnitEffectRequest {
+                identity,
+                lifetime: Rc::downgrade(&lifetime),
+                kind,
+                binding: UnitEffectBinding::Positioned {
+                    position: Vec3::ZERO,
+                    world_factor: 1.,
+                    unit_scale: 1.,
+                },
+            },
+            &frame.animations,
+            0.,
+            &mut random,
+        )?;
+    }
+    let camera = WorldCamera::stock(Vec3::new(0., -5., 2.), Vec3::ZERO, Vec3::Z, 100.).frame(1.)?;
+    let mut particle_draws = 0;
+    let mut mesh_draws = 0;
+    for now in (0..15_000).step_by(33) {
+        let draws = frame.prepare_visible_draws(
+            &renderer,
+            WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+            camera,
+            M2TransparentPass::One,
+            Vec3::ZERO,
+            now as f32,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &mut random,
+            None,
+        )?;
+        particle_draws += draws.particle_draws.len();
+        mesh_draws += draws.draws.len();
+        if now == 0 {
+            assert_eq!(
+                frame.placements.len(),
+                5,
+                "particle-only models need scene admission"
+            );
+        }
+    }
+    assert!(particle_draws > 0);
+    assert!(
+        mesh_draws > 0,
+        "inebriated bubbles also contain mesh batches"
+    );
+    assert!(frame.placements.is_empty());
+    assert!(frame.sources.is_empty());
+    println!(
+        "five archived GPU effect sources: particle_draws={particle_draws}, mesh_draws={mesh_draws}; all drained"
+    );
     Ok(())
 }

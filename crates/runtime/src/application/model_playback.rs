@@ -64,6 +64,23 @@ impl M2Playback {
         scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<Self, RuntimeTerrainFrameError> {
+        Self::default_sequence_at_phase(
+            model,
+            catalog,
+            scene_time_ms,
+            M2SequenceStartPhase::BeforeSceneUpdate,
+            random,
+        )
+    }
+
+    /// Model construction from an authored callback is already inside scene update.
+    pub(in crate::application) fn default_sequence_at_phase(
+        model: &DecodedM2Model,
+        catalog: &AnimationDataCatalog,
+        scene_time_ms: u32,
+        phase: M2SequenceStartPhase,
+        random: &mut CrtRand,
+    ) -> Result<Self, RuntimeTerrainFrameError> {
         let mut playback = Self::unstarted(0, scene_time_ms);
         let animations = model.animations();
         if animations.bones().is_empty() || animations.sequences().is_empty() {
@@ -71,7 +88,48 @@ impl M2Playback {
         }
         // The shared resolver includes native's 147/first-record emergency
         // fallback while preserving the mode of a successful DBC chain.
-        playback.apply_model_sequence(model, catalog, 0, 0, scene_time_ms, random)?;
+        if let Some(resolved) = animations.resolve_model_animation(catalog, 0) {
+            playback.apply_resolved_model_sequence(
+                model,
+                resolved.animation_id(),
+                resolved.mode(),
+                0,
+                scene_time_ms,
+                phase,
+                false,
+                random,
+            )?;
+        }
+        Ok(playback)
+    }
+
+    /// 8251B0 dispatches 6F7680 after ordinary resident model construction.
+    /// The second Stand request blends and consumes its own weighted/cycle rolls.
+    pub(in crate::application) fn unit_effect_default_sequence(
+        model: &DecodedM2Model,
+        catalog: &AnimationDataCatalog,
+        created_scene_time_ms: u32,
+        scene_time_ms: u32,
+        phase: M2SequenceStartPhase,
+        random: &mut CrtRand,
+    ) -> Result<Self, RuntimeTerrainFrameError> {
+        let mut playback =
+            Self::default_sequence_at_phase(model, catalog, scene_time_ms, phase, random)?;
+        playback.created_scene_time_ms = created_scene_time_ms;
+        if !model.animations().bones().is_empty()
+            && let Some(resolved) = model.animations().resolve_model_animation(catalog, 0)
+        {
+            playback.apply_resolved_model_sequence(
+                model,
+                resolved.animation_id(),
+                resolved.mode(),
+                0,
+                scene_time_ms,
+                phase,
+                true,
+                random,
+            )?;
+        }
         Ok(playback)
     }
 
@@ -348,6 +406,20 @@ impl M2Playback {
             timer.set_speed(speed, scene_time_ms);
             self.cycle_started_ms = timer.start_time_ms() as f32;
         }
+    }
+
+    /// CEffect completion seeks the current primary range's last millisecond, then
+    /// pauses it. This does not select a variation or consume random values.
+    pub(in crate::application) fn freeze_sequence_end(&mut self, scene_time_ms: u32) {
+        if let Some(timer) = &mut self.script_timer {
+            let offset = timer
+                .end_time_ms()
+                .wrapping_sub(timer.start_time_ms())
+                .wrapping_sub(1);
+            timer.seek(offset as i32, scene_time_ms);
+            self.cycle_started_ms = timer.start_time_ms() as f32;
+        }
+        self.set_paused(true, scene_time_ms);
     }
 
     /// Applies the native model pause marker without resetting a sequence.

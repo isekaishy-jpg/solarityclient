@@ -17,7 +17,7 @@ from unicorn.x86_const import (
 )
 
 
-def capture(executable, output):
+def capture(executable, output, effect_output=None, scene_phase=0):
     native.initialize(executable)
     uc = native.emulator()
     model, scene, resource, data, seq, bones, table, row = [
@@ -42,6 +42,7 @@ def capture(executable, output):
 
     uc.hook_add(UC_HOOK_CODE, dependencies)
     rows = ['# ids fallback flags bones metadataBase -> arguments; draws; primary timer words']
+    effect_rows = ['# model default then 8251B0 -> 825170 -> 6F7680: ids fallback flags bones metadataBase -> arguments; draws; primary timer words']
     cases = [
         ([0, 0, 7], 0, 0, 1, 0),
         ([0, 0, 7], 0, 0, 1, 5),
@@ -76,6 +77,7 @@ def capture(executable, output):
         native.write_words(uc, table, row)
         native.write_words(uc, row + 0x10, flags, fallback)
         native.write_words(uc, scene + 0xc, 20000)
+        native.write_words(uc, scene + 0x1c, scene_phase * 4)
         state, rolls, requests = 1, 0, []
         uc.reg_write(UC_X86_REG_ECX, model)
         invoke(uc, 0x834540, [scene])
@@ -84,13 +86,28 @@ def capture(executable, output):
             f'{ids} {fallback} {flags} {bone_count} {metadata_base} -> '
             f'{requests}; {rolls}; {timer}'
         )
+        if effect_output is not None:
+            effect = native.HEAP + 0x8000
+            uc.mem_write(effect, bytes(0x110))
+            uc.reg_write(UC_X86_REG_ECX, model)
+            invoke(uc, 0x8251b0, [0x6f7680, effect])
+            timer = native.read_words(uc, bones + 0x48, 8)
+            effect_rows.append(
+                f'{ids} {fallback} {flags} {bone_count} {metadata_base} -> '
+                f'{requests}; {rolls}; {timer}'
+            )
     Path(output).write_text('\n'.join(rows) + '\n', encoding='utf-8')
     print(f'Captured {len(rows) - 1} native default model sequences')
+    if effect_output is not None:
+        Path(effect_output).write_text('\n'.join(effect_rows) + '\n', encoding='utf-8')
+        print(f'Captured {len(effect_rows) - 1} native CEffect load callbacks')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable')
     parser.add_argument('output')
+    parser.add_argument('--effect-output')
+    parser.add_argument('--scene-phase', type=int, choices=[0, 1], default=0)
     args = parser.parse_args()
-    capture(args.executable, args.output)
+    capture(args.executable, args.output, args.effect_output, args.scene_phase)

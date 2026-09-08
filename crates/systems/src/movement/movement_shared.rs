@@ -18,6 +18,13 @@ const AQUATIC_MASK: u64 = MOVEMENT_SWIMMING | MOVEMENT_FLYING;
 /// Ascending and descending count as motion; turning alone does not.
 #[must_use]
 pub const fn resolve_unit_movement_speed(movement: WorldMovementState) -> f32 {
+    resolve_unit_movement_speed_extended(movement) as f32
+}
+
+/// Preserves the native return precision for comparisons before a float spill.
+/// Spline speed is divided by its unsigned duration in the x87 return value.
+#[must_use]
+pub const fn resolve_unit_movement_speed_extended(movement: WorldMovementState) -> f64 {
     let flags = movement.flags();
     if flags & 0xc0000f == 0 {
         return 0.0;
@@ -28,7 +35,7 @@ pub const fn resolve_unit_movement_speed(movement: WorldMovementState) -> f32 {
         return if spline.duration_ms == 0 {
             0.0
         } else {
-            (spline.length as f64 / spline.duration_ms as f64 * 1000.0) as f32
+            spline.length as f64 / spline.duration_ms as f64 * 1000.0
         };
     }
     let speeds = movement.speeds();
@@ -38,17 +45,17 @@ pub const fn resolve_unit_movement_speed(movement: WorldMovementState) -> f32 {
         (speeds.swim(), speeds.swim_back())
     } else if flags & MOVEMENT_WALKING != 0 {
         return if speeds.walk() < speeds.run() {
-            speeds.walk()
+            speeds.walk() as f64
         } else {
-            speeds.run()
+            speeds.run() as f64
         };
     } else {
         (speeds.run(), speeds.run_back())
     };
     if flags & MOVEMENT_BACKWARD != 0 && backward <= forward {
-        backward
+        backward as f64
     } else {
-        forward
+        forward as f64
     }
 }
 

@@ -13,6 +13,62 @@ fn float(value: &str) -> f32 {
     }
 }
 
+#[test]
+fn spline_spray_speed_keeps_original_return_precision() {
+    use solarity_ecs::{
+        WorldMovementContext, WorldMovementSpeeds, WorldMovementSpline, WorldMovementState,
+    };
+    let mut count = 0;
+    let mut spilled_disagreements = 0;
+    for line in include_str!("../fixtures/unit_spray_speed.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let values = line.split_whitespace().collect::<Vec<_>>();
+        let walk = float(values[2]);
+        let movement = WorldMovementState::new(
+            1,
+            WorldMovementSpeeds::new([walk; 9]),
+            WorldMovementContext::default(),
+        )
+        .with_spline(WorldMovementSpline {
+            flags: 0,
+            length: float(values[0]),
+            duration_ms: word(values[1]),
+            effect_started: false,
+        });
+        let input = UnitWaterSprayInput {
+            foot: Vec3::ZERO,
+            camera: Vec3::ZERO,
+            origin_z: 0.,
+            model_height: 4.,
+            liquid_id: 1,
+            liquid_surface: 1.,
+            movement_flags: 1,
+            mount_display_id: 0,
+            unit_bytes1: 0,
+            player_flags: Some(0),
+            transport_guid: 0,
+            model_flags: 0,
+            enabled: true,
+            speed: solarity_systems::resolve_unit_movement_speed_extended(movement),
+            walk_speed: walk,
+        };
+        let actual = input.resolve().map(|result| result.0);
+        assert_eq!(slot(actual), integer::<i32>(values[3]), "{line}");
+        let spilled = UnitWaterSprayInput {
+            speed: f64::from(solarity_systems::resolve_unit_movement_speed(movement)),
+            ..input
+        }
+        .resolve()
+        .map(|result| result.0);
+        spilled_disagreements += usize::from(actual != spilled);
+        count += 1;
+    }
+    assert_eq!(count, 126);
+    assert!(spilled_disagreements > 0);
+}
+
 fn word(value: &str) -> u32 {
     integer(value)
 }

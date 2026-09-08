@@ -3,6 +3,58 @@
 use super::{M2ModelAnimationMode, M2ModelSequenceTimer, M2SequenceStartPhase};
 
 #[test]
+fn sequence_seek_matches_original_client() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cases = 0;
+    for line in include_str!("../fixtures/native_model_sequence_seek.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let values = line
+            .split_whitespace()
+            .map(str::parse::<i64>)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mode = match values[1] {
+            0 => M2ModelAnimationMode::Forward,
+            1 => M2ModelAnimationMode::Reverse,
+            2 => M2ModelAnimationMode::HoldStart,
+            3 => M2ModelAnimationMode::HoldEnd,
+            _ => return Err("invalid mode".into()),
+        };
+        let mut timer = M2ModelSequenceTimer::with_timing(
+            values[0] as u32,
+            3,
+            0x20,
+            mode,
+            f32::from_bits(values[2] as u32),
+            values[4] as u32,
+            values[3] as i32,
+            if values[5] == 0 {
+                M2SequenceStartPhase::BeforeSceneUpdate
+            } else {
+                M2SequenceStartPhase::DuringSceneUpdate
+            },
+        );
+        timer.seek(values[7] as i32, values[6] as u32);
+        let actual = [
+            timer.start_ms,
+            timer.end_ms,
+            timer.speed.to_bits(),
+            timer.inverse_speed.to_bits(),
+            timer.initial_time_ms,
+            timer.cycle_count,
+        ];
+        let expected = values[8..]
+            .iter()
+            .map(|word| *word as u32)
+            .collect::<Vec<_>>();
+        assert_eq!(actual.as_slice(), expected, "{line}");
+        cases += 1;
+    }
+    assert_eq!(cases, 2880);
+    Ok(())
+}
+
+#[test]
 fn sequence_speed_matches_original_client() -> Result<(), Box<dyn std::error::Error>> {
     let mut cases = 0;
     for line in include_str!("../fixtures/native_model_sequence_speed.txt")

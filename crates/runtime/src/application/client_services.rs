@@ -152,6 +152,7 @@ pub(crate) struct ClientServices {
     /// Shared authored liquid behavior for the camera's resident water query.
     liquids: solarity_asset::LiquidTypeCatalog,
     water_ripples: super::water_ripples::RuntimeWaterRipples,
+    unit_effects: super::unit_effects::RuntimeUnitEffects,
     underwater_particles: super::underwater_particles::RuntimeUnderwaterParticles,
     terrain_frame: Option<TerrainFrame>,
     fps: Option<RuntimeFpsOverlay>,
@@ -205,6 +206,7 @@ impl ClientServices {
         let transport_catalog = catalog.clone();
         let terrain_catalog = catalog.clone();
         let world_ui_catalog = catalog.clone();
+        let unit_effects = super::unit_effects::RuntimeUnitEffects::new(catalog.clone());
         let mut assets = AssetStore::mount(catalog)?;
         let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
         let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
@@ -514,6 +516,7 @@ impl ClientServices {
                 terrain_frame: None,
                 liquids,
                 water_ripples,
+                unit_effects,
                 underwater_particles,
                 fps,
                 developer_console,
@@ -1210,6 +1213,32 @@ impl ClientServices {
             .map_or(&[][..], RuntimeWorldUi::draws);
         profile.mark("world sound and render inputs");
         let liquid_time_ms = sdl3::timer::ticks() as u32;
+        let footprint_particles = self
+            .world_ui
+            .as_ref()
+            .map_or_else(
+                || self.glue.cvar_number("showfootprintparticles"),
+                |ui| ui.cvar_number("showfootprintparticles"),
+            )
+            .ok_or(ApplicationError::FootprintParticlesCvar)?
+            != 0.;
+        let sources = self.unit_effects.sources();
+        let mut unit_effect_callback =
+            |event: &super::terrain_frame::RuntimeM2Event,
+             owner: &std::rc::Rc<super::unit_animation::UnitAnimationBehavior>,
+             model: &solarity_asset::DecodedM2Model,
+             transform: glam::Mat4| {
+                self.unit_effects.request(
+                    event,
+                    owner,
+                    model,
+                    transform,
+                    self.gameplay.world()?,
+                    self.player.sound_catalogs().0,
+                    camera.camera().position(),
+                    footprint_particles,
+                )
+            };
         frame.present(
             &mut self.renderer,
             plan,
@@ -1220,6 +1249,8 @@ impl ClientServices {
             specular_enabled,
             Some(ripples),
             underwater_particles,
+            sources,
+            Some(&mut unit_effect_callback),
             &mut self.crt_rand,
             player,
             &creatures,
@@ -1522,6 +1553,8 @@ impl ClientServices {
 
     /// Applies ordered Glue actions and polls one asynchronous login result.
     pub(crate) fn service_login(&mut self) -> Result<(), ApplicationError> {
+        self.unit_effects
+            .service_sources(&self.cpu, &mut self.renderer)?;
         let mut profile = RuntimeFrameProfile::new("session and world service");
         let Some(network) = self.network.as_ref() else {
             return Ok(());
@@ -2309,6 +2342,7 @@ impl ClientServices {
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         self.water_ripples.synchronize_world(self.gameplay.world());
+        self.unit_effects.synchronize_world(self.gameplay.world());
         self.underwater_particles
             .synchronize_world(self.gameplay.world(), &mut self.blizzard_rand.borrow_mut());
         self.synchronize_component_texture_level();
@@ -2375,6 +2409,12 @@ impl ClientServices {
             self.player_movement
                 .refresh_camera_settings(ui.cvar_revision(), |name| ui.cvar_number(name));
         }
+        self.unit_effects.refresh_breaths(
+            self.gameplay.world(),
+            &mut self.terrain,
+            &self.character_metadata,
+            crate::platform::client_milliseconds(),
+        )?;
         self.player_movement.service(
             &mut self.gameplay,
             &mut self.terrain,
@@ -2391,6 +2431,7 @@ impl ClientServices {
             self.player_movement.take_water_sample(),
             self.gameplay.world(),
         ) {
+            self.unit_effects.record_sample(sample);
             self.water_ripples.emit_sample(
                 sample,
                 self.gameplay.unit_template_flags(sample.identity),
@@ -2428,6 +2469,7 @@ impl ClientServices {
             let scene_time = self.m2_global_clock.elapsed().as_secs_f32();
             let mut random = self.blizzard_rand.borrow_mut();
             for sample in self.remote_movement.take_water_samples() {
+                self.unit_effects.record_sample(sample);
                 self.water_ripples.emit_sample(
                     sample,
                     self.gameplay.unit_template_flags(sample.identity),
@@ -2526,6 +2568,14 @@ impl ClientServices {
             RuntimeRemotePlayerPoll::Current => {}
         }
         profile.mark("creature and remote player residency");
+        self.unit_effects.synchronize_models(
+            self.gameplay.world(),
+            &self.player,
+            &mut self.terrain,
+            &self.character_metadata,
+            &self.liquids,
+            crate::platform::client_milliseconds(),
+        )?;
         if self.game_objects.scene_revision() != previous_game_object_revision
             && let Some(frame) = self.terrain_frame.as_mut()
         {

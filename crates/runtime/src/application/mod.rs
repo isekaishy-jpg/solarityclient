@@ -34,6 +34,7 @@ mod terrain_frame;
 pub(crate) mod ui_frame;
 mod underwater_particles;
 mod unit_animation;
+mod unit_effects;
 mod unit_water;
 mod water_ripples;
 mod world_coordinator;

@@ -329,7 +329,7 @@ fn add_object(world: &mut ActiveWorld, guid: u64, display: u32) -> Result<(), Bo
 }
 
 #[allow(unsafe_code)]
-fn renderer(platform: &SdlPlatform) -> Result<VulkanRenderer, Box<dyn Error>> {
+pub(super) fn renderer(platform: &SdlPlatform) -> Result<VulkanRenderer, Box<dyn Error>> {
     let bootstrap = VulkanBootstrap::start(&platform.vulkan_instance_extensions()?)?;
     // SAFETY: The hidden SDL window outlives its surface and renderer. The
     // bootstrap enabled its required extensions and takes surface ownership.

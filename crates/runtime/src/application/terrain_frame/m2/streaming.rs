@@ -159,5 +159,6 @@ pub(super) fn static_gpu_placement(
         particles,
         ribbons,
         last_effect_time_ms: scene_time_ms as u32,
+        unit_effect: None,
     })
 }

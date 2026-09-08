@@ -637,6 +637,8 @@ impl TerrainFrame {
         specular_enabled: bool,
         ripples: Option<solarity_rendering::WaterRippleFrame<'_>>,
         underwater_particles: Option<solarity_rendering::UnderwaterParticleFrame<'_>>,
+        unit_effect_sources: Option<Arc<m2::unit_effects::M2UnitEffectSources>>,
+        unit_effect_callback: Option<&mut m2::unit_effects::UnitEffectEventCallback<'_>>,
         random: &mut CrtRand,
         player: ResidentPlayerFrameInput<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
@@ -746,7 +748,10 @@ impl TerrainFrame {
         self.m2
             .update_remote_player_states(remote_players, local_animation_time_ms, random)?;
         profile.mark("unit states");
-        let m2 = self.m2.prepare_visible_draws(
+        if let Some(sources) = unit_effect_sources {
+            self.m2.set_unit_effect_sources(sources);
+        }
+        let m2 = self.m2.prepare_visible_draws_with_unit_effects(
             renderer,
             frustum,
             camera,
@@ -760,6 +765,7 @@ impl TerrainFrame {
             solarity_rendering::M2CameraEffectScale::EXTERNAL_CAMERA,
             random,
             Some(game_objects),
+            unit_effect_callback,
         )?;
         profile.mark("M2 packets");
         let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));

@@ -4,25 +4,30 @@ use super::{ClientFixture, game_object_models};
 use std::error::Error;
 
 pub fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None)
+    build_fixture(false, false, None, None)
 }
 
 pub fn fixture_with_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false, None)
+    build_fixture(true, false, None, None)
 }
 
 pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, true, None)
+    build_fixture(false, true, None, None)
 }
 
 pub fn fixture_with_hairless_npc() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, Some(9))
+    build_fixture(false, false, Some(9), None)
+}
+
+pub fn fixture_with_water_effects(attachment: u32) -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(false, false, None, Some(attachment))
 }
 
 fn build_fixture(
     effects: bool,
     equipment: bool,
     npc_race: Option<u32>,
+    water_attachment: Option<u32>,
 ) -> Result<ClientFixture, Box<dyn Error>> {
     let ids = [0, 91, 96, 97, 98, 99, 100, 101];
     let mut model = game_object_models::model_with_animations(&ids)?;
@@ -46,6 +51,28 @@ fn build_fixture(
     }
     if equipment {
         append_attachments(&mut model, &[1, 5, 6, 11, 26], ids.len());
+    }
+    if let Some(attachment) = water_attachment {
+        append_attachments(&mut model, &[attachment], ids.len());
+        let record = u32::from_le_bytes(model[0xf4..0xf8].try_into()?) as usize;
+        for (axis, value) in [0.25_f32, 0.5, 1.].into_iter().enumerate() {
+            model[record + 8 + axis * 4..record + 12 + axis * 4]
+                .copy_from_slice(&value.to_le_bytes());
+        }
+        let timestamp = model.len();
+        model.extend_from_slice(&100_u32.to_le_bytes());
+        model.extend_from_slice(&200_u32.to_le_bytes());
+        let channels = model.len();
+        for _ in &ids {
+            model.extend_from_slice(&2_u32.to_le_bytes());
+            model.extend_from_slice(&(timestamp as u32).to_le_bytes());
+        }
+        let event = model.len();
+        model.resize(event + 36, 0);
+        model[event..event + 4].copy_from_slice(b"$BTH");
+        model[event + 26..event + 28].copy_from_slice(&u16::MAX.to_le_bytes());
+        array(&mut model, event + 28, ids.len(), channels);
+        array(&mut model, 0x100, 1, event);
     }
     let animations: Vec<_> = ids
         .iter()
@@ -146,6 +173,46 @@ fn build_fixture(
     .into_iter()
     .map(|(path, bytes)| (path.to_owned(), bytes.to_vec()))
     .collect();
+    if water_attachment.is_some() {
+        let mut effect = game_object_models::model_with_animations(&[0])?;
+        append_effects(&mut effect, 1);
+        let mut strings = b"\0World\\WaterEffect.m2\0".to_vec();
+        let mut fields = Vec::new();
+        for (index, kind) in [
+            solarity_systems::UnitWaterEffect::RunSpray,
+            solarity_systems::UnitWaterEffect::WalkSpray,
+            solarity_systems::UnitWaterEffect::UnderwaterBreath,
+            solarity_systems::UnitWaterEffect::ColdBreath,
+            solarity_systems::UnitWaterEffect::InebriatedBubbles,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = strings.len() as u32;
+            strings.extend_from_slice(kind.name().as_bytes());
+            strings.push(0);
+            fields.extend_from_slice(&[
+                index as u32 + 1,
+                name,
+                1,
+                0,
+                1_f32.to_bits(),
+                0,
+                10_f32.to_bits(),
+            ]);
+        }
+        files.extend([
+            ("World\\WaterEffect.m2".to_owned(), effect),
+            (
+                "World\\WaterEffect00.skin".to_owned(),
+                game_object_models::skin()?,
+            ),
+            (
+                "DBFilesClient\\SpellVisualEffectName.dbc".to_owned(),
+                dbc(7, &fields, &strings),
+            ),
+        ]);
+    }
     if let Some(race) = npc_race {
         // Body plus three independent monster stages: empty, resident, missing.
         // Every slot has a visible batch, so GPU preparation must resolve all.

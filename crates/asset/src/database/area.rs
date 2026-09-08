@@ -16,6 +16,7 @@ const LOCALIZED_NAME_FIRST_FIELD: u32 = 11;
 pub struct AreaDefinition {
     id: u32,
     parent_area_id: u32,
+    flags: u32,
     name: String,
     sounds: AreaSoundReferences,
     /// Zero retains the original liquid or consults the area's immediate parent.
@@ -23,6 +24,12 @@ pub struct AreaDefinition {
 }
 
 impl AreaDefinition {
+    /// Returns the build-12340 AreaTable behavior flags, including cold breath.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
     /// Returns independently inherited zone sound and provider relations.
     pub const fn sounds(&self) -> AreaSoundReferences {
         self.sounds
@@ -67,6 +74,7 @@ impl AreaTableCatalog {
             areas.push(AreaDefinition {
                 id: field(&table, row, 0)?,
                 parent_area_id: field(&table, row, 2)?,
+                flags: field(&table, row, 4)?,
                 name: localized_string(&table, row, LOCALIZED_NAME_FIRST_FIELD, locale)?,
                 sounds: AreaSoundReferences::read(&table, row, 5)?,
                 liquid_overrides: [

@@ -6,6 +6,9 @@ mod equipment_residency;
 #[path = "stock_npc_residency.rs"]
 mod stock_npc_residency;
 
+#[path = "unit_water_effect_scene.rs"]
+mod unit_water_effect_scene;
+
 use super::super::{M2PlaybackStorage, m2_gpu_placement};
 use super::*;
 use crate::application::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};

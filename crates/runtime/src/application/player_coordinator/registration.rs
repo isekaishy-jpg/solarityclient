@@ -8,6 +8,21 @@ use solarity_systems::{MovementCollectionError, MovementCollisionBounds};
 use super::{ResidentPlayerModel, RuntimePlayerPresentation};
 
 impl RuntimePlayerPresentation {
+    /// Borrows each CPU-resident body without tying unit effects to GPU uploads.
+    pub(in crate::application) fn unit_effect_models(
+        &self,
+    ) -> impl Iterator<Item = (WorldObjectIdentity, &std::sync::Arc<DecodedM2Model>)> {
+        self.resident
+            .iter()
+            .chain(&self.remote_players)
+            .map(|player| (player.identity, &player.model))
+            .chain(
+                self.creatures_resident
+                    .iter()
+                    .map(|creature| (creature.key.identity, &creature.model)),
+            )
+    }
+
     /// 7370D0 selects the mount when present and transforms its recursive
     /// render box. An absent/unready model registers only the unit position.
     pub(in crate::application) fn liquid_registration_top(

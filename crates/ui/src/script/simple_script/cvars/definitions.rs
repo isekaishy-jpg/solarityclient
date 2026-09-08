@@ -90,6 +90,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("projectedTextures", "1", 0.0, 1.0),
     // 78E400 registers the default; 78D940 admits the inclusive unit interval.
     ranged("footstepBias", "0.125", 0.0, 1.0),
+    // 715330 registers the true scalar at 9E1464 without a bounds callback.
+    value("showfootprintparticles", "1"),
     ranged("gxStereoEnabled", "0", 0.0, 1.0),
     ranged("gxStereoConvergence", "1", 0.2, 50.0),
     ranged("gxStereoSeparation", "0", 0.0, 100.0),

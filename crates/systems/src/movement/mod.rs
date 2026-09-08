@@ -50,6 +50,7 @@ pub use interval_bounds::{
 };
 pub use movement_shared::{
     UnitLocomotionAnimation, resolve_unit_locomotion_animation, resolve_unit_movement_speed,
+    resolve_unit_movement_speed_extended,
 };
 pub use path::{
     MovementPath, MovementPathError, MovementPathMode, MovementPathRequest, MovementPathSample,

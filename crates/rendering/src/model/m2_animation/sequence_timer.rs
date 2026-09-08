@@ -187,6 +187,17 @@ impl M2ModelSequenceTimer {
         self.inverse_speed = inverse_speed as f32;
     }
 
+    /// `826ED0` seeks the current sequence without selecting another variation.
+    /// The timer keeps its repeat count, mode, and stored reciprocal; both
+    /// products truncate before their low words become scene ticks.
+    pub fn seek(&mut self, time_ms: i32, scene_time_ms: u32) {
+        let inverse = f64::from(self.inverse_speed).abs();
+        self.start_ms = scene_time_ms.wrapping_sub(native_float_word(f64::from(time_ms) * inverse));
+        self.end_ms = self.start_ms.wrapping_add(native_float_word(
+            f64::from(self.duration_ms.wrapping_mul(self.cycle_count)) * inverse,
+        ));
+    }
+
     /// Returns the retained primary playback speed.
     #[must_use]
     pub const fn speed(self) -> f32 {

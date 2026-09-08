@@ -14,6 +14,7 @@ mod playback;
 mod portrait;
 pub(in crate::application) mod sound;
 mod streaming;
+pub(in crate::application) mod unit_effects;
 mod visibility;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{M2PlayerItemIdentity, prepare_character_gpu};
@@ -171,6 +172,7 @@ struct M2GpuPlacement {
     ribbons: Vec<M2RibbonTrail>,
     /// `CM2Model +0x8c` belongs to this model lifetime, including unsampled intervals.
     last_effect_time_ms: u32,
+    unit_effect: Option<unit_effects::UnitEffectPlacement>,
 }
 
 /// One placement-local simulation plus an unsupported-path containment latch.
@@ -230,6 +232,8 @@ fn classify_particle_support(
 /// Placement category retained for diagnostics and player replacement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum M2GpuPlacementOwner {
+    /// One CEffect instance; its unit and attachment lifetime are retained separately.
+    UnitEffect { serial: u64 },
     /// An ADT or WMO owner from the resident terrain generation.
     Static(ResidentM2Owner),
     /// A pre-world `Model` or `ModelFFX` widget retained by Glue.
@@ -696,6 +700,7 @@ pub(in crate::application) struct M2Frame {
     glue_attachment_transforms: Vec<(u32, Option<Mat4>)>,
     recoverable_errors: Vec<String>,
     pending_glue_playback_advance: Option<M2PlaybackAdvance>,
+    unit_effects: unit_effects::M2UnitEffectScene,
 }
 
 /// Borrowed dynamic streams assembled for one unified world submission.
@@ -780,6 +785,7 @@ impl M2Frame {
             glue_attachment_transforms: Vec::new(),
             recoverable_errors: Vec::new(),
             pending_glue_playback_advance: None,
+            unit_effects: unit_effects::M2UnitEffectScene::default(),
         })
     }
 
@@ -871,6 +877,7 @@ impl M2Frame {
                 ribbons,
                 // This widget model was created at its local clock origin.
                 last_effect_time_ms: 0,
+                unit_effect: None,
             }],
             particle_twinkle,
             animation_started_at,
@@ -901,6 +908,7 @@ impl M2Frame {
             glue_attachment_transforms: Vec::new(),
             recoverable_errors: Vec::new(),
             pending_glue_playback_advance: None,
+            unit_effects: unit_effects::M2UnitEffectScene::default(),
         })
     }
 
@@ -1575,7 +1583,8 @@ impl M2Frame {
                 | M2GpuPlacementOwner::GluePet => true,
                 M2GpuPlacementOwner::PlayerItem { guid, .. }
                 | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => local_guid == Some(guid),
-                M2GpuPlacementOwner::Static(_)
+                M2GpuPlacementOwner::UnitEffect { .. }
+                | M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                 | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
@@ -1638,7 +1647,8 @@ impl M2Frame {
                 | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => {
                     remote_guids.contains(&guid)
                 }
-                M2GpuPlacementOwner::Static(_)
+                M2GpuPlacementOwner::UnitEffect { .. }
+                | M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                 | M2GpuPlacementOwner::GlueModel { .. }
                 | M2GpuPlacementOwner::GluePet
@@ -1826,6 +1836,42 @@ impl M2Frame {
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
+        self.prepare_visible_draws_with_unit_effects(
+            renderer,
+            frustum,
+            camera,
+            first_transparent_pass,
+            fog_color,
+            animation_time_ms,
+            effect_scale,
+            random,
+            game_objects,
+            None,
+        )
+    }
+
+    pub(in crate::application) fn set_unit_effect_sources(
+        &mut self,
+        sources: Arc<unit_effects::M2UnitEffectSources>,
+    ) {
+        self.unit_effects.sources = Some(sources);
+    }
+
+    /// Unit callbacks construct CEffect models before this frame's effect pass.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::application) fn prepare_visible_draws_with_unit_effects(
+        &mut self,
+        renderer: &VulkanRenderer,
+        frustum: WorldFrustum,
+        camera: WorldCameraFrame,
+        first_transparent_pass: M2TransparentPass,
+        fog_color: glam::Vec3,
+        animation_time_ms: f32,
+        effect_scale: M2CameraEffectScale,
+        random: &mut CrtRand,
+        game_objects: Option<GameObjectFrameInput<'_>>,
+        mut unit_effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
+    ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, random)?;
         }
@@ -1843,7 +1889,18 @@ impl M2Frame {
         self.glue_point_lights.clear();
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
+        self.unit_effects
+            .publish_loaded(&self.animations, animation_time_ms, random)?;
+        self.unit_effects.begin_frame();
+        if self.unit_effects.retire_drained(&mut self.placements) {
+            self.placement_topology_dirty = true;
+            self.compact_sources();
+        }
         if self.placement_topology_dirty {
+            // Changes to body residency can append a parent after retained
+            // CEffects. Keep every effect behind its current parent pose.
+            self.placements
+                .sort_by_key(|placement| placement.unit_effect.is_some());
             self.requested_items.clear();
             self.requested_items
                 .extend(
@@ -1851,7 +1908,8 @@ impl M2Frame {
                         .iter()
                         .filter_map(|placement| match placement.owner {
                             M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
-                            M2GpuPlacementOwner::Static(_)
+                            M2GpuPlacementOwner::UnitEffect { .. }
+                            | M2GpuPlacementOwner::Static(_)
                             | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                             | M2GpuPlacementOwner::GlueModel { .. }
                             | M2GpuPlacementOwner::GluePet
@@ -1875,7 +1933,8 @@ impl M2Frame {
                                 item_point,
                                 effect_point,
                             } => Some((guid, item_point, effect_point)),
-                            M2GpuPlacementOwner::Static(_)
+                            M2GpuPlacementOwner::UnitEffect { .. }
+                            | M2GpuPlacementOwner::Static(_)
                             | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
                             | M2GpuPlacementOwner::GlueModel { .. }
                             | M2GpuPlacementOwner::GluePet
@@ -1950,13 +2009,40 @@ impl M2Frame {
                 .len()
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
-        for (placement_index, bounds) in self.placement_visibility.bounds().iter().enumerate() {
+        let effect_start = self
+            .placements
+            .iter()
+            .position(|placement| placement.unit_effect.is_some())
+            .unwrap_or(self.placements.len());
+        let mut next_placement = 0;
+        loop {
+            if next_placement == effect_start
+                && self
+                    .unit_effects
+                    .publish(&mut self.placements, &mut self.sources)
+            {
+                self.placement_topology_dirty = true;
+                update_model_distance_sort_flags(
+                    &self.placements,
+                    &self.sources,
+                    &mut self.model_distance_sort,
+                );
+                self.placement_visibility
+                    .rebuild(&self.placements, &self.sources);
+            }
+            if next_placement == self.placements.len() {
+                break;
+            }
+            let placement_index = next_placement;
+            next_placement += 1;
+            let bounds = self.placement_visibility.bounds()[placement_index];
             if let Some((center, radius)) = bounds
-                && !frustum.contains_sphere(*center, *radius)?
+                && !frustum.contains_sphere(center, radius)?
             {
                 continue;
             }
             let placement = &mut self.placements[placement_index];
+            self.unit_effects.prepare_attachment(placement);
             if !placement.placement_valid {
                 continue;
             }
@@ -2053,9 +2139,13 @@ impl M2Frame {
             // ADT/WMO placements were culled from compact immutable bounds
             // before touching instance state. Replicated WMO doodads can move
             // with their parent and require their current transform here.
+            // CEffects can leave live particles outside their authored model
+            // bounds. Keep their update and particle packets in the scene;
+            // 821BEE advances registered roots and 828A00 their children.
             let static_visibility_resolved = matches!(
                 owner,
-                M2GpuPlacementOwner::Static(_)
+                M2GpuPlacementOwner::UnitEffect { .. }
+                    | M2GpuPlacementOwner::Static(_)
                     | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
             );
             if matches!(
@@ -2099,7 +2189,9 @@ impl M2Frame {
                 if let Some((advance, event_window)) = scene_sample {
                     (advance, Some(event_window))
                 } else {
-                    let advance = if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                    let advance = if let Some(effect) = &mut placement.unit_effect {
+                        effect.advance(&mut playback, &source.model, animation_time_ms, random)?
+                    } else if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
                         self.pending_glue_playback_advance.take().map_or_else(
                             || playback.clock(&source.model, animation_time_ms, random),
                             Ok,
@@ -2127,6 +2219,7 @@ impl M2Frame {
                         ..Default::default()
                     },
                 )?;
+                let first_event = self.triggered_events.len();
                 append_triggered_events(
                     &mut self.triggered_events,
                     &source.model,
@@ -2136,6 +2229,22 @@ impl M2Frame {
                     &self.bone_pose_scratch,
                     expired.event_window,
                 )?;
+                if let Some(callback) = unit_effect_callback.as_mut()
+                    && let Some(animation) = &placement.unit_animation
+                {
+                    for event in &self.triggered_events[first_event..] {
+                        if let Some(request) =
+                            callback(event, animation, &source.model, placement.transform)
+                        {
+                            self.unit_effects.emit(
+                                request,
+                                &self.animations,
+                                animation_time_ms,
+                                random,
+                            )?;
+                        }
+                    }
+                }
             }
             let clock = advance.clock;
             let finger_pose_hands = held_item_finger_pose(&self.requested_items, owner);
@@ -2172,6 +2281,7 @@ impl M2Frame {
                 },
             )?;
             let bone_pose = &self.bone_pose_scratch;
+            let first_event = self.triggered_events.len();
             append_triggered_events(
                 &mut self.triggered_events,
                 &source.model,
@@ -2181,6 +2291,30 @@ impl M2Frame {
                 bone_pose,
                 event_window,
             )?;
+            if let Some(callback) = unit_effect_callback.as_mut()
+                && let Some(animation) = &placement.unit_animation
+            {
+                for event in &self.triggered_events[first_event..] {
+                    if let Some(request) =
+                        callback(event, animation, &source.model, placement.transform)
+                    {
+                        self.unit_effects.emit(
+                            request,
+                            &self.animations,
+                            animation_time_ms,
+                            random,
+                        )?;
+                    }
+                }
+            }
+            if let Some(animation) = &placement.unit_animation {
+                self.unit_effects.update_anchor(
+                    animation,
+                    &source.model,
+                    bone_pose,
+                    placement.transform,
+                )?;
+            }
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
                 sample_m2_lights_into(
                     source.model.animations(),
@@ -2297,6 +2431,10 @@ impl M2Frame {
             let bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
             let light_bank = placement_light_bank(placement.owner);
+            let effect_retiring = placement
+                .unit_effect
+                .as_ref()
+                .is_some_and(|effect| effect.retiring());
             if placement.particles.len() != source.model.animations().particles().len() {
                 return Err(RuntimeTerrainFrameError::M2ParticleSimulationCount {
                     model: source.model.path().clone(),
@@ -2329,6 +2467,9 @@ impl M2Frame {
                     continue;
                 }
                 let simulation = &mut placement_particle.simulation;
+                if effect_retiring {
+                    simulation.set_emission_enabled(false);
+                }
                 let pose = M2ParticlePose::sample(source.model.animations(), emitter, clock)?;
                 let emitter_transform =
                     bone_pose.particle_emitter_transform(emitter, placement.transform)?;
@@ -2466,7 +2607,9 @@ impl M2Frame {
                 .extend_from_slice(bone_pose.transforms());
             let mut instance_color = placement_color(placement.color);
             instance_color.w *= placement.opacity;
-            if let Some(mesh) = source.mesh {
+            if let Some(mesh) = source.mesh
+                && !effect_retiring
+            {
                 for (draw_index, resources) in source.draws.iter().enumerate() {
                     let Some(resources) = resources else {
                         continue;
@@ -2552,7 +2695,7 @@ impl M2Frame {
                     }
                 }
             } else {
-                debug_assert!(source.draws.iter().all(Option::is_none));
+                debug_assert!(effect_retiring || source.draws.iter().all(Option::is_none));
             }
             for (ribbon_index, ((emitter, trail), passes)) in source
                 .model
@@ -2563,7 +2706,9 @@ impl M2Frame {
                 .zip(&source.ribbons)
                 .enumerate()
             {
-                if passes.is_empty() {
+                // 6F87C0 removes normal model submission; 828A00 retains only
+                // the particle pass while model bit 0x400 remains live.
+                if effect_retiring || passes.is_empty() {
                     continue;
                 }
                 if trail.sections().len() < 2 {
@@ -2818,6 +2963,14 @@ fn placement_parent_index(
         });
     }
     match placement.owner {
+        M2GpuPlacementOwner::UnitEffect { .. } => preceding.iter().rposition(|candidate| {
+            candidate.unit_animation.as_ref().is_some_and(|owner| {
+                placement
+                    .unit_effect
+                    .as_ref()
+                    .is_some_and(|effect| effect.attached_to(owner))
+            })
+        }),
         M2GpuPlacementOwner::PlayerBody { guid } => preceding
             .iter()
             .rposition(|candidate| candidate.owner == M2GpuPlacementOwner::PlayerMount { guid }),
@@ -2958,7 +3111,8 @@ fn append_triggered_events(
 
 const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
     match owner {
-        M2GpuPlacementOwner::Static(_)
+        M2GpuPlacementOwner::UnitEffect { .. }
+        | M2GpuPlacementOwner::Static(_)
         | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
         | M2GpuPlacementOwner::GlueModel { .. }
         | M2GpuPlacementOwner::GluePet => None,
@@ -2980,7 +3134,8 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
         | M2GpuPlacementOwner::PlayerItem { guid: 0, .. }
         | M2GpuPlacementOwner::PlayerItemVisual { guid: 0, .. } => M2SceneLightBank::Character,
         M2GpuPlacementOwner::GluePet => M2SceneLightBank::Pet,
-        M2GpuPlacementOwner::Static(_)
+        M2GpuPlacementOwner::UnitEffect { .. }
+        | M2GpuPlacementOwner::Static(_)
         | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
         | M2GpuPlacementOwner::GlueModel { .. }
         | M2GpuPlacementOwner::PlayerBody { .. }
@@ -3077,6 +3232,7 @@ fn m2_gpu_placement(
         particles,
         ribbons,
         last_effect_time_ms: scene_time_ms,
+        unit_effect: None,
     })
 }
 

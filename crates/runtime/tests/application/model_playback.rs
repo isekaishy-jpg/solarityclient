@@ -120,6 +120,80 @@ fn default_sequence_matches_native_selection_fallbacks_and_random_draws()
     Ok(())
 }
 
+#[test]
+fn unit_effect_load_callback_matches_original_timers_and_random_draws() -> Result<(), Box<dyn Error>>
+{
+    use solarity_rendering::M2SequenceStartPhase::{BeforeSceneUpdate, DuringSceneUpdate};
+    for (phase, fixture) in [
+        (
+            BeforeSceneUpdate,
+            include_str!("../fixtures/unit_effect_load_before.txt"),
+        ),
+        (
+            DuringSceneUpdate,
+            include_str!("../fixtures/unit_effect_load_during.txt"),
+        ),
+    ] {
+        let mut count = 0;
+        for line in fixture.lines().filter(|line| !line.starts_with('#')) {
+            let (input, expected) = line.split_once(" -> ").ok_or("native record")?;
+            let (ids, input) = input.split_once(']').ok_or("native animation ids")?;
+            let ids = ids
+                .trim_start_matches('[')
+                .split(',')
+                .map(|id| id.trim().parse::<u16>())
+                .collect::<Result<Vec<_>, _>>()?;
+            let input = input
+                .split_whitespace()
+                .map(str::parse::<u32>)
+                .collect::<Result<Vec<_>, _>>()?;
+            let (model, catalog) = default_sequence_model(&ids, input[0], input[1], input[2])?;
+            let expected = expected.split(';').collect::<Vec<_>>();
+            let rolls = expected[1].trim().parse::<usize>()?;
+            let words = expected[2]
+                .trim()
+                .trim_matches(['(', ')'])
+                .split(',')
+                .map(|word| word.trim().parse::<u32>())
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut random = CrtRand::new();
+            let playback = M2Playback::unit_effect_default_sequence(
+                &model,
+                &catalog,
+                20_000,
+                20_000,
+                phase,
+                &mut random,
+            )?;
+            let mut expected_random = CrtRand::new();
+            for _ in 0..rolls {
+                let _ = expected_random.next_u15();
+            }
+            assert_eq!(random, expected_random, "{line}");
+            if words[0] & 0xffff == 0xffff {
+                assert!(playback.script_timer.is_none());
+            } else {
+                let timer = playback.script_timer.ok_or("effect primary timer")?;
+                assert_eq!(playback.sequence as u32, words[0] & 0xffff);
+                assert_eq!(
+                    [
+                        timer.start_time_ms(),
+                        timer.end_time_ms(),
+                        timer.speed().to_bits(),
+                        timer.cycle_count()
+                    ],
+                    [words[1], words[2], words[3], words[6]],
+                    "{line}"
+                );
+                assert!(playback.script_blend.is_some(), "{line}");
+            }
+            count += 1;
+        }
+        assert_eq!(count, 8);
+    }
+    Ok(())
+}
+
 fn default_sequence_model(
     ids: &[u16],
     fallback: u32,
