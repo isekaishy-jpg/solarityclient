@@ -101,3 +101,11 @@ the decoded-asset tests compare 810 identity, translated and scaled placements.
 The camera fixture checks both selected groups in 256 original root queries.
 Runtime coverage confirms the dry/wet banks replace scene fog while preserving
 the independently depth-darkened light palette.
+
+The final environment also retains both model-consumer banks from `7F16F0`.
+The ordinary bank keeps the exterior color (or the forced wet color); the indoor
+bank receives the portal-distance color blend. Both use the indoor bank's final
+range and exponent. The capture now records 2,016 bank outputs, and the runtime
+fixture verifies their distinct colors in dry and submerged interiors. Selecting
+those banks per visible model still requires the native portal visibility pass;
+the current presentation continues to use the camera bank.

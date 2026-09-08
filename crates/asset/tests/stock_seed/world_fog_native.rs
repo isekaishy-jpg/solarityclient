@@ -97,7 +97,7 @@ fn world_model_scene_fog_matches_original_liquid_flags_and_portal_transition()
     let mut count = 0;
     for line in include_str!("../fixtures/world_model_fog_native.txt")
         .lines()
-        .filter(|line| line.starts_with("final "))
+        .filter(|line| line.starts_with("final ") || line.starts_with("ordinary "))
     {
         let row = line.split_ascii_whitespace().collect::<Vec<_>>();
         let context = WorldFogContext::new(if row[1] == "0" { 0 } else { 530 }, 777.)
@@ -116,12 +116,13 @@ fn world_model_scene_fog_matches_original_liquid_flags_and_portal_transition()
             Some(f32::from_bits(u32::from_str_radix(row[5], 16)?))
         };
         let base = context.finish(500., 0.5, 2.5, Vec3::new(35., 69., 103.) / 255., false);
-        let fog = context.world_model_scene(
+        let banks = context.world_model_scene_banks(
             base,
             palette,
             distance,
             (liquid >= 0).then_some(liquid as u32),
         );
+        let fog = banks[usize::from(row[0] == "final")];
         let native = row[6..]
             .iter()
             .map(|word| u32::from_str_radix(word, 16))
@@ -140,6 +141,6 @@ fn world_model_scene_fog_matches_original_liquid_flags_and_portal_transition()
         }
         count += 1;
     }
-    assert_eq!(count, 1008);
+    assert_eq!(count, 2016);
     Ok(())
 }

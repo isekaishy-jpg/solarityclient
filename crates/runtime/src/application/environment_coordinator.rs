@@ -62,6 +62,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     base_fog: WorldFogSample,
     liquid_flags: Option<u32>,
     fog: WorldFogSample,
+    ordinary_fog: WorldFogSample,
     light_direction: Vec3,
 }
 
@@ -123,6 +124,13 @@ impl RuntimeWorldEnvironmentFrame {
         self.fog
     }
 
+    /// Returns the ordinary model bank retained alongside camera indoor fog.
+    /// Both banks share distances and exponent; portal visibility selects color.
+    #[must_use]
+    pub const fn ordinary_model_fog(self) -> WorldFogSample {
+        self.ordinary_fog
+    }
+
     /// Applies camera-owned MFOG banks after the liquid palette is resolved.
     #[must_use]
     pub fn with_world_model_fog(
@@ -130,7 +138,7 @@ impl RuntimeWorldEnvironmentFrame {
         environment: Option<solarity_systems::WorldModelFogEnvironment>,
     ) -> Self {
         if let Some(environment) = environment {
-            self.fog = self.fog_context.world_model_scene(
+            [self.ordinary_fog, self.fog] = self.fog_context.world_model_scene_banks(
                 self.base_fog,
                 environment.palette(),
                 environment.boundary_distance(),
@@ -298,6 +306,7 @@ impl RuntimeWorldEnvironment {
             light,
             fog_context,
             fog: light.final_fog(fog_context, false),
+            ordinary_fog: light.final_fog(fog_context, false),
             base_fog: light.final_fog(fog_context, false),
             liquid_flags: None,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),
@@ -350,6 +359,7 @@ impl RuntimeWorldEnvironment {
         frame.base_fog = light.final_fog(frame.fog_context, false);
         frame.liquid_flags = (submerged.liquid_type != 0).then_some(liquid.flags());
         frame.fog = light.final_fog(frame.fog_context, submerged.liquid_type != 0);
+        frame.ordinary_fog = frame.fog;
         frame.light = light.with_liquid_depth(liquid, submerged.depth);
         Ok(frame)
     }

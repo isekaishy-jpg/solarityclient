@@ -18,11 +18,25 @@ impl WorldFogContext {
     #[must_use]
     pub fn world_model_scene(
         self,
-        mut base: WorldFogSample,
+        base: WorldFogSample,
         palette: crate::WorldModelFogPalette,
         boundary_distance: Option<f32>,
         liquid_flags: Option<u32>,
     ) -> WorldFogSample {
+        self.world_model_scene_banks(base, palette, boundary_distance, liquid_flags)[1]
+    }
+
+    /// Resolves the ordinary and indoor model fog banks, in that order.
+    /// Native 7F16F0 shares the final range/exponent between both banks but
+    /// retains the unblended ordinary color, except for forced wet fog.
+    #[must_use]
+    pub fn world_model_scene_banks(
+        self,
+        mut base: WorldFogSample,
+        palette: crate::WorldModelFogPalette,
+        boundary_distance: Option<f32>,
+        liquid_flags: Option<u32>,
+    ) -> [WorldFogSample; 2] {
         let wet_eligible = liquid_flags.is_some_and(|flags| {
             (flags & 0x20 == 0 || palette.flags() & 0x100 != 0)
                 && (flags & 0x100 == 0 || palette.flags() & 0x10 != 0)
@@ -36,6 +50,7 @@ impl WorldFogContext {
         if wet_eligible && liquid_flags.is_some_and(|flags| flags & 0x40 != 0) {
             base = target;
         }
+        let ordinary_color = base.color;
         if let Some(distance) = boundary_distance {
             // Native retains this product on x87 for the three float blends and
             // only stores the alpha product immediately before integer packing.
@@ -68,7 +83,13 @@ impl WorldFogContext {
         if self.power && liquid_flags.is_some() {
             base.exponent *= 2.;
         }
-        base
+        [
+            WorldFogSample {
+                color: ordinary_color,
+                ..base
+            },
+            base,
+        ]
     }
 
     /// Creates the build-12340 policy for a programmable-shader renderer.

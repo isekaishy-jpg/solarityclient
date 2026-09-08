@@ -128,6 +128,13 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             Vec3::new(0x12 as f32, 0x34 as f32, 0x56 as f32) / 255.
         );
         assert_eq!(indoor.light(), frame.light());
+        assert_eq!(frame.ordinary_model_fog(), frame.fog());
+        assert_eq!(indoor.ordinary_model_fog().color(), frame.fog().color());
+        assert_eq!(indoor.ordinary_model_fog().range(), indoor.fog().range());
+        assert_eq!(
+            indoor.ordinary_model_fog().exponent(),
+            indoor.fog().exponent()
+        );
         assert_eq!(frame.with_world_model_fog(None), frame);
         assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
         for (depth, expected) in [
@@ -168,6 +175,13 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
                 Vec3::new(0xab as f32, 0xcd as f32, 0xef as f32) / 255.
             );
             assert_eq!(indoor.light(), resolved.light());
+            assert_eq!(resolved.ordinary_model_fog(), resolved.fog());
+            assert_eq!(indoor.ordinary_model_fog().color(), resolved.fog().color());
+            assert_eq!(indoor.ordinary_model_fog().range(), indoor.fog().range());
+            assert_eq!(
+                indoor.ordinary_model_fog().exponent(),
+                indoor.fog().exponent()
+            );
             assert_eq!(resolved.position(), position);
             assert_eq!(resolved.view_distance(), frame.view_distance());
             assert_eq!(environment.current(), Some(frame));

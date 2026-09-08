@@ -87,6 +87,8 @@ def capture():
         n.invoke(u, 0x7f16f0, [])
         result = n.read_words(u, 0xd38ba0, 4)
         rows.append(f'final {mode} {flags:x} {liquid} {int(visible)} {bits(distance):08x} ' + ' '.join(f'{v:08x}' for v in result))
+        ordinary = n.read_words(u, 0xd38b8c, 4)
+        rows.append(f'ordinary {mode} {flags:x} {liquid} {int(visible)} {bits(distance):08x} ' + ' '.join(f'{v:08x}' for v in ordinary))
     return '\n'.join(rows) + '\n'
 
 
