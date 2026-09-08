@@ -23,6 +23,7 @@ pub struct ActiveWorld {
     objects: ObjectRegistry,
     local_player: EntityId,
     world_state_values: super::WorldStateValues,
+    local_corpse_guid: u64,
 }
 
 impl ActiveWorld {
@@ -59,6 +60,7 @@ impl ActiveWorld {
             objects,
             local_player,
             world_state_values: super::WorldStateValues::default(),
+            local_corpse_guid: 0,
         }
     }
 
@@ -480,6 +482,9 @@ impl ActiveWorld {
             self.storage.add_component(entity, (transform,));
         }
         self.objects.insert(guid, entity);
+        if self.is_owned_recoverable_corpse(guid) {
+            self.local_corpse_guid = guid;
+        }
         Ok(entity)
     }
 
@@ -655,11 +660,49 @@ impl ActiveWorld {
         if entity == self.local_player {
             return Err(WorldStateError::LocalPlayerOutOfRange { guid });
         }
+        // 705F30 clears the global for any owned non-bones corpse, even if a
+        // newer corpse has since replaced it. A bones update does not clear it.
+        if self.is_owned_recoverable_corpse(guid) {
+            self.local_corpse_guid = 0;
+        }
         self.objects.remove(guid);
         if !self.storage.delete_entity(entity) {
             return Err(WorldStateError::UnknownObject { guid });
         }
         Ok(())
+    }
+
+    /// Native 512C20 GUID retained by the Corpse_C create/add/remove lifecycle.
+    #[must_use]
+    pub const fn local_corpse_guid(&self) -> u64 {
+        self.local_corpse_guid
+    }
+
+    /// Retains the global after old-map corpse removal callbacks have run.
+    /// Any owned non-bones corpse clears it; removed bones preserve the value.
+    pub fn inherit_removed_corpse_guid(&mut self, previous: &Self) {
+        self.local_corpse_guid = if previous
+            .objects
+            .entries()
+            .any(|(guid, _)| previous.is_owned_recoverable_corpse(guid))
+        {
+            0
+        } else {
+            previous.local_corpse_guid
+        };
+    }
+
+    fn is_owned_recoverable_corpse(&self, guid: u64) -> bool {
+        if self.object_kind(guid) != Some(ObjectKind::Corpse) {
+            return false;
+        }
+        self.entity_by_guid(guid)
+            .and_then(|entity| self.storage.get::<&ObjectFields>(entity).ok())
+            .is_some_and(|fields| {
+                fields.get(33) & 1 == 0
+                    && self.local_player_guid().ok()
+                        == Some(u64::from(fields.get(6)) | (u64::from(fields.get(7)) << 32))
+            })
     }
 
     fn require_entity(&self, guid: u64) -> Result<EntityId, WorldStateError> {

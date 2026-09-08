@@ -47,6 +47,7 @@ pub use protocol::{GameObjectQueryPacketError, GameObjectQueryResponse, GameObje
 pub use protocol::{WorldClientControlUpdate, WorldPlayerControlPacketError};
 pub use protocol::{WorldEnvironmentalDamage, WorldEnvironmentalDamagePacketError};
 pub use protocol::{WorldMirrorTimerPacketError, WorldMirrorTimerUpdate};
+pub use protocol::{WorldPlayerCorpsePacketError, WorldPlayerCorpseUpdate};
 pub use protocol::{
     WorldPlayerName, WorldPlayerNamePacketError, WorldPlayerNameResponse, WorldPlayerNameResult,
 };

@@ -16,7 +16,7 @@ pub struct UiPlayerResurrectionOffer {
 }
 
 /// BD0828 corpse GUID and the independent BD0850 recovery deadline.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiPlayerCorpseState {
     /// Last resident non-bones corpse owned by the local player.
     pub guid: u64,
@@ -25,6 +25,17 @@ pub struct UiPlayerCorpseState {
     /// Current native range latch, used when restarting the deadline.
     pub in_range: bool,
     deadline_ms: u32,
+}
+
+impl Default for UiPlayerCorpseState {
+    fn default() -> Self {
+        Self {
+            guid: 0,
+            maps: (u32::MAX, u32::MAX),
+            in_range: false,
+            deadline_ms: 0,
+        }
+    }
 }
 
 impl UiPlayerCorpseState {

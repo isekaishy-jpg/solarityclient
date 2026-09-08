@@ -55,6 +55,16 @@ impl WorldServerPacket {
     {
         super::WorldPlayerResurrection::decode(self.opcode, &self.payload)
     }
+
+    /// Decodes corpse query locations and absent-transport poses.
+    ///
+    /// # Errors
+    /// Returns an error when a required field is truncated.
+    pub fn player_corpse(
+        &self,
+    ) -> Result<Option<super::WorldPlayerCorpseUpdate>, super::WorldPlayerCorpsePacketError> {
+        super::WorldPlayerCorpseUpdate::decode(self.opcode, &self.payload)
+    }
     /// Decodes authoritative full/delta aura slot updates.
     ///
     /// # Errors

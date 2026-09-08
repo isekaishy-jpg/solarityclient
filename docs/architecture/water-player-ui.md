@@ -227,6 +227,8 @@ after native timer initialization and before the death combat record.
 [Resurrection offers](player-resurrection-offers.md) now retain their flags and
 source GUID, resolve missing source names, run the independent recovery clock,
 and send the original accept/decline packets. The full stock dialogs cover
-countdowns and decline's charm/summon query. Corpse identity/range and other
-cursor-mode side effects remain in the life-system audit. Lighting and sky
-remain the final water-slice work.
+countdowns and decline's charm/summon query. [Corpse recovery](player-corpse-recovery.md)
+now owns the resident GUID, location queries, transport fallback, range events
+and stock reclaim dialog. Map-marker presentation and other cursor-mode side
+effects remain in the life-system audit. Lighting and sky remain the final
+water-slice work.

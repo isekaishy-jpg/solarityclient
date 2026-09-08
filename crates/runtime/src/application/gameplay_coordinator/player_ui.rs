@@ -62,6 +62,10 @@ pub(in crate::application) enum RuntimePlayerUiNotification {
         name: Option<String>,
     },
     CorpseRecovery(solarity_ui::UiPlayerCorpseState),
+    CorpseLocation {
+        corpse: solarity_ui::UiPlayerCorpseState,
+        event: Option<&'static str>,
+    },
     DeathAction(solarity_ui::UiPlayerDeathAction),
     PlayerAuras,
     Attack(bool),
@@ -99,6 +103,7 @@ impl RuntimePlayerResurrectionSnapshot {
         world: &solarity_ui::UiWorldState,
         spells: &solarity_asset::SpellNameCatalog,
     ) {
+        world.set_player_flags(self.flags);
         let mut state = world.resurrection_state();
         state.controlling = self.controlling;
         state.out_of_bounds = self.flags & 0x4000 != 0;
@@ -130,7 +135,8 @@ pub(in crate::application) struct RuntimePlayerUiState {
     release_timer: solarity_ui::UiPlayerReleaseTimer,
     resurrection: RuntimePlayerResurrectionSnapshot,
     offer: solarity_ui::UiPlayerResurrectionOffer,
-    corpse: solarity_ui::UiPlayerCorpseState,
+    pub(super) corpse: super::player_corpse::RuntimePlayerCorpse,
+    pub(super) arena: bool,
     combat_clock: RuntimeCombatLogClock,
     impacts: VecDeque<RuntimeEnvironmentalDamageSnapshot>,
     pending: VecDeque<RuntimePlayerUiNotification>,
@@ -143,6 +149,7 @@ impl RuntimePlayerUiState {
         update: solarity_network::WorldPlayerResurrection,
         now_ms: u32,
     ) {
+        self.refresh_corpse_guid(world);
         match update {
             solarity_network::WorldPlayerResurrection::Offer {
                 guid,
@@ -170,9 +177,9 @@ impl RuntimePlayerUiState {
                     });
             }
             solarity_network::WorldPlayerResurrection::RecoveryDelay(delay) => {
-                self.corpse.set_delay(delay, now_ms);
+                self.corpse.ui.set_delay(delay, now_ms);
                 self.pending
-                    .push_back(RuntimePlayerUiNotification::CorpseRecovery(self.corpse));
+                    .push_back(RuntimePlayerUiNotification::CorpseRecovery(self.corpse.ui));
             }
         }
     }
@@ -181,7 +188,51 @@ impl RuntimePlayerUiState {
         self.offer
     }
     pub(in crate::application) fn corpse(&self) -> solarity_ui::UiPlayerCorpseState {
-        self.corpse
+        self.corpse.ui
+    }
+
+    pub(super) fn corpse_world_entry(&mut self, world: &solarity_ecs::ActiveWorld) {
+        let ghost = RuntimePlayerHealthSnapshot::from_world(world).is_some_and(|v| v.ghost);
+        let event = self.corpse.clear(ghost, self.arena);
+        self.publish_corpse(event);
+    }
+
+    pub(in crate::application) fn receive_corpse(
+        &mut self,
+        world: &solarity_ecs::ActiveWorld,
+        update: solarity_network::WorldPlayerCorpseUpdate,
+    ) {
+        let event = self
+            .corpse
+            .receive(world, update, self.arena, super::player_corpse::seconds());
+        self.corpse.ui.guid = world.local_corpse_guid();
+        self.publish_corpse(event);
+    }
+
+    pub(in crate::application) fn advance_corpse(&mut self, world: &solarity_ecs::ActiveWorld) {
+        let before = self.corpse.ui;
+        let event = self
+            .corpse
+            .advance(world, self.arena, super::player_corpse::seconds());
+        if before != self.corpse.ui || event.is_some() {
+            self.publish_corpse(event);
+        }
+    }
+
+    fn publish_corpse(&mut self, event: Option<&'static str>) {
+        self.pending
+            .push_back(RuntimePlayerUiNotification::CorpseLocation {
+                corpse: self.corpse.ui,
+                event,
+            });
+    }
+
+    fn refresh_corpse_guid(&mut self, world: &solarity_ecs::ActiveWorld) {
+        let guid = world.local_corpse_guid();
+        if self.corpse.ui.guid != guid {
+            self.corpse.ui.guid = guid;
+            self.publish_corpse(None);
+        }
     }
 
     pub(in crate::application) fn receive_player_name(
@@ -260,7 +311,7 @@ impl RuntimePlayerUiState {
         };
         let snapshot = RuntimePlayerResurrectionSnapshot {
             controlling: (6..10).any(|index| fields.get(index) != 0),
-            flags: fields.get(150) & 0x4000,
+            flags: fields.get(150),
             spell: fields.get(1199),
             blocked: self.spells.as_ref().is_some_and(|spells| {
                 world
@@ -311,6 +362,7 @@ impl RuntimePlayerUiState {
         creatures: Option<&super::creature_cache::CreatureTemplateCache>,
         factions: Option<&solarity_asset::CharacterFactionCatalog>,
     ) {
+        self.refresh_corpse_guid(world);
         let local = world.local_player_guid().ok() == Some(identity.guid());
         let entered_death = matches!(notification,
             crate::application::gameplay_session::UnitFieldNotification::Health { previous }
@@ -394,6 +446,12 @@ impl RuntimePlayerUiState {
                         unghost: previous & 0x10 != 0 && !snapshot.ghost,
                     },
                 );
+                if (previous & 0x10 != 0) != snapshot.ghost {
+                    // 6E0FD0 dispatches flags, then 6DF710 emits unghost (when
+                    // needed) before clearing the location through 524A30.
+                    let event = self.corpse.clear(snapshot.ghost, self.arena);
+                    self.publish_corpse(event);
+                }
             }
         }
     }
@@ -503,6 +561,7 @@ impl RuntimePlayerUiState {
     /// Publish the polled image without inventing a native field callback.
     /// A later raw block may have overwritten the packet's watched old mirror.
     pub(in crate::application) fn refresh_health(&mut self, world: &solarity_ecs::ActiveWorld) {
+        self.refresh_corpse_guid(world);
         self.refresh_resurrection(world);
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
@@ -541,7 +600,9 @@ impl RuntimePlayerUiState {
     }
     pub(in crate::application) fn clear_for_world_leave(&mut self) {
         self.offer = solarity_ui::UiPlayerResurrectionOffer::default();
-        self.corpse = solarity_ui::UiPlayerCorpseState::default();
+        // Corpse position, recovery deadline and absent-transport clock belong
+        // to retained UI globals. 524A30 clears the location on the next entry;
+        // 52A980 resets recovery only when the whole FrameXML owner is created.
         self.resurrection = RuntimePlayerResurrectionSnapshot::default();
         self.in_combat = false;
         self.health = None;

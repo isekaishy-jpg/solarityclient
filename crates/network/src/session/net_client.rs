@@ -420,6 +420,26 @@ where
             .await
     }
 
+    /// Queries the corpse's original/display maps and position (524A30).
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_corpse_query(&mut self) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x216, &[]).await
+    }
+
+    /// Queries an absent corpse transport's pose using its low counter.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_corpse_transport_query(
+        &mut self,
+        counter: u32,
+    ) -> Result<(), WorldSessionError> {
+        self.send_local_movement_auxiliary(0x4b6, &counter.to_le_bytes())
+            .await
+    }
+
     /// Acknowledges one zero-based tutorial (`CMSG_TUTORIAL_FLAG`).
     ///
     /// # Errors

@@ -54,6 +54,27 @@ pub(crate) fn register_globals(
     environment: &crate::UiScriptEnvironment,
 ) -> mlua::Result<()> {
     super::player_resurrection::register_globals(lua, globals, environment)?;
+    for (name, mask) in [("ShowingHelm", 0x400), ("ShowingCloak", 0x800)] {
+        let world = environment.world_state();
+        globals.raw_set(
+            name,
+            lua.create_function(move |_, ()| {
+                Ok((world.player().is_some() && world.player_flags() & mask == 0).then_some(1))
+            })?,
+        )?;
+    }
+    for (name, mask) in [("UnitIsAFK", 2), ("UnitIsDND", 4)] {
+        let world = environment.world_state();
+        globals.raw_set(
+            name,
+            lua.create_function(move |_, unit: String| {
+                Ok((unit.eq_ignore_ascii_case("player")
+                    && world.player().is_some()
+                    && world.player_flags() & mask != 0)
+                    .then_some(1))
+            })?,
+        )?;
+    }
     let world = environment.world_state();
     globals.raw_set(
         "UnitIsControlling",

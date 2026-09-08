@@ -50,6 +50,8 @@ fn events(state: &mut RuntimePlayerUiState) -> Vec<&'static str> {
                     events.push("maximum");
                 }
             }
+            RuntimePlayerUiNotification::CorpseLocation { event: None, .. }
+            | RuntimePlayerUiNotification::Resurrection(_) => {}
             _ => panic!("unexpected life fixture notification"),
         }
     }
@@ -355,6 +357,11 @@ fn player_life_lua_observes_timer_and_final_ghost_before_each_event() -> Result<
                 health_changed,
                 maximum_changed,
             )?,
+            RuntimePlayerUiNotification::CorpseLocation {
+                corpse,
+                event: None,
+            } => ui.set_corpse_state(corpse),
+            RuntimePlayerUiNotification::Resurrection(_) => {}
             _ => panic!("life event"),
         }
     }

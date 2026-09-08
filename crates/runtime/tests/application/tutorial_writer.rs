@@ -76,5 +76,23 @@ fn water_tutorial_acknowledgements_retain_order_under_backpressure() -> Result<(
         writer.try_recv().is_err(),
         "duplicate callbacks share one query"
     );
+    let queries = [
+        super::player_corpse::CorpseQuery::Location,
+        super::player_corpse::CorpseQuery::Transport(9),
+    ];
+    gameplay.player_ui.corpse.queries.extend(queries);
+    gameplay.send_corpse_queries()?;
+    assert_eq!(gameplay.player_ui.corpse.queries.front(), Some(&queries[1]));
+    gameplay.send_corpse_queries()?;
+    assert_eq!(
+        writer.try_recv()?,
+        WorldWriterCommand::CorpseQuery(queries[0])
+    );
+    gameplay.send_corpse_queries()?;
+    assert!(gameplay.player_ui.corpse.queries.is_empty());
+    assert_eq!(
+        writer.try_recv()?,
+        WorldWriterCommand::CorpseQuery(queries[1])
+    );
     Ok(())
 }

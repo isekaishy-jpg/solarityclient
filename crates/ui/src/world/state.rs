@@ -607,6 +607,7 @@ struct UiWorldStateInner {
     resurrection: RefCell<super::UiPlayerResurrectionState>,
     resurrection_offer: Cell<super::UiPlayerResurrectionOffer>,
     corpse: Cell<super::UiPlayerCorpseState>,
+    player_flags: Cell<u32>,
     death_actions: RefCell<std::collections::VecDeque<super::UiPlayerDeathAction>>,
     falling: Cell<bool>,
     cinematic: Cell<bool>,
@@ -701,6 +702,17 @@ impl UiWorldState {
     #[must_use]
     pub fn corpse_state(&self) -> super::UiPlayerCorpseState {
         self.inner.corpse.get()
+    }
+
+    /// Publishes PLAYER_FLAGS before the associated native flags event.
+    pub fn set_player_flags(&self, flags: u32) {
+        self.inner.player_flags.set(flags);
+    }
+
+    /// Returns the replicated local PLAYER_FLAGS word.
+    #[must_use]
+    pub fn player_flags(&self) -> u32 {
+        self.inner.player_flags.get()
     }
 
     pub(crate) fn respond_to_resurrection(&self, accept: bool) {
@@ -908,6 +920,7 @@ impl UiWorldState {
             .resurrection_offer
             .set(super::UiPlayerResurrectionOffer::default());
         self.inner.corpse.set(super::UiPlayerCorpseState::default());
+        self.inner.player_flags.set(0);
         self.inner.death_actions.borrow_mut().clear();
         self.inner.cinematic.set(false);
         self.inner.falling.set(false);

@@ -34,6 +34,14 @@ impl RuntimeWorldUi {
         notification: crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification,
     ) -> Result<(), ApplicationError> {
         match notification {
+            crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                self.world.set_corpse_state(corpse);
+                if let Some(event) = event {
+                    self.dirty = true;
+                    self.manager.dispatch_event(event, &UiEventPayload::empty())?;
+                }
+                Ok(())
+            }
             crate::application::gameplay_coordinator::player_ui::RuntimePlayerUiNotification::ResurrectionOffer { offer, name } => {
                 self.world.set_resurrection_offer(offer);
                 if let Some(name) = name {

@@ -240,6 +240,12 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
                         )?;
                     }
                 }
+                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                    world.set_corpse_state(corpse);
+                    if let Some(event) = event {
+                        manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
+                    }
+                }
                 RuntimePlayerUiNotification::CorpseRecovery(corpse) => {
                     world.set_corpse_state(corpse);
                     if let Some(event) = corpse.range_event() {
@@ -439,6 +445,12 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         );
         while let Some(notification) = state.take_notification() {
             match notification {
+                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                    world.set_corpse_state(corpse);
+                    if let Some(event) = event {
+                        manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
+                    }
+                }
                 RuntimePlayerUiNotification::CorpseRecovery(corpse) => {
                     world.set_corpse_state(corpse)
                 }
@@ -509,6 +521,138 @@ fn stock_water_tutorial_opens_completes_and_queues_related_prompts()
         Some(true),
         "decline restores the original death dialog"
     );
+    let publish = |state: &mut RuntimePlayerUiState,
+                   manager: &mut FrameManager|
+     -> Result<(), Box<dyn std::error::Error>> {
+        while let Some(notification) = state.take_notification() {
+            match notification {
+                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                    world.set_corpse_state(corpse);
+                    if let Some(event) = event {
+                        manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
+                    }
+                }
+                RuntimePlayerUiNotification::CorpseRecovery(corpse) => {
+                    world.set_corpse_state(corpse);
+                    if let Some(event) = corpse.range_event() {
+                        manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?;
+                    }
+                }
+                RuntimePlayerUiNotification::Life {
+                    snapshot,
+                    event,
+                    release_timer,
+                } => super::dispatch_life(manager, &world, snapshot, event, release_timer)?,
+                RuntimePlayerUiNotification::Health {
+                    snapshot,
+                    health_changed,
+                    maximum_changed,
+                } => super::dispatch_health(
+                    manager,
+                    &world,
+                    snapshot,
+                    health_changed,
+                    maximum_changed,
+                )?,
+                RuntimePlayerUiNotification::Resurrection(snapshot) => {
+                    snapshot.publish(&world, &spell_names)
+                }
+                _ => return Err("corpse notification".into()),
+            }
+        }
+        Ok(())
+    };
+    let fields = [(24, 100), (150, 16), (1199, 0)];
+    active.update_fields(1, fields)?;
+    solarity_systems::project_object_fields(&mut active, 1, fields)?;
+    state.receive_unit_field(
+        &active,
+        active.object_identity(1).ok_or("player")?,
+        crate::application::gameplay_session::UnitFieldNotification::Health { previous: 0 },
+        20_000,
+    );
+    state.receive_unit_field(
+        &active,
+        active.object_identity(1).ok_or("player")?,
+        crate::application::gameplay_session::UnitFieldNotification::PlayerFlags { previous: 0 },
+        20_000,
+    );
+    publish(&mut state, &mut manager)?;
+    assert_eq!(manager.region_is_shown("StaticPopup2"), Some(false));
+    active.create_object(
+        0x0000f10100000009,
+        solarity_ecs::ObjectKind::Corpse,
+        None,
+        [(6, 1), (33, 0)],
+    )?;
+    STOCK_NOW.set(20_000);
+    state.receive_resurrection(
+        &active,
+        solarity_network::WorldPlayerResurrection::RecoveryDelay(2000),
+        20_000,
+    );
+    let position = active.local_player_transform()?.position();
+    state.receive_corpse(
+        &active,
+        solarity_network::WorldPlayerCorpseUpdate::Location {
+            map: 0,
+            position: position.to_array(),
+            display_map: 0,
+            transport: 0,
+        },
+    );
+    state.advance_corpse(&active);
+    publish(&mut state, &mut manager)?;
+    manager.update(0.1)?;
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(true));
+    click_button(&mut manager, "StaticPopup1Button1")?;
+    assert!(
+        world.pending_death_action().is_none(),
+        "corpse countdown disables reclaim"
+    );
+    STOCK_NOW.set(22_001);
+    manager.update(2.001)?;
+    click_button(&mut manager, "StaticPopup1Button1")?;
+    assert_eq!(
+        world.pending_death_action(),
+        Some(solarity_ui::UiPlayerDeathAction::ReclaimCorpse {
+            guid: 0x0000f10100000009
+        })
+    );
+    world.accept_death_action();
+    assert_eq!(
+        manager.region_is_shown("StaticPopup1"),
+        Some(true),
+        "native reclaim waits for server-driven range exit"
+    );
+    active.update_transform(
+        1,
+        solarity_ecs::WorldTransform::new(position + glam::Vec3::new(41., 0., 0.), 0.),
+    )?;
+    state.advance_corpse(&active);
+    publish(&mut state, &mut manager)?;
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(false));
+    state.receive_corpse(
+        &active,
+        solarity_network::WorldPlayerCorpseUpdate::Location {
+            map: 0,
+            position: active.local_player_transform()?.position().to_array(),
+            display_map: 1,
+            transport: 0,
+        },
+    );
+    state.advance_corpse(&active);
+    publish(&mut state, &mut manager)?;
+    manager.update(0.1)?;
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(true));
+    assert_eq!(
+        manager.region_is_shown("StaticPopup1Button1"),
+        Some(false),
+        "instance corpse prompt has no reclaim button"
+    );
+    state.receive_corpse(&active, solarity_network::WorldPlayerCorpseUpdate::Missing);
+    publish(&mut state, &mut manager)?;
+    assert_eq!(manager.region_is_shown("StaticPopup1"), Some(false));
     assert_eq!(manager.take_callback_failure(), None);
     Ok(())
 }
@@ -572,6 +716,10 @@ RuntimePlayerUiNotification::UnitDeath(snapshot) => super::super::environmental_
                 RuntimePlayerUiNotification::ResurrectionOffer { offer, name } => {
                     world.set_resurrection_offer(offer);
                     if let Some(name) = name { manager.dispatch_event("RESURRECT_REQUEST", &solarity_ui::UiEventPayload::new([solarity_ui::UiEventArgument::String(name)]))?; }
+                }
+                RuntimePlayerUiNotification::CorpseLocation { corpse, event } => {
+                    world.set_corpse_state(corpse);
+                    if let Some(event) = event { manager.dispatch_event(event, &solarity_ui::UiEventPayload::empty())?; }
                 }
                 RuntimePlayerUiNotification::CorpseRecovery(corpse) => {
                     world.set_corpse_state(corpse);

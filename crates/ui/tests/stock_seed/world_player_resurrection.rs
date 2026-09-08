@@ -6,6 +6,36 @@ fn now() -> u32 {
 }
 
 #[test]
+fn equipment_queries_on_player_flags_match_native_lua() -> Result<(), Box<dyn std::error::Error>> {
+    let lua = mlua::Lua::new();
+    let environment = crate::UiScriptEnvironment::new(800, 600, false)?;
+    super::super::player_release::register_globals(&lua, &lua.globals(), &environment)?;
+    let world = environment.world_state();
+    let mut count = 0;
+    for line in include_str!("../../../runtime/tests/fixtures/player_corpse_native.txt")
+        .lines()
+        .filter(|l| l.starts_with("display "))
+    {
+        let row = line.split_ascii_whitespace().collect::<Vec<_>>();
+        world.leave_world();
+        if row[1] == "1" {
+            world.enter_player(crate::UiPlayerState::new(0));
+        }
+        world.set_player_flags(u32::from_str_radix(row[2], 16)?);
+        let query = lua.globals().get::<mlua::Function>(row[3])?;
+        let value = if row[3].starts_with("Unit") {
+            query.call::<Option<u32>>("player")?
+        } else {
+            query.call::<Option<u32>>(())?
+        };
+        assert_eq!(value, (row[4] == "1").then_some(1), "{line}");
+        count += 1;
+    }
+    assert_eq!(count, 72);
+    Ok(())
+}
+
+#[test]
 fn resurrection_actions_flags_and_recovery_match_original_lua()
 -> Result<(), Box<dyn std::error::Error>> {
     let lua = mlua::Lua::new();

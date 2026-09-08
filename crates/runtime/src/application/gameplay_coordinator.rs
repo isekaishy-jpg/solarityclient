@@ -3,6 +3,7 @@
 mod creature_cache;
 pub(in crate::application) mod environmental_damage;
 mod game_object_cache;
+mod player_corpse;
 mod player_names;
 #[cfg(test)]
 #[path = "../../tests/application/player_resurrection_offer.rs"]
@@ -141,6 +142,9 @@ pub enum RuntimeGameplayError {
     /// A resurrection offer or recovery deadline was malformed.
     #[error(transparent)]
     Resurrection(#[from] solarity_network::WorldPlayerResurrectionPacketError),
+    /// A corpse location or transport response was malformed.
+    #[error(transparent)]
+    PlayerCorpse(#[from] solarity_network::WorldPlayerCorpsePacketError),
     /// A deferred source-name response was malformed.
     #[error(transparent)]
     PlayerName(#[from] solarity_network::WorldPlayerNamePacketError),
@@ -565,6 +569,39 @@ impl RuntimeGameplayCoordinator {
         Ok(())
     }
 
+    pub(in crate::application) fn corpse_world_entry(&mut self) {
+        if let Some(world) = self.world.as_ref() {
+            self.player_ui.corpse_world_entry(world);
+        }
+    }
+
+    pub(in crate::application) fn advance_corpse(&mut self) {
+        if let Some(world) = self.world.as_ref() {
+            self.player_ui.advance_corpse(world);
+        }
+    }
+
+    pub(in crate::application) fn send_corpse_queries(
+        &mut self,
+    ) -> Result<(), RuntimeGameplayError> {
+        let Some(active) = self.active.as_ref() else {
+            return Ok(());
+        };
+        while let Some(&query) = self.player_ui.corpse.queries.front() {
+            match active
+                .commands
+                .try_send(WorldWriterCommand::CorpseQuery(query))
+            {
+                Ok(()) => {
+                    self.player_ui.corpse.queries.pop_front();
+                }
+                Err(TrySendError::Full(_)) => break,
+                Err(TrySendError::Closed(_)) => return Err(RuntimeGameplayError::TaskEnded),
+            }
+        }
+        Ok(())
+    }
+
     pub(in crate::application) fn unit_template_flags(
         &self,
         identity: solarity_ecs::WorldObjectIdentity,
@@ -620,6 +657,7 @@ impl RuntimeGameplayCoordinator {
         // World-state fields live in the session-global BE8F58 hash, outside
         // the object manager replaced during a map transfer.
         if let Some(source) = self.world.as_mut() {
+            destination.inherit_removed_corpse_guid(source);
             *destination.world_state_values_mut() = std::mem::take(source.world_state_values_mut());
         }
         self.world = Some(destination);
@@ -1032,6 +1070,10 @@ where
                         writer.send_creature_query(entry, guid).await?;
                     }
                     WorldWriterCommand::PlayerNameQuery(guid) => writer.send_player_name_query(guid).await?,
+                    WorldWriterCommand::CorpseQuery(query) => match query {
+                        player_corpse::CorpseQuery::Location => writer.send_corpse_query().await?,
+                        player_corpse::CorpseQuery::Transport(counter) => writer.send_corpse_transport_query(counter).await?,
+                    },
                     WorldWriterCommand::AreaTrigger { heartbeat, trigger_id } => {
                         writer.send_movement(&heartbeat).await?;
                         writer.send_area_trigger(trigger_id).await?;
@@ -1063,6 +1105,7 @@ enum WorldWriterCommand {
     Tutorial(solarity_ui::UiTutorialAction),
     PlayerDeath(solarity_ui::UiPlayerDeathAction),
     PlayerNameQuery(u64),
+    CorpseQuery(player_corpse::CorpseQuery),
     ActiveMover(u64),
     GameObjectQuery {
         entry: u32,
@@ -1262,6 +1305,10 @@ fn apply_state_packet(
     packet: &WorldServerPacket,
     player_ui: &mut player_ui::RuntimePlayerUiState,
 ) -> Result<bool, RuntimeGameplayError> {
+    if let Some(update) = packet.player_corpse()? {
+        player_ui.receive_corpse(world, update);
+        return Ok(true);
+    }
     if let Some(update) = packet.player_resurrection()? {
         player_ui.receive_resurrection(world, update, crate::platform::client_milliseconds());
         return Ok(true);

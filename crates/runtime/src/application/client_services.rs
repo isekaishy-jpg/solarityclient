@@ -2623,6 +2623,9 @@ impl ClientServices {
         }
         self.service_terrain_streaming()?;
         profile.mark("terrain streaming");
+        self.gameplay.advance_corpse();
+        self.gameplay.send_corpse_queries()?;
+        self.publish_player_ui_notifications()?;
         self.synchronize_world_ui_zone()?;
         self.complete_world_transfer_map()?;
         if self.player.resident_frame_input().is_some()
@@ -2631,13 +2634,16 @@ impl ClientServices {
             && self.game_objects.is_ready()
             && self.world_ui.is_some()
             && self.world_transfer.complete_player()
-            && let (Some(ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world())
         {
-            ui.enter_replacement_world(
-                &self.character_metadata,
-                active,
-                self.gameplay.player_ui(),
-            )?;
+            if let (Some(ui), Some(active)) = (self.world_ui.as_mut(), self.gameplay.world()) {
+                ui.enter_replacement_world(
+                    &self.character_metadata,
+                    active,
+                    self.gameplay.player_ui(),
+                )?;
+            }
+            self.gameplay.corpse_world_entry();
+            self.publish_player_ui_notifications()?;
         }
         if self.loading_screen.is_some()
             && let (Some(ui), Some(terrain), Some(player)) = (
@@ -2758,6 +2764,8 @@ impl ClientServices {
         self.gameplay
             .player_ui_mut()
             .discard_published_notifications();
+        self.gameplay.corpse_world_entry();
+        self.publish_player_ui_notifications()?;
         self.publish_ui_modifier_keys();
         Ok(())
     }
