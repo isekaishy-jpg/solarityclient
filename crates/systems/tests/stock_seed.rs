@@ -85,6 +85,8 @@ mod talent;
 mod vehicle;
 #[path = "stock_seed/world.rs"]
 mod world;
+#[path = "stock_seed/world_model_fog.rs"]
+mod world_model_fog;
 #[path = "stock_seed/world_model_registration.rs"]
 mod world_model_registration;
 

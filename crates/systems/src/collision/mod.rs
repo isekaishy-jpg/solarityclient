@@ -9,6 +9,7 @@ mod terrain;
 mod world_model;
 mod world_model_camera;
 mod world_model_floor;
+mod world_model_fog;
 mod world_model_liquid;
 mod world_model_portal;
 mod world_model_registration;
@@ -36,6 +37,7 @@ pub use world_model::{
 };
 pub use world_model_camera::{WorldModelCameraRegistration, WorldModelCameraRegistrationQuery};
 pub use world_model_floor::{WorldModelFloorHit, WorldModelFloorHits};
+pub use world_model_fog::WorldModelFogEnvironment;
 pub use world_model_liquid::{
     PlacedWorldModelLiquid, WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene,
 };

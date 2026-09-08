@@ -74,7 +74,8 @@ pub use world::MinimapTextureCatalog;
 pub use world_model::{
     DecodedWorldModel, DecodedWorldModelGroup, WorldModelBatch, WorldModelBatchClass,
     WorldModelBlendMode, WorldModelBspNode, WorldModelDoodad, WorldModelDoodadSet,
-    WorldModelDoodadSetError, WorldModelGroupInfo, WorldModelLiquid, WorldModelLiquidVertex,
-    WorldModelMaterial, WorldModelPolygon, WorldModelPortal, WorldModelPortalReference,
-    WorldModelShader,
+    WorldModelDoodadSetError, WorldModelFog, WorldModelFogBank, WorldModelFogPalette,
+    WorldModelGroupInfo, WorldModelLiquid, WorldModelLiquidVertex, WorldModelMaterial,
+    WorldModelPolygon, WorldModelPortal, WorldModelPortalReference, WorldModelShader,
+    sample_world_model_fog,
 };

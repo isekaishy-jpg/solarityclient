@@ -335,7 +335,7 @@ def registration_probe(uc,model,segment,maximum,secondary,point,mogi,mogp,transf
         write_words(uc, placed + 4, 1)
         invoke(uc, 0x7d59b0, [segment, segment + 12, struct.unpack('<I',struct.pack('<f',maximum))[0], primary, fallback])
         owner = read_words(uc,primary,1)[0]
-        return [int(owner != 0), read_words(uc,fallback,1)[0] if owner else 0xffffffff]
+        return [int(owner != 0), *(read_words(uc, fallback, 2) if owner else [0xffffffff, 0xffffffff])]
     write_floats(uc,containment,point)
     for output,limit in ((primary,maximum),(fallback,secondary)):
         for bank in (0,1):

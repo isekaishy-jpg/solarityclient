@@ -301,9 +301,9 @@ impl ClientServices {
         let camera = self
             .resolved_world_camera()?
             .ok_or(WorldBenchmarkError::State("missing camera"))?;
-        let underwater = self
+        let (underwater, indoor_fog) = self
             .terrain
-            .camera_submerged_liquid(camera.camera().position(), &self.liquids)
+            .camera_environment(camera.camera().position(), &self.liquids)
             .map_err(super::super::sound_coordinator::RuntimeSoundError::from)
             .map_err(ApplicationError::from)?;
         let camera_duration = start.elapsed();
@@ -324,7 +324,8 @@ impl ClientServices {
         let environment = self
             .environment
             .resolve_liquid(environment, underwater, &self.liquids)
-            .map_err(ApplicationError::from)?;
+            .map_err(ApplicationError::from)?
+            .with_world_model_fog(indoor_fog);
         let ui = self
             .world_ui
             .as_ref()

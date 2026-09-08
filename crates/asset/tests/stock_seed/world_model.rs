@@ -340,6 +340,16 @@ fn world_model_decodes_stock_presentation_tables() -> Result<(), Box<dyn Error>>
     assert_eq!(group.portal_reference_count(), 2);
     assert_eq!(group.batch_counts(), [1, 0, 0, 7]);
     assert_eq!(group.fog_ids(), [1, 2, 3, 4]);
+    assert_eq!(model.fogs().len(), 5);
+    for (index, fog) in model.fogs().iter().enumerate() {
+        assert_eq!(fog.flags(), 0x100 + index as u32);
+        assert_eq!(fog.position().to_array(), [index as f32, 2., 3.]);
+        assert_eq!(fog.radii(), (4., 5.));
+        assert_eq!(fog.banks()[0].range(), (100. + index as f32, 0.25));
+        assert_eq!(fog.banks()[0].packed_color(), 0xff12_3456);
+        assert_eq!(fog.banks()[1].range(), (50. + index as f32, 0.5));
+        assert_eq!(fog.banks()[1].packed_color(), 0xffab_cdef);
+    }
     assert_eq!(group.area_table_id(), 42);
     assert_eq!(group.normals(), &[[0.0, 0.0, 1.0]; 3]);
     assert_eq!(group.texture_coordinates().len(), 2);
@@ -511,6 +521,48 @@ fn world_model_rejects_unknown_root_chunks() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn world_model_rejects_invalid_fog_records_and_group_indices() -> Result<(), Box<dyn Error>> {
+    for (size, nonfinite, group_id, expected) in [
+        (47, false, 0, "MFOG requires complete 48-byte records"),
+        (48, true, 0, "MFOG contains a nonfinite scalar"),
+        (48, false, 1, "MOGP fog index exceeds the MFOG table"),
+    ] {
+        let mut root = root_fixture(1);
+        let mut fog = vec![0; size];
+        if nonfinite {
+            set_u32(&mut fog, 36, f32::NAN.to_bits());
+        }
+        push_chunk(&mut root, *b"GOFM", &fog);
+        let mut group = group_fixture(0x08);
+        group[20 + 48] = group_id;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Fog.wmo",
+                bytes: &root,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World\\Fog_000.wmo",
+                bytes: &group,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let error = DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Fog.wmo")?)
+            .err()
+            .ok_or("invalid fog accepted")?;
+        assert!(
+            error.to_string().contains(expected),
+            "{error}: expected {expected}"
+        );
+    }
+    Ok(())
+}
+
 fn root_fixture(group_count: u32) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
@@ -572,6 +624,26 @@ fn presentation_root_fixture() -> Vec<u8> {
     set_u32(&mut group, 28, u32::MAX);
     push_chunk(&mut bytes, *b"IGOM", &group);
     append_portals(&mut bytes, &[[0, 0, 1, 0]; 5]);
+    let mut fogs = Vec::new();
+    for index in 0..5 {
+        let mut fog = [0; 48];
+        set_u32(&mut fog, 0, 0x100 + index);
+        set_vec3(&mut fog, 4, [index as f32, 2., 3.]);
+        for (offset, value) in [
+            (16, 4f32),
+            (20, 5.),
+            (24, 100. + index as f32),
+            (28, 0.25),
+            (36, 50. + index as f32),
+            (40, 0.5),
+        ] {
+            set_u32(&mut fog, offset, value.to_bits());
+        }
+        set_u32(&mut fog, 32, 0xff12_3456);
+        set_u32(&mut fog, 44, 0xffab_cdef);
+        fogs.extend(fog);
+    }
+    push_chunk(&mut bytes, *b"GOFM", &fogs);
     bytes
 }
 

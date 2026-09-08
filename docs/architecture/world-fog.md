@@ -40,6 +40,34 @@ the end to at least 30. Mode one computes its exponent from that pair, replaces
 the end by the far clip, and clamps the absolute start to zero. The shared fog
 context implements this conversion for the spatial MFOG provider.
 
+## Camera-owned interior fog
+
+The root decoder retains both banks of every 48-byte MFOG record directly from
+the chunk. The dependency's 40-byte record reader loses the second bank and
+misaligns following records. Nonfinite records, partial records and out-of-range
+nonzero MOGP fog indices fail during asset admission.
+
+Camera registration shares one resident-root query between fog and underwater
+effects. `7D59B0` can retain a second interior group when a portal supplies the
+downward-ray hit. Liquid selection and local MFOG indices use the first group;
+both groups contribute to exterior-boundary distance. The first group's four
+fog indices pass through `7A1150`'s farthest-first heap, including duplicate
+indices and equal-distance ordering. Each overlay quantizes packed colors;
+the nearest admitted volume supplies the final flags even at partial strength.
+
+`7D77C0` searches up to four group levels, skips the immediate parent and uses
+MOGI mask `0x48` to identify exterior neighbors. Distance is measured to the
+portal polygon, including nearest edges when its plane projection falls
+outside. Only distances strictly below 25 affect the transition. MOGP mask
+`0x48` independently determines whether each camera group enables indoor fog.
+
+`7F16F0` blends from the exterior palette by `clamp(distance * float(0.04),0,1)`.
+Dry cameras use bank zero. Wet bank eligibility respects LiquidType flags
+`0x20`/`0x100` and MFOG flags `0x100`/`0x10`; eligible liquid flag `0x40` forces
+the wet bank even when indoor visibility is suppressed. The underwater exponent
+multiplier applies after this composition. Normal frames and benchmark frames
+consume the same resolved environment.
+
 ## Terrain shader
 
 Original `Shaders/Vertex/vs_2_0/Terrain.bls` uses view Z and constant `c12` to
@@ -64,3 +92,12 @@ constant-depth cases. The hidden Vulkan ADT test checks 44 corresponding
 perspective/parallel frames against those pixels, including off-axis samples,
 the fog endpoint, and exponents 1, 1.5, 2 and 7. Runtime tests cover map transfers,
 underwater entry/restoration, direct parameter overrides and depth attenuation.
+
+`world_model_fog_oracle.py` adds 288 original local-volume selections and 1,008
+complete final fog compositions. `world_model_fog_distance_oracle.py` records
+2,640 original polygon distances across rectangular, triangular, skewed and
+unnormalized planes. `world_model_fog_portal_oracle.py` adds 270 graph queries;
+the decoded-asset tests compare 810 identity, translated and scaled placements.
+The camera fixture checks both selected groups in 256 original root queries.
+Runtime coverage confirms the dry/wet banks replace scene fog while preserving
+the independently depth-darkened light palette.

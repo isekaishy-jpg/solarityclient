@@ -59,6 +59,8 @@ pub struct RuntimeWorldEnvironmentFrame {
     view_distance: WorldViewDistance,
     light: WorldLightSample,
     fog_context: WorldFogContext,
+    base_fog: WorldFogSample,
+    liquid_flags: Option<u32>,
     fog: WorldFogSample,
     light_direction: Vec3,
 }
@@ -119,6 +121,23 @@ impl RuntimeWorldEnvironmentFrame {
     #[must_use]
     pub const fn fog(self) -> WorldFogSample {
         self.fog
+    }
+
+    /// Applies camera-owned MFOG banks after the liquid palette is resolved.
+    #[must_use]
+    pub fn with_world_model_fog(
+        mut self,
+        environment: Option<solarity_systems::WorldModelFogEnvironment>,
+    ) -> Self {
+        if let Some(environment) = environment {
+            self.fog = self.fog_context.world_model_scene(
+                self.base_fog,
+                environment.palette(),
+                environment.boundary_distance(),
+                self.liquid_flags,
+            );
+        }
+        self
     }
 
     /// Returns stock's time-derived exterior sun direction.
@@ -279,6 +298,8 @@ impl RuntimeWorldEnvironment {
             light,
             fog_context,
             fog: light.final_fog(fog_context, false),
+            base_fog: light.final_fog(fog_context, false),
+            liquid_flags: None,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),
         };
         self.current = Some(current);
@@ -326,6 +347,8 @@ impl RuntimeWorldEnvironment {
         };
         // 7F3230 darkens the horizon's working color before 7F0530. The later
         // 7F16F0 scene-fog pass reads the undarkened palette color at D38BF4.
+        frame.base_fog = light.final_fog(frame.fog_context, false);
+        frame.liquid_flags = (submerged.liquid_type != 0).then_some(liquid.flags());
         frame.fog = light.final_fog(frame.fog_context, submerged.liquid_type != 0);
         frame.light = light.with_liquid_depth(liquid, submerged.depth);
         Ok(frame)

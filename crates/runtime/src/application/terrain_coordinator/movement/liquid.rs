@@ -107,8 +107,23 @@ impl RuntimeTerrainCoordinator {
         position: Vec3,
         liquids: &LiquidTypeCatalog,
     ) -> Result<Option<SubmergedLiquid>, RuntimeMovementRegistrationError> {
+        Ok(self.camera_environment(position, liquids)?.0)
+    }
+
+    /// Shares one camera registration across liquid and indoor fog providers.
+    pub(in crate::application) fn camera_environment(
+        &mut self,
+        position: Vec3,
+        liquids: &LiquidTypeCatalog,
+    ) -> Result<
+        (
+            Option<SubmergedLiquid>,
+            Option<solarity_systems::WorldModelFogEnvironment>,
+        ),
+        RuntimeMovementRegistrationError,
+    > {
         let Some(active) = self.active.as_mut() else {
-            return Ok(None);
+            return Ok((None, None));
         };
         let point = TerrainRegistrationPoint::new(position.x, position.y)?;
         let end = position - Vec3::Z * 1760.0;
@@ -132,11 +147,13 @@ impl RuntimeTerrainCoordinator {
         }
         if let Some(camera) = camera.finish() {
             let root = active.movement.roots[camera.owner];
-            return Ok(active
-                .registration_root_mut(root)?
-                .registered_submerged_liquid(camera.group, position, liquids)?);
+            let root = active.registration_root_mut(root)?;
+            return Ok((
+                root.registered_submerged_liquid(camera.group, position, liquids)?,
+                root.fog_environment(camera.group, camera.secondary_group, position)?,
+            ));
         }
-        active.general_submerged_liquid(position, liquids)
+        Ok((active.general_submerged_liquid(position, liquids)?, None))
     }
 }
 

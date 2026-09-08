@@ -21,6 +21,7 @@ pub struct DecodedWorldModel {
     doodad_sets: Vec<WorldModelDoodadSet>,
     doodads: Vec<WorldModelDoodad>,
     groups: Vec<DecodedWorldModelGroup>,
+    fogs: Vec<super::WorldModelFog>,
 }
 
 impl DecodedWorldModel {
@@ -37,6 +38,7 @@ impl DecodedWorldModel {
         doodad_sets: Vec<WorldModelDoodadSet>,
         doodads: Vec<WorldModelDoodad>,
         groups: Vec<DecodedWorldModelGroup>,
+        fogs: Vec<super::WorldModelFog>,
     ) -> Self {
         Self {
             path,
@@ -50,6 +52,7 @@ impl DecodedWorldModel {
             doodad_sets,
             doodads,
             groups,
+            fogs,
         }
     }
 
@@ -119,6 +122,12 @@ impl DecodedWorldModel {
     #[must_use]
     pub fn convex_volume_planes(&self) -> &[[f32; 4]] {
         &self.spatial.convex_volume_planes
+    }
+
+    /// Returns exact MFOG volumes, including both 12-byte fog banks.
+    #[must_use]
+    pub fn fogs(&self) -> &[super::WorldModelFog] {
+        &self.fogs
     }
 
     /// Returns every MOMT material in authored table order.

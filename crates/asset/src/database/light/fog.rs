@@ -12,6 +12,65 @@ pub struct WorldFogContext {
 }
 
 impl WorldFogContext {
+    /// Applies 7F16F0's MFOG bank eligibility, portal blend, and liquid exponent.
+    /// `base` is camera-clamped scene fog before its camera-liquid multiplier.
+    /// `boundary_distance` is absent when no registered group admits indoor fog.
+    #[must_use]
+    pub fn world_model_scene(
+        self,
+        mut base: WorldFogSample,
+        palette: crate::WorldModelFogPalette,
+        boundary_distance: Option<f32>,
+        liquid_flags: Option<u32>,
+    ) -> WorldFogSample {
+        let wet_eligible = liquid_flags.is_some_and(|flags| {
+            (flags & 0x20 == 0 || palette.flags() & 0x100 != 0)
+                && (flags & 0x100 == 0 || palette.flags() & 0x10 != 0)
+        });
+        let target = if liquid_flags.is_none() || wet_eligible {
+            let bank = palette.banks()[usize::from(wet_eligible)];
+            self.world_model(bank.range().0, bank.range().1, bank.color())
+        } else {
+            base
+        };
+        if wet_eligible && liquid_flags.is_some_and(|flags| flags & 0x40 != 0) {
+            base = target;
+        }
+        if let Some(distance) = boundary_distance {
+            // Native retains this product on x87 for the three float blends and
+            // only stores the alpha product immediately before integer packing.
+            let weight = (f64::from(distance) * f64::from(0.04_f32)).clamp(0., 1.);
+            let blend =
+                |a: f32, b: f32| ((f64::from(b) - f64::from(a)) * weight + f64::from(a)) as f32;
+            base.start = blend(base.start, target.start);
+            base.end = blend(base.end, target.end);
+            base.exponent = blend(base.exponent, target.exponent);
+            let pack = |color: Vec3| {
+                let c = color
+                    .to_array()
+                    .map(|c| (f64::from(c) * 255.).round_ties_even() as u32);
+                0xff00_0000 | c[0] << 16 | c[1] << 8 | c[2]
+            };
+            let alpha = ((weight * 255.) as f32).round_ties_even() as i32 & 255;
+            let from = pack(base.color);
+            let to = pack(target.color);
+            let channel = |shift| {
+                let a = ((from >> shift) & 255_u32) as i32;
+                let b = ((to >> shift) & 255_u32) as i32;
+                if alpha == 255 {
+                    b as f32
+                } else {
+                    (a + (((b - a) * alpha) >> 8)) as f32
+                }
+            };
+            base.color = Vec3::new(channel(16), channel(8), channel(0)) / 255.;
+        }
+        if self.power && liquid_flags.is_some() {
+            base.exponent *= 2.;
+        }
+        base
+    }
+
     /// Creates the build-12340 policy for a programmable-shader renderer.
     /// Returns `None` for a nonpositive or nonfinite camera far clip.
     #[must_use]

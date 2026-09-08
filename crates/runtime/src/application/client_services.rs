@@ -1155,13 +1155,14 @@ impl ClientServices {
             developer_elapsed,
             &mut self.blizzard_rand.borrow_mut(),
         )?;
-        let underwater = self
+        let (underwater, indoor_fog) = self
             .terrain
-            .camera_submerged_liquid(camera.camera().position(), &self.liquids)
+            .camera_environment(camera.camera().position(), &self.liquids)
             .map_err(super::sound_coordinator::RuntimeSoundError::from)?;
-        let environment =
-            self.environment
-                .resolve_liquid(environment, underwater, &self.liquids)?;
+        let environment = self
+            .environment
+            .resolve_liquid(environment, underwater, &self.liquids)?
+            .with_world_model_fog(indoor_fog);
         self.underwater_particles.prepare_frame(
             &mut self.renderer,
             camera,

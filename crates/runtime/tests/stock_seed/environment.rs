@@ -72,7 +72,10 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         row[10] = override_id;
         liquids.extend(row);
     }
+    let (fog_root, fog_group) = indoor_fog_model();
     let fixture = ClientFixture::with_common_files(&[
+        ("World\\Fog.wmo", &fog_root),
+        ("World\\Fog_000.wmo", &fog_group),
         (
             "DBFilesClient\\Weather.dbc",
             &table(8, &[7, 9, 1, 1_f32.to_bits(), 0, 0, 0, 0]),
@@ -88,6 +91,15 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         Locale::EnUs,
     )?)?;
     let liquids = LiquidTypeCatalog::load(&mut store)?;
+    let fog_model = solarity_asset::DecodedWorldModel::load(
+        &mut store,
+        &solarity_asset::AssetPath::new("World\\Fog.wmo")?,
+    )?;
+    let fog_placement = solarity_systems::PlacedWorldModelCollision::prepare_transform(
+        std::sync::Arc::new(fog_model),
+        glam::Mat4::IDENTITY,
+    )?;
+    let indoor_fog = fog_placement.fog_environment(0, None, Vec3::ZERO)?;
     let mut environment = RuntimeWorldEnvironment::new(LightCatalog::load(&mut store)?, 8 << 30)?
         .with_weather(solarity_asset::WeatherCatalog::load(&mut store)?);
     let clock = RealmClock::new(WorldTimeSpeed::new(0, 0., 0)?);
@@ -108,6 +120,15 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         assert_eq!(frame.light().ambient_color(), Vec3::splat(exterior / 255.));
         assert_eq!(frame.fog().range(), (388.5, 777.));
         assert_eq!(frame.fog().exponent(), 4.25);
+        let indoor = frame.with_world_model_fog(indoor_fog);
+        assert_eq!(indoor.fog().range(), (25., 777.));
+        assert_eq!(indoor.fog().exponent(), 6.175);
+        assert_eq!(
+            indoor.fog().color(),
+            Vec3::new(0x12 as f32, 0x34 as f32, 0x56 as f32) / 255.
+        );
+        assert_eq!(indoor.light(), frame.light());
+        assert_eq!(frame.with_world_model_fog(None), frame);
         assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
         for (depth, expected) in [
             (-0.001, underwater),
@@ -139,6 +160,14 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             assert_eq!(resolved.fog().range(), (388.5, 777.));
             assert_eq!(resolved.fog().exponent(), 8.5);
             assert_eq!(resolved.fog().color(), Vec3::splat(underwater / 255.));
+            let indoor = resolved.with_world_model_fog(indoor_fog);
+            assert_eq!(indoor.fog().range(), (25., 777.));
+            assert_eq!(indoor.fog().exponent(), 13.45);
+            assert_eq!(
+                indoor.fog().color(),
+                Vec3::new(0xab as f32, 0xcd as f32, 0xef as f32) / 255.
+            );
+            assert_eq!(indoor.light(), resolved.light());
             assert_eq!(resolved.position(), position);
             assert_eq!(resolved.view_distance(), frame.view_distance());
             assert_eq!(environment.current(), Some(frame));
@@ -283,6 +312,34 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
     assert_eq!(cleared.weather_blend(), 0.);
     assert_eq!(cleared.light(), clear.light());
     Ok(())
+}
+
+/// Authored dry/wet banks in a closed interior, independent of Light.dbc.
+fn indoor_fog_model() -> (Vec<u8>, Vec<u8>) {
+    fn chunk(bytes: &mut Vec<u8>, name: [u8; 4], payload: &[u8]) {
+        bytes.extend(name);
+        bytes.extend((payload.len() as u32).to_le_bytes());
+        bytes.extend(payload);
+    }
+    let mut root = Vec::new();
+    chunk(&mut root, *b"REVM", &17u32.to_le_bytes());
+    let mut header = [0; 64];
+    header[4..8].copy_from_slice(&1u32.to_le_bytes());
+    chunk(&mut root, *b"DHOM", &header);
+    let mut info = [0; 32];
+    info[28..32].copy_from_slice(&u32::MAX.to_le_bytes());
+    chunk(&mut root, *b"IGOM", &info);
+    let mut fog = [0; 48];
+    for (offset, value) in [(24, 100f32), (28, 0.25), (36, 50.), (40, 0.5)] {
+        fog[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    fog[32..36].copy_from_slice(&0xff123456u32.to_le_bytes());
+    fog[44..48].copy_from_slice(&0xffabcdefu32.to_le_bytes());
+    chunk(&mut root, *b"GOFM", &fog);
+    let mut group = Vec::new();
+    chunk(&mut group, *b"REVM", &17u32.to_le_bytes());
+    chunk(&mut group, *b"PGOM", &[0; 68]);
+    (root, group)
 }
 
 /// One exact constant cyclic band.

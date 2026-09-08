@@ -40,6 +40,7 @@ impl DecodedWorldModel {
         validate_root(path, &root)?;
         let bounds = validate_bounds(path, root.bounding_box_min, root.bounding_box_max, "MOHD")?;
         let materials = decode_materials(path, read.bytes(), &root)?;
+        let fogs = decode_fogs(path, read.bytes())?;
         let (doodad_sets, doodads) = decode_doodads(path, read.bytes(), &root)?;
         if root.flags & 0x02 == 0
             && materials
@@ -64,6 +65,18 @@ impl DecodedWorldModel {
                 root.doodad_defs.len(),
             )?);
         }
+        for group in &groups {
+            if group
+                .fog_ids()
+                .into_iter()
+                .any(|index| index != 0 && usize::from(index) >= fogs.len())
+            {
+                return Err(world_model_message(
+                    path,
+                    "MOGP fog index exceeds the MFOG table",
+                ));
+            }
+        }
         let spatial = WorldModelSpatialData::decode(path, &root, &groups)?;
         Ok(Self::new(
             path.clone(),
@@ -77,8 +90,56 @@ impl DecodedWorldModel {
             doodad_sets,
             doodads,
             groups,
+            fogs,
         ))
     }
+}
+
+fn decode_fogs(path: &AssetPath, bytes: &[u8]) -> Result<Vec<super::WorldModelFog>, AssetError> {
+    let chunks = scan_chunks(path, bytes, "WMO root")?;
+    let Some(chunk) = chunks.iter().find(|chunk| chunk.magic == *b"GOFM") else {
+        return Ok(Vec::new());
+    };
+    let (records, remainder) = bytes[chunk.payload_start..chunk.payload_end].as_chunks::<48>();
+    if !remainder.is_empty() {
+        return Err(world_model_message(
+            path,
+            "MFOG requires complete 48-byte records",
+        ));
+    }
+    records
+        .iter()
+        .map(|record| {
+            let mut scalars = [0.; 9];
+            for (value, offset) in scalars.iter_mut().zip([4, 8, 12, 16, 20, 24, 28, 36, 40]) {
+                *value = read_f32(path, record, offset, "MFOG scalar")?;
+            }
+            if scalars.iter().any(|value| !value.is_finite()) {
+                return Err(world_model_message(
+                    path,
+                    "MFOG contains a nonfinite scalar",
+                ));
+            }
+            Ok(super::WorldModelFog {
+                flags: read_u32(path, record, 0, "MFOG flags")?,
+                position: glam::Vec3::new(scalars[0], scalars[1], scalars[2]),
+                inner_radius: scalars[3],
+                outer_radius: scalars[4],
+                banks: [
+                    super::WorldModelFogBank {
+                        end: scalars[5],
+                        start_ratio: scalars[6],
+                        color: read_u32(path, record, 32, "MFOG dry color")?,
+                    },
+                    super::WorldModelFogBank {
+                        end: scalars[7],
+                        start_ratio: scalars[8],
+                        color: read_u32(path, record, 44, "MFOG wet color")?,
+                    },
+                ],
+            })
+        })
+        .collect()
 }
 
 fn decode_doodads(

@@ -15,6 +15,8 @@ pub struct WorldModelCameraRegistration<Owner> {
     pub owner: Owner,
     /// The first camera group; 790920 uses only this group's liquid volume.
     pub group: usize,
+    /// Interior neighbor retained when the downward ray selects a portal.
+    pub secondary_group: Option<usize>,
 }
 
 /// Native 7D59B0's independent static/transformed camera ray banks.
@@ -86,7 +88,11 @@ impl<Owner: Copy> WorldModelCameraRegistrationQuery<Owner> {
                 placement.probe_camera_group_floor(index, start, end, self.maximum[bank])?
             {
                 self.maximum[bank] = floor.fraction();
-                hit = Some((index, placement.model.groups()[index].flags() & 8 == 0));
+                hit = Some((
+                    index,
+                    None,
+                    placement.model.groups()[index].flags() & 8 == 0,
+                ));
             }
         }
         if let Some(portal) = portal::probe(&placement.model, start, end)
@@ -94,11 +100,22 @@ impl<Owner: Copy> WorldModelCameraRegistrationQuery<Owner> {
         {
             self.maximum[bank] = portal.fraction();
             let group = portal.source_group();
-            hit = Some((group, placement.model.group_info()[group].flags() & 8 == 0));
+            let neighbor = portal.destination_group();
+            let secondary =
+                (placement.model.group_info()[neighbor].flags() & 8 == 0).then_some(neighbor);
+            hit = Some((
+                group,
+                secondary,
+                placement.model.group_info()[group].flags() & 8 == 0,
+            ));
         }
-        if let Some((group, interior)) = hit {
+        if let Some((group, secondary_group, interior)) = hit {
             // An exterior hit also clears an earlier root in this bank.
-            self.selected[bank] = interior.then_some(WorldModelCameraRegistration { owner, group });
+            self.selected[bank] = interior.then_some(WorldModelCameraRegistration {
+                owner,
+                group,
+                secondary_group,
+            });
         }
         Ok(())
     }

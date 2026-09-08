@@ -118,11 +118,21 @@ pub(super) fn plane_hit(
     normal: Vec3,
     distance: f32,
 ) -> Option<(f32, Vec3)> {
+    plane_hit_with_tolerance(start, direction, normal, distance, 0.1)
+}
+
+pub(super) fn plane_hit_with_tolerance(
+    start: Vec3,
+    direction: Vec3,
+    normal: Vec3,
+    distance: f32,
+    tolerance: f32,
+) -> Option<(f32, Vec3)> {
     let start = start.as_dvec3();
     let direction = direction.as_dvec3();
     let normal = normal.as_dvec3();
     let dot = (direction.y * normal.y + direction.z * normal.z) + normal.x * direction.x;
-    let tolerance = f64::from(0.1_f32);
+    let tolerance = f64::from(tolerance);
     if dot.abs() < 0.0001_f64 {
         let signed =
             ((start.y * normal.y + start.z * normal.z) + start.x * normal.x) + f64::from(distance);

@@ -64,7 +64,7 @@ def capture(executable, output):
 def capture_camera(executable, output):
     """Retain complete native root/group camera selection with real BSP probes."""
     native.initialize(executable)
-    rows = ['# 7d59b0 camera: profile mogi0 mogp0 mogi1 mogp1 transformed adjacent side; startXYZ endXYZ maximum distance (float hex); admitted group']
+    rows = ['# 7d59b0 camera: profile mogi0 mogp0 mogi1 mogp1 transformed adjacent side; startXYZ endXYZ maximum distance (float hex); admitted group secondary_group']
     rng = random.Random(12340)
     for case in range(256):
         profile = case % 6

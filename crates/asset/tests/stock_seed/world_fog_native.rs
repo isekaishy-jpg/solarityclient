@@ -89,3 +89,57 @@ fn context_rejects_invalid_clips_and_selects_the_native_map_boundary() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn world_model_scene_fog_matches_original_liquid_flags_and_portal_transition()
+-> Result<(), Box<dyn Error>> {
+    use crate::{WorldModelFogBank, WorldModelFogPalette};
+    let mut count = 0;
+    for line in include_str!("../fixtures/world_model_fog_native.txt")
+        .lines()
+        .filter(|line| line.starts_with("final "))
+    {
+        let row = line.split_ascii_whitespace().collect::<Vec<_>>();
+        let context = WorldFogContext::new(if row[1] == "0" { 0 } else { 530 }, 777.)
+            .ok_or("invalid clip")?;
+        let palette = WorldModelFogPalette::new(
+            u32::from_str_radix(row[2], 16)?,
+            [
+                WorldModelFogBank::new(300., 0.25, 0xff9a5731),
+                WorldModelFogBank::new(40., -0.25, 0xff1a7fdb),
+            ],
+        );
+        let liquid: i32 = row[3].parse()?;
+        let distance = if row[4] == "0" {
+            None
+        } else {
+            Some(f32::from_bits(u32::from_str_radix(row[5], 16)?))
+        };
+        let base = context.finish(500., 0.5, 2.5, Vec3::new(35., 69., 103.) / 255., false);
+        let fog = context.world_model_scene(
+            base,
+            palette,
+            distance,
+            (liquid >= 0).then_some(liquid as u32),
+        );
+        let native = row[6..]
+            .iter()
+            .map(|word| u32::from_str_radix(word, 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let color = Vec3::new(
+            ((native[0] >> 16) & 255) as f32,
+            ((native[0] >> 8) & 255) as f32,
+            (native[0] & 255) as f32,
+        ) / 255.;
+        assert_eq!(fog.color(), color, "{line}");
+        for (actual, expected) in [fog.range().0, fog.range().1, fog.exponent()]
+            .into_iter()
+            .zip(&native[1..])
+        {
+            check(actual, *expected, line);
+        }
+        count += 1;
+    }
+    assert_eq!(count, 1008);
+    Ok(())
+}

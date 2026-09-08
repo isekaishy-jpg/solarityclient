@@ -95,6 +95,12 @@ fn camera_water_registration_matches_original_root_and_portal_queries() -> Resul
                 words[17].parse::<usize>()?,
                 "camera group case {case}: {line}"
             );
+            let secondary = words[18].parse::<u32>()?;
+            assert_eq!(
+                camera.secondary_group,
+                (secondary != u32::from(u16::MAX)).then_some(secondary as usize),
+                "camera secondary group case {case}: {line}"
+            );
         }
     }
     Ok(())
