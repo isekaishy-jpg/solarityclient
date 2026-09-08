@@ -1,5 +1,8 @@
 //! Native 7AC060 traversal after each portal's polygon has been projected.
 
+mod projection;
+pub use projection::{WorldModelPortalProjectionFrame, WorldModelPortalProjector};
+
 use glam::Vec3;
 use solarity_asset::DecodedWorldModel;
 use thiserror::Error;
@@ -16,6 +19,9 @@ pub enum WorldModelVisibilityError {
     /// Camera coordinates or projected screen coordinates are not finite.
     #[error("world-model visibility coordinates are not finite")]
     NonFiniteCoordinates,
+    /// The supplied frustum corners cannot form finite clipping planes.
+    #[error("world-model visibility frustum has degenerate clipping faces")]
+    DegenerateFrustum,
 }
 
 /// One ordered native group visit, including the inherited fog bank.

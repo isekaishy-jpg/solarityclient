@@ -117,6 +117,31 @@ groups, checks authored portal sides, and preserves the native depth cutoff and
 screen-window intersection. MOGP and MOGI flags remain independent. Its reusable
 work stack preserves repeated visits and authored reference order. A further
 1,440 original-code queries verify those rules on decoded graphs, including
-cycles and nearly empty intersections. Polygon projection, exterior-root
-admission, per-model visibility and renderer routing remain to be connected;
-these traversal tests do not establish those separate stages.
+cycles and nearly empty intersections.
+
+`WorldModelPortalProjector` implements `7A9090`'s polygon stage and supplies
+rectangles directly to that traversal. The near-portal test considers the whole
+authored polygon within the strict 0.01 plane-distance threshold. Ordinary
+projection transforms at most twelve vertices, clips using the native 0.0001
+classification band, subtracts the eye, and divides with the native minimum W.
+The five clipping planes are top, bottom, right, left and **far**; the near plane
+is deliberately absent. `WorldModelPortalProjectionFrame::from_frustum_corners`
+constructs those planes using `983E70`'s corner order and `7912C0`'s cross-product
+float stores. Input corners are already in world space and use the original
+positive-forward view convention. This API does not construct a stock view or
+convert a Vulkan depth projection into native corners.
+
+`world_model_portal_projection_oracle.py` captures 1,122 original polygon
+projections and 108 original camera plane sets. It executes the pinned client's
+transform, near-portal inclusion, clipping and projection routines; only the
+optional occlusion provider is disabled. Camera cases execute `6BF6D0`, apply
+`795400`'s eye addition stores, then execute `984240`. Captures cover perspective
+and asymmetric orthographic projections, yaw/pitch/roll, large world positions,
+near/far boundaries, twelve-vertex truncation and epsilon neighbors. Regression
+tests compare every accepted rectangle and all five planes by float bits.
+
+The projector and traversal are independently usable, but presentation still
+uses ordinary frustum admission and the camera fog bank. Exterior-root admission,
+the camera matrix/corner adapter, per-model visibility and renderer fog routing
+remain to be connected. These captures do not establish those separate stages
+or live visual/FPS parity.

@@ -16,6 +16,129 @@ fn float(word: &str) -> Result<f32, Box<dyn Error>> {
 }
 
 #[test]
+fn portal_camera_planes_match_original_order_and_float_stores() -> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::WorldModelPortalProjectionFrame;
+    let mut count = 0;
+    for (case, line) in include_str!("../fixtures/world_model_portal_camera_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .enumerate()
+    {
+        let values = words(line)
+            .into_iter()
+            .map(float)
+            .collect::<Result<Vec<_>, _>>()?;
+        let corners = std::array::from_fn(|i| Vec3::from_slice(&values[i * 3..i * 3 + 3]));
+        let frame = WorldModelPortalProjectionFrame::from_frustum_corners(
+            Mat4::IDENTITY,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Mat4::IDENTITY,
+            corners,
+        )?;
+        for (channel, (actual, expected)) in frame
+            .clip_planes
+            .into_iter()
+            .flatten()
+            .zip(&values[24..])
+            .enumerate()
+        {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "case {case} channel {channel}: {actual} != {expected}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 108);
+    assert!(matches!(
+        WorldModelPortalProjectionFrame::from_frustum_corners(
+            Mat4::IDENTITY,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Mat4::IDENTITY,
+            [Vec3::ZERO; 8],
+        ),
+        Err(WorldModelVisibilityError::DegenerateFrustum)
+    ));
+    assert!(matches!(
+        WorldModelPortalProjectionFrame::from_frustum_corners(
+            Mat4::IDENTITY,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Mat4::IDENTITY,
+            [Vec3::splat(f32::NAN); 8],
+        ),
+        Err(WorldModelVisibilityError::NonFiniteCoordinates)
+    ));
+    Ok(())
+}
+
+#[test]
+fn portal_polygon_projection_matches_original_transform_clip_and_near_rules()
+-> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::{WorldModelPortalProjectionFrame, WorldModelPortalProjector};
+    let mut projector = WorldModelPortalProjector::default();
+    let mut count = 0;
+    for (case, line) in include_str!("../fixtures/world_model_portal_projection_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .enumerate()
+    {
+        let row = words(line);
+        let vertex_count: usize = row[0].parse()?;
+        let values = row[1..row.len() - 5]
+            .iter()
+            .map(|v| float(v))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut blocks = values.as_slice();
+        let vertices = blocks[..vertex_count * 3].as_chunks::<3>().0;
+        blocks = &blocks[vertex_count * 3..];
+        let plane = blocks[..4].try_into()?;
+        let local_camera = Vec3::from_slice(&blocks[4..7]);
+        let world_camera = Vec3::from_slice(&blocks[7..10]);
+        let root_transform = Mat4::from_cols_slice(&blocks[10..26]);
+        let relative_projection = Mat4::from_cols_slice(&blocks[26..42]);
+        let clip_planes = blocks[42..62].as_chunks::<4>().0.try_into()?;
+        let flags = u32::from_str_radix(row[row.len() - 5], 16)?;
+        let actual = projector.project_polygon(
+            vertices,
+            plane,
+            WorldModelPortalProjectionFrame {
+                root_transform,
+                local_camera,
+                world_camera,
+                relative_projection,
+                clip_planes,
+            },
+        )?;
+        if flags & 1 != 0 {
+            assert!(actual.is_none(), "case {case}: native rejected {actual:?}");
+        } else {
+            let expected = row[row.len() - 4..]
+                .iter()
+                .map(|v| float(v))
+                .collect::<Result<Vec<_>, _>>()?;
+            let actual =
+                actual.ok_or_else(|| format!("case {case}: native accepted {expected:?}"))?;
+            for (channel, (actual, expected)) in actual.into_iter().zip(expected).enumerate() {
+                assert_eq!(
+                    actual.to_bits(),
+                    expected.to_bits(),
+                    "case {case} channel {channel}: {actual} != {expected}"
+                );
+            }
+        }
+        count += 1;
+    }
+    assert_eq!(count, 1122);
+    Ok(())
+}
+
+#[test]
 fn portal_visibility_matches_original_visit_order_fog_and_clipping() -> Result<(), Box<dyn Error>> {
     let mut lines = include_str!("../fixtures/world_model_visibility_native.txt")
         .lines()

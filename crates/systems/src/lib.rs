@@ -105,10 +105,11 @@ pub use collision::{
     WorldModelCameraRegistrationQuery, WorldModelCollisionError, WorldModelCollisionScene,
     WorldModelFloorHit, WorldModelFloorHits, WorldModelFloorLight, WorldModelFogEnvironment,
     WorldModelLiquidError, WorldModelLiquidSample, WorldModelLiquidScene, WorldModelPortalHit,
-    WorldModelRegistrationCandidate, WorldModelRegistrationHit, WorldModelRegistrationHits,
-    WorldModelRegistrationKind, WorldModelRegistrationQuery, WorldModelRegistrationSelection,
-    WorldModelVisibilityError, WorldModelVisibilityQuery, WorldModelVisibilityVisit,
-    append_terrain_liquid_movement, probe_world_model_portals,
+    WorldModelPortalProjectionFrame, WorldModelPortalProjector, WorldModelRegistrationCandidate,
+    WorldModelRegistrationHit, WorldModelRegistrationHits, WorldModelRegistrationKind,
+    WorldModelRegistrationQuery, WorldModelRegistrationSelection, WorldModelVisibilityError,
+    WorldModelVisibilityQuery, WorldModelVisibilityVisit, append_terrain_liquid_movement,
+    probe_world_model_portals,
 };
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,
