@@ -1829,9 +1829,19 @@ fn register_client_runtime_globals(
         })?,
     )?;
     let cursor_position = environment.cursor_position();
+    let cursor_extent = environment.logical_extent();
+    let cursor_ui_extent = environment.ui_extent();
     globals.raw_set(
         "GetCursorPosition",
-        lua.create_function(move |_, ()| Ok(cursor_position.get()))?,
+        lua.create_function(move |_, ()| {
+            // 0x004DCB60 / 0x00510A10 convert normalized screen coordinates
+            // through the same 768-unit canvas used by region edge queries.
+            let (x, y) = cursor_position.get();
+            Ok((
+                x / f64::from(cursor_extent.0) * cursor_ui_extent.0,
+                y / f64::from(cursor_extent.1) * cursor_ui_extent.1,
+            ))
+        })?,
     )?;
     let client_clock = environment.client_clock();
     globals.raw_set(

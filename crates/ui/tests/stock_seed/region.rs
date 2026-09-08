@@ -1,5 +1,8 @@
 //! External stock-compatibility tests for typed region layout layers.
 
+#[path = "region_geometry.rs"]
+mod geometry;
+
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};

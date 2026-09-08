@@ -69,6 +69,41 @@ impl UiScreenRect {
             top: self.top + delta[1] as f64,
         }
     }
+
+    fn scaled(self, scale: f64) -> Self {
+        Self {
+            left: self.left * scale,
+            bottom: self.bottom * scale,
+            right: self.right * scale,
+            top: self.top * scale,
+        }
+    }
+}
+
+/// 4893C0 shifts left/bottom first, then right/top; the latter win for oversize frames.
+/// Coordinates and insets are in the region's own units, including the screen extent.
+pub(crate) fn clamp_screen_rect(
+    mut bounds: UiScreenRect,
+    screen: (f64, f64),
+    [left, right, top, bottom]: [f64; 4],
+) -> UiScreenRect {
+    if bounds.left < -left {
+        bounds.right -= bounds.left + left;
+        bounds.left = -left;
+    }
+    if bounds.bottom < -bottom {
+        bounds.top -= bounds.bottom + bottom;
+        bounds.bottom = -bottom;
+    }
+    if bounds.right > screen.0 - right {
+        bounds.left -= bounds.right - (screen.0 - right);
+        bounds.right = screen.0 - right;
+    }
+    if bounds.top > screen.1 - top {
+        bounds.bottom -= bounds.top - (screen.1 - top);
+        bounds.top = screen.1 - top;
+    }
+    bounds
 }
 
 /// Resolved startup geometry and inherited presentation state for one region.
@@ -83,7 +118,7 @@ pub struct UiRegionGeometry {
 }
 
 impl UiRegionGeometry {
-    /// Returns the untransformed rectangle used by anchor dependencies.
+    /// Returns the rectangle in the region's own scaled coordinate units.
     #[must_use]
     pub const fn logical_bounds(self) -> UiScreenRect {
         self.logical_bounds
@@ -165,11 +200,7 @@ impl UiRegionGeometryPlan {
                 .copied()
                 .unwrap_or(Affine2::IDENTITY);
             let logical_bounds = previous.logical_bounds;
-            let scale_transform = Affine2::scale_about(
-                object.scale,
-                (logical_bounds.left + logical_bounds.right) * 0.5,
-                (logical_bounds.bottom + logical_bounds.top) * 0.5,
-            );
+            let scale_transform = Affine2::scale_about(object.scale, 0.0, 0.0);
             let local = Affine2::translation(object.animation_offset.0, object.animation_offset.1)
                 .compose(scale_transform);
             let presentation = parent_transform.compose(local);
@@ -412,6 +443,10 @@ impl GeometryResolver<'_> {
         let shown = object.shown;
         let alpha = (object.alpha + object.animation_alpha_delta).clamp(0.0, 1.0);
         let scale = object.scale;
+        let parent = parent_index
+            .map(|parent| self.resolve(parent))
+            .transpose()?;
+        let effective_scale = scale * parent.map_or(1.0, |region| region.public.effective_scale);
         let role = object.role;
         let empty_anchor = UiRuntimeAnchor {
             point: UiPoint::Center,
@@ -437,7 +472,10 @@ impl GeometryResolver<'_> {
         if let Some((vertical, fraction)) = bar_fill
             && let Some(parent) = parent_index
         {
-            let bounds = self.resolve(parent)?.public.logical_bounds;
+            let parent_region = self.resolve(parent)?.public;
+            let bounds = parent_region
+                .logical_bounds
+                .scaled(parent_region.effective_scale / effective_scale);
             synthesized_anchors[0] = UiRuntimeAnchor {
                 point: UiPoint::BottomLeft,
                 target: Some(parent),
@@ -461,7 +499,10 @@ impl GeometryResolver<'_> {
             && let Some(parent_index) = parent_index
             && let Some(slider) = self.live.objects()[parent_index].slider
         {
-            let parent_bounds = self.resolve(parent_index)?.public.logical_bounds;
+            let parent_region = self.resolve(parent_index)?.public;
+            let parent_bounds = parent_region
+                .logical_bounds
+                .scaled(parent_region.effective_scale / effective_scale);
             let fraction = if slider.maximum > slider.minimum {
                 ((slider.value - slider.minimum) / (slider.maximum - slider.minimum))
                     .clamp(0.0, 1.0)
@@ -545,8 +586,13 @@ impl GeometryResolver<'_> {
         let mut y_constraint_count = 0;
         for (anchor_index, anchor) in anchors.iter().copied().enumerate() {
             let target = match anchor.target {
-                Some(target) => self.resolve(target)?.public.logical_bounds,
-                None => self.screen,
+                Some(target) => {
+                    let target = self.resolve(target)?.public;
+                    target
+                        .logical_bounds
+                        .scaled(target.effective_scale / effective_scale)
+                }
+                None => self.screen.scaled(1.0 / effective_scale),
             };
             let x = AxisConstraint {
                 factor: point_x_factor(anchor.point),
@@ -576,18 +622,21 @@ impl GeometryResolver<'_> {
             }
         }
 
-        let parent = parent_index
-            .map(|parent| self.resolve(parent))
-            .transpose()?;
-        let fallback_left = parent.map_or(0.0, |region| region.public.logical_bounds.left);
+        let parent_bounds = parent.map(|region| {
+            region
+                .public
+                .logical_bounds
+                .scaled(region.public.effective_scale / effective_scale)
+        });
+        let fallback_left = parent_bounds.map_or(0.0, |bounds| bounds.left);
         // A stock ScrollChild without authored points begins at the scroll
         // frame's top-left. Its content height then extends downward and feeds
         // the native vertical range rather than moving the first line upward.
-        let fallback_bottom = parent.map_or(0.0, |region| {
+        let fallback_bottom = parent_bounds.map_or(0.0, |bounds| {
             if role == UiObjectRole::ScrollChild {
-                region.public.logical_bounds.top - authored.1.max(0.0)
+                bounds.top - authored.1.max(0.0)
             } else {
-                region.public.logical_bounds.bottom
+                bounds.bottom
             }
         });
         let horizontal = solve_axis(
@@ -608,17 +657,23 @@ impl GeometryResolver<'_> {
             },
             fallback_bottom,
         )?;
-        let logical_bounds = UiScreenRect {
+        let mut logical_bounds = UiScreenRect {
             left: horizontal.0,
             bottom: vertical.0,
             right: horizontal.0 + horizontal.1,
             top: vertical.0 + vertical.1,
         };
-        let scale_transform = Affine2::scale_about(
-            scale,
-            (logical_bounds.left + logical_bounds.right) * 0.5,
-            (logical_bounds.bottom + logical_bounds.top) * 0.5,
-        );
+        if let Some(insets) = object.clamp_insets {
+            logical_bounds = clamp_screen_rect(
+                logical_bounds,
+                (
+                    self.screen.right / effective_scale,
+                    self.screen.top / effective_scale,
+                ),
+                insets,
+            );
+        }
+        let scale_transform = Affine2::scale_about(scale, 0.0, 0.0);
         let local = Affine2::translation(object.animation_offset.0, object.animation_offset.1)
             .compose(scale_transform);
         let parent_transform = parent.map_or(Affine2::IDENTITY, |region| region.presentation);
@@ -627,7 +682,6 @@ impl GeometryResolver<'_> {
         let effectively_shown =
             shown && parent.is_none_or(|region| region.public.effectively_shown);
         let effective_alpha = alpha * parent.map_or(1.0, |region| region.public.effective_alpha);
-        let effective_scale = scale * parent.map_or(1.0, |region| region.public.effective_scale);
         let animation_active =
             object.animation_active || parent.is_some_and(|region| region.public.animation_active);
         Ok(ResolvedRegion {

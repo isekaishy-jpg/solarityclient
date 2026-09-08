@@ -634,7 +634,8 @@ impl RuntimeWorldUi {
     /// Delivers the native no-argument screenshot completion event to FrameXML.
     pub(super) fn screenshot_completed(&mut self, event: &str) -> Result<(), ApplicationError> {
         self.dirty = true;
-        self.manager.dispatch_event(event, &UiEventPayload::empty())?;
+        self.manager
+            .dispatch_event(event, &UiEventPayload::empty())?;
         Ok(())
     }
 

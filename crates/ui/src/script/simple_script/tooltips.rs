@@ -5,9 +5,68 @@ mod content;
 use mlua::{Lua, ObjectLike, Table, Value};
 
 use super::{
-    OBJECT_REGISTRY, index_key, is_object_type, tooltip_anchor_key, tooltip_offset_x_key,
-    tooltip_offset_y_key, tooltip_owner_key, tooltip_padding_key, type_key,
+    DIRTY_LAYOUT, OBJECT_REGISTRY, anchors_key, create_anchor_record, index_key, is_object_type,
+    live_region_scale, mark_object_state_changed, object_is_visible, point_index,
+    tooltip_anchor_key, tooltip_offset_x_key, tooltip_offset_y_key, tooltip_owner_key,
+    tooltip_padding_key, type_key,
 };
+use crate::UiPoint;
+
+const TOOLTIP_OBJECTS: &str = "solarity.tooltip.objects";
+
+pub(super) fn enroll(lua: &Lua, tooltip: &Table) -> mlua::Result<()> {
+    let objects = match lua.named_registry_value::<Option<Table>>(TOOLTIP_OBJECTS)? {
+        Some(objects) => objects,
+        None => {
+            let objects = lua.create_table()?;
+            lua.set_named_registry_value(TOOLTIP_OBJECTS, objects.clone())?;
+            objects
+        }
+    };
+    objects.raw_set(objects.raw_len() + 1, tooltip.clone())
+}
+
+/// CGameTooltip::OnUpdate (0x0061B2E0) uses screen-root coordinates and
+/// the tooltip's effective scale, independently of its owner or parent.
+pub(super) fn update_cursor_anchors(lua: &Lua, cursor: (f64, f64)) -> mlua::Result<()> {
+    let Some(tooltips) = lua.named_registry_value::<Option<Table>>(TOOLTIP_OBJECTS)? else {
+        return Ok(());
+    };
+    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+    for slot in 1..=tooltips.raw_len() {
+        let tooltip: Table = tooltips.raw_get(slot)?;
+        let anchor = tooltip.raw_get::<String>(tooltip_anchor_key())?;
+        let point = match anchor.as_str() {
+            "ANCHOR_CURSOR" => UiPoint::Bottom,
+            "ANCHOR_CURSOR_RIGHT" => UiPoint::BottomLeft,
+            _ => continue,
+        };
+        if !object_is_visible(lua, tooltip.clone())? {
+            continue;
+        }
+        let scale = live_region_scale(&objects, &tooltip)?;
+        let mut offset = (cursor.0 / scale, cursor.1 / scale);
+        if point == UiPoint::BottomLeft {
+            offset.0 += tooltip.raw_get::<f64>(tooltip_offset_x_key())?;
+            offset.1 += tooltip.raw_get::<f64>(tooltip_offset_y_key())?;
+        }
+        let anchors: Table = tooltip.raw_get(anchors_key())?;
+        if let Some(old) = anchors.raw_get::<Option<Table>>(point_index(point))?
+            && old.raw_get::<Option<usize>>(2)?.is_none()
+            && old.raw_get::<String>(3)? == "BOTTOMLEFT"
+            && old.raw_get::<f64>(4)? == offset.0
+            && old.raw_get::<f64>(5)? == offset.1
+        {
+            continue;
+        }
+        anchors.raw_set(
+            point_index(point),
+            create_anchor_record(lua, point, None, UiPoint::BottomLeft, offset)?,
+        )?;
+        mark_object_state_changed(lua, &tooltip, DIRTY_LAYOUT)?;
+    }
+    Ok(())
+}
 
 pub(super) fn load_xml(lua: &Lua, tooltip: &Table) -> mlua::Result<()> {
     content::load_xml(lua, tooltip)
@@ -63,7 +122,7 @@ pub(super) fn register_game_tooltip_methods(lua: &Lua, methods: &Table) -> mlua:
                 tooltip.raw_set(tooltip_anchor_key(), anchor)?;
                 tooltip.raw_set(tooltip_offset_x_key(), offset_x.unwrap_or(0.0))?;
                 tooltip.raw_set(tooltip_offset_y_key(), offset_y.unwrap_or(0.0))?;
-                if anchor == "ANCHOR_NONE" {
+                if anchor != "ANCHOR_PRESERVE" {
                     tooltip.call_method::<()>("ClearAllPoints", ())?;
                 }
                 content::anchor(

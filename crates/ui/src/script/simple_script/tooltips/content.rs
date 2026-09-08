@@ -25,6 +25,7 @@ fn state(lua: &Lua, tooltip: &Table) -> mlua::Result<Table> {
     state.raw_set("minimum", 0.0)?;
     state.raw_set("fixed", false)?;
     tooltip.raw_set(key, state.clone())?;
+    super::enroll(lua, tooltip)?;
     Ok(state)
 }
 

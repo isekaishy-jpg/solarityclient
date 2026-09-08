@@ -56,6 +56,7 @@ pub(crate) struct UiRuntimeObject {
     pub(crate) shown: bool,
     pub(crate) alpha: f64,
     pub(crate) scale: f64,
+    pub(crate) clamp_insets: Option<[f64; 4]>,
     pub(crate) animation_alpha_delta: f64,
     pub(crate) animation_offset: (f64, f64),
     pub(crate) animation_active: bool,
@@ -583,6 +584,7 @@ pub(super) fn snapshot_runtime_objects(
                 .map_err(|error| snapshot_error(format!("object {lua_index} visibility"), error))?,
             alpha: finite_region_number(&table, alpha_key(), lua_index, "alpha")?,
             scale: positive_region_number(&table, scale_key(), lua_index, "scale")?,
+            clamp_insets: snapshot_clamp_insets(&table, lua_index)?,
             animation_alpha_delta: animation.alpha_delta,
             animation_offset: animation.offset,
             animation_active: animation.active,
@@ -839,6 +841,7 @@ pub(super) fn runtime_layout_journal_is_unchanged(
         if current.width != layout.0
             || current.height != layout.1
             || current.scale != layout.2
+            || current.clamp_insets != snapshot_clamp_insets(&table, lua_index)?
             || live.anchors_for(current) != layout.3
         {
             return Ok(false);
@@ -895,6 +898,7 @@ pub(super) fn refresh_runtime_dirty_objects(
             live.objects[object_index].width = width;
             live.objects[object_index].height = height;
             live.objects[object_index].scale = scale;
+            live.objects[object_index].clamp_insets = snapshot_clamp_insets(&table, lua_index)?;
             live.replace_anchors(object_index, anchors);
         }
         if flags & (DIRTY_TEXTURE | DIRTY_TEXTURE_VERTEX_COLOR) != 0
@@ -1872,6 +1876,24 @@ fn snapshot_anchors(
         });
     }
     Ok(())
+}
+
+fn snapshot_clamp_insets(
+    table: &Table,
+    lua_index: usize,
+) -> Result<Option<[f64; 4]>, UiScriptError> {
+    use super::simple_script::{frame_clamp_insets_key, frame_clamped_key};
+    if !table
+        .raw_get::<Option<bool>>(frame_clamped_key())
+        .map_err(|error| snapshot_error("screen clamp", error))?
+        .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+    let insets: Table = table
+        .raw_get(frame_clamp_insets_key())
+        .map_err(|error| snapshot_error("screen clamp insets", error))?;
+    numeric_array::<4>(&insets, lua_index, "screen clamp insets").map(Some)
 }
 
 pub(super) fn finite_region_number(

@@ -333,6 +333,8 @@ impl Default for InitialTexture {
 pub struct UiScriptRuntime {
     next_action: usize,
     ui_extent: (f64, f64),
+    cursor_position: Rc<Cell<(f64, f64)>>,
+    cursor_to_ui: (f64, f64),
     object_metatables: Vec<RegistryKey>,
     font_metatable: RegistryKey,
     animation_metatables: UiAnimationMetatables,
@@ -1442,6 +1444,11 @@ impl UiScriptRuntime {
         Ok(Self {
             next_action: 0,
             ui_extent: environment.ui_extent(),
+            cursor_position: environment.cursor_position(),
+            cursor_to_ui: (
+                environment.ui_extent().0 / f64::from(environment.logical_extent().0),
+                environment.ui_extent().1 / f64::from(environment.logical_extent().1),
+            ),
             object_metatables,
             font_metatable,
             animation_metatables,
@@ -2028,6 +2035,15 @@ impl UiScriptRuntime {
             }
             dispatched += 1;
         }
+        let cursor = self.cursor_position.get();
+        tooltips::update_cursor_anchors(
+            lua,
+            (
+                cursor.0 * self.cursor_to_ui.0,
+                cursor.1 * self.cursor_to_ui.1,
+            ),
+        )
+        .map_err(|error| execution_error("GameTooltip cursor update", error))?;
         let current_generation =
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let current_fallback_generation = fallback_state_generation(lua)
@@ -6425,8 +6441,13 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
     }
     methods.raw_set(
         "SetClampedToScreen",
-        lua.create_function(|_, (object, enabled): (Table, Option<bool>)| {
-            object.raw_set(frame_clamped_key(), enabled.unwrap_or(true))
+        lua.create_function(|lua, (object, enabled): (Table, Option<bool>)| {
+            let enabled = enabled.unwrap_or(true);
+            if object.raw_get::<bool>(frame_clamped_key())? != enabled {
+                object.raw_set(frame_clamped_key(), enabled)?;
+                mark_object_state_changed(lua, &object, DIRTY_LAYOUT)?;
+            }
+            Ok(())
         })?,
     )?;
     methods.raw_set(
@@ -6442,7 +6463,8 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 object.raw_set(
                     frame_clamp_insets_key(),
                     lua.create_sequence_from([left, right, top, bottom])?,
-                )
+                )?;
+                mark_object_state_changed(lua, &object, DIRTY_LAYOUT)
             },
         )?,
     )?;
@@ -8062,7 +8084,12 @@ fn register_region_methods(
                         right,
                         top,
                     }),
-                    _ => resolve_live_region_bounds(lua, object.clone(), ui_extent)?,
+                    _ => {
+                        let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+                        let scale = live_region_scale(&objects, &object)?;
+                        resolve_live_region_bounds(lua, object.clone(), ui_extent)?
+                            .map(|bounds| bounds.scaled(scale))
+                    }
                 };
                 let visible = match object.raw_get::<Option<bool>>(resolved_visible_key())? {
                     Some(visible) => visible,
@@ -8102,6 +8129,13 @@ fn register_region_methods(
     methods.raw_set(
         "GetScale",
         lua.create_function(|_, object: Table| object.raw_get::<f64>(scale_key()))?,
+    )?;
+    methods.raw_set(
+        "GetEffectiveScale",
+        lua.create_function(|lua, object: Table| {
+            let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
+            live_region_scale(&objects, &object)
+        })?,
     )?;
     methods.raw_set(
         "SetDrawLayer",
@@ -8184,6 +8218,33 @@ struct LiveRegionBounds {
     bottom: f64,
     right: f64,
     top: f64,
+}
+
+impl LiveRegionBounds {
+    fn scaled(self, scale: f64) -> Self {
+        Self {
+            left: self.left * scale,
+            bottom: self.bottom * scale,
+            right: self.right * scale,
+            top: self.top * scale,
+        }
+    }
+}
+
+/// CFrame's effective scale is the product of local scales up to CSimpleTop.
+fn live_region_scale(objects: &Table, object: &Table) -> mlua::Result<f64> {
+    let mut current = object.clone();
+    let mut scale = 1.0;
+    for _ in 0..=objects.raw_len() {
+        scale *= current.raw_get::<f64>(scale_key())?;
+        let Some(parent) = current.raw_get::<Option<usize>>(parent_key())? else {
+            return Ok(scale);
+        };
+        current = objects.raw_get(parent)?;
+    }
+    Err(mlua::Error::runtime(
+        "region parent cycle while resolving scale",
+    ))
 }
 
 /// Region edge queries run during FrameXML construction, before the retained
@@ -8305,6 +8366,8 @@ fn resolve_live_region_bounds_inner(
     }
     visiting.push(index);
 
+    let scale = live_region_scale(objects, &object)?;
+
     let parent_index = object.raw_get::<Option<usize>>(parent_key())?;
     let mut anchors = Vec::new();
     let anchor_table: Table = object.raw_get(anchors_key())?;
@@ -8346,15 +8409,16 @@ fn resolve_live_region_bounds_inner(
                 visiting.pop();
                 return Ok(None);
             };
+            let target_scale = live_region_scale(objects, &target)?;
             let Some(bounds) =
                 resolve_live_region_bounds_inner(objects, target, screen, resolved, visiting)?
             else {
                 visiting.pop();
                 return Ok(None);
             };
-            bounds
+            bounds.scaled(target_scale / scale)
         } else {
-            screen
+            screen.scaled(1.0 / scale)
         };
         let x = (
             live_point_x_factor(point),
@@ -8387,7 +8451,9 @@ fn resolve_live_region_bounds_inner(
             visiting.pop();
             return Ok(None);
         };
+        let parent_scale = live_region_scale(objects, &parent)?;
         resolve_live_region_bounds_inner(objects, parent, screen, resolved, visiting)?
+            .map(|bounds| bounds.scaled(parent_scale / scale))
     } else {
         None
     };
@@ -8415,12 +8481,35 @@ fn resolve_live_region_bounds_inner(
     let (Some(horizontal), Some(vertical)) = (horizontal, vertical) else {
         return Ok(None);
     };
-    let bounds = LiveRegionBounds {
+    let mut bounds = LiveRegionBounds {
         left: horizontal.0,
         bottom: vertical.0,
         right: horizontal.0 + horizontal.1,
         top: vertical.0 + vertical.1,
     };
+    if object
+        .raw_get::<Option<bool>>(frame_clamped_key())?
+        .unwrap_or(false)
+    {
+        let insets: Table = object.raw_get(frame_clamp_insets_key())?;
+        let insets = [
+            insets.raw_get(1)?,
+            insets.raw_get(2)?,
+            insets.raw_get(3)?,
+            insets.raw_get(4)?,
+        ];
+        let clamped = crate::region::clamp_screen_rect(
+            crate::UiScreenRect::from_edges(bounds.left, bounds.bottom, bounds.right, bounds.top),
+            (screen.right / scale, screen.top / scale),
+            insets,
+        );
+        bounds = LiveRegionBounds {
+            left: clamped.left(),
+            bottom: clamped.bottom(),
+            right: clamped.right(),
+            top: clamped.top(),
+        };
+    }
     resolved.insert(index, bounds);
     Ok(Some(bounds))
 }
@@ -9710,11 +9799,11 @@ pub(super) fn edit_highlight_color_key() -> LightUserData {
     hidden_key(&EDIT_HIGHLIGHT_COLOR_TOKEN)
 }
 
-fn frame_clamped_key() -> LightUserData {
+pub(super) fn frame_clamped_key() -> LightUserData {
     hidden_key(&FRAME_CLAMPED_TOKEN)
 }
 
-fn frame_clamp_insets_key() -> LightUserData {
+pub(super) fn frame_clamp_insets_key() -> LightUserData {
     hidden_key(&FRAME_CLAMP_INSETS_TOKEN)
 }
 

@@ -934,11 +934,12 @@ impl ClientServices {
                             self.glue.cvar_value(name)
                         }
                     };
-                    self.screenshots.request(super::screenshot::ScreenshotRequest::new(
-                        world,
-                        cvar("screenshotFormat").as_deref().unwrap_or("jpeg"),
-                        cvar("screenshotQuality").as_deref().unwrap_or("3"),
-                    ));
+                    self.screenshots
+                        .request(super::screenshot::ScreenshotRequest::new(
+                            world,
+                            cvar("screenshotFormat").as_deref().unwrap_or("jpeg"),
+                            cvar("screenshotQuality").as_deref().unwrap_or("3"),
+                        ));
                 }
             }
         }

@@ -1189,9 +1189,8 @@ fn glue_manager_routes_hover_and_generic_frame_pointer_handlers() -> Result<(), 
             .get::<bool>("BUTTON_MOUSE_LEFT")?
     );
     let globals = manager.bundle().lua().globals();
-    let cursor_scale = 1080.0 / 768.0;
-    assert!((globals.get::<f64>("CURSOR_X")? - model_center.0 * cursor_scale).abs() < 0.000_01);
-    assert!((globals.get::<f64>("CURSOR_Y")? - model_center.1 * cursor_scale).abs() < 0.000_01);
+    assert!((globals.get::<f64>("CURSOR_X")? - model_center.0).abs() < 0.000_01);
+    assert!((globals.get::<f64>("CURSOR_Y")? - model_center.1).abs() < 0.000_01);
     assert_eq!(
         globals.get::<String>("POINTER_LOG")?,
         "button-enter;button-leave;model-enter;model-down:LeftButton;model-up:LeftButton;"
@@ -2102,8 +2101,10 @@ fn glue_manager_resolves_live_startup_geometry() -> Result<(), Box<dyn Error>> {
         .ok_or("missing templated geometry")?;
     assert_close(root.logical_bounds().width(), 400.0);
     assert_close(root.logical_bounds().height(), 200.0);
-    assert_close(root.logical_bounds().left(), 482.666_666_666_7);
-    assert_close(root.logical_bounds().bottom(), 284.0);
+    // Lua edges are in each region's own units. A half-scale centered frame
+    // resolves the screen center before dividing by that effective scale.
+    assert_close(root.logical_bounds().left(), 1_165.333_333_333_3);
+    assert_close(root.logical_bounds().bottom(), 668.0);
     assert_close(root.presentation_bounds().width(), 200.0);
     assert_close(root.effective_alpha(), 0.8);
     assert_close(root.effective_scale(), 0.5);
@@ -2138,7 +2139,8 @@ fn glue_manager_resolves_live_startup_geometry() -> Result<(), Box<dyn Error>> {
     assert_close(templated.logical_bounds().height(), 30.0);
     assert_close(
         (templated.logical_bounds().left() + templated.logical_bounds().right()) * 0.5,
-        (root.logical_bounds().left() + root.logical_bounds().right()) * 0.5,
+        (root.logical_bounds().left() + root.logical_bounds().right()) * root.effective_scale()
+            / (2.0 * templated.effective_scale()),
     );
     assert_close(templated.presentation_bounds().width(), 15.0);
     assert_close(templated.effective_alpha(), 0.4);
