@@ -70,6 +70,7 @@ impl EntityLighting {
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
+                | M2GpuPlacementOwner::CreatureMount { .. }
                 | M2GpuPlacementOwner::GameObject { .. }
         ) {
             if self

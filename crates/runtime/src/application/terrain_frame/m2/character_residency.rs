@@ -1,7 +1,7 @@
 //! Transactional character publication with retained component instances.
 
 use super::*;
-use crate::application::player_coordinator::ResidentPlayerAttachment;
+use crate::application::player_coordinator::{ResidentMountFrameInput, ResidentPlayerAttachment};
 use solarity_ecs::{PlayerEquipmentSlot, VisibleEquipmentItem};
 
 #[derive(Clone, Copy)]
@@ -29,7 +29,7 @@ pub(super) struct M2PreparedCharacter {
 }
 
 impl M2PreparedCharacter {
-    fn push(&mut self, source: M2GpuSource, placement: M2GpuPlacement) {
+    pub(super) fn push(&mut self, source: M2GpuSource, placement: M2GpuPlacement) {
         self.new
             .push((self.new.len() + self.retained.len(), source, placement));
     }
@@ -98,10 +98,10 @@ impl M2Frame {
 
     fn same_unit_owner(
         &self,
-        input: &ResidentPlayerFrameInput<'_>,
+        animation: Option<&Rc<UnitAnimationBehavior>>,
         body_owner: M2GpuPlacementOwner,
     ) -> bool {
-        let Some(animation) = input.unit_animation() else {
+        let Some(animation) = animation else {
             return false;
         };
         self.placements.iter().any(|placement| {
@@ -133,6 +133,106 @@ impl M2Frame {
     }
 }
 
+/// Shared Unit_C mount inputs; the body animation identifies the unit lifetime.
+pub(super) struct UnitMountGpuInput<'a> {
+    pub(super) mount: ResidentMountFrameInput<'a>,
+    pub(super) body_owner: M2GpuPlacementOwner,
+    pub(super) world_transform: WorldTransform,
+    pub(super) animation: Option<&'a Rc<UnitAnimationBehavior>>,
+}
+
+/// Prepares the independent mount before its attached player or creature body.
+/// 717910 preserves its instance while the same unit and mount model remain.
+pub(super) fn prepare_mount_gpu(
+    frame: &M2Frame,
+    renderer: &mut VulkanRenderer,
+    prepared: &mut M2PreparedCharacter,
+    input: UnitMountGpuInput<'_>,
+    scene_time_ms: f32,
+    random: &mut CrtRand,
+) -> Result<(), RuntimeTerrainFrameError> {
+    let mount = input.mount;
+    let world_transform = unit_placement_transform(input.world_transform, mount.object_scale())?;
+    let same_unit = frame.same_unit_owner(input.animation, input.body_owner);
+    let owner = match input.body_owner {
+        M2GpuPlacementOwner::PlayerBody { guid } => M2GpuPlacementOwner::PlayerMount { guid },
+        M2GpuPlacementOwner::RemotePlayerBody { guid } => {
+            M2GpuPlacementOwner::RemotePlayerMount { guid }
+        }
+        M2GpuPlacementOwner::CreatureBody { guid } => M2GpuPlacementOwner::CreatureMount { guid },
+        _ => unreachable!("mount preparation requires a unit body owner"),
+    };
+    let ground = input.animation.map(|animation| UnitGroundPlacement {
+        position: input.world_transform.position(),
+        scale: mount.object_scale(),
+        owner: Rc::clone(animation),
+    });
+    // 717910 leaves an unchanged mount instance intact. A character atlas
+    // or equipment change does not replace that independent CM2Model.
+    let retained = same_unit
+        .then(|| {
+            frame.placements.iter().position(|placement| {
+                placement.owner == owner
+                    && placement
+                        .mount_key
+                        .as_ref()
+                        .is_some_and(|key| key.is_same_model_as(mount.key()))
+            })
+        })
+        .flatten();
+    if let Some(index) = retained {
+        prepared.retain(
+            index,
+            RetainedCharacterState::Mount {
+                key: mount.key().clone(),
+                transform: world_transform,
+                ground,
+            },
+        );
+    } else {
+        if mount.model().attachment(0).is_none() {
+            return Err(RuntimeTerrainFrameError::MissingMountM2Attachment {
+                model: mount.model().path().clone(),
+                attachment_id: 0,
+            });
+        }
+        let resolved = mount
+            .textures()
+            .iter()
+            .map(|texture| match texture {
+                ResidentCreatureTexture::Authored(source) => {
+                    M2ResolvedTexture::Authored(source.as_ref())
+                }
+                ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
+            })
+            .collect::<Vec<_>>();
+        let source = prepare_gpu_source(
+            renderer,
+            mount.model(),
+            &resolved,
+            None,
+            M2LocalLightCount::Four,
+            M2ModelOrientation::Authored,
+        )?;
+        let mut placement = unit_gpu_placement(
+            scene_time_ms,
+            world_transform,
+            owner,
+            mount.model(),
+            mount.animation().animation_id(),
+            mount.particle_colors().cloned(),
+            random,
+        )?;
+        placement.ground_placement = ground;
+        placement.mount_key = Some(mount.key().clone());
+        // Parent-first insertion lets the current mount bone pose determine
+        // the rider transform before the body and its equipment are visited.
+        prepared.push(source, placement);
+    }
+    Ok(())
+}
+
 /// Prepares one complete player character, including equipment and visuals.
 pub(super) fn prepare_character_gpu(
     frame: &M2Frame,
@@ -149,7 +249,7 @@ pub(super) fn prepare_character_gpu(
         unit_placement_transform(input.world_transform(), input.object_scale())?
     };
     let mut prepared = M2PreparedCharacter::default();
-    let same_unit = frame.same_unit_owner(input, body_owner);
+    let same_unit = frame.same_unit_owner(input.unit_animation(), body_owner);
     // 4EF710 admits the shoulder pair only when both live model paths match.
     let same_shoulders = same_unit
         && [
@@ -166,81 +266,19 @@ pub(super) fn prepare_character_gpu(
                 .is_some()
         });
     if let Some(mount) = mount {
-        let owner = match body_owner {
-            M2GpuPlacementOwner::PlayerBody { guid } => M2GpuPlacementOwner::PlayerMount { guid },
-            M2GpuPlacementOwner::RemotePlayerBody { guid } => {
-                M2GpuPlacementOwner::RemotePlayerMount { guid }
-            }
-            _ => unreachable!("character preparation requires a player body owner"),
-        };
-        let ground = input.unit_animation().map(|animation| UnitGroundPlacement {
-            position: input.world_transform().position(),
-            scale: mount.object_scale(),
-            owner: Rc::clone(animation),
-        });
-        // 717910 leaves an unchanged mount instance intact. A character atlas
-        // or equipment change does not replace that independent CM2Model.
-        let retained = same_unit
-            .then(|| {
-                frame.placements.iter().position(|placement| {
-                    placement.owner == owner
-                        && placement
-                            .mount_key
-                            .as_ref()
-                            .is_some_and(|key| key.is_same_model_as(mount.key()))
-                })
-            })
-            .flatten();
-        if let Some(index) = retained {
-            prepared.retain(
-                index,
-                RetainedCharacterState::Mount {
-                    key: mount.key().clone(),
-                    transform: world_transform,
-                    ground,
-                },
-            );
-        } else {
-            if mount.model().attachment(0).is_none() {
-                return Err(RuntimeTerrainFrameError::MissingMountM2Attachment {
-                    model: mount.model().path().clone(),
-                    attachment_id: 0,
-                });
-            }
-            let resolved = mount
-                .textures()
-                .iter()
-                .map(|texture| match texture {
-                    ResidentCreatureTexture::Authored(source) => {
-                        M2ResolvedTexture::Authored(source.as_ref())
-                    }
-                    ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
-                    ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                })
-                .collect::<Vec<_>>();
-            let source = prepare_gpu_source(
-                renderer,
-                mount.model(),
-                &resolved,
-                None,
-                M2LocalLightCount::Four,
-                M2ModelOrientation::Authored,
-            )?;
-            let mut placement = unit_gpu_placement(
-                scene_time_ms,
-                world_transform,
-                owner,
-                mount.model(),
-                mount.animation().animation_id(),
-                mount.particle_colors().cloned(),
-                random,
-            )?;
-            placement.ground_placement = ground;
-            placement.mount_key = Some(mount.key().clone());
-            // Parent-first insertion lets the current mount bone pose determine
-            // the rider transform before the body and its equipment are visited.
-            prepared.push(source, placement);
-        }
+        prepare_mount_gpu(
+            frame,
+            renderer,
+            &mut prepared,
+            UnitMountGpuInput {
+                mount,
+                body_owner,
+                world_transform: input.world_transform(),
+                animation: input.unit_animation(),
+            },
+            scene_time_ms,
+            random,
+        )?;
     }
     let resolved = input
         .textures()

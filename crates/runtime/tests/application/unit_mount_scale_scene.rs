@@ -1,6 +1,218 @@
-//! Native mount/player scales survive residency, attachment posing and dismounts.
+//! Native mounted-unit scales survive residency, attachment posing and dismounts.
 
 use super::*;
+use crate::application::terrain_frame::m2::placement_parent_index;
+
+/// 73D5D0 attaches the body beneath a mount for non-player Unit_C owners too.
+#[test]
+fn mounted_creatures_publish_a_mount_and_attached_rider() -> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_mount_effects()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
+    equipment_residency::fields(&mut world, 30, &[(69, 102)])?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    assert_eq!(
+        frame.placements.len(),
+        2,
+        "mounted NPC owns a mount and rider"
+    );
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8., 0., 4.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-8., 8.],
+        [-8., 8.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    let mount_owner = M2GpuPlacementOwner::CreatureMount { guid: 30 };
+    let body_owner = M2GpuPlacementOwner::CreatureBody { guid: 30 };
+    assert_eq!(frame.placements[0].owner, mount_owner);
+    assert_eq!(frame.placements[1].owner, body_owner);
+    assert!(frame.placements[1].ground_placement.is_none());
+    assert_eq!(
+        frame.placements[1]
+            .playback
+            .as_ref()
+            .ok_or("rider playback")?
+            .borrow()
+            .animation_id,
+        91,
+        "mounted NPC selects the rider pose",
+    );
+    let created = effects(&frame, mount_owner)?.last_update_ms;
+    let target = Vec3::new(-0.25, 0.15, 1.).normalize();
+    let mut normal = solarity_rendering::M2GroundNormal::default();
+    let mut previous_time = 0.;
+    let publish =
+        |presentation: &mut crate::application::player_coordinator::RuntimePlayerPresentation,
+         world: &ActiveWorld,
+         frame: &mut M2Frame,
+         renderer: &mut VulkanRenderer,
+         random: &mut CrtRand|
+         -> Result<(), Box<dyn Error>> {
+            presentation.synchronize_creatures(Some(world), |_| None)?;
+            frame.replace_creatures(
+                renderer,
+                &presentation.resident_creature_frame_inputs(),
+                random,
+            )?;
+            Ok(())
+        };
+    // Transform-only synchronization retains the complete generation, while
+    // scale changes rebuild the rider and preserve the independent mount.
+    for (index, object_scale) in [1.0_f32, 1., 1.3, 0.75, 2.].into_iter().enumerate() {
+        let position = Vec3::new(index as f32 * 0.2, 0.4, 0.5);
+        let yaw = index as f32 * 0.2;
+        let time = (created + 100 + index as u32 * 100) as f32;
+        let before = mount_snapshot(&frame, mount_owner)?;
+        equipment_residency::fields(&mut world, 30, &[(4, object_scale.to_bits())])?;
+        world.update_transform(30, WorldTransform::new(position, yaw))?;
+        presentation.set_ground_normal(world.object_identity(30).ok_or("identity")?, target);
+        let expected_random = random;
+        publish(
+            &mut presentation,
+            &world,
+            &mut frame,
+            &mut renderer,
+            &mut random,
+        )?;
+        assert_eq!(mount_snapshot(&frame, mount_owner)?, before);
+        assert_eq!(random, expected_random);
+        frame.update_creature_states(
+            &presentation.resident_creature_frame_inputs(),
+            time,
+            &mut random,
+        )?;
+        normal.advance(target, (time - previous_time) * 0.001)?;
+        previous_time = time;
+        equipment_residency::advance(&mut frame, &renderer, camera, time, &mut random)?;
+        let mount = frame
+            .placements
+            .iter()
+            .find(|p| p.owner == mount_owner)
+            .ok_or("mount")?;
+        let body = frame
+            .placements
+            .iter()
+            .find(|p| p.owner == body_owner)
+            .ok_or("rider")?;
+        let placement_yaw = body
+            .unit_animation
+            .as_ref()
+            .ok_or("animation")?
+            .body_pose()
+            .placement_yaw;
+        let scale = (0.5_f64 * f64::from(object_scale) * f64::from(1.6_f32)) as f32;
+        let expected_mount = normal.transform(position, placement_yaw, scale, 3, 0.)?;
+        assert!(
+            mount.transform.abs_diff_eq(expected_mount, 1e-6),
+            "mount case {index}"
+        );
+        let expected_body = expected_mount
+            * Mat4::from_translation(Vec3::new(0.25, 0.5, 1.))
+            * Mat4::from_scale(Vec3::splat(1. / 1.6));
+        assert!(
+            body.transform.abs_diff_eq(expected_body, 1e-6),
+            "rider case {index}"
+        );
+        assert_eq!(
+            mount.ground_placement.as_ref().ok_or("ground")?.scale,
+            scale
+        );
+        assert!(body.ground_placement.is_none());
+        assert_eq!(placement_parent_index(&frame.placements, 1, body), Some(0));
+        assert!(
+            frame.visible_draws.len() >= 2,
+            "both mounted NPC models draw"
+        );
+    }
+    let live = mount_snapshot(&frame, mount_owner)?;
+    assert!(!live.effects.particles.is_empty());
+    assert!(live.effects.ribbons.len() > 1);
+    assert!(live.event_time > 0.);
+    // A display change, dismount and reused GUID each end the mount lifetime.
+    equipment_residency::fields(&mut world, 30, &[(69, 100)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_ne!(unit_source(&frame, mount_owner)?, live.source);
+    assert_eq!(mount_snapshot(&frame, mount_owner)?.event_time, 0.);
+    let previous_source = unit_source(&frame, mount_owner)?;
+    equipment_residency::fields(&mut world, 30, &[(69, 0)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(frame.placements.len(), 1);
+    assert!(frame.sources[previous_source].is_none());
+    assert!(frame.placements[0].ground_placement.is_some());
+    equipment_residency::fields(&mut world, 30, &[(69, 102)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    let remounted_source = unit_source(&frame, mount_owner)?;
+    assert_ne!(remounted_source, previous_source);
+    assert!(effects(&frame, mount_owner)?.particles.is_empty());
+    world.remove_object(30)?;
+    add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
+    equipment_residency::fields(&mut world, 30, &[(69, 102)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_ne!(unit_source(&frame, mount_owner)?, remounted_source);
+    assert!(frame.sources[remounted_source].is_none());
+    world.remove_object(30)?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(frame.placements.is_empty());
+    assert!(frame.sources.iter().all(Option::is_none));
+    Ok(())
+}
 
 /// 717910 gives the mount a separate model lifetime from rider materials.
 #[test]
@@ -575,7 +787,7 @@ fn native_mount_scales_reach_local_and_remote_rider_matrices() -> Result<(), Box
 }
 
 /// Registration uses the mount's authored box and raw movement transform even
-/// when neither model is drawn. Retained local/remote placements must update it.
+/// when neither model is drawn. Retained player and NPC placements must update it.
 #[test]
 fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), Box<dyn Error>> {
     use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
@@ -596,8 +808,17 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
         Vec3::ZERO,
         0.,
     ));
-    for guid in [7, 20] {
-        add_unit(&mut world, guid, ObjectKind::Player, 0)?;
+    for guid in [7, 20, 30] {
+        add_unit(
+            &mut world,
+            guid,
+            if guid == 30 {
+                ObjectKind::Unit
+            } else {
+                ObjectKind::Player
+            },
+            0,
+        )?;
     }
     terrain.synchronize(Some(&world))?;
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
@@ -632,17 +853,20 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
     .into_iter()
     .enumerate()
     {
-        for guid in [7, 20] {
+        for guid in [7, 20, 30] {
             world.update_fields(guid, [(69, mount)])?;
             solarity_systems::project_object_fields(&mut world, guid, [(69, mount)])?;
             world.update_transform(guid, WorldTransform::new(Vec3::new(x, 0., 0.), yaw))?;
         }
         presentation.synchronize(Some(&world))?;
         presentation.synchronize_remote_players(Some(&world))?;
+        presentation.synchronize_creatures(Some(&world), |_| None)?;
         let local = presentation.resident_frame_input().ok_or("local")?;
         let remote = presentation.resident_remote_player_frame_inputs();
+        let creatures = presentation.resident_creature_frame_inputs();
         frame.replace_player(&mut renderer, Some(local), &mut random)?;
         frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
+        frame.replace_creatures(&mut renderer, &creatures, &mut random)?;
         let time = index as f32 * 100.;
         if index != 0 {
             frame.update_player_state(
@@ -651,6 +875,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
                 &mut random,
             )?;
             frame.update_remote_player_states(&remote, time, &mut random)?;
+            frame.update_creature_states(&creatures, time, &mut random)?;
         }
         let draws = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
@@ -670,7 +895,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
             draws.draws.is_empty(),
             "outdoor callbacks precede draw culling"
         );
-        for guid in [7, 20] {
+        for guid in [7, 20, 30] {
             let identity = world.object_identity(guid).ok_or("identity")?;
             assert_eq!(
                 presentation.take_scene_collision(identity),

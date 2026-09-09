@@ -365,6 +365,12 @@ pub enum RuntimeTerrainFrameError {
         /// Remote player GUID whose mount is absent.
         guid: u64,
     },
+    /// A mounted creature update has no matching mount placement.
+    #[error("creature {guid:#018X} has no mount M2 placement in the current frame")]
+    MissingCreatureMountM2Placement {
+        /// Creature GUID whose mount is absent.
+        guid: u64,
+    },
     /// A current creature update has no matching placement in the GPU generation.
     #[error("visible creature {guid:#018X} has no M2 placement in the current frame")]
     MissingCreatureM2Placement {

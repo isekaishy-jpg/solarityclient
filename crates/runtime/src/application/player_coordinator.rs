@@ -1457,7 +1457,7 @@ impl RuntimePlayerPresentation {
         let bodies = self
             .creatures_resident
             .iter()
-            .map(|resident| (resident.key.guid, &resident.model, false))
+            .map(|resident| (resident.key.guid, &resident.model, resident.mount.is_some()))
             .chain(
                 self.remote_players
                     .iter()
@@ -1551,6 +1551,9 @@ impl RuntimePlayerPresentation {
                     path: appearance.body().model_path().clone(),
                     object_scale: body_scale * appearance.object_scale(),
                     particle_color_id: appearance.body().display().particle_color_id(),
+                    mount_key: appearance
+                        .mount()
+                        .map(|mount| mount_model_key(mount, body_scale, appearance.object_scale())),
                 },
                 transform,
                 requested_animation,
@@ -1566,10 +1569,22 @@ impl RuntimePlayerPresentation {
         if unchanged {
             for (desired, resident) in desired.iter().zip(&mut self.creatures_resident) {
                 resident.world_transform = desired.transform;
+                if let Some(mount) = resident.mount.as_mut() {
+                    mount.animation = resolve_resident_animation(
+                        &self.animations,
+                        &mount.model,
+                        desired.requested_animation,
+                        desired.animation_tier,
+                    )?;
+                }
                 resident.animation = resolve_resident_animation(
                     &self.animations,
                     &resident.model,
-                    desired.requested_animation,
+                    if resident.mount.is_some() {
+                        UnitLocomotionAnimation::MOUNT
+                    } else {
+                        desired.requested_animation
+                    },
                     desired.animation_tier,
                 )?;
             }
@@ -1588,10 +1603,22 @@ impl RuntimePlayerPresentation {
             {
                 let resident = &mut self.creatures_resident[index];
                 resident.world_transform = desired.transform;
+                if let Some(mount) = resident.mount.as_mut() {
+                    mount.animation = resolve_resident_animation(
+                        &self.animations,
+                        &mount.model,
+                        desired.requested_animation,
+                        desired.animation_tier,
+                    )?;
+                }
                 resident.animation = resolve_resident_animation(
                     &self.animations,
                     &resident.model,
-                    desired.requested_animation,
+                    if resident.mount.is_some() {
+                        UnitLocomotionAnimation::MOUNT
+                    } else {
+                        desired.requested_animation
+                    },
                     desired.animation_tier,
                 )?;
                 retained.push(desired.key.guid);
@@ -1648,10 +1675,37 @@ impl RuntimePlayerPresentation {
                     ),
                 )
             };
+            // 73D5D0 and 717910 give every Unit_C its own mount model;
+            // NPC residency preserves the same independent child as players.
+            let mount_appearance = desired
+                .key
+                .mount_key
+                .as_ref()
+                .map(|key| {
+                    self.creatures
+                        .resolve_model(key.display_id)
+                        .map_err(UnitModelAppearanceError::from)
+                })
+                .transpose()?;
+            let mount = load_mount_model(
+                mount_appearance.as_ref(),
+                desired.key.mount_key.as_ref(),
+                desired.requested_animation,
+                desired.animation_tier,
+                &self.animations,
+                &self.particle_colors,
+                &mut self.models,
+                &mut self.textures,
+                &mut assets,
+            )?;
             let animation = resolve_resident_animation(
                 &self.animations,
                 &model,
-                desired.requested_animation,
+                if mount.is_some() {
+                    UnitLocomotionAnimation::MOUNT
+                } else {
+                    desired.requested_animation
+                },
                 desired.animation_tier,
             )?;
             residents.push(ResidentCreatureModel {
@@ -1666,6 +1720,7 @@ impl RuntimePlayerPresentation {
                 ),
                 world_transform: desired.transform,
                 animation,
+                mount,
             });
         }
         drop(assets);
@@ -2738,6 +2793,7 @@ struct CreatureModelKey {
     path: AssetPath,
     object_scale: f32,
     particle_color_id: u32,
+    mount_key: Option<MountModelKey>,
 }
 
 struct DesiredCreatureModel {
@@ -2756,6 +2812,7 @@ struct ResidentCreatureModel {
     particle_colors: Option<M2ParticleColorReplacement>,
     world_transform: WorldTransform,
     animation: UnitModelAnimation,
+    mount: Option<ResidentMountModel>,
 }
 
 /// Creature submesh selection from player-style or packed display metadata.
@@ -3026,6 +3083,7 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
     animation: UnitModelAnimation,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
     unit_animation: Option<&'a Rc<UnitAnimationBehavior>>,
+    mount: Option<ResidentMountFrameInput<'a>>,
 }
 
 impl<'a> ResidentCreatureFrameInput<'a> {
@@ -3041,11 +3099,19 @@ impl<'a> ResidentCreatureFrameInput<'a> {
             animation: resident.animation,
             particle_colors: resident.particle_colors.as_ref(),
             unit_animation: None,
+            mount: resident
+                .mount
+                .as_ref()
+                .map(ResidentMountFrameInput::from_resident),
         }
     }
 
     pub(super) const fn generation(&self) -> &UnitPresentationGeneration {
         self.generation
+    }
+
+    pub(super) const fn mount(&self) -> Option<ResidentMountFrameInput<'a>> {
+        self.mount
     }
 
     pub(super) const fn guid(&self) -> u64 {

@@ -79,6 +79,15 @@ key and ground/world transforms transactionally while retaining the source,
 clocks and emitter histories. The same live regression resizes both players
 repeatedly and verifies the new transforms alongside unchanged instance state.
 
+Creature residency now carries the mount selected by `UNIT_FIELD_MOUNTDISPLAYID`
+through the same independent model preparation and retention path. Both
+`0x0073D5D0` and `0x00717910` operate on the common `Unit_C` mount slot; this
+ownership is not player-specific. NPC riders receive the mounted animation input,
+inherit attachment zero and its reciprocal display scale, and leave ground
+placement to the mount. The GPU regression covers both models drawing, movement,
+slope alignment, repeated size changes with live particle/ribbon histories,
+display replacement, dismount/remount, and removal/reuse of the NPC GUID.
+
 Mount playback still uses the existing generic model clock. The retained
 mount request owner, mounted behavior routing (`0x007385C0`), and model-specific
 completion dispatch (`0x0073BFF0`) remain animation integration work. This
@@ -108,7 +117,7 @@ Nonpositive depth enters bucket zero; an index at least 64 is unvisited.
 before frustum or occlusion rejection. Therefore outdoor movement admission
 does not mean that the unit was drawn. The raw unit registration transform
 from `0x007370D0` supplies the bounds, before the smoothed model tilt.
-Mounted player registrations select the mount box and mount scale independently
+Mounted player and NPC registrations select the mount box and mount scale independently
 of the attached rider transform; see [unit body scale](unit-body-scale.md).
 
 `tools/ghidra/scene_depth_oracle.py` runs the original camera instruction range

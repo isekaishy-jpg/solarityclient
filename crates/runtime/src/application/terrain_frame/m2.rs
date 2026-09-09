@@ -20,7 +20,10 @@ pub(in crate::application) mod unit_effects;
 mod unit_registration;
 mod visibility;
 use crate::application::unit_animation::UnitAnimationBehavior;
-use character_residency::{M2PlayerItemIdentity, prepare_character_gpu};
+use character_residency::{
+    M2PlayerItemIdentity, M2PreparedCharacter, UnitMountGpuInput, prepare_character_gpu,
+    prepare_mount_gpu,
+};
 use playback::M2PlaybackStorage;
 use unit_registration::UnitSceneRegistration;
 
@@ -277,6 +280,8 @@ enum M2GpuPlacementOwner {
     RemotePlayerMount { guid: u64 },
     /// One visible non-player unit projected from authoritative ECS state.
     CreatureBody { guid: u64 },
+    /// Independent mount below a non-player unit rider.
+    CreatureMount { guid: u64 },
     /// The controlled player's current movement-parent GameObject.
     GameObject {
         guid: u64,
@@ -1294,6 +1299,23 @@ impl M2Frame {
                 retained.push(input.guid());
                 continue;
             }
+            let mut character = M2PreparedCharacter::default();
+            let mount = input.mount();
+            if let Some(mount) = mount {
+                prepare_mount_gpu(
+                    self,
+                    renderer,
+                    &mut character,
+                    UnitMountGpuInput {
+                        mount,
+                        body_owner: M2GpuPlacementOwner::CreatureBody { guid: input.guid() },
+                        world_transform: input.world_transform(),
+                        animation: input.unit_animation(),
+                    },
+                    self.animation_time_ms(),
+                    random,
+                )?;
+            }
             let resolved = input
                 .textures()
                 .iter()
@@ -1313,8 +1335,10 @@ impl M2Frame {
                 M2LocalLightCount::Four,
                 M2ModelOrientation::Authored,
             )?;
-            let transform =
-                unit_placement_transform(input.world_transform(), input.object_scale())?;
+            let transform = unit_placement_transform(
+                input.world_transform(),
+                mount.map_or(input.object_scale(), |mount| mount.object_scale()),
+            )?;
             let mut placement = if let Some(animation) = input.unit_animation() {
                 animation.synchronize(self.animation_time_ms() as u32, random)?;
                 let mut placement = m2_gpu_placement(
@@ -1339,31 +1363,29 @@ impl M2Frame {
                     random,
                 )?
             };
-            placement.scene_registration =
-                Some(UnitSceneRegistration::new(input.model(), transform)?);
+            placement.scene_registration = Some(UnitSceneRegistration::new(
+                mount.map_or(input.model().as_ref(), |mount| mount.model().as_ref()),
+                transform,
+            )?);
             placement.unit_presentation = Some(input.generation().clone());
+            placement.rider_scale = mount.map_or(1.0, |mount| mount.rider_scale());
             placement.ground_placement =
-                input.unit_animation().map(|animation| UnitGroundPlacement {
-                    position: input.world_transform().position(),
-                    scale: input.object_scale(),
-                    owner: Rc::clone(animation),
-                });
-            prepared.push((source, placement));
+                input
+                    .unit_animation()
+                    .filter(|_| mount.is_none())
+                    .map(|animation| UnitGroundPlacement {
+                        position: input.world_transform().position(),
+                        scale: input.object_scale(),
+                        owner: Rc::clone(animation),
+                    });
+            character.push(source, placement);
+            prepared.push(character);
         }
 
-        self.retain_unit_effects(prepared.iter_mut().map(|(_, placement)| placement));
+        self.retain_character_instances(&mut prepared);
         self.remove_creatures(&retained);
-        for (source, placement) in prepared {
-            let source_index = self.sources.len();
-            self.sources.push(Some(source));
-            self.placements.push(M2GpuPlacement {
-                sound_lifetime: Default::default(),
-                light_lifetime: Default::default(),
-                entity_lighting: Default::default(),
-                placement_valid: true,
-                source_index,
-                ..placement
-            });
+        for character in prepared {
+            self.publish_character(character);
         }
         Ok(())
     }
@@ -1530,8 +1552,46 @@ impl M2Frame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         for input in inputs {
-            let transform =
-                unit_placement_transform(input.world_transform(), input.object_scale())?;
+            let transform = if let Some(mount) = input.mount() {
+                let transform =
+                    unit_placement_transform(input.world_transform(), mount.object_scale())?;
+                let placement = self
+                    .placements
+                    .iter_mut()
+                    .find(|placement| {
+                        placement.owner
+                            == (M2GpuPlacementOwner::CreatureMount { guid: input.guid() })
+                    })
+                    .ok_or(RuntimeTerrainFrameError::MissingCreatureMountM2Placement {
+                        guid: input.guid(),
+                    })?;
+                placement.transform = transform;
+                placement.local_transform = transform;
+                placement.ground_placement =
+                    input.unit_animation().map(|animation| UnitGroundPlacement {
+                        position: input.world_transform().position(),
+                        scale: mount.object_scale(),
+                        owner: Rc::clone(animation),
+                    });
+                let Some(source) = self.sources[placement.source_index].as_ref() else {
+                    continue;
+                };
+                if let Some(mut playback) = placement
+                    .playback
+                    .as_mut()
+                    .map(M2PlaybackStorage::borrow_mut)
+                {
+                    playback.select_animation(
+                        &source.model,
+                        mount.animation().animation_id(),
+                        animation_time_ms,
+                        random,
+                    )?;
+                }
+                transform
+            } else {
+                unit_placement_transform(input.world_transform(), input.object_scale())?
+            };
             let placement = self
                 .placements
                 .iter_mut()
@@ -1543,17 +1603,23 @@ impl M2Frame {
                 })?;
             placement.transform = transform;
             placement.local_transform = transform;
-            placement.scene_registration =
-                Some(UnitSceneRegistration::new(input.model(), transform)?);
+            placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());
+            placement.scene_registration = Some(UnitSceneRegistration::new(
+                input
+                    .mount()
+                    .map_or(input.model().as_ref(), |mount| mount.model().as_ref()),
+                transform,
+            )?);
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
             if let Some(animation) = input.unit_animation() {
-                placement.ground_placement = Some(UnitGroundPlacement {
-                    position: input.world_transform().position(),
-                    scale: input.object_scale(),
-                    owner: Rc::clone(animation),
-                });
+                placement.ground_placement =
+                    input.mount().is_none().then_some(UnitGroundPlacement {
+                        position: input.world_transform().position(),
+                        scale: input.object_scale(),
+                        owner: Rc::clone(animation),
+                    });
                 animation.synchronize(animation_time_ms as u32, random)?;
                 placement.unit_animation = Some(Rc::clone(animation));
                 placement.playback = Some(M2PlaybackStorage::Shared(animation.playback()));
@@ -1700,6 +1766,7 @@ impl M2Frame {
                 | M2GpuPlacementOwner::RemotePlayerBody { .. }
                 | M2GpuPlacementOwner::RemotePlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
+                | M2GpuPlacementOwner::CreatureMount { .. }
                 | M2GpuPlacementOwner::GameObject { .. } => false,
             };
             if owned {
@@ -1719,7 +1786,8 @@ impl M2Frame {
         self.placement_topology_dirty = true;
         let mut creature_sources = Vec::new();
         self.placements.retain(|placement| {
-            if let M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
+            if let M2GpuPlacementOwner::CreatureBody { guid }
+            | M2GpuPlacementOwner::CreatureMount { guid } = placement.owner
                 && !retained.contains(&guid)
             {
                 creature_sources.push(placement.source_index);
@@ -1765,6 +1833,7 @@ impl M2Frame {
                 | M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::CreatureBody { .. }
+                | M2GpuPlacementOwner::CreatureMount { .. }
                 | M2GpuPlacementOwner::GameObject { .. } => false,
             };
             if owned {
@@ -2054,6 +2123,7 @@ impl M2Frame {
                             | M2GpuPlacementOwner::RemotePlayerBody { .. }
                             | M2GpuPlacementOwner::RemotePlayerMount { .. }
                             | M2GpuPlacementOwner::CreatureBody { .. }
+                            | M2GpuPlacementOwner::CreatureMount { .. }
                             | M2GpuPlacementOwner::GameObject { .. }
                             | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
                         }),
@@ -2079,6 +2149,7 @@ impl M2Frame {
                             | M2GpuPlacementOwner::RemotePlayerBody { .. }
                             | M2GpuPlacementOwner::RemotePlayerMount { .. }
                             | M2GpuPlacementOwner::CreatureBody { .. }
+                            | M2GpuPlacementOwner::CreatureMount { .. }
                             | M2GpuPlacementOwner::GameObject { .. }
                             | M2GpuPlacementOwner::PlayerItem { .. } => None,
                         }),
@@ -2090,7 +2161,8 @@ impl M2Frame {
                         .iter()
                         .filter_map(|placement| match placement.owner {
                             M2GpuPlacementOwner::PlayerMount { guid }
-                            | M2GpuPlacementOwner::RemotePlayerMount { guid } => Some(guid),
+                            | M2GpuPlacementOwner::RemotePlayerMount { guid }
+                            | M2GpuPlacementOwner::CreatureMount { guid } => Some(guid),
                             _ => None,
                         }),
                 );
@@ -2243,7 +2315,8 @@ impl M2Frame {
                 placement.transform = parent * placement.local_transform;
             }
             if let M2GpuPlacementOwner::PlayerBody { guid }
-            | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
+            | M2GpuPlacementOwner::RemotePlayerBody { guid }
+            | M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
                 && self.mounted_guids.contains(&guid)
             {
                 let transform = self
@@ -2554,7 +2627,8 @@ impl M2Frame {
                 }
             }
             if let M2GpuPlacementOwner::PlayerMount { guid }
-            | M2GpuPlacementOwner::RemotePlayerMount { guid } = placement.owner
+            | M2GpuPlacementOwner::RemotePlayerMount { guid }
+            | M2GpuPlacementOwner::CreatureMount { guid } = placement.owner
             {
                 if matches!(placement.owner, M2GpuPlacementOwner::PlayerMount { .. }) {
                     self.mount_camera_sample = Some(sample_mount_camera(
@@ -3232,6 +3306,9 @@ fn placement_parent_index(
         M2GpuPlacementOwner::RemotePlayerBody { guid } => preceding.iter().rposition(|candidate| {
             candidate.owner == M2GpuPlacementOwner::RemotePlayerMount { guid }
         }),
+        M2GpuPlacementOwner::CreatureBody { guid } => preceding
+            .iter()
+            .rposition(|candidate| candidate.owner == M2GpuPlacementOwner::CreatureMount { guid }),
         M2GpuPlacementOwner::PlayerItem { guid, .. } => preceding.iter().rposition(|candidate| {
             candidate.owner == M2GpuPlacementOwner::PlayerBody { guid }
                 || candidate.owner == M2GpuPlacementOwner::RemotePlayerBody { guid }
@@ -3251,7 +3328,7 @@ fn placement_parent_index(
         | M2GpuPlacementOwner::GluePet
         | M2GpuPlacementOwner::PlayerMount { .. }
         | M2GpuPlacementOwner::RemotePlayerMount { .. }
-        | M2GpuPlacementOwner::CreatureBody { .. }
+        | M2GpuPlacementOwner::CreatureMount { .. }
         | M2GpuPlacementOwner::GameObject { .. } => None,
     }
 }
@@ -3376,6 +3453,7 @@ const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
         | M2GpuPlacementOwner::RemotePlayerBody { guid }
         | M2GpuPlacementOwner::RemotePlayerMount { guid }
         | M2GpuPlacementOwner::CreatureBody { guid }
+        | M2GpuPlacementOwner::CreatureMount { guid }
         | M2GpuPlacementOwner::GameObject { guid, .. }
         | M2GpuPlacementOwner::PlayerItem { guid, .. }
         | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => Some(guid),
@@ -3398,6 +3476,7 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
         | M2GpuPlacementOwner::RemotePlayerBody { .. }
         | M2GpuPlacementOwner::RemotePlayerMount { .. }
         | M2GpuPlacementOwner::CreatureBody { .. }
+        | M2GpuPlacementOwner::CreatureMount { .. }
         | M2GpuPlacementOwner::GameObject { .. }
         | M2GpuPlacementOwner::PlayerItem { .. }
         | M2GpuPlacementOwner::PlayerItemVisual { .. } => M2SceneLightBank::Environment,
