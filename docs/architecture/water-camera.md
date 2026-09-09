@@ -74,7 +74,9 @@ center ray precedes the swept volume and one-ninth retreat. The final interface
 stage retains the camera's forward direction. First person keeps an exact zero
 distance and therefore does not run the final interface trace.
 
-`camera_primary_oracle.py` compares 508 complete native primary calculations.
+`camera_primary_oracle.py` captures 508 complete native primary calculations;
+the public player-controller regression replays those within its supported
+subject-height range (at least 5/6 of a world unit).
 Dedicated water-segment, WMO clipping/grid, and terrain-grid captures cover
 526, 526, 436, and 636 cases respectively. Water rays retain native mesh
 coordinates, cell traversal, triangle order and strict fraction comparison.
@@ -90,6 +92,19 @@ adds the original one-ninth-plus-epsilon cushion, and restarts a two-second
 cosine recovery. It shares the principal height target with mounted `$CMA`
 changes. `camera_height_recovery_oracle.py` captures 36 histories, including
 repeated obstruction and wrapping client timestamps, with exact float results.
+
+The pre-collision pose retains its forward vector, scalar distance and local
+height independently of world-space eye and target points. `605D60` reads
+these native banks directly. Reconstructing them by subtracting rounded world
+coordinates introduced a stationary 0.11-unit alternating retreat near ground
+contact at close zoom distances. Keeping the original values matches the
+native result in the reproduced near-vertical case. Final water correction
+also retains this orientation.
+
+`camera_ground_oracle.py` runs the original primary and volume code against
+controlled ground geometry. Its 54 probes include the near-clip threshold,
+ground-contact zoom band, three pitches and two world origins. The regression
+compares resolved distance, height and eye through the public camera API.
 
 ## Water pitch and control modes
 

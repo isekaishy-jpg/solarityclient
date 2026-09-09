@@ -3,6 +3,8 @@
 use glam::Vec3;
 use thiserror::Error;
 
+use super::types::PlayerCameraOrbit;
+
 use super::{
     PlayerCameraLiquidState, PlayerCameraPose, PlayerCameraVolume, PlayerCameraVolumeKind,
     PlayerCameraVolumeQueryError, resolve_player_camera_volume,
@@ -109,15 +111,17 @@ pub fn resolve_player_camera_obstruction<E>(
     settings: PlayerCameraObstructionSettings,
     mut scene: impl FnMut(PlayerCameraSceneQuery<'_>) -> Result<Option<f32>, E>,
 ) -> Result<PlayerCameraObstruction, PlayerCameraObstructionError<E>> {
-    let forward = (pose.target() - pose.eye())
-        .try_normalize()
-        .ok_or(PlayerCameraObstructionError::InvalidCameraBasis)?;
+    // 605D60 reads the camera's distance/height banks and virtual forward
+    // vector directly. Reconstructing them from quantized world positions
+    // can toggle the one-ninth retreat across successive stationary frames.
+    let orbit = pose.orbit();
+    let forward = orbit.forward;
     let input = PrimaryInput {
         subject: pose.subject(),
         forward,
         up: pose.up(),
-        distance: (pose.orbit_pivot() - pose.eye()).dot(forward).max(0.0),
-        height: pose.orbit_pivot().z - pose.subject().z,
+        distance: orbit.distance,
+        height: orbit.height,
         mount_height: pose.flying_mount_height(),
     };
     let resolved = resolve_primary(input, aspect_ratio, settings, &mut scene)?;
@@ -135,6 +139,11 @@ pub fn resolve_player_camera_obstruction<E>(
             pivot,
             pose.subject(),
             pose.flying_mount_height(),
+            PlayerCameraOrbit {
+                distance: resolved.distance,
+                height: resolved.height,
+                ..orbit
+            },
         ),
         distance: resolved.distance,
         height: resolved.height,
@@ -142,6 +151,7 @@ pub fn resolve_player_camera_obstruction<E>(
 }
 
 #[derive(Clone, Copy)]
+/// Native primary inputs retain scalar banks independently of world coordinates.
 struct PrimaryInput {
     subject: Vec3,
     forward: Vec3,
@@ -150,12 +160,14 @@ struct PrimaryInput {
     height: f32,
     mount_height: f32,
 }
+/// Primary scalar results before composing the final eye.
 struct PrimaryResult {
     distance: f32,
     height: f32,
     vertical_fraction: f32,
 }
 
+/// Applies native anchor limits, center tracing and swept-volume retreat in order.
 fn resolve_primary<E>(
     input: PrimaryInput,
     aspect: f32,
@@ -252,6 +264,7 @@ fn resolve_primary<E>(
     })
 }
 
+/// Composes 601D60's eye with the distance-attenuated flying-mount offset.
 fn camera_eye(input: PrimaryInput, pivot: Vec3, distance: f32, vertical_fraction: f32) -> Vec3 {
     let mut eye = (pivot.as_dvec3() - input.forward.as_dvec3() * f64::from(distance)).as_vec3();
     if distance > 0.0 && input.mount_height.abs() >= f32::EPSILON * 2.0 && input.distance > 0.0 {
@@ -263,6 +276,7 @@ fn camera_eye(input: PrimaryInput, pivot: Vec3, distance: f32, vertical_fraction
     eye
 }
 
+/// Validates a scene provider's optional segment fraction without substituting geometry.
 fn trace<E>(
     scene: &mut impl FnMut(PlayerCameraSceneQuery<'_>) -> Result<Option<f32>, E>,
     start: Vec3,
@@ -275,111 +289,4 @@ fn trace<E>(
         return Err(PlayerCameraObstructionError::InvalidTraceFraction);
     }
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn primary_constraints_match_original_execution() -> Result<(), Box<dyn std::error::Error>> {
-        for line in include_str!("../../tests/fixtures/camera-primary-native.txt")
-            .lines()
-            .filter(|line| !line.starts_with('#'))
-        {
-            let groups = line
-                .split('|')
-                .map(|group| {
-                    group
-                        .split_whitespace()
-                        .map(|word| u32::from_str_radix(word, 16))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let v = &groups[0];
-            let f = |i: usize| f32::from_bits(v[i]);
-            let point = |i: usize| Vec3::new(f(i), f(i + 1), f(i + 2));
-            let input = PrimaryInput {
-                subject: point(0),
-                forward: point(3),
-                up: point(6),
-                distance: f(9),
-                height: f(10),
-                mount_height: f(11),
-            };
-            let settings = PlayerCameraObstructionSettings {
-                water_collision: v[12] != 0,
-                subject_liquid: match v[13] {
-                    0 => PlayerCameraLiquidState::Absent,
-                    1 => PlayerCameraLiquidState::Surface { depth: f(14) },
-                    _ => PlayerCameraLiquidState::Submerged { depth: f(14) },
-                },
-                minimum_subject_height: (f(15) >= 0.0).then(|| f(15) * 0.75),
-            };
-            let mut calls = Vec::new();
-            let mut ray_index = 0;
-            let resolved = resolve_primary(input, 16.0 / 9.0, settings, &mut |query| {
-                Ok::<_, std::convert::Infallible>(match query {
-                    PlayerCameraSceneQuery::Segment { start, end, water } => {
-                        calls.extend(
-                            start
-                                .to_array()
-                                .into_iter()
-                                .chain(end.to_array())
-                                .map(f32::to_bits),
-                        );
-                        calls.push(if water { 0x120171 } else { 0x100171 });
-                        let fraction = if ray_index == 0
-                            && f64::from(input.height) - f64::from(0.2_f32) > f64::from(EPSILON)
-                        {
-                            f(16)
-                        } else {
-                            f(17)
-                        };
-                        ray_index += 1;
-                        (fraction >= 0.0).then_some(fraction)
-                    }
-                    PlayerCameraSceneQuery::Volume { .. } => (f(18) >= 0.0).then(|| f(18)),
-                })
-            })?;
-            for (index, actual) in [
-                resolved.distance,
-                resolved.height,
-                resolved.vertical_fraction,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                assert!(
-                    (actual - f32::from_bits(groups[1][index])).abs() < 0.000_01,
-                    "result {index}: {actual}; {line}"
-                );
-            }
-            let pivot = Vec3::new(
-                input.subject.x,
-                input.subject.y,
-                input.subject.z + resolved.height,
-            );
-            let eye = camera_eye(input, pivot, resolved.distance, resolved.vertical_fraction);
-            for (index, actual) in eye.to_array().into_iter().enumerate() {
-                assert!(
-                    (actual - f32::from_bits(groups[1][3 + index])).abs() < 0.000_2,
-                    "eye {index}: {actual}; {line}"
-                );
-            }
-            assert_eq!(calls.len(), groups[2].len(), "{line}");
-            for (index, (&actual, &expected)) in calls.iter().zip(&groups[2]).enumerate() {
-                if index % 7 == 6 {
-                    assert_eq!(actual, expected, "{line}");
-                } else {
-                    assert!(
-                        (f32::from_bits(actual) - f32::from_bits(expected)).abs() < 0.000_2,
-                        "trace {index}: {}; {line}",
-                        f32::from_bits(actual)
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
 }

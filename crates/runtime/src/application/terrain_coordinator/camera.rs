@@ -68,7 +68,7 @@ impl RuntimeTerrainCoordinator {
             })?;
         feedback(obstruction.distance(), obstruction.height());
         let pose = obstruction.pose();
-        let forward = (pose.target() - pose.eye()).normalize();
+        let forward = pose.forward();
         // The final water-only segment is independent of cameraWaterCollision.
         // Resolve it first so the subsequent solid-volume callback has one
         // mutable scene borrow, while Systems retains 6061D0's arithmetic.

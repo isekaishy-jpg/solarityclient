@@ -15,6 +15,10 @@ mod battlefield;
 mod calendar;
 #[path = "stock_seed/camera.rs"]
 mod camera;
+#[path = "stock_seed/camera_ground.rs"]
+mod camera_ground;
+#[path = "stock_seed/camera_primary.rs"]
+mod camera_primary;
 #[path = "stock_seed/character.rs"]
 mod character;
 #[path = "stock_seed/collision.rs"]

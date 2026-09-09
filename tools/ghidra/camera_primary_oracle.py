@@ -17,7 +17,7 @@ from camera_water_oracle import bits,ret
 def f32(value): return struct.unpack('<f',struct.pack('<f',value))[0]
 
 
-def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_height,vertical,center,volume):
+def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_height,vertical,center,volume,ground_plane=False):
     uc=n.emulator()
     camera,vtable,point,dist,anchor,offset,unit,fields,cvar,eye,pivot=[n.HEAP+i*0x1000 for i in range(11)]
     forward_fn,up_fn=n.STOP+0x100,n.STOP+0x200
@@ -35,6 +35,15 @@ def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_heig
     n.write_words(uc,unit+8,fields)
     n.write_words(uc,fields,1,0,8)
     n.write_floats(uc,unit+0x854,[max(unit_height,0.)])
+    if ground_plane:
+        # Run 6059E0 and its original triangle clipping, supplying only the
+        # scene collection and FOV boundaries used by camera_volume_oracle.
+        n.write_floats(uc,camera+0x38,[.2,5000.])
+        n.write_floats(uc,camera+0x44,[16/9])
+        n.write_words(uc,vtable,n.STOP+0x300)
+        n.write_floats(uc,n.HEAP+0xb000,[1.5707964])
+        uc.mem_write(n.STOP+0x300,b'\xd9\x05'+struct.pack('<I',n.HEAP+0xb000)+b'\xc3')
+        uc.mem_write(0x40c8fa,b'\xc3')
     calls=[]
     ray_index=0
     def hook(uc,address,size,data):
@@ -52,10 +61,24 @@ def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_heig
             _,a,b,contact,fraction,mask,_=n.read_words(uc,sp,7)
             calls.extend([*n.read_words(uc,a,3),*n.read_words(uc,b,3),mask])
             fraction_value = vertical if ray_index==0 and height-f32(.2)>2**-20 else center
+            if ground_plane:
+                start=n.read_floats(uc,a,3)
+                end=n.read_floats(uc,b,3)
+                fraction_value=(start[2]-subject[2])/(start[2]-end[2]) if start[2]>=subject[2] and end[2]<subject[2] else -1.
             ray_index+=1
             if fraction_value>=0: n.write_floats(uc,fraction,[fraction_value])
             ret(uc,int(fraction_value>=0))
-        elif address==0x6059e0:
+        elif address==0x77f330 and ground_plane:
+            _,body,collection,flags,unused=n.read_words(uc,sp,5)
+            assert unused == 0
+            bank=n.HEAP+0xc000
+            selected=bool(flags & 0x100171)
+            n.write_words(uc,collection,int(selected),int(selected),bank,0x100)
+            if selected:
+                x,y,z=subject
+                n.write_floats(uc,bank,[0.,0.,1.,0.,x-100,y-100,z,x+100,y-100,z,x,y+100,z])
+            ret(uc,int(selected))
+        elif address==0x6059e0 and not ground_plane:
             _,output,_,_,_=n.read_words(uc,sp,5)
             d=n.read_floats(uc,output,1)[0]
             span=f32(d-f32(.2))

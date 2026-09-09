@@ -17,6 +17,18 @@ pub struct PlayerCameraPose {
     orbit_pivot: Vec3,
     subject: Vec3,
     flying_mount_height: f32,
+    orbit: PlayerCameraOrbit,
+}
+
+/// Native camera scalar banks and orientation, independent of rounded world positions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct PlayerCameraOrbit {
+    /// Orientation supplied by CGCamera's forward-vector accessor.
+    pub forward: Vec3,
+    /// Persistent zoom distance in world units, before final water correction.
+    pub distance: f32,
+    /// Subject-relative anchor height in world units.
+    pub height: f32,
 }
 
 impl PlayerCameraPose {
@@ -25,7 +37,7 @@ impl PlayerCameraPose {
     /// # Errors
     /// Rejects a non-finite eye or resulting target.
     pub fn with_eye(mut self, eye: Vec3) -> Result<Self, PlayerCameraPoseError> {
-        let target = eye + (self.target - self.eye);
+        let target = eye + self.orbit.forward;
         if !eye.is_finite() || !target.is_finite() {
             return Err(PlayerCameraPoseError::NonFiniteTransform);
         }
@@ -41,6 +53,7 @@ impl PlayerCameraPose {
         orbit_pivot: Vec3,
         subject: Vec3,
         flying_mount_height: f32,
+        orbit: PlayerCameraOrbit,
     ) -> Self {
         Self {
             eye,
@@ -49,7 +62,18 @@ impl PlayerCameraPose {
             orbit_pivot,
             subject,
             flying_mount_height,
+            orbit,
         }
+    }
+
+    /// Returns the retained native orientation without subtracting world coordinates.
+    #[must_use]
+    pub const fn forward(self) -> Vec3 {
+        self.orbit.forward
+    }
+
+    pub(super) const fn orbit(self) -> PlayerCameraOrbit {
+        self.orbit
     }
 
     /// Returns the world-space camera position before obstruction correction.

@@ -4,6 +4,8 @@ use glam::Vec3;
 use solarity_asset::DecodedM2Model;
 use solarity_ecs::{PlayerViewState, WorldTransform};
 
+use super::types::PlayerCameraOrbit;
+
 use super::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
     CameraSubjectHeightSource, PlayerCameraHeightSample, PlayerCameraPose, PlayerCameraPoseError,
@@ -124,7 +126,8 @@ fn resolve_player_camera_pose_with_flying_mount_height(
         Vec3::ZERO
     };
     let eye = eye + flying_mount_offset;
-    let target = eye + facing * pitch.cos() - Vec3::Z * pitch.sin();
+    let forward = facing * pitch.cos() - Vec3::Z * pitch.sin();
+    let target = eye + forward;
 
     Ok(PlayerCameraPose::new(
         eye,
@@ -133,6 +136,11 @@ fn resolve_player_camera_pose_with_flying_mount_height(
         orbit_pivot,
         subject,
         flying_mount_height,
+        PlayerCameraOrbit {
+            forward,
+            distance,
+            height: subject_height.value().max(CAMERA_PIVOT_HEIGHT_MINIMUM),
+        },
     ))
 }
 
