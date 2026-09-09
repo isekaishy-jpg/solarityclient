@@ -14,13 +14,14 @@ layout(location = 3) in vec3 in_vertex_light;
 layout(location = 4) in float in_fog_visibility;
 
 layout(set = 0, binding = 0) uniform TerrainScene {
-    mat4 view_projection;
+    mat4 projection;
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 sun_direction;
     vec4 view_depth;
     vec4 fog_parameters;
     vec4 fog_color;
+    mat4 view;
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D material_atlas;

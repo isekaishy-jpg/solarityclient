@@ -11,6 +11,7 @@ layout(std140, set = 1, binding = 0) uniform WorldModelMaterialState {
     vec4 fog_color;
     vec4 fragment_parameters;
     uvec4 behavior;
+    mat4 model_view;
 } material;
 
 layout(set = 2, binding = 0) uniform sampler2D material_texture_0;

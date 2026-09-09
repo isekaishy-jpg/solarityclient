@@ -241,8 +241,15 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
 
 fn world_scene(camera: solarity_rendering::WorldCameraFrame) -> WorldFrameScene<'static> {
     WorldFrameScene::new(
-        TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ONE, Vec3::ZERO, Vec3::Z),
+        TerrainSceneUniform::new(
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            Vec3::ONE,
+            Vec3::ZERO,
+            Vec3::Z,
+        ),
         WorldModelSceneUniform::new(
+            Mat4::IDENTITY,
             Mat4::IDENTITY,
             Vec3::ZERO,
             Vec3::ONE,

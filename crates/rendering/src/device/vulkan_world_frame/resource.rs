@@ -408,7 +408,7 @@ impl WorldFrameSlot {
                         self.layout.world_model_material_stride,
                         index,
                     )?,
-                    &draw.material().to_bytes(),
+                    &draw.material().to_bytes(scene.world_model().view()),
                     self.layout.total_bytes,
                 )?;
             }

@@ -5,7 +5,8 @@ use glam::{Mat4, Vec3, Vec4};
 /// Per-frame camera and outdoor directional-light state shared by all MCNKs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerrainSceneUniform {
-    view_projection: Mat4,
+    projection: Mat4,
+    view: Mat4,
     ambient_color: Vec3,
     diffuse_color: Vec3,
     sun_direction: Vec3,
@@ -16,20 +17,24 @@ pub struct TerrainSceneUniform {
 
 impl TerrainSceneUniform {
     /// Byte size of the exact std140 scene block consumed by both stages.
-    pub const BYTE_SIZE: usize = 160;
+    pub const BYTE_SIZE: usize = 224;
 
     /// Captures one camera/light snapshot without introducing lighting defaults.
     ///
     /// `sun_direction` points from the terrain surface toward the outdoor light.
+    /// Terrain.bls applies view and projection separately: combining them loses
+    /// depth precision when translating the original world-space MCNK vertices.
     #[must_use]
     pub const fn new(
-        view_projection: Mat4,
+        projection: Mat4,
+        view: Mat4,
         ambient_color: Vec3,
         diffuse_color: Vec3,
         sun_direction: Vec3,
     ) -> Self {
         Self {
-            view_projection,
+            projection,
+            view,
             ambient_color,
             diffuse_color,
             sun_direction,
@@ -54,13 +59,14 @@ impl TerrainSceneUniform {
     pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
         let mut bytes = [0_u8; Self::BYTE_SIZE];
         let mut offset = 0;
-        write_mat4(&mut bytes, &mut offset, self.view_projection);
+        write_mat4(&mut bytes, &mut offset, self.projection);
         write_vec4(&mut bytes, &mut offset, self.ambient_color.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.diffuse_color.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.sun_direction.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.view_depth);
         write_vec4(&mut bytes, &mut offset, self.fog_parameters);
         write_vec4(&mut bytes, &mut offset, self.fog_color);
+        write_mat4(&mut bytes, &mut offset, self.view);
         debug_assert_eq!(offset, Self::BYTE_SIZE);
         bytes
     }

@@ -297,7 +297,7 @@ pub(in crate::application) fn sky_scene(
         Vec4::new(0., 0., 0.999_023_44, 1.),
     );
     solarity_rendering::M2SceneUniform::new(
-        depth * camera.projection() * view,
+        depth * camera.projection(),
         view,
         Vec3::ZERO,
         Vec3::ZERO,

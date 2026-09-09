@@ -60,7 +60,8 @@ impl M2LocalLightState {
 /// Per-frame scene block shared by every visible M2 draw.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2SceneUniform {
-    view_projection: Mat4,
+    projection: Mat4,
+    view: Mat4,
     camera_position: Vec3,
     ambient_light: Vec3,
     diffuse_light: Vec3,
@@ -76,14 +77,15 @@ pub struct M2SceneUniform {
 
 impl M2SceneUniform {
     /// Byte size of the exact std140 scene descriptor block.
-    pub const BYTE_SIZE: usize = 784;
+    pub const BYTE_SIZE: usize = 848;
 
-    /// Creates one bounded scene-lighting and fog snapshot. `view` is the
-    /// right-handed world-to-eye transform used to build `view_projection`.
+    /// Creates one bounded scene-lighting and fog snapshot. Stock projects
+    /// view-space positions; preserving that boundary avoids world-coordinate
+    /// cancellation in clip Z. `view` also transforms world-space effect meshes.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
-        view_projection: Mat4,
+        projection: Mat4,
         view: Mat4,
         camera_position: Vec3,
         ambient_light: Vec3,
@@ -94,7 +96,8 @@ impl M2SceneUniform {
         local_lights: [M2LocalLightState; 4],
     ) -> Self {
         Self {
-            view_projection,
+            projection,
+            view,
             camera_position,
             ambient_light,
             diffuse_light,
@@ -134,7 +137,7 @@ impl M2SceneUniform {
     pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
         let mut bytes = [0_u8; Self::BYTE_SIZE];
         let mut offset = 0;
-        write_mat4(&mut bytes, &mut offset, self.view_projection);
+        write_mat4(&mut bytes, &mut offset, self.projection);
         write_vec4(&mut bytes, &mut offset, self.camera_position.extend(1.0));
         write_vec4(&mut bytes, &mut offset, self.ambient_light.extend(0.0));
         write_vec4(&mut bytes, &mut offset, self.diffuse_light.extend(0.0));
@@ -150,6 +153,7 @@ impl M2SceneUniform {
         }
         self.shadow.write_bytes(&mut bytes, &mut offset);
         write_vec4(&mut bytes, &mut offset, self.view_depth_plane);
+        write_mat4(&mut bytes, &mut offset, self.view);
         bytes
     }
 }
@@ -159,7 +163,7 @@ impl M2SceneUniform {
 pub struct M2MaterialUniform {
     model: Mat4,
     texture_transforms: [Mat4; 2],
-    environment_view: Mat4,
+    model_view: Mat4,
     mesh_color: Vec4,
     fog_color: Vec4,
     fragment_parameters: Vec4,
@@ -174,7 +178,7 @@ impl M2MaterialUniform {
     pub const fn new(
         model: Mat4,
         texture_transforms: [Mat4; 2],
-        environment_view: Mat4,
+        model_view: Mat4,
         mesh_color: Vec4,
         fog_color: Vec4,
         fragment_parameters: Vec4,
@@ -182,7 +186,7 @@ impl M2MaterialUniform {
         Self {
             model,
             texture_transforms,
-            environment_view,
+            model_view,
             mesh_color,
             fog_color,
             fragment_parameters,
@@ -198,7 +202,7 @@ impl M2MaterialUniform {
         for transform in self.texture_transforms {
             write_mat4(&mut bytes, &mut offset, transform);
         }
-        write_mat4(&mut bytes, &mut offset, self.environment_view);
+        write_mat4(&mut bytes, &mut offset, self.model_view);
         write_vec4(&mut bytes, &mut offset, self.mesh_color);
         write_vec4(&mut bytes, &mut offset, self.fog_color);
         write_vec4(&mut bytes, &mut offset, self.fragment_parameters);

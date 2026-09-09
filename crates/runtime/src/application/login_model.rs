@@ -1329,13 +1329,15 @@ impl RuntimeGlueModelScene {
             (Vec3::ZERO, Vec3::ZERO)
         };
         let terrain = TerrainSceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
+            camera.view(),
             environment_ambient,
             environment_diffuse,
             active.environment.light_direction,
         );
         let world_model = WorldModelSceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
+            camera.view(),
             camera.camera().position(),
             environment_ambient,
             environment_diffuse,
@@ -1344,7 +1346,7 @@ impl RuntimeGlueModelScene {
         );
         let specular_enabled = glue.cvar_boolean("specular");
         let model = M2SceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
             camera.view(),
             camera.camera().position(),
             environment_ambient,
@@ -1371,7 +1373,7 @@ impl RuntimeGlueModelScene {
                 light.local_lights(visible.glue_point_lights)
             });
         let character_model = M2SceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
             camera.view(),
             camera.camera().position(),
             Vec3::ZERO,

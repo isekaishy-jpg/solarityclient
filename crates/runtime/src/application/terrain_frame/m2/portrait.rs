@@ -173,7 +173,7 @@ impl M2Frame {
         }
         // 0x00616BC0 supplies ambient .45 and one white (-1, 0, -1) D3D ray.
         let scene = M2SceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
             camera.view(),
             camera.camera().position(),
             Vec3::splat(0.45),

@@ -90,8 +90,15 @@ fn liquid_resident_terrain_reaches_the_world_frame() -> Result<(), Box<dyn Error
     ]
     .map(|kind| LiquidDepthTexture::prepare(kind, [0; 2], [255; 2]));
     let scene = WorldFrameScene::new(
-        TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ONE, Vec3::ZERO, Vec3::Z),
+        TerrainSceneUniform::new(
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            Vec3::ONE,
+            Vec3::ZERO,
+            Vec3::Z,
+        ),
         WorldModelSceneUniform::new(
+            Mat4::IDENTITY,
             Mat4::IDENTITY,
             Vec3::ZERO,
             Vec3::ONE,

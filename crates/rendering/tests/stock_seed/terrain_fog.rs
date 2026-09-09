@@ -30,7 +30,7 @@ pub(super) fn compare_native_fog(
             } else {
                 Mat4::orthographic_rh(-10., 10., -10., 10., -1., 100.)
             };
-            let scene = TerrainSceneUniform::new(projection * view, Vec3::ONE, Vec3::ZERO, Vec3::Z)
+            let scene = TerrainSceneUniform::new(projection, view, Vec3::ONE, Vec3::ZERO, Vec3::Z)
                 .with_fog(
                     view,
                     Vec4::new(0., 20., 0., exponent),

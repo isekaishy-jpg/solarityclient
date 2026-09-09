@@ -207,7 +207,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
     )
     .frame(1.)?;
     let base = M2SceneUniform::new(
-        camera.view_projection(),
+        camera.projection(),
         camera.view(),
         camera.camera().position(),
         Vec3::ZERO,

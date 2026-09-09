@@ -10,6 +10,8 @@ mod particle_fog;
 mod particle_frame;
 #[path = "model/portrait.rs"]
 mod portrait;
+#[path = "model/projection.rs"]
+mod projection;
 #[path = "model/scene_lights.rs"]
 mod scene_lights;
 #[path = "model/sequence_blend.rs"]
@@ -3534,8 +3536,15 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     assert_ne!(character_scene.to_bytes(), scene_uniform.to_bytes());
     assert_ne!(pet_scene.to_bytes(), character_scene.to_bytes());
     let world_scene = WorldFrameScene::new(
-        TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::Z),
+        TerrainSceneUniform::new(
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::Z,
+        ),
         WorldModelSceneUniform::new(
+            Mat4::IDENTITY,
             Mat4::IDENTITY,
             Vec3::ZERO,
             Vec3::ZERO,

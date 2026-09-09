@@ -194,13 +194,20 @@ fn instance_lighting_grows_independently_of_mesh_draws_and_selects_each_gpu_queu
                 if queue == 0 {
                     Mat4::IDENTITY
                 } else {
-                    camera.view_projection()
+                    camera.projection()
                 },
                 color,
             );
             let scene = WorldFrameScene::new(
-                TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::Z),
+                TerrainSceneUniform::new(
+                    Mat4::IDENTITY,
+                    Mat4::IDENTITY,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    Vec3::Z,
+                ),
                 WorldModelSceneUniform::new(
+                    Mat4::IDENTITY,
                     Mat4::IDENTITY,
                     Vec3::ZERO,
                     Vec3::ZERO,

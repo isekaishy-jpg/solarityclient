@@ -344,9 +344,16 @@ fn capture(
     )?;
     let fog = Vec4::new(90., 100., 0., 1.);
     let scene = WorldFrameScene::new(
-        TerrainSceneUniform::new(camera.view_projection(), Vec3::ONE, Vec3::ZERO, Vec3::Z),
+        TerrainSceneUniform::new(
+            camera.projection(),
+            camera.view(),
+            Vec3::ONE,
+            Vec3::ZERO,
+            Vec3::Z,
+        ),
         WorldModelSceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
+            camera.view(),
             camera.camera().position(),
             Vec3::ONE,
             Vec3::ZERO,
@@ -354,7 +361,7 @@ fn capture(
             fog,
         ),
         M2SceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
             camera.view(),
             camera.camera().position(),
             Vec3::ONE,

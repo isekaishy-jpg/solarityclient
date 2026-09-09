@@ -15,7 +15,7 @@ layout(location = 2) in vec4 in_color;
 layout(location = 3) in vec2 in_tex_coord;
 
 layout(std140, set = 0, binding = 0) uniform M2ParticleScene {
-    mat4 view_projection;
+    mat4 projection;
     vec4 camera_position;
     vec4 ambient_light;
     vec4 diffuse_light;
@@ -28,6 +28,7 @@ layout(std140, set = 0, binding = 0) uniform M2ParticleScene {
     vec4 shadow_light_direction;
     vec4 shadow_filter_offsets[8];
     vec4 view_depth_plane;
+    mat4 view;
 } scene;
 
 layout(location = 0) out vec2 out_tex_coord;
@@ -65,7 +66,8 @@ vec3 lighting(vec3 position, vec3 normal) {
 }
 
 void main() {
-    gl_Position = scene.view_projection * vec4(in_position, 1.0);
+    precise vec4 view_position = scene.view * vec4(in_position, 1.0);
+    gl_Position = scene.projection * view_position;
     out_tex_coord = in_tex_coord;
     out_color = vec4(in_color.rgb * lighting(in_position, in_normal), in_color.a);
     float fog_range = max(scene.fog_parameters.y - scene.fog_parameters.x, 0.001);

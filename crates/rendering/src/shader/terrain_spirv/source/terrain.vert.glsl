@@ -7,13 +7,14 @@ layout(location = 3) in vec2 in_alpha_coordinates;
 layout(location = 4) in vec3 in_color_rgb;
 
 layout(set = 0, binding = 0) uniform TerrainScene {
-    mat4 view_projection;
+    mat4 projection;
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 sun_direction;
     vec4 view_depth;
     vec4 fog_parameters;
     vec4 fog_color;
+    mat4 view;
 } scene;
 
 layout(push_constant) uniform TerrainDraw {
@@ -30,7 +31,10 @@ void main() {
     const float atlas_texels = 1024.0;
     vec2 atlas_origin = vec2(draw.atlas_chunk) * chunk_texels;
 
-    gl_Position = scene.view_projection * vec4(in_position, 1.0);
+    // Terrain.bls uses c0..c3 for view, then c4..c7 for projection. Keeping
+    // clip Z separate prevents depth cancellation at large world coordinates.
+    precise vec4 view_position = scene.view * vec4(in_position, 1.0);
+    gl_Position = scene.projection * view_position;
     // Original Terrain.bls uses view Z and c12, then pow/max/min into oFog.
     float eye_depth = -dot(scene.view_depth, vec4(in_position, 1.0));
     float inverse_range = 1.0 / (scene.fog_parameters.y - scene.fog_parameters.x);

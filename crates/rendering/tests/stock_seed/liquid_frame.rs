@@ -752,8 +752,15 @@ fn triangle(depth: f32, color: [u8; 4]) -> [LiquidRenderVertex; 3] {
 /// Unused world shader families retain valid uniforms in a liquid-only frame.
 fn scene() -> WorldFrameScene<'static> {
     WorldFrameScene::new(
-        TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ONE, Vec3::ZERO, Vec3::Z),
+        TerrainSceneUniform::new(
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            Vec3::ONE,
+            Vec3::ZERO,
+            Vec3::Z,
+        ),
         WorldModelSceneUniform::new(
+            Mat4::IDENTITY,
             Mat4::IDENTITY,
             Vec3::ZERO,
             Vec3::ONE,

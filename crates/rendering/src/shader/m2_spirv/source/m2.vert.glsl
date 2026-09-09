@@ -16,7 +16,7 @@ struct M2LocalLight {
 };
 
 layout(std140, set = 0, binding = 0) uniform M2SceneState {
-    mat4 view_projection;
+    mat4 projection;
     vec4 camera_position;
     vec4 ambient_light;
     vec4 diffuse_light;
@@ -29,6 +29,7 @@ layout(std140, set = 0, binding = 0) uniform M2SceneState {
     vec4 shadow_light_direction;
     vec4 shadow_filter_offsets[8];
     vec4 view_depth_plane;
+    mat4 view;
 } scene;
 
 layout(std430, set = 1, binding = 0) readonly buffer M2BoneTransforms {
@@ -38,7 +39,7 @@ layout(std430, set = 1, binding = 0) readonly buffer M2BoneTransforms {
 layout(std140, set = 2, binding = 0) uniform M2MaterialState {
     mat4 model;
     mat4 texture_transforms[2];
-    mat4 environment_view;
+    mat4 model_view;
     vec4 mesh_color;
     vec4 fog_color;
     vec4 fragment_parameters;
@@ -88,8 +89,8 @@ mat4 skin_matrix() {
 
 // Evaluate the fixed-function-style environment coordinates used by the Env effects.
 vec2 environment_coordinates(vec3 position, vec3 normal) {
-    vec3 view_position = (material.environment_view * vec4(position, 1.0)).xyz;
-    vec3 view_normal = normalize(mat3(material.environment_view) * normal);
+    vec3 view_position = (material.model_view * vec4(position, 1.0)).xyz;
+    vec3 view_normal = normalize(mat3(material.model_view) * normal);
     vec3 direction = -normalize(view_position);
     vec3 reflected = direction - 2.0 * view_normal * dot(direction, view_normal);
     reflected.z += 1.0;
@@ -156,7 +157,9 @@ void main() {
     vec3 skinned_normal = normalize(mat3(skin) * model_normal);
     vec3 world_position = (material.model * vec4(skinned_position, 1.0)).xyz;
     vec3 world_normal = normalize(mat3(material.model) * skinned_normal);
-    gl_Position = scene.view_projection * vec4(world_position, 1.0);
+    // Stock projects the model-view result, retaining local vertex precision.
+    precise vec4 view_position = material.model_view * vec4(skinned_position, 1.0);
+    gl_Position = scene.projection * view_position;
 
     vec2 environment = environment_coordinates(skinned_position, skinned_normal);
     vec2 first = texture_coordinates_0;

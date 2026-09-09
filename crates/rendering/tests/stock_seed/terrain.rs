@@ -119,7 +119,8 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     )
     .frame(1.0)?;
     let scene = TerrainSceneUniform::new(
-        visible.view_projection(),
+        visible.projection(),
+        visible.view(),
         Vec3::new(0.25, 0.3, 0.35),
         Vec3::new(0.75, 0.7, 0.65),
         Vec3::new(0.0, 0.0, 1.0),
@@ -307,7 +308,8 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     let world_scene = WorldFrameScene::new(
         scene,
         WorldModelSceneUniform::new(
-            visible.view_projection(),
+            visible.projection(),
+            visible.view(),
             visible.camera().position(),
             Vec3::new(0.25, 0.3, 0.35),
             Vec3::new(0.75, 0.7, 0.65),
@@ -315,7 +317,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
             fog,
         ),
         M2SceneUniform::new(
-            visible.view_projection(),
+            visible.projection(),
             visible.view(),
             visible.camera().position(),
             Vec3::new(0.25, 0.3, 0.35),

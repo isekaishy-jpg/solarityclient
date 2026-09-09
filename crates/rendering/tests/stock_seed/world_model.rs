@@ -88,6 +88,7 @@ fn world_model_mesh_plan_combines_stock_surface_ranges() -> Result<(), Box<dyn E
 
     let scene = WorldModelSceneUniform::new(
         Mat4::IDENTITY,
+        Mat4::IDENTITY,
         Vec3::new(1.0, 2.0, 3.0),
         Vec3::new(64.0, 32.0, 128.0) / 255.0,
         Vec3::new(128.0, 64.0, 0.0) / 255.0,
@@ -110,7 +111,7 @@ fn world_model_mesh_plan_combines_stock_surface_ranges() -> Result<(), Box<dyn E
     assert_vec3_bytes(uniform.additive_color(), [63, 31, 15]);
     assert_eq!(uniform.behavior(), [1, 0, 1, 0]);
     assert_eq!(
-        uniform.to_bytes().len(),
+        uniform.to_bytes(Mat4::IDENTITY).len(),
         WorldModelMaterialUniform::BYTE_SIZE
     );
 

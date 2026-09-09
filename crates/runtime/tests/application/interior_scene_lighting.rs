@@ -215,7 +215,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
     )
     .frame(1.)?;
     let base = M2SceneUniform::new(
-        camera.view_projection(),
+        camera.projection(),
         camera.view(),
         camera.camera().position(),
         Vec3::ZERO,

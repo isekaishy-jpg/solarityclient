@@ -711,14 +711,16 @@ impl TerrainFrame {
         let (fog_start, fog_end) = fog.range();
         let fog_parameters = Vec4::new(fog_start, fog_end, 0.0, fog.exponent());
         let terrain_scene = TerrainSceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
+            camera.view(),
             light.ambient_color(),
             light.diffuse_color(),
             environment.light_direction(),
         )
         .with_fog(camera.view(), fog_parameters, fog.color());
         let world_model_scene = WorldModelSceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
+            camera.view(),
             camera.camera().position(),
             light.ambient_color(),
             light.diffuse_color(),
@@ -726,7 +728,7 @@ impl TerrainFrame {
             fog_parameters,
         );
         let m2_scene = M2SceneUniform::new(
-            camera.view_projection(),
+            camera.projection(),
             camera.view(),
             camera.camera().position(),
             glam::Vec3::ZERO,

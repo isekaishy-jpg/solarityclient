@@ -205,8 +205,15 @@ fn sky_models_share_bone_storage_and_keep_native_compositor_order() -> Result<()
             Mat4::from_translation(Vec3::splat(1000.))
         };
         let mut scene = WorldFrameScene::new(
-            TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ONE, Vec3::ZERO, Vec3::Z),
+            TerrainSceneUniform::new(
+                Mat4::IDENTITY,
+                Mat4::IDENTITY,
+                Vec3::ONE,
+                Vec3::ZERO,
+                Vec3::Z,
+            ),
             WorldModelSceneUniform::new(
+                Mat4::IDENTITY,
                 Mat4::IDENTITY,
                 Vec3::ZERO,
                 Vec3::ONE,

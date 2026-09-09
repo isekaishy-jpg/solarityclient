@@ -75,8 +75,15 @@ fn installed_stars_follow_opacity_without_camera_translation()
         assert_eq!(stars.draws().len(), 7);
         let uniform = sky_scene(camera);
         let scene = WorldFrameScene::new(
-            TerrainSceneUniform::new(Mat4::IDENTITY, Vec3::ONE, Vec3::ZERO, Vec3::Z),
+            TerrainSceneUniform::new(
+                Mat4::IDENTITY,
+                Mat4::IDENTITY,
+                Vec3::ONE,
+                Vec3::ZERO,
+                Vec3::Z,
+            ),
             WorldModelSceneUniform::new(
+                Mat4::IDENTITY,
                 Mat4::IDENTITY,
                 Vec3::ZERO,
                 Vec3::ONE,

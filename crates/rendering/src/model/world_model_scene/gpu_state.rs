@@ -8,7 +8,8 @@ use crate::{WorldModelFogMode, WorldModelLightingMode, WorldModelSurfacePass};
 /// Per-frame light, camera, and fog block shared by visible WMO surfaces.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldModelSceneUniform {
-    view_projection: Mat4,
+    projection: Mat4,
+    view: Mat4,
     camera_position: Vec3,
     exterior_ambient: Vec3,
     exterior_direct: Vec3,
@@ -25,7 +26,8 @@ impl WorldModelSceneUniform {
     /// Captures one world-light snapshot and derives stock's alternate pair.
     #[must_use]
     pub fn new(
-        view_projection: Mat4,
+        projection: Mat4,
+        view: Mat4,
         camera_position: Vec3,
         exterior_ambient: Vec3,
         exterior_direct: Vec3,
@@ -35,7 +37,8 @@ impl WorldModelSceneUniform {
         let (flattened_ambient, flattened_direct) =
             flattened_lighting(exterior_ambient, exterior_direct);
         Self {
-            view_projection,
+            projection,
+            view,
             camera_position,
             exterior_ambient,
             exterior_direct,
@@ -52,12 +55,17 @@ impl WorldModelSceneUniform {
         [self.flattened_ambient, self.flattened_direct]
     }
 
+    /// Supplies the same view sample for each material's CPU model-view product.
+    pub(crate) const fn view(self) -> Mat4 {
+        self.view
+    }
+
     /// Serializes without depending on Rust or glam memory layout.
     #[must_use]
     pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
         let mut bytes = [0_u8; Self::BYTE_SIZE];
         let mut offset = 0;
-        write_mat4(&mut bytes, &mut offset, self.view_projection);
+        write_mat4(&mut bytes, &mut offset, self.projection);
         for value in [
             self.camera_position,
             self.exterior_ambient,
@@ -86,7 +94,7 @@ pub struct WorldModelMaterialUniform {
 
 impl WorldModelMaterialUniform {
     /// Exact std140 descriptor size consumed by both MapObj stages.
-    pub const BYTE_SIZE: usize = 144;
+    pub const BYTE_SIZE: usize = 208;
 
     /// Creates one pass snapshot from decoded MOMT and live environment state.
     #[allow(clippy::too_many_arguments)]
@@ -131,9 +139,11 @@ impl WorldModelMaterialUniform {
         self.behavior
     }
 
-    /// Serializes without depending on Rust or glam memory layout.
+    /// Serializes the world transform for lighting and the CPU-composed
+    /// model-view transform for stock's separate projection stage. The latter
+    /// avoids adding a large world origin to every vertex before subtracting it.
     #[must_use]
-    pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {
+    pub fn to_bytes(self, view: Mat4) -> [u8; Self::BYTE_SIZE] {
         let mut bytes = [0_u8; Self::BYTE_SIZE];
         let mut offset = 0;
         write_mat4(&mut bytes, &mut offset, self.model);
@@ -148,6 +158,7 @@ impl WorldModelMaterialUniform {
         for value in self.behavior {
             write_u32(&mut bytes, &mut offset, value);
         }
+        write_mat4(&mut bytes, &mut offset, view * self.model);
         bytes
     }
 }

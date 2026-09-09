@@ -11,7 +11,7 @@ struct M2LocalLight {
 };
 
 layout(std140, set = 0, binding = 0) uniform M2ParticleScene {
-    mat4 view_projection;
+    mat4 projection;
     vec4 camera_position;
     vec4 ambient_light;
     vec4 diffuse_light;
@@ -24,6 +24,7 @@ layout(std140, set = 0, binding = 0) uniform M2ParticleScene {
     vec4 shadow_light_direction;
     vec4 shadow_filter_offsets[8];
     vec4 view_depth_plane;
+    mat4 view;
 } scene;
 
 layout(location = 0) in vec2 in_tex_coord;

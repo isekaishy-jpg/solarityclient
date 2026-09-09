@@ -19,7 +19,7 @@ struct M2LocalLight {
 };
 
 layout(std140, set = 0, binding = 0) uniform M2SceneState {
-    mat4 view_projection;
+    mat4 projection;
     vec4 camera_position;
     vec4 ambient_light;
     vec4 diffuse_light;
@@ -32,12 +32,13 @@ layout(std140, set = 0, binding = 0) uniform M2SceneState {
     vec4 shadow_light_direction;
     vec4 shadow_filter_offsets[8];
     vec4 view_depth_plane;
+    mat4 view;
 } scene;
 
 layout(std140, set = 2, binding = 0) uniform M2MaterialState {
     mat4 model;
     mat4 texture_transforms[2];
-    mat4 environment_view;
+    mat4 model_view;
     vec4 mesh_color;
     vec4 fog_color;
     vec4 fragment_parameters;

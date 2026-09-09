@@ -111,13 +111,15 @@ fn particle_framebuffer_uses_stock_depth_and_fog_exponent() -> Result<(), Box<dy
                     let fog = Vec4::new(0.0, 20.0, 0.0, exponent);
                     let scene = WorldFrameScene::new(
                         TerrainSceneUniform::new(
-                            camera.view_projection(),
+                            camera.projection(),
+                            camera.view(),
                             Vec3::ONE,
                             Vec3::ZERO,
                             Vec3::Z,
                         ),
                         WorldModelSceneUniform::new(
-                            camera.view_projection(),
+                            camera.projection(),
+                            camera.view(),
                             eye,
                             Vec3::ONE,
                             Vec3::ZERO,
@@ -125,7 +127,7 @@ fn particle_framebuffer_uses_stock_depth_and_fog_exponent() -> Result<(), Box<dy
                             fog,
                         ),
                         M2SceneUniform::new(
-                            camera.view_projection(),
+                            camera.projection(),
                             camera.view(),
                             eye,
                             Vec3::ONE,

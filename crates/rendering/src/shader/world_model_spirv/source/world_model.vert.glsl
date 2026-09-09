@@ -5,7 +5,7 @@
 #endif
 
 layout(std140, set = 0, binding = 0) uniform WorldModelSceneState {
-    mat4 view_projection;
+    mat4 projection;
     vec4 camera_position;
     vec4 exterior_ambient;
     vec4 exterior_direct;
@@ -22,6 +22,7 @@ layout(std140, set = 1, binding = 0) uniform WorldModelMaterialState {
     vec4 fog_color;
     vec4 fragment_parameters;
     uvec4 behavior;
+    mat4 model_view;
 } material;
 
 layout(location = 0) in vec3 model_position;
@@ -41,7 +42,8 @@ layout(location = 5) out float fragment_fog_visibility;
 void main() {
     vec3 world_position = (material.model * vec4(model_position, 1.0)).xyz;
     vec3 world_normal = normalize(mat3(material.model) * model_normal);
-    gl_Position = scene.view_projection * vec4(world_position, 1.0);
+    precise vec4 view_position = material.model_view * vec4(model_position, 1.0);
+    gl_Position = scene.projection * view_position;
     fragment_texture_coordinates_0 = texture_coordinates_0;
     fragment_texture_coordinates_1 = texture_coordinates_1;
 

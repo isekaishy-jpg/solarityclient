@@ -118,8 +118,7 @@ pub(super) fn compare_native_lighting(renderer: &mut VulkanRenderer) -> Result<(
                 row[start + 2].parse()?,
             ))
         };
-        let scene =
-            TerrainSceneUniform::new(projection * view, vector(4)?, vector(7)?, vector(10)?);
+        let scene = TerrainSceneUniform::new(projection, view, vector(4)?, vector(7)?, vector(10)?);
         renderer.request_frame_capture()?;
         renderer.present_terrain(scene, &[draws[&key]])?;
         let frame = renderer
