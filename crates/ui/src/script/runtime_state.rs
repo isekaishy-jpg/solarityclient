@@ -104,7 +104,10 @@ pub(crate) struct UiRuntimeSlider {
 pub(crate) struct UiRuntimeText {
     pub(crate) content: String,
     pub(crate) face: AssetPath,
+    /// Authored font-resource height in local UI units, before raster clamping.
     pub(crate) height: f64,
+    /// Explicit display height after SetTextHeight clears the pixel-font mode.
+    pub(crate) text_height: Option<f64>,
     pub(crate) rasterization: FontRasterization,
     pub(crate) outline_width: f64,
     pub(crate) color: [f64; 4],
@@ -1332,10 +1335,9 @@ fn snapshot_text(
     else {
         return Ok(None);
     };
-    let height = table
+    let text_height = table
         .raw_get::<Option<f64>>(font_height_key())
-        .map_err(|error| snapshot_error(format!("object {lua_index} text height"), error))?
-        .unwrap_or(height);
+        .map_err(|error| snapshot_error(format!("object {lua_index} text height"), error))?;
     if !height.is_finite() || height <= 0.0 {
         return Err(UiScriptError::Plan {
             message: format!("live UI text {lua_index} has invalid font height {height}"),
@@ -1419,6 +1421,7 @@ fn snapshot_text(
         content,
         face,
         height,
+        text_height,
         rasterization: if flags
             .split(',')
             .any(|flag| flag.trim().eq_ignore_ascii_case("MONOCHROME"))

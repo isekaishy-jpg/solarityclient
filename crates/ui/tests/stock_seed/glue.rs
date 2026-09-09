@@ -1631,6 +1631,10 @@ fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(),
         server_name.call::<Option<String>>(())?.as_deref(),
         Some("Remembered Realm")
     );
+    let set_cvar = globals.get::<mlua::Function>("SetCVar")?;
+    set_cvar.call::<()>(("realmName", ""))?;
+    assert_eq!(server_name.call::<String>(())?, "");
+    set_cvar.call::<()>(("realmName", "Remembered Realm"))?;
     assert!(!connected.call::<bool>(())?);
     let UiGlueNetworkAction::Login(request) = manager
         .take_network_action()
@@ -1673,6 +1677,13 @@ fn glue_manager_bridges_login_actions_without_exposing_passwords() -> Result<(),
     assert!(server_values[2].is_nil());
     assert_eq!(lua_numeric(&server_values[3]), Some(1.0));
     assert!(connected.call::<bool>(())?);
+    manager.set_network_status(UiGlueNetworkStatus::default());
+    assert_eq!(server_name.call::<String>(())?, "Local Realm");
+    assert_eq!(
+        manager.cvar_value("realmName").as_deref(),
+        Some("Local Realm")
+    );
+    assert!(!connected.call::<bool>(())?);
     Ok(())
 }
 

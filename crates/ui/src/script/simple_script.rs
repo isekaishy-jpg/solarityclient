@@ -18,7 +18,7 @@ use mlua::{LightUserData, Lua, MultiValue, RegistryKey, Table, Value, Variadic};
 use solarity_asset::{AssetPath, AssetStore, AssetStoreHandle, Locale, canonical_model_path};
 
 use crate::event::{UiEventArgument, UiEventPayload, canonical_frame_event, canonical_glue_event};
-use crate::script::UiGlueNetworkBridge;
+use crate::script::{UiGlueNetworkBridge, UiGlueNetworkStatus};
 use crate::{
     FontCatalog, FontDefinition, FontOutline, FontShadow, HorizontalJustification, UiAnchorTarget,
     UiAnimationPlan, UiBindingAssignments, UiBlendMode, UiBundle, UiDrawLayer, UiFrameStatePlan,
@@ -958,6 +958,14 @@ impl UiScriptEnvironment {
 
     pub(crate) fn network(&self) -> Rc<RefCell<UiGlueNetworkBridge>> {
         self.network.clone()
+    }
+
+    /// Retains the selected realm CVar independently of the connection lifetime.
+    pub(crate) fn set_network_status(&self, status: UiGlueNetworkStatus) {
+        if let Some(name) = status.server_name() {
+            self.cvars.load("realmName", name.to_owned());
+        }
+        self.network.borrow_mut().set_status(status);
     }
 
     pub(crate) fn process(&self) -> Rc<RefCell<crate::script::UiProcessBridge>> {
@@ -5125,8 +5133,16 @@ fn register_font_string_methods(
             let color: Table = font.raw_get(text_color_key())?;
             let shadow_offset: Table = font.raw_get(font_shadow_offset_key())?;
             let shadow_color: Table = font.raw_get(font_shadow_color_key())?;
+            let text_height = if font_string
+                .raw_get::<Option<f64>>(font_height_key())?
+                .is_some()
+            {
+                font.raw_get::<Option<f64>>(font_height_key())?
+            } else {
+                None
+            };
             font_string.raw_set(font_object_key(), font)?;
-            font_string.raw_set(font_height_key(), Value::Nil)?;
+            font_string.raw_set(font_height_key(), text_height)?;
             font_string.raw_set(text_color_key(), color)?;
             font_string.raw_set(font_shadow_offset_key(), shadow_offset)?;
             font_string.raw_set(font_shadow_color_key(), shadow_color)?;
@@ -5178,7 +5194,17 @@ fn register_font_string_methods(
                 )));
             }
             let height = f64::from(height as f32);
-            if font_string.raw_get::<Option<f64>>(font_height_key())? == Some(height) {
+            let previous_height =
+                font_string
+                    .raw_get::<Option<f64>>(font_height_key())?
+                    .or(font_string
+                        .raw_get::<Option<Table>>(font_object_key())?
+                        .map(|font| font.raw_get::<Option<f64>>(font_height_key()))
+                        .transpose()?
+                        .flatten());
+            if previous_height
+                .is_some_and(|previous| (previous - height).abs() < f64::from(f32::EPSILON))
+            {
                 return Ok(());
             }
             font_string.raw_set(font_height_key(), height)?;

@@ -96,6 +96,41 @@ fn startup_profile_persists_changed_cvars() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// AccountLogin.lua reads the saved realm through GetServerName before login;
+/// real realm names and Sound_OutputDriverName contain quoted whitespace.
+#[test]
+fn quoted_profile_values_survive_loading_and_repeated_saves() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    let config = fixture.profile_root().join("WTF/Config.wtf");
+    std::fs::create_dir_all(fixture.profile_root().join("WTF"))?;
+    std::fs::write(
+        &config,
+        "\u{feff}SET realmName \"GameMap Playerbots Test\"\r\n\tset\tSound_OutputDriverName\t\"Speakers (USB Audio)\" \r\nSET accountList \"\"\r\n",
+    )?;
+    let mut profile = StartupProfile::load(fixture.profile_root())?;
+    assert_eq!(
+        profile.cvar_values(),
+        &[
+            ("realmName".to_owned(), "GameMap Playerbots Test".to_owned()),
+            (
+                "Sound_OutputDriverName".to_owned(),
+                "Speakers (USB Audio)".to_owned()
+            ),
+            ("accountList".to_owned(), String::new()),
+        ]
+    );
+    let updated = vec![("realmName".to_owned(), "Another Realm".to_owned())];
+    profile.persist_cvars(&updated)?;
+    let saved = std::fs::read_to_string(&config)?;
+    profile.persist_cvars(&updated)?;
+    assert_eq!(std::fs::read_to_string(&config)?, saved);
+    assert_eq!(saved.matches("SET realmName ").count(), 1);
+    let reopened = StartupProfile::load(fixture.profile_root())?;
+    assert_eq!(reopened.cvar_values()[0], updated[0]);
+    assert_eq!(reopened.cvar_values()[1].1, "Speakers (USB Audio)");
+    Ok(())
+}
+
 /// Missing policy is rejected rather than replaced with a machine-dependent default.
 #[test]
 fn missing_required_capacity_has_no_guessed_default() -> Result<(), Box<dyn Error>> {

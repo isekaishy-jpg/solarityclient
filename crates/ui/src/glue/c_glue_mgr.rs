@@ -718,7 +718,7 @@ impl GlueManager {
 
     /// Publishes runtime-owned server facts for synchronous Glue queries.
     pub fn set_network_status(&self, status: UiGlueNetworkStatus) {
-        self.network.borrow_mut().set_status(status);
+        self.environment.set_network_status(status);
     }
 
     /// Publishes the complete runtime-owned realm directory for Glue queries.

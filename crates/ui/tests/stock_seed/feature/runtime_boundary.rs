@@ -161,7 +161,7 @@ fn frame_globals_read_the_shared_runtime_boundary() -> Result<(), Box<dyn Error>
   DynamicTabText:SetText("Tab")
   tab:SetText("Tab")
   local tabTextHeight = tab:GetTextHeight()
-  assert(tabTextHeight == 12, tostring(tabTextHeight))
+  assert(math.abs(tabTextHeight - 11 * 768 / 720) &lt; 1e-6, tostring(tabTextHeight))
   tab:Click()
   assert(CLICK_BUTTON == "LeftButton" and CLICK_DOWN == false, tostring(CLICK_BUTTON)..":"..tostring(CLICK_DOWN))
   local tooltipFrame = CreateFrame("GameTooltip", "RuntimeTooltip", self)

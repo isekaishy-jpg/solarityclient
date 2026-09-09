@@ -1088,7 +1088,7 @@ fn font_key(
     })?;
     Ok(LineFontKey {
         face,
-        pixel_height: (f64::from(height) * pixels_per_ui_unit).round().max(1.0) as u32,
+        pixel_height: super::raster_pixel_height(f64::from(height), pixels_per_ui_unit),
         rasterization: if definition.monochrome().unwrap_or(false) {
             FontRasterization::Monochrome
         } else {
@@ -1108,7 +1108,7 @@ fn runtime_font_key(
     }
     Ok(LineFontKey {
         face: text.face.clone(),
-        pixel_height: (text.height * pixels_per_ui_unit).round().max(1.0) as u32,
+        pixel_height: super::raster_pixel_height(text.height, pixels_per_ui_unit),
         rasterization: text.rasterization,
     })
 }
@@ -1354,6 +1354,24 @@ const fn hex_nibble(byte: u8) -> u8 {
     }
 }
 
+/// Places the text block relative to its owner's top, including short-field centering.
+fn vertical_block_top(
+    owner_height: f64,
+    block_height: f64,
+    insets: [f64; 4],
+    justification: crate::VerticalJustification,
+) -> f64 {
+    let [_, _, inset_top, inset_bottom] = insets;
+    let available_height = (owner_height - inset_top - inset_bottom).max(0.0);
+    match justification {
+        crate::VerticalJustification::Top => -inset_top,
+        crate::VerticalJustification::Middle => {
+            -inset_top - (available_height - block_height) * 0.5
+        }
+        crate::VerticalJustification::Bottom => -owner_height + inset_bottom + block_height,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_live_quads(
     live: &UiRuntimeObjectPlan,
@@ -1421,6 +1439,10 @@ fn layout_live_quads_for_objects(
                 font.face, font.pixel_height
             ),
         })?;
+        let rendered_pixel_height =
+            super::text_pixel_height(font.pixel_height, text.text_height, pixels_per_ui_unit);
+        let glyph_pixels_per_ui_unit =
+            pixels_per_ui_unit * f64::from(font.pixel_height) / rendered_pixel_height;
         let displayed = presented_characters(text);
         let lines = if object.kind == UiObjectKind::EditBox && !text.multiline {
             vec![
@@ -1454,9 +1476,8 @@ fn layout_live_quads_for_objects(
             lines
         };
         let owner = region.logical_bounds();
-        let [inset_left, inset_right, inset_top, inset_bottom] = text.text_insets;
+        let [inset_left, inset_right, _, _] = text.text_insets;
         let available_width = (owner.width() - inset_left - inset_right).max(0.0);
-        let available_height = (owner.height() - inset_top - inset_bottom).max(0.0);
         // CSimpleButton owns a single-line label even though the nested
         // FontString begins with CSimpleFontString's ordinary wrap default.
         // Stock clips a long label to the button instead of creating a second
@@ -1479,7 +1500,7 @@ fn layout_live_quads_for_objects(
                             glyphs
                                 .get(&GlyphKey::new(&font, presented.character))
                                 .map_or(0.0, |glyph| {
-                                    glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit
+                                    glyph.advance_x_26_6() as f64 / 64.0 / glyph_pixels_per_ui_unit
                                 })
                         },
                     )
@@ -1489,17 +1510,16 @@ fn layout_live_quads_for_objects(
         if text.max_lines > 0 {
             lines.truncate(text.max_lines as usize);
         }
-        let line_height = f64::from(font.pixel_height) / pixels_per_ui_unit;
+        let line_height = rendered_pixel_height / pixels_per_ui_unit;
         let block_height =
             line_height * lines.len() as f64 + text.spacing * lines.len().saturating_sub(1) as f64;
-        let block_top = match text.vertical {
-            crate::VerticalJustification::Top => -inset_top,
-            crate::VerticalJustification::Middle => {
-                -inset_top - (available_height - block_height).max(0.0) * 0.5
-            }
-            crate::VerticalJustification::Bottom => -owner.height() + inset_bottom + block_height,
-        };
-        let ascender = metrics.ascender_26_6 as f64 / 64.0 / pixels_per_ui_unit;
+        let block_top = vertical_block_top(
+            owner.height(),
+            block_height,
+            text.text_insets,
+            text.vertical,
+        );
+        let ascender = metrics.ascender_26_6 as f64 / 64.0 / glyph_pixels_per_ui_unit;
         let color = text.color.map(|component| component as f32);
         // CSimpleScrollFrame clips every region beneath its assigned child,
         // not only SimpleHTML. CharacterCreate's race and class descriptions
@@ -1534,7 +1554,7 @@ fn layout_live_quads_for_objects(
                     },
                     |glyph| {
                         Ok(width
-                            + glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit)
+                            + glyph.advance_x_26_6() as f64 / 64.0 / glyph_pixels_per_ui_unit)
                     },
                 )
             })?;
@@ -1552,7 +1572,13 @@ fn layout_live_quads_for_objects(
                 && !text.multiline
                 && line_index == 0)
                 .then(|| {
-                    edit_box_caret_metrics(text, &font, glyphs, pixels_per_ui_unit, available_width)
+                    edit_box_caret_metrics(
+                        text,
+                        &font,
+                        glyphs,
+                        glyph_pixels_per_ui_unit,
+                        available_width,
+                    )
                 });
             if let Some((caret_offset, caret_width)) = caret {
                 // CSimpleEditBox scrolls its one-line text just enough to keep
@@ -1579,7 +1605,7 @@ fn layout_live_quads_for_objects(
                         "live text object {object_index} uses unavailable glyph {character:?}"
                     ),
                 })?;
-                let advance = glyph.advance_x_26_6() as f64 / 64.0 / pixels_per_ui_unit;
+                let advance = glyph.advance_x_26_6() as f64 / 64.0 / glyph_pixels_per_ui_unit;
                 if let Some(layout) = edit_box_layout.as_mut() {
                     layout.push_cluster(
                         presented.source_begin,
@@ -1618,10 +1644,10 @@ fn layout_live_quads_for_objects(
                             ),
                         }
                     })?;
-                    let left = pen_x + f64::from(glyph.bearing_x()) / pixels_per_ui_unit;
-                    let top = baseline + f64::from(glyph.bearing_y()) / pixels_per_ui_unit;
-                    let right = left + f64::from(glyph.width()) / pixels_per_ui_unit;
-                    let bottom = top - f64::from(glyph.height()) / pixels_per_ui_unit;
+                    let left = pen_x + f64::from(glyph.bearing_x()) / glyph_pixels_per_ui_unit;
+                    let top = baseline + f64::from(glyph.bearing_y()) / glyph_pixels_per_ui_unit;
+                    let right = left + f64::from(glyph.width()) / glyph_pixels_per_ui_unit;
+                    let bottom = top - f64::from(glyph.height()) / glyph_pixels_per_ui_unit;
                     let u0 = placement.x as f32 / extent.0 as f32;
                     let v0 = placement.y as f32 / extent.1 as f32;
                     let u1 = (placement.x + glyph.width()) as f32 / extent.0 as f32;

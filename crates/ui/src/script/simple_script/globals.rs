@@ -2318,16 +2318,11 @@ fn register_glue_network_globals(
         lua.create_function(move |_, ()| {
             let network = network.borrow();
             let status = network.status();
-            let server_name = status.server_name().map(str::to_owned).or_else(|| {
-                cvars
-                    .get("realmName")
-                    .filter(|remembered| !remembered.is_empty())
-            });
             Ok((
-                server_name,
+                cvars.get("realmName"),
                 status.player_killing_allowed().then_some(1.0_f64),
                 status.roleplaying().then_some(1.0_f64),
-                status.is_server_down().then_some(1.0_f64),
+                (status.server_name().is_none() || status.is_server_down()).then_some(1.0_f64),
             ))
         })?,
     )?;

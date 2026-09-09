@@ -195,12 +195,12 @@ impl FontSystem {
         Ok(advances)
     }
 
-    /// Returns the hinted ascender for one face and pixel height.
+    /// Returns the build-12340 face ascender for one pixel height.
     ///
     /// # Errors
     ///
     /// Returns the same archive, face, or size failures as glyph loading and
-    /// rejects a face that does not publish scalable size metrics.
+    /// rejects a face whose ascender and descender define no vertical span.
     pub fn ascender_26_6(
         &mut self,
         store: &mut AssetStore,
@@ -218,11 +218,11 @@ impl FontSystem {
                 pixel_height,
                 message: error.to_string(),
             })?;
-        face.size_metrics()
-            .map(|metrics| i64::from(metrics.ascender))
+        super::pixel_size::ascender_pixels(face.ascender(), face.descender(), pixel_height)
+            .map(|ascender| ascender * 64)
             .ok_or_else(|| FontError::Face {
                 path: path.clone(),
-                message: "face has no active size metrics".to_owned(),
+                message: "face has no vertical metric span".to_owned(),
             })
     }
 

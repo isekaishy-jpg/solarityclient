@@ -171,9 +171,8 @@ impl TextMeasurement {
         let Some(height) = definition.height() else {
             return Ok(self.one_pixel());
         };
-        let pixel_height = (f64::from(height) * self.pixels_per_ui_unit)
-            .round()
-            .max(1.0) as u32;
+        let pixel_height =
+            crate::font::raster_pixel_height(f64::from(height), self.pixels_per_ui_unit);
         let rasterization = if definition.monochrome().unwrap_or(false) {
             FontRasterization::Monochrome
         } else {
@@ -227,7 +226,12 @@ impl TextMeasurement {
             .shadow()
             .and_then(|shadow| shadow.offset())
             .map_or(0.0, |offset| f64::from(offset.1).max(0.0));
-        Ok((f64::from(line_height) * lines + shadow).max(self.one_pixel()))
+        let pixel_height =
+            crate::font::raster_pixel_height(f64::from(line_height), self.pixels_per_ui_unit);
+        Ok(
+            (f64::from(pixel_height) / self.pixels_per_ui_unit * lines + shadow)
+                .max(self.one_pixel()),
+        )
     }
 
     fn one_pixel(&self) -> f64 {
@@ -260,10 +264,15 @@ impl TextMeasurement {
                 "FontString extent requires a mounted stock asset store",
             ));
         };
-        let line_height = font_string
-            .raw_get::<Option<f64>>(super::font_height_key())?
-            .unwrap_or(f64::from(line_height));
-        let pixel_height = (line_height * self.pixels_per_ui_unit).round().max(1.0) as u32;
+        let pixel_height =
+            crate::font::raster_pixel_height(f64::from(line_height), self.pixels_per_ui_unit);
+        let rendered_pixel_height = crate::font::text_pixel_height(
+            pixel_height,
+            font_string.raw_get::<Option<f64>>(super::font_height_key())?,
+            self.pixels_per_ui_unit,
+        );
+        let glyph_pixels_per_ui_unit =
+            self.pixels_per_ui_unit * f64::from(pixel_height) / rendered_pixel_height;
         let rasterization = if definition.monochrome().unwrap_or(false) {
             FontRasterization::Monochrome
         } else {
@@ -301,7 +310,7 @@ impl TextMeasurement {
                 .zip(advances)
                 .map(|(character, advance)| MeasuredCharacter {
                     character,
-                    advance: advance as f64 / 64.0 / self.pixels_per_ui_unit,
+                    advance: advance as f64 / 64.0 / glyph_pixels_per_ui_unit,
                 })
                 .collect::<Vec<_>>();
             let wrapped = match wrap_width {
@@ -325,7 +334,7 @@ impl TextMeasurement {
                 break;
             }
         }
-        let rendered_line_height = f64::from(pixel_height) / self.pixels_per_ui_unit;
+        let rendered_line_height = rendered_pixel_height / self.pixels_per_ui_unit;
         let height = rendered_line_height * line_count as f64
             + spacing * line_count.saturating_sub(1) as f64;
         Ok((

@@ -250,18 +250,15 @@ fn set_value<'line>(line: &'line str, requested_name: &str) -> Option<&'line str
     name.eq_ignore_ascii_case(requested_name).then_some(value)
 }
 
+/// Config.wtf quotes delimit the value, including spaces in realm and audio
+/// device names. Splitting the value on whitespace discards those saved CVars
+/// and makes each subsequent save append an apparently absent declaration.
 fn set_record(line: &str) -> Option<(&str, &str)> {
-    let mut fields = line.split_whitespace();
-    let command = fields.next()?;
-    let name = fields.next()?;
-    let quoted = fields.next()?;
-    if fields.next().is_some()
-        || !command.eq_ignore_ascii_case("SET")
-        || quoted.len() < 2
-        || !quoted.starts_with('"')
-        || !quoted.ends_with('"')
-    {
+    let (command, remainder) = line.trim_start().split_once(char::is_whitespace)?;
+    let (name, quoted) = remainder.trim_start().split_once(char::is_whitespace)?;
+    if !command.eq_ignore_ascii_case("SET") {
         return None;
     }
-    Some((name, quoted.get(1..quoted.len() - 1)?))
+    let value = quoted.trim().strip_prefix('"')?.strip_suffix('"')?;
+    (!value.contains('"')).then_some((name, value))
 }

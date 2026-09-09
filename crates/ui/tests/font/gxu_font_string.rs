@@ -21,6 +21,27 @@ fn glyph(advance: i64) -> RasterizedGlyph {
     }
 }
 
+// Unhooked 0x006C6190, string bottom=697 and one 18px line. The native
+// translation floors the final screen coordinate after vertical justification.
+#[test]
+fn short_font_string_centering_matches_original_translation() {
+    use crate::VerticalJustification::{Bottom, Middle, Top};
+    for (height, justification, native_y) in [
+        (13.0, Top, 710.0),
+        (13.0, Middle, 712.0),
+        (13.0, Bottom, 715.0),
+        (18.0, Top, 715.0),
+        (18.0, Middle, 715.0),
+        (18.0, Bottom, 715.0),
+        (40.0, Top, 737.0),
+        (40.0, Middle, 726.0),
+        (40.0, Bottom, 715.0),
+    ] {
+        let offset = super::vertical_block_top(height, 18.0, [0.0; 4], justification);
+        assert_eq!((697.0 + height + offset).floor(), native_y);
+    }
+}
+
 fn local_quad(object_index: usize, caret: bool) -> LocalGlyphQuad {
     LocalGlyphQuad {
         packet_key: None,
@@ -121,6 +142,7 @@ fn edit_box_caret_uses_password_cell_and_utf8_cursor_boundary() -> Result<(), Fo
         content: "éx".to_owned(),
         face,
         height: 12.0,
+        text_height: None,
         rasterization: FontRasterization::Antialiased,
         outline_width: 0.0,
         color: [1.0; 4],

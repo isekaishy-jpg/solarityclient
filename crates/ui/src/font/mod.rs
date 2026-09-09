@@ -10,6 +10,7 @@ mod gxu_font_misc_classes;
 mod gxu_font_string;
 mod gxu_font_util;
 mod i_gxu_font_glyph;
+mod pixel_size;
 mod status;
 
 pub use c_simple_font::{
@@ -21,4 +22,5 @@ pub(crate) use gxu_font_string::wrap_line;
 pub use gxu_font_string::{UiGlyphAtlasPlan, UiGlyphQuad, UiNativeTextStyle};
 pub use gxu_font_util::{FontRasterization, FontSystem};
 pub use i_gxu_font_glyph::RasterizedGlyph;
+pub(crate) use pixel_size::{raster_pixel_height, text_pixel_height};
 pub use status::FontError;
