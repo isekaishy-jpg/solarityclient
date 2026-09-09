@@ -220,16 +220,22 @@ impl DecodedWorldModelGroup {
     }
 
     /// Returns one BGRA color after native 7D7380's shared render/floor fixup.
-    /// Missing MOCV uses the renderer's opaque-white default.
+    /// Missing MOCV follows 7C8560's vertex upload: ordinary MapObj uses
+    /// opaque 127-gray, while unified MapObjU uses opaque black. These defaults
+    /// are not authored colors and must not pass through the MOCV correction.
     #[must_use]
     pub fn fixed_vertex_color(&self, root_flags: u16, index: usize) -> Option<[u8; 4]> {
         if index >= self.vertices.len() {
             return None;
         }
-        let mut color = self
-            .vertex_colors
-            .first()
-            .map_or([255; 4], |colors| colors[index]);
+        let Some(colors) = self.vertex_colors.first() else {
+            return Some(if root_flags & 2 == 0 {
+                [127, 127, 127, 255]
+            } else {
+                [0, 0, 0, 255]
+            });
+        };
+        let mut color = colors[index];
         if root_flags & 8 != 0 {
             return Some(color);
         }

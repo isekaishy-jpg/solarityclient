@@ -10,6 +10,58 @@ use solarity_asset::{
 
 use crate::support::{Fixture, FixtureFile};
 
+/// Missing MOCV uses 7C8560's exact colors for both native vertex layouts.
+#[test]
+fn world_model_missing_vertex_colors_match_original_upload() -> Result<(), Box<dyn Error>> {
+    let root = root_fixture(1);
+    let group = group_fixture(0x08);
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World/Colors.wmo",
+            bytes: &root,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "World/Colors_000.wmo",
+            bytes: &group,
+        },
+    ])?;
+    let mut assets = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let model = DecodedWorldModel::load(&mut assets, &AssetPath::new("World/Colors.wmo")?)?;
+    let group = &model.groups()[0];
+    assert!(group.vertex_colors().is_empty());
+    let mut cases = 0;
+    for line in include_str!("../fixtures/wmo_vertex_colors_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let row = line.split_ascii_whitespace().collect::<Vec<_>>();
+        if row[3] != "none" {
+            continue;
+        }
+        let flags = u16::from_str_radix(row[0], 16)?;
+        let expected = u32::from_str_radix(row[4], 16)?.to_le_bytes();
+        for vertex in 0..group.vertices().len() {
+            assert_eq!(
+                group.fixed_vertex_color(flags, vertex),
+                Some(expected),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            group.fixed_vertex_color(flags, group.vertices().len()),
+            None
+        );
+        cases += 1;
+    }
+    assert_eq!(cases, 24);
+    Ok(())
+}
+
 /// A version-17 root admits independently resolved collision-ready groups.
 #[test]
 fn world_model_loads_stock_group_geometry_and_bsp() -> Result<(), Box<dyn Error>> {

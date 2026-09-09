@@ -54,5 +54,7 @@ mod water_ripple;
 mod weather;
 #[path = "stock_seed/world_model.rs"]
 mod world_model;
+#[path = "stock_seed/world_model_lighting.rs"]
+mod world_model_lighting;
 #[path = "stock_seed/world_text.rs"]
 mod world_text;

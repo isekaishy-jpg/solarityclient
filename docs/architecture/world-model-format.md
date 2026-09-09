@@ -34,3 +34,17 @@ cargo run -p solarity-asset --example validate_world_models -- <Data> enUS WORLD
 ```
 
 This checks asset decoding, not live network entry, rendering, or boarding.
+
+## Missing vertex-color streams
+
+`0x007C8560` uploads `0xFF7F7F7F` when a group has no MOCV and root flag
+`0x02` is clear. With that flag set, the default is `0xFF000000`. This applies
+to both stock vertex formats (4 and 13). These defaults bypass the authored
+MOCV correction in `0x007D7380`; treating absent colors as white overlights
+exterior zeppelin groups using MapObjU.
+
+`wmo_vertex_color_oracle.py` executes the original uploader for 72 cases,
+covering both formats, D3D/OpenGL packing, six root-flag combinations and
+present/absent streams. Asset tests compare all 24 absent-stream cases. A GPU
+regression renders the six root flags under three ambient levels, verifying
+the distinct ordinary and unified defaults through their actual shaders.
