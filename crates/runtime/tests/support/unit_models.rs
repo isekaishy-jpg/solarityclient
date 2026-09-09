@@ -4,28 +4,40 @@ use super::{ClientFixture, game_object_models};
 use std::error::Error;
 
 pub fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, None, None)
+    build_fixture(false, false, None, None, None, None)
 }
 
 pub fn fixture_with_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false, None, None, None)
+    build_fixture(true, false, None, None, None, None)
 }
 
 pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, true, None, None, None)
+    build_fixture(false, true, None, None, None, None)
 }
 
 pub fn fixture_with_hairless_npc() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, Some(9), None, None)
+    build_fixture(false, false, Some(9), None, None, None)
 }
 
 pub fn fixture_with_water_effects(attachment: u32) -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, Some(attachment), None)
+    build_fixture(false, false, None, Some(attachment), None, None)
 }
 
 /// Distinct display/model scales and a family interval for live scale updates.
 pub fn fixture_with_body_scale() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, None, Some((0.4, 1.25)))
+    build_fixture(false, false, None, None, Some((0.4, 1.25)), None)
+}
+
+/// Display 102 is a mount with independently authored display/model scales.
+pub fn fixture_with_mount_scale() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(
+        false,
+        false,
+        None,
+        None,
+        Some((0.4, 1.25)),
+        Some((1.6, 3.5)),
+    )
 }
 
 fn build_fixture(
@@ -34,6 +46,7 @@ fn build_fixture(
     npc_race: Option<u32>,
     water_attachment: Option<u32>,
     body_scale: Option<(f32, f32)>,
+    mount_scale: Option<(f32, f32)>,
 ) -> Result<ClientFixture, Box<dyn Error>> {
     let ids = [0, 91, 96, 97, 98, 99, 100, 101];
     let mut model = game_object_models::model_with_animations(&ids)?;
@@ -57,6 +70,9 @@ fn build_fixture(
     }
     if equipment {
         append_attachments(&mut model, &[1, 5, 6, 11, 26], ids.len());
+    }
+    if mount_scale.is_some() {
+        append_attachments(&mut model, &[0], ids.len());
     }
     if let Some(attachment) = water_attachment {
         append_attachments(&mut model, &[attachment], ids.len());
@@ -94,6 +110,9 @@ fn build_fixture(
     displays.extend_from_slice(&display);
     display[0] = 102;
     display[1] = 8;
+    if let Some((scale, _)) = mount_scale {
+        display[4] = scale.to_bits();
+    }
     display[3] = u32::from(npc_race.is_some());
     if npc_race.is_some() {
         display[7] = 1;
@@ -112,6 +131,9 @@ fn build_fixture(
     let mut models = model_data.to_vec();
     let mut model_paths = b"\0Character\\Human\\Male\\HumanMale.m2\0".to_vec();
     model_data[0] = 8;
+    if let Some((_, scale)) = mount_scale {
+        model_data[4] = scale.to_bits();
+    }
     model_data[2] = model_paths.len() as u32;
     models.extend_from_slice(&model_data);
     model_paths.extend_from_slice(b"Creature\\Alternate.m2\0");

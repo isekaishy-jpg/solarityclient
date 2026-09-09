@@ -9,6 +9,9 @@ mod stock_npc_residency;
 #[path = "unit_body_scale_scene.rs"]
 mod unit_body_scale_scene;
 
+#[path = "unit_mount_scale_scene.rs"]
+mod unit_mount_scale_scene;
+
 #[path = "unit_water_effect_scene.rs"]
 mod unit_water_effect_scene;
 

@@ -140,6 +140,7 @@ pub(super) fn static_gpu_placement(
     };
     Ok(M2GpuPlacement {
         ground_placement: None,
+        rider_scale: 1.0,
         sound_lifetime: Default::default(),
         light_lifetime: Default::default(),
         entity_lighting: Default::default(),

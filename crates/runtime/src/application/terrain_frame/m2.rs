@@ -170,6 +170,8 @@ struct M2GpuPlacement {
     local_transform: Mat4,
     /// Raw unit position/scale avoid recovering placement inputs from a matrix.
     ground_placement: Option<UnitGroundPlacement>,
+    /// 73D5D0's inverse mount display scale, applied after the rider attachment.
+    rider_scale: f32,
     transform: Mat4,
     /// Local reflection paired with the source's Vulkan front-face state.
     orientation: M2ModelOrientation,
@@ -900,6 +902,7 @@ impl M2Frame {
                 source_index: 0,
                 local_transform: transform,
                 ground_placement: None,
+                rider_scale: 1.0,
                 transform,
                 orientation: M2ModelOrientation::Authored,
                 glue_parent_attachment: None,
@@ -1463,6 +1466,7 @@ impl M2Frame {
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2Placement { guid: input.guid() })?;
         placement.transform = transform;
         placement.local_transform = transform;
+        placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());
         let Some(source) = self.sources[placement.source_index].as_ref() else {
             return Ok(());
         };
@@ -1597,6 +1601,7 @@ impl M2Frame {
                 })?;
             placement.transform = transform;
             placement.local_transform = transform;
+            placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
@@ -2199,7 +2204,8 @@ impl M2Frame {
                 let Some(transform) = transform else {
                     continue;
                 };
-                placement.transform = transform;
+                placement.transform =
+                    transform * Mat4::from_scale(glam::Vec3::splat(placement.rider_scale));
             }
             if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
                 if self
@@ -3416,6 +3422,7 @@ fn m2_gpu_placement(
         source_index,
         local_transform: transform,
         ground_placement: None,
+        rider_scale: 1.0,
         transform,
         orientation: M2ModelOrientation::Authored,
         glue_parent_attachment: None,

@@ -236,6 +236,7 @@ pub(super) fn prepare_character_gpu(
         )?
     };
     body.unit_presentation = Some(input.generation().clone());
+    body.rider_scale = mount.map_or(1.0, |mount| mount.rider_scale());
     prepared.push(source, body);
     for attachment in input.attachments() {
         if input.model().attachment(attachment.point().id()).is_none() {

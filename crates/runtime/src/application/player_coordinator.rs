@@ -1041,20 +1041,31 @@ impl RuntimePlayerPresentation {
             Err(error) => return Err(error.into()),
         };
         let path = M2ModelCache::canonical_path(appearance.body().model_path())?;
-        let scale = appearance.object_scale();
+        let Some(body_scale) = solarity_systems::resolve_unit_body_scale(
+            world,
+            guid,
+            &self.creatures,
+            &self.races,
+            None,
+        ) else {
+            return Ok(RuntimePlayerPoll::Pending);
+        };
+        // 73FCC0 installs the same authored body multiplier for players and
+        // creatures; 71C0E0 combines it with the independent instance scale.
+        let scale = body_scale * appearance.object_scale();
         let body_model = appearance.body().model();
         let body_display = appearance.body().display();
         let authored_scale = body_display.model_scale() * body_model.model_scale();
         // CGUnit_C multiplies the authored display/model scale by the live
         // OBJECT_FIELD_SCALE_X before publishing its collision dimensions.
-        let collision_scale = authored_scale * scale.max(1.0);
+        let collision_scale = authored_scale * appearance.object_scale().max(1.0);
         let collision_extent = body_model
             .collision_extent()
             .map(|extent| extent * collision_scale);
         let particle_color_id = appearance.body().display().particle_color_id();
         let mount_key = appearance
             .mount()
-            .map(|mount| mount_model_key(mount, appearance.object_scale()));
+            .map(|mount| mount_model_key(mount, body_scale, appearance.object_scale()));
         let character = appearance
             .character()
             .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
@@ -1290,7 +1301,7 @@ impl RuntimePlayerPresentation {
         )?;
         let mount = load_mount_model(
             appearance.mount(),
-            appearance.object_scale(),
+            mount_key.as_ref(),
             requested_animation,
             unit_presentation.animation_tier(),
             &self.animations,
@@ -1819,10 +1830,19 @@ impl RuntimePlayerPresentation {
             .model()
             .collision_extent()
             .map(|extent| extent * collision_scale);
+        let Some(body_scale) = solarity_systems::resolve_unit_body_scale(
+            world,
+            guid,
+            &self.creatures,
+            &self.races,
+            None,
+        ) else {
+            return Ok(None);
+        };
         Ok(Some(DesiredRemotePlayerModel {
             identity,
             guid,
-            object_scale: appearance.object_scale(),
+            object_scale: body_scale * appearance.object_scale(),
             collision_extent,
             particle_color_id: appearance.body().display().particle_color_id(),
             path: M2ModelCache::canonical_path(appearance.body().model_path())?,
@@ -1835,7 +1855,7 @@ impl RuntimePlayerPresentation {
             animation_tier: unit_presentation.animation_tier(),
             mount_key: appearance
                 .mount()
-                .map(|mount| mount_model_key(mount, appearance.object_scale())),
+                .map(|mount| mount_model_key(mount, body_scale, appearance.object_scale())),
         }))
     }
 
@@ -1907,7 +1927,7 @@ impl RuntimePlayerPresentation {
         )?;
         let mount = load_mount_model(
             appearance.mount(),
-            appearance.object_scale(),
+            desired.mount_key.as_ref(),
             desired.requested_animation,
             desired.animation_tier,
             &self.animations,
@@ -2682,6 +2702,8 @@ struct MountModelKey {
     display_id: u32,
     path: AssetPath,
     object_scale: f32,
+    /// 73D5D0 cancels the display multiplier on the attached rider model.
+    rider_scale: f32,
     particle_color_id: u32,
     mount_height: f32,
 }
@@ -2691,6 +2713,7 @@ struct ResidentMountModel {
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
     object_scale: f32,
+    rider_scale: f32,
     particle_colors: Option<M2ParticleColorReplacement>,
     animation: UnitModelAnimation,
 }
@@ -2930,6 +2953,7 @@ pub(super) struct ResidentMountFrameInput<'a> {
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
     object_scale: f32,
+    rider_scale: f32,
     animation: UnitModelAnimation,
     particle_colors: Option<&'a M2ParticleColorReplacement>,
 }
@@ -2940,6 +2964,7 @@ impl<'a> ResidentMountFrameInput<'a> {
             model: &resident.model,
             textures: &resident.textures,
             object_scale: resident.object_scale,
+            rider_scale: resident.rider_scale,
             animation: resident.animation,
             particle_colors: resident.particle_colors.as_ref(),
         }
@@ -2955,6 +2980,11 @@ impl<'a> ResidentMountFrameInput<'a> {
 
     pub(super) const fn object_scale(self) -> f32 {
         self.object_scale
+    }
+
+    /// Scale local to mount attachment zero, preserving the rider's body size.
+    pub(super) const fn rider_scale(self) -> f32 {
+        self.rider_scale
     }
 
     pub(super) const fn animation(self) -> UnitModelAnimation {
@@ -3421,21 +3451,22 @@ fn prepare_npc_character_textures(
         .collect()
 }
 
-/// Captures the complete display/model identity and stock base-scale product.
-fn mount_model_key(appearance: &CreatureModelAppearance<'_>, object_scale: f32) -> MountModelKey {
-    let authored_scale = appearance.display().model_scale() * appearance.model().model_scale();
-    // `CGUnit_C::GetModelScale` replaces a non-positive authored product with
-    // one. The authoritative OBJECT_FIELD_SCALE_X remains an independent
-    // instance multiplier applied after that DBC result.
-    let model_scale = if authored_scale > 0.0 {
-        authored_scale
-    } else {
-        1.0
-    };
+/// Captures 73D5D0's mount display multiplier and 71C0E0's retained product.
+fn mount_model_key(
+    appearance: &CreatureModelAppearance<'_>,
+    body_scale: f32,
+    object_scale: f32,
+) -> MountModelKey {
+    // Mount loading stores only CreatureDisplayInfo +0x10 at Unit_C +0x990.
+    // Its model-data scale does not participate, and there is no positivity
+    // repair here. Retain the product until the native final float store.
+    let display_scale = appearance.display().model_scale();
     MountModelKey {
         display_id: appearance.display().id(),
         path: appearance.model_path().clone(),
-        object_scale: object_scale * model_scale,
+        object_scale: (f64::from(body_scale) * f64::from(object_scale) * f64::from(display_scale))
+            as f32,
+        rider_scale: 1.0 / display_scale,
         particle_color_id: appearance.display().particle_color_id(),
         mount_height: appearance.model().mount_height(),
     }
@@ -3445,7 +3476,7 @@ fn mount_model_key(appearance: &CreatureModelAppearance<'_>, object_scale: f32) 
 #[allow(clippy::too_many_arguments)]
 fn load_mount_model(
     appearance: Option<&CreatureModelAppearance<'_>>,
-    object_scale: f32,
+    key: Option<&MountModelKey>,
     requested_animation: UnitLocomotionAnimation,
     animation_tier: solarity_ecs::UnitAnimationTier,
     animations: &AnimationDataCatalog,
@@ -3454,10 +3485,9 @@ fn load_mount_model(
     textures: &mut BlpTextureCache,
     assets: &mut solarity_asset::AssetStore,
 ) -> Result<Option<ResidentMountModel>, RuntimePlayerError> {
-    let Some(appearance) = appearance else {
+    let Some((appearance, key)) = appearance.zip(key) else {
         return Ok(None);
     };
-    let key = mount_model_key(appearance, object_scale);
     let model = models.load(assets, appearance.model_path())?;
     let textures = prepare_creature_textures(&model, appearance, assets, textures)?;
     let animation =
@@ -3466,6 +3496,7 @@ fn load_mount_model(
         model,
         textures,
         object_scale: key.object_scale,
+        rider_scale: key.rider_scale,
         particle_colors: M2ParticleColorReplacement::resolve(
             particle_colors,
             key.particle_color_id,
