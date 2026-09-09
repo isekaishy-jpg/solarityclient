@@ -1378,6 +1378,11 @@ impl RuntimePlayerPresentation {
         self.unit_animations.notify_movement(event);
     }
 
+    /// Takes the prior scene bit for the unit's complete movement service pass.
+    pub(super) fn take_scene_collision(&self, identity: solarity_ecs::WorldObjectIdentity) -> bool {
+        self.unit_animations.take_scene_collision(identity)
+    }
+
     /// Publishes movement's retained world normal to the unit's scene owner.
     pub(super) fn set_ground_normal(
         &self,

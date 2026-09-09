@@ -24,6 +24,14 @@ fn ground_placement_retains_smoothing_across_model_replacement_and_duplicate_dra
     scene.set_ground_normal(identity, target);
     scene.bind(identity, &owner.model, &owner.animations, input(0));
     let first = Rc::clone(scene.get(identity.guid()).ok_or("first model")?);
+    assert!(!scene.take_scene_collision(identity));
+    first.admit_scene_collision();
+    assert!(scene.take_scene_collision(identity));
+    assert!(
+        !scene.take_scene_collision(identity),
+        "each scene bit is consumed once"
+    );
+    first.admit_scene_collision();
     let mut random = CrtRand::new();
     let position = Vec3::new(13., -7., 5.);
     first.advance_scene(100., &mut random)?;
@@ -55,6 +63,10 @@ fn ground_placement_retains_smoothing_across_model_replacement_and_duplicate_dra
     )?);
     scene.bind(identity, &replacement, &owner.animations, input(0));
     let second = scene.get(identity.guid()).ok_or("replacement model")?;
+    assert!(
+        scene.take_scene_collision(identity),
+        "replacement retains prior scene admission"
+    );
     second.advance_scene(600., &mut random)?;
     assert_eq!(
         second.ground_transform(position, 2., 600., 0.5)?,

@@ -29,6 +29,10 @@ mod tests;
 #[path = "../../../../tests/application/remote_passenger.rs"]
 mod passenger_tests;
 
+#[cfg(test)]
+#[path = "../../../../tests/application/remote_spline_ground.rs"]
+mod spline_ground_tests;
+
 /// A stable, wrapping-clock queue entry after native delay admission.
 struct Scheduled {
     message: RemoteMovement,
@@ -54,6 +58,8 @@ pub(super) struct RemoteUnit {
     pub path_parent: Option<PassengerParent>,
     /// Local collision normal retained when packet/path input replaces motion.
     pub ground_normal: glam::Vec3,
+    /// Previous scene traversal's unit callback bit, consumed once per service pass.
+    pub scene_collision: bool,
     pub animation_events: VecDeque<UnitMovementAnimationEvent>,
     /// Unit +0x784 survives packet and spline replacement within this lifetime.
     pub previous_water_depth: f32,
@@ -77,6 +83,7 @@ impl RemoteUnit {
             path: None,
             path_parent: None,
             ground_normal: glam::Vec3::Z,
+            scene_collision: false,
             animation_events: VecDeque::new(),
             previous_water_depth: 0.0,
             clock: RemoteMovementClock::default(),
@@ -164,9 +171,16 @@ impl RemoteUnit {
     }
 
     pub fn snapshot(&self) -> (WorldTransform, WorldMovementState) {
-        self.motion
+        let (transform, mut movement) = self
+            .motion
             .as_ref()
-            .map_or(self.published, LocalMovement::snapshot)
+            .map_or(self.published, LocalMovement::snapshot);
+        if let Some(path) = &self.path {
+            movement = movement
+                .with_flags(movement.flags() | (self.published.1.flags() & 0x0800_0000))
+                .with_spline(path.motion());
+        }
+        (transform, movement)
     }
 
     /// Constructs the shared ground/fall engine in the admitted parent's coordinates.
@@ -175,13 +189,22 @@ impl RemoteUnit {
         geometry: &mut G,
     ) -> Result<(), RuntimePlayerMovementError> {
         if self.path.is_some() {
-            return self.refresh_path_parent(geometry);
+            self.refresh_path_parent(geometry)?;
         }
         let (transform, movement) = self.published;
+        let walking_path = self.path.as_ref().is_some_and(|path| {
+            path.motion().flags & 0xa00 == 0 && movement.flags() as u32 & 0x4220_0000 == 0
+        });
         // Swimming shares the local 3D owner; flight retains its separate path.
         if self.motion.is_none()
-            && self.path.is_none()
-            && movement.flags() as u32 & 0x4a00_0000 == 0
+            && (self.path.is_none() || walking_path)
+            && movement.flags() as u32
+                & (if walking_path {
+                    0x4200_0000
+                } else {
+                    0x4a00_0000
+                })
+                == 0
             && (movement.flags() as u32 & 0x200000 != 0 || movement.flags() as u32 & 0xc000c0 == 0)
         {
             let mut context = movement.context();
@@ -538,14 +561,19 @@ impl RemoteUnit {
                 |motion| motion.position,
             );
             let can_advance = movement.flags() & 0x40c0_10ff != 0 && in_map_bounds(position);
-            if can_advance && self.path.is_some() {
-                self.advance_path(next_ms, &target_position)?;
-            }
-            if let Some(motion) = &mut self.motion {
+            let path_interval = self
+                .path
+                .as_ref()
+                .is_some_and(|path| path.motion().flags & 0x400 == 0);
+            if can_advance && path_interval {
+                self.advance_path(next_ms, dimensions, profile, geometry, &target_position)?;
+            } else if let Some(motion) = &mut self.motion {
                 motion.remote_profile = Some(profile);
                 if can_advance {
                     motion.interval(duration, dimensions, geometry, &mut VecDeque::new())?;
                 }
+            }
+            if let Some(motion) = &mut self.motion {
                 motion.time_ms = next_ms;
             }
             self.time_ms = next_ms;

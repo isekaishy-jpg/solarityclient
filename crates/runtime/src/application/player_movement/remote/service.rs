@@ -162,6 +162,7 @@ impl RuntimeRemoteMovement {
                 MovementBspCacheMode::Enabled,
                 &mut self.geometry,
             );
+            owner.scene_collision = presentation.take_scene_collision(identity);
             owner.process(
                 events,
                 now_ms,

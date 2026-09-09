@@ -48,8 +48,11 @@ the original sequence lookup, primary timer query, basis construction, blend,
 and scale against controlled model records. Tests match 216 smoothing cases
 and 520 complete model matrices and sequence weights by exact float bits.
 
-These are standalone presentation operations. The live unit surface source,
-scene callback ownership, and renderer calls remain to be connected.
+The runtime publishes local and remote collision normals through the unit's
+lifetime state. Model loading, replacement, and duplicate draws preserve that
+state. Ordinary unmounted unit placement uses the final body yaw and the scene
+frame duration supplied by `0x004F8D10`; a gap in callbacks does not become a
+larger smoothing interval.
 
 ## Recovered integration rules
 
@@ -73,16 +76,20 @@ and complete insertion routine, including its original intrusive-list helper,
 without hooks. The 489 cases cover direction octants, vertical views, all depth
 boundaries, and large world coordinates.
 
-This operation does not yet own the live scene callback. `0x0079A870` always
-traverses exterior bins when the camera is outside a WMO; an interior camera
-requires an admitted exterior portal window. WMO-bound units instead depend
-on visited group lists through `0x00793270`. Those live membership and traversal
-decisions must be connected before treating this depth result as a complete
-scene-admission answer.
+The live outdoor bridge now publishes this admission before draw-frustum
+rejection, and the next remote movement service consumes it once across all
+catch-up intervals. It admits ordinary unmounted units outside WMO interiors
+when the camera has no WMO registration. Camera and unit registration reuse the
+resident native floor/portal queries.
+
+An interior camera requires an admitted exterior portal window. WMO-bound units
+instead depend on visited group lists through `0x00793270`. That portal/group
+scene bridge, mounted model registrations, and special hidden-model registration
+flags remain unimplemented; the outdoor bridge is not a complete scene answer.
 
 ### Movement and presentation
 
-The following behavior defines the remaining live integration:
+The shared movement and presentation integration follows these recovered rules:
 
 - `0x006E9E20` bypasses collision for a remote spline owner when unit flags
   at `+0xBC` lack `0x800000`. Otherwise it calls `0x00762E00` using the delta
@@ -92,7 +99,7 @@ The following behavior defines the remaining live integration:
   with flags `5` from `0x00793060` and `0x00793270`. The remaining callback pass
   at `0x00793450` sets bit `4` when registered-model classification byte `+0x25`
   is less than `2`. This is a scene traversal classification, not the network's
-  visible-object set. Exact live admission still needs its scene owner.
+  visible-object set. The runtime currently wires the exterior depth-list case.
 - After native movement, `0x006EAC40` calls `0x006E9470` with the sampled spline
   point. That correction replaces the retained position only when forced or
   squared displacement is at least `9.0` (`0x009E2FF8`). Thus ordinary collision
@@ -118,8 +125,15 @@ The following behavior defines the remaining live integration:
   does not blend toward upright heading. Combinations such as `6` or `10` do
   not enter that sequence override.
 
-The standalone tests establish clipping, normal computation, smoothing,
-sequence blend, and model-matrix arithmetic. They do not establish live scene
-admission, spline collision continuation, or the final rendered pose. The
-reported NPC slope defect remains open until those paths are connected and
-verified together.
+`MovementIntervalDrive` retains `0x00762E00`'s original direction and speed
+through collision substeps. Its 356 unhooked native fixtures compare all float
+stores exactly. Runtime walking splines use that drive with the shared ground
+and fall solver, preserve corrections below three yards, keep the compact path
+summary, and publish the resulting normal. Spatial, parabolic, falling-path,
+and hover response owners remain outside this walking integration.
+
+Runtime regression tests cover repeated slope intervals without double motion,
+scene-rejected raw placement, pre-collision snap, missing-geometry travel
+normals, completion, and admission lifetime across model replacement. A rendered
+stock-map check and the remaining scene cases are still required before closing
+the reported NPC slope defect.

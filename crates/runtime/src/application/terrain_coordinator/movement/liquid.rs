@@ -125,27 +125,7 @@ impl RuntimeTerrainCoordinator {
         let Some(active) = self.active.as_mut() else {
             return Ok((None, None));
         };
-        let point = TerrainRegistrationPoint::new(position.x, position.y)?;
-        let end = position - Vec3::Z * 1760.0;
-        let maximum = active
-            .tile_at(point.tile())
-            .map(|tile| tile.collision.trace(position, end, 0.0, 1.0))
-            .transpose()?
-            .flatten()
-            .map_or(1.0, |hit| hit.fraction());
-        let mut camera = WorldModelCameraRegistrationQuery::new(position, end, maximum)?;
-        for index in 0..active.movement.roots.len() {
-            let root = active.movement.roots[index];
-            camera.probe_root(
-                index,
-                match root {
-                    MovementRootReference::Static(_) => WorldModelRegistrationKind::Static,
-                    MovementRootReference::GameObject(_) => WorldModelRegistrationKind::Transformed,
-                },
-                active.registration_root_mut(root)?,
-            )?;
-        }
-        if let Some(camera) = camera.finish() {
+        if let Some(camera) = active.camera_registration(position)? {
             let root = active.movement.roots[camera.owner];
             let root = active.registration_root_mut(root)?;
             return Ok((
@@ -158,6 +138,37 @@ impl RuntimeTerrainCoordinator {
 }
 
 impl super::ResidentTerrainMap {
+    /// 795D40 registers the camera once against the resident terrain/root banks.
+    pub(super) fn camera_registration(
+        &mut self,
+        position: Vec3,
+    ) -> Result<
+        Option<solarity_systems::WorldModelCameraRegistration<usize>>,
+        RuntimeMovementRegistrationError,
+    > {
+        let point = TerrainRegistrationPoint::new(position.x, position.y)?;
+        let end = position - Vec3::Z * 1760.0;
+        let maximum = self
+            .tile_at(point.tile())
+            .map(|tile| tile.collision.trace(position, end, 0.0, 1.0))
+            .transpose()?
+            .flatten()
+            .map_or(1.0, |hit| hit.fraction());
+        let mut camera = WorldModelCameraRegistrationQuery::new(position, end, maximum)?;
+        for index in 0..self.movement.roots.len() {
+            let root = self.movement.roots[index];
+            camera.probe_root(
+                index,
+                match root {
+                    MovementRootReference::Static(_) => WorldModelRegistrationKind::Static,
+                    MovementRootReference::GameObject(_) => WorldModelRegistrationKind::Transformed,
+                },
+                self.registration_root_mut(root)?,
+            )?;
+        }
+        Ok(camera.finish())
+    }
+
     /// General 7A0B00 tries each eligible WMO before falling back to ADT.
     fn general_submerged_liquid(
         &mut self,

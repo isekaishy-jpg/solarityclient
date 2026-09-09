@@ -13,6 +13,7 @@ use super::{RuntimeTerrainFrameError, UnitAnimationBehavior, UnitAnimationScene}
 /// Retained independently of animation/model replacements for the same unit.
 pub(super) struct UnitGroundPose {
     target: Cell<Vec3>,
+    scene_collision: Cell<bool>,
     normal: RefCell<M2GroundNormal>,
     last_scene_time_ms: Cell<Option<f32>>,
 }
@@ -21,6 +22,7 @@ impl Default for UnitGroundPose {
     fn default() -> Self {
         Self {
             target: Cell::new(Vec3::Z),
+            scene_collision: Cell::new(false),
             normal: RefCell::new(M2GroundNormal::default()),
             last_scene_time_ms: Cell::new(None),
         }
@@ -28,6 +30,13 @@ impl Default for UnitGroundPose {
 }
 
 impl UnitAnimationScene {
+    /// Unit_C consumes and clears its prior scene callback bit after catch-up.
+    pub fn take_scene_collision(&self, identity: WorldObjectIdentity) -> bool {
+        retained_ground_pose(&mut self.ground_poses.borrow_mut(), identity)
+            .scene_collision
+            .replace(false)
+    }
+
     /// The movement service publishes world-space normals before the scene tick.
     pub fn set_ground_normal(&self, identity: WorldObjectIdentity, normal: Vec3) {
         retained_ground_pose(&mut self.ground_poses.borrow_mut(), identity)
@@ -59,6 +68,11 @@ fn retained_ground_pose(
 }
 
 impl UnitAnimationBehavior {
+    /// 793060 sets scene visitation before the later frustum/occlusion draw tests.
+    pub fn admit_scene_collision(&self) {
+        self.ground.scene_collision.set(true);
+    }
+
     /// 71FD80 -> 7197D0 -> 82DD80 places the ordinary, unlinked unit body.
     /// Flight/banking and attachment transforms have their own placement lanes.
     pub fn ground_transform(

@@ -6,6 +6,7 @@ mod dynamic;
 mod liquid;
 mod map_models;
 mod registration;
+mod scene;
 mod world_model;
 
 pub use cache::{RuntimeMovementGeometry, RuntimeMovementGeometryFailure};

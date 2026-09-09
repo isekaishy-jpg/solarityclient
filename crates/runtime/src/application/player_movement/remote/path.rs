@@ -3,9 +3,14 @@
 use glam::Vec3;
 use solarity_ecs::{WorldMovementState, WorldMovementTransport, WorldTransform};
 use solarity_network::MonsterMove;
+use solarity_systems::{
+    MovementFallState, MovementFallTrajectory, MovementGroundProfile, MovementSplineTarget,
+};
 
 use super::super::passenger::PassengerParent;
-use super::super::{LocalMovementGeometry, RuntimePlayerMovementError};
+use super::super::{
+    LocalMovement, LocalMovementGeometry, MovementPhase, RuntimePlayerMovementError,
+};
 use super::state::RemoteUnit;
 
 impl RemoteUnit {
@@ -131,16 +136,24 @@ impl RemoteUnit {
         Ok(())
     }
 
-    /// 6E9470 stores the sampled local point; 4F4460 projects it for presentation.
-    pub(super) fn advance_path(
+    /// Samples once, applies the previous scene's collision admission, and keeps
+    /// 6E9470's small ground corrections while the sampled path remains active.
+    pub(super) fn advance_path<G: LocalMovementGeometry>(
         &mut self,
         now_ms: u32,
+        dimensions: [f32; 3],
+        profile: MovementGroundProfile,
+        geometry: &mut G,
         target_position: impl Fn(u64) -> Option<Vec3>,
     ) -> Result<(), RuntimePlayerMovementError> {
+        let (world, movement) = self.snapshot();
         let Some(path) = &mut self.path else {
             return Ok(());
         };
-        let (world, movement) = self.published;
+        let duration = now_ms.wrapping_sub(self.time_ms);
+        if duration == 0 {
+            return Ok(());
+        }
         let transport = movement.context().transport;
         let current = transport.map_or(world, |parent| {
             WorldTransform::new(parent.position, parent.orientation)
@@ -150,7 +163,56 @@ impl RemoteUnit {
             target_position(guid)
                 .map(|point| parent.map_or(point, |parent| parent.frame.local_position(point)))
         })?;
-        self.published = project(local, movement, parent, transport);
+        let summary = path.motion();
+        let Some(motion) = &mut self.motion else {
+            // Spatial/hover paths retain their separate response owner.
+            self.published = project(local, movement, parent, transport);
+            return Ok(());
+        };
+        motion.published = project(local, movement, parent, transport);
+        motion.orientation = local.orientation();
+        motion.flags = movement.flags() as u32 & 0x77ff_fdff;
+        motion.secondary = (movement.flags() >> 32) as u16;
+        motion.remote_profile = Some(profile);
+        // 6EAC40 advances the owner clock before 6E9C30 can snap and return.
+        motion.elapsed_ms = motion.elapsed_ms.wrapping_add(duration);
+        let target = MovementSplineTarget::new(current.position(), local.position(), duration)?;
+        if summary.flags & 0x400 != 0 {
+            // 98CA00 finalizes placement and returns before collision sampling.
+            motion.position = local.position();
+            motion.stop_path_fall()?;
+            motion.reanchor()?;
+        } else if target.requires_snap(motion.flags) {
+            // 6E9C30 rebases launch height without ending an ordinary fall.
+            motion.position = local.position();
+            if let MovementPhase::Fall(fall) = motion.phase {
+                let mut fall = fall.snapshot();
+                fall.position = motion.position;
+                fall.launch_height = motion.position.z
+                    + MovementFallTrajectory::new(fall.mode, fall.initial_downward_speed)?
+                        .distance_at_millis(fall.fall_time_ms)?;
+                motion.retained_launch_height = fall.launch_height;
+                motion.phase = MovementPhase::Fall(MovementFallState::new(fall)?);
+            }
+        } else if !self.scene_collision {
+            // 6E9E20 -> 988490 clears ordinary falling outside scene admission.
+            motion.stop_path_fall()?;
+            motion.elapsed_ms = motion.elapsed_ms.wrapping_add(duration);
+            motion.position = local.position();
+        } else {
+            motion.spline_interval(local.position(), duration, summary, dimensions, geometry)?;
+            let corrected = target.corrected_position(motion.position)?;
+            if corrected != motion.position {
+                // 6E9470 -> 9886E0 also clears ordinary falling and resets its anchor.
+                motion.position = corrected;
+                motion.stop_path_fall()?;
+                motion.reanchor()?;
+            }
+        }
+        motion.time_ms = now_ms;
+        self.ground_normal = motion.ground_normal;
+        self.path_parent = motion.passenger;
+        self.published = self.snapshot();
         Ok(())
     }
 }
@@ -186,4 +248,24 @@ fn project(
         )
     });
     (world, projected)
+}
+
+impl LocalMovement {
+    /// 988490 releases ordinary fall state and restores a deferred root when needed.
+    fn stop_path_fall(&mut self) -> Result<(), RuntimePlayerMovementError> {
+        if self.flags & 0x101000 == 0 {
+            return Ok(());
+        }
+        if let MovementPhase::Fall(fall) = self.phase {
+            self.context.fall_time_ms = fall.snapshot().fall_time_ms;
+        }
+        self.flags &= !0x3000;
+        if self.flags & 0x100000 != 0 {
+            self.flags = self.flags & 0xff20_3f00 | 0x800;
+        }
+        self.phase = MovementPhase::Ground {
+            step_anchor: self.context.spline_elevation,
+        };
+        self.reanchor()
+    }
 }

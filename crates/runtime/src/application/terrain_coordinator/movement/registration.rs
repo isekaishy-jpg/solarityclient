@@ -44,6 +44,9 @@ pub enum RuntimeMovementReference {
 /// Invalid geometry or an unresolved reference in an admitted generation.
 #[derive(Debug, Error)]
 pub enum RuntimeMovementRegistrationError {
+    /// Outdoor model depth cannot be represented by the native scene camera.
+    #[error(transparent)]
+    SceneDepth(#[from] solarity_systems::WorldSceneDepthError),
     /// An attached MODD could not form its current placement.
     #[error(transparent)]
     M2(#[from] solarity_systems::M2CollisionError),
