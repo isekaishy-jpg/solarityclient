@@ -25,10 +25,35 @@ geometry, all six box boundaries, the strict normal threshold, and mixed ordered
 candidate sets at large world coordinates. Tests compare all three float bit
 patterns exactly.
 
+## Implemented model pose
+
+`M2GroundNormal` starts upright and reproduces the accepted-normal smoothing
+slice of `0x007197D0`. It retains the unit's normal independently of model
+replacement. Its model transform reproduces `0x0082DD80`: heading construction,
+pitch-only or full-normal alignment, optional sequence blending, and final
+scale. The full-alignment side vector is normalized, while the retained normal
+and derived forward vector are not independently normalized. Matrix blending
+stores both scaled matrices before addition, including their translation.
+
+`M2ModelSequenceTimer::ground_alignment_weight` uses the unwrapped primary
+timer sampled by `0x008266B0`, not the bone pose's modulo time. Both the timer's
+initial elapsed product and `0x00407930`'s speed division truncate through an
+int64 conversion before retaining the low word. The half-duration division
+remains extended precision through the optional flag-4 inversion. Zero-speed,
+negative-speed, zero-span, and wrapping-clock cases follow the executable.
+
+`tools/ghidra/unit_ground_pose_oracle.py` executes the original smoothing slice
+and full model-placement function without instruction hooks. The latter runs
+the original sequence lookup, primary timer query, basis construction, blend,
+and scale against controlled model records. Tests match 216 smoothing cases
+and 520 complete model matrices and sequence weights by exact float bits.
+
+These are standalone presentation operations. The live unit surface source,
+scene callback ownership, and renderer calls remain to be connected.
+
 ## Recovered integration rules
 
-The following behavior is researched but is not yet wired into live spline
-movement or model placement by the surface-query change:
+The following behavior defines the remaining live integration:
 
 - `0x006E9E20` bypasses collision for a remote spline owner when unit flags
   at `+0xBC` lack `0x800000`. Otherwise it calls `0x00762E00` using the delta
@@ -43,6 +68,11 @@ movement or model placement by the surface-query change:
   point. That correction replaces the retained position only when forced or
   squared displacement is at least `9.0` (`0x009E2FF8`). Thus ordinary collision
   corrections below three yards survive the spline update.
+- Before collision, `0x006E9C30` has a separate snap-and-return rule when
+  squared horizontal speed exceeds `3600.0` (`0x00A32834`) or total squared
+  displacement exceeds `9.0`. Unlike the post-collision correction, both
+  pre-collision comparisons are strict. The calculations retain extended
+  displacement products and the seconds conversion from `0x009E1134`.
 - `0x00762E00` calls `0x0075EE60` after its movement loop, except for an active
   spline carrying `0x2000`. When initial candidate collection fails for an
   active spline, `0x0075D3C0` instead stores the raw target and derives the normal
@@ -59,7 +89,8 @@ movement or model placement by the surface-query change:
   does not blend toward upright heading. Combinations such as `6` or `10` do
   not enter that sequence override.
 
-The standalone surface tests establish clipping and normal computation. They do
-not establish the live scene admission, spline collision continuation, normal
-smoothing, sequence blend, or final rendered pose. The reported NPC slope defect
-remains open until those paths are connected and verified together.
+The standalone tests establish clipping, normal computation, smoothing,
+sequence blend, and model-matrix arithmetic. They do not establish live scene
+admission, spline collision continuation, or the final rendered pose. The
+reported NPC slope defect remains open until those paths are connected and
+verified together.

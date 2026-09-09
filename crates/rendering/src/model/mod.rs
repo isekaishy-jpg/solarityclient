@@ -7,6 +7,7 @@ mod character_component;
 mod character_model_base;
 mod component_utils;
 pub(crate) mod m2_animation;
+mod m2_ground;
 mod m2_scene;
 mod world_model_scene;
 
@@ -28,6 +29,7 @@ pub use m2_animation::{
     sample_m2_lights_into, sample_m2_scene_lights_into, sample_m2_ui_camera_frame,
     triggered_m2_event_indices,
 };
+pub use m2_ground::{M2GroundNormal, M2GroundPlacementError};
 pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2ElementAlphaState, M2LocalLightState,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2SceneUniform, M2ShadowMatrix,

@@ -10,6 +10,10 @@ mod completion_tests;
 #[path = "../../../tests/support/sequence_speed.rs"]
 mod speed_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/support/ground_sequence.rs"]
+mod ground_tests;
+
 /// Whether sequence setup runs inside the scene's current update.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum M2SequenceStartPhase {
@@ -38,6 +42,51 @@ pub struct M2ModelSequenceTimer {
 }
 
 impl M2ModelSequenceTimer {
+    /// Returns `82DD80`'s primary-sequence weight toward full ground alignment.
+    ///
+    /// The caller supplies the resolved primary sequence's authored flags.
+    /// This samples the unclamped, non-looped `8266B0` timer, including its
+    /// explicit offset, rather than the bone pose's modulo animation clock.
+    #[must_use]
+    pub fn ground_alignment_weight(self, sequence_flags: u32, scene_time_ms: u32) -> f32 {
+        let flags = sequence_flags & 0xe;
+        if flags == 8 {
+            return 1.0;
+        }
+        if flags != 2 && flags != 4 {
+            return 0.0;
+        }
+        let weight = if self.speed == 0.0 {
+            1.0
+        } else if self.speed > 0.0 {
+            // 8266B0 truncates a signed wrapping delta times speed to int64,
+            // keeps its low word, and then adds the initial animation offset.
+            let elapsed = self.unwrapped_time(scene_time_ms);
+            let elapsed = native_float_word(f64::from(
+                (f64::from(elapsed) / f64::from(self.speed)) as f32,
+            )) as i32;
+            let half_duration = self.end_ms.wrapping_sub(self.start_ms) >> 1;
+            let weight = f64::from(elapsed) / f64::from(half_duration);
+            // The original comparisons select one for unordered/zero-span
+            // ratios. Preserve that rule instead of Rust's NaN clamp behavior.
+            if weight < 0.0 {
+                0.0
+            } else if weight < 1.0 {
+                weight
+            } else {
+                1.0
+            }
+        } else {
+            0.0
+        };
+        // Flag 4 subtracts the retained quotient before its final float store.
+        if flags == 4 {
+            (1.0 - weight) as f32
+        } else {
+            weight as f32
+        }
+    }
+
     /// Constructs the exact unit-speed timer used by Model Lua methods.
     ///
     /// The caller supplies the next raw CRT roll for the authored cycle range.
