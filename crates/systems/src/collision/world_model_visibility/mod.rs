@@ -5,6 +5,7 @@ mod query;
 
 pub use projection::{
     WorldModelExteriorPortalWindow, WorldModelPortalProjectionFrame, WorldModelPortalProjector,
+    WorldSceneCameraFrame,
 };
 pub use query::WorldModelVisibilityQuery;
 
@@ -25,6 +26,9 @@ pub enum WorldModelVisibilityError {
     /// The supplied frustum corners cannot form finite clipping planes.
     #[error("world-model visibility frustum has degenerate clipping faces")]
     DegenerateFrustum,
+    /// Perspective parameters cannot form the ordinary scene projection.
+    #[error("world-model scene camera projection is invalid")]
+    InvalidCameraProjection,
 }
 
 /// One ordered native group visit, including the inherited fog bank.

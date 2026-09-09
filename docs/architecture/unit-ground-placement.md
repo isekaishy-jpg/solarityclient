@@ -105,6 +105,15 @@ for maximum nonnegative local forward depth. The 1,188 native fixtures compare
 all four screen-window coordinates and depth exactly. These shared components
 are not yet connected to runtime indoor scene admission.
 
+`WorldSceneCameraFrame` now supplies the native perspective input to that
+projection. It reproduces `0x006BFE60`, `0x006BF370`, `0x006BF6D0`, and the
+world-eye corner additions in `0x00795400`; 324 complete original frames match
+the combined matrix, all eight world corners, and five clipping planes exactly.
+The corner path copies XYZ through `0x00982950` without a perspective divide.
+For each placed root it also reproduces `0x007A6E00`'s local forward plane,
+including the strict short-direction threshold and extended-value plane offset.
+All 312 transformed-root fixtures match the stored camera point and plane bits.
+
 An interior camera requires an admitted exterior portal window. WMO-bound units
 instead depend on visited group lists through `0x00793270`. That portal/group
 scene bridge, mounted model registrations, and special hidden-model registration

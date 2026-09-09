@@ -114,7 +114,7 @@ pub use collision::{
     WorldModelRegistrationHit, WorldModelRegistrationHits, WorldModelRegistrationKind,
     WorldModelRegistrationQuery, WorldModelRegistrationSelection, WorldModelSceneVisibilityEvent,
     WorldModelVisibilityError, WorldModelVisibilityQuery, WorldModelVisibilityVisit,
-    append_terrain_liquid_movement, probe_world_model_portals,
+    WorldSceneCameraFrame, append_terrain_liquid_movement, probe_world_model_portals,
 };
 pub use equipment::{
     PlayerEquipmentAppearance, PlayerEquipmentAppearanceError, ResolvedEquipmentItem,

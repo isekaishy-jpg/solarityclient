@@ -16,6 +16,110 @@ fn float(word: &str) -> Result<f32, Box<dyn Error>> {
 }
 
 #[test]
+fn root_local_camera_plane_matches_original_transform_and_short_direction_rules()
+-> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::WorldSceneCameraFrame;
+    let mut count = 0;
+    for (case, line) in include_str!("../fixtures/world_model_local_camera_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .enumerate()
+    {
+        let values = words(line)
+            .into_iter()
+            .map(float)
+            .collect::<Result<Vec<_>, _>>()?;
+        let inverse = Mat4::from_cols_slice(&values[..16]);
+        let eye = Vec3::from_slice(&values[16..19]);
+        let target = Vec3::from_slice(&values[19..22]);
+        // A parallel up vector would make the unrelated perspective frame
+        // singular. Select either axis while preserving the exact two points.
+        let delta = target - eye;
+        let up = if delta.cross(Vec3::Z).length_squared() > 0.01 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        let frame = WorldSceneCameraFrame::perspective(eye, target, up, 0.9424778, 1., 0.2, 100.)?;
+        let local = frame.for_root(inverse.inverse(), inverse)?.local_camera;
+        for (channel, (actual, expected)) in local
+            .to_array()
+            .into_iter()
+            .zip(&values[22..25])
+            .enumerate()
+        {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "local camera {case}/{channel}"
+            );
+        }
+        for (channel, (actual, expected)) in frame
+            .local_forward_plane(inverse)?
+            .into_iter()
+            .zip(&values[28..32])
+            .enumerate()
+        {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "local plane {case}/{channel}: {actual} != {expected}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 312);
+    Ok(())
+}
+
+#[test]
+fn scene_camera_matches_original_perspective_corners_and_relative_projection()
+-> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::WorldSceneCameraFrame;
+    let mut count = 0;
+    for (case, line) in include_str!("../fixtures/world_scene_projection_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .enumerate()
+    {
+        let values = words(line)
+            .into_iter()
+            .map(float)
+            .collect::<Result<Vec<_>, _>>()?;
+        let frame = WorldSceneCameraFrame::perspective(
+            Vec3::from_slice(&values[..3]),
+            Vec3::from_slice(&values[3..6]),
+            Vec3::from_slice(&values[6..9]),
+            values[9],
+            values[10],
+            values[11],
+            values[12],
+        )?;
+        let projection = frame.for_root(Mat4::IDENTITY, Mat4::IDENTITY)?;
+        for (channel, (actual, expected)) in projection
+            .relative_projection
+            .to_cols_array()
+            .into_iter()
+            .chain(frame.corners().iter().flat_map(|point| point.to_array()))
+            .chain(projection.clip_planes.into_iter().flatten())
+            .zip(&values[45..])
+            .enumerate()
+        {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "case {case} channel {channel}: {actual} != {expected}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 324);
+    Ok(())
+}
+
+#[test]
 fn portal_camera_planes_match_original_order_and_float_stores() -> Result<(), Box<dyn Error>> {
     use glam::Mat4;
     use solarity_systems::WorldModelPortalProjectionFrame;
