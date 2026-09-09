@@ -56,8 +56,8 @@ pub use movement_shared::{
 pub use path::{
     MovementPath, MovementPathError, MovementPathMode, MovementPathRequest, MovementPathSample,
     MovementSpline, MovementSplineDefinition, MovementSplineError, MovementSplineFacing,
-    PreparedMovementPath, advance_world_movement_spline, advance_world_movement_splines,
-    set_world_movement_spline,
+    MovementSplineTarget, PreparedMovementPath, advance_world_movement_spline,
+    advance_world_movement_splines, set_world_movement_spline,
 };
 pub use player::{WorldEntryGroundContact, WorldEntryGroundContactError};
 pub use remote::{

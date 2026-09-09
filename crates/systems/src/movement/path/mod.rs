@@ -1,6 +1,7 @@
 //! Native Path.cpp geometry and distance-weighted parameter selection.
 
 mod geometry;
+mod placement;
 mod preparation;
 mod spline;
 mod world;
@@ -10,6 +11,7 @@ pub use world::{
 };
 
 pub use geometry::{MovementPath, MovementPathError, MovementPathMode, MovementPathSample};
+pub use placement::MovementSplineTarget;
 pub use preparation::{MovementPathRequest, PreparedMovementPath};
 pub use spline::{
     MovementSpline, MovementSplineDefinition, MovementSplineError, MovementSplineFacing,
