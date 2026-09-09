@@ -20,6 +20,9 @@ mod scenery_distance_tests;
 mod shadow;
 pub(in crate::application) mod sky;
 pub(in crate::application) mod sound;
+#[cfg(test)]
+#[path = "../../../tests/application/static_m2_streaming.rs"]
+mod static_streaming_tests;
 mod streaming;
 pub(in crate::application) mod unit_effects;
 mod unit_registration;
@@ -721,6 +724,7 @@ pub(in crate::application) struct M2Frame {
     animations: Arc<AnimationDataCatalog>,
     sources: Vec<Option<M2GpuSource>>,
     placements: Vec<M2GpuPlacement>,
+    static_residency: streaming::StaticM2Residency,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
     animation_started_at: std::time::Instant,
     /// Previous scene pass, independent of unit residency and draw admission.
@@ -818,6 +822,7 @@ impl M2Frame {
             animations,
             sources,
             placements,
+            static_residency: streaming::StaticM2Residency::new(scene),
             particle_twinkle,
             animation_started_at: std::time::Instant::now(),
             unit_scene_time_ms: 0.0,
@@ -922,6 +927,7 @@ impl M2Frame {
         Ok(Self {
             animations,
             sources: vec![Some(source)],
+            static_residency: streaming::StaticM2Residency::default(),
             placements: vec![M2GpuPlacement {
                 sound_lifetime: Default::default(),
                 light_lifetime: Default::default(),
@@ -3951,6 +3957,8 @@ fn prepare_gpu_source_with_plan(
     cpu_source: Option<&M2CpuSource>,
     orientation: M2ModelOrientation,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
+    let mut profile =
+        crate::application::frame_profile::RuntimeFrameProfile::new("M2 source publication");
     if textures.len() != model.textures().len() {
         return Err(RuntimeTerrainFrameError::M2TextureTableCount {
             model: model.path().clone(),
@@ -3980,6 +3988,7 @@ fn prepare_gpu_source_with_plan(
         }
     }
     let uploaded = renderer.upload_blp_textures(&uploads)?;
+    profile.mark("validation and BLP uploads");
     let mut texture_handles = vec![None; textures.len()];
     for (texture_index, handle) in upload_indices.into_iter().zip(uploaded) {
         texture_handles[texture_index] = Some(M2TextureImageHandle::Blp(handle));
@@ -4021,11 +4030,13 @@ fn prepare_gpu_source_with_plan(
         }
     }
 
+    profile.mark("special texture uploads");
     let mesh = if plan.has_drawable_geometry() {
         Some(renderer.upload_m2_mesh(&plan)?)
     } else {
         None
     };
+    profile.mark("mesh upload");
     let mut texture_requests = Vec::with_capacity(plan.draws().len());
     let mut pipelines = Vec::with_capacity(plan.draws().len());
     for (draw_index, draw) in plan.draws().iter().enumerate() {
@@ -4082,7 +4093,9 @@ fn prepare_gpu_source_with_plan(
         }
         texture_requests.push(texture_set(model, draw_index, &stages)?);
     }
+    profile.mark("mesh pipelines and samplers");
     let texture_sets = renderer.prepare_m2_texture_sets(&texture_requests)?;
+    profile.mark("mesh descriptors");
     let mut draws = Vec::with_capacity(plan.draws().len());
     draws.resize_with(plan.draws().len(), || None);
     for ((draw_index, pipeline, runtime_fade_pipeline), texture_set) in
@@ -4170,6 +4183,7 @@ fn prepare_gpu_source_with_plan(
                 .collect(),
         );
     }
+    profile.mark("effects");
     Ok(M2GpuSource {
         model: Arc::clone(model),
         plan,

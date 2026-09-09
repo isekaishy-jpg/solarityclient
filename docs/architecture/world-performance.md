@@ -44,6 +44,9 @@ terrain/WMO liquid provider. Each resolution retains all nine obstruction probes
 Residency changes additionally report terrain/liquid publication, static M2 and
 WMO membership updates, and resource retirement. Per-tile upload scopes separate
 geometry, blend/shadow atlases, diffuse images, and descriptor/pipeline preparation.
+M2 publication scopes additionally separate requested-owner collection, retained
+source lookup, new source/placement admission, and retirement/compaction. Per-source
+scopes distinguish image and mesh uploads, pipelines/samplers, descriptors, and effects.
 
 `SOLARITY_WORLD_CAPTURE_DIR` requests PPM framebuffer captures at the start/end
 of each phase and at quarter turns of the orbit or travel segments. This explicitly waits for GPU
@@ -102,6 +105,45 @@ same route's mean total frames from 6.412 to 4.498 ms outbound and 6.515 to
 This uncaptured, unprofiled replay used the same 2,400-frame phases and default
 environmentDetail 1.0; it demonstrates reduced work on this route, without
 establishing populated live-world performance or a worst-case latency bound.
+
+## Static M2 publication
+
+Static scenery retains a compact owner set and a list of its source slots.
+Publishing a changed ADT looks up each shared static source once, without
+rebuilding those identities from every large animation/effect record. Source
+compaction updates this list alongside placement indices; when every source is
+still referenced, the identity remap requires no instance writes. Dynamic model
+sources remain separate because the same decoded model can use different texture
+replacements. Placement order and animation, particle, ribbon, sound, and light
+lifetimes remain owned by the existing instance records.
+
+The Vulkan regression publishes overlapping MDDF identities, removes an earlier
+source slot, adds new owners through the remapped slot, and then removes and
+reloads the static scene while a dynamic source sharing the model stays alive.
+It checks draw-resource reuse, placement order, retained playback/effect clocks,
+native random consumption, and static/dynamic source separation. The lifetime
+rule remains build 12340's chunk-reference ownership at `0x007A50C0`.
+
+On the same 2,400-frame travel route above, with primary shadows enabled,
+profiling/captures disabled, and no compiler running, the measured changes were:
+
+| Phase | Mean streaming on changed frames before | After | Mean total frame before | After |
+| --- | ---: | ---: | ---: | ---: |
+| Outbound | 20.326 ms | 17.150 ms | 4.816 ms | 4.776 ms |
+| Return | 15.886 ms | 13.215 ms | 4.856 ms | 4.719 ms |
+
+Both directions again admitted 21 tiles and evicted 21 across 24 changed frames.
+Separate profiled replays reduced retained-owner/source lookup from approximately
+2.8–3.7 ms per changed publication interval to 0.03–0.05 ms. Requested-owner
+collection still took roughly 1.6–2.0 ms, and retirement/compaction commonly
+took about 3 ms, with an isolated 24 ms sample in the profiled run.
+The loading-component means fell by 16% and 17%; overall frame means changed
+much less because residency changes are sparse. Maximum total frames in the
+new run were 35.139 ms outbound and 28.257 ms returning. These single-run maxima
+do not establish a worst-case bound. Full requested-owner collection, placement
+retirement, terrain publication, and subsequent visibility preparation still
+cost time; this change does not eliminate world-loading stalls or establish
+populated-world performance.
 
 ## Resident camera bounds
 

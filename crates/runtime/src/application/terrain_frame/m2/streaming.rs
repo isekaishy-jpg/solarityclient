@@ -6,13 +6,58 @@ use std::sync::Arc;
 use solarity_asset::AnimationDataCatalog;
 use solarity_rendering::{M2ModelOrientation, M2RibbonTrail, VulkanRenderer};
 
-use crate::application::terrain_coordinator::m2_residency::{ResidentM2Placement, ResidentM2Scene};
+use crate::application::frame_profile::RuntimeFrameProfile;
+use crate::application::terrain_coordinator::m2_residency::{
+    ResidentM2Owner, ResidentM2Placement, ResidentM2Scene,
+};
 use crate::random::CrtRand;
 
 use super::{
     M2Frame, M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, M2Playback,
     RuntimeTerrainFrameError, prepare_source, stock_particle_simulations,
 };
+
+/// Compact static identities avoid scanning animation and effect state to reuse an owner.
+/// Dynamic sources never enter this index because their replacement textures can differ.
+#[derive(Default)]
+pub(super) struct StaticM2Residency {
+    owners: HashSet<ResidentM2Owner>,
+    source_indices: Vec<usize>,
+}
+
+impl StaticM2Residency {
+    /// Seeds the index from the same scene used to create the initial static owners.
+    pub(super) fn new(scene: &ResidentM2Scene) -> Self {
+        let owners = scene
+            .placements()
+            .iter()
+            .map(ResidentM2Placement::owner)
+            .collect();
+        let mut source_indices = scene
+            .placements()
+            .iter()
+            .map(ResidentM2Placement::source_index)
+            .collect::<Vec<_>>();
+        source_indices.sort_unstable();
+        source_indices.dedup();
+        Self {
+            owners,
+            source_indices,
+        }
+    }
+
+    /// Follows the common static/dynamic source compactor without retaining dead slots.
+    fn remap_sources(&mut self, remap: &[usize]) {
+        self.source_indices.retain_mut(|index| {
+            let mapped = remap[*index];
+            if mapped == usize::MAX {
+                return false;
+            }
+            *index = mapped;
+            true
+        });
+    }
+}
 
 impl M2Frame {
     /// Retains each MDDF/MODD owner until its last resident ADT reference leaves.
@@ -26,27 +71,29 @@ impl M2Frame {
         scenes: impl Iterator<Item = &'a ResidentM2Scene> + Clone,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let mut profile = RuntimeFrameProfile::new("M2 residency publication");
         let requested = scenes
             .clone()
             .flat_map(ResidentM2Scene::placements)
             .map(|placement| placement.owner())
             .collect::<HashSet<_>>();
-        let mut retained = HashSet::with_capacity(requested.len());
+        profile.mark("requested owners");
         // Source reuse is confined to static owners: character texture
         // replacements can share an M2 model but represent different materials.
-        let mut sources = HashMap::new();
-        for placement in &self.placements {
-            if let M2GpuPlacementOwner::Static(owner) = placement.owner {
-                retained.insert(owner);
-                if let Some(source) = self.sources[placement.source_index].as_ref() {
-                    sources.insert(Arc::as_ptr(&source.model), placement.source_index);
-                }
+        let mut sources = HashMap::with_capacity(self.static_residency.source_indices.len());
+        for &source_index in &self.static_residency.source_indices {
+            if let Some(source) = self.sources[source_index].as_ref() {
+                sources.insert(Arc::as_ptr(&source.model), source_index);
             }
         }
         let mut added = Vec::new();
+        let mut added_owners = HashSet::new();
+        profile.mark("retained owners and sources");
         for scene in scenes {
             for placement in scene.placements() {
-                if !retained.insert(placement.owner()) {
+                if self.static_residency.owners.contains(&placement.owner())
+                    || !added_owners.insert(placement.owner())
+                {
                     continue;
                 }
                 let source = scene.sources().get(placement.source_index()).ok_or(
@@ -62,6 +109,7 @@ impl M2Frame {
                     let gpu = prepare_source(renderer, source)?;
                     let index = self.sources.len();
                     self.sources.push(gpu);
+                    self.static_residency.source_indices.push(index);
                     sources.insert(identity, index);
                     index
                 };
@@ -75,13 +123,18 @@ impl M2Frame {
                 )?);
             }
         }
+        profile.mark("new sources and placements");
         self.placements.retain(|placement| match placement.owner {
             M2GpuPlacementOwner::Static(owner) => requested.contains(&owner),
             _ => true,
         });
         self.placements.extend(added);
+        // Publish identities only after every new owner is ready, so a failed
+        // resource preparation cannot make the next attempt skip that owner.
+        self.static_residency.owners = requested;
         self.placement_topology_dirty = true;
         self.compact_sources();
+        profile.mark("retirement and compaction");
         Ok(())
     }
 
@@ -91,6 +144,11 @@ impl M2Frame {
         let mut remap = vec![usize::MAX; self.sources.len()];
         for placement in &self.placements {
             remap[placement.source_index] = 0;
+        }
+        // A residency change often leaves every shared source referenced. Its
+        // mapping is then the identity: avoid writing every large live instance.
+        if !remap.contains(&usize::MAX) {
+            return;
         }
         let mut index = 0;
         let mut next = 0;
@@ -103,6 +161,7 @@ impl M2Frame {
             index += 1;
             keep
         });
+        self.static_residency.remap_sources(&remap);
         for placement in &mut self.placements {
             // Every surviving placement marked its source above.
             placement.source_index = remap[placement.source_index];
