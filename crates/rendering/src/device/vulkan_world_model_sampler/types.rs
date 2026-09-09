@@ -43,7 +43,7 @@ pub enum WorldModelBaseMip {
 }
 
 impl WorldModelBaseMip {
-    pub(super) const fn level(self) -> f32 {
+    pub(in crate::device) const fn level(self) -> f32 {
         match self {
             Self::Zero => 0.0,
             Self::One => 1.0,

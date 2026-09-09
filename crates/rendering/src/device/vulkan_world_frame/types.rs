@@ -19,6 +19,7 @@ pub struct WorldFrameScene<'a> {
     underwater: Option<UnderwaterParticleFrame<'a>>,
     sky: Option<WorldSkyFrame<'a>>,
     low_detail: Option<crate::WorldLowDetailFrame<'a>>,
+    ground_detail: Option<crate::GroundDetailFrame<'a>>,
     world_depth_range: bool,
     clouds: Option<WorldCloudFrame<'a>>,
     celestials: Option<crate::WorldCelestialFrame<'a>>,
@@ -45,6 +46,7 @@ impl<'a> WorldFrameScene<'a> {
             underwater: None,
             sky: None,
             low_detail: None,
+            ground_detail: None,
             world_depth_range: false,
             clouds: None,
             celestials: None,
@@ -69,6 +71,17 @@ impl<'a> WorldFrameScene<'a> {
 
     pub(in crate::device) const fn low_detail(self) -> Option<crate::WorldLowDetailFrame<'a>> {
         self.low_detail
+    }
+
+    /// Adds the native terrain-detail queue using the shared outdoor scene state.
+    #[must_use]
+    pub const fn with_ground_detail(mut self, frame: crate::GroundDetailFrame<'a>) -> Self {
+        self.ground_detail = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn ground_detail(self) -> Option<crate::GroundDetailFrame<'a>> {
+        self.ground_detail
     }
 
     pub(in crate::device) const fn depth_maximum(self) -> f32 {
@@ -287,6 +300,7 @@ pub struct WorldFrameReport {
     underwater_draw_count: usize,
     sky_draw_count: usize,
     low_detail_draw_count: usize,
+    ground_detail_draw_count: usize,
     celestial_draw_count: usize,
     sky_model_draw_count: usize,
     terrain_draw_count: usize,
@@ -321,6 +335,7 @@ impl WorldFrameReport {
             underwater_draw_count: 0,
             sky_draw_count: 0,
             low_detail_draw_count: 0,
+            ground_detail_draw_count: 0,
             celestial_draw_count: 0,
             sky_model_draw_count: 0,
             liquid_draw_count,
@@ -344,6 +359,18 @@ impl WorldFrameReport {
     #[must_use]
     pub const fn low_detail_draw_count(self) -> usize {
         self.low_detail_draw_count
+    }
+
+    /// Records the accepted native detail texture buckets.
+    pub(super) const fn with_ground_detail_draw_count(mut self, count: usize) -> Self {
+        self.ground_detail_draw_count = count;
+        self
+    }
+
+    /// Returns the submitted grass and other terrain-detail texture bucket count.
+    #[must_use]
+    pub const fn ground_detail_draw_count(self) -> usize {
+        self.ground_detail_draw_count
     }
 
     pub(super) const fn with_sky_model_draw_count(mut self, count: usize) -> Self {

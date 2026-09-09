@@ -100,6 +100,10 @@ Worker-completed neighbors enter collision and renderer state together; primary
 tile changes preserve retained M2 playback, particles, and ribbons. Shared
 placement IDs prevent duplicate buildings and doodads across ADT references.
 Departed terrain GPU allocations retire after their queued frame uses complete.
+[Ground detail](terrain-ground-detail.md) shares the tile's worker-resident
+tables, first-SKIN models, and textures. Visible nearby chunks generate their
+grass, flowers, and stones once per density setting, with submitted GPU
+resources retained until the owning frame fences complete.
 
 `RuntimeGameObjectPresentation` admits all visible GameObjects, shares model
 preparation by canonical path, and publishes independent object lifetimes into

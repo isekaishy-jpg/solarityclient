@@ -214,6 +214,7 @@ pub struct VulkanRenderer {
     underwater_pipeline: PctPipeline,
     sky_pipeline: PctPipeline,
     low_detail_pipelines: LowDetailPipelines,
+    detail_pipeline: crate::device::vulkan_detail::DetailPipeline,
     cloud_pipeline: PctPipeline,
     celestial_pipeline: PctPipeline,
     terrain_materials: TerrainMaterialRegistry,
@@ -305,6 +306,7 @@ impl VulkanRenderer {
             underwater_pipeline: PctPipeline::default(),
             sky_pipeline: PctPipeline::default(),
             low_detail_pipelines: LowDetailPipelines::default(),
+            detail_pipeline: crate::device::vulkan_detail::DetailPipeline::default(),
             cloud_pipeline: PctPipeline::default(),
             celestial_pipeline: PctPipeline::default(),
             terrain_retirements: std::collections::VecDeque::new(),
@@ -2442,6 +2444,10 @@ impl VulkanRenderer {
                 self.depth_format,
             )?;
         }
+        if scene.ground_detail().is_some() {
+            self.detail_pipeline
+                .prepare(&self.device, self.color_format, self.depth_format)?;
+        }
         if scene.sky().is_some() {
             self.sky_pipeline.prepare(
                 &self.device,
@@ -2482,6 +2488,7 @@ impl VulkanRenderer {
                 underwater_pipeline: &self.underwater_pipeline,
                 sky_pipeline: &self.sky_pipeline,
                 low_detail_pipelines: &self.low_detail_pipelines,
+                detail_pipeline: &self.detail_pipeline,
                 cloud_pipeline: &self.cloud_pipeline,
                 celestial_pipeline: &self.celestial_pipeline,
                 liquid_meshes: &self.liquid_meshes,
@@ -2844,6 +2851,7 @@ impl Drop for VulkanRenderer {
         self.underwater_pipeline.destroy(&self.device);
         self.sky_pipeline.destroy(&self.device);
         self.low_detail_pipelines.destroy(&self.device);
+        self.detail_pipeline.destroy(&self.device);
         self.cloud_pipeline.destroy(&self.device);
         self.celestial_pipeline.destroy(&self.device);
         self.world_model_pipelines.destroy(&self.device);

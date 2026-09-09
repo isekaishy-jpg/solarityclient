@@ -172,6 +172,7 @@ pub(super) struct WorldFrameSlot {
     pub(super) sky: SkyFrameResources,
     /// Pins the shared GPU map until this slot's fence retires.
     pub(super) low_detail_map: Option<std::sync::Arc<crate::TerrainLowDetailMap>>,
+    pub(super) ground_detail: Vec<std::sync::Arc<crate::GroundDetailMeshPlan>>,
     pub(super) clouds: CloudFrameResources,
     pub(super) celestials: [CelestialFrameResources; 3],
     buffer: vk::Buffer,
@@ -701,6 +702,7 @@ impl WorldFrameSlot {
         self.underwater.destroy(device, allocator);
         self.sky.destroy(allocator);
         self.low_detail_map = None;
+        self.ground_detail.clear();
         self.clouds.destroy(device, allocator);
         for body in &mut self.celestials {
             body.destroy(device, allocator);
@@ -747,6 +749,7 @@ impl WorldFrameSlot {
             underwater: UnderwaterFrameResources::empty(),
             sky: SkyFrameResources::empty(),
             low_detail_map: None,
+            ground_detail: Vec::new(),
             clouds: CloudFrameResources::empty(),
             celestials: [const { CelestialFrameResources::empty() }; 3],
             buffer: vk::Buffer::null(),

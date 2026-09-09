@@ -28,11 +28,13 @@ use crate::application::liquid::{
 
 mod camera;
 mod camera_profile;
+mod ground_detail;
 pub(in crate::application) mod m2_residency;
 mod movement;
 mod streaming;
 pub(in crate::application) mod world_model_residency;
 
+use ground_detail::{GroundDetailAssetCache, ResidentGroundDetailTile};
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
 pub(in crate::application) use movement::UnitWorldModelLocation;
 use movement::{ResidentMovementReferences, ResidentMovementScene};
@@ -51,6 +53,9 @@ use world_model_residency::{
 /// Failure while synchronizing authored terrain with authoritative world state.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainError {
+    /// Authored detail models could not complete on the terrain asset worker.
+    #[error(transparent)]
+    GroundDetail(#[from] solarity_rendering::GroundDetailError),
     /// Required liquid presentation assets could not complete on the terrain worker.
     #[error(transparent)]
     LiquidAssets(#[from] RuntimeLiquidAssetError),
@@ -228,6 +233,7 @@ pub struct RuntimeTerrainCoordinator {
     models: M2ModelCache,
     world_models: WmoModelCache,
     liquid_assets: LiquidAssetCache,
+    ground_detail_assets: GroundDetailAssetCache,
     active: Option<ResidentTerrainMap>,
     worker_catalog: Option<ArchiveCatalog>,
     worker: Option<Box<TerrainWorkerState>>,
@@ -264,6 +270,7 @@ impl RuntimeTerrainCoordinator {
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
             liquid_assets: LiquidAssetCache::default(),
+            ground_detail_assets: GroundDetailAssetCache::default(),
             active: None,
             worker_catalog: None,
             worker: None,
@@ -711,6 +718,7 @@ impl RuntimeTerrainCoordinator {
             .load_tile(&mut self.assets.borrow_mut(), tile_index)?;
         let resident = ResidentTerrainTile::prepare(
             decoded,
+            &mut self.ground_detail_assets,
             &mut self.liquid_assets,
             &mut self.textures,
             &mut self.models,
@@ -1225,6 +1233,7 @@ struct TerrainWorkerState {
     models: M2ModelCache,
     world_models: WmoModelCache,
     liquid_assets: LiquidAssetCache,
+    ground_detail_assets: GroundDetailAssetCache,
 }
 
 impl TerrainWorkerState {
@@ -1236,6 +1245,7 @@ impl TerrainWorkerState {
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
             liquid_assets: LiquidAssetCache::default(),
+            ground_detail_assets: GroundDetailAssetCache::default(),
         })
     }
 
@@ -1282,6 +1292,7 @@ impl TerrainWorkerState {
         let decoded = terrain.load_tile(&mut self.assets, request.tile)?;
         let tile = Some(ResidentTerrainTile::prepare(
             decoded,
+            &mut self.ground_detail_assets,
             &mut self.liquid_assets,
             &mut self.textures,
             &mut self.models,
@@ -1395,6 +1406,7 @@ impl ResidentGlobalWorldModel {
 }
 
 pub(super) struct ResidentTerrainTile {
+    ground_detail: ResidentGroundDetailTile,
     movement_references: ResidentMovementReferences,
     decoded: DecodedTerrainTile,
     textures: Vec<Arc<BlpTextureSource>>,
@@ -1412,6 +1424,7 @@ pub(super) struct ResidentTerrainTile {
 impl ResidentTerrainTile {
     fn prepare(
         decoded: DecodedTerrainTile,
+        ground_detail_assets: &mut GroundDetailAssetCache,
         liquid_assets: &mut LiquidAssetCache,
         texture_cache: &mut BlpTextureCache,
         model_cache: &mut M2ModelCache,
@@ -1426,6 +1439,8 @@ impl ResidentTerrainTile {
             .map(|path| texture_cache.load(store, path))
             .collect::<Result<Vec<_>, _>>()?;
         let mesh = Arc::new(TerrainTileMeshPlan::prepare(&decoded)?);
+        let ground_detail =
+            ground_detail_assets.prepare(&decoded, model_cache, texture_cache, store)?;
         let collision = TerrainCollisionMesh::prepare(&decoded)?;
         let liquid = TerrainLiquidMesh::prepare(&decoded)?;
         let liquid_batches =
@@ -1446,6 +1461,7 @@ impl ResidentTerrainTile {
             ResidentMovementReferences::prepare(Some(&decoded), &m2_scene, &world_models);
         Ok(Self {
             movement_references,
+            ground_detail,
             decoded,
             textures,
             mesh,

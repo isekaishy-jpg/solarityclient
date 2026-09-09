@@ -108,6 +108,7 @@ pub struct TerrainChunk {
     world_model_references: Vec<u32>,
     sound_emitters: Vec<TerrainSoundEmitter>,
     texture_selection: [u16; 8],
+    detail_exclusion: [u8; 8],
 }
 
 impl TerrainChunk {
@@ -128,6 +129,7 @@ impl TerrainChunk {
         world_model_references: Vec<u32>,
         sound_emitters: Vec<TerrainSoundEmitter>,
         texture_selection: [u16; 8],
+        detail_exclusion: [u8; 8],
     ) -> Self {
         Self {
             index,
@@ -145,6 +147,7 @@ impl TerrainChunk {
             world_model_references,
             sound_emitters,
             texture_selection,
+            detail_exclusion,
         }
     }
 
@@ -215,6 +218,15 @@ impl TerrainChunk {
         self.layers
             .get(usize::from(layer))
             .map(|layer| layer.effect_id())
+    }
+
+    /// Selects native 7D3390's detail effect, including the header 0x50 stencil.
+    #[must_use]
+    pub fn detail_effect_at(&self, x: u8, y: u8) -> Option<u32> {
+        if x >= 8 || y >= 8 || self.detail_exclusion[usize::from(y)] & (1 << x) != 0 {
+            return None;
+        }
+        self.ground_effect_at(x, y)
     }
 
     /// Returns the optional decoded RGB blend planes in an RGBA8 upload map.

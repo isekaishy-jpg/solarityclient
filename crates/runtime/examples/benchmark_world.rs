@@ -151,12 +151,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut writer = BufWriter::new(File::create(output)?);
     writeln!(
         writer,
-        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z"
+        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z,ground_detail_draws"
     )?;
     for sample in &samples {
         writeln!(
             writer,
-            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6}",
+            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{}",
             sample.phase,
             sample.frame,
             sample.resident_tiles,
@@ -171,6 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             sample.position.x,
             sample.position.y,
             sample.position.z,
+            sample.ground_detail_draws,
         )?;
     }
     writer.flush()?;

@@ -12,6 +12,7 @@ use glam::Mat4;
 use crate::WorldScreenWindow;
 use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
+use crate::device::vulkan_detail::{DetailCreateContext, DetailPipeline, DetailRegistry};
 use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_liquid::{LiquidFrameCreateContext, LiquidMeshRegistry, LiquidPipelines};
@@ -69,6 +70,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) underwater_pipeline: &'a PctPipeline,
     pub(in crate::device) sky_pipeline: &'a PctPipeline,
     pub(in crate::device) low_detail_pipelines: &'a LowDetailPipelines,
+    pub(in crate::device) detail_pipeline: &'a DetailPipeline,
     pub(in crate::device) cloud_pipeline: &'a PctPipeline,
     pub(in crate::device) celestial_pipeline: &'a PctPipeline,
     pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
@@ -105,6 +107,7 @@ pub(in crate::device) struct WorldFrameWindow {
 pub(in crate::device) struct WorldFrameRenderer {
     resources: WorldFrameResources,
     low_detail: LowDetailRegistry,
+    ground_detail: DetailRegistry,
     profiler: Option<WorldFrameProfiler>,
 }
 
@@ -113,6 +116,7 @@ impl Default for WorldFrameRenderer {
         Self {
             resources: WorldFrameResources::default(),
             low_detail: LowDetailRegistry::default(),
+            ground_detail: DetailRegistry::default(),
             profiler: WorldFrameProfiler::from_environment(),
         }
     }
@@ -231,6 +235,7 @@ impl WorldFrameRenderer {
             && scene.liquids().is_none_or(|frame| frame.draws().is_empty())
             && scene.sky().is_none()
             && scene.low_detail().is_none()
+            && scene.ground_detail().is_none()
             && scene.clouds().is_none()
             && scene
                 .celestials()
@@ -343,6 +348,26 @@ impl WorldFrameRenderer {
         let (acquired, wait_write_elapsed, acquire_elapsed) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
+            slot.ground_detail.clear();
+            if let Some(frame) = scene.ground_detail() {
+                slot.ground_detail.extend(
+                    frame
+                        .draws()
+                        .iter()
+                        .map(|draw| std::sync::Arc::clone(draw.plan())),
+                );
+            }
+            self.ground_detail.ensure(
+                &DetailCreateContext {
+                    device: context.device,
+                    allocator: context.allocator,
+                    textures: context.liquid_textures,
+                    descriptor: context.detail_pipeline.descriptor_layout(),
+                    anisotropy_supported: context.maximum_sampler_anisotropy > 1.0,
+                    maximum_anisotropy: context.maximum_sampler_anisotropy,
+                },
+                scene.ground_detail(),
+            )?;
             // Pin only after retirement; shared immutable buffers survive other slots.
             slot.low_detail_map = scene
                 .low_detail()
@@ -497,6 +522,9 @@ impl WorldFrameRenderer {
                 .low_detail()
                 .and_then(|frame| self.low_detail.get(frame.map())),
             low_detail_frame: scene.low_detail(),
+            detail_pipeline: context.detail_pipeline,
+            ground_detail_registry: &self.ground_detail,
+            ground_detail_frame: scene.ground_detail(),
             depth_maximum: scene.depth_maximum(),
             sky_resources: &slot.sky,
             sky_frame: scene.sky(),
@@ -575,6 +603,7 @@ impl WorldFrameRenderer {
             bone_count,
         )
         .with_low_detail_draw_count(low_detail_draw_count)
+        .with_ground_detail_draw_count(scene.ground_detail().map_or(0, |frame| frame.draw_count()))
         .with_sky_model_draw_count(sky_draw_count)
         .with_celestial_draw_count(scene.celestials().map_or(0, |frame| frame.draw_count()))
         .with_sky_draw_count(usize::from(scene.sky().is_some()))
@@ -585,5 +614,6 @@ impl WorldFrameRenderer {
     pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         self.resources.destroy(device, allocator);
         self.low_detail.destroy(allocator);
+        self.ground_detail.destroy(device, allocator);
     }
 }

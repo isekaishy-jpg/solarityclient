@@ -34,6 +34,12 @@ mod lighting;
 #[path = "terrain_retirement.rs"]
 mod retirement;
 
+#[path = "ground_detail.rs"]
+mod ground_detail;
+
+#[path = "ground_detail_shader.rs"]
+mod ground_detail_shader;
+
 /// The 145-vertex MCNK grid becomes 256 stock fan triangles with no holes.
 #[test]
 fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error>> {
@@ -350,6 +356,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(frame.ribbon_vertex_count(), 0);
     fog::compare_native_fog(&mut renderer, draw)?;
     lighting::compare_native_lighting(&mut renderer)?;
+    ground_detail_shader::compare_native_detail(&mut renderer)?;
     retirement::reload_in_flight(&mut renderer, &tile_mesh, grass_texture)?;
     // A valid frustum can reject every resident chunk. The terrain pass must
     // still clear and present its attachments for that camera orientation.

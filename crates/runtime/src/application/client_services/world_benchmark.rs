@@ -44,6 +44,8 @@ pub struct WorldBenchmarkSample {
     pub admitted_tiles: usize,
     /// Previously resident ADTs released during that transaction.
     pub evicted_tiles: usize,
+    /// Visible native terrain-detail texture buckets submitted this frame.
+    pub ground_detail_draws: usize,
     /// Fixture world position used for this frame's residency demand.
     pub position: Vec3,
 }
@@ -401,6 +403,12 @@ impl ClientServices {
             .set_environment_detail(ui.cvar_number("environmentDetail"))
             .map_err(ApplicationError::from)?;
         frame
+            .set_ground_detail(
+                ui.cvar_number("groundEffectDensity"),
+                ui.cvar_number("groundEffectDist"),
+            )
+            .map_err(ApplicationError::from)?;
+        let report = frame
             .present(
                 &mut self.renderer,
                 self.terrain
@@ -447,6 +455,7 @@ impl ClientServices {
             resident_tiles: self.terrain.resident_tile_count(),
             admitted_tiles,
             evicted_tiles,
+            ground_detail_draws: report.ground_detail_draw_count(),
             position: world.local_player_transform()?.position(),
         })
     }

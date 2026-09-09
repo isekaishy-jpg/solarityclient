@@ -31,6 +31,7 @@ The CSV includes world coordinates and counts of ADTs admitted and evicted
 during each streaming transaction. Inspect those counts alongside frame-time
 outliers to distinguish steady rendering from resource publication and
 retirement. Returning along the same route exercises recently departed tiles.
+`ground_detail_draws` records the accepted grass/detail texture buckets.
 The phase names describe input, not a promise that resource
 loading has finished. Samples separate service, streaming, UI, final camera
 resolution, and presentation. Streaming currently includes a camera resolution

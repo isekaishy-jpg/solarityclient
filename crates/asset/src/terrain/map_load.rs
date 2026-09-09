@@ -489,6 +489,9 @@ fn decode_chunk(
         world_model_references.to_vec(),
         sound_emitters,
         texture_selection,
+        // Native 7C64B0 retains header+0x50 separately from the full sixteen-
+        // byte texture selector. wow-adt labels these eight bytes unknown.
+        chunk.header.unknown_8bytes,
     ))
 }
 

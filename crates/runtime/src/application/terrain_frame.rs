@@ -30,6 +30,7 @@ use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
 use crate::random::CrtRand;
 
+mod ground_detail;
 pub(in crate::application) mod m2;
 mod sky;
 mod streaming;
@@ -42,6 +43,18 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// The registered detail policy is absent or nonfinite.
+    #[error("ground detail requires finite density and distance cvars")]
+    InvalidGroundDetailCvar,
+    /// A worker failed to retain a texture required by its prepared model.
+    #[error("ground detail texture {0} is not resident")]
+    MissingGroundDetailTexture(AssetPath),
+    /// Authored detail inputs could not form the native mesh.
+    #[error(transparent)]
+    GroundDetail(#[from] solarity_rendering::GroundDetailError),
+    /// Detail geometry and texture publication disagree.
+    #[error(transparent)]
+    GroundDetailFrame(#[from] solarity_rendering::GroundDetailFrameError),
     /// A current scene light or receiving model has invalid spatial data.
     #[error(transparent)]
     SceneLight(#[from] solarity_rendering::ScenePointLightError),
@@ -524,6 +537,7 @@ pub(super) struct TerrainFrame {
     map_id: Option<u32>,
     tiles: Vec<TerrainGpuTile>,
     visible_draws: Vec<TerrainPreparedDraw>,
+    ground_detail: ground_detail::GroundDetailWorld,
     liquid_materials: LiquidGpuMaterialCache,
     liquid_filtering: WorldModelTextureFiltering,
     liquid_draws: Vec<solarity_rendering::LiquidPreparedDraw>,
@@ -596,6 +610,10 @@ impl TerrainFrame {
                 liquids,
             }],
             visible_draws: Vec::with_capacity(plan.chunks().len()),
+            ground_detail: ground_detail::GroundDetailWorld::new(
+                world_model_filtering,
+                world_model_base_mip,
+            ),
             liquid_materials,
             liquid_filtering: world_model_filtering,
             sky: sky::WorldSky::new(),
@@ -638,6 +656,10 @@ impl TerrainFrame {
             map_id: None,
             tiles: Vec::new(),
             visible_draws: Vec::new(),
+            ground_detail: ground_detail::GroundDetailWorld::new(
+                world_model_filtering,
+                world_model_base_mip,
+            ),
             liquid_materials: LiquidGpuMaterialCache::default(),
             liquid_filtering: world_model_filtering,
             sky: sky::WorldSky::new(),
@@ -645,6 +667,15 @@ impl TerrainFrame {
             m2,
             world_models,
         })
+    }
+
+    /// Applies the registered ground-effect policy before chunk admission.
+    pub(super) fn set_ground_detail(
+        &mut self,
+        density: Option<f32>,
+        distance: Option<f32>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.ground_detail.configure(density, distance)
     }
 
     /// Applies 78DC60's environmentDetail clamp to the retained scenery policy.
@@ -721,6 +752,9 @@ impl TerrainFrame {
             }
         }
         profile.mark("terrain culling");
+        self.ground_detail
+            .prepare(renderer, terrain.resident_tiles(), camera, frustum)?;
+        profile.mark("ground detail");
         let light = environment.light();
         self.sky.update(
             environment,
@@ -850,6 +884,7 @@ impl TerrainFrame {
         )?;
         let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));
         let mut scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
+            .with_ground_detail(self.ground_detail.frame(camera.camera().position())?)
             .with_world_depth_range()
             .with_m2_instance_scenes(m2.instance_scenes)
             .with_sky_models(sky_models)

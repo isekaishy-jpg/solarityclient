@@ -20,6 +20,7 @@ mod db_cache_instances;
 mod db_client;
 mod environmental_damage;
 mod game_object;
+mod ground_effect;
 mod item;
 mod light;
 mod liquid_material;
@@ -71,6 +72,7 @@ pub use creature::{
 };
 pub use environmental_damage::{EnvironmentalDamageCatalog, EnvironmentalVisualKit};
 pub use game_object::{GameObjectDisplayCatalog, GameObjectDisplayInfo};
+pub use ground_effect::{GroundEffectCatalog, GroundEffectDoodad, GroundEffectTexture};
 pub use item::{
     HelmetGeosetVisibility, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinition,
     ItemDefinitionCatalog, ItemDisplayCatalog, ItemDisplayInfo, ItemVisual, ItemVisualCatalog,

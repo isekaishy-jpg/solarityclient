@@ -13,6 +13,14 @@ fn main() {
         Some(output) => PathBuf::from(output),
         None => panic!("Cargo must define OUT_DIR for build-generated shaders"),
     };
+    for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+        compile(
+            &format!("src/shader/detail_spirv/source/detail.{stage}.glsl"),
+            kind,
+            &output.join(format!("detail.{stage}.spv")),
+            &[],
+        );
+    }
     compile(
         "src/shader/m2_spirv/source/m2.vert.glsl",
         ShaderKind::Vertex,

@@ -1294,6 +1294,11 @@ impl ClientServices {
             || self.glue.cvar_number("environmentDetail"),
             |ui| ui.cvar_number("environmentDetail"),
         );
+        let ground_detail = ["groundEffectDensity", "groundEffectDist"].map(|name| {
+            self.world_ui
+                .as_ref()
+                .map_or_else(|| self.glue.cvar_number(name), |ui| ui.cvar_number(name))
+        });
         let footstep_bias = self
             .world_ui
             .as_ref()
@@ -1360,6 +1365,7 @@ impl ClientServices {
                 )
             };
         frame.set_environment_detail(environment_detail)?;
+        frame.set_ground_detail(ground_detail[0], ground_detail[1])?;
         frame.present(
             &mut self.renderer,
             plan,

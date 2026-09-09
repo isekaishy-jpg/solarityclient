@@ -37,6 +37,7 @@ use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
 use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
 
 mod bindings;
+mod ground_detail;
 mod low_detail;
 use bindings::WorldCommandBindings;
 use low_detail::record_low_detail;
@@ -86,6 +87,9 @@ pub(super) struct RecordContext<'a> {
     pub(super) low_detail_pipelines: &'a crate::device::vulkan_low_detail::LowDetailPipelines,
     pub(super) low_detail_map: Option<&'a crate::device::vulkan_low_detail::LowDetailGpuMap>,
     pub(super) low_detail_frame: Option<crate::WorldLowDetailFrame<'a>>,
+    pub(super) detail_pipeline: &'a crate::device::vulkan_detail::DetailPipeline,
+    pub(super) ground_detail_registry: &'a crate::device::vulkan_detail::DetailRegistry,
+    pub(super) ground_detail_frame: Option<crate::GroundDetailFrame<'a>>,
     pub(super) depth_maximum: f32,
     pub(super) sky_resources: &'a SkyFrameResources,
     pub(super) sky_frame: Option<crate::WorldSkyFrame<'a>>,
@@ -233,6 +237,8 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
     for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
         record_world_model(&context, index, draw, &mut bindings)?;
     }
+    // 4F9154 dispatches 7984A0 before the ordinary liquid/M2 scene queues.
+    ground_detail::record_ground_detail(&context, &mut bindings)?;
     record_liquid_queue(&context, LiquidQueue::Opaque, &mut bindings)?;
     record_m2_scene_elements(&context, &mut bindings)?;
     record_underwater(&context, &mut bindings);

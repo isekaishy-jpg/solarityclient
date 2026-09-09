@@ -4820,7 +4820,7 @@ fn append_string(block: &mut Vec<u8>, value: &str) -> u32 {
 }
 
 /// Serializes one deterministic WotLK M2 with two texture stages.
-fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
+pub(crate) fn render_m2_bytes(name: &str, skin_profiles: u32) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut model = M2Model {
         header: M2Header::new(M2Version::WotLK),
         name: Some(name.to_owned()),

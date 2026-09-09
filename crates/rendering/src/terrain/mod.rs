@@ -11,6 +11,10 @@ mod map_weather;
 mod mesh;
 mod tile_mesh;
 
+pub use detail_doodad::{
+    GroundDetailBatch, GroundDetailDensity, GroundDetailError, GroundDetailMeshPlan,
+    GroundDetailModel, GroundDetailPlacement, GroundDetailVertex, TerrainDetailChunk,
+};
 pub use gpu_state::TerrainSceneUniform;
 pub use low_detail::{TerrainLowDetailMap, TerrainLowDetailMesh, WorldLowDetailFrame};
 pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};
