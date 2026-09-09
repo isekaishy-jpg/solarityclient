@@ -53,6 +53,35 @@ scene callback ownership, and renderer calls remain to be connected.
 
 ## Recovered integration rules
 
+### Outdoor scene depth admission
+
+`WorldSceneDepthFrame` implements the camera plane from `0x00795400`, the
+leading raw registered AABB corner from `0x00790650`, and outdoor M2 insertion
+from `0x00792E60`. The XY plane retains the full-forward intermediate values
+before horizontal normalization. Positive depths are multiplied by the float
+at `0x00A3F7EC`, stored to float, reduced by `0.5`, then rounded to nearest even.
+Nonpositive depth enters bucket zero; an index at least 64 is unvisited.
+
+`0x007B5590` classifies every eligible registered M2 into these 64 lists.
+`0x0079A790` visits every list, and `0x00793060` changes classification to 1
+before frustum or occlusion rejection. Therefore outdoor movement admission
+does not mean that the unit was drawn. The raw unit registration transform
+from `0x007370D0` supplies the bounds, before the smoothed model tilt.
+
+`tools/ghidra/scene_depth_oracle.py` runs the original camera instruction range
+and complete insertion routine, including its original intrusive-list helper,
+without hooks. The 489 cases cover direction octants, vertical views, all depth
+boundaries, and large world coordinates.
+
+This operation does not yet own the live scene callback. `0x0079A870` always
+traverses exterior bins when the camera is outside a WMO; an interior camera
+requires an admitted exterior portal window. WMO-bound units instead depend
+on visited group lists through `0x00793270`. Those live membership and traversal
+decisions must be connected before treating this depth result as a complete
+scene-admission answer.
+
+### Movement and presentation
+
 The following behavior defines the remaining live integration:
 
 - `0x006E9E20` bypasses collision for a remote spline owner when unit flags

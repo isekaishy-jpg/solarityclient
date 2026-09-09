@@ -48,7 +48,9 @@ mod underwater_particles;
 mod vehicle;
 mod water_ripple;
 mod world;
+mod world_scene;
 pub use spell::unit_has_aura_type;
+pub use world_scene::{WorldSceneDepthError, WorldSceneDepthFrame};
 
 pub use combat::{
     CombatLogObjectClassification, combat_log_object_flags, faction_template_reaction,
