@@ -14,6 +14,7 @@ pub(super) struct M2PlayerItemIdentity {
 enum RetainedCharacterState {
     Item(Option<M2PlayerItemIdentity>),
     Mount {
+        key: MountModelKey,
         transform: Mat4,
         ground: Option<UnitGroundPlacement>,
     },
@@ -62,7 +63,12 @@ impl M2Frame {
                         placement.item_identity = Some(identity);
                     }
                     RetainedCharacterState::Item(None) => {}
-                    RetainedCharacterState::Mount { transform, ground } => {
+                    RetainedCharacterState::Mount {
+                        key,
+                        transform,
+                        ground,
+                    } => {
+                        placement.mount_key = Some(key);
                         placement.transform = transform;
                         placement.local_transform = transform;
                         placement.ground_placement = ground;
@@ -177,7 +183,11 @@ pub(super) fn prepare_character_gpu(
         let retained = same_unit
             .then(|| {
                 frame.placements.iter().position(|placement| {
-                    placement.owner == owner && placement.mount_key.as_ref() == Some(mount.key())
+                    placement.owner == owner
+                        && placement
+                            .mount_key
+                            .as_ref()
+                            .is_some_and(|key| key.is_same_model_as(mount.key()))
                 })
             })
             .flatten();
@@ -185,6 +195,7 @@ pub(super) fn prepare_character_gpu(
             prepared.retain(
                 index,
                 RetainedCharacterState::Mount {
+                    key: mount.key().clone(),
                     transform: world_transform,
                     ground,
                 },

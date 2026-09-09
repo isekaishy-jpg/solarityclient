@@ -178,6 +178,57 @@ fn unchanged_mounts_retain_animation_and_effects_across_rider_rebuilds()
             "retained parent is published before its rider"
         );
     }
+    // 71C0E0 reads the current unit scale without replacing the mount model.
+    // Repeated changes must update placement while preserving every live clock.
+    let scaled_before = mounts
+        .map(|owner| mount_snapshot(&frame, owner))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    for object_scale in [1.3_f32, 0.75, 2.] {
+        let previous_bodies = bodies
+            .map(|owner| unit_source(&frame, owner))
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        for guid in [7, 20] {
+            equipment_residency::fields(&mut world, guid, &[(4, object_scale.to_bits())])?;
+        }
+        let expected_random = random;
+        publish(
+            &mut presentation,
+            &world,
+            &mut frame,
+            &mut renderer,
+            &mut random,
+        )?;
+        for (index, owner) in mounts.into_iter().enumerate() {
+            assert_eq!(
+                mount_snapshot(&frame, owner)?,
+                scaled_before[index],
+                "scale {object_scale}, {owner:?}"
+            );
+            assert_ne!(unit_source(&frame, bodies[index])?, previous_bodies[index]);
+            let mount = frame
+                .placements
+                .iter()
+                .find(|p| p.owner == owner)
+                .ok_or("scaled mount")?;
+            let expected_scale = (0.5_f64 * f64::from(object_scale) * f64::from(1.6_f32)) as f32;
+            assert_eq!(
+                mount.ground_placement.as_ref().ok_or("ground")?.scale,
+                expected_scale
+            );
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                assert!(
+                    (mount.transform.transform_vector3(axis).length() - expected_scale).abs()
+                        < 1e-6
+                );
+            }
+        }
+        assert_eq!(
+            random, expected_random,
+            "size changes consume no mount rolls"
+        );
+    }
     // Reused GUIDs, changed displays, and remounts each begin a fresh instance.
     world.remove_object(20)?;
     add_unit(&mut world, 20, ObjectKind::Player, 0)?;

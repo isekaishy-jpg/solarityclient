@@ -67,12 +67,17 @@ alignment override from the selected mount's primary sequence.
 An unchanged mount also retains its complete GPU instance when a rider's atlas
 or equipment is rebuilt. `0x00717910` gives the mount a separate model slot and
 leaves the same pointer untouched. Residency compares the unit animation owner
-and complete mount key before retaining that component; new displays, dismounts,
+and mount model identity before retaining that component; new displays, dismounts,
 or new unit lifetimes create new components. Publication remains transactional
 and parent-first, updating the retained mount's world transform and ground input
 before attaching the new rider. The live regression checks local and remote
 animation/event phases, particle allocation and ages, ribbon history, random
 consumption, and the retained source's lifetime through an actual atlas rebuild.
+Size changes also preserve the instance: `0x0071C0E0` reads the current unit
+scale for placement without replacing the mount. Residency updates the scale
+key and ground/world transforms transactionally while retaining the source,
+clocks and emitter histories. The same live regression resizes both players
+repeatedly and verifies the new transforms alongside unchanged instance state.
 
 Mount playback still uses the existing generic model clock. The retained
 mount request owner, mounted behavior routing (`0x007385C0`), and model-specific

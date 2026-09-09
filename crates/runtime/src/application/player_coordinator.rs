@@ -2708,6 +2708,17 @@ pub(super) struct MountModelKey {
     mount_height: f32,
 }
 
+impl MountModelKey {
+    /// 71C0E0 reads unit scale per placement; it is not a mount model lifetime.
+    pub(super) fn is_same_model_as(&self, other: &Self) -> bool {
+        self.display_id == other.display_id
+            && self.path == other.path
+            && self.rider_scale == other.rider_scale
+            && self.particle_color_id == other.particle_color_id
+            && self.mount_height == other.mount_height
+    }
+}
+
 /// Archive-selected mount model and its independently animated presentation.
 struct ResidentMountModel {
     key: MountModelKey,
