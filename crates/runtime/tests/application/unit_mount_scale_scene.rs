@@ -2,6 +2,140 @@
 
 use super::*;
 
+/// Native 7197D0/82DD80 selects the mount's flags at unit scale, then the
+/// attached rider inherits the tilted saddle basis and translation.
+#[test]
+fn mounted_ground_pose_reaches_local_and_remote_rider_attachments() -> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_mount_scale()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    for guid in [7, 20] {
+        add_unit(&mut world, guid, ObjectKind::Player, 0)?;
+    }
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8., 0., 4.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-8., 8.],
+        [-8., 8.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    let target = Vec3::new(-0.25, 0.15, 1.).normalize();
+    let mut normal = solarity_rendering::M2GroundNormal::default();
+    let mut previous_time = 0.;
+    for (index, (time, mount_id, position, yaw)) in [
+        (100., 102, Vec3::ZERO, 0.),
+        (300., 102, Vec3::new(1., 2., 0.5), 0.8),
+        (300., 102, Vec3::new(1., 2., 0.5), 0.8),
+        (500., 0, Vec3::ZERO, 0.),
+        (700., 102, Vec3::ZERO, 0.),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for guid in [7, 20] {
+            world.update_fields(guid, [(69, mount_id)])?;
+            solarity_systems::project_object_fields(&mut world, guid, [(69, mount_id)])?;
+            world.update_transform(guid, WorldTransform::new(position, yaw))?;
+            presentation.set_ground_normal(world.object_identity(guid).ok_or("identity")?, target);
+        }
+        presentation.synchronize(Some(&world))?;
+        presentation.synchronize_remote_players(Some(&world))?;
+        let local = presentation.resident_frame_input().ok_or("local")?;
+        let remote = presentation.resident_remote_player_frame_inputs();
+        frame.replace_player(&mut renderer, Some(local), &mut random)?;
+        frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
+        if index != 0 {
+            frame.update_player_state(
+                presentation.resident_frame_input().ok_or("local")?,
+                time,
+                &mut random,
+            )?;
+            frame.update_remote_player_states(&remote, time, &mut random)?;
+        }
+        normal.advance(target, (time - previous_time) * 0.001)?;
+        previous_time = time;
+        frame.prepare_visible_draws(
+            &renderer,
+            WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+            camera,
+            solarity_rendering::M2TransparentPass::One,
+            Vec3::ZERO,
+            time,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &mut random,
+            None,
+        )?;
+        for (body_owner, mount_owner) in [
+            (
+                M2GpuPlacementOwner::PlayerBody { guid: 7 },
+                M2GpuPlacementOwner::PlayerMount { guid: 7 },
+            ),
+            (
+                M2GpuPlacementOwner::RemotePlayerBody { guid: 20 },
+                M2GpuPlacementOwner::RemotePlayerMount { guid: 20 },
+            ),
+        ] {
+            let body = frame
+                .placements
+                .iter()
+                .find(|p| p.owner == body_owner)
+                .ok_or("body")?;
+            let yaw = body
+                .unit_animation
+                .as_ref()
+                .ok_or("unit animation")?
+                .body_pose()
+                .placement_yaw;
+            let expected_body = if mount_id == 0 {
+                normal.transform(position, yaw, 0.5, 0, 0.)?
+            } else {
+                let mount = frame
+                    .placements
+                    .iter()
+                    .find(|p| p.owner == mount_owner)
+                    .ok_or("mount")?;
+                let expected_mount = normal.transform(position, yaw, 0.8, 3, 0.)?;
+                assert!(
+                    mount.transform.abs_diff_eq(expected_mount, 1e-6),
+                    "case {index}: {mount_owner:?}"
+                );
+                assert!(
+                    mount.transform.z_axis.x < -0.08,
+                    "mount receives slope normal"
+                );
+                expected_mount
+                    * Mat4::from_translation(Vec3::new(0.25, 0.5, 1.))
+                    * Mat4::from_scale(Vec3::splat(1. / 1.6))
+            };
+            assert!(
+                body.transform.abs_diff_eq(expected_body, 1e-6),
+                "case {index}: {body_owner:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Original 73D5D0/71C0E0 records exercise both players with non-unit body,
 /// display and model scales. The mount attachment must not resize its rider.
 #[test]

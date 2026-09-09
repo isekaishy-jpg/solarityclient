@@ -307,6 +307,14 @@ fn build_fixture(
             .ok_or("mount model")?;
         alternate.1[0xa0..0xa4].copy_from_slice(&(-2.0_f32).to_le_bytes());
         alternate.1[0xac..0xb0].copy_from_slice(&2.0_f32.to_le_bytes());
+        // Full ground alignment and an offset saddle distinguish the mount's
+        // basis from its upright rider model and exercise attached translation.
+        alternate.1[0x10..0x14].copy_from_slice(&3_u32.to_le_bytes());
+        let attachment = u32::from_le_bytes(alternate.1[0xf4..0xf8].try_into()?) as usize;
+        for (axis, value) in [0.25_f32, 0.5, 1.].into_iter().enumerate() {
+            alternate.1[attachment + 8 + axis * 4..attachment + 12 + axis * 4]
+                .copy_from_slice(&value.to_le_bytes());
+        }
         append_mount_terrain(&mut files)?;
     }
     if equipment {

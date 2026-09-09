@@ -155,10 +155,12 @@ enum M2TransparentDrawIndex {
 }
 
 /// Authoritative unit inputs retained before terrain tilt changes the model basis.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct UnitGroundPlacement {
     position: glam::Vec3,
     scale: f32,
+    /// The unit owns normals/yaw even when this placement is its mount.
+    owner: Rc<UnitAnimationBehavior>,
 }
 
 /// Exact per-instance state required by later animation and material assembly.
@@ -1337,10 +1339,12 @@ impl M2Frame {
             placement.scene_registration =
                 Some(UnitSceneRegistration::new(input.model(), transform)?);
             placement.unit_presentation = Some(input.generation().clone());
-            placement.ground_placement = Some(UnitGroundPlacement {
-                position: input.world_transform().position(),
-                scale: input.object_scale(),
-            });
+            placement.ground_placement =
+                input.unit_animation().map(|animation| UnitGroundPlacement {
+                    position: input.world_transform().position(),
+                    scale: input.object_scale(),
+                    owner: Rc::clone(animation),
+                });
             prepared.push((source, placement));
         }
 
@@ -1445,6 +1449,12 @@ impl M2Frame {
                 })?;
             placement.transform = transform;
             placement.local_transform = transform;
+            placement.ground_placement =
+                input.unit_animation().map(|animation| UnitGroundPlacement {
+                    position: input.world_transform().position(),
+                    scale: mount.object_scale(),
+                    owner: Rc::clone(animation),
+                });
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 return Ok(());
             };
@@ -1487,6 +1497,7 @@ impl M2Frame {
             placement.ground_placement = input.mount().is_none().then_some(UnitGroundPlacement {
                 position: input.world_transform().position(),
                 scale: input.object_scale(),
+                owner: Rc::clone(animation),
             });
             animation.synchronize(animation_time_ms as u32, random)?;
             placement.unit_animation = Some(Rc::clone(animation));
@@ -1538,6 +1549,7 @@ impl M2Frame {
                 placement.ground_placement = Some(UnitGroundPlacement {
                     position: input.world_transform().position(),
                     scale: input.object_scale(),
+                    owner: Rc::clone(animation),
                 });
                 animation.synchronize(animation_time_ms as u32, random)?;
                 placement.unit_animation = Some(Rc::clone(animation));
@@ -1585,6 +1597,12 @@ impl M2Frame {
                     )?;
                 placement.transform = transform;
                 placement.local_transform = transform;
+                placement.ground_placement =
+                    input.unit_animation().map(|animation| UnitGroundPlacement {
+                        position: input.world_transform().position(),
+                        scale: mount.object_scale(),
+                        owner: Rc::clone(animation),
+                    });
                 let Some(source) = self.sources[placement.source_index].as_ref() else {
                     continue;
                 };
@@ -1631,6 +1649,7 @@ impl M2Frame {
                     input.mount().is_none().then_some(UnitGroundPlacement {
                         position: input.world_transform().position(),
                         scale: input.object_scale(),
+                        owner: Rc::clone(animation),
                     });
                 animation.synchronize(animation_time_ms as u32, random)?;
                 placement.unit_animation = Some(Rc::clone(animation));
@@ -2101,18 +2120,39 @@ impl M2Frame {
                     animation.admit_scene_collision();
                 }
                 animation.advance_scene(animation_time_ms, random)?;
-                placement.transform = if let Some(ground) = placement.ground_placement
-                    && animation.uses_ground_placement()
-                {
-                    animation.ground_transform(
-                        ground.position,
-                        ground.scale,
-                        animation_time_ms,
-                        frame_seconds,
-                    )?
-                } else {
-                    placement.local_transform * animation.body_pose().placement_rotation
-                };
+                placement.transform =
+                    placement.local_transform * animation.body_pose().placement_rotation;
+            }
+        }
+        // Ground placement follows unit animation/yaw for every model, including
+        // mounts inserted before their riders. It does not advance a second
+        // unit callback or substitute the rider's model/timer for the mount.
+        for &index in self.placement_visibility.dynamic_indices() {
+            let placement = &mut self.placements[index];
+            let Some(ground) = &placement.ground_placement else {
+                continue;
+            };
+            if !ground.owner.uses_ground_placement() {
+                continue;
+            }
+            if placement.unit_animation.is_some() {
+                placement.transform = ground.owner.ground_transform(
+                    ground.position,
+                    ground.scale,
+                    animation_time_ms,
+                    frame_seconds,
+                )?;
+            } else if let Some(source) = &self.sources[placement.source_index]
+                && let Some(playback) = &placement.playback
+            {
+                placement.transform = ground.owner.ground_model_transform(
+                    ground.position,
+                    ground.scale,
+                    animation_time_ms,
+                    frame_seconds,
+                    &source.model,
+                    &playback.borrow(),
+                )?;
             }
         }
         self.rider_transforms.clear();

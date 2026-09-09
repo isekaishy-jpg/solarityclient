@@ -12,6 +12,35 @@ const POSES: &[u16] = &[
     115, 116, 127, 131, 132, 187, 201, 202, 224, 300, 301, 302, 304, 466, 468, 472,
 ];
 
+/// 7197D0 queries GetModel's primary timer: the rider's alignment sequence
+/// cannot tilt a mount whose own primary has no alignment override.
+#[test]
+fn selected_ground_model_uses_its_own_sequence_weight() -> Result<(), Box<dyn Error>> {
+    let rider = owner_with_sequence_metadata(&[0], input(0), |_, _, sequence| {
+        sequence[12..16].copy_from_slice(&0x28_u32.to_le_bytes());
+    })?;
+    let mount = owner_with_input(&[0], input(0))?;
+    let mut scene = UnitAnimationScene::default();
+    scene.set_ground_normal(rider.identity, Vec3::new(-0.25, 0.15, 1.).normalize());
+    scene.bind(rider.identity, &rider.model, &rider.animations, input(0));
+    let rider = scene.get(rider.identity.guid()).ok_or("rider")?;
+    let mut random = CrtRand::new();
+    rider.advance_scene(100., &mut random)?;
+    mount.advance_scene(100., &mut random)?;
+    let tilted = rider.ground_transform(Vec3::ZERO, 1., 100., 0.5)?;
+    assert!(tilted.z_axis.x < -0.2);
+    let upright = rider.ground_model_transform(
+        Vec3::ZERO,
+        1.,
+        100.,
+        0.5,
+        &mount.model,
+        &mount.playback.borrow(),
+    )?;
+    assert_eq!(upright, Mat4::IDENTITY);
+    Ok(())
+}
+
 #[test]
 fn ground_placement_retains_smoothing_across_model_replacement_and_duplicate_draws()
 -> Result<(), Box<dyn Error>> {

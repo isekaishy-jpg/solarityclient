@@ -5,10 +5,12 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use glam::{Mat4, Vec3};
+use solarity_asset::DecodedM2Model;
 use solarity_ecs::WorldObjectIdentity;
 use solarity_rendering::M2GroundNormal;
 
 use super::{RuntimeTerrainFrameError, UnitAnimationBehavior, UnitAnimationScene};
+use crate::application::model_playback::M2Playback;
 
 /// Retained independently of animation/model replacements for the same unit.
 pub(super) struct UnitGroundPose {
@@ -82,6 +84,28 @@ impl UnitAnimationBehavior {
         scene_time_ms: f32,
         frame_seconds: f32,
     ) -> Result<Mat4, RuntimeTerrainFrameError> {
+        self.ground_model_transform(
+            position,
+            scale,
+            scene_time_ms,
+            frame_seconds,
+            &self.model,
+            &self.playback.borrow(),
+        )
+    }
+
+    /// GetModel selects the mount's flags and primary timer while the unit
+    /// retains the shared normal and yaw. Rider timers never supply its weight.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ground_model_transform(
+        &self,
+        position: Vec3,
+        scale: f32,
+        scene_time_ms: f32,
+        frame_seconds: f32,
+        model: &DecodedM2Model,
+        playback: &M2Playback,
+    ) -> Result<Mat4, RuntimeTerrainFrameError> {
         let mut normal = self.ground.normal.borrow_mut();
         if self.ground.last_scene_time_ms.get() != Some(scene_time_ms) {
             // 4F8D10 passes the scene context's +B14 frame duration. A unit
@@ -91,10 +115,9 @@ impl UnitAnimationBehavior {
                 .map_err(|_| RuntimeTerrainFrameError::InvalidUnitM2Transform)?;
             self.ground.last_scene_time_ms.set(Some(scene_time_ms));
         }
-        let playback = self.playback.borrow();
         let weight = playback
             .script_timer
-            .zip(self.model.animations().sequences().get(playback.sequence))
+            .zip(model.animations().sequences().get(playback.sequence))
             .map_or(0.0, |(timer, sequence)| {
                 timer.ground_alignment_weight(sequence.flags(), scene_time_ms as u32)
             });
@@ -103,7 +126,7 @@ impl UnitAnimationBehavior {
                 position,
                 self.body_pose().placement_yaw,
                 scale,
-                self.model.flags(),
+                model.flags(),
                 weight,
             )
             .map_err(|_| RuntimeTerrainFrameError::InvalidUnitM2Transform)

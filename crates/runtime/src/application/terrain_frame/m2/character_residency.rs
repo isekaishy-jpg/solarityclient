@@ -175,7 +175,7 @@ pub(super) fn prepare_character_gpu(
             }
             _ => unreachable!("character preparation requires a player body owner"),
         };
-        let placement = unit_gpu_placement(
+        let mut placement = unit_gpu_placement(
             scene_time_ms,
             world_transform,
             owner,
@@ -184,6 +184,11 @@ pub(super) fn prepare_character_gpu(
             mount.particle_colors().cloned(),
             random,
         )?;
+        placement.ground_placement = input.unit_animation().map(|animation| UnitGroundPlacement {
+            position: input.world_transform().position(),
+            scale: mount.object_scale(),
+            owner: Rc::clone(animation),
+        });
         // Parent-first insertion lets the current mount bone pose determine
         // the rider transform before the body and its equipment are visited.
         prepared.push(source, placement);
@@ -222,6 +227,7 @@ pub(super) fn prepare_character_gpu(
         body.ground_placement = mount.is_none().then_some(UnitGroundPlacement {
             position: input.world_transform().position(),
             scale: input.object_scale(),
+            owner: Rc::clone(animation),
         });
         body
     } else {

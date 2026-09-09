@@ -50,9 +50,24 @@ and 520 complete model matrices and sequence weights by exact float bits.
 
 The runtime publishes local and remote collision normals through the unit's
 lifetime state. Model loading, replacement, and duplicate draws preserve that
-state. Ordinary unmounted unit placement uses the final body yaw and the scene
+state. Ordinary unit placement uses the final body yaw and the scene
 frame duration supplied by `0x004F8D10`; a gap in callbacks does not become a
 larger smoothing interval.
+
+Mounted player placement now follows `0x007197D0`'s `GetModel` selection:
+the mount receives the shared unit normal/yaw, its virtual model scale, and
+its own model flags and primary timer. The rider's timer cannot provide the
+mount's sequence alignment weight. All unit animation/yaw updates precede this
+placement pass, including mounts stored before their riders. The rider and its
+equipment then inherit the tilted attachment matrix. GPU regressions cover
+local and remote players, translated/rotated slopes, duplicate draws, and
+dismount/remount state; a separate timer regression distinguishes a rider's
+alignment override from the selected mount's primary sequence.
+
+Mount playback still uses the existing generic model clock. The retained
+mount request owner, mounted behavior routing (`0x007385C0`), and model-specific
+completion dispatch (`0x0073BFF0`) remain animation integration work. This
+placement change does not claim those timer/lifetime gaps are closed.
 
 ## Recovered integration rules
 
@@ -194,8 +209,8 @@ the final ordinary group pass still requires the unit's interior classification.
 Decoded WMO regressions cover the whole-list early return, envelope rejection,
 exterior-unit callbacks and admission through a preceding moving root.
 
-Mounted model registrations and special hidden-model flags remain separate
-gaps. Rendered NPC placement still needs an in-world check; the Windows
+Special hidden-model flags remain a separate gap. Rendered NPC placement
+still needs an in-world check; the Windows
 inspection helper was unavailable during the automated validation session.
 
 ### Movement and presentation
