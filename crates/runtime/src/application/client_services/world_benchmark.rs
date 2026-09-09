@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use solarity_ecs::{ActiveWorld, PlayerViewState, WorldStateError};
+use glam::Vec3;
+use solarity_ecs::{ActiveWorld, PlayerViewState, WorldStateError, WorldTransform};
 use solarity_rendering::{WorldModelBaseMip, WorldModelTextureFiltering};
 use solarity_ui::GlueError;
 use thiserror::Error;
@@ -39,6 +40,12 @@ pub struct WorldBenchmarkSample {
     pub present: Duration,
     /// Complete ADTs retained after this transaction.
     pub resident_tiles: usize,
+    /// Complete ADTs admitted during this frame's streaming transaction.
+    pub admitted_tiles: usize,
+    /// Previously resident ADTs released during that transaction.
+    pub evicted_tiles: usize,
+    /// Fixture world position used for this frame's residency demand.
+    pub position: Vec3,
 }
 
 /// Offline diagnostics retain failures instead of reporting partial success.
@@ -76,10 +83,11 @@ pub enum WorldBenchmarkError {
 impl ClientServices {
     pub(in crate::application) fn benchmark_world(
         &mut self,
-        world: &ActiveWorld,
+        world: &mut ActiveWorld,
         clock: &RealmClock,
         frames_per_phase: NonZeroUsize,
         capture_directory: Option<&Path>,
+        travel_offset: Option<Vec3>,
     ) -> Result<Vec<WorldBenchmarkSample>, WorldBenchmarkError> {
         if self.gameplay.world().is_some()
             || self.terrain_frame.is_some()
@@ -93,6 +101,13 @@ impl ClientServices {
             return Err(WorldBenchmarkError::State(
                 "fixture player is missing FrameXML facts",
             ));
+        }
+        let initial_transform = world.local_player_transform()?;
+        let player_guid = world.local_player_guid()?;
+        if travel_offset.is_some_and(|offset| {
+            !offset.is_finite() || !(initial_transform.position() + offset).is_finite()
+        }) {
+            return Err(WorldBenchmarkError::State("travel segment must be finite"));
         }
         let start = Instant::now();
         self.terrain
@@ -177,7 +192,14 @@ impl ClientServices {
         let initial_view = world.local_player_view()?;
         let mut samples = Vec::new();
         let mut previous = Instant::now();
-        for phase in ["streaming", "stationary", "orbit", "pointer"] {
+        let phases = ["streaming", "stationary", "orbit", "pointer"]
+            .into_iter()
+            .chain(
+                travel_offset
+                    .into_iter()
+                    .flat_map(|_| ["travel_out", "travel_back", "settled"]),
+            );
+        for phase in phases {
             tracing::info!(phase, "started offline World benchmark phase");
             for index in 0..frames_per_phase.get() {
                 let frame_start = Instant::now();
@@ -194,6 +216,21 @@ impl ClientServices {
                 if self.platform.presentation_suspended() {
                     return Err(WorldBenchmarkError::Cancelled);
                 }
+                if let Some(offset) = travel_offset {
+                    let progress = (index + 1) as f32 / frames_per_phase.get() as f32;
+                    let fraction = match phase {
+                        "travel_out" => progress,
+                        "travel_back" => 1. - progress,
+                        _ => 0.,
+                    };
+                    world.update_transform(
+                        player_guid,
+                        WorldTransform::new(
+                            initial_transform.position() + offset * fraction,
+                            initial_transform.orientation(),
+                        ),
+                    )?;
+                }
                 let view = if phase == "orbit" {
                     PlayerViewState::new(
                         initial_view.distance(),
@@ -209,7 +246,7 @@ impl ClientServices {
                 let capture = capture_directory.filter(|_| {
                     index == 0
                         || index + 1 == frames_per_phase.get()
-                        || (phase == "orbit"
+                        || (matches!(phase, "orbit" | "travel_out" | "travel_back")
                             && index.is_multiple_of((frames_per_phase.get() / 4).max(1)))
                 });
                 if capture.is_some() {
@@ -241,6 +278,7 @@ impl ClientServices {
             }
         }
         world.set_local_player_view(initial_view)?;
+        world.update_transform(player_guid, initial_transform)?;
         Ok(samples)
     }
 
@@ -262,7 +300,31 @@ impl ClientServices {
             .map_err(ApplicationError::from)?;
         let service = start.elapsed();
         let start = Instant::now();
+        let previous_tiles = self
+            .terrain
+            .resident_tiles()
+            .map(|tile| tile.mesh().tile())
+            .collect::<Vec<_>>();
+        // Normal World servicing promotes the followed player's ADT before
+        // submitting the camera window. Travel must exercise that ownership
+        // transition as well as loading neighbors around a fixed primary.
+        self.terrain
+            .synchronize_async(Some(world), &self.cpu)
+            .map_err(ApplicationError::from)?;
         self.service_terrain_streaming()?;
+        let current_tiles = self
+            .terrain
+            .resident_tiles()
+            .map(|tile| tile.mesh().tile())
+            .collect::<Vec<_>>();
+        let admitted_tiles = current_tiles
+            .iter()
+            .filter(|tile| !previous_tiles.contains(tile))
+            .count();
+        let evicted_tiles = previous_tiles
+            .iter()
+            .filter(|tile| !current_tiles.contains(tile))
+            .count();
         let streaming = start.elapsed();
         let start = Instant::now();
         let ui = self
@@ -380,6 +442,9 @@ impl ClientServices {
             camera: camera_duration,
             present,
             resident_tiles: self.terrain.resident_tile_count(),
+            admitted_tiles,
+            evicted_tiles,
+            position: world.local_player_transform()?.position(),
         })
     }
 }

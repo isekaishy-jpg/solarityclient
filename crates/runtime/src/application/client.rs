@@ -414,6 +414,10 @@ impl ClientApplication {
     /// Uses a fresh diagnostic application and real terrain streaming, player,
     /// camera, FrameXML and Vulkan paths. Four equal phases cover initial
     /// streaming, stationary presentation, camera orbit, and pointer motion.
+    /// An optional world-space travel offset adds outbound, return, and settled
+    /// phases. Each travel phase samples the same segment at equal frame steps,
+    /// independently of rendering throughput; this is a residency workload,
+    /// not a real-time movement-speed measurement. The fixture is restored on success.
     /// It performs no server operations or movement simulation; it does not
     /// represent live remote-unit or network load. Shut down after this replay.
     /// Optional framebuffer captures synchronize GPU completion; use a separate
@@ -424,13 +428,19 @@ impl ClientApplication {
     /// or any production subsystem failure.
     pub fn benchmark_world(
         &mut self,
-        world: &solarity_ecs::ActiveWorld,
+        world: &mut solarity_ecs::ActiveWorld,
         clock: &crate::RealmClock,
         frames_per_phase: std::num::NonZeroUsize,
         capture_directory: Option<&std::path::Path>,
+        travel_offset: Option<glam::Vec3>,
     ) -> Result<Vec<super::WorldBenchmarkSample>, super::WorldBenchmarkError> {
-        self.services
-            .benchmark_world(world, clock, frames_per_phase, capture_directory)
+        self.services.benchmark_world(
+            world,
+            clock,
+            frames_per_phase,
+            capture_directory,
+            travel_offset,
+        )
     }
 
     /// Routes one event after any preceding motion run has been flushed.

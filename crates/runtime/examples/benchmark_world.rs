@@ -1,6 +1,7 @@
 //! Measures installed World presentation with an explicitly offline player fixture.
 
 use std::error::Error;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufWriter, Error as IoError, ErrorKind, Write};
 use std::num::NonZeroUsize;
@@ -10,12 +11,13 @@ use std::time::Duration;
 use glam::Vec3;
 use solarity_ecs::{
     ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, PlayerMoney,
-    PlayerProgression, UnitAnimationTier, UnitFlags, UnitIdentity, UnitPresentation,
-    UnitSheathState, UnitStats, UnitVitals, WorldBootstrap, WorldMapId,
+    PlayerProgression, PlayerViewState, UnitAnimationTier, UnitFlags, UnitIdentity,
+    UnitPresentation, UnitSheathState, UnitStats, UnitVitals, WorldBootstrap, WorldMapId,
 };
 use solarity_network::WorldTimeSpeed;
 use solarity_runtime::{ClientApplication, RealmClock, RuntimeConfiguration};
 
+/// Creates a controlled world fixture and writes every measured frame, including residency churn.
 fn main() -> Result<(), Box<dyn Error>> {
     let filter = tracing_subscriber::EnvFilter::builder()
         .with_default_directive(tracing::Level::INFO.into())
@@ -26,7 +28,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         IoError::new(
             ErrorKind::InvalidInput,
             format!(
-                "usage: benchmark_world <frames per phase> <output.csv> <map> <x> <y> <z> {}",
+                "usage: benchmark_world <frames per phase> <output.csv> <map> <x> <y> <z> \
+                 [--travel-offset <dx> <dy> <dz>] [--camera-distance <yards>] \
+                 [--camera-pitch <radians>] [--realm-hour <0..23>] {}",
                 RuntimeConfiguration::usage()
             ),
         )
@@ -50,8 +54,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             .ok_or_else(usage)?
             .parse()?;
     }
-    let configuration = RuntimeConfiguration::from_arguments(args)?;
-    // A level-one human warrior with empty equipment and explicit noon realm time.
+    let mut travel_offset = None;
+    let mut distance = PlayerViewState::STOCK_VIEW_2.distance();
+    let mut pitch = PlayerViewState::STOCK_VIEW_2.pitch_radians();
+    let mut hour = 12_u32;
+    let mut runtime_args = Vec::new();
+    while let Some(argument) = args.next() {
+        match argument.to_str() {
+            Some("--travel-offset") => {
+                travel_offset = Some(Vec3::new(
+                    finite_argument(&mut args)?,
+                    finite_argument(&mut args)?,
+                    finite_argument(&mut args)?,
+                ));
+            }
+            Some("--camera-distance") => distance = finite_argument(&mut args)?,
+            Some("--camera-pitch") => pitch = finite_argument(&mut args)?,
+            Some("--realm-hour") => {
+                hour = args
+                    .next()
+                    .and_then(|v| v.into_string().ok())
+                    .ok_or_else(usage)?
+                    .parse()?;
+            }
+            _ => runtime_args.push(argument),
+        }
+    }
+    if distance <= 0. || pitch.abs() >= std::f32::consts::FRAC_PI_2 || hour > 23 {
+        return Err(usage().into());
+    }
+    let configuration = RuntimeConfiguration::from_arguments(runtime_args)?;
+    // A level-one human warrior with empty equipment and an explicit realm hour.
     // No server identity, authentication, movement input, or remote population is supplied.
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(map),
@@ -60,6 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Vec3::from_array(position),
         0.,
     ));
+    world.set_local_player_view(PlayerViewState::new(distance, pitch, 0., 2))?;
     let player = world.local_player();
     world.storage_mut().add_component(
         player,
@@ -89,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             UnitStats::new([20; 5], [0; 5], [0; 5]),
         ),
     );
-    let clock = RealmClock::new(WorldTimeSpeed::new(12 << 6, 0., 0)?);
+    let clock = RealmClock::new(WorldTimeSpeed::new(hour << 6, 0., 0)?);
     let mut application = ClientApplication::start(configuration)?;
     println!(
         "adapter={} extent={:?}; offline fixture, real installed terrain/FrameXML/Vulkan; no network, movement solver, remote units, audio or overlays",
@@ -102,19 +136,25 @@ fn main() -> Result<(), Box<dyn Error>> {
             "framebuffer capture enabled; use a separate uncaptured run for performance measurements"
         );
     }
-    let result = application.benchmark_world(&world, &clock, frames, capture_directory.as_deref());
+    let result = application.benchmark_world(
+        &mut world,
+        &clock,
+        frames,
+        capture_directory.as_deref(),
+        travel_offset,
+    );
     let shutdown = application.shutdown();
     let samples = result?;
     shutdown?;
     let mut writer = BufWriter::new(File::create(output)?);
     writeln!(
         writer,
-        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms"
+        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z"
     )?;
     for sample in &samples {
         writeln!(
             writer,
-            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6}",
             sample.phase,
             sample.frame,
             sample.resident_tiles,
@@ -123,17 +163,33 @@ fn main() -> Result<(), Box<dyn Error>> {
             ms(sample.streaming),
             ms(sample.ui),
             ms(sample.camera),
-            ms(sample.present)
+            ms(sample.present),
+            sample.admitted_tiles,
+            sample.evicted_tiles,
+            sample.position.x,
+            sample.position.y,
+            sample.position.z,
         )?;
     }
     writer.flush()?;
-    for phase in ["streaming", "stationary", "orbit", "pointer"] {
+    for phase in [
+        "streaming",
+        "stationary",
+        "orbit",
+        "pointer",
+        "travel_out",
+        "travel_back",
+        "settled",
+    ] {
         let mut intervals = samples
             .iter()
             .filter(|s| s.phase == phase)
             .map(|s| s.total)
             .collect::<Vec<_>>();
         intervals.sort_unstable();
+        if intervals.is_empty() {
+            continue;
+        }
         let mean = intervals.iter().map(|&d| ms(d)).sum::<f64>() / intervals.len() as f64;
         println!(
             "phase={phase} frames={} mean_ms={mean:.6} p50_ms={:.6} p95_ms={:.6} max_ms={:.6}",
@@ -146,6 +202,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Parses finite fixture coordinates and view settings before starting the renderer.
+fn finite_argument(args: &mut impl Iterator<Item = OsString>) -> Result<f32, Box<dyn Error>> {
+    let value: f32 = args
+        .next()
+        .and_then(|v| v.into_string().ok())
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "missing numeric fixture argument"))?
+        .parse()?;
+    if !value.is_finite() {
+        return Err(
+            IoError::new(ErrorKind::InvalidInput, "fixture argument must be finite").into(),
+        );
+    }
+    Ok(value)
+}
+
+/// Converts the retained high-resolution interval for human-readable CSV output.
 fn ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.
 }

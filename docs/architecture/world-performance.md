@@ -4,10 +4,12 @@
 streaming, environment, local-player presentation, FrameXML, camera collision,
 M2/WMO presentation, and Vulkan owners without authenticating or connecting to a
 realm. The caller provides a map and position. The example supplies a level-one
-human warrior with empty equipment and a fixed noon realm clock.
+human warrior with empty equipment and a fixed realm clock (noon by default).
 
 The command takes `frames-per-phase output.csv map x y z` followed by the ordinary
-runtime configuration arguments. Use an isolated `--profile-root` and explicitly
+runtime configuration arguments. Diagnostic options `--camera-distance`,
+`--camera-pitch` (radians), and `--realm-hour` select the recorded scene's view
+and lighting. Use an isolated `--profile-root` and explicitly
 select window dimensions, presentation mode, and GPU. CSV rows retain each
 measured frame, including terrain publication and hover stalls. Required assets,
 FrameXML callbacks, and recoverable presentation failures terminate the replay;
@@ -16,7 +18,20 @@ they do not become skipped samples.
 The four phases request initial streaming, an unchanged view, a full camera
 orbit, and pointer motion through FrameXML. Streaming remains active in every
 phase, so the `resident_tiles` column must be inspected before describing an
-interval as settled. The phase names describe input, not a promise that resource
+interval as settled. An optional `--travel-offset dx dy dz` adds outbound,
+return, and settled phases. Travel updates the authoritative fixture transform,
+promotes the primary ADT through the normal asynchronous coordinator, and
+submits camera-driven neighbor demand. It samples each segment in equal frame
+steps, making the route independent of rendering throughput. This is a
+controlled residency workload, not a real-time movement-speed measurement;
+choose explicit heights appropriate to the route because no movement solver
+adjusts them to terrain.
+
+The CSV includes world coordinates and counts of ADTs admitted and evicted
+during each streaming transaction. Inspect those counts alongside frame-time
+outliers to distinguish steady rendering from resource publication and
+retirement. Returning along the same route exercises recently departed tiles.
+The phase names describe input, not a promise that resource
 loading has finished. Samples separate service, streaming, UI, final camera
 resolution, and presentation. Streaming currently includes a camera resolution
 of its own. `SOLARITY_FRAME_TIMINGS=1` additionally reports the renderer's resource,
@@ -25,13 +40,35 @@ It also aggregates camera resolutions by terrain, placed WMO, placed M2, and
 terrain/WMO liquid provider. Each resolution retains all nine obstruction probes.
 
 `SOLARITY_WORLD_CAPTURE_DIR` requests PPM framebuffer captures at the start/end
-of each phase and at quarter turns of the orbit. This explicitly waits for GPU
+of each phase and at quarter turns of the orbit or travel segments. This explicitly waits for GPU
 readback and writes images between frames, affecting both retirement and animation
 time. Use a separate run without this setting for timing comparisons.
 
 This replay does not exercise the network, movement solver, remote population,
 audio, or diagnostic overlays. Its frame times are evidence about the exercised
 production paths, not a substitute for measurements from a populated live world.
+
+## Travel baseline
+
+On 2026-09-09, a GTX 1070 replay at 1280 x 720 used 2,400 frames per phase,
+map 1, start `(1100, -4500, 150)`, offset `(-1600, 0, 0)`, and camera distance
+25. Capture and profiling were disabled, and no compiler ran during measurement.
+The explicit elevated route isolates world residency from ground movement.
+
+Initial streaming admitted 48 neighbors around the primary ADT. Outbound and
+return travel each admitted 21 tiles and evicted 21, ending with 49 resident
+ADTs. Both directions had 24 frames with residency changes.
+
+| Phase | Mean frame | p95 frame | Maximum frame | Mean streaming on changed frames |
+| --- | ---: | ---: | ---: | ---: |
+| Outbound | 6.318 ms | 8.920 ms | 103.653 ms | 25.262 ms |
+| Return | 6.281 ms | 8.710 ms | 33.855 ms | 18.554 ms |
+
+The worst outbound frame admitted one tile and spent 95.966 ms in the streaming
+transaction. Frames without residency changes averaged 0.177 ms outbound and
+0.179 ms returning in that component. These measurements establish a publication
+stall to investigate; they do not attribute all of it to GPU transfers or prove
+complete scene-loading or live-world performance parity.
 
 ## Resident camera bounds
 
