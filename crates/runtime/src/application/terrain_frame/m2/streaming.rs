@@ -23,6 +23,18 @@ use super::{
 pub(super) struct StaticM2Residency {
     owners: HashSet<ResidentM2Owner>,
     source_indices: Vec<usize>,
+    // Shared scene ownership makes generation identity stable even when the
+    // coordinator moves a tile between primary and neighboring residency.
+    scenes: Vec<Arc<ResidentM2Scene>>,
+    references: HashMap<ResidentM2Owner, usize>,
+}
+
+/// Proposed scene references remain separate until all new GPU owners are ready.
+struct StaticM2SceneUpdate {
+    scenes: Vec<Arc<ResidentM2Scene>>,
+    added: Vec<usize>,
+    // Final counts for owners touched by arriving or departing scenes only.
+    references: HashMap<ResidentM2Owner, usize>,
 }
 
 impl StaticM2Residency {
@@ -43,7 +55,67 @@ impl StaticM2Residency {
         Self {
             owners,
             source_indices,
+            // GPU preparation can precede the first full tile publication. Its
+            // scene is not an extra reference: it may already have departed.
+            scenes: Vec::new(),
+            references: HashMap::new(),
         }
+    }
+
+    /// Counts only changed generations, preserving caller order for new owners.
+    /// Duplicate references to the same scene never register it twice.
+    fn stage_scenes<'a>(
+        &self,
+        scenes: impl Iterator<Item = &'a Arc<ResidentM2Scene>>,
+    ) -> StaticM2SceneUpdate {
+        let mut update = StaticM2SceneUpdate {
+            scenes: Vec::new(),
+            added: Vec::new(),
+            references: HashMap::new(),
+        };
+        for scene in scenes {
+            if update.scenes.iter().any(|old| Arc::ptr_eq(old, scene)) {
+                continue;
+            }
+            if !self.scenes.iter().any(|old| Arc::ptr_eq(old, scene)) {
+                update.added.push(update.scenes.len());
+                for placement in scene.placements() {
+                    let owner = placement.owner();
+                    *update
+                        .references
+                        .entry(owner)
+                        .or_insert_with(|| self.references.get(&owner).copied().unwrap_or(0)) += 1;
+                }
+            }
+            update.scenes.push(Arc::clone(scene));
+        }
+        // Apply arrivals before departures so a shared owner can cross tile
+        // generations without a transient zero count or a restarted clock.
+        for scene in &self.scenes {
+            if update.scenes.iter().any(|next| Arc::ptr_eq(next, scene)) {
+                continue;
+            }
+            for placement in scene.placements() {
+                let owner = placement.owner();
+                *update
+                    .references
+                    .entry(owner)
+                    .or_insert_with(|| self.references[&owner]) -= 1;
+            }
+        }
+        update
+    }
+
+    /// Commits a prepared generation set without rebuilding all live owner counts.
+    fn publish_scenes(&mut self, update: StaticM2SceneUpdate) {
+        for (owner, count) in update.references {
+            if count == 0 {
+                self.references.remove(&owner);
+            } else {
+                self.references.insert(owner, count);
+            }
+        }
+        self.scenes = update.scenes;
     }
 
     /// Follows the common static/dynamic source compactor without retaining dead slots.
@@ -68,16 +140,12 @@ impl M2Frame {
     pub(in crate::application::terrain_frame) fn synchronize_static_scenes<'a>(
         &mut self,
         renderer: &mut VulkanRenderer,
-        scenes: impl Iterator<Item = &'a ResidentM2Scene> + Clone,
+        scenes: impl Iterator<Item = &'a Arc<ResidentM2Scene>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut profile = RuntimeFrameProfile::new("M2 residency publication");
-        let requested = scenes
-            .clone()
-            .flat_map(ResidentM2Scene::placements)
-            .map(|placement| placement.owner())
-            .collect::<HashSet<_>>();
-        profile.mark("requested owners");
+        let update = self.static_residency.stage_scenes(scenes);
+        profile.mark("scene reference changes");
         // Source reuse is confined to static owners: character texture
         // replacements can share an M2 model but represent different materials.
         let mut sources = HashMap::with_capacity(self.static_residency.source_indices.len());
@@ -89,7 +157,8 @@ impl M2Frame {
         let mut added = Vec::new();
         let mut added_owners = HashSet::new();
         profile.mark("retained owners and sources");
-        for scene in scenes {
+        for &index in &update.added {
+            let scene = &update.scenes[index];
             for placement in scene.placements() {
                 if self.static_residency.owners.contains(&placement.owner())
                     || !added_owners.insert(placement.owner())
@@ -124,6 +193,9 @@ impl M2Frame {
             }
         }
         profile.mark("new sources and placements");
+        // Publish references only after every new owner is ready, so a failed
+        // resource preparation cannot make the next attempt skip that owner.
+        self.static_residency.publish_scenes(update);
         // Retirement already visits every live owner. Gather its source here
         // instead of scanning the large animation/effect records a second time.
         let mut remap = vec![usize::MAX; self.sources.len()];
@@ -132,7 +204,13 @@ impl M2Frame {
         }
         self.placements.retain(|placement| {
             let keep = match placement.owner {
-                M2GpuPlacementOwner::Static(owner) => requested.contains(&owner),
+                M2GpuPlacementOwner::Static(owner) => {
+                    let keep = self.static_residency.references.contains_key(&owner);
+                    if !keep {
+                        self.static_residency.owners.remove(&owner);
+                    }
+                    keep
+                }
                 _ => true,
             };
             if keep {
@@ -142,9 +220,7 @@ impl M2Frame {
         });
         profile.mark("placement retirement");
         self.placements.extend(added);
-        // Publish identities only after every new owner is ready, so a failed
-        // resource preparation cannot make the next attempt skip that owner.
-        self.static_residency.owners = requested;
+        self.static_residency.owners.extend(added_owners);
         self.placement_topology_dirty = true;
         profile.mark("placement append and owner publication");
         self.compact_referenced_sources(remap);

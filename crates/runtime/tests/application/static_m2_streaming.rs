@@ -171,6 +171,86 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     Ok(())
 }
 
+/// Exercises scene generations through coordinator admission and real GPU publication.
+#[test]
+fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
+-> Result<(), Box<dyn Error>> {
+    let _guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = fixture()?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let maps = MapCatalog::load(&mut store)?;
+    let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps);
+    terrain.synchronize(Some(&world(1000.)))?;
+    let first = Arc::clone(terrain.resident_m2_scene().ok_or("initial scene")?);
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &first,
+        animations,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    frame.placements[1].last_effect_time_ms = 777;
+    let mut expected = random;
+    frame.synchronize_static_scenes(&mut renderer, [&first, &first].into_iter(), &mut random)?;
+    assert_eq!(random, expected, "initial publication adds no extra owner");
+
+    terrain.synchronize(Some(&world(500.)))?;
+    let second = Arc::clone(terrain.resident_m2_scene().ok_or("second scene")?);
+    roll_owners(&mut expected, 1);
+    frame.synchronize_static_scenes(
+        &mut renderer,
+        [&second, &first, &second].into_iter(),
+        &mut random,
+    )?;
+    assert_eq!(owners(&frame), [10, 20, 30]);
+    assert_eq!(random, expected, "two scene references share owner 20");
+    frame.synchronize_static_scenes(&mut renderer, [&second].into_iter(), &mut random)?;
+    assert_eq!(owners(&frame), [20, 30]);
+    assert_eq!(frame.placements[0].last_effect_time_ms, 777);
+    assert_eq!(
+        random, expected,
+        "departure preserves the surviving reference"
+    );
+
+    // Rebuilding an ADT creates a new immutable generation, even at the same
+    // map coordinates. Stock 0x007A50C0's overlapping references preserve the
+    // already live owner when old and new generations exchange in one publish.
+    terrain.synchronize(None)?;
+    terrain.synchronize(Some(&world(500.)))?;
+    let reloaded = Arc::clone(terrain.resident_m2_scene().ok_or("reloaded scene")?);
+    assert!(!Arc::ptr_eq(&second, &reloaded));
+    frame.synchronize_static_scenes(&mut renderer, [&reloaded].into_iter(), &mut random)?;
+    assert_eq!(owners(&frame), [20, 30]);
+    assert_eq!(frame.placements[0].last_effect_time_ms, 777);
+    assert_eq!(
+        random, expected,
+        "a shared owner outlives its scene generation"
+    );
+
+    // Retaining CPU generation handles alone must not keep any GPU owner alive.
+    frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
+    assert!(frame.placements.is_empty());
+    assert!(frame.sources.is_empty());
+    roll_owners(&mut expected, 3);
+    frame.synchronize_static_scenes(&mut renderer, [&second, &first].into_iter(), &mut random)?;
+    assert_eq!(
+        owners(&frame),
+        [20, 30, 10],
+        "new owners follow input scene order"
+    );
+    assert_eq!(
+        random, expected,
+        "returning owners start fresh exactly once"
+    );
+    Ok(())
+}
+
 /// Reads the externally authored order while allowing the test's live dynamic owner.
 fn owners(frame: &M2Frame) -> Vec<u32> {
     frame

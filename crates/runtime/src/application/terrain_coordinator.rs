@@ -852,7 +852,7 @@ impl RuntimeTerrainCoordinator {
 
     /// Returns the resident MDDF/MODD presentation scene for GPU publication.
     #[must_use]
-    pub(super) fn resident_m2_scene(&self) -> Option<&ResidentM2Scene> {
+    pub(super) fn resident_m2_scene(&self) -> Option<&Arc<ResidentM2Scene>> {
         let active = self.active.as_ref()?;
         active.tile.as_ref().map(|tile| &tile.m2_scene).or_else(|| {
             active
@@ -866,14 +866,14 @@ impl RuntimeTerrainCoordinator {
     #[must_use]
     pub fn resident_m2_authored_texture_count(&self) -> usize {
         self.resident_m2_scene()
-            .map_or(0, ResidentM2Scene::authored_texture_count)
+            .map_or(0, |scene| scene.authored_texture_count())
     }
 
     /// Returns unresolved typed replacement slots retained by resident M2s.
     #[must_use]
     pub fn resident_m2_replaceable_texture_count(&self) -> usize {
         self.resident_m2_scene()
-            .map_or(0, ResidentM2Scene::replaceable_texture_count)
+            .map_or(0, |scene| scene.replaceable_texture_count())
     }
 
     /// Returns upload plans whose bounds intersect an explicit camera frustum.
@@ -1053,14 +1053,14 @@ impl RuntimeTerrainCoordinator {
     #[must_use]
     pub fn resident_m2_count(&self) -> usize {
         self.resident_m2_scene()
-            .map_or(0, ResidentM2Scene::placement_count)
+            .map_or(0, |scene| scene.placement_count())
     }
 
     /// Returns distinct M2/SKIN generations shared by all placed instances.
     #[must_use]
     pub fn resident_m2_source_count(&self) -> usize {
         self.resident_m2_scene()
-            .map_or(0, ResidentM2Scene::source_count)
+            .map_or(0, |scene| scene.source_count())
     }
 
     /// Traces dedicated collision triangles in resident placed M2s.
@@ -1364,7 +1364,7 @@ impl ResidentTerrainMap {
 /// Complete non-ADT scene owned by one WDT-level MODF placement.
 struct ResidentGlobalWorldModel {
     movement_references: ResidentMovementReferences,
-    m2_scene: ResidentM2Scene,
+    m2_scene: Arc<ResidentM2Scene>,
     m2_collision: M2CollisionScene,
     world_model_collision: WorldModelCollisionScene,
     world_model_liquid: WorldModelLiquidScene,
@@ -1396,7 +1396,7 @@ impl ResidentGlobalWorldModel {
             ResidentMovementReferences::prepare(None, &m2_scene, &world_models);
         Ok(Self {
             movement_references,
-            m2_scene,
+            m2_scene: Arc::new(m2_scene),
             m2_collision,
             world_model_collision,
             world_model_liquid,
@@ -1414,7 +1414,8 @@ pub(super) struct ResidentTerrainTile {
     collision: TerrainCollisionMesh,
     liquid: TerrainLiquidMesh,
     liquid_batches: Vec<ResidentTerrainLiquidBatch>,
-    m2_scene: ResidentM2Scene,
+    // Renderer publication shares this immutable generation until its owners retire.
+    m2_scene: Arc<ResidentM2Scene>,
     m2_collision: M2CollisionScene,
     world_model_collision: WorldModelCollisionScene,
     world_model_liquid: WorldModelLiquidScene,
@@ -1468,7 +1469,7 @@ impl ResidentTerrainTile {
             collision,
             liquid,
             liquid_batches,
-            m2_scene,
+            m2_scene: Arc::new(m2_scene),
             m2_collision,
             world_model_collision,
             world_model_liquid,

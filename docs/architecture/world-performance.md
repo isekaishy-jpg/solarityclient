@@ -120,6 +120,18 @@ sources remain separate because the same decoded model can use different texture
 replacements. Placement order and animation, particle, ribbon, sound, and light
 lifetimes remain owned by the existing instance records.
 
+Immutable M2 scenes are shared between the terrain coordinator and renderer
+publication. Their allocation identities survive tile promotion and distinguish
+reloaded generations. Publication counts placement references only in arriving
+and departing scenes, and prepares new owners only from arriving scenes. Retained
+scenes no longer contribute full placement scans to requested-owner collection
+or new-owner discovery. Duplicate input references register one scene; owners
+shared by different scenes retain separate counts. Arrivals and departures are
+evaluated together, so replacing a scene does not restart a surviving owner.
+Scene counts publish after new GPU owners are ready, preserving retry discovery
+if resource preparation fails. The initial GPU scene is not an extra reference:
+the first full publication can already exclude it.
+
 Static retirement also gathers source references while deciding which owners
 survive. Newly admitted placements contribute their references before the same
 source compactor runs. This avoids a second scan of all large instance records;
@@ -132,6 +144,10 @@ reloads the static scene while a dynamic source sharing the model stays alive.
 It checks draw-resource reuse, placement order, retained playback/effect clocks,
 native random consumption, and static/dynamic source separation. The lifetime
 rule remains build 12340's chunk-reference ownership at `0x007A50C0`.
+An additional regression exchanges overlapping scene generations, duplicates and
+reorders input references, reloads an ADT at the same coordinates, and removes all
+references while CPU scene handles remain alive. It checks owner order, retained
+effect clocks, and exact random consumption on fresh admission.
 
 On the same 2,400-frame travel route above, with primary shadows enabled,
 profiling/captures disabled, and no compiler running, the measured changes were:
@@ -149,9 +165,9 @@ took about 3 ms, with an isolated 24 ms sample in the profiled run.
 The loading-component means fell by 16% and 17%; overall frame means changed
 much less because residency changes are sparse. Maximum total frames in the
 new run were 35.139 ms outbound and 28.257 ms returning. These single-run maxima
-do not establish a worst-case bound. Full requested-owner collection, placement
-retirement, terrain publication, and subsequent visibility preparation still
-cost time; this change does not eliminate world-loading stalls or establish
+do not establish a worst-case bound. At that stage, full requested-owner
+collection, placement retirement, terrain publication, and subsequent visibility
+preparation still cost time; the source index alone did not eliminate stalls or establish
 populated-world performance.
 
 Gathering source references during retirement, measured separately on the same
@@ -162,6 +178,36 @@ changed-frame streaming means from 17.150 to 16.417 ms outbound and 13.215 to
 This is about a 4% reduction in the loading component and 1.3% in whole-frame
 means. The outbound maximum reached 51.912 ms, so isolated stalls remain and
 the average improvement is not a worst-frame guarantee.
+
+Incremental scene references were compared on 2026-09-09 against the subsequent
+placement-metadata build, using the same 2,400-frame route at 1280 x 720 on the
+GTX 1070 with primary/detail shadows enabled. Profiling and captures were disabled,
+and no compiler ran during either measurement.
+
+| Travel phase | Mean changed-frame streaming before | After | Median before | After |
+| --- | ---: | ---: | ---: | ---: |
+| Outbound | 16.798 ms | 12.585 ms | 15.007 ms | 11.487 ms |
+| Return | 12.166 ms | 9.502 ms | 12.271 ms | 9.580 ms |
+
+This pair reduced the loading-component means by 25% and 22%. Whole-frame means
+were 3.866/3.812 ms before and 3.847/3.854 ms after: the change primarily removes
+work from infrequent tile publications. Each direction retained 24 changed frames,
+21 admissions, and 21 evictions; asynchronous completion shifted some admissions
+between neighboring frames. Ground-detail and primary-shadow draw counts matched
+frame by frame in settled, orbit, pointer, and both travel phases. The CSV does
+not expose static M2 draw counts; the ownership regressions check those lifetimes.
+Maximum total frames were 46.693/23.436 ms before and 26.419/35.701 ms after, so
+isolated stalls remain. These offline results do not establish populated-world
+performance or the requested 1,200 FPS target.
+
+In a separate instrumented replay, changed-scene reference accounting averaged
+approximately 0.08–0.21 ms per publication interval, compared with 1.6–1.8 ms
+for the previous full requested-owner collection. Late travel intervals spent
+0.48–0.83 ms discovering/preparing new owners, down from roughly 1.7–2.2 ms.
+Placement retirement remained around 2.0–2.6 ms, and isolated source preparation
+and placement append samples still reached 16.4 ms and 7.5 ms respectively.
+Those remaining publication costs require further work; instrumented component
+timings are separate from the unprofiled frame measurements above.
 
 ## Resident camera bounds
 

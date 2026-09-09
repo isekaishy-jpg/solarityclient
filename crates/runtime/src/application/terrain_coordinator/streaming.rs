@@ -380,7 +380,9 @@ impl ResidentTerrainTile {
         &self.textures
     }
 
-    pub(in crate::application) fn m2_scene(&self) -> &super::m2_residency::ResidentM2Scene {
+    pub(in crate::application) fn m2_scene(
+        &self,
+    ) -> &std::sync::Arc<super::m2_residency::ResidentM2Scene> {
         &self.m2_scene
     }
 
