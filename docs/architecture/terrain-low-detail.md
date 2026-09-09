@@ -19,7 +19,15 @@ initialized to one and has no executable writers. `795F80` selects viewport
 depth `0.998046875..0.9990234375`. The fixed-function terrain pass sets fog
 start/end to zero/one and uses the packed DayNight color at offset `8C`.
 The Vulkan replacement keeps view and projection separate and outputs this
-fully fogged color. Ordinary world queues use their existing documented
+fully fogged color. `795F80` changes projection while retaining the main GX
+view. The replacement therefore carries the source camera's retained direction
+instead of subtracting its rounded one-unit world target. A regression checks
+identical main/horizon views across yaw and large world coordinates.
+
+The runtime supplies the working light palette's horizon color, including
+`7F3230` liquid-depth darkening. The later `7F16F0` scene fog and local MFOG
+camera bank have separate colors and must not replace this input.
+Ordinary world queues use their existing documented
 `0..0.94` interval; Glue frames retain their own depth interval. Sky keeps its
 existing reserved projection and is drawn before the horizon.
 

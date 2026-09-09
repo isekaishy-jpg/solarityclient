@@ -60,6 +60,9 @@ impl<'a> WorldLowDetailFrame<'a> {
             source.far_clip() - 50.0,
             source.far_clip(),
         )
+        // 795F80 preserves the GX view while replacing its projection. In
+        // particular, do not rebuild direction from a rounded world target.
+        .with_view_direction(source.view_direction())
         .frame(camera.aspect_ratio())?;
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
         Ok(Self {

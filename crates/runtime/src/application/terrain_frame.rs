@@ -840,10 +840,12 @@ impl TerrainFrame {
             .with_sky_models(sky_models)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
         if let Some(map) = terrain.low_detail() {
+            // 7D5E70 consumes DayNight+8C, including liquid-depth darkening;
+            // scene fog and camera-interior MFOG retain separate colors.
             scene = scene.with_low_detail(solarity_rendering::WorldLowDetailFrame::new(
                 map,
                 camera,
-                fog.color(),
+                light.fog_color(),
             )?);
         }
         if default_sky {

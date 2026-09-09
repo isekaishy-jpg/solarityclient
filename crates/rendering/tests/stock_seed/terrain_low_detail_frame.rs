@@ -9,6 +9,29 @@ use solarity_rendering::{
 
 use super::*;
 
+/// 795F80 replaces only projection; its GX view is the ordinary camera's view.
+#[test]
+fn horizon_preserves_main_camera_basis_when_world_target_rounds() -> Result<(), Box<dyn Error>> {
+    let map = Arc::new(flat_map([40, 29], 0)?);
+    for eye in [Vec3::new(15000., -14000., 2500.), Vec3::splat(33_554_432.)] {
+        for yaw in [0.1_f32, 0.7, 1.4, 3.2, 5.9] {
+            let direction = Vec3::new(yaw.cos(), yaw.sin(), -0.3).normalize();
+            assert_ne!(eye + direction - eye, direction);
+            let camera = WorldCamera::stock(eye, eye + direction, Vec3::Z, 777.)
+                .with_view_direction(direction)
+                .frame(16. / 9.)?;
+            let horizon = WorldLowDetailFrame::new(&map, camera, Vec3::ONE)?;
+            assert_eq!(horizon.camera().view(), camera.view());
+            assert_eq!(horizon.camera().forward(), camera.forward());
+            assert_eq!(horizon.camera().right(), camera.right());
+            assert_eq!(horizon.camera().up(), camera.up());
+            assert_eq!(horizon.camera().camera().near_clip(), 727.);
+            assert_eq!(horizon.camera().camera().far_clip(), 777.);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 #[allow(unsafe_code)] // SDL transfers this hidden test surface to Vulkan ownership.
 fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(), Box<dyn Error>> {
