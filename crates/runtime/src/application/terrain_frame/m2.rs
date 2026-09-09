@@ -152,6 +152,13 @@ enum M2TransparentDrawIndex {
     Ribbon(usize),
 }
 
+/// Authoritative unit inputs retained before terrain tilt changes the model basis.
+#[derive(Clone, Copy)]
+struct UnitGroundPlacement {
+    position: glam::Vec3,
+    scale: f32,
+}
+
 /// Exact per-instance state required by later animation and material assembly.
 struct M2GpuPlacement {
     sound_lifetime: std::cell::OnceCell<Rc<sound::M2SoundKind>>,
@@ -161,6 +168,8 @@ struct M2GpuPlacement {
     source_index: usize,
     /// Placement-local transform retained across animated parent resolution.
     local_transform: Mat4,
+    /// Raw unit position/scale avoid recovering placement inputs from a matrix.
+    ground_placement: Option<UnitGroundPlacement>,
     transform: Mat4,
     /// Local reflection paired with the source's Vulkan front-face state.
     orientation: M2ModelOrientation,
@@ -691,6 +700,8 @@ pub(in crate::application) struct M2Frame {
     placements: Vec<M2GpuPlacement>,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
     animation_started_at: std::time::Instant,
+    /// Previous scene pass, independent of unit residency and draw admission.
+    unit_scene_time_ms: f32,
     bone_pose_scratch: M2BonePose,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
@@ -781,6 +792,7 @@ impl M2Frame {
             placements,
             particle_twinkle,
             animation_started_at: std::time::Instant::now(),
+            unit_scene_time_ms: 0.0,
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -887,6 +899,7 @@ impl M2Frame {
                 world_model_state: None,
                 source_index: 0,
                 local_transform: transform,
+                ground_placement: None,
                 transform,
                 orientation: M2ModelOrientation::Authored,
                 glue_parent_attachment: None,
@@ -907,6 +920,7 @@ impl M2Frame {
             }],
             particle_twinkle,
             animation_started_at,
+            unit_scene_time_ms: 0.0,
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -1313,6 +1327,10 @@ impl M2Frame {
                 )?
             };
             placement.unit_presentation = Some(input.generation().clone());
+            placement.ground_placement = Some(UnitGroundPlacement {
+                position: input.world_transform().position(),
+                scale: input.object_scale(),
+            });
             prepared.push((source, placement));
         }
 
@@ -1449,6 +1467,10 @@ impl M2Frame {
             return Ok(());
         };
         if let Some(animation) = input.unit_animation() {
+            placement.ground_placement = input.mount().is_none().then_some(UnitGroundPlacement {
+                position: input.world_transform().position(),
+                scale: input.object_scale(),
+            });
             animation.synchronize(animation_time_ms as u32, random)?;
             placement.unit_animation = Some(Rc::clone(animation));
             placement.playback = Some(M2PlaybackStorage::Shared(animation.playback()));
@@ -1494,6 +1516,10 @@ impl M2Frame {
                 continue;
             };
             if let Some(animation) = input.unit_animation() {
+                placement.ground_placement = Some(UnitGroundPlacement {
+                    position: input.world_transform().position(),
+                    scale: input.object_scale(),
+                });
                 animation.synchronize(animation_time_ms as u32, random)?;
                 placement.unit_animation = Some(Rc::clone(animation));
                 placement.playback = Some(M2PlaybackStorage::Shared(animation.playback()));
@@ -1575,6 +1601,11 @@ impl M2Frame {
                 continue;
             };
             if let Some(animation) = input.unit_animation() {
+                placement.ground_placement =
+                    input.mount().is_none().then_some(UnitGroundPlacement {
+                        position: input.world_transform().position(),
+                        scale: input.object_scale(),
+                    });
                 animation.synchronize(animation_time_ms as u32, random)?;
                 placement.unit_animation = Some(Rc::clone(animation));
                 placement.playback = Some(M2PlaybackStorage::Shared(animation.playback()));
@@ -1923,6 +1954,8 @@ impl M2Frame {
             solarity_systems::WorldEntityLightEnvironment,
         )>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
+        let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
+        self.unit_scene_time_ms = animation_time_ms;
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, random)?;
         }
@@ -2033,8 +2066,18 @@ impl M2Frame {
             let placement = &mut self.placements[index];
             if let Some(animation) = &placement.unit_animation {
                 animation.advance_scene(animation_time_ms, random)?;
-                placement.transform =
-                    placement.local_transform * animation.body_pose().placement_rotation;
+                placement.transform = if let Some(ground) = placement.ground_placement
+                    && animation.uses_ground_placement()
+                {
+                    animation.ground_transform(
+                        ground.position,
+                        ground.scale,
+                        animation_time_ms,
+                        frame_seconds,
+                    )?
+                } else {
+                    placement.local_transform * animation.body_pose().placement_rotation
+                };
             }
         }
         self.rider_transforms.clear();
@@ -3352,6 +3395,7 @@ fn m2_gpu_placement(
         world_model_state: None,
         source_index,
         local_transform: transform,
+        ground_placement: None,
         transform,
         orientation: M2ModelOrientation::Authored,
         glue_parent_attachment: None,

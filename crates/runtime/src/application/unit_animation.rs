@@ -1,5 +1,9 @@
 //! Retained unit posture/movement requests and their primary sequence callback.
 
+mod ground;
+
+use ground::UnitGroundPose;
+
 #[cfg(test)]
 #[path = "../../tests/application/unit_animation.rs"]
 mod tests;
@@ -176,12 +180,15 @@ struct PendingUnitAnimation {
 #[derive(Default)]
 pub(super) struct UnitAnimationScene {
     owners: BTreeMap<u64, Rc<UnitAnimationBehavior>>,
+    /// Movement can publish before a model finishes loading for this unit.
+    ground_poses: RefCell<BTreeMap<u64, (WorldObjectIdentity, Rc<UnitGroundPose>)>>,
     scene_time_ms: u32,
 }
 
 impl UnitAnimationScene {
     pub fn clear(&mut self) {
         self.owners.clear();
+        self.ground_poses.get_mut().clear();
         self.scene_time_ms = 0;
     }
 
@@ -192,6 +199,9 @@ impl UnitAnimationScene {
     pub fn retain_world(&mut self, world: &ActiveWorld) {
         self.owners
             .retain(|guid, owner| world.object_identity(*guid) == Some(owner.identity));
+        self.ground_poses
+            .get_mut()
+            .retain(|guid, (identity, _)| world.object_identity(*guid) == Some(*identity));
     }
 
     pub fn bind(
@@ -206,16 +216,16 @@ impl UnitAnimationScene {
         {
             owner.set_input(input);
         } else {
-            self.owners.insert(
-                identity.guid(),
-                Rc::new(UnitAnimationBehavior::new(
-                    identity,
-                    Arc::clone(model),
-                    Arc::clone(animations),
-                    input,
-                    self.scene_time_ms,
-                )),
+            let mut replacement = UnitAnimationBehavior::new(
+                identity,
+                Arc::clone(model),
+                Arc::clone(animations),
+                input,
+                self.scene_time_ms,
             );
+            // 7197D0's normal exists before and across CM2Model replacements.
+            replacement.ground = self.ground_pose(identity);
+            self.owners.insert(identity.guid(), Rc::new(replacement));
         }
     }
 
@@ -267,6 +277,7 @@ pub(super) struct UnitAnimationBehavior {
     playback: Rc<RefCell<M2Playback>>,
     scene_sample: RefCell<Option<UnitAnimationSceneSample>>,
     body: RefCell<UnitBodyPose>,
+    ground: Rc<UnitGroundPose>,
     model_color: Cell<u32>,
     upper_body_wound: Cell<Option<(u16, M2ModelSequenceBlend)>>,
 }
@@ -283,6 +294,8 @@ struct UnitBodyPose {
 #[derive(Clone, Copy)]
 pub(super) struct UnitBodyPoseSample {
     pub placement_rotation: Mat4,
+    /// Final native body heading, before terrain alignment and body scale.
+    pub placement_yaw: f32,
     transforms: [(u16, Mat4); 2],
     transform_count: usize,
     procedural_turn: u32,
@@ -330,6 +343,7 @@ impl UnitAnimationBehavior {
             scene_sample: RefCell::new(None),
             model_color: Cell::new(u32::MAX),
             upper_body_wound: Cell::new(None),
+            ground: Rc::new(UnitGroundPose::default()),
             body: RefCell::new(UnitBodyPose {
                 controller: UnitBodyOrientation::new(input.facing),
                 last_scene_time: None,
@@ -337,6 +351,7 @@ impl UnitAnimationBehavior {
                 facing_tick: 0,
                 sample: UnitBodyPoseSample {
                     placement_rotation: Mat4::IDENTITY,
+                    placement_yaw: input.facing,
                     transforms: [(4, Mat4::IDENTITY), (6, Mat4::IDENTITY)],
                     transform_count: 0,
                     procedural_turn: 0,
@@ -451,6 +466,7 @@ impl UnitAnimationBehavior {
         let changed = body.sample.procedural_turn != sample.procedural_turn;
         body.sample.procedural_turn = sample.procedural_turn;
         body.sample.placement_rotation = body_rotation(sample.yaw - input.facing);
+        body.sample.placement_yaw = sample.yaw;
         body.sample.transform_count = 0;
         for (key, angle) in [(4, sample.spine), (6, sample.head)] {
             if let Some(angle) = angle {

@@ -139,6 +139,7 @@ pub(super) fn static_gpu_placement(
         None => (None, Vec::new(), Vec::new()),
     };
     Ok(M2GpuPlacement {
+        ground_placement: None,
         sound_lifetime: Default::default(),
         light_lifetime: Default::default(),
         entity_lighting: Default::default(),

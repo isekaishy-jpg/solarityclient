@@ -52,6 +52,8 @@ pub(super) struct RemoteUnit {
     pub path: Option<MovementSpline>,
     /// Retained lifetime/frame while spline travel owns the local pose.
     pub path_parent: Option<PassengerParent>,
+    /// Local collision normal retained when packet/path input replaces motion.
+    pub ground_normal: glam::Vec3,
     pub animation_events: VecDeque<UnitMovementAnimationEvent>,
     /// Unit +0x784 survives packet and spline replacement within this lifetime.
     pub previous_water_depth: f32,
@@ -74,6 +76,7 @@ impl RemoteUnit {
             motion: None,
             path: None,
             path_parent: None,
+            ground_normal: glam::Vec3::Z,
             animation_events: VecDeque::new(),
             previous_water_depth: 0.0,
             clock: RemoteMovementClock::default(),
@@ -150,6 +153,7 @@ impl RemoteUnit {
     ) {
         if let Some(motion) = &mut self.motion {
             self.animation_events.append(&mut motion.animation_events);
+            self.ground_normal = motion.ground_normal;
         }
         self.published = (transform, movement);
         self.time_ms = time_ms;
@@ -211,6 +215,7 @@ impl RemoteUnit {
                 )?
             };
             motion.remote = true;
+            motion.ground_normal = self.ground_normal;
             motion.context.transport = transport.filter(|_| parent.is_some());
             self.motion = Some(motion);
         }
@@ -404,6 +409,7 @@ impl RemoteUnit {
         );
         if let Some(motion) = &mut self.motion {
             self.animation_events.append(&mut motion.animation_events);
+            self.ground_normal = motion.ground_normal;
         }
         self.motion = None;
         self.path_parent = None;

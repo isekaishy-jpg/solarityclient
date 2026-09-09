@@ -1,5 +1,6 @@
 //! Timestamped local movement, collision continuation, and frozen notifications.
 
+mod ground;
 mod passenger;
 pub(super) mod remote;
 mod swimming;
@@ -190,6 +191,8 @@ struct LocalMovement {
     stand_state: u8,
     identity: WorldObjectIdentity,
     position: Vec3,
+    /// Movement_C +0x38 survives interval and authoritative pose replacement.
+    ground_normal: Vec3,
     orientation: f32,
     flags: u32,
     secondary: u16,
@@ -542,6 +545,7 @@ impl RuntimePlayerMovement {
                     owner.passenger_clock,
                     owner.previous_water_depth,
                     owner.is_swimming,
+                    owner.ground_normal,
                 )
             });
             let Some(owner) =
@@ -560,6 +564,7 @@ impl RuntimePlayerMovement {
                     passenger_clock,
                     depth,
                     swimming,
+                    ground_normal,
                 )),
             ) = (self.owner.as_mut(), retained_control)
             {
@@ -573,6 +578,7 @@ impl RuntimePlayerMovement {
                 owner.passenger_clock = passenger_clock;
                 owner.previous_water_depth = depth;
                 owner.is_swimming = swimming;
+                owner.ground_normal = ground_normal;
             }
         }
         let Some(owner) = self.owner.as_mut() else {
@@ -890,6 +896,7 @@ impl LocalMovement {
             stand_state: 0,
             identity,
             position: transform.position(),
+            ground_normal: Vec3::Z,
             orientation: transform.orientation(),
             flags,
             secondary,
@@ -1356,6 +1363,7 @@ impl LocalMovement {
             if !ready {
                 self.elapsed_ms = self.elapsed_ms.wrapping_sub(remaining);
                 self.skip(remaining, output);
+                self.update_ground_normal(dimensions, geometry)?;
                 return Ok(());
             }
             // 7618B0 and 760B40 check parent retention before fall/swim motion.
@@ -1371,6 +1379,7 @@ impl LocalMovement {
                 self.time_ms = saved.wrapping_add(duration - remaining);
                 self.emit(WorldMovementKind::ChangeTransport, output)?;
                 self.time_ms = saved;
+                self.update_ground_normal(dimensions, geometry)?;
                 return Ok(());
             }
             let was_airborne = matches!(self.phase, MovementPhase::Fall(_));
@@ -1566,9 +1575,11 @@ impl LocalMovement {
             remaining = remaining.saturating_sub(consumed);
             if changed || landing.is_some() {
                 self.elapsed_ms = self.elapsed_ms.saturating_sub(remaining);
+                self.update_ground_normal(dimensions, geometry)?;
                 return Ok(());
             }
         }
+        self.update_ground_normal(dimensions, geometry)?;
         Ok(())
     }
 

@@ -219,6 +219,10 @@ pub(super) fn prepare_character_gpu(
             scene_time_ms as u32,
         )?;
         body.unit_animation = Some(Rc::clone(animation));
+        body.ground_placement = mount.is_none().then_some(UnitGroundPlacement {
+            position: input.world_transform().position(),
+            scale: input.object_scale(),
+        });
         body
     } else {
         unit_gpu_placement(

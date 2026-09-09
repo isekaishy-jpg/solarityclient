@@ -120,6 +120,9 @@ impl RuntimeRemoteMovement {
                 // Path advancement and explicit object baselines are external
                 // publications. Keep clock history within this object lifetime.
                 owner.published = (transform, movement);
+                if let Some(motion) = &owner.motion {
+                    owner.ground_normal = motion.ground_normal;
+                }
                 owner.motion = None;
                 owner.path_parent = None;
                 owner.path = world
@@ -168,6 +171,15 @@ impl RuntimeRemoteMovement {
                 target_position,
             )?;
             owner.advance(now_ms, dimensions, profile, &mut geometry, target_position)?;
+            let normal = owner.motion.as_ref().map_or_else(
+                || {
+                    owner.path_parent.map_or(owner.ground_normal, |parent| {
+                        parent.frame.world_direction(owner.ground_normal)
+                    })
+                },
+                |motion| motion.world_ground_normal(),
+            );
+            presentation.set_ground_normal(identity, normal);
             self.animation_events.append(&mut owner.animation_events);
             if let Some(motion) = &mut owner.motion {
                 self.animation_events.append(&mut motion.animation_events);

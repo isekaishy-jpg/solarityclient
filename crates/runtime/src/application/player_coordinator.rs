@@ -1378,6 +1378,15 @@ impl RuntimePlayerPresentation {
         self.unit_animations.notify_movement(event);
     }
 
+    /// Publishes movement's retained world normal to the unit's scene owner.
+    pub(super) fn set_ground_normal(
+        &self,
+        identity: solarity_ecs::WorldObjectIdentity,
+        normal: glam::Vec3,
+    ) {
+        self.unit_animations.set_ground_normal(identity, normal);
+    }
+
     /// Shares retained display, item, and race tables with the unit sound owner.
     pub(super) fn sound_catalogs(
         &self,

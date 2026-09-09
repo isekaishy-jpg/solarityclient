@@ -13,6 +13,78 @@ const POSES: &[u16] = &[
 ];
 
 #[test]
+fn ground_placement_retains_smoothing_across_model_replacement_and_duplicate_draws()
+-> Result<(), Box<dyn Error>> {
+    let owner = owner_with_sequence_metadata(&[0], input(0), |_, _, sequence| {
+        sequence[12..16].copy_from_slice(&0x28_u32.to_le_bytes());
+    })?;
+    let identity = owner.identity;
+    let mut scene = UnitAnimationScene::default();
+    let target = Vec3::new(-0.25, 0., 1.).normalize();
+    scene.set_ground_normal(identity, target);
+    scene.bind(identity, &owner.model, &owner.animations, input(0));
+    let first = Rc::clone(scene.get(identity.guid()).ok_or("first model")?);
+    let mut random = CrtRand::new();
+    let position = Vec3::new(13., -7., 5.);
+    first.advance_scene(100., &mut random)?;
+    first.ground_transform(position, 2., 100., 0.)?;
+    first.advance_scene(600., &mut random)?;
+    let before = first.ground_transform(position, 2., 600., 0.5)?;
+    assert_eq!(before.w_axis.truncate(), position);
+    assert!(before.z_axis.x < -0.3 && before.z_axis.z > 1.9);
+    assert_eq!(
+        first.ground_transform(position, 2., 600., 0.5)?,
+        before,
+        "a second draw in one scene frame must not smooth again"
+    );
+
+    let mut bytes = models::model_with_animations(&[0])?;
+    bytes[0x10..0x14].copy_from_slice(&3_u32.to_le_bytes());
+    let skin = models::skin()?;
+    let fixture = ClientFixture::with_common_files(&[
+        ("Solarity\\Replacement.m2", &bytes),
+        ("Solarity\\Replacement00.skin", &skin),
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let replacement = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Solarity\\Replacement.m2")?,
+    )?);
+    scene.bind(identity, &replacement, &owner.animations, input(0));
+    let second = scene.get(identity.guid()).ok_or("replacement model")?;
+    second.advance_scene(600., &mut random)?;
+    assert_eq!(
+        second.ground_transform(position, 2., 600., 0.5)?,
+        before,
+        "model replacement must preserve the unit's smoothed normal and frame clock"
+    );
+    Ok(())
+}
+
+#[test]
+fn ground_placement_uses_frame_duration_after_a_gap_in_unit_callbacks() -> Result<(), Box<dyn Error>>
+{
+    let owner = owner_with_sequence_metadata(&[0], input(0), |_, _, sequence| {
+        sequence[12..16].copy_from_slice(&0x28_u32.to_le_bytes());
+    })?;
+    let mut scene = UnitAnimationScene::default();
+    scene.bind(owner.identity, &owner.model, &owner.animations, input(0));
+    scene.set_ground_normal(owner.identity, Vec3::new(-0.25, 0., 1.).normalize());
+    let model = scene.get(owner.identity.guid()).ok_or("ground model")?;
+    model.advance_scene(100., &mut CrtRand::new())?;
+    model.ground_transform(Vec3::ZERO, 1., 100., 0.)?;
+    let transform = model.ground_transform(Vec3::ZERO, 1., 100_000., 0.01)?;
+    assert!(
+        transform.z_axis.x < -0.01 && transform.z_axis.x > -0.03,
+        "4F8D10 supplies this scene's 10 ms, not the unit's 99.9-second absence"
+    );
+    Ok(())
+}
+
+#[test]
 fn wounds_retain_packet_attack_context_and_primary_motion() -> Result<(), Box<dyn Error>> {
     let owner = owner_with_input(&[0, 4, 8, 9, 10], input(0))?;
     let mut random = CrtRand::new();

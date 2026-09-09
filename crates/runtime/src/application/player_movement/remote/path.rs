@@ -32,6 +32,7 @@ impl RemoteUnit {
         if stopped != movement {
             if let Some(motion) = &mut self.motion {
                 self.animation_events.append(&mut motion.animation_events);
+                self.ground_normal = motion.ground_normal;
             }
             self.motion = None;
             self.published = (world, stopped);

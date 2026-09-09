@@ -8,6 +8,46 @@ use solarity_systems::MovementGroundProfile;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
+fn authoritative_replacement_preserves_the_units_collision_normal() -> TestResult {
+    let (_, motion) = owner()?;
+    let (transform, movement) = motion.snapshot();
+    let mut remote = RemoteUnit::new(motion.identity, transform, movement, 0);
+    let mut floor = Floor::new()?;
+    remote.initialize_motion(&mut floor)?;
+    let normal = glam::Vec3::new(-0.25, 0., 1.).normalize();
+    remote
+        .motion
+        .as_mut()
+        .ok_or("initial motion")?
+        .ground_normal = normal;
+    remote.baseline(transform, movement, 50);
+    remote.initialize_motion(&mut floor)?;
+    assert_eq!(
+        remote
+            .motion
+            .as_ref()
+            .ok_or("replacement motion")?
+            .world_ground_normal(),
+        normal
+    );
+    remote.receive(
+        command(WorldMovementKind::SetFacing, 0, 50, 0.),
+        50,
+        50,
+        &mut floor,
+    )?;
+    assert_eq!(
+        remote
+            .motion
+            .as_ref()
+            .ok_or("packet motion")?
+            .world_ground_normal(),
+        normal
+    );
+    Ok(())
+}
+
+#[test]
 fn remote_swimming_predicts_received_pitch_without_ground_projection() -> TestResult {
     let (_, motion) = owner()?;
     let (transform, movement) = motion.snapshot();

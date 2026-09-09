@@ -2519,6 +2519,9 @@ impl ClientServices {
             crate::platform::client_milliseconds(),
         )?;
         profile.mark("player movement");
+        if let Some((identity, normal)) = self.player_movement.ground_sample() {
+            self.player.set_ground_normal(identity, normal);
+        }
         if let Some(ui) = self.world_ui.as_mut() {
             while let Some(index) = self.player_movement.take_tutorial() {
                 ui.trigger_tutorial(index)?;
