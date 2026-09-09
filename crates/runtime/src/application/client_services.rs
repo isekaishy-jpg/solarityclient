@@ -2656,7 +2656,11 @@ impl ClientServices {
             RuntimePlayerPoll::Current => {}
         }
         profile.mark("local player residency");
-        match self.player.synchronize_creatures(self.gameplay.world())? {
+        match self
+            .player
+            .synchronize_creatures(self.gameplay.world(), |identity| {
+                self.gameplay.unit_template_family(identity)
+            })? {
             RuntimeCreaturePoll::ModelsChanged => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     let creatures = self.player.resident_creature_frame_inputs();

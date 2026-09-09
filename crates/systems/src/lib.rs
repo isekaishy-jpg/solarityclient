@@ -93,7 +93,9 @@ pub use camera::{
     PlayerCameraVolume, PlayerCameraVolumeError, PlayerCameraVolumeKind,
     PlayerCameraVolumeQueryError, resolve_player_camera_volume,
 };
-pub use character::{UnitModelAppearance, UnitModelAppearanceError, resolve_unit_model};
+pub use character::{
+    UnitModelAppearance, UnitModelAppearanceError, resolve_unit_body_scale, resolve_unit_model,
+};
 pub use collision::{
     M2CollisionError, M2CollisionScene, MovementBspCacheMode, MovementCollectionError,
     MovementCollisionBounds, MovementCollisionPlane, MovementCollisionTriangle,

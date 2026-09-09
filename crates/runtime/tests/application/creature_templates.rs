@@ -35,6 +35,8 @@ fn creature_template_flags_follow_encrypted_replies_and_exact_unit_lifetimes()
                 synchronize(&mut gameplay)?;
                 assert_eq!(writes.await??, vec![request(42, 420), request(43, 430)]);
                 assert_eq!(gameplay.unit_template_flags(ready), 1 << 22);
+                assert_eq!(gameplay.unit_template_family(ready), Some(17));
+                assert_eq!(gameplay.unit_template_family(shared), None);
                 assert_eq!(gameplay.unit_template_flags(shared), 0);
 
                 let world = gameplay.world_mut().ok_or("world")?;
@@ -60,6 +62,8 @@ fn creature_template_flags_follow_encrypted_replies_and_exact_unit_lifetimes()
                     tokio::task::yield_now().await;
                 }
                 assert_eq!(gameplay.unit_template_flags(retired), 0);
+                assert_eq!(gameplay.unit_template_family(retired), None);
+                assert_eq!(gameplay.unit_template_family(shared), Some(17));
                 assert_eq!(gameplay.unit_template_flags(shared), 1 << 22);
                 assert_eq!(gameplay.unit_template_flags(replacement), 1 << 25);
                 assert_eq!(gameplay.unit_template_flags(missing), 0);
@@ -203,7 +207,9 @@ fn template(entry: u32, flags: u32) -> Vec<u8> {
     let mut body = entry.to_le_bytes().to_vec();
     body.extend([0; 6]);
     body.extend(flags.to_le_bytes());
-    body.extend([0; 36]);
+    body.extend([0; 4]);
+    body.extend(17_u32.to_le_bytes());
+    body.extend([0; 28]);
     body.extend(1.0_f32.to_le_bytes());
     body.extend(1.0_f32.to_le_bytes());
     body.push(0);

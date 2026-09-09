@@ -4,23 +4,28 @@ use super::{ClientFixture, game_object_models};
 use std::error::Error;
 
 pub fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, None)
+    build_fixture(false, false, None, None, None)
 }
 
 pub fn fixture_with_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false, None, None)
+    build_fixture(true, false, None, None, None)
 }
 
 pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, true, None, None)
+    build_fixture(false, true, None, None, None)
 }
 
 pub fn fixture_with_hairless_npc() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, Some(9), None)
+    build_fixture(false, false, Some(9), None, None)
 }
 
 pub fn fixture_with_water_effects(attachment: u32) -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, Some(attachment))
+    build_fixture(false, false, None, Some(attachment), None)
+}
+
+/// Distinct display/model scales and a family interval for live scale updates.
+pub fn fixture_with_body_scale() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(false, false, None, None, Some((0.4, 1.25)))
 }
 
 fn build_fixture(
@@ -28,6 +33,7 @@ fn build_fixture(
     equipment: bool,
     npc_race: Option<u32>,
     water_attachment: Option<u32>,
+    body_scale: Option<(f32, f32)>,
 ) -> Result<ClientFixture, Box<dyn Error>> {
     let ids = [0, 91, 96, 97, 98, 99, 100, 101];
     let mut model = game_object_models::model_with_animations(&ids)?;
@@ -81,7 +87,7 @@ fn build_fixture(
     let mut display = [0; 16];
     display[0] = 100;
     display[1] = 7;
-    display[4] = 1.0_f32.to_bits();
+    display[4] = body_scale.map_or(1.0, |scale| scale.0).to_bits();
     display[5] = u32::MAX;
     let mut displays = display.to_vec();
     display[0] = 101;
@@ -102,7 +108,7 @@ fn build_fixture(
     let mut model_data = [0; 28];
     model_data[0] = 7;
     model_data[2] = 1;
-    model_data[4] = 1.0_f32.to_bits();
+    model_data[4] = body_scale.map_or(1.0, |scale| scale.1).to_bits();
     let mut models = model_data.to_vec();
     let mut model_paths = b"\0Character\\Human\\Male\\HumanMale.m2\0".to_vec();
     model_data[0] = 8;
@@ -261,6 +267,14 @@ fn build_fixture(
         files.push((
             "Textures\\BakedNpcTextures\\HairlessNpc.blp".to_owned(),
             skin_texture(),
+        ));
+    }
+    if body_scale.is_some() {
+        let mut family = [0; 28];
+        family[..5].copy_from_slice(&[1, 0.25_f32.to_bits(), 1, 1.25_f32.to_bits(), 5]);
+        files.push((
+            "DBFilesClient\\CreatureFamily.dbc".to_owned(),
+            dbc(28, &family, b"\0"),
         ));
     }
     if equipment {

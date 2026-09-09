@@ -640,6 +640,16 @@ impl RuntimeGameplayCoordinator {
         self.creature_templates.flags(identity)
     }
 
+    /// Supplies only a creature family bound to this exact admitted lifetime.
+    pub(in crate::application) fn unit_template_family(
+        &self,
+        identity: solarity_ecs::WorldObjectIdentity,
+    ) -> Option<u32> {
+        self.creature_templates
+            .template(identity)
+            .map(|template| template.family())
+    }
+
     /// Admits pending template requests without dropping them under backpressure.
     pub(in crate::application) fn send_game_object_queries(
         &mut self,

@@ -1466,9 +1466,12 @@ impl RuntimePlayerPresentation {
     /// Player objects require character atlas and equipment composition and
     /// remain on the dedicated player path. This pass admits creature objects
     /// only after their complete display, transform, and tier state exists.
+    /// `family_for` supplies the server template bound to each exact lifetime;
+    /// its arrival and later level/pet changes update the authored body scale.
     pub fn synchronize_creatures(
         &mut self,
         world: Option<&ActiveWorld>,
+        family_for: impl Fn(WorldObjectIdentity) -> Option<u32>,
     ) -> Result<RuntimeCreaturePoll, RuntimePlayerError> {
         let Some(world) = world else {
             self.creatures_resident.clear();
@@ -1505,13 +1508,23 @@ impl RuntimePlayerPresentation {
                 UnitLocomotionAnimation::STAND,
                 resolve_unit_locomotion_animation,
             );
+            let family = family_for(identity).and_then(|id| self.creature_families.family(id));
+            let Some(body_scale) = solarity_systems::resolve_unit_body_scale(
+                world,
+                guid,
+                &self.creatures,
+                &self.races,
+                family,
+            ) else {
+                continue;
+            };
             desired.push(DesiredCreatureModel {
                 key: CreatureModelKey {
                     identity,
                     guid,
                     display_id: appearance.body().display().id(),
                     path: appearance.body().model_path().clone(),
-                    object_scale: appearance.object_scale(),
+                    object_scale: body_scale * appearance.object_scale(),
                     particle_color_id: appearance.body().display().particle_color_id(),
                 },
                 transform,

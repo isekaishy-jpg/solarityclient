@@ -29,7 +29,7 @@ fn environmental_packets_select_live_unit_kits_and_reject_replaced_units()
         0.0,
     ));
     add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     let mut effects = RuntimeUnitEffects::new(archive, Arc::clone(&catalog));
     effects.synchronize_world(Some(&world));
     let mut ui = RuntimePlayerUiState::default();
@@ -143,7 +143,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
             0.,
         ));
         add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
-        presentation.synchronize_creatures(Some(&world))?;
+        presentation.synchronize_creatures(Some(&world), |_| None)?;
         let identity = world.object_identity(30).ok_or("unit identity")?;
         let lifetime = Rc::new(());
         let mut random = CrtRand::new();

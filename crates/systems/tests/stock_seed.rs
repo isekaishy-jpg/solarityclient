@@ -85,6 +85,8 @@ mod stable;
 mod support;
 #[path = "stock_seed/talent.rs"]
 mod talent;
+#[path = "stock_seed/unit_body_scale.rs"]
+mod unit_body_scale;
 #[path = "stock_seed/vehicle.rs"]
 mod vehicle;
 #[path = "stock_seed/world.rs"]

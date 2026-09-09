@@ -1206,18 +1206,18 @@ fn creature_residency_tracks_authoritative_world_lifecycle() -> Result<(), Box<d
     project_object_fields(&mut world, guid, fields)?;
 
     assert_eq!(
-        presentation.synchronize_creatures(Some(&world))?,
+        presentation.synchronize_creatures(Some(&world), |_| None)?,
         RuntimeCreaturePoll::ModelsChanged
     );
     assert_eq!(presentation.resident_creature_count(), 1);
     world.update_transform(guid, WorldTransform::new(Vec3::Y, 1.0))?;
     assert_eq!(
-        presentation.synchronize_creatures(Some(&world))?,
+        presentation.synchronize_creatures(Some(&world), |_| None)?,
         RuntimeCreaturePoll::Current
     );
     world.remove_object(guid)?;
     assert_eq!(
-        presentation.synchronize_creatures(Some(&world))?,
+        presentation.synchronize_creatures(Some(&world), |_| None)?,
         RuntimeCreaturePoll::ModelsChanged
     );
     assert_eq!(presentation.resident_creature_count(), 0);

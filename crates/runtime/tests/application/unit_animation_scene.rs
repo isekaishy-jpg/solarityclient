@@ -6,6 +6,9 @@ mod equipment_residency;
 #[path = "stock_npc_residency.rs"]
 mod stock_npc_residency;
 
+#[path = "unit_body_scale_scene.rs"]
+mod unit_body_scale_scene;
+
 #[path = "unit_water_effect_scene.rs"]
 mod unit_water_effect_scene;
 
@@ -31,7 +34,7 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
         0.,
     ));
     add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     let retained = presentation.resident_creature_frame_inputs()[0]
         .generation()
         .clone();
@@ -40,7 +43,7 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
     add_unit(&mut world, 32, ObjectKind::Unit, 0)?;
     solarity_systems::project_object_fields(&mut world, 32, [(67, 103), (68, 103)])?;
     assert!(matches!(
-        presentation.synchronize_creatures(Some(&world))?,
+        presentation.synchronize_creatures(Some(&world), |_| None)?,
         crate::application::RuntimeCreaturePoll::ModelsChanged
     ));
     let inputs = presentation.resident_creature_frame_inputs();
@@ -91,12 +94,12 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
     )?;
     assert_eq!(draws.draws.len(), 9);
     assert!(matches!(
-        presentation.synchronize_creatures(Some(&world))?,
+        presentation.synchronize_creatures(Some(&world), |_| None)?,
         crate::application::RuntimeCreaturePoll::Current
     ));
     world.remove_object(31)?;
     world.remove_object(32)?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     assert_eq!(presentation.resident_creature_frame_inputs().len(), 1);
     assert!(retained.matches(presentation.resident_creature_frame_inputs()[0].generation()));
     Ok(())
@@ -117,7 +120,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     ));
     add_unit(&mut world, 20, ObjectKind::Player, 1)?;
     add_unit(&mut world, 30, ObjectKind::Unit, 3)?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     presentation.synchronize_remote_players(Some(&world))?;
     let remote = Rc::clone(
         presentation.resident_remote_player_frame_inputs()[0]
@@ -189,7 +192,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     }
     add_unit(&mut world, 21, ObjectKind::Player, 1)?;
     add_unit(&mut world, 31, ObjectKind::Unit, 3)?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     presentation.synchronize_remote_players(Some(&world))?;
     assert!(
         remote_generation
@@ -243,7 +246,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         world.update_fields(guid, [(74, 0)])?;
         solarity_systems::project_object_fields(&mut world, guid, [(74, 0)])?;
     }
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     presentation.synchronize_remote_players(Some(&world))?;
     frame.update_creature_states(
         &presentation.resident_creature_frame_inputs(),
@@ -290,7 +293,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         96
     );
     world.remove_object(30)?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
         &mut renderer,
         &presentation.resident_creature_frame_inputs(),
@@ -332,7 +335,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
         add_unit(&mut world, guid, kind, 0)?;
     }
     presentation.synchronize(Some(&world))?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     presentation.synchronize_remote_players(Some(&world))?;
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
@@ -422,7 +425,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     world.update_fields(30, [(67, 101)])?;
     solarity_systems::project_object_fields(&mut world, 30, [(67, 101)])?;
     presentation.synchronize(Some(&world))?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     presentation.synchronize_remote_players(Some(&world))?;
     publish(&mut frame, &mut renderer, &presentation, &mut random)?;
     assert_eq!(random, expected_random);
@@ -457,7 +460,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     add_unit(&mut world, 20, ObjectKind::Player, 0)?;
     world.update_fields(30, [(67, 102)])?;
     solarity_systems::project_object_fields(&mut world, 30, [(67, 102)])?;
-    presentation.synchronize_creatures(Some(&world))?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
     presentation.synchronize_remote_players(Some(&world))?;
     publish(&mut frame, &mut renderer, &presentation, &mut random)?;
     for owner in [owners[1], owners[2]] {
@@ -552,7 +555,7 @@ fn unit_presentation_from_store(
     let catalogs = RuntimePlayerCatalogs::new(
         AnimationDataCatalog::load(&mut store)?,
         CreatureCatalog::load(&mut store)?,
-        CreatureFamilyCatalog::default(),
+        CreatureFamilyCatalog::load(&mut store)?,
         CharacterAppearanceCatalog::load(&mut store)?,
         CharacterRaceCatalog::load(&mut store)?,
         HelmetGeosetVisibilityCatalog::load(&mut store)?,

@@ -64,7 +64,7 @@ fn stock_goblin_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error
     for display in &displays {
         solarity_systems::project_object_fields(&mut world, 30, [(67, *display), (68, *display)])?;
         presentation
-            .synchronize_creatures(Some(&world))
+            .synchronize_creatures(Some(&world), |_| None)
             .map_err(|error| format!("display {display} residency: {error}"))?;
         frame
             .replace_creatures(
