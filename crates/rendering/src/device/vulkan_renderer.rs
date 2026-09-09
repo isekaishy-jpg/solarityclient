@@ -590,6 +590,10 @@ impl VulkanRenderer {
     ) -> Result<T, VulkanError> {
         self.collect_retired_terrain()?;
         if let Some(allocator) = self.allocator.as_ref() {
+            self.terrain_meshes
+                .retire_completed_transfers(&self.device, allocator)?;
+            self.terrain_materials
+                .retire_completed_transfers(&self.device, allocator)?;
             self.m2_meshes
                 .retire_completed_transfers(&self.device, allocator)?;
             self.liquid_meshes.collect(&self.device, allocator)?;
@@ -924,6 +928,8 @@ impl VulkanRenderer {
     ///
     /// Repeated submission of the same immutable plan returns its stable
     /// renderer-local handle without another staging allocation or queue wait.
+    /// New geometry uses transfer-to-input barriers on the graphics queue;
+    /// subsequent draws can consume it without a render-thread fence wait.
     ///
     /// # Errors
     ///
@@ -936,7 +942,7 @@ impl VulkanRenderer {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        self.terrain_meshes.upload(
+        let handle = self.terrain_meshes.upload(
             MeshUploadContext {
                 device: &self.device,
                 allocator,
@@ -944,7 +950,10 @@ impl VulkanRenderer {
                 graphics_queue_family: self.report.graphics_queue_family,
             },
             plan,
-        )
+        )?;
+        // Transfers can outlive this call even before a first frame is submitted.
+        self.is_idle = false;
+        Ok(handle)
     }
 
     /// Returns immutable diagnostics for one live terrain allocation.
@@ -957,7 +966,8 @@ impl VulkanRenderer {
     ///
     /// The image is linear RGBA8: blend weights and authored shadow opacity
     /// must not receive sRGB conversion. Repeated submission deduplicates by
-    /// immutable tile-plan identity.
+    /// immutable tile-plan identity. The upload queues image barriers before
+    /// subsequent draws and retains staging until its transfer fence signals.
     ///
     /// # Errors
     ///
@@ -970,7 +980,7 @@ impl VulkanRenderer {
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
-        self.terrain_materials.upload(
+        let handle = self.terrain_materials.upload(
             TextureUploadContext {
                 device: &self.device,
                 allocator,
@@ -978,7 +988,9 @@ impl VulkanRenderer {
                 graphics_queue_family: self.report.graphics_queue_family,
             },
             plan,
-        )
+        )?;
+        self.is_idle = false;
+        Ok(handle)
     }
 
     /// Returns immutable diagnostics for one live terrain material atlas.
@@ -2816,7 +2828,7 @@ impl Drop for VulkanRenderer {
             self.portrait_masks.clear();
             self.blp_textures.destroy(&self.device, allocator);
             self.terrain_materials.destroy(&self.device, allocator);
-            self.terrain_meshes.destroy(allocator);
+            self.terrain_meshes.destroy(&self.device, allocator);
             self.liquid_meshes.destroy(&self.device, allocator);
             self.world_model_meshes.destroy(allocator);
             self.m2_meshes.destroy(&self.device, allocator);

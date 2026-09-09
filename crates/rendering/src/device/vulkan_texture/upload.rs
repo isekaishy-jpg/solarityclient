@@ -13,7 +13,7 @@ use super::types::{
     BlpColorSpace, BlpTextureResourceInfo, BlpTextureSourceKind, BlpTextureStorage,
 };
 
-/// Borrowed renderer objects required for one synchronous texture transfer.
+/// Borrowed renderer objects required to submit a texture transfer.
 #[derive(Clone, Copy)]
 pub(in crate::device) struct TextureUploadContext<'a> {
     pub(in crate::device) device: &'a Device,
@@ -611,6 +611,25 @@ pub(in crate::device) fn upload_rgba8_image(
     upload_rgba8_image_with_color_space(context, extent, bytes, BlpColorSpace::Linear)
 }
 
+/// Queues a linear RGBA8 image while retaining its borrowed pixels only for staging.
+///
+/// Later draws on the same graphics queue observe the recorded image barriers.
+/// The caller retains the returned staging owner until its transfer completes.
+pub(in crate::device) fn upload_rgba8_image_deferred(
+    context: TextureUploadContext<'_>,
+    extent: (u32, u32),
+    bytes: &[u8],
+) -> Result<(GpuSampledImage, DeferredTextureTransfer), VulkanError> {
+    validate_rgba8_image(extent, bytes)?;
+    let mips = [UploadMip {
+        offset: 0,
+        width: extent.0,
+        height: extent.1,
+    }];
+    let format = texture_format(BlpTextureStorage::Rgba8, BlpColorSpace::Linear);
+    upload_sampled_image_deferred(context, format, extent, bytes, &mips)
+}
+
 /// Queues one complete RGBA8 mip chain and returns its staging retirement owner.
 ///
 /// The image may enter descriptor and draw preparation immediately when those
@@ -670,6 +689,18 @@ fn upload_rgba8_image_with_color_space(
     bytes: &[u8],
     color_space: BlpColorSpace,
 ) -> Result<GpuSampledImage, VulkanError> {
+    validate_rgba8_image(extent, bytes)?;
+    let mips = [UploadMip {
+        offset: 0,
+        width: extent.0,
+        height: extent.1,
+    }];
+    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
+    upload_sampled_image(context, format, extent, bytes, &mips)
+}
+
+/// Rejects incomplete pixels before any synchronous or deferred allocation.
+fn validate_rgba8_image(extent: (u32, u32), bytes: &[u8]) -> Result<(), VulkanError> {
     let expected = u64::from(extent.0)
         .checked_mul(u64::from(extent.1))
         .and_then(|pixels| pixels.checked_mul(4))
@@ -686,13 +717,7 @@ fn upload_rgba8_image_with_color_space(
             ),
         ));
     }
-    let mips = [UploadMip {
-        offset: 0,
-        width: extent.0,
-        height: extent.1,
-    }];
-    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
-    upload_sampled_image(context, format, extent, bytes, &mips)
+    Ok(())
 }
 
 fn upload_sampled_image(

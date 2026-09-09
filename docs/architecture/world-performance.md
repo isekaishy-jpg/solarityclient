@@ -38,6 +38,9 @@ of its own. `SOLARITY_FRAME_TIMINGS=1` additionally reports the renderer's resou
 buffer/fence, image acquisition, command-recording, submit, and present intervals.
 It also aggregates camera resolutions by terrain, placed WMO, placed M2, and
 terrain/WMO liquid provider. Each resolution retains all nine obstruction probes.
+Residency changes additionally report terrain/liquid publication, static M2 and
+WMO membership updates, and resource retirement. Per-tile upload scopes separate
+geometry, blend/shadow atlases, diffuse images, and descriptor/pipeline preparation.
 
 `SOLARITY_WORLD_CAPTURE_DIR` requests PPM framebuffer captures at the start/end
 of each phase and at quarter turns of the orbit or travel segments. This explicitly waits for GPU
@@ -69,6 +72,23 @@ transaction. Frames without residency changes averaged 0.177 ms outbound and
 0.179 ms returning in that component. These measurements establish a publication
 stall to investigate; they do not attribute all of it to GPU transfers or prove
 complete scene-loading or live-world performance parity.
+
+Terrain geometry and blend/shadow atlases now submit without host fence waits.
+The same uncaptured route still admitted and evicted 21 tiles in each direction,
+with 24 changed frames. Outbound changed-frame streaming averaged 21.774 ms
+(29.893 ms maximum), compared with 25.262 ms before. Returning averaged
+18.527 ms, effectively unchanged from 18.554 ms. Maximum total frames were
+47.739 ms outbound and 40.197 ms returning. Overall phase means were 6.412 ms
+and 6.515 ms, respectively, so this run does **not** demonstrate an overall
+frame-rate improvement. The smaller outbound maximum is a single-run observation,
+not a guarantee about worst-case loading latency.
+
+A separate profiled run before deferral attributed roughly 8-14 ms of changed
+frames to static M2 membership. Geometry and atlas preparation also include host
+serialization, staging, and allocation; removing transfer waits does not remove
+that work. These costs remain under investigation. Hidden GPU regression coverage
+retires an ADT before its first draw, reloads it across in-flight frames with fresh
+handles, rejects retired handles, and verifies the final terrain pixels.
 
 ## Resident camera bounds
 

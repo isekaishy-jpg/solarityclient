@@ -1049,13 +1049,17 @@ fn prepare_tile_draws(
     plan: &TerrainTileMeshPlan,
     sources: &[Arc<BlpTextureSource>],
 ) -> Result<Vec<TerrainPreparedDraw>, RuntimeTerrainFrameError> {
+    let mut profile =
+        crate::application::frame_profile::RuntimeFrameProfile::new("Terrain tile upload");
     validate_texture_table(plan, sources)?;
 
     // The shared tile allocations are immutable. Renderer registries use
     // the plan identity to suppress duplicate staging work within a
     // generation, while MTEX images deduplicate by selected asset identity.
     let mesh = renderer.upload_terrain_mesh(plan)?;
+    profile.mark("geometry");
     let material = renderer.upload_terrain_material(plan)?;
+    profile.mark("atlas");
     let texture_uploads = sources
         .iter()
         .map(|source| {
@@ -1063,6 +1067,7 @@ fn prepare_tile_draws(
         })
         .collect::<Vec<_>>();
     let textures = renderer.upload_blp_textures(&texture_uploads)?;
+    profile.mark("layer textures");
 
     let mut requests = Vec::with_capacity(plan.chunks().len());
     let mut layer_counts = Vec::with_capacity(plan.chunks().len());
@@ -1106,6 +1111,7 @@ fn prepare_tile_draws(
     }
 
     let mut draws = Vec::with_capacity(plan.chunks().len());
+    profile.mark("descriptors and pipelines");
     for chunk_index in 0..plan.chunks().len() {
         let slot = usize::from(layer_counts[chunk_index].get() - 1);
         let Some(pipeline) = pipelines[slot] else {

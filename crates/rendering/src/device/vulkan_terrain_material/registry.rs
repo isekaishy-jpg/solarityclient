@@ -5,10 +5,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::TerrainTileMeshPlan;
 use crate::device::VulkanError;
-use crate::device::vulkan_texture::{GpuSampledImage, TextureUploadContext, upload_rgba8_image};
+use crate::device::vulkan_texture::{
+    DeferredTextureTransfer, GpuSampledImage, TextureUploadContext, upload_rgba8_image_deferred,
+};
 
 use super::{TerrainMaterialHandle, TerrainMaterialResourceInfo};
 
+/// One ADT's blend weights and authored shadow opacity in linear byte space.
 struct GpuTerrainMaterial {
     plan_identity: u64,
     image: GpuSampledImage,
@@ -21,6 +24,7 @@ pub(in crate::device) struct TerrainMaterialRegistry {
     handles: HashMap<u64, TerrainMaterialHandle>,
     resources: HashMap<u32, GpuTerrainMaterial>,
     next_slot: u32,
+    pending_transfers: Vec<DeferredTextureTransfer>,
 }
 
 impl Default for TerrainMaterialRegistry {
@@ -31,16 +35,19 @@ impl Default for TerrainMaterialRegistry {
             handles: HashMap::new(),
             resources: HashMap::new(),
             next_slot: 0,
+            pending_transfers: Vec::new(),
         }
     }
 }
 
 impl TerrainMaterialRegistry {
+    /// Publishes an immutable atlas behind queue-ordered image barriers.
     pub(in crate::device) fn upload(
         &mut self,
         context: TextureUploadContext<'_>,
         plan: &TerrainTileMeshPlan,
     ) -> Result<TerrainMaterialHandle, VulkanError> {
+        self.retire_completed_transfers(context.device, context.allocator)?;
         if let Some(handle) = self.handles.get(&plan.identity()) {
             return Ok(*handle);
         }
@@ -51,7 +58,8 @@ impl TerrainMaterialRegistry {
         let width = u32::try_from(crate::TERRAIN_MATERIAL_ATLAS_WIDTH)
             .map_err(|source| VulkanError::operation("convert terrain atlas width", source))?;
         let extent = (width, width);
-        let image = upload_rgba8_image(context, extent, plan.material_atlas_rgba())?;
+        let (image, transfer) =
+            upload_rgba8_image_deferred(context, extent, plan.material_atlas_rgba())?;
         let info =
             TerrainMaterialResourceInfo::new(plan.tile(), extent, plan.material_atlas_rgba().len());
         let handle = TerrainMaterialHandle {
@@ -68,7 +76,25 @@ impl TerrainMaterialRegistry {
         );
         self.next_slot = next_slot;
         self.handles.insert(plan.identity(), handle);
+        self.pending_transfers.push(transfer);
         Ok(handle)
+    }
+
+    /// Retires completed staging even when its destination ADT has already departed.
+    pub(in crate::device) fn retire_completed_transfers(
+        &mut self,
+        device: &ash::Device,
+        allocator: &vk_mem::Allocator,
+    ) -> Result<(), VulkanError> {
+        let mut index = self.pending_transfers.len();
+        while index > 0 {
+            index -= 1;
+            if self.pending_transfers[index].is_complete(device)? {
+                let mut transfer = self.pending_transfers.swap_remove(index);
+                transfer.destroy(device, allocator);
+            }
+        }
+        Ok(())
     }
 
     pub(in crate::device) fn info(
@@ -118,12 +144,16 @@ impl TerrainMaterialRegistry {
             .map(|resource| (handle, resource.image))
     }
 
+    /// Releases staging and images after the renderer has waited for device idle.
     pub(in crate::device) fn destroy(
         &mut self,
         device: &ash::Device,
         allocator: &vk_mem::Allocator,
     ) {
         self.handles.clear();
+        for mut transfer in self.pending_transfers.drain(..) {
+            transfer.destroy(device, allocator);
+        }
         for resource in self.resources.values_mut() {
             resource.image.destroy(device, allocator);
         }

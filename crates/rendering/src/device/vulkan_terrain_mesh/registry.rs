@@ -5,10 +5,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::TerrainTileMeshPlan;
 use crate::device::VulkanError;
-use crate::device::vulkan_mesh::{GpuMeshBuffers, MeshUploadContext, upload_mesh_buffers};
+use crate::device::vulkan_mesh::{
+    DeferredMeshTransfer, GpuMeshBuffers, MeshUploadContext, upload_mesh_buffers_deferred,
+};
 
 use super::{TerrainMeshHandle, TerrainMeshResourceInfo};
 
+/// Immutable ADT geometry retained until its last submitted frame completes.
 struct GpuTerrainMesh {
     plan_identity: u64,
     buffers: GpuMeshBuffers,
@@ -21,6 +24,7 @@ pub(in crate::device) struct TerrainMeshRegistry {
     handles: HashMap<u64, TerrainMeshHandle>,
     resources: HashMap<u32, GpuTerrainMesh>,
     next_slot: u32,
+    pending_transfers: Vec<DeferredMeshTransfer>,
 }
 
 impl Default for TerrainMeshRegistry {
@@ -31,16 +35,19 @@ impl Default for TerrainMeshRegistry {
             handles: HashMap::new(),
             resources: HashMap::new(),
             next_slot: 0,
+            pending_transfers: Vec::new(),
         }
     }
 }
 
 impl TerrainMeshRegistry {
+    /// Publishes geometry behind queue-ordered input barriers without a host wait.
     pub(in crate::device) fn upload(
         &mut self,
         context: MeshUploadContext<'_>,
         plan: &TerrainTileMeshPlan,
     ) -> Result<TerrainMeshHandle, VulkanError> {
+        self.retire_completed_transfers(context.device, context.allocator)?;
         if let Some(handle) = self.handles.get(&plan.identity()) {
             return Ok(*handle);
         }
@@ -68,7 +75,8 @@ impl TerrainMeshRegistry {
             vertex_bytes.len(),
             index_bytes.len(),
         );
-        let buffers = upload_mesh_buffers(context, &vertex_bytes, &index_bytes)?;
+        let (buffers, transfer) =
+            upload_mesh_buffers_deferred(context, &vertex_bytes, &index_bytes)?;
         let handle = TerrainMeshHandle {
             registry_id: self.registry_id,
             slot,
@@ -83,7 +91,25 @@ impl TerrainMeshRegistry {
         );
         self.next_slot = next_slot;
         self.handles.insert(plan.identity(), handle);
+        self.pending_transfers.push(transfer);
         Ok(handle)
+    }
+
+    /// Reclaims staging independently of ADT retirement after its transfer fence signals.
+    pub(in crate::device) fn retire_completed_transfers(
+        &mut self,
+        device: &ash::Device,
+        allocator: &vk_mem::Allocator,
+    ) -> Result<(), VulkanError> {
+        let mut index = self.pending_transfers.len();
+        while index > 0 {
+            index -= 1;
+            if self.pending_transfers[index].is_complete(device)? {
+                let mut transfer = self.pending_transfers.swap_remove(index);
+                transfer.destroy(device, allocator);
+            }
+        }
+        Ok(())
     }
 
     pub(in crate::device) fn info(
@@ -130,8 +156,16 @@ impl TerrainMeshRegistry {
             .map(|resource| resource.buffers)
     }
 
-    pub(in crate::device) fn destroy(&mut self, allocator: &vk_mem::Allocator) {
+    /// Releases staging and geometry after the renderer has waited for device idle.
+    pub(in crate::device) fn destroy(
+        &mut self,
+        device: &ash::Device,
+        allocator: &vk_mem::Allocator,
+    ) {
         self.handles.clear();
+        for mut transfer in self.pending_transfers.drain(..) {
+            transfer.destroy(device, allocator);
+        }
         for resource in self.resources.values_mut() {
             resource.buffers.destroy(allocator);
         }

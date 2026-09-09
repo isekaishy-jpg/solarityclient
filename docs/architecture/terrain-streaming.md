@@ -88,6 +88,16 @@ descriptor pools remain allocated until their final set retires. The fence
 scope follows the Vulkan specification's
 [queue-submission fence ordering](https://docs.vulkan.org/spec/latest/chapters/synchronization.html#synchronization-fences-signaling).
 
+Terrain geometry and blend/shadow atlas uploads submit to that same graphics
+queue without waiting on the render thread. The existing mesh transfer-to-input
+barriers and image transfer-to-sampling barriers order the first draw after its
+upload. Separate transfer owners retain staging allocations, command pools, and
+fences until completion; both new uploads and presentation poll them. An ADT may
+retire before its first draw because its retirement fence follows the transfer.
+Shutdown waits even if uploads occurred without any subsequent presentation.
+This changes Vulkan scheduling, preserving the authored geometry, atlas bytes,
+whole-ADT publication, and native placement ownership described above.
+
 ## Validation and remaining integration
 
 `terrain-streaming-native.txt` records 1,096 executions of the original window
@@ -118,7 +128,7 @@ Native loading admits individual chunks and has staged inner-window readiness
 for terrain, WMOs, and M2s. The runtime currently admits a whole ADT generation
 and still completes the transition card from the primary scene. Static-model
 GPU buffers/descriptors and shared diffuse images still use their existing
-renderer cache lifetime. Incremental asynchronous GPU transfers, native loading
+renderer cache lifetime. WMO geometry still uses synchronous uploads. Native loading
 readiness, specialized GameObject movement providers, and local ground/fall/input
 ownership remain separate work. Movement now joins the resident neighborhood,
 retained generic GameObject lists, and admitted replicated WMO roots while

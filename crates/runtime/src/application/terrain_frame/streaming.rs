@@ -5,6 +5,7 @@ use std::sync::Arc;
 use solarity_asset::TerrainTileIndex;
 use solarity_rendering::VulkanRenderer;
 
+use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::terrain_coordinator::ResidentTerrainTile;
 use crate::random::CrtRand;
 
@@ -54,6 +55,8 @@ impl TerrainFrame {
         {
             return Ok(());
         }
+        // Sample only residency changes, so steady frames cannot dilute upload stalls.
+        let mut profile = RuntimeFrameProfile::new("Terrain publication");
         let mut added = Vec::new();
         for tile in tiles.clone() {
             if !self
@@ -70,15 +73,18 @@ impl TerrainFrame {
                 });
             }
         }
+        profile.mark("terrain and liquids");
         self.m2.synchronize_static_scenes(
             renderer,
             tiles.clone().map(ResidentTerrainTile::m2_scene),
             random,
         )?;
+        profile.mark("M2 membership");
         self.world_models.synchronize_static_scenes(
             renderer,
             tiles.clone().map(ResidentTerrainTile::world_models),
         )?;
+        profile.mark("WMO membership");
         let departed_liquids = self
             .tiles
             .iter()
@@ -107,6 +113,7 @@ impl TerrainFrame {
                 .any(|tile| Arc::ptr_eq(&gpu.plan, tile.mesh()))
         });
         self.tiles.extend(added);
+        profile.mark("retirement");
         Ok(())
     }
 }
