@@ -12,6 +12,55 @@ const POSES: &[u16] = &[
     115, 116, 127, 131, 132, 187, 201, 202, 224, 300, 301, 302, 304, 466, 468, 472,
 ];
 
+/// 738B34 installs the mounted rider pose after ordinary posture requests;
+/// 738CF3's death override still admits a full-body death sequence.
+#[test]
+fn mounted_rider_posture_changes_preserve_the_saddle_pose() -> Result<(), Box<dyn Error>> {
+    let mut mounted = input(0);
+    mounted.mounted = true;
+    let owner = owner_with_input(POSES, mounted)?;
+    let mut random = CrtRand::new();
+    owner.advance_scene(100., &mut random)?;
+    assert_eq!(owner.playback.borrow().animation_id, 91);
+    let timer = owner.playback.borrow().script_timer.ok_or("rider timer")?;
+    let expected_random = random;
+    for (index, stand) in [1, 0, 3, 0, 4, 5, 6, 8, 0, 9, 0, 1].into_iter().enumerate() {
+        mounted.stand = stand;
+        owner.set_input(mounted);
+        owner.synchronize(110 + index as u32, &mut random)?;
+        let playback = owner.playback.borrow();
+        assert_eq!(playback.animation_id, 91, "mounted stand {stand}");
+        assert_eq!(
+            playback.script_timer,
+            Some(timer),
+            "posture cannot restart the rider"
+        );
+        assert_eq!(random, expected_random);
+    }
+    mounted.mounted = false;
+    owner.set_input(mounted);
+    owner.synchronize(150, &mut random)?;
+    assert_eq!(
+        owner.playback.borrow().animation_id,
+        97,
+        "dismount admits the latest sit state"
+    );
+    mounted.mounted = true;
+    mounted.stand = 0;
+    owner.set_input(mounted);
+    owner.synchronize(160, &mut random)?;
+    mounted.stand = 7;
+    mounted.alive = false;
+    owner.set_input(mounted);
+    owner.synchronize(170, &mut random)?;
+    assert_eq!(
+        owner.playback.borrow().animation_id,
+        466,
+        "death overrides the saddle pose"
+    );
+    Ok(())
+}
+
 /// 7197D0 queries GetModel's primary timer: the rider's alignment sequence
 /// cannot tilt a mount whose own primary has no alignment override.
 #[test]

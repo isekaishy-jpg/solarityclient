@@ -656,7 +656,9 @@ impl UnitAnimationBehavior {
             return None;
         }
         // 73F060's changed-stand path precedes the general 724500 resolver.
-        if input.stand != self.processed_stand.get() {
+        // While mounted, 738B34 routes ordinary posture requests back to the
+        // rider pose; 738CF3's full-body death override was handled above.
+        if input.stand != self.processed_stand.get() && !input.mounted {
             match resolve_unit_stand_transition(
                 input.stand,
                 self.processed_stand.get(),

@@ -79,6 +79,14 @@ mount request owner, mounted behavior routing (`0x007385C0`), and model-specific
 completion dispatch (`0x0073BFF0`) remain animation integration work. This
 placement change does not claim those timer/lifetime gaps are closed.
 
+The rider's ordinary posture transitions preserve the mounted pose, following
+`0x00738B34`. In particular, entering stand state 9 cannot replace the saddle
+pose with Submerge 201, and leaving it cannot install StandUp 127 or Stand 224.
+Death entry still reaches the full-body override at `0x00738CF3`. The regression
+covers both submerged transitions, other ordinary postures, unchanged rider
+timers/random state, dismount into the latest posture, and mounted death. Stock's
+spell-selected rider pose at `0x00724820` remains separate aura-visual work.
+
 ## Recovered integration rules
 
 ### Outdoor scene depth admission
