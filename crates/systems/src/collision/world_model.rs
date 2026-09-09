@@ -257,6 +257,17 @@ impl PlacedWorldModelCollision {
         &self.model
     }
 
+    /// Returns 7AE720's placed MOGI bounds used by scene and movement lists.
+    ///
+    /// # Errors
+    /// Rejects a group outside this admitted root generation.
+    pub fn scene_group_bounds(&self, group: usize) -> Result<[Vec3; 2], WorldModelCollisionError> {
+        self.movement_group_bounds
+            .get(group)
+            .copied()
+            .ok_or(WorldModelCollisionError::InvalidGroup { group_index: group })
+    }
+
     /// Tests the placed root box used before ordinary movement collection.
     #[must_use]
     pub fn movement_intersects(&self, bounds: super::MovementCollisionBounds) -> bool {

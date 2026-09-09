@@ -10,13 +10,13 @@ use glam::Vec3;
 use solarity_rendering::WorldCameraFrame;
 use solarity_systems::{
     MovementCollisionBounds, PlacedWorldModelCollision, WorldModelCameraRegistration,
-    WorldModelCameraSceneQuery, WorldModelRegistrationSelection, WorldModelVisibilityError,
-    WorldSceneCameraFrame, WorldSceneDepthFrame,
+    WorldModelCameraSceneQuery, WorldModelExteriorPortalWindow, WorldModelRegistrationSelection,
+    WorldModelVisibilityError, WorldSceneCameraFrame, WorldSceneDepthFrame,
 };
 
 use super::{
-    ResidentTerrainMap, RuntimeMovementRegistrationError, RuntimeTerrainCoordinator,
-    RuntimeWorldModelMovementOwner,
+    MovementRootReference, ResidentTerrainMap, RuntimeMovementRegistrationError,
+    RuntimeTerrainCoordinator, RuntimeWorldModelMovementOwner,
 };
 
 /// Reuses camera traversal scratch and eligible root/group destinations each frame.
@@ -39,19 +39,22 @@ impl UnitSceneAdmission {
         let source = camera.camera();
         let eye = source.position();
         let target = source.target();
+        let scene = WorldSceneCameraFrame::perspective(
+            eye,
+            target,
+            source.view_direction(),
+            source.up(),
+            source
+                .vertical_field_of_view_radians()
+                .ok_or(WorldModelVisibilityError::InvalidCameraProjection)?,
+            camera.aspect_ratio(),
+            [source.near_clip(), source.far_clip()],
+        )?;
+        let mut primary_owner = None;
+        let mut outdoor_window = None;
         if let Some(registration) = active.camera_registration(eye)? {
-            let scene = WorldSceneCameraFrame::perspective(
-                eye,
-                target,
-                source.view_direction(),
-                source.up(),
-                source
-                    .vertical_field_of_view_radians()
-                    .ok_or(WorldModelVisibilityError::InvalidCameraProjection)?,
-                camera.aspect_ratio(),
-                [source.near_clip(), source.far_clip()],
-            )?;
             let primary = active.movement.roots[registration.primary.owner].owner();
+            primary_owner = Some(primary);
             for selected in registration
                 .secondary
                 .into_iter()
@@ -70,12 +73,33 @@ impl UnitSceneAdmission {
                     },
                     primary,
                 )?;
-                if owner == primary && exterior {
-                    self.outdoor = Some(WorldSceneDepthFrame::new(eye, target)?);
+                if owner == primary {
+                    outdoor_window = exterior.map(|window| window.screen_window);
                 }
             }
         } else {
-            self.outdoor = Some(WorldSceneDepthFrame::new(eye, target)?);
+            outdoor_window = Some([0., 0., 1., 1.]);
+        }
+        if let Some(window) = outdoor_window {
+            let depth = WorldSceneDepthFrame::new(eye, target)?;
+            self.outdoor = Some(depth);
+            for index in 0..active.movement.roots.len() {
+                let reference = active.movement.roots[index];
+                // 792AD0 sends roots marked 0x400 to an overlap list. Its
+                // separate 792BD0/799F80 passes are not connected here yet.
+                if !matches!(reference, MovementRootReference::Static(_)) {
+                    continue;
+                }
+                let root = active.registration_root_mut(reference)?;
+                self.record_outdoor_root(
+                    root,
+                    scene,
+                    reference.owner(),
+                    primary_owner,
+                    depth,
+                    window,
+                )?;
+            }
         }
         Ok(())
     }
@@ -87,14 +111,13 @@ impl UnitSceneAdmission {
         camera: WorldSceneCameraFrame,
         registration: WorldModelCameraRegistration<RuntimeWorldModelMovementOwner>,
         primary: RuntimeWorldModelMovementOwner,
-    ) -> Result<bool, RuntimeMovementRegistrationError> {
+    ) -> Result<Option<WorldModelExteriorPortalWindow>, RuntimeMovementRegistrationError> {
         let initial = [
             registration.group,
             registration.secondary_group.unwrap_or(registration.group),
         ];
         let count = 1 + usize::from(registration.secondary_group.is_some());
-        let exterior = self
-            .query
+        self.query
             .query_camera_root(root, camera, &initial[..count])?;
         for &group in self.query.groups() {
             if registration.owner == primary
@@ -103,7 +126,39 @@ impl UnitSceneAdmission {
                 self.groups.insert((registration.owner, group));
             }
         }
-        Ok(exterior)
+        Ok(self.query.exterior_window())
+    }
+
+    /// 792AD0 depth-lists exterior MOGI groups before 79A160/7B3A10 traversal.
+    /// All bins run; with optional occlusion disabled, their order cannot alter
+    /// the final set of 79A260 unit callback destinations.
+    fn record_outdoor_root(
+        &mut self,
+        root: &PlacedWorldModelCollision,
+        camera: WorldSceneCameraFrame,
+        owner: RuntimeWorldModelMovementOwner,
+        primary: Option<RuntimeWorldModelMovementOwner>,
+        depth: WorldSceneDepthFrame,
+        screen_window: [f32; 4],
+    ) -> Result<(), RuntimeMovementRegistrationError> {
+        for (group, info) in root.model().group_info().iter().enumerate() {
+            if info.flags() & 0x10008 == 0
+                || depth.depth_bin(root.scene_group_bounds(group)?)?.is_none()
+            {
+                continue;
+            }
+            for &visited in self
+                .query
+                .query_outdoor_group(root, camera, group, screen_window)?
+            {
+                if Some(owner) == primary
+                    || root.model().group_info()[visited].flags() & 0x10008 == 0
+                {
+                    self.groups.insert((owner, visited));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 7C2A70 links both primary banks; fallback floor banks are not scene lists.
@@ -124,7 +179,7 @@ impl UnitSceneAdmission {
         }
         Ok(self
             .outdoor
-            .map(|depth| depth.m2_depth_bin([bounds.minimum(), bounds.maximum()]))
+            .map(|depth| depth.depth_bin([bounds.minimum(), bounds.maximum()]))
             .transpose()?
             .flatten()
             .is_some())

@@ -158,13 +158,25 @@ group order, window stores, depth and fog exactly. The composed
 `query_outdoor_group` adds `0x007B3A10`'s MOGI flag branches and cropped bounds:
 `0x10000` makes a direct callback; `8` starts portal recursion. Camera-root
 queries now retain the union of all accepted true-exterior windows, using
-`0x007905B0/0x0078F2F0`'s bounds and greatest-depth merge. These shared entry
-APIs do not yet connect non-camera-root passes to runtime movement admission.
+`0x007905B0/0x0078F2F0`'s bounds and greatest-depth merge.
 
-This connection covers camera-root traversal. Entry into other WMO roots from
-the outdoor depth lists (`0x0079A160/0x007B3A10`) and transformed-root overlap
-lists (`0x00799F80`) remains unimplemented. Mounted model registrations and
-special hidden-model flags also remain separate gaps.
+Runtime admission now connects ordinary MODF roots to the outdoor depth pass
+(`0x00792AD0/0x0079A160/0x007B3A10`). Groups masked by MOGI `0x10008` use their
+placed MOGI bounds and the shared 64-bin depth formula. All 603 eligible static
+WMO captures match the original insertion bucket; the fixture also retains the
+other group flags and transformed-list destinations for subsequent work.
+Outdoor cameras supply the full window; an indoor camera supplies the primary
+root's merged exterior window. Accepted entry groups traverse their portals,
+and `0x0079A260` keeps interior unit destinations or any destination owned by
+the primary camera root. A decoded two-group WMO regression reaches an indoor
+floor registration through its entrance and rejects a reversed camera or a
+screen window that excludes that entrance. Unit bounds remain independent of
+the interior callback, which precedes the unit's own draw visibility check.
+
+Replicated moving roots set root flag `0x400` (`0x007B64F0`) and use the separate
+overlap list. Its outdoor-camera conversion (`0x00792BD0`) and indoor-camera
+pass (`0x00799F80`) remain unconnected. Mounted model registrations and special
+hidden-model flags also remain separate gaps.
 
 ### Movement and presentation
 

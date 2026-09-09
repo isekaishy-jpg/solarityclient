@@ -53,7 +53,7 @@ def capture(executable, output):
         native.write_floats(uc, model + 0x48, low + high)
         for bucket in range(64):
             head = 0xcd9060 + bucket * 0x6c
-            native.write_words(uc, head, 8, (head + 4) | 1, (head + 4) | 1)
+            native.write_words(uc, head, 8, head + 4, (head + 4) | 1)
         native.invoke(uc, 0x792e60, [model])
         link = native.read_words(uc, model + 8, 1)[0]
         bucket = (link - 0xcd9064) // 0x6c if link else -1

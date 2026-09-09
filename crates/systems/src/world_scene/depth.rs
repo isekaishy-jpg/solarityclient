@@ -1,4 +1,4 @@
-//! The 64 outdoor M2 depth lists populated by `792E60` before scene traversal.
+//! The 64 outdoor depth lists populated by `792E60`/`792AD0` before traversal.
 
 use glam::Vec3;
 use thiserror::Error;
@@ -54,15 +54,18 @@ impl WorldSceneDepthFrame {
         })
     }
 
-    /// Selects `790650`'s leading AABB corner and `792E60`'s insertion bucket.
+    /// Selects `790650`'s leading AABB corner and the shared insertion bucket.
     ///
     /// Bounds use the raw registered transform, before unit ground-normal tilt.
     /// `None` leaves the registration unvisited by the outdoor depth traversal.
     /// Units behind the eye enter bucket zero, irrespective of draw visibility.
+    /// `792AD0` uses the same bucket for static WMO groups masked by MOGI
+    /// 0x10008. Their bounds come from the placed MOGI box, and their callbacks
+    /// additionally require the outdoor window and portal traversal.
     ///
     /// # Errors
     /// Rejects nonfinite, reversed, or unrepresentable model bounds.
-    pub fn m2_depth_bin(self, bounds: [Vec3; 2]) -> Result<Option<u8>, WorldSceneDepthError> {
+    pub fn depth_bin(self, bounds: [Vec3; 2]) -> Result<Option<u8>, WorldSceneDepthError> {
         let [minimum, maximum] = bounds;
         if !minimum.is_finite() || !maximum.is_finite() || minimum.cmpgt(maximum).any() {
             return Err(WorldSceneDepthError::InvalidBounds);
