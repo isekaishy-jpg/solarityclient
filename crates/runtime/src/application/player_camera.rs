@@ -225,15 +225,26 @@ impl PlayerCameraInput {
         self.flags = self.flags & !0x30000
             | if contacts.anchor { 0x20000 } else { 0 }
             | if contacts.orbit { 0x10000 } else { 0 };
-        if !pivot::admitted(self.follow[0].current, self.flags, movement, settings) {
+        if self.pivot.current.abs() >= 0.001_f32
+            && !pivot::admitted(self.follow[0].current, self.flags, movement, settings)
+        {
             self.pivot
                 .request(0.0, 0.0, 1.0, settings.return_speed, time);
+        } else {
+            // 606F90 calls 5FEF10 when 602600 declines a return. Renewed
+            // contact therefore stops a previous recovery at its current angle.
+            self.pivot.cancel();
         }
     }
 
     /// The offset affects only the final view, after all eye-position constraints.
     pub(super) fn pivot_pitch(&self) -> f32 {
         self.pivot.current
+    }
+
+    /// Primary collision retains the requested zoom while its current bank recovers.
+    pub(super) fn distance_target(&self) -> f32 {
+        self.zoom.target
     }
 
     pub(super) fn follow_input(

@@ -14,9 +14,12 @@ use solarity_systems::{
 #[test]
 fn ground_camera_retains_native_distance_and_orientation() -> Result<(), Box<dyn Error>> {
     let mut checked = 0;
-    for row in include_str!("../fixtures/camera-ground-native.txt")
-        .lines()
-        .filter(|row| !row.starts_with('#') && !row.is_empty())
+    for row in concat!(
+        include_str!("../fixtures/camera-ground-native.txt"),
+        include_str!("../fixtures/camera-ground-targets-native.txt")
+    )
+    .lines()
+    .filter(|row| !row.starts_with('#') && !row.is_empty())
     {
         let words = row
             .split('|')
@@ -44,6 +47,8 @@ fn ground_camera_retains_native_distance_and_orientation() -> Result<(), Box<dyn
             16.0 / 9.0,
             PlayerCameraObstructionSettings {
                 water_collision: false,
+                distance_target: input.get(7).copied(),
+                height_target: input.get(8).copied(),
                 ..Default::default()
             },
             |query| {
@@ -95,6 +100,6 @@ fn ground_camera_retains_native_distance_and_orientation() -> Result<(), Box<dyn
         );
         checked += 1;
     }
-    assert_eq!(checked, 54);
+    assert_eq!(checked, 270);
     Ok(())
 }

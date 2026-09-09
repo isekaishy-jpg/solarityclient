@@ -4,7 +4,13 @@ use super::{
     CameraZoom, PlayerCameraInput, PlayerCameraMouseSettings, PlayerCameraZoomSettings,
     mouse_angles,
 };
-use solarity_ecs::PlayerViewState;
+use glam::Vec3;
+use solarity_ecs::{PlayerViewState, WorldTransform};
+use solarity_systems::{
+    CameraSubjectGeometry, PlayerCameraContacts, PlayerCameraObstructionSettings,
+    PlayerCameraSceneQuery, PlayerCameraVolumeError, PlayerCameraVolumeKind,
+    resolve_camera_subject_height, resolve_player_camera_obstruction, resolve_player_camera_pose,
+};
 
 /// Complete original mouse execution covers pivot admission, reversal and ordinary orbit.
 #[test]
@@ -87,13 +93,6 @@ fn pivot_mouse_events_match_stock_pitch_banks() -> Result<(), Box<dyn std::error
 /// The same mouse gesture selects stationary-eye pitch or inward orbit from its yaw component.
 #[test]
 fn ground_contact_preserves_both_drag_behaviors() -> Result<(), Box<dyn std::error::Error>> {
-    use glam::Vec3;
-    use solarity_ecs::WorldTransform;
-    use solarity_systems::{
-        CameraSubjectGeometry, PlayerCameraContacts, resolve_camera_subject_height,
-        resolve_player_camera_pose,
-    };
-
     let mut camera = PlayerCameraInput::new(PlayerViewState::new(2.0, -0.6, 0.0, 2), 0.0);
     camera.set_free_look(true, 0.0);
     let settings = PlayerCameraMouseSettings {
@@ -129,6 +128,106 @@ fn ground_contact_preserves_both_drag_behaviors() -> Result<(), Box<dyn std::err
     assert!(camera.view(0.0).pitch_radians() < -0.6);
     assert!(camera.pivot_pitch().abs() < 0.000_001);
     Ok(())
+}
+
+/// 605D60's requested-distance query keeps a shortened eye in the pivot mode.
+#[test]
+fn continued_upward_drag_retains_ground_contact_at_the_shortened_distance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let subject = Vec3::new(1340.0, -4380.0, 28.0);
+    let transform = WorldTransform::new(subject, 0.0);
+    let height = resolve_camera_subject_height(CameraSubjectGeometry::new(
+        Some(1.75 - 0.097_222_224),
+        2.0,
+        1.0,
+    ))?;
+    let mut camera = PlayerCameraInput::new(PlayerViewState::new(5.55, -0.6, 0.0, 2), 0.0);
+    camera.zoom.distance = 2.7;
+    camera.set_free_look(true, 0.0);
+    let mouse = PlayerCameraMouseSettings {
+        yaw_speed: 180.0,
+        pitch_speed: 90.0,
+        invert_yaw: false,
+        invert_pitch: false,
+        pivot: Default::default(),
+    };
+    let planted_eye = resolve_player_camera_pose(transform, camera.view(0.0), height)?.eye();
+    for frame in 0..20 {
+        let time = 1000 + frame * 16;
+        camera.sample_follow(time);
+        let pose = resolve_player_camera_pose(transform, camera.view(0.0), height)?;
+        let obstruction = resolve_player_camera_obstruction(
+            pose,
+            16.0 / 9.0,
+            PlayerCameraObstructionSettings {
+                water_collision: false,
+                distance_target: Some(camera.distance_target()),
+                height_target: Some(height.value()),
+                ..Default::default()
+            },
+            |query| ground_scene(subject, query),
+        )?;
+        assert!(
+            obstruction.contacts().orbit,
+            "contact lost on frame {frame}"
+        );
+        camera.contacts(obstruction.contacts(), 0, mouse.pivot, time);
+        camera.motion([0.0, -20.0], mouse, 0, time);
+        let tilted = obstruction
+            .pose()
+            .with_view_pitch_offset(camera.pivot_pitch())?;
+        assert_eq!(tilted.eye(), planted_eye);
+        assert_eq!(camera.view(0.0).pitch_radians(), -0.6);
+        assert!(!camera.pivot.active);
+    }
+    Ok(())
+}
+
+/// 606F90 selects 5FEF10 when contact resumes, stopping an earlier return lane.
+#[test]
+fn renewed_ground_contact_stops_pivot_return() {
+    let mut camera = PlayerCameraInput::new(PlayerViewState::new(5.55, -0.6, 0.0, 2), 0.0);
+    let settings = super::PlayerCameraPivotSettings::default();
+    camera.pivot.current = -0.25;
+    camera.contacts(PlayerCameraContacts::default(), 0, settings, 1000);
+    camera.sample_follow(1050);
+    assert!(camera.pivot.active);
+    let angle = camera.pivot_pitch();
+    assert!(angle > -0.25 && angle < 0.0);
+    camera.contacts(
+        PlayerCameraContacts {
+            anchor: false,
+            orbit: true,
+        },
+        0,
+        settings,
+        1050,
+    );
+    camera.sample_follow(3000);
+    assert_eq!(camera.pivot_pitch(), angle);
+    assert!(!camera.pivot.active);
+}
+
+/// Controlled horizontal ground uses the real Systems camera-volume clipper.
+fn ground_scene(
+    subject: Vec3,
+    query: PlayerCameraSceneQuery<'_>,
+) -> Result<Option<f32>, PlayerCameraVolumeError> {
+    match query {
+        PlayerCameraSceneQuery::Segment { start, end, .. } => Ok((start.z >= subject.z
+            && end.z < subject.z)
+            .then(|| (start.z - subject.z) / (start.z - end.z))),
+        PlayerCameraSceneQuery::Volume { volume, kind } => {
+            if kind == PlayerCameraVolumeKind::Water {
+                return Ok(None);
+            }
+            volume.triangle_retreat([
+                subject + Vec3::new(-100.0, -100.0, 0.0),
+                subject + Vec3::new(100.0, -100.0, 0.0),
+                subject + Vec3::new(0.0, 100.0, 0.0),
+            ])
+        }
+    }
 }
 
 #[test]

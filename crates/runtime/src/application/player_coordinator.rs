@@ -2071,6 +2071,13 @@ impl RuntimePlayerPresentation {
             .map(|resident| resident.camera_height)
     }
 
+    /// Keeps the native principal height target independent of its obstructed sample.
+    pub(super) fn camera_target_height(&self) -> Option<f32> {
+        self.resident
+            .as_ref()
+            .map(|resident| resident.camera_height_state.target_height())
+    }
+
     /// Returns the selected player's scaled stock collision width and height.
     #[must_use]
     pub fn collision_extent(&self) -> Option<[f32; 2]> {

@@ -135,6 +135,22 @@ vertical drag preserves the eye exactly and that reversal restores ordinary
 orbit. Primary and ground fixtures verify both native contact bits. Special
 vehicle/remote camera subjects remain outside this ordinary-player path.
 
+Primary contact must survive collision recovery. `605D60` starts its queries
+at the greater of the current and requested distance (`+0x118`, `+0x1e8`) and
+height (`+0x128`, `+0x218`), then caps the returned eye distance and anchor
+height by their current banks. Testing only the shortened current distance
+can clear contact without changing the eye position, incorrectly allowing a
+later upward drag to resume ordinary orbit. The runtime now supplies both
+targets. `601D60` also uses the greater current/requested distance to attenuate
+the mounted offset. When contact resumes, `606F90` calls `5FEF10` to cancel an existing
+pivot return at its current angle.
+
+An additional 216 native ground cases and 508 primary cases exercise separate
+current/target banks, including mounted offsets and water constraints. A
+runtime regression repeatedly resolves real ground-volume geometry and
+applies upward input, asserting persistent contact, a fixed orbit and eye,
+and stopped pivot recovery after contact resumes.
+
 ## Water pitch and control modes
 
 `606F90` requests pitch changes at surfaced/submerged transitions while

@@ -11,9 +11,12 @@ use solarity_systems::{
 /// Native primary constraints replay through the public mounted-player camera.
 #[test]
 fn primary_constraints_match_original_execution() -> Result<(), Box<dyn std::error::Error>> {
-    for line in include_str!("../fixtures/camera-primary-native.txt")
-        .lines()
-        .filter(|line| !line.starts_with('#'))
+    for line in concat!(
+        include_str!("../fixtures/camera-primary-native.txt"),
+        include_str!("../fixtures/camera-primary-targets-native.txt")
+    )
+    .lines()
+    .filter(|line| !line.starts_with('#'))
     {
         let groups = line
             .split('|')
@@ -56,6 +59,8 @@ fn primary_constraints_match_original_execution() -> Result<(), Box<dyn std::err
                 _ => PlayerCameraLiquidState::Submerged { depth: f(14) },
             },
             minimum_subject_height: (f(15) >= 0.0).then(|| f(15) * 0.75),
+            distance_target: v.get(19).copied().map(f32::from_bits),
+            height_target: v.get(20).copied().map(f32::from_bits),
         };
         let mut calls = Vec::new();
         let mut ray_index = 0;
@@ -71,7 +76,8 @@ fn primary_constraints_match_original_execution() -> Result<(), Box<dyn std::err
                     );
                     calls.push(if water { 0x120171 } else { 0x100171 });
                     let fraction = if ray_index == 0
-                        && f64::from(f(10)) - f64::from(0.2_f32)
+                        && f64::from(f(10).max(settings.height_target.unwrap_or(f(10))))
+                            - f64::from(0.2_f32)
                             > f64::from(0.000_000_953_674_3_f32)
                     {
                         f(16)

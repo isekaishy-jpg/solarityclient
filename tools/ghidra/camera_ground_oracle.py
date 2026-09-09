@@ -20,6 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--targets', action='store_true', help='retain independent distance and height targets')
     args = parser.parse_args()
     native.initialize(args.executable)
     rows = ['# native 605D60/601D60/6059E0; pinned build-12340 aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8',
@@ -29,13 +30,22 @@ def main():
         [-1.553343, -1.4, -.6],
         [.199999, .2, .200001, 1.6391548, 1.7502688, 1.7502698, 1.8, 2.95, 3.2],
     )
-    for subject, pitch, distance in cases:
+    cases = ((subject, pitch, distance, None) for subject, pitch, distance in cases)
+    if args.targets:
+        cases = ((subject, pitch, distance, (target_distance, target_height))
+                 for subject, pitch, distance, target_distance, target_height in itertools.product(
+                     [[0., 0., 0.], [1340., -4380., 28.]], [-1.4, -.6, -.2],
+                     [1.8, 2.7, 2.8, 2.9, 3., 3.2], [0., 2.5, 5.55], [1., 3.]))
+        rows[1] = rows[1].replace('distance height |', 'distance height distance-target height-target |')
+    for subject, pitch, distance, targets in cases:
         yaw, pitch, distance = map(f32, [.7, pitch, distance])
         cy, sy, cp, sp = map(f32, [math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)])
         forward = [f32(cy*cp), f32(sy*cp), -sp]
         up = [f32(cy*sp), f32(sy*sp), cp]
-        result, _ = primary(subject, forward, up, distance, 1.75, 0., 0, 0, 0., -1., -1., -1., -1., ground_plane=True)
+        result, _ = primary(subject, forward, up, distance, 1.75, 0., 0, 0, 0., -1., -1., -1., -1., ground_plane=True, targets=targets)
         inputs = list(map(bits, subject + [yaw, pitch, distance, 1.75]))
+        if targets is not None:
+            inputs.extend(map(bits, targets))
         rows.append(' | '.join(' '.join(f'{word:08x}' for word in group) for group in [inputs, result]))
     args.output.write_text('\n'.join(rows)+'\n', encoding='utf-8')
     print(f'wrote {len(rows)-2} native stationary-ground probes')

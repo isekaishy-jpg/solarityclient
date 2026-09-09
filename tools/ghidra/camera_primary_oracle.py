@@ -17,7 +17,7 @@ from camera_water_oracle import bits,ret
 def f32(value): return struct.unpack('<f',struct.pack('<f',value))[0]
 
 
-def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_height,vertical,center,volume,ground_plane=False):
+def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_height,vertical,center,volume,ground_plane=False,targets=None):
     uc=n.emulator()
     camera,vtable,point,dist,anchor,offset,unit,fields,cvar,eye,pivot=[n.HEAP+i*0x1000 for i in range(11)]
     forward_fn,up_fn=n.STOP+0x100,n.STOP+0x200
@@ -27,6 +27,9 @@ def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_heig
     n.write_floats(uc,camera+0x38,[.2])
     n.write_floats(uc,camera+0x118,[distance])
     n.write_floats(uc,camera+0x128,[height])
+    if targets is not None:
+        n.write_floats(uc,camera+0x1e8,[targets[0]])
+        n.write_floats(uc,camera+0x218,[targets[1]])
     n.write_floats(uc,camera+0x13c,[mount])
     n.write_words(uc,camera+0x98,[0,0x100000,0x200000][state])
     n.write_words(uc,0xc249b4,cvar)
@@ -60,7 +63,8 @@ def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_heig
         elif address==0x77f310:
             _,a,b,contact,fraction,mask,_=n.read_words(uc,sp,7)
             calls.extend([*n.read_words(uc,a,3),*n.read_words(uc,b,3),mask])
-            fraction_value = vertical if ray_index==0 and height-f32(.2)>2**-20 else center
+            query_height = max(height, targets[1]) if targets is not None else height
+            fraction_value = vertical if ray_index==0 and query_height-f32(.2)>2**-20 else center
             if ground_plane:
                 start=n.read_floats(uc,a,3)
                 end=n.read_floats(uc,b,3)
@@ -104,6 +108,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('executable')
     p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--targets',action='store_true',help='capture independent zoom and height targets')
     args=p.parse_args()
     n.initialize(args.executable)
     cases=[]
@@ -113,10 +118,16 @@ def main():
     for _ in range(400):
         cases.append(([rng.uniform(-1000,1000) for _ in range(3)],[.8660254,0.,-.5],[.5,0.,.8660254],rng.choice([.01,.2,.2005,1.,5.,15.]),rng.choice([.1,.2,.3,.8333333,1.75,4.]),rng.choice([0.,2.]),rng.randrange(2),rng.randrange(3),rng.uniform(-1.,7.),rng.choice([-1.,2.,4.]),rng.choice([-1.,0.,.5,1.]),rng.choice([-1.,0.,.5,1.]),rng.choice([-1.,0.,.4,1.])))
     rows=['# subject3 forward3 up3 distance height mount water state depth unit-height(-1 absent) vertical-ray(-1 absent) center-ray volume-retreat | distance height vertical-fraction eye3 contact-flags | ordered (start3 end3 mask) rays; hex words']
+    if args.targets:
+        rows[0] = rows[0].replace('volume-retreat |', 'volume-retreat distance-target height-target |')
+        rows.append('# pinned build-12340 aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8; independent current and target banks')
     for case in cases:
         subject,forward,up,d,h,m,w,s,dep,u,v,c,vol=case
         inputs=[*map(bits,subject+forward+up+[d,h,m]),w,s,*map(bits,[dep,u,v,c,vol])]
-        result,calls=primary(*case)
+        targets = (d * 1.7 + .5, h * 1.4 + .8) if args.targets else None
+        if targets is not None:
+            inputs.extend(map(bits, targets))
+        result,calls=primary(*case,targets=targets)
         rows.append(' | '.join(' '.join(f'{word:08x}' for word in values) for values in [inputs,result,calls]).rstrip())
     args.output.write_text('\n'.join(rows)+'\n',encoding='utf-8')
     print(f'wrote {len(cases)} native primary constraints')

@@ -21,10 +21,14 @@ impl ClientServices {
         let (width, height) = self.platform.pixel_extent();
         let aspect_ratio = width as f32 / height as f32;
         let mut resolved_height = None;
+        let settings = solarity_systems::PlayerCameraObstructionSettings {
+            height_target: self.player.camera_target_height(),
+            ..self.player_movement.camera_collision_settings()
+        };
         let pose = self.terrain.resolve_player_camera_with_feedback(
             pose,
             aspect_ratio,
-            self.player_movement.camera_collision_settings(),
+            settings,
             |distance, height, contacts| {
                 self.player_movement
                     .camera_obstructed(distance, contacts, now);

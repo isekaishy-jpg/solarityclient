@@ -327,7 +327,13 @@ impl RuntimePlayerMovement {
     pub(super) fn camera_collision_settings(
         &self,
     ) -> solarity_systems::PlayerCameraObstructionSettings {
-        self.camera_collision_settings
+        solarity_systems::PlayerCameraObstructionSettings {
+            distance_target: self
+                .owner
+                .as_ref()
+                .map(|owner| owner.camera.distance_target()),
+            ..self.camera_collision_settings
+        }
     }
     /// Samples the live camera after this frame's collision feedback.
     pub(super) fn camera_view(&self) -> Option<solarity_ecs::PlayerViewState> {

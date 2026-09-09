@@ -23,6 +23,10 @@ pub struct PlayerCameraObstructionSettings {
     pub subject_liquid: PlayerCameraLiquidState,
     /// Unit-specific minimum camera anchor, normally 75% of unit height.
     pub minimum_subject_height: Option<f32>,
+    /// Requested zoom bank (`+0x1e8`), retained while collision shortens the current eye.
+    pub distance_target: Option<f32>,
+    /// Principal height target (`+0x218`), retained during anchor collision recovery.
+    pub height_target: Option<f32>,
 }
 
 impl Default for PlayerCameraObstructionSettings {
@@ -31,6 +35,8 @@ impl Default for PlayerCameraObstructionSettings {
             water_collision: true,
             subject_liquid: PlayerCameraLiquidState::Absent,
             minimum_subject_height: None,
+            distance_target: None,
+            height_target: None,
         }
     }
 }
@@ -135,6 +141,9 @@ pub fn resolve_player_camera_obstruction<E>(
         forward,
         up: pose.up(),
         distance: orbit.distance,
+        maximum_distance: orbit
+            .distance
+            .max(settings.distance_target.unwrap_or(orbit.distance)),
         height: orbit.height,
         mount_height: pose.flying_mount_height(),
     };
@@ -172,6 +181,8 @@ struct PrimaryInput {
     forward: Vec3,
     up: Vec3,
     distance: f32,
+    /// Greater current/target distance, also used by 601D60's mounted-offset ratio.
+    maximum_distance: f32,
     height: f32,
     mount_height: f32,
 }
@@ -190,6 +201,13 @@ fn resolve_primary<E>(
     settings: PlayerCameraObstructionSettings,
     scene: &mut impl FnMut(PlayerCameraSceneQuery<'_>) -> Result<Option<f32>, E>,
 ) -> Result<PrimaryResult, PlayerCameraObstructionError<E>> {
+    // 605D60 tests the farther target even after last frame's collision has
+    // shortened the current bank. The final result is still capped by current
+    // distance/height; testing only current can incorrectly clear contact.
+    let query_distance = input.maximum_distance;
+    let query_height = input
+        .height
+        .max(settings.height_target.unwrap_or(input.height));
     let depth = match settings.subject_liquid {
         PlayerCameraLiquidState::Absent => 0.0,
         PlayerCameraLiquidState::Surface { depth }
@@ -204,10 +222,14 @@ fn resolve_primary<E>(
         || settings
             .minimum_subject_height
             .is_some_and(|height| !height.is_finite())
+        || [settings.distance_target, settings.height_target]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.is_finite())
     {
         return Err(PlayerCameraObstructionError::InvalidCameraBasis);
     }
-    let mut height = input.height;
+    let mut height = query_height;
     let mut lower = MINIMUM_HEIGHT;
     let mut upper = input.height;
     let mut vertical_fraction = 1.0;
@@ -248,7 +270,7 @@ fn resolve_primary<E>(
     }
     height = height.max(lower).min(upper);
     let pivot = Vec3::new(input.subject.x, input.subject.y, input.subject.z + height);
-    let mut distance = input.distance;
+    let mut distance = query_distance;
     if f64::from(distance) - f64::from(0.2_f32) > f64::from(EPSILON) {
         let desired = (pivot.as_dvec3() - input.forward.as_dvec3() * f64::from(distance)
             + input.up.as_dvec3() * f64::from(input.mount_height) * f64::from(vertical_fraction))
@@ -270,7 +292,7 @@ fn resolve_primary<E>(
                 contacts.orbit = true;
                 distance = shortened;
             }
-            if (f64::from(input.distance) - f64::from(distance)).abs()
+            if (f64::from(query_distance) - f64::from(distance)).abs()
                 >= f64::from(f32::EPSILON * 2.0)
             {
                 distance = (distance - RETREAT).max(0.0);
@@ -288,10 +310,13 @@ fn resolve_primary<E>(
 /// Composes 601D60's eye with the distance-attenuated flying-mount offset.
 fn camera_eye(input: PrimaryInput, pivot: Vec3, distance: f32, vertical_fraction: f32) -> Vec3 {
     let mut eye = (pivot.as_dvec3() - input.forward.as_dvec3() * f64::from(distance)).as_vec3();
-    if distance > 0.0 && input.mount_height.abs() >= f32::EPSILON * 2.0 && input.distance > 0.0 {
+    if distance > 0.0
+        && input.mount_height.abs() >= f32::EPSILON * 2.0
+        && input.maximum_distance > 0.0
+    {
         let offset =
             (f64::from(vertical_fraction) * f64::from(input.mount_height) * f64::from(distance)
-                / f64::from(input.distance)) as f32;
+                / f64::from(input.maximum_distance)) as f32;
         eye = (eye.as_dvec3() + input.up.as_dvec3() * f64::from(offset)).as_vec3();
     }
     eye
