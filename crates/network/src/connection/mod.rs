@@ -5,10 +5,12 @@
 //! or packet definitions.
 
 mod error;
+mod world_duplex;
 mod world_state;
 mod wow_connection;
 
 pub use error::{WorldAuthError, WorldAuthFailure, WorldAuthStage};
+pub use world_duplex::WorldSessionDuplex;
 pub use world_state::{
     AccountExpansion, CharacterLogin, CharacterLoginProgress, InWorldSession, WorldAuthProgress,
     WorldPacketReader, WorldPacketWriter, WorldQueue, WorldSession, WorldSessionInfo,

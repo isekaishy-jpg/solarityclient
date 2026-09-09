@@ -3,6 +3,9 @@
 mod creature_cache;
 pub(in crate::application) mod environmental_damage;
 mod game_object_cache;
+#[cfg(test)]
+#[path = "../../tests/application/logout.rs"]
+mod logout_tests;
 mod player_corpse;
 mod player_names;
 #[cfg(test)]
@@ -60,8 +63,9 @@ use glam::Vec3;
 use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId, WorldStateError};
 use solarity_network::{
     InWorldSession, WorldActionButtonPacketError, WorldActionButtons, WorldLivenessPacketError,
-    WorldLocation, WorldMovementMessage, WorldPacketReader, WorldPacketWriter, WorldServerPacket,
-    WorldSessionError, WorldTimePacketError, WorldTransfer,
+    WorldLocation, WorldLogout, WorldLogoutRequest, WorldMovementMessage, WorldPacketReader,
+    WorldPacketWriter, WorldServerPacket, WorldSession, WorldSessionError, WorldTimePacketError,
+    WorldTransfer,
 };
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -196,6 +200,8 @@ pub struct RuntimeGameplayCoordinator {
     weather_updates: VecDeque<(solarity_network::WorldWeatherUpdate, u32)>,
     /// Packet dispatch yields to the composition root at each transfer packet.
     transfer: Option<WorldTransfer>,
+    logout_update: Option<WorldLogout>,
+    logged_out_session: Option<WorldSession<TcpStream>>,
     /// Native Unit_C short-stop CVar, refreshed before packet dispatch.
     path_distance_tolerance: f32,
 }
@@ -243,6 +249,8 @@ impl RuntimeGameplayCoordinator {
             unhandled_packets: VecDeque::new(),
             weather_updates: VecDeque::new(),
             transfer: None,
+            logout_update: None,
+            logged_out_session: None,
             path_distance_tolerance: 1.0,
         }
     }
@@ -398,7 +406,10 @@ impl RuntimeGameplayCoordinator {
         if let Some(clock) = &mut self.realm_clock {
             clock.advance();
         }
-        if self.transfer.is_some() {
+        if self.transfer.is_some()
+            || self.logout_update.is_some()
+            || self.logged_out_session.is_some()
+        {
             return Ok(0);
         }
         let Some(mut active) = self.active.take() else {
@@ -411,7 +422,23 @@ impl RuntimeGameplayCoordinator {
         let mut applied = 0;
         loop {
             match active.receiver.try_recv() {
-                Ok(Ok(packet)) => {
+                Ok(Ok(GameplayNetworkEvent::LoggedOut(session))) => {
+                    self.logged_out_session = Some(*session);
+                    break;
+                }
+                Ok(Ok(GameplayNetworkEvent::Packet(packet))) => {
+                    let logout = match packet.logout() {
+                        Ok(logout) => logout,
+                        Err(error) => {
+                            active.task.abort();
+                            return Err(error.into());
+                        }
+                    };
+                    if let Some(update) = logout {
+                        self.logout_update = Some(update);
+                        self.active = Some(active);
+                        break;
+                    }
                     match packet.world_transfer() {
                         Ok(Some(transfer)) => {
                             self.transfer = Some(transfer);
@@ -542,6 +569,16 @@ impl RuntimeGameplayCoordinator {
                 .synchronize_world(self.world.as_ref());
         }
         Ok(applied)
+    }
+
+    /// Takes a logout callback before dispatch advances to the next packet.
+    pub fn take_logout_update(&mut self) -> Option<WorldLogout> {
+        self.logout_update.take()
+    }
+
+    /// Returns the retained transport only after both encrypted I/O directions stop.
+    pub fn take_logged_out_session(&mut self) -> Option<WorldSession<TcpStream>> {
+        self.logged_out_session.take()
     }
 
     /// Takes the transfer packet that paused main-thread dispatch.
@@ -829,6 +866,22 @@ impl RuntimeGameplayCoordinator {
         }
     }
 
+    /// Retains logout requests under the same bounded writer admission as movement.
+    pub(in crate::application) fn send_logout_action(
+        &self,
+        action: WorldLogoutRequest,
+    ) -> Result<bool, RuntimeGameplayError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(RuntimeGameplayError::TaskEnded)?;
+        match active.commands.try_send(WorldWriterCommand::Logout(action)) {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Closed(_)) => Err(RuntimeGameplayError::TaskEnded),
+        }
+    }
+
     /// Returns the authoritative active ECS world.
     #[must_use]
     pub const fn world(&self) -> Option<&ActiveWorld> {
@@ -966,6 +1019,8 @@ impl RuntimeGameplayCoordinator {
         self.action_buttons = None;
         self.unhandled_packets.clear();
         self.transfer = None;
+        self.logout_update = None;
+        self.logged_out_session = None;
     }
 }
 
@@ -982,44 +1037,81 @@ impl Drop for RuntimeGameplayCoordinator {
 }
 
 struct ActiveGameplayNetwork {
-    receiver: Receiver<Result<WorldServerPacket, RuntimeGameplayError>>,
+    receiver: Receiver<Result<GameplayNetworkEvent, RuntimeGameplayError>>,
     commands: mpsc::Sender<WorldWriterCommand>,
     task: JoinHandle<()>,
 }
 
+/// Ordered packets and terminal transport ownership share one FIFO channel.
+enum GameplayNetworkEvent {
+    Packet(WorldServerPacket),
+    LoggedOut(Box<WorldSession<TcpStream>>),
+}
+
+/// Stops at LOGOUT_COMPLETE without dropping a partially written encrypted packet.
 async fn pump_world_packets(
     session: InWorldSession<TcpStream>,
-    sender: mpsc::Sender<Result<WorldServerPacket, RuntimeGameplayError>>,
+    sender: mpsc::Sender<Result<GameplayNetworkEvent, RuntimeGameplayError>>,
     commands: mpsc::Sender<WorldWriterCommand>,
     command_receiver: Receiver<WorldWriterCommand>,
 ) {
-    let (mut reader, mut writer) = session.split();
-    let result = tokio::select! {
-        result = receive_world_packets(&mut reader, &sender, commands) => result,
-        result = service_world_writer(&mut writer, command_receiver) => result,
-    };
+    let mut duplex = session.into_duplex();
+    let result = async {
+        {
+            let (reader, writer) = duplex.io();
+            let mut writing = std::pin::pin!(service_world_writer(writer, command_receiver));
+            let completed = tokio::select! {
+                result = receive_world_packets(reader, &sender, commands.clone()) => result?,
+                result = &mut writing => { result?; false },
+            };
+            if !completed {
+                return Ok::<_, RuntimeGameplayError>(());
+            }
+            // Keep polling the writer while enqueueing its packet-boundary stop,
+            // including when the application has filled the bounded queue.
+            tokio::try_join!(
+                async {
+                    commands
+                        .send(WorldWriterCommand::Handoff)
+                        .await
+                        .map_err(|_| RuntimeGameplayError::TaskEnded)
+                },
+                &mut writing
+            )?;
+        }
+        let session = duplex.into_session()?;
+        let _sent = sender
+            .send(Ok(GameplayNetworkEvent::LoggedOut(Box::new(session))))
+            .await;
+        Ok(())
+    }
+    .await;
     if let Err(error) = result {
-        let _send_result = sender.send(Err(error)).await;
+        let _sent = sender.send(Err(error)).await;
     }
 }
 
+/// Retains every encrypted read until its packet boundary or connection failure.
 async fn receive_world_packets<R>(
     reader: &mut WorldPacketReader<R>,
-    sender: &mpsc::Sender<Result<WorldServerPacket, RuntimeGameplayError>>,
+    sender: &mpsc::Sender<Result<GameplayNetworkEvent, RuntimeGameplayError>>,
     liveness_sender: mpsc::Sender<WorldWriterCommand>,
-) -> Result<(), RuntimeGameplayError>
+) -> Result<bool, RuntimeGameplayError>
 where
     R: AsyncRead + Unpin + Send,
 {
     loop {
         let packet = reader.receive_packet().await?;
+        if packet.logout()? == Some(WorldLogout::Complete) {
+            return Ok(true);
+        }
         if let Some(sequence) = packet.pong_sequence()? {
             if liveness_sender
                 .send(WorldWriterCommand::Pong(sequence))
                 .await
                 .is_err()
             {
-                return Ok(());
+                return Ok(false);
             }
             continue;
         }
@@ -1029,12 +1121,16 @@ where
                 .await
                 .is_err()
             {
-                return Ok(());
+                return Ok(false);
             }
             continue;
         }
-        if sender.send(Ok(packet)).await.is_err() {
-            return Ok(());
+        if sender
+            .send(Ok(GameplayNetworkEvent::Packet(packet)))
+            .await
+            .is_err()
+        {
+            return Ok(false);
         }
     }
 }
@@ -1064,6 +1160,8 @@ where
                     return Ok(());
                 };
                 match event {
+                    WorldWriterCommand::Handoff => return Ok(()),
+                    WorldWriterCommand::Logout(request) => writer.send_logout(request).await?,
                     WorldWriterCommand::Pong(received) => {
                         if let Some((expected, sent_at)) = pending_ping
                             && received == expected
@@ -1136,6 +1234,8 @@ fn duration_millis_u32(duration: Duration) -> u32 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// All writes share one queue and one continuously owned cipher half.
 enum WorldWriterCommand {
+    Handoff,
+    Logout(WorldLogoutRequest),
     Pong(u32),
     TimeSync(u32),
     WorldportAcknowledgement,

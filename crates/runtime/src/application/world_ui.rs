@@ -20,6 +20,7 @@ use super::terrain_frame::TerrainFrame;
 use crate::time::RealmClock;
 
 mod environmental_damage;
+mod logout;
 mod minimap;
 mod mirror_timer;
 use minimap::RuntimeMinimapScene;
@@ -179,6 +180,18 @@ impl RuntimeWorldUi {
 
     /// Delivers the live-world exit event without reconstructing FrameXML.
     pub(super) fn leave_world(&mut self) -> Result<(), ApplicationError> {
+        self.leave_world_events(&["PLAYER_LEAVING_WORLD"])
+    }
+
+    /// 528010 emits PLAYER_LOGOUT before PLAYER_LEAVING_WORLD on final UI retirement.
+    pub(super) fn retire_world(&mut self) -> Result<(), ApplicationError> {
+        let events = self.leave_world_events(&["PLAYER_LOGOUT", "PLAYER_LEAVING_WORLD"]);
+        let cancellation = self.logout_update(solarity_network::WorldLogout::CancelAcknowledged);
+        events.and(cancellation)
+    }
+
+    /// Releases input and combat before the selected native world-exit notifications.
+    fn leave_world_events(&mut self, events: &[&str]) -> Result<(), ApplicationError> {
         self.dirty = true;
         let release = self.route_binding(
             &crate::PlatformEvent::ApplicationDidEnterBackground,
@@ -193,11 +206,15 @@ impl RuntimeWorldUi {
         } else {
             Ok(())
         };
-        let leave = self
-            .manager
-            .dispatch_event("PLAYER_LEAVING_WORLD", &UiEventPayload::empty())
-            .map(|_| ())
-            .map_err(ApplicationError::from);
+        let mut leave = Ok(());
+        for event in events {
+            let dispatched = self
+                .manager
+                .dispatch_event(event, &UiEventPayload::empty())
+                .map(|_| ())
+                .map_err(ApplicationError::from);
+            leave = leave.and(dispatched);
+        }
         let timers = self.stop_world_mirror_timers();
         self.world.clear_death_actions();
         release.and(combat).and(leave).and(timers)

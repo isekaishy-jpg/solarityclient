@@ -37,6 +37,7 @@ pub use unit_aura::{WorldUnitAura, WorldUnitAuraPacketError, WorldUnitAuraUpdate
 pub use remote_movement::{
     MonsterMove, MonsterMovePath, MonsterMoveTransport, MovementPacketError, RemoteMovement,
 };
+mod logout;
 mod object_update;
 mod player_control;
 mod server_packet;
@@ -68,6 +69,7 @@ pub use game_object_query::{
     GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate,
 };
 pub use liveness::WorldLivenessPacketError;
+pub use logout::{WorldLogout, WorldLogoutRequest};
 pub use mirror_timer::{WorldMirrorTimerPacketError, WorldMirrorTimerUpdate};
 pub use movement::{ObjectMovementContext, ObjectMovementFall, ObjectMovementTransport};
 pub use movement_message::{

@@ -159,6 +159,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             )]),
         )?;
     }
+    // Stock's predicted-health path polls UnitHealth from OnUpdate.
+    manager.update(1.0 / 60.0)?;
     check_player_bar(&manager, "PlayerFrameHealthBar", 0.5)?;
     check_player_bar(&manager, "PlayerFrameManaBar", 0.25)?;
     println!("Stock player health and mana textures rendered full and partial values");

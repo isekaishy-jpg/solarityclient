@@ -23,6 +23,9 @@ impl std::fmt::Display for WorldSessionStage {
 /// A failure while exchanging encrypted build-12340 world packets.
 #[derive(Debug, Error)]
 pub enum WorldSessionError {
+    /// Borrowed duplex halves were replaced with unrelated transports.
+    #[error("world session transport halves belong to different connections")]
+    MismatchedTransport,
     /// A client packet could not be written to the transport.
     #[error("world session {stage} I/O failed: {message}")]
     Io {

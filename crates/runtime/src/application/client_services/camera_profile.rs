@@ -57,15 +57,17 @@ impl ClientServices {
 
     /// Stock 512890 saves current camera state before serializing character CVars.
     pub(super) fn save_character_camera(&mut self) -> Result<(), ApplicationError> {
-        let (Some(profile), Some(world)) = (&mut self.character_profile, self.gameplay.world())
-        else {
+        let Some(profile) = &mut self.character_profile else {
             return Ok(());
         };
         let view = match self.player_movement.camera_view() {
             Some(view) => view,
-            None => world
-                .local_player_view()
-                .map_err(RuntimeGameplayError::from)?,
+            None => match self.gameplay.world() {
+                Some(world) => world
+                    .local_player_view()
+                    .map_err(RuntimeGameplayError::from)?,
+                None => return Ok(()),
+            },
         };
         profile.persist_cvars(&save_values(view))?;
         Ok(())

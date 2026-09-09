@@ -43,7 +43,9 @@ fn weather_receiver_preserves_packet_order_and_resets_on_world_replacement() -> 
             body.extend_from_slice(&update.grade.to_le_bytes());
             body.push(u8::from(update.instant));
             server.exchange(vec![(0x2f4, body)], 0).await?.await??;
-            sender.try_send(Ok(network.receive_packet().await?))?;
+            sender.try_send(Ok(GameplayNetworkEvent::Packet(
+                network.receive_packet().await?,
+            )))?;
         }
         assert_eq!(gameplay.service()?, 2);
         assert!(gameplay.unhandled_packets().is_empty());

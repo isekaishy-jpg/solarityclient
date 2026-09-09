@@ -1802,14 +1802,7 @@ fn register_client_runtime_globals(
             Ok(())
         })?,
     )?;
-    let quit = process.clone();
-    globals.raw_set(
-        "Quit",
-        lua.create_function(move |_, _: Variadic<Value>| {
-            quit.borrow_mut().push(UiProcessAction::Quit);
-            Ok(())
-        })?,
-    )?;
+    crate::world::logout::register_globals(lua, globals, environment)?;
     globals.raw_set(
         "QuitGame",
         lua.create_function(move |_, _: Variadic<Value>| {

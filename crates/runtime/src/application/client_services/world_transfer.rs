@@ -1,10 +1,11 @@
 //! Repeatable active-world transfer wiring on the presentation thread.
 
 use solarity_asset::MapDifficultyCatalog;
-use solarity_network::{WorldTransfer, WorldTransferTransport};
+use solarity_network::{WorldSessionError, WorldTransfer, WorldTransferTransport};
 
 use super::ClientServices;
 use crate::application::ApplicationError;
+use crate::application::gameplay_coordinator::RuntimeGameplayError;
 use crate::application::world_transfer::{
     RuntimeWorldReplacement, RuntimeWorldTransferEffect, RuntimeWorldTransferError,
 };
@@ -36,7 +37,7 @@ impl ClientServices {
                 .synchronize_consumed_offer(ui.resurrection_offer());
         }
         loop {
-            self.gameplay.service_with_game_objects(
+            let serviced = self.gameplay.service_with_game_objects(
                 &mut |world, identity, notification, receipt_ms| {
                     self.game_objects
                         .observe_notification(
@@ -48,8 +49,25 @@ impl ClientServices {
                         )
                         .map_err(Into::into)
                 },
-            )?;
+            );
+            match serviced {
+                Err(error @ RuntimeGameplayError::Session(WorldSessionError::Io { .. })) => {
+                    tracing::warn!(error = %error, "world connection lost");
+                    return self.connection_lost();
+                }
+                Err(error) => return Err(error.into()),
+                Ok(_) => {}
+            }
             self.publish_player_ui_notifications()?;
+            if let Some(session) = self.gameplay.take_logged_out_session() {
+                return self.complete_logout(session);
+            }
+            if let Some(update) = self.gameplay.take_logout_update() {
+                if let Some(ui) = self.world_ui.as_mut() {
+                    ui.logout_update(update)?;
+                }
+                continue;
+            }
             let Some(transfer) = self.gameplay.take_world_transfer() else {
                 break;
             };

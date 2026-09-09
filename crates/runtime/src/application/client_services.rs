@@ -4,6 +4,7 @@
 
 mod camera_profile;
 pub(super) mod glue_benchmark;
+mod session_lifecycle;
 pub(super) mod world_benchmark;
 mod world_camera;
 mod world_transfer;
@@ -176,6 +177,7 @@ pub(crate) struct ClientServices {
     addon_catalog: AddonCatalog,
     realm_directory_published: bool,
     character_screen_published: bool,
+    quit_after_logout: bool,
     character_directory_published: bool,
     /// Backdrop GPU residency is drained only after the authentication popup
     /// has reached the swapchain, keeping that one-time work covered.
@@ -566,6 +568,7 @@ impl ClientServices {
                 addon_catalog,
                 realm_directory_published: false,
                 character_screen_published: false,
+                quit_after_logout: false,
                 character_directory_published: false,
                 authentication_prewarm_active: false,
                 pending_character_screen_requests: RuntimeCharacterScreenRequests::default(),
@@ -938,6 +941,9 @@ impl ClientServices {
 
     /// Takes one process-level action emitted by the currently owned built-in UI.
     pub(crate) fn take_process_action(&mut self) -> Option<UiProcessAction> {
+        if std::mem::take(&mut self.quit_after_logout) {
+            return Some(UiProcessAction::Quit);
+        }
         loop {
             let (action, world) = self.take_ui_process_action()?;
             match action {
@@ -1727,36 +1733,7 @@ impl ClientServices {
                     }
                 }
                 UiGlueNetworkAction::Disconnect => {
-                    self.persist_active_cvars()?;
-                    self.save_character_camera()?;
-                    self.character_profile = None;
-                    self.player_movement.reset();
-                    self.login.disconnect();
-                    self.world.disconnect();
-                    self.gameplay.disconnect();
-                    self.area_triggers.disconnect();
-                    self.world_transfer.disconnect();
-                    self.environment.disconnect();
-                    self.player.disconnect();
-                    self.game_objects.disconnect();
-                    self.terrain.disconnect();
-                    self.sound.disconnect()?;
-                    if let Some(frame) = self.terrain_frame.take() {
-                        frame.retire(&mut self.renderer)?;
-                    }
-                    self.loading_screen_cache.clear();
-                    self.loading_screen_prewarm_queue.clear();
-                    self.authentication_prewarm_active = false;
-                    self.realm_directory_published = false;
-                    self.character_screen_published = false;
-                    self.character_directory_published = false;
-                    self.pending_character_screen_requests =
-                        RuntimeCharacterScreenRequests::default();
-                    self.pending_realm_id = None;
-                    self.selected_realm = None;
-                    self.glue
-                        .set_realm_directory(self.realm_metadata.empty_directory());
-                    self.glue.set_network_status(UiGlueNetworkStatus::default());
+                    self.disconnect_from_server()?;
                 }
                 UiGlueNetworkAction::RequestRealmList {
                     show_progress_dialog,
@@ -1844,7 +1821,7 @@ impl ClientServices {
                             )?;
                         }
                         Err(RuntimeWorldError::AlreadyActive) => {}
-                        Err(error) => self.publish_world_failure(error),
+                        Err(error) => self.publish_world_failure(error)?,
                     }
                 }
                 UiGlueNetworkAction::DeleteCharacter { guid } => {
@@ -1863,7 +1840,7 @@ impl ClientServices {
                             )?;
                         }
                         Err(RuntimeWorldError::AlreadyActive) => {}
-                        Err(error) => self.publish_world_failure(error),
+                        Err(error) => self.publish_world_failure(error)?,
                     }
                 }
                 UiGlueNetworkAction::RenameCharacter { guid, name } => {
@@ -1884,7 +1861,7 @@ impl ClientServices {
                             continue;
                         }
                         Err(error) => {
-                            self.publish_world_failure(RuntimeWorldError::from(error));
+                            self.publish_world_failure(RuntimeWorldError::from(error))?;
                             continue;
                         }
                     };
@@ -1903,7 +1880,7 @@ impl ClientServices {
                             )?;
                         }
                         Err(RuntimeWorldError::AlreadyActive) => {}
-                        Err(error) => self.publish_world_failure(error),
+                        Err(error) => self.publish_world_failure(error)?,
                     }
                 }
                 UiGlueNetworkAction::CharacterRenameValidationFailed { message_token } => {
@@ -1987,7 +1964,7 @@ impl ClientServices {
                     match self.world.enter_world(&handle, guid) {
                         Ok(()) => self.loading_screen = Some(loading),
                         Err(RuntimeWorldError::AlreadyActive) => {}
-                        Err(error) => self.publish_world_failure(error),
+                        Err(error) => self.publish_world_failure(error)?,
                     }
                 }
             }
@@ -2030,7 +2007,7 @@ impl ClientServices {
                     }
                 }
                 Err(RuntimeWorldError::AlreadyActive | RuntimeWorldError::NoCharacterScreen) => {}
-                Err(error) => self.publish_world_failure(error),
+                Err(error) => self.publish_world_failure(error)?,
             }
         }
 
@@ -2282,7 +2259,7 @@ impl ClientServices {
                 )?;
                 self.glue_ui_dirty = true;
             }
-            Err(error) => self.publish_world_failure(error),
+            Err(error) => self.publish_world_failure(error)?,
         }
         self.service_loading_screen_prewarm()?;
         self.service_world_transfers()?;
@@ -2808,6 +2785,20 @@ impl ClientServices {
         let Some(ui) = self.world_ui.as_ref() else {
             return Ok(());
         };
+        let logout = ui.logout_state();
+        while let Some(action) = logout.pending_action() {
+            let request = match action {
+                solarity_ui::UiLogoutAction::Request => {
+                    solarity_network::WorldLogoutRequest::Request
+                }
+                solarity_ui::UiLogoutAction::Cancel => solarity_network::WorldLogoutRequest::Cancel,
+                solarity_ui::UiLogoutAction::Force => solarity_network::WorldLogoutRequest::Force,
+            };
+            if !self.gameplay.send_logout_action(request)? {
+                break;
+            }
+            logout.accept_action();
+        }
         let state = ui.tutorial_state();
         while let Some(action) = ui.pending_death_action() {
             if !self.gameplay.send_player_death_action(action)? {
@@ -2969,32 +2960,17 @@ impl ClientServices {
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
         self.recording.shutdown(&self.sound);
-        self.persist_active_cvars()?;
-        self.save_character_camera()?;
-        self.character_profile = None;
-        self.player_movement.reset();
-        self.login.disconnect();
-        self.world.disconnect();
-        self.gameplay.disconnect();
-        self.area_triggers.disconnect();
-        self.world_transfer.disconnect();
-        self.environment.disconnect();
-        self.player.disconnect();
-        self.game_objects.disconnect();
-        self.terrain.disconnect();
-        self.sound.disconnect()?;
-        self.terrain_frame = None;
-        self.world_ui = None;
-        self.loading_screen = None;
+        let retired = self.disconnect_from_server();
         let sound_result = self.sound.shutdown().map_err(ApplicationError::from);
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {
             network.shutdown_timeout(self.network_shutdown_timeout);
         }
-        sound_result?;
-        renderer_result?;
-        cpu_result
+        retired
+            .and(sound_result)
+            .and(renderer_result)
+            .and(cpu_result)
     }
 
     fn persist_active_cvars(&mut self) -> Result<(), ApplicationError> {
@@ -3189,7 +3165,16 @@ impl ClientServices {
         Ok(())
     }
 
-    fn publish_world_failure(&mut self, error: RuntimeWorldError) {
+    fn publish_world_failure(&mut self, error: RuntimeWorldError) -> Result<(), ApplicationError> {
+        if matches!(
+            &error,
+            RuntimeWorldError::Disconnected
+                | RuntimeWorldError::Session(solarity_network::WorldSessionError::Io { .. })
+        ) {
+            tracing::warn!(error = %error, "world connection lost");
+            self.world_failures.push_back(error);
+            return self.connection_lost();
+        }
         self.loading_screen = None;
         self.world_ui = None;
         self.character_screen_published = false;
@@ -3201,6 +3186,7 @@ impl ClientServices {
         }
         tracing::warn!(error = %error, "world authentication failed");
         self.world_failures.push_back(error);
+        Ok(())
     }
 
     /// Transfers the chosen realmd identity into world authentication and
@@ -3240,7 +3226,7 @@ impl ClientServices {
                     .persist_cvars(&[("realmName".to_owned(), selected.name.clone())])?;
                 self.selected_realm = Some(selected);
             }
-            Err(error) => self.publish_world_failure(error),
+            Err(error) => self.publish_world_failure(error)?,
         }
         Ok(())
     }

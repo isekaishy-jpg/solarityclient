@@ -608,6 +608,7 @@ struct UiWorldStateInner {
     resurrection_offer: Cell<super::UiPlayerResurrectionOffer>,
     corpse: Cell<super::UiPlayerCorpseState>,
     player_flags: Cell<u32>,
+    logout: super::UiLogoutState,
     death_actions: RefCell<std::collections::VecDeque<super::UiPlayerDeathAction>>,
     falling: Cell<bool>,
     cinematic: Cell<bool>,
@@ -736,6 +737,11 @@ impl UiWorldState {
     #[must_use]
     pub fn is_falling(&self) -> bool {
         self.inner.falling.get()
+    }
+
+    /// Shares native logout admission with the world session composition root.
+    pub fn logout(&self) -> super::UiLogoutState {
+        self.inner.logout.clone()
     }
 
     /// Retains an already admitted native Lua or session death request.
@@ -915,6 +921,7 @@ impl UiWorldState {
 
     /// Clears player facts when the active world ends.
     pub fn leave_world(&self) {
+        self.inner.logout.clear();
         *self.inner.resurrection.borrow_mut() = super::UiPlayerResurrectionState::default();
         self.inner
             .resurrection_offer

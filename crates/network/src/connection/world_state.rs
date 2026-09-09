@@ -1,7 +1,7 @@
 //! Owned world-authentication states independent of packet dependency types.
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use wow_srp::wrath_header::{ClientCrypto, ClientDecrypterHalf, ClientEncrypterHalf};
+use wow_srp::wrath_header::{ClientDecrypterHalf, ClientEncrypterHalf};
 
 use crate::protocol::{
     CharacterLoginRejection, WorldAddonManifest, WorldLocation, WorldServerPacket,
@@ -58,7 +58,8 @@ impl WorldSessionInfo {
 /// An authenticated world transport with live Wrath header cryptography.
 pub struct WorldSession<S> {
     pub(crate) stream: S,
-    pub(crate) crypto: ClientCrypto,
+    pub(crate) encrypter: ClientEncrypterHalf,
+    pub(crate) decrypter: ClientDecrypterHalf,
     pub(crate) account_name: String,
     pub(crate) realm_id: u8,
     pub(crate) info: WorldSessionInfo,
@@ -207,7 +208,8 @@ impl<S> InWorldSession<S> {
         S: AsyncRead + AsyncWrite,
     {
         let (reader, writer) = tokio::io::split(self.session.stream);
-        let (encrypter, decrypter) = self.session.crypto.split();
+        let encrypter = self.session.encrypter;
+        let decrypter = self.session.decrypter;
         (
             WorldPacketReader {
                 stream: reader,
@@ -252,11 +254,7 @@ impl<S> WorldSession<S> {
     /// Consumes the session and returns its transport after discarding crypto state.
     #[must_use]
     pub fn into_stream(self) -> S {
-        let Self {
-            stream,
-            crypto: _crypto,
-            ..
-        } = self;
+        let Self { stream, .. } = self;
         stream
     }
 }

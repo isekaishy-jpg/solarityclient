@@ -1839,9 +1839,9 @@ fn glue_manager_bridges_stock_realm_list_globals() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/// Shared Lua runtime preserves Screenshot and both quit spellings in execution order.
+/// Glue uses QuitGame for process exit; FrameXML Quit belongs to server-owned logout.
 #[test]
-fn glue_manager_bridges_quit_and_quit_game_to_process_owner() -> Result<(), Box<dyn Error>> {
+fn glue_manager_bridges_quit_game_and_screenshot_to_process_owner() -> Result<(), Box<dyn Error>> {
     let fixture = Fixture::new(&[
         FixtureFile {
             path: "Interface\\GlueXML\\GlueXML.toc",
@@ -1850,7 +1850,7 @@ fn glue_manager_bridges_quit_and_quit_game_to_process_owner() -> Result<(), Box<
         FixtureFile {
             path: "Interface\\GlueXML\\Process.xml",
             bytes: br#"<Ui><Frame name="Process"><Scripts><OnLoad>
-  Quit()
+  QuitGame()
   assert(GetCVarDefault("screenshotFormat") == "jpeg")
   assert(GetCVarDefault("screenshotQuality") == "3")
   assert(select('#', Screenshot()) == 0)

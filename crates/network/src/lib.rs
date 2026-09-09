@@ -20,7 +20,7 @@ pub use authentication::{
 pub use connection::{
     AccountExpansion, CharacterLogin, CharacterLoginProgress, InWorldSession, WorldAuthError,
     WorldAuthFailure, WorldAuthProgress, WorldAuthStage, WorldConnection, WorldPacketReader,
-    WorldPacketWriter, WorldQueue, WorldSession, WorldSessionInfo,
+    WorldPacketWriter, WorldQueue, WorldSession, WorldSessionDuplex, WorldSessionInfo,
 };
 pub use protocol::{
     AddonManifestError, AddonPolicyError, BannedAddon, MonsterMove, MonsterMovePath,
@@ -37,10 +37,11 @@ pub use protocol::{
     ObjectMovementFall, ObjectMovementSpeeds, ObjectMovementTransport, ObjectMovementUpdate,
     ObjectPositionTransport, ObjectUpdateError, WORLD_ACTION_BUTTON_COUNT,
     WorldActionButtonPacketError, WorldActionButtonUpdate, WorldActionButtons,
-    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldMovementEncodeError,
-    WorldMovementField, WorldMovementKind, WorldMovementMessage, WorldObjectKind,
-    WorldObjectUpdate, WorldObjectUpdateBatch, WorldServerPacket, WorldTimePacketError,
-    WorldTimeSpeed, WorldTransfer, WorldTransferPacketError, WorldTransferTransport,
+    WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldLogout,
+    WorldLogoutRequest, WorldMovementEncodeError, WorldMovementField, WorldMovementKind,
+    WorldMovementMessage, WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,
+    WorldServerPacket, WorldTimePacketError, WorldTimeSpeed, WorldTransfer,
+    WorldTransferPacketError, WorldTransferTransport,
 };
 pub use protocol::{CreatureQueryPacketError, CreatureQueryResponse, CreatureTemplate};
 pub use protocol::{GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate};

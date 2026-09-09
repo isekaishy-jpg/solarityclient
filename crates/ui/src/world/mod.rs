@@ -3,6 +3,8 @@
 pub(crate) mod combat_log;
 mod game_ui;
 mod language;
+pub(crate) mod logout;
+pub use logout::{UiLogoutAction, UiLogoutState};
 pub(crate) mod mirror_timer;
 pub(crate) mod player_release;
 pub(crate) mod player_resurrection;

@@ -125,7 +125,7 @@ where
         message: ClientOpcodeMessage,
     ) -> Result<(), WorldSessionError> {
         message
-            .tokio_write_encrypted_client(&mut self.stream, self.crypto.encrypter())
+            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
             .await
             .map_err(|error| WorldSessionError::Io {
                 stage: WorldSessionStage::Send,
@@ -149,7 +149,7 @@ where
         ClientOpcodeMessage::from(CMSG_PLAYER_LOGIN {
             guid: Guid::new(character.guid()),
         })
-        .tokio_write_encrypted_client(&mut self.stream, self.crypto.encrypter())
+        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
         .await
         .map_err(|error| WorldSessionError::Io {
             stage: WorldSessionStage::Send,
@@ -169,7 +169,7 @@ where
     /// Returns [`WorldSessionError`] when the encrypted header or packet body
     /// cannot be read and decoded.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
-        receive_packet(&mut self.stream, &mut self.crypto).await
+        receive_packet_from(&mut self.stream, &mut self.decrypter).await
     }
 }
 
@@ -184,7 +184,7 @@ where
     /// Returns [`WorldSessionError`] when the encrypted header or packet body
     /// cannot be read and decoded.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
-        receive_packet(&mut self.session.stream, &mut self.session.crypto).await
+        receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await
     }
 
     /// Advances world entry by one encrypted server packet.
@@ -196,7 +196,8 @@ where
     ///
     /// Returns [`WorldSessionError`] when packet I/O or terminal-result decoding fails.
     pub async fn advance(mut self) -> Result<CharacterLoginProgress<S>, WorldSessionError> {
-        let packet = receive_packet(&mut self.session.stream, &mut self.session.crypto).await?;
+        let packet =
+            receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await?;
         if let Some(location) = packet.world_location().map_err(world_entry_decode_error)? {
             return Ok(CharacterLoginProgress::Entered(InWorldSession {
                 session: self.session,
@@ -231,7 +232,7 @@ where
     ///
     /// Returns [`WorldSessionError`] when the encrypted header or body cannot be read.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
-        receive_packet(&mut self.session.stream, &mut self.session.crypto).await
+        receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await
     }
 
     /// Sends stock's periodic encrypted latency probe.
@@ -248,7 +249,7 @@ where
             sequence_id,
             round_time_in_ms,
         })
-        .tokio_write_encrypted_client(&mut self.session.stream, self.session.crypto.encrypter())
+        .tokio_write_encrypted_client(&mut self.session.stream, &mut self.session.encrypter)
         .await
         .map_err(|error| WorldSessionError::Io {
             stage: WorldSessionStage::Send,
@@ -270,7 +271,7 @@ where
             time_sync: counter,
             client_ticks,
         })
-        .tokio_write_encrypted_client(&mut self.session.stream, self.session.crypto.encrypter())
+        .tokio_write_encrypted_client(&mut self.session.stream, &mut self.session.encrypter)
         .await
         .map_err(|error| WorldSessionError::Io {
             stage: WorldSessionStage::Send,
@@ -297,6 +298,26 @@ impl<W> WorldPacketWriter<W>
 where
     W: AsyncWrite + Unpin + Send,
 {
+    /// Sends 6B1930/6B18C0's empty request without replacing the session cipher.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted header cannot be completed.
+    pub async fn send_logout(
+        &mut self,
+        request: crate::protocol::WorldLogoutRequest,
+    ) -> Result<(), WorldSessionError> {
+        use crate::protocol::WorldLogoutRequest;
+        self.send_local_movement_auxiliary(
+            match request {
+                WorldLogoutRequest::Request => 0x4b,
+                WorldLogoutRequest::Cancel => 0x4e,
+                WorldLogoutRequest::Force => 0x4a,
+            },
+            &[],
+        )
+        .await
+    }
+
     /// Queries the native creature cache by entry and full requesting GUID.
     ///
     /// # Errors
@@ -606,16 +627,6 @@ fn world_entry_decode_error(error: crate::protocol::WorldEntryPacketError) -> Wo
         stage: WorldSessionStage::Receive,
         message: error.to_string(),
     }
-}
-
-async fn receive_packet<S>(
-    stream: &mut S,
-    crypto: &mut wow_srp::wrath_header::ClientCrypto,
-) -> Result<WorldServerPacket, WorldSessionError>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send,
-{
-    receive_packet_from(stream, crypto.decrypter()).await
 }
 
 async fn receive_packet_from<S>(

@@ -134,19 +134,23 @@ where
                 billing_rested,
                 billing_time,
                 expansion,
-            } => Ok(WorldAuthProgress::Authenticated(WorldSession {
-                stream: self.stream,
-                crypto: self.crypto,
-                account_name: self.account_name,
-                realm_id: self.realm_id,
-                addon_manifest: self.addon_manifest,
-                info: WorldSessionInfo {
-                    billing_time,
-                    billing_flags: billing_flags.as_int(),
-                    billing_rested,
-                    expansion: account_expansion(expansion),
-                },
-            })),
+            } => {
+                let (encrypter, decrypter) = self.crypto.split();
+                Ok(WorldAuthProgress::Authenticated(WorldSession {
+                    stream: self.stream,
+                    encrypter,
+                    decrypter,
+                    account_name: self.account_name,
+                    realm_id: self.realm_id,
+                    addon_manifest: self.addon_manifest,
+                    info: WorldSessionInfo {
+                        billing_time,
+                        billing_flags: billing_flags.as_int(),
+                        billing_rested,
+                        expansion: account_expansion(expansion),
+                    },
+                }))
+            }
             SMSG_AUTH_RESPONSE::AuthWaitQueue {
                 queue_position,
                 realm_has_free_character_migration,

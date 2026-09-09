@@ -60,6 +60,9 @@ pub enum RuntimeWorldPoll {
 /// A failure to start or complete selected-realm authentication.
 #[derive(Debug, Error)]
 pub enum RuntimeWorldError {
+    /// The authenticated peer closed while no character operation was reading packets.
+    #[error("the world connection closed")]
+    Disconnected,
     /// A second realm was selected while the first task was active.
     #[error("a world authentication exchange is already active")]
     AlreadyActive,
@@ -484,6 +487,15 @@ impl RuntimeWorldCoordinator {
     /// Returns a transport/authentication failure or a stable task-boundary
     /// error when the worker disappears without its owned result.
     pub fn poll(&mut self) -> Result<RuntimeWorldPoll, RuntimeWorldError> {
+        let connection_closed = self.active.is_none()
+            && match self.authenticated() {
+                Some(session) => session.connection_closed()?,
+                None => false,
+            };
+        if connection_closed {
+            self.disconnect();
+            return Err(RuntimeWorldError::Disconnected);
+        }
         let Some(active) = self.active.as_mut() else {
             return Ok(if self.world_entry.is_some() {
                 RuntimeWorldPoll::EnteredWorld
@@ -562,6 +574,28 @@ impl RuntimeWorldCoordinator {
         self.character_selection = None;
         self.character_screen = None;
         self.world_entry = None;
+    }
+
+    /// Restores the same authenticated connection after 6B2180's logout completion.
+    ///
+    /// # Errors
+    /// Returns an ownership error if a character-screen operation is already active.
+    pub fn resume_character_screen(
+        &mut self,
+        session: WorldSession<TcpStream>,
+    ) -> Result<(), RuntimeWorldError> {
+        if self.active.is_some() {
+            return Err(RuntimeWorldError::AlreadyActive);
+        }
+        if self.authenticated().is_some() || self.world_entry.is_some() {
+            return Err(RuntimeWorldError::AlreadyAuthenticated);
+        }
+        self.character_screen = Some(RuntimeCharacterScreen {
+            session,
+            addon_policy: None,
+            setup_packets: Vec::new(),
+        });
+        Ok(())
     }
 
     /// Returns the retained encrypted world session.
