@@ -13,6 +13,7 @@ mod geometry;
 mod ground_trajectory;
 mod grounded;
 mod interval_bounds;
+mod interval_drive;
 mod movement_shared;
 mod movement_source;
 mod path;
@@ -49,6 +50,7 @@ pub use interval_bounds::{
     MovementIntervalBounds, MovementIntervalBoundsError, MovementIntervalMode,
     MovementIntervalRequest,
 };
+pub use interval_drive::{MovementIntervalDrive, MovementIntervalDriveError, MovementTravelAxes};
 pub use movement_shared::{
     UnitLocomotionAnimation, resolve_unit_locomotion_animation, resolve_unit_movement_speed,
     resolve_unit_movement_speed_extended,
