@@ -56,7 +56,7 @@ use crate::application::game_object_coordinator::{
     GameObjectFrameInput, GameObjectWorldModelState,
 };
 use crate::application::player_coordinator::{
-    ResidentCreatureFrameInput, ResidentCreatureGeosets, ResidentCreatureTexture,
+    MountModelKey, ResidentCreatureFrameInput, ResidentCreatureGeosets, ResidentCreatureTexture,
     ResidentGlueCharacterFrameInput, ResidentPlayerFrameInput, ResidentPlayerTexture,
     UnitPresentationGeneration,
 };
@@ -192,6 +192,8 @@ struct M2GpuPlacement {
     playback: Option<M2PlaybackStorage>,
     unit_animation: Option<Rc<UnitAnimationBehavior>>,
     unit_presentation: Option<UnitPresentationGeneration>,
+    /// An unchanged mount survives character atlas and equipment rebuilds.
+    mount_key: Option<MountModelKey>,
     item_identity: Option<M2PlayerItemIdentity>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
@@ -921,6 +923,7 @@ impl M2Frame {
                 playback: Some(M2PlaybackStorage::Local(playback)),
                 unit_animation: None,
                 unit_presentation: None,
+                mount_key: None,
                 item_identity: None,
                 particles,
                 ribbons,
@@ -3485,6 +3488,7 @@ fn m2_gpu_placement(
         playback,
         unit_animation: None,
         unit_presentation: None,
+        mount_key: None,
         item_identity: None,
         particles,
         ribbons,

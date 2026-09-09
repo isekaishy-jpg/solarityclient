@@ -398,7 +398,11 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     Ok(())
 }
 
-fn fields(world: &mut ActiveWorld, guid: u64, values: &[(u16, u32)]) -> Result<(), Box<dyn Error>> {
+pub(super) fn fields(
+    world: &mut ActiveWorld,
+    guid: u64,
+    values: &[(u16, u32)],
+) -> Result<(), Box<dyn Error>> {
     world.update_fields(guid, values.iter().copied())?;
     solarity_systems::project_object_fields(world, guid, values.iter().copied())?;
     Ok(())
@@ -422,7 +426,7 @@ fn publish(
     Ok(())
 }
 
-fn advance(
+pub(super) fn advance(
     frame: &mut M2Frame,
     renderer: &VulkanRenderer,
     camera: WorldCameraFrame,

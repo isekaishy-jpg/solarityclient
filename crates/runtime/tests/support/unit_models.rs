@@ -40,6 +40,11 @@ pub fn fixture_with_mount_scale() -> Result<ClientFixture, Box<dyn Error>> {
     )
 }
 
+/// Live mount emitters and a saddle exercise independent component lifetime.
+pub fn fixture_with_mount_effects() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(true, false, None, None, Some((0.4, 1.25)), Some((1.6, 3.5)))
+}
+
 fn build_fixture(
     effects: bool,
     equipment: bool,

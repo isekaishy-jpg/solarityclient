@@ -10,11 +10,20 @@ pub(super) struct M2PlayerItemIdentity {
     visible: VisibleEquipmentItem,
 }
 
+/// Inputs committed only after every replacement GPU source has prepared.
+enum RetainedCharacterState {
+    Item(Option<M2PlayerItemIdentity>),
+    Mount {
+        transform: Mat4,
+        ground: Option<UnitGroundPlacement>,
+    },
+}
+
 /// New resources are prepared without disturbing continuing child instances.
 #[derive(Default)]
 pub(super) struct M2PreparedCharacter {
     new: Vec<(usize, M2GpuSource, M2GpuPlacement)>,
-    retained: Vec<(usize, usize, Option<M2PlayerItemIdentity>)>,
+    retained: Vec<(usize, usize, RetainedCharacterState)>,
     ready: Vec<(usize, M2GpuPlacement)>,
 }
 
@@ -24,9 +33,9 @@ impl M2PreparedCharacter {
             .push((self.new.len() + self.retained.len(), source, placement));
     }
 
-    fn retain(&mut self, index: usize, identity: Option<M2PlayerItemIdentity>) {
+    fn retain(&mut self, index: usize, state: RetainedCharacterState) {
         self.retained
-            .push((index, self.new.len() + self.retained.len(), identity));
+            .push((index, self.new.len() + self.retained.len(), state));
     }
 }
 
@@ -36,8 +45,8 @@ impl M2Frame {
         let mut retained = HashMap::new();
         for (character_index, character) in characters.iter_mut().enumerate() {
             self.retain_unit_effects(character.new.iter_mut().map(|(_, _, placement)| placement));
-            for &(index, order, identity) in &character.retained {
-                let previous = retained.insert(index, (character_index, order, identity));
+            for (index, order, state) in character.retained.drain(..) {
+                let previous = retained.insert(index, (character_index, order, state));
                 debug_assert!(previous.is_none(), "one owner per retained component");
             }
         }
@@ -47,9 +56,17 @@ impl M2Frame {
         // Detach the retained placements before retiring the old characters.
         // Their source indices stay live and retain the same GPU handles.
         for (index, mut placement) in std::mem::take(&mut self.placements).into_iter().enumerate() {
-            if let Some((character, order, identity)) = retained.remove(&index) {
-                if let Some(identity) = identity {
-                    placement.item_identity = Some(identity);
+            if let Some((character, order, state)) = retained.remove(&index) {
+                match state {
+                    RetainedCharacterState::Item(Some(identity)) => {
+                        placement.item_identity = Some(identity);
+                    }
+                    RetainedCharacterState::Item(None) => {}
+                    RetainedCharacterState::Mount { transform, ground } => {
+                        placement.transform = transform;
+                        placement.local_transform = transform;
+                        placement.ground_placement = ground;
+                    }
                 }
                 characters[character].ready.push((order, placement));
             } else {
@@ -143,31 +160,6 @@ pub(super) fn prepare_character_gpu(
                 .is_some()
         });
     if let Some(mount) = mount {
-        if mount.model().attachment(0).is_none() {
-            return Err(RuntimeTerrainFrameError::MissingMountM2Attachment {
-                model: mount.model().path().clone(),
-                attachment_id: 0,
-            });
-        }
-        let resolved = mount
-            .textures()
-            .iter()
-            .map(|texture| match texture {
-                ResidentCreatureTexture::Authored(source) => {
-                    M2ResolvedTexture::Authored(source.as_ref())
-                }
-                ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
-                ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
-            })
-            .collect::<Vec<_>>();
-        let source = prepare_gpu_source(
-            renderer,
-            mount.model(),
-            &resolved,
-            None,
-            M2LocalLightCount::Four,
-            M2ModelOrientation::Authored,
-        )?;
         let owner = match body_owner {
             M2GpuPlacementOwner::PlayerBody { guid } => M2GpuPlacementOwner::PlayerMount { guid },
             M2GpuPlacementOwner::RemotePlayerBody { guid } => {
@@ -175,23 +167,69 @@ pub(super) fn prepare_character_gpu(
             }
             _ => unreachable!("character preparation requires a player body owner"),
         };
-        let mut placement = unit_gpu_placement(
-            scene_time_ms,
-            world_transform,
-            owner,
-            mount.model(),
-            mount.animation().animation_id(),
-            mount.particle_colors().cloned(),
-            random,
-        )?;
-        placement.ground_placement = input.unit_animation().map(|animation| UnitGroundPlacement {
+        let ground = input.unit_animation().map(|animation| UnitGroundPlacement {
             position: input.world_transform().position(),
             scale: mount.object_scale(),
             owner: Rc::clone(animation),
         });
-        // Parent-first insertion lets the current mount bone pose determine
-        // the rider transform before the body and its equipment are visited.
-        prepared.push(source, placement);
+        // 717910 leaves an unchanged mount instance intact. A character atlas
+        // or equipment change does not replace that independent CM2Model.
+        let retained = same_unit
+            .then(|| {
+                frame.placements.iter().position(|placement| {
+                    placement.owner == owner && placement.mount_key.as_ref() == Some(mount.key())
+                })
+            })
+            .flatten();
+        if let Some(index) = retained {
+            prepared.retain(
+                index,
+                RetainedCharacterState::Mount {
+                    transform: world_transform,
+                    ground,
+                },
+            );
+        } else {
+            if mount.model().attachment(0).is_none() {
+                return Err(RuntimeTerrainFrameError::MissingMountM2Attachment {
+                    model: mount.model().path().clone(),
+                    attachment_id: 0,
+                });
+            }
+            let resolved = mount
+                .textures()
+                .iter()
+                .map(|texture| match texture {
+                    ResidentCreatureTexture::Authored(source) => {
+                        M2ResolvedTexture::Authored(source.as_ref())
+                    }
+                    ResidentCreatureTexture::StockWhite => M2ResolvedTexture::StockWhite,
+                    ResidentCreatureTexture::StockFailure => M2ResolvedTexture::StockFailure,
+                })
+                .collect::<Vec<_>>();
+            let source = prepare_gpu_source(
+                renderer,
+                mount.model(),
+                &resolved,
+                None,
+                M2LocalLightCount::Four,
+                M2ModelOrientation::Authored,
+            )?;
+            let mut placement = unit_gpu_placement(
+                scene_time_ms,
+                world_transform,
+                owner,
+                mount.model(),
+                mount.animation().animation_id(),
+                mount.particle_colors().cloned(),
+                random,
+            )?;
+            placement.ground_placement = ground;
+            placement.mount_key = Some(mount.key().clone());
+            // Parent-first insertion lets the current mount bone pose determine
+            // the rider transform before the body and its equipment are visited.
+            prepared.push(source, placement);
+        }
     }
     let resolved = input
         .textures()
@@ -289,7 +327,7 @@ pub(super) fn prepare_character_gpu(
                 .is_some_and(|(previous, current)| {
                     previous.visible.enchantment_word() == current.visible.enchantment_word()
                 });
-            prepared.retain(index, identity);
+            prepared.retain(index, RetainedCharacterState::Item(identity));
             if unchanged_visuals {
                 for (index, placement) in frame.placements.iter().enumerate() {
                     if let M2GpuPlacementOwner::PlayerItemVisual {
@@ -298,7 +336,7 @@ pub(super) fn prepare_character_gpu(
                         && guid == input.guid()
                         && item_point == attachment.point()
                     {
-                        prepared.retain(index, None);
+                        prepared.retain(index, RetainedCharacterState::Item(None));
                     }
                 }
                 continue;

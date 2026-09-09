@@ -2,6 +2,257 @@
 
 use super::*;
 
+/// 717910 gives the mount a separate model lifetime from rider materials.
+#[test]
+fn unchanged_mounts_retain_animation_and_effects_across_rider_rebuilds()
+-> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_mount_effects()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    for guid in [7, 20] {
+        add_unit(&mut world, guid, ObjectKind::Player, 0)?;
+        equipment_residency::fields(&mut world, guid, &[(69, 102)])?;
+    }
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8., 0., 4.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-8., 8.],
+        [-8., 8.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    let publish =
+        |presentation: &mut crate::application::player_coordinator::RuntimePlayerPresentation,
+         world: &ActiveWorld,
+         frame: &mut M2Frame,
+         renderer: &mut VulkanRenderer,
+         random: &mut CrtRand|
+         -> Result<(), Box<dyn Error>> {
+            presentation.synchronize(Some(world))?;
+            presentation.synchronize_remote_players(Some(world))?;
+            frame.replace_player(renderer, presentation.resident_frame_input(), random)?;
+            frame.replace_remote_players(
+                renderer,
+                &presentation.resident_remote_player_frame_inputs(),
+                random,
+            )?;
+            Ok(())
+        };
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    let mounts = [
+        M2GpuPlacementOwner::PlayerMount { guid: 7 },
+        M2GpuPlacementOwner::RemotePlayerMount { guid: 20 },
+    ];
+    let bodies = [
+        M2GpuPlacementOwner::PlayerBody { guid: 7 },
+        M2GpuPlacementOwner::RemotePlayerBody { guid: 20 },
+    ];
+    let created = mounts
+        .iter()
+        .map(|owner| effects(&frame, *owner).map(|state| state.last_update_ms))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .max()
+        .ok_or("mount creation")?;
+    for time in [created + 100, created + 300] {
+        equipment_residency::advance(&mut frame, &renderer, camera, time as f32, &mut random)?;
+    }
+    let before = mounts
+        .map(|owner| mount_snapshot(&frame, owner))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let body_sources = bodies
+        .map(|owner| unit_source(&frame, owner))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    for snapshot in &before {
+        assert!(!snapshot.effects.particles.is_empty());
+        assert!(snapshot.effects.ribbons.len() > 1);
+        assert!(snapshot.event_time > 0.);
+    }
+    // An atlas rebuild and simultaneous movement must preserve instance state
+    // while publishing the fresh parent transform before rider attachment posing.
+    presentation.set_component_texture_level(
+        solarity_rendering::CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
+    );
+    let position = Vec3::new(1., 2., 0.5);
+    for guid in [7, 20] {
+        world.update_transform(guid, WorldTransform::new(position, 0.8))?;
+    }
+    let expected_random = random;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(
+        random, expected_random,
+        "unchanged mounts consume no new variation rolls"
+    );
+    for (index, owner) in mounts.into_iter().enumerate() {
+        assert_ne!(
+            unit_source(&frame, bodies[index])?,
+            body_sources[index],
+            "rider resources rebuilt"
+        );
+        assert_eq!(mount_snapshot(&frame, owner)?, before[index], "{owner:?}");
+        let mount = frame
+            .placements
+            .iter()
+            .find(|p| p.owner == owner)
+            .ok_or("mount")?;
+        assert_eq!(mount.transform.w_axis.truncate(), position);
+        assert_eq!(
+            mount
+                .ground_placement
+                .as_ref()
+                .ok_or("mount ground")?
+                .position,
+            position
+        );
+        let source = frame.sources[mount.source_index]
+            .as_ref()
+            .ok_or("retained mount source")?;
+        assert_eq!(
+            source.model.path(),
+            &AssetPath::new("Creature/Alternate.m2")?
+        );
+    }
+    equipment_residency::advance(
+        &mut frame,
+        &renderer,
+        camera,
+        (created + 350) as f32,
+        &mut random,
+    )?;
+    for (index, owner) in mounts.into_iter().enumerate() {
+        let after = mount_snapshot(&frame, owner)?;
+        assert_eq!(
+            after.effects.particle_allocation,
+            before[index].effects.particle_allocation
+        );
+        assert!(
+            after.effects.particles[0].age_seconds()
+                > before[index].effects.particles[0].age_seconds()
+        );
+        assert!(after.event_time > before[index].event_time);
+        let mount_index = frame
+            .placements
+            .iter()
+            .position(|p| p.owner == owner)
+            .ok_or("mount order")?;
+        let body_index = frame
+            .placements
+            .iter()
+            .position(|p| p.owner == bodies[index])
+            .ok_or("rider order")?;
+        assert!(
+            mount_index < body_index,
+            "retained parent is published before its rider"
+        );
+    }
+    // Reused GUIDs, changed displays, and remounts each begin a fresh instance.
+    world.remove_object(20)?;
+    add_unit(&mut world, 20, ObjectKind::Player, 0)?;
+    equipment_residency::fields(&mut world, 20, &[(69, 102)])?;
+    equipment_residency::fields(&mut world, 7, &[(69, 100)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    for (index, owner) in mounts.into_iter().enumerate() {
+        let new = mount_snapshot(&frame, owner)?;
+        assert_ne!(new.source, before[index].source);
+        assert!(new.effects.particles.is_empty());
+        assert!(new.effects.ribbons.is_empty());
+        assert_eq!(new.event_time, 0.);
+    }
+    let prior_source = unit_source(&frame, mounts[0])?;
+    equipment_residency::fields(&mut world, 7, &[(69, 0)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(!frame.placements.iter().any(|p| p.owner == mounts[0]));
+    equipment_residency::fields(&mut world, 7, &[(69, 100)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_ne!(unit_source(&frame, mounts[0])?, prior_source);
+    assert!(effects(&frame, mounts[0])?.particles.is_empty());
+    Ok(())
+}
+
+/// Observable primary/event clocks and emitter history of one live mount.
+#[derive(Debug, PartialEq)]
+struct MountSnapshot {
+    source: usize,
+    sequence: usize,
+    cycle: u32,
+    cycle_start: f32,
+    event_time: f32,
+    global_event_time: f32,
+    effects: UnitEffectsSnapshot,
+}
+
+fn mount_snapshot(
+    frame: &M2Frame,
+    owner: M2GpuPlacementOwner,
+) -> Result<MountSnapshot, Box<dyn Error>> {
+    let mount = frame
+        .placements
+        .iter()
+        .find(|p| p.owner == owner)
+        .ok_or("mount")?;
+    let playback = mount.playback.as_ref().ok_or("mount playback")?.borrow();
+    Ok(MountSnapshot {
+        source: mount.source_index,
+        sequence: playback.sequence,
+        cycle: playback.cycle_count,
+        cycle_start: playback.cycle_started_ms,
+        event_time: playback.previous_event_elapsed_ms,
+        global_event_time: playback.previous_global_event_elapsed_ms,
+        effects: effects(frame, owner)?,
+    })
+}
+
 /// Native 7197D0/82DD80 selects the mount's flags at unit scale, then the
 /// attached rider inherits the tilted saddle basis and translation.
 #[test]

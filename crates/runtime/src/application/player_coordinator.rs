@@ -2698,7 +2698,7 @@ struct DesiredRemotePlayerModel {
 
 /// Stable DBC/model identity which invalidates one resident mount generation.
 #[derive(Clone, PartialEq)]
-struct MountModelKey {
+pub(super) struct MountModelKey {
     display_id: u32,
     path: AssetPath,
     object_scale: f32,
@@ -2710,6 +2710,7 @@ struct MountModelKey {
 
 /// Archive-selected mount model and its independently animated presentation.
 struct ResidentMountModel {
+    key: MountModelKey,
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
     object_scale: f32,
@@ -2950,6 +2951,7 @@ impl<'a> ResidentPlayerFrameInput<'a> {
 /// Borrowed mount resources composed beneath one resident rider.
 #[derive(Clone, Copy)]
 pub(super) struct ResidentMountFrameInput<'a> {
+    key: &'a MountModelKey,
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
     object_scale: f32,
@@ -2961,6 +2963,7 @@ pub(super) struct ResidentMountFrameInput<'a> {
 impl<'a> ResidentMountFrameInput<'a> {
     fn from_resident(resident: &'a ResidentMountModel) -> Self {
         Self {
+            key: &resident.key,
             model: &resident.model,
             textures: &resident.textures,
             object_scale: resident.object_scale,
@@ -2972,6 +2975,10 @@ impl<'a> ResidentMountFrameInput<'a> {
 
     pub(super) const fn model(self) -> &'a Arc<DecodedM2Model> {
         self.model
+    }
+
+    pub(super) const fn key(self) -> &'a MountModelKey {
+        self.key
     }
 
     pub(super) const fn textures(self) -> &'a [ResidentCreatureTexture] {
@@ -3493,6 +3500,7 @@ fn load_mount_model(
     let animation =
         resolve_resident_animation(animations, &model, requested_animation, animation_tier)?;
     Ok(Some(ResidentMountModel {
+        key: key.clone(),
         model,
         textures,
         object_scale: key.object_scale,
