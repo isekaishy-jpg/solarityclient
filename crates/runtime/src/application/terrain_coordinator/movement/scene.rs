@@ -4,7 +4,10 @@
 #[path = "../../../../tests/application/unit_scene.rs"]
 mod tests;
 
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 use glam::Vec3;
 use solarity_rendering::WorldCameraFrame;
@@ -24,6 +27,10 @@ use super::{
 pub(super) struct UnitSceneAdmission {
     query: WorldModelCameraSceneQuery,
     groups: HashSet<(RuntimeWorldModelMovementOwner, usize)>,
+    /// Every 799310 group callback participates in later moving-root overlap.
+    visible_bounds: HashMap<(RuntimeWorldModelMovementOwner, usize), MovementCollisionBounds>,
+    /// 799F80's direct callbacks also accept exterior-registered units.
+    overlap_groups: HashSet<(RuntimeWorldModelMovementOwner, usize)>,
     outdoor: Option<WorldSceneDepthFrame>,
 }
 
@@ -35,6 +42,8 @@ impl UnitSceneAdmission {
         camera: WorldCameraFrame,
     ) -> Result<(), RuntimeMovementRegistrationError> {
         self.groups.clear();
+        self.visible_bounds.clear();
+        self.overlap_groups.clear();
         self.outdoor = None;
         let source = camera.camera();
         let eye = source.position();
@@ -85,13 +94,12 @@ impl UnitSceneAdmission {
             self.outdoor = Some(depth);
             for index in 0..active.movement.roots.len() {
                 let reference = active.movement.roots[index];
-                // 792AD0 sends roots marked 0x400 to an overlap list. Its
-                // separate 792BD0/799F80 passes are not connected here yet.
+                // 792AD0 sends roots marked 0x400 to a separate ordered list.
                 if !matches!(reference, MovementRootReference::Static(_)) {
                     continue;
                 }
                 let root = active.registration_root_mut(reference)?;
-                self.record_outdoor_root(
+                let _ = self.record_outdoor_root(
                     root,
                     scene,
                     reference.owner(),
@@ -99,6 +107,35 @@ impl UnitSceneAdmission {
                     depth,
                     window,
                 )?;
+            }
+            if primary_owner.is_none() {
+                // 792BD0 converts the moving list only for outdoor cameras.
+                // Its first out-of-range entry stops the entire remaining list.
+                for index in 0..active.movement.roots.len() {
+                    let reference = active.movement.roots[index];
+                    if !matches!(reference, MovementRootReference::GameObject(_)) {
+                        continue;
+                    }
+                    let root = active.registration_root_mut(reference)?;
+                    if self
+                        .record_outdoor_root(root, scene, reference.owner(), None, depth, window)?
+                        .is_break()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(primary) = primary_owner {
+            // 799F80 follows both camera-root and ordinary outdoor passes,
+            // even when the primary camera has no true-exterior portal.
+            for index in 0..active.movement.roots.len() {
+                let reference = active.movement.roots[index];
+                if !matches!(reference, MovementRootReference::GameObject(_)) {
+                    continue;
+                }
+                let root = active.registration_root_mut(reference)?;
+                self.record_overlap_root(root, scene, reference.owner(), primary)?;
             }
         }
         Ok(())
@@ -119,13 +156,7 @@ impl UnitSceneAdmission {
         let count = 1 + usize::from(registration.secondary_group.is_some());
         self.query
             .query_camera_root(root, camera, &initial[..count])?;
-        for &group in self.query.groups() {
-            if registration.owner == primary
-                || root.model().group_info()[group].flags() & 0x10008 == 0
-            {
-                self.groups.insert((registration.owner, group));
-            }
-        }
+        self.record_group_callbacks(root, registration.owner, Some(primary))?;
         Ok(self.query.exterior_window())
     }
 
@@ -140,22 +171,92 @@ impl UnitSceneAdmission {
         primary: Option<RuntimeWorldModelMovementOwner>,
         depth: WorldSceneDepthFrame,
         screen_window: [f32; 4],
+    ) -> Result<ControlFlow<()>, RuntimeMovementRegistrationError> {
+        let envelope = camera.enclosing_bounds();
+        for (group, info) in root.model().group_info().iter().enumerate() {
+            if info.flags() & 0x10008 == 0 {
+                continue;
+            }
+            let bounds = root.scene_group_bounds(group)?;
+            if !envelope.intersects(MovementCollisionBounds::new(bounds[0], bounds[1])?) {
+                continue;
+            }
+            if depth.depth_bin(bounds)?.is_none() {
+                if matches!(owner, RuntimeWorldModelMovementOwner::GameObject { .. }) {
+                    return Ok(ControlFlow::Break(()));
+                }
+                continue;
+            }
+            self.query
+                .query_outdoor_group(root, camera, group, screen_window)?;
+            self.record_group_callbacks(root, owner, primary)?;
+        }
+        Ok(ControlFlow::Continue(()))
+    }
+
+    /// 799F80 visits moving exterior entries in original root/group list order.
+    /// Earlier portal callbacks can establish overlap for a later moving root.
+    fn record_overlap_root(
+        &mut self,
+        root: &PlacedWorldModelCollision,
+        camera: WorldSceneCameraFrame,
+        owner: RuntimeWorldModelMovementOwner,
+        primary: RuntimeWorldModelMovementOwner,
     ) -> Result<(), RuntimeMovementRegistrationError> {
         for (group, info) in root.model().group_info().iter().enumerate() {
-            if info.flags() & 0x10008 == 0
-                || depth.depth_bin(root.scene_group_bounds(group)?)?.is_none()
+            if info.flags() & 0x10008 == 0 {
+                continue;
+            }
+            let [minimum, maximum] = root.scene_group_bounds(group)?;
+            let bounds = MovementCollisionBounds::new(minimum, maximum)?;
+            if !camera.enclosing_bounds().intersects(bounds)
+                || !self.overlap_bounds_visible(camera, bounds)?
             {
                 continue;
             }
-            for &visited in self
-                .query
-                .query_outdoor_group(root, camera, group, screen_window)?
-            {
-                if Some(owner) == primary
-                    || root.model().group_info()[visited].flags() & 0x10008 == 0
-                {
-                    self.groups.insert((owner, visited));
-                }
+            self.query
+                .query_outdoor_group(root, camera, group, [0., 0., 1., 1.])?;
+            self.record_group_callbacks(root, owner, Some(primary))?;
+            self.overlap_groups.insert((owner, group));
+        }
+        Ok(())
+    }
+
+    /// The indoor overlap pass uses the full viewport and bypasses overlap only
+    /// after a true-exterior portal has enabled outdoor traversal (ADF59C >= 0).
+    fn overlap_bounds_visible(
+        &self,
+        camera: WorldSceneCameraFrame,
+        bounds: MovementCollisionBounds,
+    ) -> Result<bool, RuntimeMovementRegistrationError> {
+        if self.outdoor.is_none()
+            && !self
+                .visible_bounds
+                .values()
+                .any(|visible| visible.intersects(bounds))
+        {
+            return Ok(false);
+        }
+        Ok(camera
+            .frustum_for_window([0., 0., 1., 1.])?
+            .intersects_bounds(bounds))
+    }
+
+    /// Retains all visible bounds while applying 79A260's narrower unit gate.
+    fn record_group_callbacks(
+        &mut self,
+        root: &PlacedWorldModelCollision,
+        owner: RuntimeWorldModelMovementOwner,
+        primary: Option<RuntimeWorldModelMovementOwner>,
+    ) -> Result<(), RuntimeMovementRegistrationError> {
+        for &group in self.query.groups() {
+            let [minimum, maximum] = root.scene_group_bounds(group)?;
+            self.visible_bounds.insert(
+                (owner, group),
+                MovementCollisionBounds::new(minimum, maximum)?,
+            );
+            if Some(owner) == primary || root.model().group_info()[group].flags() & 0x10008 == 0 {
+                self.groups.insert((owner, group));
             }
         }
         Ok(())
@@ -168,6 +269,12 @@ impl UnitSceneAdmission {
         selection: WorldModelRegistrationSelection<RuntimeWorldModelMovementOwner>,
         bounds: MovementCollisionBounds,
     ) -> Result<bool, RuntimeMovementRegistrationError> {
+        if selection.primary().into_iter().flatten().any(|candidate| {
+            self.overlap_groups
+                .contains(&(candidate.owner(), candidate.hit().group_index()))
+        }) {
+            return Ok(true);
+        }
         if selection
             .selected()
             .is_some_and(|candidate| candidate.hit().is_interior())

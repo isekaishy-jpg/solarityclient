@@ -91,6 +91,21 @@ impl WorldSceneCameraFrame {
         self.frustum.corners()
     }
 
+    /// Returns 795400/984930's full-camera box used before scene list insertion.
+    /// Strict comparisons preserve the first corner's signed-zero ties.
+    #[must_use]
+    pub fn enclosing_bounds(&self) -> MovementCollisionBounds {
+        let mut minimum = self.corners()[0];
+        let mut maximum = minimum;
+        for &corner in &self.corners()[1..] {
+            minimum = Vec3::select(corner.cmplt(minimum), corner, minimum);
+            maximum = Vec3::select(maximum.cmplt(corner), corner, maximum);
+        }
+        // Construction admitted eight finite corners, so their component-wise
+        // extrema always form a finite ordered box without another error path.
+        MovementCollisionBounds { minimum, maximum }
+    }
+
     /// Tests a validated world AABB against 9839E0's full six-plane frustum.
     #[must_use]
     pub fn intersects_bounds(self, bounds: MovementCollisionBounds) -> bool {

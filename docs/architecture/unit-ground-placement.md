@@ -173,10 +173,28 @@ floor registration through its entrance and rejects a reversed camera or a
 screen window that excludes that entrance. Unit bounds remain independent of
 the interior callback, which precedes the unit's own draw visibility check.
 
-Replicated moving roots set root flag `0x400` (`0x007B64F0`) and use the separate
-overlap list. Its outdoor-camera conversion (`0x00792BD0`) and indoor-camera
-pass (`0x00799F80`) remain unconnected. Mounted model registrations and special
-hidden-model flags also remain separate gaps.
+Replicated moving roots set root flag `0x400` (`0x007B64F0`) and use a separate
+ordered overlap list. Both ordinary and moving exterior entries first pass
+`0x007B6110`'s inclusive overlap with the full-camera envelope at `0x00CD8F44`.
+`WorldSceneCameraFrame::enclosing_bounds` reproduces `0x00984930` over all eight
+corners; all 648 native envelope captures match every float store.
+
+For outdoor cameras, the runtime now applies `0x00792BD0`'s depth conversion to
+the moving entries in root/group order. All 489 native depth conversions match.
+An entry beyond the final bin stops conversion of the entire remaining list;
+an entry outside the camera envelope never reaches that decision. For indoor
+cameras, `0x00799F80` instead requires overlap with an already-visible group or
+an accepted true-exterior portal, then tests the full-viewport frustum. All 960
+native overlap-gate captures agree. Earlier moving-root portal callbacks add
+visible bounds that can admit later roots, so this pass preserves native order.
+Its direct `0x00793270` callback enables exterior-registered units too, while
+the final ordinary group pass still requires the unit's interior classification.
+Decoded WMO regressions cover the whole-list early return, envelope rejection,
+exterior-unit callbacks and admission through a preceding moving root.
+
+Mounted model registrations and special hidden-model flags remain separate
+gaps. Rendered NPC placement still needs an in-world check; the Windows
+inspection helper was unavailable during the automated validation session.
 
 ### Movement and presentation
 
@@ -190,8 +208,8 @@ The shared movement and presentation integration follows these recovered rules:
   with flags `5` from `0x00793060` and `0x00793270`. The remaining callback pass
   at `0x00793450` sets bit `4` when registered-model classification byte `+0x25`
   is less than `2`. This is a scene traversal classification, not the network's
-  visible-object set. The runtime wires exterior depth lists and indoor units
-  linked to eligible groups visited through either camera root.
+  visible-object set. The runtime wires exterior depth lists and group visits
+  through camera roots, outdoor entrances and moving-root overlap passes.
 - After native movement, `0x006EAC40` calls `0x006E9470` with the sampled spline
   point. That correction replaces the retained position only when forced or
   squared displacement is at least `9.0` (`0x009E2FF8`). Thus ordinary collision

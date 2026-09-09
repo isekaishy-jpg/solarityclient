@@ -57,6 +57,31 @@ fn outdoor_world_model_depth_lists_match_unhooked_original() -> Result<(), Box<d
     Ok(())
 }
 
+/// 792BD0 retains an out-of-range transformed entry in the original overlap list.
+#[test]
+fn transformed_world_model_depth_conversion_matches_unhooked_original() -> Result<(), Box<dyn Error>>
+{
+    let mut count = 0;
+    for line in include_str!("fixtures/world-model-scene-overlap-depth-native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+    {
+        let mut fields = line.split_whitespace();
+        let frame = WorldSceneDepthFrame::new(vector(&mut fields)?, vector(&mut fields)?)?;
+        let bounds = [vector(&mut fields)?, vector(&mut fields)?];
+        let expected: i32 = fields.next().ok_or("missing destination")?.parse()?;
+        assert_eq!(
+            frame.depth_bin(bounds)?.map_or(-2, i32::from),
+            expected,
+            "native moving WMO case {count}"
+        );
+        assert!(fields.next().is_none());
+        count += 1;
+    }
+    assert_eq!(count, 489);
+    Ok(())
+}
+
 /// Decodes a native XYZ float store without decimal conversion.
 fn vector(fields: &mut SplitWhitespace<'_>) -> Result<Vec3, Box<dyn Error>> {
     let mut result = [0.; 3];

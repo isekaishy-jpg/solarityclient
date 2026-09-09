@@ -1,5 +1,8 @@
 //! Decoded WMO registration and camera traversal drive indoor unit collision.
 
+#[path = "unit_scene_overlap.rs"]
+mod overlap;
+
 use std::{error::Error, sync::Arc};
 
 use glam::{Mat4, Vec3};
@@ -168,7 +171,7 @@ fn outdoor_building_portal_admits_registered_indoor_unit() -> Result<(), Box<dyn
             [0.1, 1000.],
         )?;
         let mut scene = UnitSceneAdmission::default();
-        scene.record_outdoor_root(
+        let _ = scene.record_outdoor_root(
             &root,
             camera,
             selected,
@@ -192,7 +195,7 @@ fn outdoor_building_portal_admits_registered_indoor_unit() -> Result<(), Box<dyn
 fn outdoor_scene_cannot_enter_a_root_without_exterior_groups() -> Result<(), Box<dyn Error>> {
     let root = floor_root(0, 0)?;
     let mut scene = UnitSceneAdmission::default();
-    scene.record_outdoor_root(
+    let _ = scene.record_outdoor_root(
         &root,
         camera()?,
         owner(17),
