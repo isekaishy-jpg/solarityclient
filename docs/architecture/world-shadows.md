@@ -34,6 +34,11 @@ repository's native instruction oracles.
   a point-filtered, clamped depth texture at explicit LOD zero.
 - `Terrain2`/`Terrain3` use five samples and combine dynamic visibility with
   authored terrain visibility using the minimum before the 0.7/0.3 lighting mix.
+- `DetailDoodad.bls` vertex/pixel variant one uses the same five sample offsets,
+  then takes the minimum with authored detail visibility and blends back toward
+  it by `(1.2 - abs(dot(normal, light)))^4`, saturated after the second square.
+  The interpolated terrain normal is not normalized again. The primary fade
+  plane is zero; distance alpha and fog retain their ordinary detail behavior.
 - `Diffuse_T1` and `MapObjDiffuse_T1` supply camera-space position and normals
   to the model receiver. `Combiners_Opaque` and the seven MapObj pixel families
   use nine samples nearby, five beyond eye depth ten, border fade, and the
@@ -55,6 +60,12 @@ ribbons do not acquire additional updates. Prepared receiver pipelines are
 created during resource publication, avoiding first-use shader compilation in
 the frame submission path. The runtime reads `extShadowQuality` from the active
 CVar owner; zero disables this map and enabled values select its original size.
+
+Ground detail uses paired baked/primary pipelines with the slot's shared receiver
+descriptor. Chunk origins are made relative to both the camera and the shadow
+origin on the CPU. The vertex shader adds the small local coordinates afterward,
+preserving receiver precision at large world coordinates. Both pipeline variants
+are prepared before publication; the disabled variant retains the baked shader.
 
 The offline world replay records `primary_shadow_draws` alongside terrain-detail
 counts and frame/streaming timings. Captures remain separate from performance
@@ -78,6 +89,28 @@ and unified material family and check unchanged empty-map color and opacity.
 Runtime coverage checks offscreen unit admission, palette sharing, and unchanged
 invisible-effect clocks.
 
+The ground-detail oracle captures 540 unchanged shader cases covering depth
+equality, the five sample offsets, map borders, authored shadows, and normal
+relief. Sixty-four production Vulkan captures compare occupied, empty, disabled, and
+out-of-range maps at both primary map sizes, two light angles, and large world
+origins. The existing 120 baked detail/fog/alpha captures remain part of the
+same regression.
+
+A separate 2,400-frame-per-phase comparison at `(1100, -4290, 20)`, 1280 x 720
+on the GTX 1070, measured these whole-frame means before and after adding the
+detail receiver. Profiling and capture were disabled, and no compiler ran.
+
+| Ground-level phase | Baked detail only | Primary detail receiver |
+| --- | ---: | ---: |
+| Stationary | 6.360 ms | 6.456 ms |
+| Orbit | 5.667 ms | 5.448 ms |
+| Pointer | 6.729 ms | 6.771 ms |
+
+Both runs submitted identical detail counts (28 stationary, 25–36 during the
+orbit) and 11 shadow packets per frame. These mixed single-pair changes do not
+isolate the receiver's exact cost or establish a general performance improvement.
+The new pointer-phase maximum was 41.902 ms; isolated stalls remain.
+
 An installed-data capture at `(1100, -4290, 20)` outside Orgrimmar shows the
 player silhouette on terrain throughout a camera orbit. The ordinary fixture
 submits 11 body material packets per frame. A separate GTX 1070 replay at
@@ -99,8 +132,8 @@ outbound and 15.886 ms returning in the enabled run.
 
 This implementation supplies the primary unit map. Higher quality settings'
 additional environment maps, cached static casters, cascade transitions, and
-hardware comparison sampling are unfinished. Dynamic grass/detail and liquid
-receiver variants and the quality-zero projected entity-shadow path remain
+hardware comparison sampling are unfinished. Liquid receiver variants and the
+quality-zero projected entity-shadow path remain
 separate work. Native exceptional registration flags outside the ordinary typed
 unit owners also need dedicated evidence and runtime coverage. These limits
 prevent describing the entire stock shadow system as complete.

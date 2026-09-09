@@ -63,10 +63,11 @@ through offscreen Direct3D 9. A Vulkan test compares 120 lighting, tint, shadow,
 fog, alpha-cutoff, and distance-fade cases through archive-backed ADT/M2/SKIN/
 BLP inputs and the production world pass.
 
-The current world renderer still lacks the original terrain horizon and
-sphere-occluder rejection. This detail path implements the ordinary unshadowed
-BLS permutation; dynamic shadow-map permutations remain part of the world
-shadow work. Whole-ADT publication and first-use detail generation are still
+The detail path also receives the [primary unit shadow map](world-shadows.md)
+through native variant one's five samples, authored-shadow minimum, and normal
+relief. The shadow-cascade variants remain unfinished. The current world renderer
+still lacks the original terrain horizon and sphere-occluder rejection.
+Whole-ADT publication and first-use detail generation are still
 measurable sources of streaming work. The offline replay exposes submitted
 detail texture-bucket counts as `ground_detail_draws` beside its frame timings.
 

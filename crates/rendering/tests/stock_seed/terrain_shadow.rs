@@ -304,6 +304,9 @@ fn compare_bone_class(
                     renderer, scene, base, shadow, &casters, &bones,
                 )?;
             }
+            if eye_depth == 20. {
+                super::ground_detail_shadow::compare_receivers(renderer, base, &casters, &bones)?;
+            }
             let mut colors = Vec::new();
             for casting in [None, Some(0), Some(1)] {
                 let scene = casting.map_or(scene, |count| {

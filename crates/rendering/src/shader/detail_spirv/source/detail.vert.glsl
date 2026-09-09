@@ -1,5 +1,19 @@
 #version 460
 
+#ifndef DETAIL_PRIMARY_SHADOW
+#define DETAIL_PRIMARY_SHADOW 0
+#endif
+
+#if DETAIL_PRIMARY_SHADOW
+layout(std140, set = 2, binding = 0) uniform DetailShadow {
+    vec4 origin_and_texel;
+    vec4 receiver_rows[3];
+    vec4 light_direction;
+} shadow;
+layout(location = 4) out vec3 shadow_coordinates;
+layout(location = 5) out vec3 shadow_normal;
+#endif
+
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec4 in_color;
@@ -18,6 +32,7 @@ layout(set = 0, binding = 0) uniform TerrainScene {
 
 layout(push_constant) uniform DetailDraw {
     vec4 origin_and_distance;
+    vec4 shadow_origin;
 } draw;
 
 layout(location = 0) out vec4 color;
@@ -43,4 +58,14 @@ void main() {
     color.rgb = min(scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse, vec3(1.0)) * in_color.rgb;
     color.a = in_color.a;
     coordinates = in_coordinates;
+#if DETAIL_PRIMARY_SHADOW
+    // DetailDoodad.bls variant one applies the receiver rows to view-space
+    // vertices. Equivalent world-space rows retain chunk-local precision here.
+    vec4 relative_position = vec4(in_position + draw.shadow_origin.xyz, 1.0);
+    shadow_coordinates = vec3(dot(relative_position, shadow.receiver_rows[0]),
+        dot(relative_position, shadow.receiver_rows[1]),
+        dot(relative_position, shadow.receiver_rows[2]));
+    // Native relief uses the interpolated terrain normal without normalization.
+    shadow_normal = in_normal;
+#endif
 }

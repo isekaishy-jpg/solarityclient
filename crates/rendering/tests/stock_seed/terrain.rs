@@ -40,6 +40,9 @@ mod ground_detail;
 #[path = "ground_detail_shader.rs"]
 mod ground_detail_shader;
 
+#[path = "ground_detail_shadow.rs"]
+mod ground_detail_shadow;
+
 #[path = "terrain_shadow.rs"]
 mod shadow;
 

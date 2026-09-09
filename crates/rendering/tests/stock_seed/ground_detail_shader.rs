@@ -109,6 +109,17 @@ fn prepare_draw(
     tint: [u8; 3],
     shadow: u8,
 ) -> Result<GroundDetailDraw, Box<dyn Error>> {
+    prepare_draw_at(renderer, argb, tint, shadow, Vec3::ZERO)
+}
+
+/// Relocates the authored chunk to exercise local-vertex receiver precision.
+pub(super) fn prepare_draw_at(
+    renderer: &mut VulkanRenderer,
+    argb: u32,
+    tint: [u8; 3],
+    shadow: u8,
+    origin: Vec3,
+) -> Result<GroundDetailDraw, Box<dyn Error>> {
     let path = format!("fixture/detail_{argb:08x}.blp");
     let base = AdtBuilder::new()
         .with_version(AdtVersion::WotLK)
@@ -120,6 +131,7 @@ fn prepare_draw(
     };
     root.texture_flags = Some(MtxfChunk { flags: vec![0] });
     let chunk = &mut root.mcnk_chunks[0];
+    chunk.header.position = origin.to_array();
     chunk.header.unknown_8bytes = (!(1_u64 << 32)).to_le_bytes();
     chunk.layers.as_mut().ok_or("layers missing")?.layers[0].effect_id = 1;
     chunk.header.flags.value |= 0x40;

@@ -20,6 +20,12 @@ fn main() {
             &output.join(format!("detail.{stage}.spv")),
             &[],
         );
+        compile(
+            &format!("src/shader/detail_spirv/source/detail.{stage}.glsl"),
+            kind,
+            &output.join(format!("detail-shadow.{stage}.spv")),
+            &[("DETAIL_PRIMARY_SHADOW", "1")],
+        );
     }
     compile(
         "src/shader/m2_spirv/source/m2.vert.glsl",

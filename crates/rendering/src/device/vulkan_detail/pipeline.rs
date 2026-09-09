@@ -6,13 +6,14 @@ use ash::{Device, vk};
 
 use crate::VulkanError;
 
-/// Renderer-lifetime ownership of one detail pipeline and descriptor ABI.
+/// Renderer-lifetime ownership of baked/primary-shadow detail pipelines and their ABI.
 #[derive(Default)]
 pub(in crate::device) struct DetailPipeline {
-    pipeline: vk::Pipeline,
+    pipelines: [vk::Pipeline; 2],
     layout: vk::PipelineLayout,
     descriptor: vk::DescriptorSetLayout,
     scene: vk::DescriptorSetLayout,
+    shadow: vk::DescriptorSetLayout,
 }
 
 impl DetailPipeline {
@@ -23,7 +24,7 @@ impl DetailPipeline {
         color: vk::Format,
         depth: vk::Format,
     ) -> Result<(), VulkanError> {
-        if self.pipeline != vk::Pipeline::null() {
+        if self.pipelines[0] != vk::Pipeline::null() {
             return Ok(());
         }
         let result = self.create(device, color, depth);
@@ -58,18 +59,36 @@ impl DetailPipeline {
         // SAFETY: This scene layout exactly matches the existing terrain frame descriptor ABI.
         self.scene = unsafe { device.create_descriptor_set_layout(&info, None) }
             .map_err(|source| VulkanError::operation("create detail scene layout", source))?;
-        let sets = [self.scene, self.descriptor];
+        let bindings = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        ];
+        let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+        // SAFETY: This is the slot-retained terrain/WMO receiver descriptor ABI.
+        self.shadow = unsafe { device.create_descriptor_set_layout(&info, None) }
+            .map_err(|source| VulkanError::operation("create detail shadow layout", source))?;
+        let sets = [self.scene, self.descriptor, self.shadow];
         let pushes = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
-            .size(16)];
+            .size(32)];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
             .push_constant_ranges(&pushes);
-        // SAFETY: Both descriptor layouts are live and the 16-byte push bank fits the device.
+        // SAFETY: All descriptor layouts are live and the 32-byte push bank fits the device.
         self.layout = unsafe { device.create_pipeline_layout(&info, None) }
             .map_err(|source| VulkanError::operation("create detail pipeline layout", source))?;
-        let modules = ShaderModules::create(device)?;
-        self.pipeline = create_pipeline(device, self.layout, color, depth, &modules)?;
+        for (index, has_primary_shadow) in [false, true].into_iter().enumerate() {
+            let modules = ShaderModules::create(device, has_primary_shadow)?;
+            self.pipelines[index] = create_pipeline(device, self.layout, color, depth, &modules)?;
+        }
         Ok(())
     }
 
@@ -77,16 +96,21 @@ impl DetailPipeline {
         self.descriptor
     }
 
-    pub(in crate::device) const fn raw(&self) -> (vk::Pipeline, vk::PipelineLayout) {
-        (self.pipeline, self.layout)
+    pub(in crate::device) const fn raw(
+        &self,
+        has_primary_shadow: bool,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
+        (self.pipelines[has_primary_shadow as usize], self.layout)
     }
 
     /// Releases the owned objects after every world-frame slot has retired.
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         // SAFETY: Renderer teardown or failed creation excludes all GPU users.
         unsafe {
-            if self.pipeline != vk::Pipeline::null() {
-                device.destroy_pipeline(self.pipeline, None);
+            for pipeline in self.pipelines {
+                if pipeline != vk::Pipeline::null() {
+                    device.destroy_pipeline(pipeline, None);
+                }
             }
             if self.layout != vk::PipelineLayout::null() {
                 device.destroy_pipeline_layout(self.layout, None);
@@ -96,6 +120,9 @@ impl DetailPipeline {
             }
             if self.descriptor != vk::DescriptorSetLayout::null() {
                 device.destroy_descriptor_set_layout(self.descriptor, None);
+            }
+            if self.shadow != vk::DescriptorSetLayout::null() {
+                device.destroy_descriptor_set_layout(self.shadow, None);
             }
         }
         *self = Self::default();
@@ -220,7 +247,7 @@ struct ShaderModules<'a> {
 
 impl<'a> ShaderModules<'a> {
     /// Holds both compiled stages only until pipeline creation has consumed them.
-    fn create(device: &'a Device) -> Result<Self, VulkanError> {
+    fn create(device: &'a Device, has_primary_shadow: bool) -> Result<Self, VulkanError> {
         let create = |bytes: &[u8]| {
             let words: Vec<u32> = bytes
                 .as_chunks::<4>()
@@ -233,8 +260,16 @@ impl<'a> ShaderModules<'a> {
             unsafe { device.create_shader_module(&info, None) }
                 .map_err(|source| VulkanError::operation("create detail shader module", source))
         };
-        let vertex_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/detail.vert.spv"));
-        let fragment_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/detail.frag.spv"));
+        let vertex_bytes: &[u8] = if has_primary_shadow {
+            include_bytes!(concat!(env!("OUT_DIR"), "/detail-shadow.vert.spv"))
+        } else {
+            include_bytes!(concat!(env!("OUT_DIR"), "/detail.vert.spv"))
+        };
+        let fragment_bytes: &[u8] = if has_primary_shadow {
+            include_bytes!(concat!(env!("OUT_DIR"), "/detail-shadow.frag.spv"))
+        } else {
+            include_bytes!(concat!(env!("OUT_DIR"), "/detail.frag.spv"))
+        };
         let vertex = create(vertex_bytes)?;
         let fragment = match create(fragment_bytes) {
             Ok(fragment) => fragment,
