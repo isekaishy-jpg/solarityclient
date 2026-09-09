@@ -130,13 +130,23 @@ shared query includes this separate pass, using the placed group-info bounds.
 `WorldSceneCameraFrame::intersects_bounds` reproduces `0x009839E0`'s six-plane
 test, supporting-corner sign bits and stored `0xBC9F49F4` negative tolerance.
 All 1,344 native bounds fixtures match, including near/far edges and large
-coordinates. Runtime indoor-unit membership is the next consumer of these
-retained callbacks; it is not yet connected.
+coordinates. Runtime indoor-unit admission consumes these retained callbacks
+from both camera roots. `0x0079A260` excludes secondary-root groups whose MOGI
+flags intersect `0x10008`; all primary-root callbacks remain eligible.
 
-An interior camera requires an admitted exterior portal window. WMO-bound units
-instead depend on visited group lists through `0x00793270`. That indoor unit
-group registration, mounted model registrations, and special hidden-model registration
-flags remain unimplemented; the outdoor bridge is not a complete scene answer.
+Outdoor unit lists require an admitted exterior portal when the camera is
+indoors. Indoor unit membership follows `0x007C2A70`: the selected primary
+candidate classifies the unit, and both primary root/group banks link it into
+scene lists. Fallback floor banks are not additional scene destinations.
+`0x00793270` enables ordinary indoor collision before testing model visibility,
+so a matching eligible group suffices even when the model lies outside its
+screen window. Decoded WMO/BSP runtime tests cover both primary banks, exact
+root identity, secondary-root exclusions, and exterior depth admission.
+
+This connection covers camera-root traversal. Entry into other WMO roots from
+the outdoor depth lists (`0x0079A160/0x007B3A10`) and transformed-root overlap
+lists (`0x00799F80`) remains unimplemented. Mounted model registrations and
+special hidden-model flags also remain separate gaps.
 
 ### Movement and presentation
 
@@ -150,7 +160,8 @@ The shared movement and presentation integration follows these recovered rules:
   with flags `5` from `0x00793060` and `0x00793270`. The remaining callback pass
   at `0x00793450` sets bit `4` when registered-model classification byte `+0x25`
   is less than `2`. This is a scene traversal classification, not the network's
-  visible-object set. The runtime currently wires the exterior depth-list case.
+  visible-object set. The runtime wires exterior depth lists and indoor units
+  linked to eligible groups visited through either camera root.
 - After native movement, `0x006EAC40` calls `0x006E9470` with the sampled spline
   point. That correction replaces the retained position only when forced or
   squared displacement is at least `9.0` (`0x009E2FF8`). Thus ordinary collision

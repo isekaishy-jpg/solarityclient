@@ -1956,11 +1956,9 @@ impl M2Frame {
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
-        let outdoor_scene = if let Some((terrain, _)) = spatial_lighting.as_mut() {
-            terrain.outdoor_unit_scene_frame(camera)?
-        } else {
-            None
-        };
+        if let Some((terrain, _)) = spatial_lighting.as_mut() {
+            terrain.prepare_unit_scene(camera)?;
+        }
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, random)?;
         }
@@ -2070,11 +2068,9 @@ impl M2Frame {
         for &index in self.placement_visibility.dynamic_indices() {
             let placement = &mut self.placements[index];
             if let Some(animation) = &placement.unit_animation {
-                if let Some(depth) = outdoor_scene
-                    && let Some(ground) = placement.ground_placement
+                if let Some(ground) = placement.ground_placement
                     && let Some(source) = self.sources[placement.source_index].as_ref()
                     && let Some((terrain, _)) = spatial_lighting.as_mut()
-                    && !terrain.unit_scene_is_interior(ground.position)?
                 {
                     // 7370D0 registers the raw unit yaw/scale bounds. The tilt
                     // callback below changes drawing, not this depth admission.
@@ -2085,11 +2081,7 @@ impl M2Frame {
                     )
                     .and_then(|bounds| bounds.transformed(placement.local_transform))
                     .map_err(crate::application::RuntimeMovementRegistrationError::from)?;
-                    if depth
-                        .m2_depth_bin([bounds.minimum(), bounds.maximum()])
-                        .map_err(crate::application::RuntimeMovementRegistrationError::from)?
-                        .is_some()
-                    {
+                    if terrain.unit_scene_admits(ground.position, bounds)? {
                         animation.admit_scene_collision();
                     }
                 }
