@@ -56,7 +56,49 @@ impl WorldModelVisibilityQuery {
             return Err(WorldModelVisibilityError::InvalidGroup);
         }
         Self::validate(model, position, projected_portals)?;
-        self.push_initial(group, indoor_fog);
+        self.push_initial(group, indoor_fog, [-1., -1., 1., 1.]);
+        self.traverse(
+            model,
+            position,
+            maximum_depth,
+            projected_portals,
+            TraversalOutput::Groups,
+        );
+        Ok(&self.visits)
+    }
+
+    /// Traverses 7AD350's outdoor entry with the inherited screen window.
+    ///
+    /// The initial window uses clip-space min-Y, min-X, max-Y, max-X order.
+    /// Fog starts in the outdoor bank, and CFBEC0 is zero: this traversal visits
+    /// groups without generating camera-root exterior portal events. Optional
+    /// occluder construction is disabled at this boundary. The caller first
+    /// applies 7B3A10's group-info flag and cropped world-bounds checks.
+    ///
+    /// # Errors
+    /// Rejects invalid groups, projection counts, nonfinite values or an
+    /// unordered initial screen window.
+    pub fn query_outdoor(
+        &mut self,
+        model: &DecodedWorldModel,
+        position: Vec3,
+        group: usize,
+        maximum_depth: u32,
+        screen_window: [f32; 4],
+        projected_portals: &[Option<[f32; 4]>],
+    ) -> Result<&[WorldModelVisibilityVisit], WorldModelVisibilityError> {
+        self.clear();
+        if group >= model.groups().len() {
+            return Err(WorldModelVisibilityError::InvalidGroup);
+        }
+        Self::validate(model, position, projected_portals)?;
+        if !screen_window.into_iter().all(f32::is_finite) {
+            return Err(WorldModelVisibilityError::NonFiniteCoordinates);
+        }
+        if screen_window[0] >= screen_window[2] || screen_window[1] >= screen_window[3] {
+            return Err(WorldModelVisibilityError::DegenerateFrustum);
+        }
+        self.push_initial(group, false, screen_window);
         self.traverse(
             model,
             position,
@@ -96,7 +138,7 @@ impl WorldModelVisibilityQuery {
         self.exterior_encountered
             .resize(model.portals().len(), false);
         for &group in initial_groups.iter().rev() {
-            self.push_initial(group, true);
+            self.push_initial(group, true, [-1., -1., 1., 1.]);
         }
         self.traverse(
             model,
@@ -137,14 +179,14 @@ impl WorldModelVisibilityQuery {
         Ok(())
     }
 
-    /// Native 7AD1F0 starts each admitted camera group with the full window.
-    fn push_initial(&mut self, group: usize, indoor_fog: bool) {
+    /// Starts a camera group or outdoor entry with its caller-selected window.
+    fn push_initial(&mut self, group: usize, indoor_fog: bool, screen_window: [f32; 4]) {
         self.pending.push(Pending::Group {
             visit: WorldModelVisibilityVisit {
                 group,
                 indoor_fog,
                 depth: 0,
-                screen_window: [-1., -1., 1., 1.],
+                screen_window,
             },
             parent: None,
         });

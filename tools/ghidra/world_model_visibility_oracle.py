@@ -16,19 +16,20 @@ import wmo_registration_oracle as n
 from liquid_material_oracle import return_value
 
 
-def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, scene_events=False, starts=None):
+def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, scene_events=False, starts=None, camera_root=True, initial_window=None):
     u = n.emulator()
     info_flags = flags if info_flags is None else info_flags
     root, info, portals, refs, groups, window = [n.HEAP + i * 0x2000 for i in range(6)]
     n.write_words(u, root + 0x130, info, 0, portals, refs)
     n.write_words(u, root + 0x1e0, 1)
     n.write_words(u, 0xd1bee4, maximum)
-    n.write_words(u, 0xcfbec0, 1)
+    n.write_words(u, 0xcfbec0, int(camera_root))
+    n.write_words(u, 0xcfbebc, 0)
     n.write_words(u, 0xd1bed8, n.STOP + 16)
     n.write_words(u, 0xd1c3d0, 3)
     n.write_words(u, 0xd1c424, 1)
     n.write_floats(u, 0xd1c42c, point)
-    n.write_floats(u, window, [-1., -1., 1., 1.])
+    n.write_floats(u, window, [-1., -1., 1., 1.] if initial_window is None else initial_window)
     reference = 0
     for index, value in enumerate(flags):
         n.write_words(u, info + index * 32, info_flags[index])
@@ -69,6 +70,13 @@ def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, sce
             ret(u)
         elif address in (0x791950, 0x78fb50, 0x790e20):
             ret(u)
+        elif address in (0x794190, 0x6156c0):
+            # Outdoor-root traversal clears graphics occluder/exclusion lists.
+            ret(u, 1)
+        elif address == 0x7a8e90:
+            # Rejected top-level portal records a graphics-only exclusion.
+            # CFBEBC is zero, so no occluder output consumes this list here.
+            ret(u, 2)
         elif address == 0x7a8f20:
             portal, reference, cache, exterior = n.read_words(u, sp + 4, 4)
             # Projection is separately covered by the original 7A8F20 oracle.

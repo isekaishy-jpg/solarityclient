@@ -100,3 +100,6 @@ mod world_model_visibility;
 
 #[path = "stock_seed/movement_swimming.rs"]
 mod movement_swimming;
+
+#[path = "stock_seed/world_model_outdoor_visibility.rs"]
+mod world_model_outdoor_visibility;

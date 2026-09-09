@@ -152,8 +152,14 @@ construction preserves the extended cross-product cancellation before float
 stores. These window frames remain separate from portal polygon clipping:
 `0x007A72A0` reads the fixed full-camera planes at `0x00CDD108`, while scene
 bounds use the current frustum stack at `0x00CDB168 + 0xFC * [0x00CD8798]`.
-The window API is a foundation for the outstanding non-camera-root passes;
-it does not yet connect those passes to runtime movement admission.
+`WorldModelVisibilityQuery::query_outdoor` reproduces `0x007AD350`'s inherited
+clip window and outdoor fog bank. Its 420 native `0x007AC060` captures match
+group order, window stores, depth and fog exactly. The composed
+`query_outdoor_group` adds `0x007B3A10`'s MOGI flag branches and cropped bounds:
+`0x10000` makes a direct callback; `8` starts portal recursion. Camera-root
+queries now retain the union of all accepted true-exterior windows, using
+`0x007905B0/0x0078F2F0`'s bounds and greatest-depth merge. These shared entry
+APIs do not yet connect non-camera-root passes to runtime movement admission.
 
 This connection covers camera-root traversal. Entry into other WMO roots from
 the outdoor depth lists (`0x0079A160/0x007B3A10`) and transformed-root overlap

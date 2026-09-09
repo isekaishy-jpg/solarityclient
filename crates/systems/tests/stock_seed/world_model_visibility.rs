@@ -749,7 +749,7 @@ fn camera_root_direct_groups_follow_authored_flags_and_transformed_bounds()
 }
 
 /// Loads the oracle graph through complete decoded MPQ root/group resources.
-fn visibility_model(
+pub(super) fn visibility_model(
     flags: &[u32],
     info_flags: &[u32],
     edges: &[[u32; 2]],

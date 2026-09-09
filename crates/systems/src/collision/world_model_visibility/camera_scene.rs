@@ -3,8 +3,8 @@
 use glam::Vec3;
 
 use super::{
-    WorldModelPortalProjector, WorldModelSceneVisibilityEvent, WorldModelVisibilityError,
-    WorldModelVisibilityQuery, WorldSceneCameraFrame,
+    WorldModelExteriorPortalWindow, WorldModelPortalProjector, WorldModelSceneVisibilityEvent,
+    WorldModelVisibilityError, WorldModelVisibilityQuery, WorldSceneCameraFrame,
 };
 use crate::collision::{MovementCollisionBounds, PlacedWorldModelCollision};
 
@@ -14,6 +14,7 @@ pub struct WorldModelCameraSceneQuery {
     projector: WorldModelPortalProjector,
     visibility: WorldModelVisibilityQuery,
     groups: Vec<usize>,
+    exterior_window: Option<WorldModelExteriorPortalWindow>,
 }
 
 impl WorldModelCameraSceneQuery {
@@ -37,6 +38,7 @@ impl WorldModelCameraSceneQuery {
         initial_groups: &[usize],
     ) -> Result<bool, WorldModelVisibilityError> {
         self.groups.clear();
+        self.exterior_window = None;
         let frame = camera.for_root(root.transform, root.inverse_transform)?;
         let forward_plane = camera.local_forward_plane(root.inverse_transform)?;
         let model = &root.model;
@@ -48,7 +50,6 @@ impl WorldModelCameraSceneQuery {
             10,
             projected,
         )?;
-        let mut exterior_visible = false;
         for event in events {
             let WorldModelSceneVisibilityEvent::ExteriorPortal { reference } = event else {
                 if let WorldModelSceneVisibilityEvent::Group(visit) = event {
@@ -56,9 +57,6 @@ impl WorldModelCameraSceneQuery {
                 }
                 continue;
             };
-            if exterior_visible {
-                continue;
-            }
             let reference = model.portal_references()[*reference];
             if model.group_info()[usize::from(reference.group_index())].flags() & 0x10008 == 0 {
                 continue;
@@ -66,20 +64,17 @@ impl WorldModelCameraSceneQuery {
             let portal = model.portals()[usize::from(reference.portal_index())];
             let start = usize::from(portal.vertex_start());
             let end = start + usize::from(portal.vertex_count());
-            if self
-                .projector
-                .project_exterior_polygon(
-                    &model.portal_vertices()[start..end],
-                    Vec3::from_array(portal.normal()),
-                    reference.side(),
-                    forward_plane,
-                    frame,
-                )?
-                .is_some()
-            {
-                // Every surviving 7A70D0 depth is nonnegative, which is the
-                // 79A870 gate. Subsequent windows cannot revoke this admission.
-                exterior_visible = true;
+            if let Some(window) = self.projector.project_exterior_polygon(
+                &model.portal_vertices()[start..end],
+                Vec3::from_array(portal.normal()),
+                reference.side(),
+                forward_plane,
+                frame,
+            )? {
+                self.exterior_window = Some(match self.exterior_window {
+                    Some(previous) => merge_exterior_windows(previous, window),
+                    None => window,
+                });
             }
         }
         // 7AD1F0 follows recursive visits with direct callbacks for 0x10000
@@ -95,12 +90,90 @@ impl WorldModelCameraSceneQuery {
                 self.groups.push(group);
             }
         }
-        Ok(exterior_visible)
+        Ok(self.exterior_window.is_some())
+    }
+
+    /// Resolves 7B3A10's entry into one group from an exterior scene window.
+    ///
+    /// The window uses normalized min-Y, min-X, max-Y, max-X coordinates.
+    /// MOGI flag 0x10000 selects a direct callback; flag 8 enters 7AD350's
+    /// outdoor-fog recursion after the cropped world AABB test. Projection
+    /// retains the fixed full-camera planes throughout recursion. Callers own
+    /// outdoor depth/overlap list admission; optional occlusion is disabled.
+    ///
+    /// # Errors
+    /// Rejects invalid group indices, camera/root transforms, windows or bounds.
+    pub fn query_outdoor_group(
+        &mut self,
+        root: &PlacedWorldModelCollision,
+        camera: WorldSceneCameraFrame,
+        group: usize,
+        screen_window: [f32; 4],
+    ) -> Result<&[usize], WorldModelVisibilityError> {
+        self.groups.clear();
+        self.exterior_window = None;
+        let model = &root.model;
+        let info = model
+            .group_info()
+            .get(group)
+            .ok_or(WorldModelVisibilityError::InvalidGroup)?;
+        let frustum = camera.frustum_for_window(screen_window)?;
+        let [minimum, maximum] = info.bounds().map(Vec3::from_array);
+        let bounds = MovementCollisionBounds::new(minimum, maximum)?.transformed(root.transform)?;
+        if !frustum.intersects_bounds(bounds) {
+            return Ok(&self.groups);
+        }
+        if info.flags() & 0x10000 != 0 {
+            self.groups.push(group);
+        } else if info.flags() & 8 != 0 {
+            let frame = camera.for_root(root.transform, root.inverse_transform)?;
+            let projected = self.projector.project(model, frame)?;
+            // 7B3A10 retains the multiply/subtract until each float store.
+            let window = screen_window.map(|value| (f64::from(value) * 2. - 1.) as f32);
+            self.groups.extend(
+                self.visibility
+                    .query_outdoor(model, frame.local_camera, group, 10, window, projected)?
+                    .iter()
+                    .map(|visit| visit.group),
+            );
+        }
+        Ok(&self.groups)
+    }
+
+    /// Returns 790AD0's merged true-exterior window after a camera-root query.
+    /// The primary root's bank supplies 79A790's outdoor depth traversal window.
+    #[must_use]
+    pub const fn exterior_window(&self) -> Option<WorldModelExteriorPortalWindow> {
+        self.exterior_window
     }
 
     /// Returns ordered group callbacks; read only after a successful root query.
     #[must_use]
     pub fn groups(&self) -> &[usize] {
         &self.groups
+    }
+}
+
+/// 7905B0/78F2F0 merge exterior bounds and retain the greatest portal depth.
+/// Equal values choose the incoming store, preserving native signed-zero ties.
+fn merge_exterior_windows(
+    previous: WorldModelExteriorPortalWindow,
+    incoming: WorldModelExteriorPortalWindow,
+) -> WorldModelExteriorPortalWindow {
+    WorldModelExteriorPortalWindow {
+        screen_window: std::array::from_fn(|axis| {
+            let old = previous.screen_window[axis];
+            let new = incoming.screen_window[axis];
+            if (axis < 2 && old < new) || (axis >= 2 && old > new) {
+                old
+            } else {
+                new
+            }
+        }),
+        depth: if previous.depth > incoming.depth {
+            previous.depth
+        } else {
+            incoming.depth
+        },
     }
 }
