@@ -49,6 +49,8 @@ impl WorldCameraSubject {
 pub struct WorldCamera {
     position: Vec3,
     target: Vec3,
+    /// Camera policy may retain a direction before rounding its world endpoint.
+    view_direction: Option<Vec3>,
     up: Vec3,
     projection: WorldCameraProjection,
     near_clip: f32,
@@ -80,6 +82,7 @@ impl WorldCamera {
         Self {
             position,
             target,
+            view_direction: None,
             up,
             projection: WorldCameraProjection::Perspective {
                 vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
@@ -103,6 +106,7 @@ impl WorldCamera {
         Self {
             position,
             target,
+            view_direction: None,
             up,
             projection: WorldCameraProjection::Perspective {
                 vertical_field_of_view_radians: WORLD_VERTICAL_FIELD_OF_VIEW_RADIANS,
@@ -126,6 +130,7 @@ impl WorldCamera {
         Self {
             position,
             target,
+            view_direction: None,
             up,
             projection: WorldCameraProjection::Perspective {
                 vertical_field_of_view_radians,
@@ -150,6 +155,7 @@ impl WorldCamera {
         Self {
             position,
             target,
+            view_direction: None,
             up,
             projection: WorldCameraProjection::Orthographic {
                 horizontal,
@@ -159,6 +165,23 @@ impl WorldCamera {
             far_clip,
             subject: None,
         }
+    }
+
+    /// Retains 607DB8's camera direction independently of its world endpoint.
+    ///
+    /// Player cameras provide this before world-coordinate rounding; authored
+    /// target-based cameras retain their endpoint subtraction when omitted.
+    #[must_use]
+    pub const fn with_view_direction(mut self, direction: Vec3) -> Self {
+        self.view_direction = Some(direction);
+        self
+    }
+
+    /// Returns the unnormalized direction supplied to view construction.
+    #[must_use]
+    pub fn view_direction(self) -> Vec3 {
+        self.view_direction
+            .unwrap_or_else(|| self.target - self.position)
     }
 
     /// Returns the eye position used for fog, sorting, and view transforms.

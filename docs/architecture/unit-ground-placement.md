@@ -79,8 +79,9 @@ boundaries, and large world coordinates.
 The live outdoor bridge now publishes this admission before draw-frustum
 rejection, and the next remote movement service consumes it once across all
 catch-up intervals. It admits ordinary unmounted units outside WMO interiors
-when the camera has no WMO registration. Camera and unit registration reuse the
-resident native floor/portal queries.
+when the camera has no WMO registration or the primary camera root admits an
+exterior portal. Camera and unit registration reuse the resident native
+floor/portal queries.
 
 Camera registration now retains both roots returned by `0x007D59B0`. A static
 interior remains primary when both banks hit; a transformed-only hit is promoted
@@ -102,21 +103,29 @@ normal times `0.01`, negate that offset for a positive reference side, and run
 `0x007A85E0` without the ordinary near-portal full-window shortcut. The first
 twelve vertices supply projection, while `0x007A70D0` scans all original vertices
 for maximum nonnegative local forward depth. The 1,188 native fixtures compare
-all four screen-window coordinates and depth exactly. These shared components
-are not yet connected to runtime indoor scene admission.
+all four screen-window coordinates and depth exactly. The runtime now composes
+these queries for the primary camera root. Only adjacent group-info flags
+masked by `0x10008` reach the exterior bank: the other portal callbacks and the
+initial group's `0x40140` full-window rule affect the separate general bank.
+An accepted exterior window enables outdoor unit depth lists even when the
+camera is inside a WMO. A transformed-root composition test checks both visible
+and rejected portal directions, independent adjacent flags, and shared groups.
 
 `WorldSceneCameraFrame` now supplies the native perspective input to that
 projection. It reproduces `0x006BFE60`, `0x006BF370`, `0x006BF6D0`, and the
-world-eye corner additions in `0x00795400`; 324 complete original frames match
+world-eye corner additions in `0x00795400`; 648 complete original frames match
 the combined matrix, all eight world corners, and five clipping planes exactly.
 The corner path copies XYZ through `0x00982950` without a perspective divide.
 For each placed root it also reproduces `0x007A6E00`'s local forward plane,
 including the strict short-direction threshold and extended-value plane offset.
 All 312 transformed-root fixtures match the stored camera point and plane bits.
+The camera handoff retains `0x00607DB8`'s original view direction independently
+of the rounded world endpoint. The native fixtures cover both input forms, and
+a renderer regression checks that translation leaves the view basis unchanged.
 
 An interior camera requires an admitted exterior portal window. WMO-bound units
-instead depend on visited group lists through `0x00793270`. That portal/group
-scene bridge, mounted model registrations, and special hidden-model registration
+instead depend on visited group lists through `0x00793270`. That indoor unit
+group registration, mounted model registrations, and special hidden-model registration
 flags remain unimplemented; the outdoor bridge is not a complete scene answer.
 
 ### Movement and presentation

@@ -19,10 +19,10 @@ def f32(value):
     return struct.unpack('<f', struct.pack('<f', value))[0]
 
 
-def capture(u, eye, target, up, fov, aspect, near, far):
+def capture(u, eye, forward, up, fov, aspect, near, far):
     origin, direction, up_ptr, view_ptr, projection_ptr = [n.HEAP + i * 0x1000 for i in range(5)]
     n.write_floats(u, origin, [0., 0., 0.])
-    n.write_floats(u, direction, [f32(target[i] - eye[i]) for i in range(3)])
+    n.write_floats(u, direction, forward)
     n.write_floats(u, up_ptr, up)
     n.invoke(u, 0x6bfe60, [origin, direction, up_ptr, view_ptr])
     bits = lambda value: struct.unpack('<I', struct.pack('<f', value))[0]
@@ -39,7 +39,7 @@ def main():
     args = parser.parse_args()
     n.initialize(args.executable)
     u = n.emulator()
-    rows = ['# eye3 target3 up3 verticalFov aspect near far; native view16 projection16 relative16 worldCorners24 worldClipPlanes20; hex float stores']
+    rows = ['# eye3 target3 forward3 up3 verticalFov aspect near far; native view16 projection16 relative16 worldCorners24 worldClipPlanes20; hex float stores; paired endpoint-derived and retained 607DB8 directions']
     for eye, yaw, pitch, roll, aspect, near_far in itertools.product(
         [[0., 0., 0.], [500., -200., 70.], [15000., -14000., 2500.]],
         [0., .37, -1.13], [0., -.51, .83], [0., .29], [1., 16/9, 32/9], [[.2, 100.], [.2, 5000.]],
@@ -50,8 +50,11 @@ def main():
         up = [f32(base_up[i] * math.cos(roll) + side[i] * math.sin(roll)) for i in range(3)]
         target = [f32(eye[i] + forward[i]) for i in range(3)]
         fov, aspect, near, far = map(f32, [.9424778, aspect, *near_far])
-        inputs = eye + target + up + [fov, aspect, near, far]
-        rows.append(words(inputs + capture(u, eye, target, up, fov, aspect, near, far)))
+        # Keep the original endpoint-derived cases alongside 607DB8's retained
+        # direction to distinguish projection precision from local depth planes.
+        for direction in [[f32(target[i] - eye[i]) for i in range(3)], list(map(f32, forward))]:
+            inputs = eye + target + direction + up + [fov, aspect, near, far]
+            rows.append(words(inputs + capture(u, eye, direction, up, fov, aspect, near, far)))
     args.output.write_text('\n'.join(rows) + '\n', encoding='utf-8')
     print(f'Captured {len(rows) - 1} original scene camera frames')
 

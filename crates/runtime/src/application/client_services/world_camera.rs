@@ -50,6 +50,7 @@ impl ClientServices {
                 pose.subject(),
                 environment.view_distance().value(),
             )
+            .with_view_direction(pose.forward())
             .frame(aspect_ratio)?,
         ))
     }

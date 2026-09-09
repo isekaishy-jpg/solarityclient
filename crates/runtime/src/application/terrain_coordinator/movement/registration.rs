@@ -44,6 +44,9 @@ pub enum RuntimeMovementReference {
 /// Invalid geometry or an unresolved reference in an admitted generation.
 #[derive(Debug, Error)]
 pub enum RuntimeMovementRegistrationError {
+    /// Camera-root portal projection or scene traversal failed.
+    #[error(transparent)]
+    SceneVisibility(#[from] solarity_systems::WorldModelVisibilityError),
     /// Outdoor model depth cannot be represented by the native scene camera.
     #[error(transparent)]
     SceneDepth(#[from] solarity_systems::WorldSceneDepthError),

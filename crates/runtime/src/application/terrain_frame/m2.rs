@@ -1957,8 +1957,7 @@ impl M2Frame {
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
         let outdoor_scene = if let Some((terrain, _)) = spatial_lighting.as_mut() {
-            terrain
-                .outdoor_unit_scene_frame(camera.camera().position(), camera.camera().target())?
+            terrain.outdoor_unit_scene_frame(camera)?
         } else {
             None
         };

@@ -62,6 +62,47 @@ fn followed_world_camera_retains_distinct_subject_positions() -> Result<(), Box<
     Ok(())
 }
 
+/// 607DB8's retained direction prevents world-coordinate rounding from turning
+/// the camera as its position changes; depth consumers still retain the target.
+#[test]
+fn retained_camera_direction_preserves_view_basis_at_large_coordinates()
+-> Result<(), Box<dyn Error>> {
+    let forward = Vec3::new(0.7234567, -0.5345678, 0.3456789).normalize();
+    let reference = WorldCamera::stock(Vec3::ZERO, forward, Vec3::Z, 5000.)
+        .with_view_direction(forward)
+        .frame(16. / 9.)?;
+    for eye in [Vec3::new(15000., -14000., 2500.), Vec3::splat(33_554_432.)] {
+        let target = eye + forward;
+        assert_ne!(target - eye, forward);
+        let camera = WorldCamera::stock(eye, target, Vec3::Z, 5000.).with_view_direction(forward);
+        let frame = camera.frame(16. / 9.)?;
+        assert_eq!(camera.target(), target);
+        assert_eq!(camera.view_direction(), forward);
+        assert_eq!(frame.forward(), reference.forward());
+        assert_eq!(frame.right(), reference.right());
+        assert_eq!(frame.up(), reference.up());
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            assert_eq!(
+                frame.view().transform_vector3(axis),
+                reference.view().transform_vector3(axis)
+            );
+        }
+    }
+    assert_eq!(
+        WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.)
+            .with_view_direction(Vec3::splat(f32::NAN))
+            .frame(1.),
+        Err(WorldCameraError::NonFiniteBasis)
+    );
+    assert_eq!(
+        WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.)
+            .with_view_direction(Vec3::ZERO)
+            .frame(1.),
+        Err(WorldCameraError::ViewDirection)
+    );
+    Ok(())
+}
+
 /// The eye-based frustum rejects geometry behind or outside the view wedge.
 #[test]
 fn world_frustum_tests_spheres_and_oriented_boxes() -> Result<(), Box<dyn Error>> {

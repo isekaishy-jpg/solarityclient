@@ -33,7 +33,7 @@ impl WorldCamera {
         }
         self.validate()?;
 
-        let direction = self.target() - self.position();
+        let direction = self.view_direction();
         let forward = direction.normalize();
         let mut up = self.up() - forward * self.up().dot(forward);
         let up_length_squared = up.length_squared();
@@ -46,7 +46,7 @@ impl WorldCamera {
         // consume the exact orthonormal basis used by the view matrix.
         up = right.cross(forward).normalize();
 
-        let view = Mat4::look_at_rh(self.position(), self.target(), up);
+        let view = Mat4::look_to_rh(self.position(), forward, up);
         let projection = match self.projection() {
             WorldCameraProjection::Perspective {
                 vertical_field_of_view_radians,
@@ -81,10 +81,14 @@ impl WorldCamera {
 
     /// Rejects malformed camera state before glam's projection constructors.
     pub(super) fn validate(self) -> Result<(), WorldCameraError> {
-        if !finite_vec3(self.position()) || !finite_vec3(self.target()) || !finite_vec3(self.up()) {
+        if !finite_vec3(self.position())
+            || !finite_vec3(self.target())
+            || !finite_vec3(self.up())
+            || !finite_vec3(self.view_direction())
+        {
             return Err(WorldCameraError::NonFiniteBasis);
         }
-        if (self.target() - self.position()).length_squared() <= 1.0e-8 {
+        if self.view_direction().length_squared() <= 1.0e-8 {
             return Err(WorldCameraError::ViewDirection);
         }
         match self.projection() {

@@ -23,6 +23,8 @@ impl WorldSceneCameraFrame {
     /// The view is relative to the eye and uses 6BFE60's positive-forward
     /// convention. 6BF6D0 inverts view/projection separately, transforms its
     /// depth-scaled clip corners, then 795400 adds the world eye to each corner.
+    /// 607DB8 supplies the original camera direction to view construction;
+    /// the rounded world target remains separate for 7A6E00's local depth plane.
     ///
     /// # Errors
     /// Rejects nonfinite inputs, invalid perspective parameters or a degenerate
@@ -30,13 +32,14 @@ impl WorldSceneCameraFrame {
     pub fn perspective(
         eye: Vec3,
         target: Vec3,
+        forward: Vec3,
         up: Vec3,
         vertical_fov_radians: f32,
         aspect_ratio: f32,
-        near: f32,
-        far: f32,
+        clip_range: [f32; 2],
     ) -> Result<Self, WorldModelVisibilityError> {
-        if !eye.is_finite() || !target.is_finite() || !up.is_finite() {
+        let [near, far] = clip_range;
+        if !eye.is_finite() || !target.is_finite() || !forward.is_finite() || !up.is_finite() {
             return Err(WorldModelVisibilityError::NonFiniteCoordinates);
         }
         if ![vertical_fov_radians, aspect_ratio, near, far]
@@ -50,7 +53,7 @@ impl WorldSceneCameraFrame {
         {
             return Err(WorldModelVisibilityError::InvalidCameraProjection);
         }
-        let view = matrix::view(target - eye, up);
+        let view = matrix::view(forward, up);
         let projection = matrix::perspective(vertical_fov_radians, aspect_ratio, near, far);
         let inverse = matrix::multiply(
             matrix::inverse(projection).ok_or(WorldModelVisibilityError::DegenerateFrustum)?,

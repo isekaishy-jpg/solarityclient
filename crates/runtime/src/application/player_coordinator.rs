@@ -2232,6 +2232,7 @@ impl RuntimePlayerPresentation {
                 pose.subject(),
                 far_clip,
             )
+            .with_view_direction(pose.forward())
         })
     }
 

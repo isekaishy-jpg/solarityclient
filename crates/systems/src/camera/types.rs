@@ -104,7 +104,7 @@ impl PlayerCameraPose {
         self.eye
     }
 
-    /// Returns the one-unit look direction endpoint used by projection.
+    /// Returns the rounded world endpoint used by scene depth planes.
     #[must_use]
     pub const fn target(self) -> Vec3 {
         self.target

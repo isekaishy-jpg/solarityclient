@@ -41,7 +41,8 @@ fn root_local_camera_plane_matches_original_transform_and_short_direction_rules(
         } else {
             Vec3::Y
         };
-        let frame = WorldSceneCameraFrame::perspective(eye, target, up, 0.9424778, 1., 0.2, 100.)?;
+        let frame =
+            WorldSceneCameraFrame::perspective(eye, target, delta, up, 0.9424778, 1., [0.2, 100.])?;
         let local = frame.for_root(inverse.inverse(), inverse)?.local_camera;
         for (channel, (actual, expected)) in local
             .to_array()
@@ -92,10 +93,10 @@ fn scene_camera_matches_original_perspective_corners_and_relative_projection()
             Vec3::from_slice(&values[..3]),
             Vec3::from_slice(&values[3..6]),
             Vec3::from_slice(&values[6..9]),
-            values[9],
-            values[10],
-            values[11],
+            Vec3::from_slice(&values[9..12]),
             values[12],
+            values[13],
+            [values[14], values[15]],
         )?;
         let projection = frame.for_root(Mat4::IDENTITY, Mat4::IDENTITY)?;
         for (channel, (actual, expected)) in projection
@@ -104,7 +105,7 @@ fn scene_camera_matches_original_perspective_corners_and_relative_projection()
             .into_iter()
             .chain(frame.corners().iter().flat_map(|point| point.to_array()))
             .chain(projection.clip_planes.into_iter().flatten())
-            .zip(&values[45..])
+            .zip(&values[48..])
             .enumerate()
         {
             assert_eq!(
@@ -115,7 +116,7 @@ fn scene_camera_matches_original_perspective_corners_and_relative_projection()
         }
         count += 1;
     }
-    assert_eq!(count, 324);
+    assert_eq!(count, 648);
     Ok(())
 }
 
@@ -481,6 +482,68 @@ fn camera_root_scene_events_match_original_order_cache_and_depth_limit()
         );
     }
     assert_eq!(count, 756);
+    Ok(())
+}
+
+/// Composes portal projection and group traversal for the exterior scene bank.
+#[test]
+fn complete_camera_root_pipeline_opens_only_visible_exterior_links() -> Result<(), Box<dyn Error>> {
+    use glam::{Mat4, Quat};
+    use solarity_systems::{
+        PlacedWorldModelCollision, WorldModelExteriorSceneQuery, WorldSceneCameraFrame,
+    };
+    use std::sync::Arc;
+    let mut query = WorldModelExteriorSceneQuery::default();
+    for adjacent_flags in [8, 0x40, 0x100, 0x40000, 0x10000, 0] {
+        let model = Arc::new(visibility_model(
+            &[0, adjacent_flags],
+            &[0, adjacent_flags],
+            &[[0, 1]],
+            &[[0., 0., 1., 0.]],
+        )?);
+        let mut root = PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;
+        for transform in [
+            Mat4::IDENTITY,
+            Mat4::from_scale_rotation_translation(
+                Vec3::splat(2.),
+                Quat::from_rotation_y(0.37),
+                Vec3::new(500., -200., 70.),
+            ),
+        ] {
+            root.set_transform(transform)?;
+            let eye = transform.transform_point3(Vec3::new(0., 0., 3.));
+            let toward = transform.transform_point3(Vec3::ZERO);
+            let away = transform.transform_point3(Vec3::new(0., 0., 6.));
+            let up = transform.transform_vector3(Vec3::Y);
+            let camera = |target| {
+                WorldSceneCameraFrame::perspective(
+                    eye,
+                    target,
+                    target - eye,
+                    up,
+                    0.9424778,
+                    16. / 9.,
+                    [0.2, 100.],
+                )
+            };
+            // Only 790AD0's exterior bank enables 79A790's outdoor lists.
+            assert_eq!(
+                query.query_camera_root(&root, camera(toward)?, &[0])?,
+                adjacent_flags & 0x10008 != 0,
+                "flags {adjacent_flags:x}"
+            );
+            assert!(!query.query_camera_root(&root, camera(away)?, &[0])?);
+            assert!(!query.query_camera_root(&root, camera(toward)?, &[])?);
+            assert_eq!(
+                query.query_camera_root(&root, camera(toward)?, &[2]),
+                Err(WorldModelVisibilityError::InvalidGroup)
+            );
+            assert_eq!(
+                query.query_camera_root(&root, camera(toward)?, &[0, 0])?,
+                adjacent_flags & 0x10008 != 0
+            );
+        }
+    }
     Ok(())
 }
 

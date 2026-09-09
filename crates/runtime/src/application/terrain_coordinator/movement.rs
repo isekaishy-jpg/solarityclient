@@ -214,6 +214,7 @@ pub(super) struct ResidentMovementScene {
     dynamic: ResidentDynamicMovement,
     roots: Vec<MovementRootReference>,
     game_object_world_models: ResidentGameObjectWorldModels,
+    exterior_scene_query: solarity_systems::WorldModelExteriorSceneQuery,
 }
 
 /// Worker-prepared MCRF/MODR references into the corresponding M2 scene.
