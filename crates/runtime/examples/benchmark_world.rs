@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             format!(
                 "usage: benchmark_world <frames per phase> <output.csv> <map> <x> <y> <z> \
                  [--travel-offset <dx> <dy> <dz>] [--camera-distance <yards>] \
-                 [--camera-pitch <radians>] [--realm-hour <0..23>] {}",
+                 [--camera-pitch <radians>] [--camera-yaw <radians>] [--realm-hour <0..23>] {}",
                 RuntimeConfiguration::usage()
             ),
         )
@@ -57,6 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut travel_offset = None;
     let mut distance = PlayerViewState::STOCK_VIEW_2.distance();
     let mut pitch = PlayerViewState::STOCK_VIEW_2.pitch_radians();
+    let mut yaw = 0.0;
     let mut hour = 12_u32;
     let mut runtime_args = Vec::new();
     while let Some(argument) = args.next() {
@@ -70,6 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             Some("--camera-distance") => distance = finite_argument(&mut args)?,
             Some("--camera-pitch") => pitch = finite_argument(&mut args)?,
+            Some("--camera-yaw") => yaw = finite_argument(&mut args)?,
             Some("--realm-hour") => {
                 hour = args
                     .next()
@@ -93,7 +95,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Vec3::from_array(position),
         0.,
     ));
-    world.set_local_player_view(PlayerViewState::new(distance, pitch, 0., 2))?;
+    world.set_local_player_view(PlayerViewState::new(distance, pitch, yaw, 2))?;
     let player = world.local_player();
     world.storage_mut().add_component(
         player,

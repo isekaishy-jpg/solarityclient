@@ -324,6 +324,9 @@ pub enum RuntimeTerrainFrameError {
         /// Invalid effective Model frame alpha.
         opacity: f32,
     },
+    /// The registered environmentDetail CVar must supply a finite scalar.
+    #[error("environmentDetail cvar is missing or non-finite")]
+    InvalidEnvironmentDetailCvar,
     /// The retained Glue model generation has no matching model placement.
     #[error("Glue M2 model placement is unavailable")]
     MissingGlueM2Placement,
@@ -642,6 +645,18 @@ impl TerrainFrame {
             m2,
             world_models,
         })
+    }
+
+    /// Applies 78DC60's environmentDetail clamp to the retained scenery policy.
+    pub(super) fn set_environment_detail(
+        &mut self,
+        value: Option<f32>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let value = value
+            .filter(|value| value.is_finite())
+            .ok_or(RuntimeTerrainFrameError::InvalidEnvironmentDetailCvar)?;
+        self.m2.environment_detail = value.clamp(0.5, 1.5);
+        Ok(())
     }
 
     /// Culls, lights, records, and presents one resident terrain frame.

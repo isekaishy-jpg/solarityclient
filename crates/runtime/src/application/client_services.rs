@@ -1290,6 +1290,10 @@ impl ClientServices {
             .map(solarity_rendering::TerrainTileMeshPlan::tile);
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let specular_enabled = self.glue.cvar_boolean("specular");
+        let environment_detail = self.world_ui.as_ref().map_or_else(
+            || self.glue.cvar_number("environmentDetail"),
+            |ui| ui.cvar_number("environmentDetail"),
+        );
         let footstep_bias = self
             .world_ui
             .as_ref()
@@ -1355,6 +1359,7 @@ impl ClientServices {
                     footprint_particles,
                 )
             };
+        frame.set_environment_detail(environment_detail)?;
         frame.present(
             &mut self.renderer,
             plan,

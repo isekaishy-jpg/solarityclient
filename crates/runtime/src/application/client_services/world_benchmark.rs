@@ -398,6 +398,9 @@ impl ClientServices {
             .prepare(&mut self.renderer, environment)
             .map_err(ApplicationError::from)?;
         frame
+            .set_environment_detail(ui.cvar_number("environmentDetail"))
+            .map_err(ApplicationError::from)?;
+        frame
             .present(
                 &mut self.renderer,
                 self.terrain

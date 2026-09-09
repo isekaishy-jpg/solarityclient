@@ -9,10 +9,14 @@ mod game_object_scene_tests;
 mod unit_effect_model_tests;
 
 mod character_residency;
+mod distance;
 mod entity_lighting;
 mod game_objects;
 mod playback;
 mod portrait;
+#[cfg(test)]
+#[path = "../../../tests/application/scenery_distance.rs"]
+mod scenery_distance_tests;
 pub(in crate::application) mod sky;
 pub(in crate::application) mod sound;
 mod streaming;
@@ -724,6 +728,8 @@ pub(in crate::application) struct M2Frame {
     model_distance_sort: Vec<bool>,
     placement_topology_dirty: bool,
     placement_visibility: visibility::M2PlacementVisibility,
+    /// Stock environmentDetail is clamped by its 78DC60 CVar callback.
+    pub(super) environment_detail: f32,
     particle_vertices: Vec<M2ParticleRenderVertex>,
     particle_indices: Vec<u32>,
     particle_sort_indices: Vec<usize>,
@@ -815,6 +821,7 @@ impl M2Frame {
             model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
+            environment_detail: 1.0,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_sort_indices: Vec::new(),
@@ -946,6 +953,7 @@ impl M2Frame {
             model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
+            environment_detail: 1.0,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
             particle_sort_indices: Vec::new(),
@@ -2285,6 +2293,14 @@ impl M2Frame {
                     .as_ref()
                     .is_some_and(|source| !source.model.animations().lights().is_empty());
             let bounds = self.placement_visibility.bounds()[placement_index];
+            let scenery_opacity = self.placement_visibility.opacity(
+                placement_index,
+                camera.camera().position(),
+                self.environment_detail,
+            );
+            if scenery_opacity == 0.0 && !publishes_lights {
+                continue;
+            }
             if let Some((center, radius)) = bounds
                 && !publishes_lights
                 && !frustum.contains_sphere(center, radius)?
@@ -2292,6 +2308,7 @@ impl M2Frame {
                 continue;
             }
             let placement = &mut self.placements[placement_index];
+            let placement_opacity = placement.opacity * scenery_opacity;
             self.unit_effects.prepare_attachment(placement);
             if let Some(effect) = &mut placement.unit_effect
                 && let Some(event) = effect.take_ready_sound(placement.transform.w_axis.truncate())
@@ -2597,7 +2614,7 @@ impl M2Frame {
                 )?;
                 self.scene_lighting.publish(
                     placement.light_lifetime.get_or_init(|| Rc::new(())),
-                    placement_mesh_color(placement.owner, placement.color).w * placement.opacity,
+                    placement_mesh_color(placement.owner, placement.color).w * placement_opacity,
                 )?;
             }
             if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
@@ -2866,7 +2883,7 @@ impl M2Frame {
                         particle_to_world,
                         inherited_scale,
                         placement_mesh_color(placement.owner, placement.color).w
-                            * placement.opacity,
+                            * placement_opacity,
                         &self.particle_twinkle,
                         placement.particle_colors.as_ref(),
                         &mut self.particle_sort_indices,
@@ -2927,7 +2944,7 @@ impl M2Frame {
             if let Some(animation) = &placement.unit_animation {
                 instance_color *= placement_color(animation.model_color().to_le_bytes());
             }
-            instance_color.w *= placement.opacity;
+            instance_color.w *= placement_opacity;
             if let Some(mesh) = source.mesh
                 && !effect_retiring
             {

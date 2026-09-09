@@ -8,7 +8,7 @@ human warrior with empty equipment and a fixed realm clock (noon by default).
 
 The command takes `frames-per-phase output.csv map x y z` followed by the ordinary
 runtime configuration arguments. Diagnostic options `--camera-distance`,
-`--camera-pitch` (radians), and `--realm-hour` select the recorded scene's view
+`--camera-pitch`/`--camera-yaw` (radians), and `--realm-hour` select the recorded scene's view
 and lighting. Use an isolated `--profile-root` and explicitly
 select window dimensions, presentation mode, and GPU. CSV rows retain each
 measured frame, including terrain publication and hover stalls. Required assets,
@@ -89,6 +89,16 @@ serialization, staging, and allocation; removing transfer waits does not remove
 that work. These costs remain under investigation. Hidden GPU regression coverage
 retires an ADT before its first draw, reloads it across in-flight frames with fresh
 handles, rejects retired handles, and verifies the final terrain pixels.
+
+Restoring [static scenery distance fading](scenery-distance.md) reduced the
+same route's mean total frames from 6.412 to 4.498 ms outbound and 6.515 to
+4.473 ms returning (30% and 31%). Both directions again had 24 changed frames,
+21 admissions, and 21 evictions. Steady presentation means fell from
+5.029/5.167 ms to 3.194/3.196 ms. Changed-frame streaming still averaged
+19.852/16.452 ms, so the distance policy does not resolve publication stalls.
+This uncaptured, unprofiled replay used the same 2,400-frame phases and default
+environmentDetail 1.0; it demonstrates reduced work on this route, without
+establishing populated live-world performance or a worst-case latency bound.
 
 ## Resident camera bounds
 
