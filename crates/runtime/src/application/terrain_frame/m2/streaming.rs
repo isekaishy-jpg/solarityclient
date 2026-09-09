@@ -124,27 +124,52 @@ impl M2Frame {
             }
         }
         profile.mark("new sources and placements");
-        self.placements.retain(|placement| match placement.owner {
-            M2GpuPlacementOwner::Static(owner) => requested.contains(&owner),
-            _ => true,
+        // Retirement already visits every live owner. Gather its source here
+        // instead of scanning the large animation/effect records a second time.
+        let mut remap = vec![usize::MAX; self.sources.len()];
+        for placement in &added {
+            remap[placement.source_index] = 0;
+        }
+        self.placements.retain(|placement| {
+            let keep = match placement.owner {
+                M2GpuPlacementOwner::Static(owner) => requested.contains(&owner),
+                _ => true,
+            };
+            if keep {
+                remap[placement.source_index] = 0;
+            }
+            keep
         });
+        profile.mark("placement retirement");
         self.placements.extend(added);
         // Publish identities only after every new owner is ready, so a failed
         // resource preparation cannot make the next attempt skip that owner.
         self.static_residency.owners = requested;
         self.placement_topology_dirty = true;
-        self.compact_sources();
-        profile.mark("retirement and compaction");
+        profile.mark("placement append and owner publication");
+        self.compact_referenced_sources(remap);
+        profile.mark("source compaction");
         Ok(())
     }
 
     /// Drops unreferenced sources and remaps surviving static and dynamic slots.
     /// Empty geometry is still an occupied source when a placement references it.
     pub(super) fn compact_sources(&mut self) {
+        let mut profile = RuntimeFrameProfile::new("M2 source compaction");
         let mut remap = vec![usize::MAX; self.sources.len()];
         for placement in &self.placements {
             remap[placement.source_index] = 0;
         }
+        profile.mark("referenced slots");
+        self.compact_referenced_sources(remap);
+        profile.mark("source compaction");
+    }
+
+    /// Consumes one mark per source: zero is referenced, `usize::MAX` is dead.
+    /// Callers must mark every retained and newly added placement, including
+    /// dynamic owners and sources whose geometry is intentionally empty.
+    fn compact_referenced_sources(&mut self, mut remap: Vec<usize>) {
+        let mut profile = RuntimeFrameProfile::new("M2 referenced source compaction");
         // A residency change often leaves every shared source referenced. Its
         // mapping is then the identity: avoid writing every large live instance.
         if !remap.contains(&usize::MAX) {
@@ -161,11 +186,14 @@ impl M2Frame {
             index += 1;
             keep
         });
+        profile.mark("source retirement");
         self.static_residency.remap_sources(&remap);
+        profile.mark("static source remap");
         for placement in &mut self.placements {
             // Every surviving placement marked its source above.
             placement.source_index = remap[placement.source_index];
         }
+        profile.mark("placement source remap");
     }
 }
 

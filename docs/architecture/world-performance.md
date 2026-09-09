@@ -45,8 +45,10 @@ Residency changes additionally report terrain/liquid publication, static M2 and
 WMO membership updates, and resource retirement. Per-tile upload scopes separate
 geometry, blend/shadow atlases, diffuse images, and descriptor/pipeline preparation.
 M2 publication scopes additionally separate requested-owner collection, retained
-source lookup, new source/placement admission, and retirement/compaction. Per-source
-scopes distinguish image and mesh uploads, pipelines/samplers, descriptors, and effects.
+source lookup, new source/placement admission, placement retirement, append, and
+source compaction. Changed placement topology reports effect ordering, attachment
+membership, distance-sort flags, and visibility rebuilding. Per-source scopes
+distinguish image and mesh uploads, pipelines/samplers, descriptors, and effects.
 
 `SOLARITY_WORLD_CAPTURE_DIR` requests PPM framebuffer captures at the start/end
 of each phase and at quarter turns of the orbit or travel segments. This explicitly waits for GPU
@@ -117,6 +119,12 @@ sources remain separate because the same decoded model can use different texture
 replacements. Placement order and animation, particle, ribbon, sound, and light
 lifetimes remain owned by the existing instance records.
 
+Static retirement also gathers source references while deciding which owners
+survive. Newly admitted placements contribute their references before the same
+source compactor runs. This avoids a second scan of all large instance records;
+dynamic retirement retains the separate collection path. An empty geometry slot
+still survives while any owner references it.
+
 The Vulkan regression publishes overlapping MDDF identities, removes an earlier
 source slot, adds new owners through the remapped slot, and then removes and
 reloads the static scene while a dynamic source sharing the model stays alive.
@@ -144,6 +152,15 @@ do not establish a worst-case bound. Full requested-owner collection, placement
 retirement, terrain publication, and subsequent visibility preparation still
 cost time; this change does not eliminate world-loading stalls or establish
 populated-world performance.
+
+Gathering source references during retirement, measured separately on the same
+route and with the same disabled profiling/capture settings, further reduced
+changed-frame streaming means from 17.150 to 16.417 ms outbound and 13.215 to
+12.623 ms returning. Total-frame means moved from 4.776 to 4.716 ms and 4.719 to
+4.658 ms, respectively. Tile admission/eviction counts remained identical.
+This is about a 4% reduction in the loading component and 1.3% in whole-frame
+means. The outbound maximum reached 51.912 ms, so isolated stalls remain and
+the average improvement is not a worst-frame guarantee.
 
 ## Resident camera bounds
 

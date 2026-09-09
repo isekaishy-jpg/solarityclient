@@ -144,6 +144,30 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
             .collect::<Vec<_>>(),
         [0, 1, 1, 2]
     );
+
+    // Empty geometry is an occupied source while a live owner references it.
+    // Retirement must preserve it even when all renderable scenery leaves.
+    let empty_source = frame.sources.len();
+    frame.sources.push(None);
+    let mut empty = super::streaming::static_gpu_placement(
+        &scene.placements()[0],
+        empty_source,
+        None,
+        &frame.animations,
+        0.,
+        &mut random,
+    )?;
+    empty.owner = M2GpuPlacementOwner::GluePet;
+    frame.placements.push(empty);
+    frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
+    assert_eq!(frame.placements.len(), 2);
+    assert_eq!(frame.sources.len(), 2);
+    assert_eq!(frame.placements[1].source_index, 1);
+    assert!(frame.sources[1].is_none());
+    frame.placements.clear();
+    frame.compact_sources();
+    assert!(frame.sources.is_empty());
+    assert_eq!(random, expected, "retirement consumes no randomness");
     Ok(())
 }
 

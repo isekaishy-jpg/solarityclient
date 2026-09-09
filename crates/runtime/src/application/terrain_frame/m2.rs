@@ -42,6 +42,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::model_playback::{M2Playback, M2PlaybackAdvance};
 use glam::Mat4;
 use solarity_asset::{
@@ -2131,10 +2132,12 @@ impl M2Frame {
             self.compact_sources();
         }
         if self.placement_topology_dirty {
+            let mut profile = RuntimeFrameProfile::new("M2 placement topology");
             // Changes to body residency can append a parent after retained
             // CEffects. Keep every effect behind its current parent pose.
             self.placements
                 .sort_by_key(|placement| placement.unit_effect.is_some());
+            profile.mark("effect ordering");
             self.requested_items.clear();
             self.requested_items
                 .extend(
@@ -2203,13 +2206,16 @@ impl M2Frame {
             );
             self.glue_attachment_ids.sort_unstable();
             self.glue_attachment_ids.dedup();
+            profile.mark("attachment membership");
             update_model_distance_sort_flags(
                 &self.placements,
                 &self.sources,
                 &mut self.model_distance_sort,
             );
+            profile.mark("distance sort flags");
             self.placement_visibility
                 .rebuild(&self.placements, &self.sources);
+            profile.mark("visibility rebuild");
             self.placement_topology_dirty = false;
         }
         // Primary unit completion belongs to the scene update, including
