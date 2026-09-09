@@ -2,7 +2,8 @@
 
 use glam::{Mat4, Vec3};
 
-use super::matrix;
+use super::{bounds, matrix};
+use crate::collision::MovementCollisionBounds;
 use crate::collision::world_model_visibility::{
     WorldModelPortalProjectionFrame, WorldModelVisibilityError,
 };
@@ -14,7 +15,7 @@ pub struct WorldSceneCameraFrame {
     target: Vec3,
     relative_projection: Mat4,
     corners: [Vec3; 8],
-    clip_planes: [[f32; 4]; 5],
+    clip_planes: [[f32; 4]; 6],
 }
 
 impl WorldSceneCameraFrame {
@@ -86,7 +87,13 @@ impl WorldSceneCameraFrame {
             target,
             relative_projection,
             corners,
-            clip_planes: frame.clip_planes,
+            clip_planes: std::array::from_fn(|index| {
+                if index < 5 {
+                    frame.clip_planes[index]
+                } else {
+                    bounds::near_plane(frame.clip_planes[4], corners[2])
+                }
+            }),
         })
     }
 
@@ -94,6 +101,15 @@ impl WorldSceneCameraFrame {
     #[must_use]
     pub const fn corners(&self) -> &[Vec3; 8] {
         &self.corners
+    }
+
+    /// Tests a validated world AABB against 9839E0's six scene clipping planes.
+    ///
+    /// This includes the near plane and the native negative tolerance; portal
+    /// polygon clipping separately consumes only the first five planes.
+    #[must_use]
+    pub fn intersects_bounds(self, bounds: MovementCollisionBounds) -> bool {
+        bounds::intersects(&self.clip_planes, bounds)
     }
 
     /// Binds one root's retained forward/inverse placement to the shared camera.
@@ -117,7 +133,7 @@ impl WorldSceneCameraFrame {
             local_camera,
             world_camera: self.eye,
             relative_projection: self.relative_projection,
-            clip_planes: self.clip_planes,
+            clip_planes: std::array::from_fn(|index| self.clip_planes[index]),
         })
     }
 

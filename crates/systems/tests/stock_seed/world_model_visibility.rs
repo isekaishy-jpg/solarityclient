@@ -120,6 +120,55 @@ fn scene_camera_matches_original_perspective_corners_and_relative_projection()
     Ok(())
 }
 
+/// Native camera-edge fixtures include the sixth face and all tolerance crossings.
+#[test]
+fn scene_bounds_match_original_six_plane_tolerance_at_camera_edges() -> Result<(), Box<dyn Error>> {
+    use solarity_systems::{MovementCollisionBounds, WorldSceneCameraFrame};
+    let cameras = include_str!("../fixtures/world_scene_projection_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            let values = words(line)
+                .into_iter()
+                .map(float)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, Box<dyn Error>>(WorldSceneCameraFrame::perspective(
+                Vec3::from_slice(&values[..3]),
+                Vec3::from_slice(&values[3..6]),
+                Vec3::from_slice(&values[6..9]),
+                Vec3::from_slice(&values[9..12]),
+                values[12],
+                values[13],
+                [values[14], values[15]],
+            )?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut count = 0;
+    for line in include_str!("../fixtures/world_scene_bounds_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let values = words(line);
+        let camera = cameras[values[0].parse::<usize>()?];
+        let coordinates = values[1..7]
+            .iter()
+            .map(|word| float(word))
+            .collect::<Result<Vec<_>, _>>()?;
+        let bounds = MovementCollisionBounds::new(
+            Vec3::from_slice(&coordinates[..3]),
+            Vec3::from_slice(&coordinates[3..]),
+        )?;
+        assert_eq!(
+            camera.intersects_bounds(bounds),
+            values[7] == "3",
+            "case {count}: {line}"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 1344);
+    Ok(())
+}
+
 #[test]
 fn portal_camera_planes_match_original_order_and_float_stores() -> Result<(), Box<dyn Error>> {
     use glam::Mat4;
@@ -490,10 +539,10 @@ fn camera_root_scene_events_match_original_order_cache_and_depth_limit()
 fn complete_camera_root_pipeline_opens_only_visible_exterior_links() -> Result<(), Box<dyn Error>> {
     use glam::{Mat4, Quat};
     use solarity_systems::{
-        PlacedWorldModelCollision, WorldModelExteriorSceneQuery, WorldSceneCameraFrame,
+        PlacedWorldModelCollision, WorldModelCameraSceneQuery, WorldSceneCameraFrame,
     };
     use std::sync::Arc;
-    let mut query = WorldModelExteriorSceneQuery::default();
+    let mut query = WorldModelCameraSceneQuery::default();
     for adjacent_flags in [8, 0x40, 0x100, 0x40000, 0x10000, 0] {
         let model = Arc::new(visibility_model(
             &[0, adjacent_flags],
@@ -532,6 +581,8 @@ fn complete_camera_root_pipeline_opens_only_visible_exterior_links() -> Result<(
                 adjacent_flags & 0x10008 != 0,
                 "flags {adjacent_flags:x}"
             );
+            assert_eq!(query.groups().first(), Some(&0));
+            assert_eq!(query.groups().contains(&1), adjacent_flags != 8);
             assert!(!query.query_camera_root(&root, camera(away)?, &[0])?);
             assert!(!query.query_camera_root(&root, camera(toward)?, &[])?);
             assert_eq!(
@@ -544,6 +595,46 @@ fn complete_camera_root_pipeline_opens_only_visible_exterior_links() -> Result<(
             );
         }
     }
+    Ok(())
+}
+
+/// 7AD1F0's final callbacks use MOGI flags and full world bounds independently
+/// of recursive starting groups or the loaded group's 0x10000 flag.
+#[test]
+fn camera_root_direct_groups_follow_authored_flags_and_transformed_bounds()
+-> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::{
+        PlacedWorldModelCollision, WorldModelCameraSceneQuery, WorldSceneCameraFrame,
+    };
+    use std::sync::Arc;
+    let model = Arc::new(visibility_model(
+        &[0, 0x10000, 0],
+        &[0x10000, 0, 0],
+        &[],
+        &[],
+    )?);
+    let mut root = PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;
+    let camera = WorldSceneCameraFrame::perspective(
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::X,
+        Vec3::Z,
+        0.9424778,
+        1.,
+        [0.2, 100.],
+    )?;
+    let mut query = WorldModelCameraSceneQuery::default();
+    assert!(!query.query_camera_root(&root, camera, &[])?);
+    assert_eq!(query.groups(), &[0]);
+    assert!(!query.query_camera_root(&root, camera, &[2, 1])?);
+    assert_eq!(query.groups(), &[2, 0]);
+    root.set_transform(Mat4::from_translation(Vec3::new(-1000., 0., 0.)))?;
+    assert!(!query.query_camera_root(&root, camera, &[])?);
+    assert!(query.groups().is_empty());
+    root.set_transform(Mat4::IDENTITY)?;
+    assert!(!query.query_camera_root(&root, camera, &[0])?);
+    assert_eq!(query.groups(), &[0, 0]);
     Ok(())
 }
 

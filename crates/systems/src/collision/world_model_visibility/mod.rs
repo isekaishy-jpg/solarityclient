@@ -1,10 +1,10 @@
 //! Native 7AC060 traversal after each portal's polygon has been projected.
 
-mod exterior_scene;
+mod camera_scene;
 mod projection;
 mod query;
 
-pub use exterior_scene::WorldModelExteriorSceneQuery;
+pub use camera_scene::WorldModelCameraSceneQuery;
 pub use projection::{
     WorldModelExteriorPortalWindow, WorldModelPortalProjectionFrame, WorldModelPortalProjector,
     WorldSceneCameraFrame,
@@ -31,6 +31,9 @@ pub enum WorldModelVisibilityError {
     /// Perspective parameters cannot form the ordinary scene projection.
     #[error("world-model scene camera projection is invalid")]
     InvalidCameraProjection,
+    /// Authored group bounds or their placed world transform are invalid.
+    #[error(transparent)]
+    Bounds(#[from] crate::collision::MovementCollectionError),
 }
 
 /// One ordered native group visit, including the inherited fog bank.

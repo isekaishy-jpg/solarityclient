@@ -123,6 +123,16 @@ The camera handoff retains `0x00607DB8`'s original view direction independently
 of the rounded world endpoint. The native fixtures cover both input forms, and
 a renderer regression checks that translation leaves the view basis unchanged.
 
+`WorldModelCameraSceneQuery` also retains the complete camera-root group callback
+order. After recursive portal visits, `0x007AD1F0` tests each MOGI group carrying
+`0x10000` against the full world frustum and invokes its direct callback. The
+shared query includes this separate pass, using the placed group-info bounds.
+`WorldSceneCameraFrame::intersects_bounds` reproduces `0x009839E0`'s six-plane
+test, supporting-corner sign bits and stored `0xBC9F49F4` negative tolerance.
+All 1,344 native bounds fixtures match, including near/far edges and large
+coordinates. Runtime indoor-unit membership is the next consumer of these
+retained callbacks; it is not yet connected.
+
 An interior camera requires an admitted exterior portal window. WMO-bound units
 instead depend on visited group lists through `0x00793270`. That indoor unit
 group registration, mounted model registrations, and special hidden-model registration
