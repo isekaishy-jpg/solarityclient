@@ -64,5 +64,15 @@ check the resulting mount and rider matrices across mounts and dismounts.
 
 The native `+0x9C` auxiliary scale and `0x72CBB0` object-scale compensation
 during asynchronous model replacement retain separate, unimplemented
-lifecycles. Mounted NPC residency and mounted scene-registration/terrain-tilt
-routing also remain separate work.
+lifecycles. Mounted NPC residency and mounted terrain-tilt routing also
+remain separate work.
+
+Scene registration follows `0x7370D0`: `0x6E6F80` selects the mount model
+when present, and the bounds use the raw movement yaw/position with the
+selected model scale. The GPU body placement retains these registration
+bounds independently of its rider attachment and ground-tilt inputs. Both
+initial publication and movement updates refresh them; the scene callback
+still advances the single unit animation owner before draw visibility.
+A real terrain/GPU test places local and remote players at the native outdoor
+depth boundary with distinct body/mount boxes. It checks mounting, rotation,
+movement, dismounting, remounting, and collision callbacks for culled models.

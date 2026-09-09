@@ -70,6 +70,8 @@ Nonpositive depth enters bucket zero; an index at least 64 is unvisited.
 before frustum or occlusion rejection. Therefore outdoor movement admission
 does not mean that the unit was drawn. The raw unit registration transform
 from `0x007370D0` supplies the bounds, before the smoothed model tilt.
+Mounted player registrations select the mount box and mount scale independently
+of the attached rider transform; see [unit body scale](unit-body-scale.md).
 
 `tools/ghidra/scene_depth_oracle.py` runs the original camera instruction range
 and complete insertion routine, including its original intrusive-list helper,
@@ -78,7 +80,7 @@ boundaries, and large world coordinates.
 
 The live outdoor bridge now publishes this admission before draw-frustum
 rejection, and the next remote movement service consumes it once across all
-catch-up intervals. It admits ordinary unmounted units outside WMO interiors
+catch-up intervals. It admits units outside WMO interiors
 when the camera has no WMO registration or the primary camera root admits an
 exterior portal. Camera and unit registration reuse the resident native
 floor/portal queries.

@@ -235,6 +235,10 @@ pub(super) fn prepare_character_gpu(
             random,
         )?
     };
+    body.scene_registration = Some(UnitSceneRegistration::new(
+        mount.map_or(input.model().as_ref(), |mount| mount.model().as_ref()),
+        world_transform,
+    )?);
     body.unit_presentation = Some(input.generation().clone());
     body.rider_scale = mount.map_or(1.0, |mount| mount.rider_scale());
     prepared.push(source, body);

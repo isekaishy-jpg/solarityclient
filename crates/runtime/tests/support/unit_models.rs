@@ -299,6 +299,16 @@ fn build_fixture(
             dbc(28, &family, b"\0"),
         ));
     }
+    if mount_scale.is_some() {
+        // Give the mount a distinct model box as well as a distinct scale.
+        let alternate = files
+            .iter_mut()
+            .find(|(path, _)| path == "Creature\\Alternate.m2")
+            .ok_or("mount model")?;
+        alternate.1[0xa0..0xa4].copy_from_slice(&(-2.0_f32).to_le_bytes());
+        alternate.1[0xac..0xb0].copy_from_slice(&2.0_f32.to_le_bytes());
+        append_mount_terrain(&mut files)?;
+    }
     if equipment {
         append_equipment_files(&mut files, &ids)?;
     }
@@ -308,6 +318,55 @@ fn build_fixture(
             .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
             .collect::<Vec<_>>(),
     )
+}
+
+/// A real resident outdoor tile lets mounted players enter scene depth lists.
+fn append_mount_terrain(files: &mut Vec<(String, Vec<u8>)>) -> Result<(), Box<dyn Error>> {
+    let mut manifest = wow_wdt::WdtFile::new(wow_wdt::version::WowVersion::WotLK);
+    manifest.mwmo = Some(wow_wdt::chunks::MwmoChunk::new());
+    manifest
+        .main
+        .get_mut(32, 32)
+        .ok_or("tile")?
+        .set_has_adt(true);
+    let mut wdt = Vec::new();
+    wow_wdt::WdtWriter::new(&mut wdt).write(&manifest)?;
+    let adt = wow_adt::builder::AdtBuilder::new()
+        .with_version(wow_adt::AdtVersion::WotLK)
+        .add_texture("tileset/fixture/grass.blp")
+        .build()?
+        .to_bytes()?;
+    let wow_adt::ParsedAdt::Root(mut root) = wow_adt::parse_adt(&mut std::io::Cursor::new(adt))?
+    else {
+        return Err("root ADT".into());
+    };
+    root.texture_flags = Some(wow_adt::chunks::MtxfChunk { flags: vec![0] });
+    for chunk in &mut root.mcnk_chunks {
+        chunk.header.position = [
+            17_066.666_f32 - (512 + chunk.header.index_y) as f32 * 33.333_332,
+            17_066.666_f32 - (512 + chunk.header.index_x) as f32 * 33.333_332,
+            0.,
+        ];
+        chunk.heights.as_mut().ok_or("heights")?.heights.fill(0.);
+    }
+    let adt = wow_adt::builder::BuiltAdt::from_root_adt(*root, None).to_bytes()?;
+    let mut map = [0; 66];
+    map[1] = 1;
+    map[5] = 1;
+    map[59] = u32::MAX;
+    files.extend([
+        (
+            "DBFilesClient\\Map.dbc".to_owned(),
+            dbc(66, &map, b"\0Mount\0"),
+        ),
+        ("World\\Maps\\Mount\\Mount.wdt".to_owned(), wdt),
+        ("World\\Maps\\Mount\\Mount_32_32.adt".to_owned(), adt),
+        (
+            "tileset\\fixture\\grass.blp".to_owned(),
+            super::bootstrap_texture_blp(),
+        ),
+    ]);
+    Ok(())
 }
 
 fn append_equipment_files(

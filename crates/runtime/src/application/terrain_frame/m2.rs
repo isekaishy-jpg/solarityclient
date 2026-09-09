@@ -17,10 +17,12 @@ pub(in crate::application) mod sky;
 pub(in crate::application) mod sound;
 mod streaming;
 pub(in crate::application) mod unit_effects;
+mod unit_registration;
 mod visibility;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{M2PlayerItemIdentity, prepare_character_gpu};
 use playback::M2PlaybackStorage;
+use unit_registration::UnitSceneRegistration;
 
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -170,6 +172,8 @@ struct M2GpuPlacement {
     local_transform: Mat4,
     /// Raw unit position/scale avoid recovering placement inputs from a matrix.
     ground_placement: Option<UnitGroundPlacement>,
+    /// GetModel scene bounds remain independent of terrain and rider posing.
+    scene_registration: Option<UnitSceneRegistration>,
     /// 73D5D0's inverse mount display scale, applied after the rider attachment.
     rider_scale: f32,
     transform: Mat4,
@@ -902,6 +906,7 @@ impl M2Frame {
                 source_index: 0,
                 local_transform: transform,
                 ground_placement: None,
+                scene_registration: None,
                 rider_scale: 1.0,
                 transform,
                 orientation: M2ModelOrientation::Authored,
@@ -1329,6 +1334,8 @@ impl M2Frame {
                     random,
                 )?
             };
+            placement.scene_registration =
+                Some(UnitSceneRegistration::new(input.model(), transform)?);
             placement.unit_presentation = Some(input.generation().clone());
             placement.ground_placement = Some(UnitGroundPlacement {
                 position: input.world_transform().position(),
@@ -1467,6 +1474,12 @@ impl M2Frame {
         placement.transform = transform;
         placement.local_transform = transform;
         placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());
+        placement.scene_registration = Some(UnitSceneRegistration::new(
+            input
+                .mount()
+                .map_or(input.model().as_ref(), |mount| mount.model().as_ref()),
+            transform,
+        )?);
         let Some(source) = self.sources[placement.source_index].as_ref() else {
             return Ok(());
         };
@@ -1516,6 +1529,8 @@ impl M2Frame {
                 })?;
             placement.transform = transform;
             placement.local_transform = transform;
+            placement.scene_registration =
+                Some(UnitSceneRegistration::new(input.model(), transform)?);
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
@@ -1602,6 +1617,12 @@ impl M2Frame {
             placement.transform = transform;
             placement.local_transform = transform;
             placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());
+            placement.scene_registration = Some(UnitSceneRegistration::new(
+                input
+                    .mount()
+                    .map_or(input.model().as_ref(), |mount| mount.model().as_ref()),
+                transform,
+            )?);
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 continue;
             };
@@ -2073,22 +2094,11 @@ impl M2Frame {
         for &index in self.placement_visibility.dynamic_indices() {
             let placement = &mut self.placements[index];
             if let Some(animation) = &placement.unit_animation {
-                if let Some(ground) = placement.ground_placement
-                    && let Some(source) = self.sources[placement.source_index].as_ref()
+                if let Some(registration) = placement.scene_registration
                     && let Some((terrain, _)) = spatial_lighting.as_mut()
+                    && terrain.unit_scene_admits(registration.position, registration.bounds)?
                 {
-                    // 7370D0 registers the raw unit yaw/scale bounds. The tilt
-                    // callback below changes drawing, not this depth admission.
-                    let bounds = source.model.bounds();
-                    let bounds = solarity_systems::MovementCollisionBounds::new(
-                        bounds.minimum(),
-                        bounds.maximum(),
-                    )
-                    .and_then(|bounds| bounds.transformed(placement.local_transform))
-                    .map_err(crate::application::RuntimeMovementRegistrationError::from)?;
-                    if terrain.unit_scene_admits(ground.position, bounds)? {
-                        animation.admit_scene_collision();
-                    }
+                    animation.admit_scene_collision();
                 }
                 animation.advance_scene(animation_time_ms, random)?;
                 placement.transform = if let Some(ground) = placement.ground_placement
@@ -3422,6 +3432,7 @@ fn m2_gpu_placement(
         source_index,
         local_transform: transform,
         ground_placement: None,
+        scene_registration: None,
         rider_scale: 1.0,
         transform,
         orientation: M2ModelOrientation::Authored,

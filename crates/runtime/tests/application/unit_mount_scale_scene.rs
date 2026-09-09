@@ -137,3 +137,115 @@ fn native_mount_scales_reach_local_and_remote_rider_matrices() -> Result<(), Box
     }
     Ok(())
 }
+
+/// Registration uses the mount's authored box and raw movement transform even
+/// when neither model is drawn. Retained local/remote placements must update it.
+#[test]
+fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), Box<dyn Error>> {
+    use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
+    use solarity_asset::MapCatalog;
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_mount_scale()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps);
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    for guid in [7, 20] {
+        add_unit(&mut world, guid, ObjectKind::Player, 0)?;
+    }
+    terrain.synchronize(Some(&world))?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    // Native outdoor depth ends at 2133.333...: the mounted leading corner
+    // reaches 2132.9, while the body's reaches 2134.0 and is not admitted.
+    let eye = Vec3::new(-2134.5, 0., 2.);
+    let camera = WorldCamera::new(eye, eye + Vec3::X, Vec3::Z, 1., 0.1, 100.).frame(1.)?;
+    let environment = solarity_systems::WorldEntityLightEnvironment::new(
+        Vec3::splat(0.2),
+        Vec3::splat(0.8),
+        -Vec3::Z,
+        -Vec3::Z,
+    );
+    for (index, (mount, x, yaw, admitted)) in [
+        (102, 0., 0., true),
+        (102, 0., std::f32::consts::FRAC_PI_2, false),
+        (102, 0., 0., true),
+        (102, 5., 0., false),
+        (102, 0., 0., true),
+        (0, 0., 0., false),
+        (102, 0., 0., true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for guid in [7, 20] {
+            world.update_fields(guid, [(69, mount)])?;
+            solarity_systems::project_object_fields(&mut world, guid, [(69, mount)])?;
+            world.update_transform(guid, WorldTransform::new(Vec3::new(x, 0., 0.), yaw))?;
+        }
+        presentation.synchronize(Some(&world))?;
+        presentation.synchronize_remote_players(Some(&world))?;
+        let local = presentation.resident_frame_input().ok_or("local")?;
+        let remote = presentation.resident_remote_player_frame_inputs();
+        frame.replace_player(&mut renderer, Some(local), &mut random)?;
+        frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
+        let time = index as f32 * 100.;
+        if index != 0 {
+            frame.update_player_state(
+                presentation.resident_frame_input().ok_or("local")?,
+                time,
+                &mut random,
+            )?;
+            frame.update_remote_player_states(&remote, time, &mut random)?;
+        }
+        let draws = frame.prepare_visible_draws_with_unit_effects(
+            &renderer,
+            WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+            camera,
+            solarity_rendering::M2TransparentPass::One,
+            Vec3::ZERO,
+            time,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &mut random,
+            None,
+            None,
+            None,
+            Some((&mut terrain, environment)),
+        )?;
+        assert!(
+            draws.draws.is_empty(),
+            "outdoor callbacks precede draw culling"
+        );
+        for guid in [7, 20] {
+            let identity = world.object_identity(guid).ok_or("identity")?;
+            assert_eq!(
+                presentation.take_scene_collision(identity),
+                admitted,
+                "case {index}, unit {guid}"
+            );
+            assert!(
+                !presentation.take_scene_collision(identity),
+                "single callback latch"
+            );
+        }
+    }
+    Ok(())
+}
