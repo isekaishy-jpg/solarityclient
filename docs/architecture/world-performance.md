@@ -47,8 +47,9 @@ geometry, blend/shadow atlases, diffuse images, and descriptor/pipeline preparat
 M2 publication scopes additionally separate requested-owner collection, retained
 source lookup, new source/placement admission, placement retirement, append, and
 source compaction. Changed placement topology reports effect ordering, attachment
-membership, distance-sort flags, and visibility rebuilding. Per-source scopes
-distinguish image and mesh uploads, pipelines/samplers, descriptors, and effects.
+membership, and visibility rebuilding, including model admission/sort metadata.
+Per-source scopes distinguish image and mesh uploads, pipelines/samplers,
+descriptors, and effects.
 
 `SOLARITY_WORLD_CAPTURE_DIR` requests PPM framebuffer captures at the start/end
 of each phase and at quarter turns of the orbit or travel segments. This explicitly waits for GPU
@@ -214,6 +215,15 @@ tests that array before touching the much larger instance records. Placement
 publication, retirement, and compaction rebuild the array in placement order.
 Camera motion still tests every bound against the current frustum.
 
+The same rebuild now records each model's light presence, parent-inherited
+distance-sort flag, and the first effect's placement index. This avoids scanning
+large placement records for the effect boundary and reading every model source
+before the ordinary visibility test on every frame. The metadata rebuild shares
+the parent lookup previously repeated by the separate distance-sort pass.
+Model replacement and effect publication invalidate these values alongside the
+existing bounds. Offscreen light owners still run their ordinary animation and
+light updates; light visibility and sampled colors are not cached here.
+
 Replicated WMO doodads, units, and animated attachments retain their live
 transform and visibility paths. Unit animation completion runs for every dynamic
 owner before visibility rejection, including offscreen units. Parent/child order,
@@ -238,6 +248,30 @@ stage instrumentation before the change counted 28,077 resident placements and
 roughly 862–985 visible instances; bone sampling itself took about 0.35 ms, while
 the uncached placement scan and culling accounted for a larger share of the M2
 preparation cost. That temporary instrumentation is not in the runtime.
+
+On 2026-09-09, the metadata cache was compared on the 1280 x 720 GTX 1070
+travel route above with 2,400 frames per phase and primary/detail shadows
+enabled. Profiling and capture were disabled, with no compiler workload.
+
+| Travel phase | Before metadata cache | After | Repeat after |
+| --- | ---: | ---: | ---: |
+| Outbound mean frame | 4.582 ms | 3.843 ms | 3.838 ms |
+| Return mean frame | 4.575 ms | 3.958 ms | 3.821 ms |
+
+The first comparison reduced mean frame time by 16% outbound and 13% returning.
+Detail and primary-shadow draw counts matched frame by frame throughout the
+settled, orbit, pointer, and travel phases. All travel runs retained 24 changed
+frames with 21 admissions and 21 evictions in each direction. Existing offscreen
+light coverage and explicitly enabled installed-archive effect tests verify
+that culling still publishes light sources and newly admitted effects drain.
+
+Changed-frame streaming means were 16.231/12.352 ms before, 15.392/14.615 ms
+after, and 15.389/12.138 ms on the repeat. The first new return run contained a
+49.154 ms total frame, including 42.431 ms in streaming; the repeat return
+maximum was 23.503 ms. These measurements support less steady rendering work,
+not elimination of publication stalls or a worst-case latency guarantee. The
+offline, frame-driven route also does not establish live populated-world FPS
+or the requested 1,200 FPS target.
 
 ## World graphics bindings
 

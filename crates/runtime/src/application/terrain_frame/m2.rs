@@ -736,7 +736,6 @@ pub(in crate::application) struct M2Frame {
     shadow_draws: Vec<M2PreparedDraw>,
     shadow_admission: Vec<bool>,
     transparent_elements: Vec<M2TransparentElement>,
-    model_distance_sort: Vec<bool>,
     placement_topology_dirty: bool,
     placement_visibility: visibility::M2PlacementVisibility,
     /// Stock environmentDetail is clamped by its 78DC60 CVar callback.
@@ -833,7 +832,6 @@ impl M2Frame {
             shadow_draws: Vec::new(),
             shadow_admission: Vec::new(),
             transparent_elements: Vec::new(),
-            model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
             environment_detail: 1.0,
@@ -968,7 +966,6 @@ impl M2Frame {
             shadow_draws: Vec::new(),
             shadow_admission: Vec::new(),
             transparent_elements: Vec::new(),
-            model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
             environment_detail: 1.0,
@@ -2207,12 +2204,6 @@ impl M2Frame {
             self.glue_attachment_ids.sort_unstable();
             self.glue_attachment_ids.dedup();
             profile.mark("attachment membership");
-            update_model_distance_sort_flags(
-                &self.placements,
-                &self.sources,
-                &mut self.model_distance_sort,
-            );
-            profile.mark("distance sort flags");
             self.placement_visibility
                 .rebuild(&self.placements, &self.sources);
             profile.mark("visibility rebuild");
@@ -2289,11 +2280,7 @@ impl M2Frame {
                 .len()
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
-        let effect_start = self
-            .placements
-            .iter()
-            .position(|placement| placement.unit_effect.is_some())
-            .unwrap_or(self.placements.len());
+        let effect_start = self.placement_visibility.effect_start();
         let mut next_placement = 0;
         loop {
             if next_placement == effect_start
@@ -2302,11 +2289,6 @@ impl M2Frame {
                     .publish(&mut self.placements, &mut self.sources)
             {
                 self.placement_topology_dirty = true;
-                update_model_distance_sort_flags(
-                    &self.placements,
-                    &self.sources,
-                    &mut self.model_distance_sort,
-                );
                 self.placement_visibility
                     .rebuild(&self.placements, &self.sources);
             }
@@ -2316,10 +2298,8 @@ impl M2Frame {
             let placement_index = next_placement;
             next_placement += 1;
             self.shadow_admission.push(false);
-            let publishes_lights = world_lighting.is_some()
-                && self.sources[self.placements[placement_index].source_index]
-                    .as_ref()
-                    .is_some_and(|source| !source.model.animations().lights().is_empty());
+            let publishes_lights =
+                world_lighting.is_some() && self.placement_visibility.has_lights(placement_index);
             let bounds = self.placement_visibility.bounds()[placement_index];
             let scenery_opacity = self.placement_visibility.opacity(
                 placement_index,
@@ -3065,7 +3045,10 @@ impl M2Frame {
                         || alpha_state == M2ElementAlphaState::Translucent
                     {
                         let section_distance = section_distance_key(draw, bone_pose, model_view)?;
-                        let primary_distance = if self.model_distance_sort[placement_index] {
+                        let primary_distance = if self
+                            .placement_visibility
+                            .model_distance_sort(placement_index)
+                        {
                             m2_model_distance_key(model_view)
                         } else {
                             section_distance
@@ -3338,26 +3321,6 @@ fn prepare_glue_character_gpu_source(
 
 /// Replays the shared-model distance bit computed after M2/SKIN publication.
 ///
-/// Stock enables the bit for models authored with at least two external view
-/// profiles. A child retains it only when its parent has it, so attachments do
-/// not silently change the containing model's transparency domain.
-fn update_model_distance_sort_flags(
-    placements: &[M2GpuPlacement],
-    sources: &[Option<M2GpuSource>],
-    enabled: &mut Vec<bool>,
-) {
-    enabled.clear();
-    enabled.reserve(placements.len().saturating_sub(enabled.capacity()));
-    for (placement_index, placement) in placements.iter().enumerate() {
-        let authored = sources
-            .get(placement.source_index)
-            .and_then(Option::as_ref)
-            .is_some_and(|source| source.model.skin_profile_count() >= 2);
-        let parent = placement_parent_index(placements, placement_index, placement);
-        enabled.push(authored && parent.is_none_or(|index| enabled[index]));
-    }
-}
-
 /// Resolves the parent-first placement relations already used for transforms.
 fn placement_parent_index(
     placements: &[M2GpuPlacement],
