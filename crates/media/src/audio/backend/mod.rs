@@ -1,5 +1,6 @@
 //! FMOD-facing stock backend and vendor implementation boundary.
 
+mod capture;
 mod dependency;
 mod status;
 mod types;

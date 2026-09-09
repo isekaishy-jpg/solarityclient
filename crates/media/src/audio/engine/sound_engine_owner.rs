@@ -93,7 +93,25 @@ impl OwnedSoundEngine {
         let output_reference = unsafe { &*output_pointer };
         self.engine
             .restart_output(output_reference, software_channel_count)?;
-        self._output = output;
+        // Retain the new output before any fallible callback work: the engine
+        // already borrows it after restart_output succeeds.
+        let previous = std::mem::replace(&mut self._output, output);
+        if let Some(sink) = previous.recording_audio() {
+            previous.set_recording_audio(None)?;
+            self._output.set_recording_audio(Some(sink))?;
+        }
+        Ok(())
+    }
+
+    /// Enables or removes recording of this owner's final game mix.
+    ///
+    /// # Errors
+    /// Returns an output callback-registration failure.
+    pub fn set_recording_audio(
+        &self,
+        sink: Option<std::sync::Arc<crate::RecordingAudio>>,
+    ) -> Result<(), SoundEngineError> {
+        self._output.set_recording_audio(sink)?;
         Ok(())
     }
 

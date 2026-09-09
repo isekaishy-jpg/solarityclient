@@ -5,7 +5,7 @@
 use ash::{Device, vk};
 use vk_mem::Alloc;
 
-use super::VulkanError;
+use super::{VulkanError, scale};
 
 /// One completed framebuffer in top-to-bottom, tightly packed RGBA8 order.
 ///
@@ -30,18 +30,19 @@ impl CapturedFrame {
 }
 
 /// A single requested copy, retained until its GPU work has retired.
-pub(super) struct FrameReadback {
-    extent: (u32, u32),
-    byte_count: usize,
+pub(in crate::device) struct FrameReadback {
+    pub(super) extent: (u32, u32),
+    pub(super) byte_count: usize,
     buffer: vk::Buffer,
-    allocation: vk_mem::Allocation,
+    pub(super) allocation: vk_mem::Allocation,
+    pub(super) scale: Option<scale::CaptureScale>,
     /// Set only after a complete successful presentation; prevents later writes.
-    pub(super) captured: bool,
+    pub(in crate::device) captured: bool,
 }
 
 impl FrameReadback {
     /// Allocates host-readable storage only for an explicit capture request.
-    pub(super) fn create(
+    pub(in crate::device) fn create(
         allocator: &vk_mem::Allocator,
         extent: (u32, u32),
     ) -> Result<Self, VulkanError> {
@@ -71,15 +72,17 @@ impl FrameReadback {
             byte_count,
             buffer,
             allocation,
+            scale: None,
             captured: false,
         })
     }
 
     /// Replaces the final presentation transition with a copy and host barrier.
     ///
-    /// The acquired BGRA8 image must match this allocation's extent, with all
-    /// rendering scopes ended. The caller retains the buffer through GPU idle.
-    pub(super) fn record(
+    /// The acquired BGRA8 image must match the source extent, with all rendering
+    /// scopes ended. An optional scale image matches the bounded output extent.
+    /// The caller retains both allocations until GPU completion is proven.
+    pub(in crate::device) fn record(
         &self,
         device: &Device,
         command_buffer: vk::CommandBuffer,
@@ -152,9 +155,13 @@ impl FrameReadback {
                     .image_memory_barriers(&to_copy)
                     .buffer_memory_barriers(&to_write),
             );
+            let copy_image = self
+                .scale
+                .as_ref()
+                .map_or(image, |scale| scale.record(device, command_buffer, image));
             device.cmd_copy_image_to_buffer(
                 command_buffer,
-                image,
+                copy_image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 self.buffer,
                 &[region],
@@ -169,7 +176,10 @@ impl FrameReadback {
     }
 
     /// Copies completed mapped bytes after the renderer has waited for GPU idle.
-    pub(super) fn read(&self, allocator: &vk_mem::Allocator) -> Result<CapturedFrame, VulkanError> {
+    pub(in crate::device) fn read(
+        &self,
+        allocator: &vk_mem::Allocator,
+    ) -> Result<CapturedFrame, VulkanError> {
         allocator
             .invalidate_allocation(&self.allocation, 0, self.byte_count as u64)
             .map_err(|source| VulkanError::operation("invalidate frame readback", source))?;
@@ -198,7 +208,10 @@ impl FrameReadback {
     }
 
     /// Releases the allocation after GPU idle, or before any submission.
-    pub(super) fn destroy(mut self, allocator: &vk_mem::Allocator) {
+    pub(in crate::device) fn destroy(mut self, allocator: &vk_mem::Allocator) {
+        if let Some(scale) = self.scale.take() {
+            scale.destroy(allocator);
+        }
         // SAFETY: The owner has retired all commands referencing this buffer.
         unsafe { allocator.destroy_buffer(self.buffer, &mut self.allocation) };
     }

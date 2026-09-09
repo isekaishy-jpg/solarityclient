@@ -27,6 +27,7 @@ mod player_control;
 mod player_coordinator;
 mod player_movement;
 mod realm_directory;
+mod recording;
 mod run;
 mod screenshot;
 mod sky_resources;

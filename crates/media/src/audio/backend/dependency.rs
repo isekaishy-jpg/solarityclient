@@ -2,7 +2,9 @@
 
 #![allow(unsafe_code)]
 
+use std::cell::RefCell;
 use std::num::NonZeroU16;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -53,6 +55,7 @@ pub struct SoundOutput {
     target: SoundOutputTarget,
     info: SoundOutputInfo,
     mixer: Mixer,
+    capture: RefCell<Option<Box<super::capture::AudioTap>>>,
 }
 
 impl SoundOutput {
@@ -140,7 +143,34 @@ impl SoundOutput {
             target,
             info: SoundOutputInfo::new(target, sample_rate_hz, channel_count),
             mixer,
+            capture: RefCell::new(None),
         })
+    }
+
+    /// Attaches or removes bounded recording of the final game mix.
+    ///
+    /// # Errors
+    /// Returns an SDL callback-registration error.
+    pub fn set_recording_audio(
+        &self,
+        sink: Option<Arc<crate::RecordingAudio>>,
+    ) -> Result<(), SoundBackendError> {
+        let mut current = self.capture.borrow_mut();
+        if current.is_some() {
+            super::capture::detach(&self.mixer)?;
+            *current = None;
+        }
+        if let Some(sink) = sink {
+            *current = Some(super::capture::AudioTap::attach(&self.mixer, sink)?);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn recording_audio(&self) -> Option<Arc<crate::RecordingAudio>> {
+        self.capture
+            .borrow()
+            .as_ref()
+            .map(|tap| Arc::clone(&tap.sink))
     }
 
     /// Returns the explicit target and actual mixer format.
@@ -170,6 +200,16 @@ impl SoundOutput {
                 "generate sound memory output",
                 sdl3::get_error(),
             ))
+        }
+    }
+}
+
+impl Drop for SoundOutput {
+    fn drop(&mut self) {
+        // The mixer is still live here; detach before either userdata or mixer
+        // fields drop. SDL only rejects an invalid mixer, excluded by ownership.
+        if self.capture.get_mut().is_some() {
+            let _result = super::capture::detach(&self.mixer);
         }
     }
 }

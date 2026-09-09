@@ -103,6 +103,7 @@ const STOCK_CHARACTER_BACKDROPS: [&str; 8] = [
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
     screenshots: super::screenshot::RuntimeScreenshots,
+    recording: super::recording::RuntimeRecording,
     login_ui: Option<RuntimeUiFrame>,
     /// Second UI slot used as a candidate during an atomic screen transition.
     ///
@@ -474,6 +475,10 @@ impl ClientServices {
                 screenshots: super::screenshot::RuntimeScreenshots::new(
                     configuration.profile_root(),
                 ),
+                recording: super::recording::RuntimeRecording::new(
+                    configuration.profile_root(),
+                    configuration.record_video(),
+                ),
                 login_ui,
                 pending_login_ui: None,
                 glue_ui_dirty: false,
@@ -636,6 +641,14 @@ impl ClientServices {
         event: &PlatformEvent,
         timestamp_ms: u32,
     ) -> Result<(), ApplicationError> {
+        if self.recording.service_event(
+            event,
+            self.platform.window_id(),
+            &mut self.renderer,
+            &self.sound,
+        ) {
+            return Ok(());
+        }
         if let Some(world_ui) = self.world_ui.as_mut() {
             world_ui.set_input_event_time(timestamp_ms);
         }
@@ -1005,6 +1018,7 @@ impl ClientServices {
 
     /// Presents one Glue or resident-world frame under the active VSync policy.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        self.service_recording();
         self.service_screenshots()?;
         let mut profile = RuntimeFrameProfile::new("application present");
         let update_time = std::time::Instant::now();
@@ -2947,6 +2961,7 @@ impl ClientServices {
 
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
+        self.recording.shutdown(&self.sound);
         self.persist_active_cvars()?;
         self.save_character_camera()?;
         self.character_profile = None;
@@ -3083,13 +3098,21 @@ impl ClientServices {
     /// Reuses one retained vector for the overlays shared by every presenter.
     fn refresh_runtime_overlay_draws(&mut self) {
         self.runtime_overlay_draws.clear();
-        if self.glue.cvar_boolean("showfps")
+        if (self.glue.cvar_boolean("showfps") || self.recording.status().is_some())
             && let Some(fps) = self.fps.as_ref()
         {
             self.runtime_overlay_draws.extend_from_slice(fps.draws());
         }
         self.runtime_overlay_draws
             .extend_from_slice(self.developer_console.draws());
+    }
+
+    /// Advance explicit recording and publish its status through the retained overlay.
+    fn service_recording(&mut self) {
+        self.recording.poll(&mut self.renderer, &self.sound);
+        if let Some(fps) = self.fps.as_mut() {
+            fps.set_recording_status(self.recording.status());
+        }
     }
 }
 

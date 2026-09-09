@@ -1,5 +1,8 @@
 //! External tests for composition-root ownership and shutdown.
 
+#[path = "application/recording.rs"]
+mod recording;
+
 use std::error::Error;
 use std::ffi::OsString;
 

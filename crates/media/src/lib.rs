@@ -6,6 +6,11 @@
 
 mod audio;
 mod cinematic;
+mod recording;
+
+pub use recording::{
+    RecordingAudio, RecordingError, RecordingMode, RecordingReport, VideoRecorder,
+};
 
 pub use cinematic::{CinematicAudioFrame, CinematicDecoder, CinematicError, CinematicVideoFrame};
 mod voice;

@@ -284,6 +284,14 @@ impl RuntimeSoundCoordinator {
         self.engine.with_engine(|engine| engine.output_info())
     }
 
+    pub(super) fn set_recording_audio(
+        &self,
+        sink: Option<std::sync::Arc<solarity_media::RecordingAudio>>,
+    ) -> Result<(), RuntimeSoundError> {
+        self.engine.set_recording_audio(sink)?;
+        Ok(())
+    }
+
     /// Returns the exact real software-mix count from `Sound_NumChannels`.
     #[must_use]
     pub(crate) fn software_channel_count(&self) -> usize {

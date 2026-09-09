@@ -188,6 +188,7 @@ pub struct VulkanRenderer {
     adapter_index: usize,
     present_mode: VulkanPresentMode,
     capture: Option<super::vulkan_capture::FrameReadback>,
+    video_capture: Option<super::vulkan_capture::VideoReadback>,
     device: Device,
     pipeline_cache: vk::PipelineCache,
     pipeline_cache_path: Option<PathBuf>,
@@ -277,6 +278,7 @@ impl VulkanRenderer {
             adapter_index,
             present_mode,
             capture: None,
+            video_capture: None,
             device,
             pipeline_cache: vk::PipelineCache::null(),
             pipeline_cache_path: None,
@@ -546,7 +548,15 @@ impl VulkanRenderer {
         let uploaded = self.cinematic_frames.present(FrameContext {
             device: &self.device,
             allocator,
-            capture: self.capture.as_ref().filter(|capture| !capture.captured),
+            capture: self
+                .capture
+                .as_ref()
+                .filter(|capture| !capture.captured)
+                .or_else(|| {
+                    self.video_capture
+                        .as_ref()
+                        .and_then(|video| video.pending())
+                }),
             swapchain_loader: &self.swapchain_loader,
             swapchain: self.swapchain,
             swapchain_images: &self.swapchain_images,
@@ -584,6 +594,11 @@ impl VulkanRenderer {
         let result = match present(self) {
             Err(VulkanError::SwapchainOutOfDate) => {
                 self.recreate_swapchain()?;
+                if let (Some(video), Some(allocator)) =
+                    (self.video_capture.as_mut(), self.allocator.as_ref())
+                {
+                    video.resize(allocator, self.report.extent)?;
+                }
                 // Recreate waited for idle. A pending readback may have belonged
                 // to the failed present, and must match the replacement extent.
                 if self
@@ -606,6 +621,13 @@ impl VulkanRenderer {
             }
             result => result,
         };
+        let screenshot_selected = self
+            .capture
+            .as_ref()
+            .is_some_and(|capture| !capture.captured);
+        if !screenshot_selected && let Some(video) = self.video_capture.as_mut() {
+            video.submitted(&self.device, self.graphics_queue, result.is_ok())?;
+        }
         if result.is_ok()
             && let Some(capture) = self.capture.as_mut()
         {
@@ -663,6 +685,115 @@ impl VulkanRenderer {
         let result = capture.read(allocator);
         capture.destroy(allocator);
         result.map(Some)
+    }
+
+    /// Creates one reusable 30 FPS recording slot, bounded to 1280 by 720 pixels.
+    /// Returns the fixed, even output dimensions for this recording session.
+    ///
+    /// # Errors
+    /// Returns an error for an active session or failed GPU resource creation.
+    pub fn begin_video_capture(&mut self) -> Result<(u32, u32), VulkanError> {
+        if self.video_capture.is_some() {
+            return Err(VulkanError::FrameCaptureBusy);
+        }
+        let selected =
+            SelectedAdapter::select(&self.bootstrap, self.adapter_index, self.present_mode)?;
+        // SAFETY: The selected physical device belongs to this live instance.
+        let format = unsafe {
+            self.bootstrap
+                .instance
+                .get_physical_device_format_properties(
+                    selected.physical_device,
+                    vk::Format::B8G8R8A8_UNORM,
+                )
+        };
+        let required = vk::FormatFeatureFlags::BLIT_SRC
+            | vk::FormatFeatureFlags::BLIT_DST
+            | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR;
+        if !format.optimal_tiling_features.contains(required) {
+            return Err(VulkanError::operation(
+                "start recording",
+                "GPU does not support filtered BGRA capture scaling",
+            ));
+        }
+        let allocator = self
+            .allocator
+            .as_ref()
+            .ok_or_else(|| VulkanError::operation("start recording", "allocator is unavailable"))?;
+        let video = super::vulkan_capture::VideoReadback::create(
+            &self.device,
+            allocator,
+            self.report.extent,
+        )?;
+        let extent = video.extent();
+        self.video_capture = Some(video);
+        Ok(extent)
+    }
+
+    /// Offers a timestamped sample of the next game frame without waiting.
+    /// A busy capture slot or pending screenshot declines this sample.
+    ///
+    /// # Errors
+    /// Returns an error for absent recording state or failed resize allocation.
+    pub fn request_video_frame(
+        &mut self,
+        timestamp: std::time::Duration,
+    ) -> Result<bool, VulkanError> {
+        if self
+            .capture
+            .as_ref()
+            .is_some_and(|capture| !capture.captured)
+        {
+            return Ok(false);
+        }
+        let allocator = self
+            .allocator
+            .as_ref()
+            .ok_or_else(|| VulkanError::operation("capture video", "allocator is unavailable"))?;
+        let video = self
+            .video_capture
+            .as_mut()
+            .ok_or_else(|| VulkanError::operation("capture video", "recording is not active"))?;
+        video.resize(allocator, self.report.extent)?;
+        Ok(video.request(timestamp))
+    }
+
+    /// Copies a completed sample into the caller's reusable tightly packed BGRA8
+    /// buffer. Its dimensions are those returned by `begin_video_capture`.
+    /// Polling never waits for GPU completion or allocates pixel storage.
+    ///
+    /// # Errors
+    /// Returns synchronization, mapping, or exact buffer-size errors.
+    pub fn poll_video_frame(
+        &mut self,
+        output: &mut [u8],
+    ) -> Result<Option<std::time::Duration>, VulkanError> {
+        let Some(video) = self.video_capture.as_mut() else {
+            return Ok(None);
+        };
+        let allocator = self
+            .allocator
+            .as_ref()
+            .ok_or_else(|| VulkanError::operation("collect video", "allocator is unavailable"))?;
+        video.poll(&self.device, allocator, output)
+    }
+
+    /// Releases a recording slot once its submitted copy has finished. Returns
+    /// false while it is in flight, allowing shutdown to progress on later frames.
+    ///
+    /// # Errors
+    /// Returns a GPU fence-polling error.
+    pub fn end_video_capture(&mut self) -> Result<bool, VulkanError> {
+        if let Some(video) = self.video_capture.as_ref()
+            && !video.complete(&self.device)?
+        {
+            return Ok(false);
+        }
+        if let (Some(video), Some(allocator)) = (self.video_capture.take(), self.allocator.as_ref())
+        {
+            video.destroy(&self.device, allocator);
+        }
+        Ok(true)
     }
 
     /// Rebuilds every swapchain-shaped frame owner after the desktop surface
@@ -977,7 +1108,15 @@ impl VulkanRenderer {
             TerrainFrameContext {
                 device: &self.device,
                 allocator,
-                capture: self.capture.as_ref().filter(|capture| !capture.captured),
+                capture: self
+                    .capture
+                    .as_ref()
+                    .filter(|capture| !capture.captured)
+                    .or_else(|| {
+                        self.video_capture
+                            .as_ref()
+                            .and_then(|video| video.pending())
+                    }),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -1449,7 +1588,15 @@ impl VulkanRenderer {
         let report = self.ui_frames.present_clear(
             UiFrameContext {
                 device: &self.device,
-                capture: self.capture.as_ref().filter(|capture| !capture.captured),
+                capture: self
+                    .capture
+                    .as_ref()
+                    .filter(|capture| !capture.captured)
+                    .or_else(|| {
+                        self.video_capture
+                            .as_ref()
+                            .and_then(|video| video.pending())
+                    }),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -1486,7 +1633,15 @@ impl VulkanRenderer {
         let report = self.ui_frames.present_composite(
             UiFrameContext {
                 device: &self.device,
-                capture: self.capture.as_ref().filter(|capture| !capture.captured),
+                capture: self
+                    .capture
+                    .as_ref()
+                    .filter(|capture| !capture.captured)
+                    .or_else(|| {
+                        self.video_capture
+                            .as_ref()
+                            .and_then(|video| video.pending())
+                    }),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -2277,7 +2432,15 @@ impl VulkanRenderer {
             WorldFrameContext {
                 device: &self.device,
                 allocator,
-                capture: self.capture.as_ref().filter(|capture| !capture.captured),
+                capture: self
+                    .capture
+                    .as_ref()
+                    .filter(|capture| !capture.captured)
+                    .or_else(|| {
+                        self.video_capture
+                            .as_ref()
+                            .and_then(|video| video.pending())
+                    }),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -2466,7 +2629,15 @@ impl VulkanRenderer {
             M2FrameContext {
                 device: &self.device,
                 allocator,
-                capture: self.capture.as_ref().filter(|capture| !capture.captured),
+                capture: self
+                    .capture
+                    .as_ref()
+                    .filter(|capture| !capture.captured)
+                    .or_else(|| {
+                        self.video_capture
+                            .as_ref()
+                            .and_then(|video| video.pending())
+                    }),
                 swapchain_loader: &self.swapchain_loader,
                 swapchain: self.swapchain,
                 swapchain_images: &self.swapchain_images,
@@ -2614,6 +2785,9 @@ impl Drop for VulkanRenderer {
             }
             if let Some(capture) = self.capture.take() {
                 capture.destroy(allocator);
+            }
+            if let Some(video) = self.video_capture.take() {
+                video.destroy(&self.device, allocator);
             }
             self.cinematic_frames.destroy(&self.device, allocator);
             self.world_frames.destroy(&self.device, allocator);

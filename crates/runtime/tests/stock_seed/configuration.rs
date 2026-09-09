@@ -37,6 +37,12 @@ fn complete_arguments_produce_typed_configuration() -> Result<(), Box<dyn Error>
     assert_eq!(configuration.window().height(), 720);
     assert_eq!(configuration.window().mode(), WindowMode::Windowed);
     assert_eq!(configuration.gpu_index(), 0);
+    assert!(!configuration.record_video());
+    let mut recording = arguments(&fixture, &["--cpu-workers", "3", "--cpu-capacity", "24"]);
+    recording.push(OsString::from("--record-video"));
+    assert!(RuntimeConfiguration::from_arguments(recording.clone())?.record_video());
+    recording.push(OsString::from("--record-video"));
+    assert!(RuntimeConfiguration::from_arguments(recording).is_err());
     Ok(())
 }
 

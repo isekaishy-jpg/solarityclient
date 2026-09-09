@@ -217,6 +217,7 @@ impl ClientServices {
                         .request_frame_capture()
                         .map_err(ApplicationError::from)?;
                 }
+                self.service_recording();
                 let sample =
                     self.benchmark_world_frame(world, clock, phase, index, elapsed, frame_start)?;
                 samples.push(sample);

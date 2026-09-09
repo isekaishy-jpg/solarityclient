@@ -30,6 +30,8 @@ mod model;
 mod model_order;
 #[path = "stock_seed/particle.rs"]
 mod particle;
+#[path = "recording/gpu.rs"]
+mod recording;
 #[path = "stock_seed/scene.rs"]
 mod scene;
 #[path = "stock_seed/shader.rs"]

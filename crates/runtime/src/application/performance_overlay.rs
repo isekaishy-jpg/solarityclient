@@ -17,7 +17,7 @@ pub(super) use layout::overlay_extent;
 use layout::{FPS_TEXT_REGION_HEIGHT, FPS_TEXT_TOP_LEFT};
 
 const FONT_PATH: &str = "Fonts\\FRIZQT__.TTF";
-const GLYPH_REPERTOIRE: &str = "-0123456789. FPS";
+const GLYPH_REPERTOIRE: &str = "-0123456789. ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /// Renderer-resident developer FPS overlay matching SolCL's default style.
 pub(super) struct RuntimeFpsOverlay {
@@ -28,6 +28,9 @@ pub(super) struct RuntimeFpsOverlay {
     logical_extent: [f32; 2],
     display_height: u32,
     text: String,
+    recording_status: Option<&'static str>,
+    last_fps: Option<f64>,
+    status_dirty: bool,
 }
 
 impl RuntimeFpsOverlay {
@@ -79,6 +82,9 @@ impl RuntimeFpsOverlay {
             logical_extent,
             display_height: pixel_extent.1,
             text,
+            recording_status: None,
+            last_fps: None,
+            status_dirty: false,
         }))
     }
 
@@ -87,10 +93,19 @@ impl RuntimeFpsOverlay {
         renderer: &mut VulkanRenderer,
         completed_at: Instant,
     ) -> Result<(), ApplicationError> {
-        let Some(fps) = self.counter.record(completed_at) else {
+        let update = self.counter.record(completed_at);
+        if update.is_none() && !self.status_dirty {
             return Ok(());
-        };
-        let text = format!("{fps:.1} FPS");
+        }
+        self.last_fps = update.or(self.last_fps);
+        self.status_dirty = false;
+        let mut text = self
+            .last_fps
+            .map_or_else(|| "-- FPS".to_owned(), |fps| format!("{fps:.1} FPS"));
+        if let Some(status) = self.recording_status {
+            text.push_str("  ");
+            text.push_str(status);
+        }
         if self.text == text {
             return Ok(());
         }
@@ -109,5 +124,12 @@ impl RuntimeFpsOverlay {
 
     pub(super) fn draws(&self) -> &[UiPreparedDraw] {
         self.frame.draws()
+    }
+
+    pub(super) fn set_recording_status(&mut self, status: Option<&'static str>) {
+        if self.recording_status != status {
+            self.recording_status = status;
+            self.status_dirty = true;
+        }
     }
 }

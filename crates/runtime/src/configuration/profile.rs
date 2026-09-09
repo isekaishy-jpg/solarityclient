@@ -30,6 +30,7 @@ const WINDOW_WIDTH_OPTION: &str = "--window-width";
 const WINDOW_HEIGHT_OPTION: &str = "--window-height";
 const WINDOW_MODE_OPTION: &str = "--window-mode";
 const GPU_INDEX_OPTION: &str = "--gpu-index";
+const RECORD_VIDEO_OPTION: &str = "--record-video";
 
 /// Complete configuration required to construct the initial client services.
 #[derive(Clone, Debug)]
@@ -43,6 +44,7 @@ pub struct RuntimeConfiguration {
     login: LoginConfiguration,
     window: WindowConfiguration,
     gpu_index: usize,
+    record_video: bool,
 }
 
 impl RuntimeConfiguration {
@@ -64,6 +66,13 @@ impl RuntimeConfiguration {
                 .to_str()
                 .ok_or(ConfigurationError::NonUnicodeOption)?;
             match option {
+                RECORD_VIDEO_OPTION => {
+                    set_once(
+                        &mut values.record_video,
+                        OsString::from("enabled"),
+                        RECORD_VIDEO_OPTION,
+                    )?;
+                }
                 DATA_ROOT_OPTION => {
                     let value = next_value(&mut arguments, DATA_ROOT_OPTION)?;
                     set_once(&mut values.data_root, value, DATA_ROOT_OPTION)?;
@@ -145,7 +154,7 @@ impl RuntimeConfiguration {
          --login-client-ip <IPv4> \
          --window-width <pixels> --window-height <pixels> \
          --window-mode <windowed|fullscreen-windowed> \
-         --gpu-index <zero-based-index>"
+         --gpu-index <zero-based-index> [--record-video]"
     }
 
     /// Returns the validated client `Data` directory.
@@ -200,6 +209,11 @@ impl RuntimeConfiguration {
     #[must_use]
     pub const fn gpu_index(&self) -> usize {
         self.gpu_index
+    }
+
+    /// Whether to start rotated video evidence for this automated run.
+    pub const fn record_video(&self) -> bool {
+        self.record_video
     }
 
     /// Validates parsed operating-system strings into domain types.
@@ -299,6 +313,7 @@ impl RuntimeConfiguration {
             login,
             window: WindowConfiguration::new(window_width, window_height, window_mode),
             gpu_index,
+            record_video: values.record_video.is_some(),
         })
     }
 }
@@ -320,6 +335,7 @@ struct ParsedValues {
     window_height: Option<OsString>,
     window_mode: Option<OsString>,
     gpu_index: Option<OsString>,
+    record_video: Option<OsString>,
 }
 
 /// Reads the argument following an option.
