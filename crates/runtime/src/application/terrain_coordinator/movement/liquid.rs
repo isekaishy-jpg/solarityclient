@@ -126,6 +126,7 @@ impl RuntimeTerrainCoordinator {
             return Ok((None, None));
         };
         if let Some(camera) = active.camera_registration(position)? {
+            let camera = camera.primary;
             let root = active.movement.roots[camera.owner];
             let root = active.registration_root_mut(root)?;
             return Ok((
@@ -143,7 +144,7 @@ impl super::ResidentTerrainMap {
         &mut self,
         position: Vec3,
     ) -> Result<
-        Option<solarity_systems::WorldModelCameraRegistration<usize>>,
+        Option<solarity_systems::WorldModelCameraSceneRegistration<usize>>,
         RuntimeMovementRegistrationError,
     > {
         let point = TerrainRegistrationPoint::new(position.x, position.y)?;
@@ -166,7 +167,7 @@ impl super::ResidentTerrainMap {
                 self.registration_root_mut(root)?,
             )?;
         }
-        Ok(camera.finish())
+        Ok(camera.finish_scene())
     }
 
     /// General 7A0B00 tries each eligible WMO before falling back to ADT.

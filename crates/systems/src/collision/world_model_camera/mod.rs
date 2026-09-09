@@ -19,6 +19,17 @@ pub struct WorldModelCameraRegistration<Owner> {
     pub secondary_group: Option<usize>,
 }
 
+/// Both camera roots published by 7D59B0 for 795D40's scene traversal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldModelCameraSceneRegistration<Owner> {
+    /// Static interior when present, otherwise the promoted transformed root.
+    /// Liquid and fog selection use this registration.
+    pub primary: WorldModelCameraRegistration<Owner>,
+    /// Transformed interior retained alongside a static primary root.
+    /// 79A870 traverses this root before the primary root.
+    pub secondary: Option<WorldModelCameraRegistration<Owner>>,
+}
+
 /// Native 7D59B0's independent static/transformed camera ray banks.
 pub struct WorldModelCameraRegistrationQuery<Owner> {
     start: Vec3,
@@ -123,6 +134,20 @@ impl<Owner: Copy> WorldModelCameraRegistrationQuery<Owner> {
     /// Camera registration prefers the static bank (unlike unit registration).
     #[must_use]
     pub fn finish(self) -> Option<WorldModelCameraRegistration<Owner>> {
-        self.selected[0].or(self.selected[1])
+        self.finish_scene().map(|scene| scene.primary)
+    }
+
+    /// Retains both interior banks for scene traversal. Native 7D59B0 promotes
+    /// the transformed bank only when the static bank has no interior root.
+    #[must_use]
+    pub fn finish_scene(self) -> Option<WorldModelCameraSceneRegistration<Owner>> {
+        let [primary, secondary] = self.selected;
+        match primary {
+            Some(primary) => Some(WorldModelCameraSceneRegistration { primary, secondary }),
+            None => secondary.map(|primary| WorldModelCameraSceneRegistration {
+                primary,
+                secondary: None,
+            }),
+        }
     }
 }

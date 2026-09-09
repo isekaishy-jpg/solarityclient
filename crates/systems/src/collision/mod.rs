@@ -37,7 +37,10 @@ pub use terrain::{
 pub use world_model::{
     PlacedWorldModelCollision, WorldModelCollisionError, WorldModelCollisionScene,
 };
-pub use world_model_camera::{WorldModelCameraRegistration, WorldModelCameraRegistrationQuery};
+pub use world_model_camera::{
+    WorldModelCameraRegistration, WorldModelCameraRegistrationQuery,
+    WorldModelCameraSceneRegistration,
+};
 pub use world_model_floor::{WorldModelFloorHit, WorldModelFloorHits};
 pub use world_model_fog::WorldModelFogEnvironment;
 pub use world_model_lighting::{WorldModelFloorLight, world_model_doodad_light_colors};

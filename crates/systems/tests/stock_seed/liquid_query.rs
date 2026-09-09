@@ -83,13 +83,16 @@ fn camera_water_registration_matches_original_root_and_portal_queries() -> Resul
             },
             &mut placement,
         )?;
-        let camera = camera.finish();
+        let camera = camera.finish_scene();
         assert_eq!(
             camera.is_some(),
             words[16] == "1",
             "camera admission case {case}: {line}"
         );
         if let Some(camera) = camera {
+            // 7D59B0 promotes a transformed-only hit into the primary slot.
+            assert!(camera.secondary.is_none(), "single-root case {case}");
+            let camera = camera.primary;
             assert_eq!(
                 camera.group,
                 words[17].parse::<usize>()?,
@@ -101,6 +104,36 @@ fn camera_water_registration_matches_original_root_and_portal_queries() -> Resul
                 (secondary != u32::from(u16::MAX)).then_some(secondary as usize),
                 "camera secondary group case {case}: {line}"
             );
+
+            // 7D59B0 retains independent banks regardless of root visit order.
+            // The two decoded roots overlap exactly, exercising the equal-hit
+            // case that must not let one bank replace the other.
+            for order in [[false, true], [true, false]] {
+                let mut query = WorldModelCameraRegistrationQuery::new(
+                    Vec3::from_slice(&values[..3]),
+                    Vec3::from_slice(&values[3..6]),
+                    values[6],
+                )?;
+                for transformed in order {
+                    query.probe_root(
+                        if transformed { 22 } else { 11 },
+                        if transformed {
+                            WorldModelRegistrationKind::Transformed
+                        } else {
+                            WorldModelRegistrationKind::Static
+                        },
+                        &mut placement,
+                    )?;
+                }
+                let scene = query.finish_scene().ok_or("missing overlapping roots")?;
+                assert_eq!(scene.primary.owner, 11, "primary case {case}");
+                assert_eq!(scene.primary.group, camera.group);
+                assert_eq!(scene.primary.secondary_group, camera.secondary_group);
+                let secondary = scene.secondary.ok_or("lost transformed camera root")?;
+                assert_eq!(secondary.owner, 22, "secondary case {case}");
+                assert_eq!(secondary.group, camera.group);
+                assert_eq!(secondary.secondary_group, camera.secondary_group);
+            }
         }
     }
     Ok(())

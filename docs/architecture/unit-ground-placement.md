@@ -82,6 +82,13 @@ catch-up intervals. It admits ordinary unmounted units outside WMO interiors
 when the camera has no WMO registration. Camera and unit registration reuse the
 resident native floor/portal queries.
 
+Camera registration now retains both roots returned by `0x007D59B0`. A static
+interior remains primary when both banks hit; a transformed-only hit is promoted
+and leaves no secondary root. Liquid and fog still use the primary registration.
+Scene traversal needs both because `0x0079A870` visits the secondary root before
+the primary. Decoded camera fixtures cover both root visit orders and preserve
+each root's portal-adjacent group.
+
 An interior camera requires an admitted exterior portal window. WMO-bound units
 instead depend on visited group lists through `0x00793270`. That portal/group
 scene bridge, mounted model registrations, and special hidden-model registration
