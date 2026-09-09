@@ -120,6 +120,116 @@ fn scene_camera_matches_original_perspective_corners_and_relative_projection()
     Ok(())
 }
 
+/// Every case executes both complete native window routines and plane creation.
+/// Quarter, narrow, off-screen and unclamped windows include cancellation edges.
+#[test]
+fn scene_window_frusta_match_both_original_crop_routines() -> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::WorldSceneCameraFrame;
+    let cameras = include_str!("../fixtures/world_scene_projection_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            let values = words(line)
+                .into_iter()
+                .map(float)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, Box<dyn Error>>(WorldSceneCameraFrame::perspective(
+                Vec3::from_slice(&values[..3]),
+                Vec3::from_slice(&values[3..6]),
+                Vec3::from_slice(&values[6..9]),
+                Vec3::from_slice(&values[9..12]),
+                values[12],
+                values[13],
+                [values[14], values[15]],
+            )?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut count = 0;
+    for line in include_str!("../fixtures/world_scene_window_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let fields = words(line);
+        let camera = cameras[fields[0].parse::<usize>()?];
+        let values = fields[1..]
+            .iter()
+            .map(|word| float(word))
+            .collect::<Result<Vec<_>, _>>()?;
+        let full_planes = camera.for_root(Mat4::IDENTITY, Mat4::IDENTITY)?.clip_planes;
+        let frustum = camera.frustum_for_window(values[..4].try_into()?)?;
+        for (channel, (actual, expected)) in frustum
+            .corners()
+            .iter()
+            .flat_map(|point| point.to_array())
+            .chain(frustum.clip_planes().iter().flatten().copied())
+            .zip(&values[4..])
+            .enumerate()
+        {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "case {count} channel {channel}"
+            );
+        }
+        // Recursive bounds cropping cannot replace CDD108's fixed camera
+        // polygon planes with the CDB168 scene-stack planes.
+        assert_eq!(
+            camera.for_root(Mat4::IDENTITY, Mat4::IDENTITY)?.clip_planes,
+            full_planes
+        );
+        count += 1;
+    }
+    assert_eq!(count, 1296);
+    Ok(())
+}
+
+/// Window bounds accept one camera quadrant while excluding its opposite.
+#[test]
+fn scene_window_bounds_use_cropped_faces_and_reject_invalid_windows() -> Result<(), Box<dyn Error>>
+{
+    use solarity_systems::{MovementCollisionBounds, WorldSceneCameraFrame};
+    let camera = WorldSceneCameraFrame::perspective(
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::X,
+        Vec3::Z,
+        0.9424778,
+        1.,
+        [0.2, 100.],
+    )?;
+    let left = camera.frustum_for_window([0., 0., 1., 0.5])?;
+    let right = camera.frustum_for_window([0., 0.5, 1., 1.])?;
+    let midpoint = |frustum: solarity_systems::WorldSceneFrustum| {
+        frustum.corners().iter().copied().sum::<Vec3>() / 8.
+    };
+    for (own, other) in [(left, right), (right, left)] {
+        let center = midpoint(own);
+        let bounds = MovementCollisionBounds::new(center, center)?;
+        assert!(camera.intersects_bounds(bounds));
+        assert!(own.intersects_bounds(bounds));
+        assert!(!other.intersects_bounds(bounds));
+    }
+    for window in [
+        [0., 0., 0., 1.],
+        [0., 0., 1., 0.],
+        [1., 0., 0., 1.],
+        [0., 1., 1., 0.],
+    ] {
+        assert!(matches!(
+            camera.frustum_for_window(window),
+            Err(WorldModelVisibilityError::DegenerateFrustum)
+        ));
+    }
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(matches!(
+            camera.frustum_for_window([0., value, 1., 1.]),
+            Err(WorldModelVisibilityError::NonFiniteCoordinates)
+        ));
+    }
+    Ok(())
+}
+
 /// Native camera-edge fixtures include the sixth face and all tolerance crossings.
 #[test]
 fn scene_bounds_match_original_six_plane_tolerance_at_camera_edges() -> Result<(), Box<dyn Error>> {

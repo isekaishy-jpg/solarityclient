@@ -2,7 +2,7 @@
 
 use glam::{Mat4, Vec3};
 
-use super::{bounds, matrix};
+use super::{WorldSceneFrustum, matrix};
 use crate::collision::MovementCollisionBounds;
 use crate::collision::world_model_visibility::{
     WorldModelPortalProjectionFrame, WorldModelVisibilityError,
@@ -14,8 +14,7 @@ pub struct WorldSceneCameraFrame {
     eye: Vec3,
     target: Vec3,
     relative_projection: Mat4,
-    corners: [Vec3; 8],
-    clip_planes: [[f32; 4]; 6],
+    frustum: WorldSceneFrustum,
 }
 
 impl WorldSceneCameraFrame {
@@ -75,41 +74,43 @@ impl WorldSceneCameraFrame {
             matrix::corner(inverse, [x, y, z, depth]) + eye
         });
         let relative_projection = Mat4::from_cols_array(&matrix::multiply(view, projection));
-        let frame = WorldModelPortalProjectionFrame::from_frustum_corners(
-            Mat4::IDENTITY,
-            eye,
-            eye,
-            relative_projection,
-            corners,
-        )?;
+        if !relative_projection.is_finite() {
+            return Err(WorldModelVisibilityError::NonFiniteCoordinates);
+        }
         Ok(Self {
             eye,
             target,
             relative_projection,
-            corners,
-            clip_planes: std::array::from_fn(|index| {
-                if index < 5 {
-                    frame.clip_planes[index]
-                } else {
-                    bounds::near_plane(frame.clip_planes[4], corners[2])
-                }
-            }),
+            frustum: WorldSceneFrustum::from_corners(corners)?,
         })
     }
 
     /// Returns native near/far corners for scene bounds and group frustum tests.
     #[must_use]
     pub const fn corners(&self) -> &[Vec3; 8] {
-        &self.corners
+        self.frustum.corners()
     }
 
-    /// Tests a validated world AABB against 9839E0's six scene clipping planes.
-    ///
-    /// This includes the near plane and the native negative tolerance; portal
-    /// polygon clipping separately consumes only the first five planes.
+    /// Tests a validated world AABB against 9839E0's full six-plane frustum.
     #[must_use]
     pub fn intersects_bounds(self, bounds: MovementCollisionBounds) -> bool {
-        bounds::intersects(&self.clip_planes, bounds)
+        self.frustum.intersects_bounds(bounds)
+    }
+
+    /// Builds 790AF0/790E20's scene frustum for a normalized screen window.
+    ///
+    /// Coordinates are min-Y, min-X, max-Y, max-X, where the full screen is
+    /// [0, 0, 1, 1]. Stock allows coordinates outside that range. Every window
+    /// interpolates from the original camera corners, including recursive group
+    /// windows. Portal polygons continue using the camera's full five planes.
+    ///
+    /// # Errors
+    /// Rejects nonfinite or reversed windows and degenerate resulting faces.
+    pub fn frustum_for_window(
+        self,
+        window: [f32; 4],
+    ) -> Result<WorldSceneFrustum, WorldModelVisibilityError> {
+        self.frustum.for_window(window)
     }
 
     /// Binds one root's retained forward/inverse placement to the shared camera.
@@ -133,7 +134,7 @@ impl WorldSceneCameraFrame {
             local_camera,
             world_camera: self.eye,
             relative_projection: self.relative_projection,
-            clip_planes: std::array::from_fn(|index| self.clip_planes[index]),
+            clip_planes: std::array::from_fn(|index| self.frustum.clip_planes()[index]),
         })
     }
 

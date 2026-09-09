@@ -2,6 +2,8 @@
 
 mod bounds;
 mod frame;
+mod frustum;
 mod matrix;
 
 pub use frame::WorldSceneCameraFrame;
+pub use frustum::WorldSceneFrustum;

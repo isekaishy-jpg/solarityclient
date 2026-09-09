@@ -143,6 +143,18 @@ so a matching eligible group suffices even when the model lies outside its
 screen window. Decoded WMO/BSP runtime tests cover both primary banks, exact
 root identity, secondary-root exclusions, and exterior depth admission.
 
+`WorldSceneCameraFrame::frustum_for_window` now supplies the cropped six-plane
+bounds frame used by `0x00790AF0/0x00790E20`. All 1,296 paired native captures
+match every corner and plane bit, including narrow and off-screen windows.
+Coordinates retain native min-Y, min-X, max-Y, max-X order in normalized screen
+space, and every recursive crop starts from the full camera corners. Plane
+construction preserves the extended cross-product cancellation before float
+stores. These window frames remain separate from portal polygon clipping:
+`0x007A72A0` reads the fixed full-camera planes at `0x00CDD108`, while scene
+bounds use the current frustum stack at `0x00CDB168 + 0xFC * [0x00CD8798]`.
+The window API is a foundation for the outstanding non-camera-root passes;
+it does not yet connect those passes to runtime movement admission.
+
 This connection covers camera-root traversal. Entry into other WMO roots from
 the outdoor depth lists (`0x0079A160/0x007B3A10`) and transformed-root overlap
 lists (`0x00799F80`) remains unimplemented. Mounted model registrations and

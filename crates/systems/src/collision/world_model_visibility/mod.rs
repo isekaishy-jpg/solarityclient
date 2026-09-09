@@ -7,7 +7,7 @@ mod query;
 pub use camera_scene::WorldModelCameraSceneQuery;
 pub use projection::{
     WorldModelExteriorPortalWindow, WorldModelPortalProjectionFrame, WorldModelPortalProjector,
-    WorldSceneCameraFrame,
+    WorldSceneCameraFrame, WorldSceneFrustum,
 };
 pub use query::WorldModelVisibilityQuery;
 

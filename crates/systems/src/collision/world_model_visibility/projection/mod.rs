@@ -8,4 +8,4 @@ mod scene_camera;
 pub use exterior::WorldModelExteriorPortalWindow;
 pub use frame::WorldModelPortalProjectionFrame;
 pub use polygon::WorldModelPortalProjector;
-pub use scene_camera::WorldSceneCameraFrame;
+pub use scene_camera::{WorldSceneCameraFrame, WorldSceneFrustum};

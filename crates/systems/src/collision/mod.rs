@@ -57,5 +57,5 @@ pub use world_model_registration_scene::{
 pub use world_model_visibility::{
     WorldModelCameraSceneQuery, WorldModelExteriorPortalWindow, WorldModelPortalProjectionFrame,
     WorldModelPortalProjector, WorldModelSceneVisibilityEvent, WorldModelVisibilityError,
-    WorldModelVisibilityQuery, WorldModelVisibilityVisit, WorldSceneCameraFrame,
+    WorldModelVisibilityQuery, WorldModelVisibilityVisit, WorldSceneCameraFrame, WorldSceneFrustum,
 };
