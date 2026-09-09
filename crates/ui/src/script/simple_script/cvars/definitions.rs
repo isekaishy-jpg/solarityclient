@@ -168,6 +168,9 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("cameraPitchMoveSpeed", "90", 0.1, 360.0),
     value("cameraPitchSmoothSpeed", "45"),
     value("cameraPivot", "1"),
+    value("cameraPivotDXMax", "0.05"),
+    value("cameraPivotDYMin", "0.00"),
+    ranged("cameraTargetSmoothSpeed", "90", 0.1, 360.0),
     value("cameraSmoothStyle", "4"),
     // Camera.cpp 5FD910 registers the complete follow profile tables.
     value("cameraSmoothNeverIdleDelay", "0.0"),

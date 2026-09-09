@@ -3,8 +3,10 @@
 use solarity_ecs::PlayerViewState;
 
 mod follow;
+mod pivot;
 mod water;
 pub(super) use follow::FollowSettings as PlayerCameraFollowSettings;
+pub(super) use pivot::PivotSettings as PlayerCameraPivotSettings;
 pub(super) use water::WaterSettings as PlayerCameraWaterSettings;
 
 #[derive(Clone, Copy)]
@@ -163,6 +165,7 @@ pub(super) struct PlayerCameraMouseSettings {
     pub pitch_speed: f32,
     pub invert_yaw: bool,
     pub invert_pitch: bool,
+    pub pivot: PlayerCameraPivotSettings,
 }
 
 /// Free look retains a world-space yaw while the subject can turn independently.
@@ -174,6 +177,7 @@ pub(super) struct PlayerCameraInput {
     flags: u32,
     world_yaw: f32,
     follow: [follow::FollowAngle; 2],
+    pivot: follow::FollowAngle,
 }
 
 impl PlayerCameraInput {
@@ -184,6 +188,7 @@ impl PlayerCameraInput {
             zoom: CameraZoom::new(view.distance()),
             flags: 0,
             world_yaw: wrap_yaw(facing + view.yaw_offset_radians()),
+            pivot: follow::FollowAngle::new(0.0),
             follow: [
                 follow::FollowAngle::new(view.pitch_radians()),
                 follow::FollowAngle::new(view.yaw_offset_radians()),
@@ -207,6 +212,28 @@ impl PlayerCameraInput {
 
     pub(super) fn obstructed(&mut self, distance: f32, time: u32) {
         self.zoom.obstructed(distance, time);
+    }
+
+    /// Preserves primary hit bits and requests native offset recovery after contact loss.
+    pub(super) fn contacts(
+        &mut self,
+        contacts: solarity_systems::PlayerCameraContacts,
+        movement: u32,
+        settings: PlayerCameraPivotSettings,
+        time: u32,
+    ) {
+        self.flags = self.flags & !0x30000
+            | if contacts.anchor { 0x20000 } else { 0 }
+            | if contacts.orbit { 0x10000 } else { 0 };
+        if !pivot::admitted(self.follow[0].current, self.flags, movement, settings) {
+            self.pivot
+                .request(0.0, 0.0, 1.0, settings.return_speed, time);
+        }
+    }
+
+    /// The offset affects only the final view, after all eye-position constraints.
+    pub(super) fn pivot_pitch(&self) -> f32 {
+        self.pivot.current
     }
 
     pub(super) fn follow_input(
@@ -234,6 +261,7 @@ impl PlayerCameraInput {
     }
 
     pub(super) fn sample_follow(&mut self, time: u32) {
+        self.pivot.sample(time);
         self.follow[0].sample(time);
         if !self.free_look() {
             self.follow[1].sample(time);
@@ -253,6 +281,7 @@ impl PlayerCameraInput {
             for angle in &mut self.follow {
                 angle.cancel();
             }
+            self.pivot.cancel();
         } else {
             self.follow[1].current = self.world_yaw - facing;
             for angle in &mut self.follow {
@@ -285,14 +314,28 @@ impl PlayerCameraInput {
 
     /// SDL supplies pixel deltas, after the coordinate conversion performed by
     /// native 47C020. 6020B0 scales them against the original 800x600 basis.
-    pub(super) fn motion(&mut self, delta: [f32; 2], settings: PlayerCameraMouseSettings) {
+    pub(super) fn motion(
+        &mut self,
+        delta: [f32; 2],
+        settings: PlayerCameraMouseSettings,
+        movement: u32,
+        time: u32,
+    ) {
         if !self.free_look() || !delta.into_iter().all(f32::is_finite) {
             return;
         }
         self.flags |= 0x40;
         let [yaw, pitch] = mouse_angles(delta, settings);
         self.world_yaw = wrap_yaw(self.world_yaw - yaw);
-        self.follow[0].current = (self.follow[0].current + pitch).clamp(-1.553_343, 1.553_343);
+        pivot::motion(
+            &mut self.pivot,
+            &mut self.follow[0].current,
+            self.flags,
+            movement,
+            [yaw, pitch],
+            settings,
+            time,
+        );
     }
 }
 
@@ -324,153 +367,5 @@ fn wrap_yaw(value: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn collision_recovery_and_wheel_input_match_original_histories()
-    -> Result<(), Box<dyn std::error::Error>> {
-        for line in include_str!("../../tests/fixtures/camera-obstruction-recovery-native.txt")
-            .lines()
-            .filter(|line| !line.starts_with('#'))
-        {
-            let groups = line
-                .split('|')
-                .map(|group| {
-                    group
-                        .split_whitespace()
-                        .map(|word| u32::from_str_radix(word, 16))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut zoom = CameraZoom::new(f32::from_bits(groups[0][0]));
-            for (action, expected) in groups[1]
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .zip(groups[2].as_chunks::<5>().0)
-            {
-                match action[0] {
-                    0 | 1 => {
-                        zoom.request(action[0] == 0, f32::from_bits(action[2]), action[1], 8.33)
-                    }
-                    2 => zoom.sample(action[1], PlayerCameraZoomSettings::default()),
-                    3 => zoom.obstructed(f32::from_bits(action[2]), action[1]),
-                    _ => unreachable!(),
-                }
-                assert!(
-                    (zoom.distance - f32::from_bits(expected[0])).abs() < 0.000_01,
-                    "distance action={action:?} actual={} expected={}",
-                    zoom.distance,
-                    f32::from_bits(expected[0])
-                );
-                assert!((zoom.target - f32::from_bits(expected[1])).abs() < 0.000_01);
-                assert_eq!(zoom.recovery.is_some(), expected[2] != 0);
-                if let Some((start, anchor)) = zoom.recovery {
-                    assert_eq!(start, expected[3]);
-                    assert!((anchor - f32::from_bits(expected[4])).abs() < 0.000_01);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn zoom_histories_match_original_requests_and_ticks() -> Result<(), Box<dyn std::error::Error>>
-    {
-        for line in include_str!("../../tests/fixtures/camera-zoom-native.txt")
-            .lines()
-            .skip(1)
-        {
-            let groups = line
-                .split('|')
-                .map(|group| {
-                    group
-                        .split_whitespace()
-                        .map(|word| u32::from_str_radix(word, 16))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let settings = PlayerCameraZoomSettings {
-                speed: f32::from_bits(groups[0][0]),
-                maximum: f32::from_bits(groups[0][1]),
-                maximum_factor: f32::from_bits(groups[0][2]),
-            };
-            let mut zoom = CameraZoom::new(f32::from_bits(groups[0][3]));
-            for action in groups[1].as_chunks::<3>().0 {
-                if action[0] == 2 {
-                    zoom.sample(action[1], settings);
-                } else {
-                    zoom.request(
-                        action[0] == 0,
-                        f32::from_bits(action[2]),
-                        action[1],
-                        settings.speed,
-                    );
-                }
-            }
-            assert_eq!(
-                [
-                    zoom.distance.to_bits(),
-                    zoom.flags,
-                    zoom.starts[0],
-                    zoom.starts[1],
-                    zoom.stops[0],
-                    zoom.stops[1],
-                    zoom.deadlines[0],
-                    zoom.deadlines[1]
-                ],
-                groups[2].as_slice(),
-                "{line}"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn mouse_angles_match_original_camera_instructions() -> Result<(), Box<dyn std::error::Error>> {
-        for line in include_str!("../../tests/fixtures/camera-mouse-native.txt")
-            .lines()
-            .skip(1)
-        {
-            let words: Vec<_> = line
-                .split_whitespace()
-                .filter(|word| *word != "|")
-                .map(|word| u32::from_str_radix(word, 16))
-                .collect::<Result<_, _>>()?;
-            let actual = mouse_angles(
-                [f32::from_bits(words[0]), f32::from_bits(words[1])],
-                PlayerCameraMouseSettings {
-                    yaw_speed: f32::from_bits(words[2]),
-                    pitch_speed: f32::from_bits(words[3]),
-                    invert_yaw: words[4] != 0,
-                    invert_pitch: words[5] != 0,
-                },
-            );
-            assert_eq!(actual.map(f32::to_bits), [words[6], words[7]], "{line}");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn orbit_keeps_world_direction_when_subject_turns() {
-        let mut camera = PlayerCameraInput::new(PlayerViewState::default(), 1.);
-        camera.set_free_look(true, 1.);
-        camera.motion(
-            [100., 50.],
-            PlayerCameraMouseSettings {
-                yaw_speed: 180.,
-                pitch_speed: 90.,
-                invert_yaw: false,
-                invert_pitch: false,
-            },
-        );
-        let direction = camera.yaw();
-        assert!(direction > 0.5 && direction < 0.7);
-        assert!((2. + camera.view(2.).yaw_offset_radians() - direction).abs() < 0.000_001);
-        assert!(camera.view(2.).pitch_radians() > PlayerViewState::default().pitch_radians());
-        camera.set_free_look(false, 2.);
-        assert!(!camera.free_look());
-        assert!((2. + camera.view(2.).yaw_offset_radians() - direction).abs() < 0.000_001);
-    }
-}
+#[path = "../../tests/application/player_camera.rs"]
+mod tests;

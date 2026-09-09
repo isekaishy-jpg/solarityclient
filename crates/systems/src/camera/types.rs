@@ -18,6 +18,7 @@ pub struct PlayerCameraPose {
     subject: Vec3,
     flying_mount_height: f32,
     orbit: PlayerCameraOrbit,
+    forward: Vec3,
 }
 
 /// Native camera scalar banks and orientation, independent of rounded world positions.
@@ -37,13 +38,33 @@ impl PlayerCameraPose {
     /// # Errors
     /// Rejects a non-finite eye or resulting target.
     pub fn with_eye(mut self, eye: Vec3) -> Result<Self, PlayerCameraPoseError> {
-        let target = eye + self.orbit.forward;
+        let target = eye + self.forward;
         if !eye.is_finite() || !target.is_finite() {
             return Err(PlayerCameraPoseError::NonFiniteTransform);
         }
         self.eye = eye;
         self.target = target;
         Ok(self)
+    }
+
+    /// Tilts the final view around the resolved eye without moving its orbit.
+    ///
+    /// `606F90` applies the independent `+0x130` pitch after primary and water
+    /// collision. Keeping this out of orbit geometry permits stock's planted
+    /// camera to look upward while its contact position remains unchanged.
+    ///
+    /// # Errors
+    /// Rejects non-finite pitch or resulting view vectors.
+    pub fn with_view_pitch_offset(mut self, radians: f32) -> Result<Self, PlayerCameraPoseError> {
+        if !radians.is_finite() {
+            return Err(PlayerCameraPoseError::NonFiniteView);
+        }
+        let (sin, cos) = f64::from(radians).sin_cos();
+        let forward = self.forward.as_dvec3();
+        let up = self.up.as_dvec3();
+        self.forward = (forward * cos - up * sin).as_vec3();
+        self.up = (forward * sin + up * cos).as_vec3();
+        self.with_eye(self.eye)
     }
 
     pub(super) const fn new(
@@ -63,13 +84,14 @@ impl PlayerCameraPose {
             subject,
             flying_mount_height,
             orbit,
+            forward: orbit.forward,
         }
     }
 
     /// Returns the retained native orientation without subtracting world coordinates.
     #[must_use]
     pub const fn forward(self) -> Vec3 {
-        self.orbit.forward
+        self.forward
     }
 
     pub(super) const fn orbit(self) -> PlayerCameraOrbit {

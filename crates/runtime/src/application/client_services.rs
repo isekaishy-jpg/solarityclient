@@ -921,6 +921,9 @@ impl ClientServices {
                 pitch_speed: scalar("camerapitchmovespeed", 90.),
                 invert_yaw: scalar("mouseinvertyaw", 0.) != 0.,
                 invert_pitch: scalar("mouseinvertpitch", 0.) != 0.,
+                pivot: super::player_camera::PlayerCameraPivotSettings::read(&|name| {
+                    world_ui.cvar_number(name)
+                }),
             };
             self.player_movement.push_mouse_motion(
                 [pointer.delta_x, pointer.delta_y],

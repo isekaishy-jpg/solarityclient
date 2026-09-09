@@ -23,7 +23,7 @@ impl RuntimeTerrainCoordinator {
         aspect_ratio: f32,
         settings: PlayerCameraObstructionSettings,
     ) -> Result<PlayerCameraPose, RuntimeCameraError> {
-        self.resolve_player_camera_with_feedback(pose, aspect_ratio, settings, |_, _| {})
+        self.resolve_player_camera_with_feedback(pose, aspect_ratio, settings, |_, _, _| {})
     }
 
     pub(in crate::application) fn resolve_player_camera_with_feedback(
@@ -31,7 +31,7 @@ impl RuntimeTerrainCoordinator {
         pose: PlayerCameraPose,
         aspect_ratio: f32,
         settings: PlayerCameraObstructionSettings,
-        feedback: impl FnOnce(f32, f32),
+        feedback: impl FnOnce(f32, f32, solarity_systems::PlayerCameraContacts),
     ) -> Result<PlayerCameraPose, RuntimeCameraError> {
         let mut profile = self
             .camera_profile
@@ -66,7 +66,11 @@ impl RuntimeTerrainCoordinator {
                     })
                 }
             })?;
-        feedback(obstruction.distance(), obstruction.height());
+        feedback(
+            obstruction.distance(),
+            obstruction.height(),
+            obstruction.contacts(),
+        );
         let pose = obstruction.pose();
         let forward = pose.forward();
         // The final water-only segment is independent of cameraWaterCollision.

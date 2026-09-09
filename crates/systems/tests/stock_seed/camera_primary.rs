@@ -94,6 +94,12 @@ fn primary_constraints_match_original_execution() -> Result<(), Box<dyn std::err
             );
         }
         let eye = resolved.pose().eye();
+        let contacts = resolved.contacts();
+        assert_eq!(
+            (u32::from(contacts.orbit) * 0x10000) | (u32::from(contacts.anchor) * 0x20000),
+            groups[1][6],
+            "contact flags; {line}"
+        );
         for (index, actual) in eye.to_array().into_iter().enumerate() {
             assert!(
                 (actual - f32::from_bits(groups[1][3 + index])).abs() < 0.000_2,

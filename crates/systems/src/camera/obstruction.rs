@@ -60,9 +60,23 @@ pub struct PlayerCameraObstruction {
     pose: PlayerCameraPose,
     distance: f32,
     height: f32,
+    contacts: PlayerCameraContacts,
+}
+
+/// Native primary contact bits retained for the next mouse-pivot decision.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PlayerCameraContacts {
+    /// The vertical subject-anchor ray hit geometry (`0x20000`).
+    pub anchor: bool,
+    /// The orbit center ray or swept volume hit geometry (`0x10000`).
+    pub orbit: bool,
 }
 
 impl PlayerCameraObstruction {
+    /// Returns actual hit results, including hits that do not shorten distance.
+    pub const fn contacts(&self) -> PlayerCameraContacts {
+        self.contacts
+    }
     /// Returns the local anchor height without subtracting rounded world Z.
     #[must_use]
     pub const fn height(&self) -> f32 {
@@ -147,6 +161,7 @@ pub fn resolve_player_camera_obstruction<E>(
         ),
         distance: resolved.distance,
         height: resolved.height,
+        contacts: resolved.contacts,
     })
 }
 
@@ -165,6 +180,7 @@ struct PrimaryResult {
     distance: f32,
     height: f32,
     vertical_fraction: f32,
+    contacts: PlayerCameraContacts,
 }
 
 /// Applies native anchor limits, center tracing and swept-volume retreat in order.
@@ -195,6 +211,7 @@ fn resolve_primary<E>(
     let mut lower = MINIMUM_HEIGHT;
     let mut upper = input.height;
     let mut vertical_fraction = 1.0;
+    let mut contacts = PlayerCameraContacts::default();
     if f64::from(height) - f64::from(0.2_f32) > f64::from(EPSILON) {
         if settings.water_collision {
             match settings.subject_liquid {
@@ -217,6 +234,7 @@ fn resolve_primary<E>(
             Vec3::new(input.subject.x, input.subject.y, base_z + span),
             settings.water_collision,
         )? {
+            contacts.anchor = true;
             vertical_fraction = fraction;
             height *= fraction;
         }
@@ -236,6 +254,7 @@ fn resolve_primary<E>(
             + input.up.as_dvec3() * f64::from(input.mount_height) * f64::from(vertical_fraction))
         .as_vec3();
         if let Some(fraction) = trace(scene, pivot, desired, settings.water_collision)? {
+            contacts.orbit = true;
             distance *= fraction;
         }
         if distance > EPSILON {
@@ -248,6 +267,7 @@ fn resolve_primary<E>(
                 settings.water_collision,
                 |volume, kind| scene(PlayerCameraSceneQuery::Volume { volume, kind }),
             )? {
+                contacts.orbit = true;
                 distance = shortened;
             }
             if (f64::from(input.distance) - f64::from(distance)).abs()
@@ -261,6 +281,7 @@ fn resolve_primary<E>(
         distance: distance.min(input.distance),
         height,
         vertical_fraction,
+        contacts,
     })
 }
 

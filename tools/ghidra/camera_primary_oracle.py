@@ -9,7 +9,7 @@ import random
 import struct
 from pathlib import Path
 from unicorn import UC_HOOK_CODE
-from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESP, UC_X86_REG_EDX
+from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESP, UC_X86_REG_EDX, UC_X86_REG_EAX
 import wmo_registration_oracle as n
 from camera_water_oracle import bits,ret
 
@@ -92,11 +92,12 @@ def primary(subject,forward,up,distance,height,mount,water,state,depth,unit_heig
     uc.hook_add(UC_HOOK_CODE,hook)
     uc.reg_write(UC_X86_REG_ECX,camera)
     n.invoke(uc,0x605d60,[point,dist,anchor,offset,bits(depth),camera+0x2c0])
+    contacts = uc.reg_read(UC_X86_REG_EAX)
     result=[*n.read_words(uc,dist,1),*n.read_words(uc,anchor,1),*n.read_words(uc,camera+0x2c0,1)]
     n.write_floats(uc,pivot,[subject[0],subject[1],f32(f32(subject[2])+n.read_floats(uc,anchor,1)[0])])
     uc.reg_write(UC_X86_REG_ECX,camera)
     n.invoke(uc,0x601d60,[eye,pivot,result[0],offset])
-    return result+list(n.read_words(uc,eye,3)),calls
+    return result+list(n.read_words(uc,eye,3))+[contacts],calls
 
 
 def main():
@@ -111,12 +112,12 @@ def main():
     rng=random.Random(12340)
     for _ in range(400):
         cases.append(([rng.uniform(-1000,1000) for _ in range(3)],[.8660254,0.,-.5],[.5,0.,.8660254],rng.choice([.01,.2,.2005,1.,5.,15.]),rng.choice([.1,.2,.3,.8333333,1.75,4.]),rng.choice([0.,2.]),rng.randrange(2),rng.randrange(3),rng.uniform(-1.,7.),rng.choice([-1.,2.,4.]),rng.choice([-1.,0.,.5,1.]),rng.choice([-1.,0.,.5,1.]),rng.choice([-1.,0.,.4,1.])))
-    rows=['# subject3 forward3 up3 distance height mount water state depth unit-height(-1 absent) vertical-ray(-1 absent) center-ray volume-retreat | distance height vertical-fraction eye3 | ordered (start3 end3 mask) rays; hex words']
+    rows=['# subject3 forward3 up3 distance height mount water state depth unit-height(-1 absent) vertical-ray(-1 absent) center-ray volume-retreat | distance height vertical-fraction eye3 contact-flags | ordered (start3 end3 mask) rays; hex words']
     for case in cases:
         subject,forward,up,d,h,m,w,s,dep,u,v,c,vol=case
         inputs=[*map(bits,subject+forward+up+[d,h,m]),w,s,*map(bits,[dep,u,v,c,vol])]
         result,calls=primary(*case)
-        rows.append(' | '.join(' '.join(f'{word:08x}' for word in values) for values in [inputs,result,calls]))
+        rows.append(' | '.join(' '.join(f'{word:08x}' for word in values) for values in [inputs,result,calls]).rstrip())
     args.output.write_text('\n'.join(rows)+'\n',encoding='utf-8')
     print(f'wrote {len(cases)} native primary constraints')
 

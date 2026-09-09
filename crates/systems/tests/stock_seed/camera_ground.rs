@@ -87,6 +87,12 @@ fn ground_camera_retains_native_distance_and_orientation() -> Result<(), Box<dyn
             "eye; {row}"
         );
         assert_eq!(result.pose().forward(), pose.forward());
+        let contacts = result.contacts();
+        assert_eq!(
+            (u32::from(contacts.orbit) * 0x10000) | (u32::from(contacts.anchor) * 0x20000),
+            expected[6].to_bits(),
+            "contact flags; {row}"
+        );
         checked += 1;
     }
     assert_eq!(checked, 54);

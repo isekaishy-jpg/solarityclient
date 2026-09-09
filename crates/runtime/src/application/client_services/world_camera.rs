@@ -25,14 +25,18 @@ impl ClientServices {
             pose,
             aspect_ratio,
             self.player_movement.camera_collision_settings(),
-            |distance, height| {
-                self.player_movement.camera_obstructed(distance, now);
+            |distance, height, contacts| {
+                self.player_movement
+                    .camera_obstructed(distance, contacts, now);
                 resolved_height = Some(height);
             },
         )?;
         if let Some(height) = resolved_height {
             self.player.camera_height_obstructed(height, now)?;
         }
+        let pose = pose
+            .with_view_pitch_offset(self.player_movement.camera_pivot_pitch())
+            .map_err(super::super::terrain_coordinator::RuntimeCameraError::from)?;
         Ok(Some(
             WorldCamera::stock_following(
                 pose.eye(),

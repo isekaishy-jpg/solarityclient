@@ -23,7 +23,7 @@ def main():
     args = parser.parse_args()
     native.initialize(args.executable)
     rows = ['# native 605D60/601D60/6059E0; pinned build-12340 aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8',
-            '# subject3 yaw pitch distance height | distance height vertical-fraction eye3; f32 hex words; fixed ground, aspect 16/9, water off']
+            '# subject3 yaw pitch distance height | distance height vertical-fraction eye3 contact-flags; f32 hex words; fixed ground, aspect 16/9, water off']
     cases = itertools.product(
         [[0., 0., 0.], [1340., -4380., 28.]],
         [-1.553343, -1.4, -.6],

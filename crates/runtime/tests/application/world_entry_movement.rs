@@ -277,6 +277,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         pitch_speed: 90.,
         invert_yaw: false,
         invert_pitch: false,
+        pivot: Default::default(),
     };
     movement.push(hold(UiMovementControl::Forward, false, 1200));
     movement.push(hold(UiMovementControl::CameraOrSelectOrMove, true, 1200));

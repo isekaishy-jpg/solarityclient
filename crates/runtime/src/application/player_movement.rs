@@ -164,6 +164,7 @@ pub(super) struct RuntimePlayerMovement {
     water_sample: Option<super::unit_water::UnitWaterSample>,
     camera_zoom_settings: PlayerCameraZoomSettings,
     camera_follow_settings: PlayerCameraFollowSettings,
+    camera_pivot_settings: super::player_camera::PlayerCameraPivotSettings,
     camera_cvar_revision: Option<u64>,
     owner: Option<LocalMovement>,
     input: PlayerInputState,
@@ -344,10 +345,25 @@ impl RuntimePlayerMovement {
     }
 
     /// The scene camera feeds collision distance back into its retained zoom lane.
-    pub(super) fn camera_obstructed(&mut self, distance: f32, time: u32) {
+    pub(super) fn camera_obstructed(
+        &mut self,
+        distance: f32,
+        contacts: solarity_systems::PlayerCameraContacts,
+        time: u32,
+    ) {
         if let Some(owner) = &mut self.owner {
             owner.camera.obstructed(distance, time);
+            owner
+                .camera
+                .contacts(contacts, owner.flags, self.camera_pivot_settings, time);
         }
+    }
+
+    /// Returns the final-view offset held separately from the saved orbit state.
+    pub(super) fn camera_pivot_pitch(&self) -> f32 {
+        self.owner
+            .as_ref()
+            .map_or(0.0, |owner| owner.camera.pivot_pitch())
     }
 
     /// Initial zero-launch support resolution belongs behind the loading card.
@@ -370,6 +386,7 @@ impl RuntimePlayerMovement {
         self.camera_water_settings = PlayerCameraWaterSettings::read(&number);
         self.camera_collision_settings.water_collision = self.camera_water_settings.collision;
         self.camera_follow_settings = PlayerCameraFollowSettings::read(&number);
+        self.camera_pivot_settings = super::player_camera::PlayerCameraPivotSettings::read(&number);
         self.set_camera_zoom_settings(PlayerCameraZoomSettings {
             speed: number("cameradistancemovespeed").unwrap_or(8.33),
             maximum: number("cameradistancemax").unwrap_or(15.),
@@ -696,9 +713,12 @@ impl LocalMovement {
                 };
             }
             MovementCommand::MouseMotion {
-                delta, settings, ..
+                delta,
+                settings,
+                timestamp_ms,
             } => {
-                self.camera.motion(delta, settings);
+                self.camera
+                    .motion(delta, settings, self.flags, timestamp_ms);
                 if self.camera.free_look() && input.mouse_turning() && admission.turning {
                     self.set_mouse_facing(input, output)?;
                 }

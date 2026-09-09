@@ -80,14 +80,14 @@ pub use movement::{
 pub use camera::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,
     CameraSubjectHeightSource, MountCameraGeometry, MountCameraHeightError,
-    PLAYER_CAMERA_WATER_CLEARANCE, PlayerCameraHeightSample, PlayerCameraHeightState,
-    PlayerCameraLiquidState, PlayerCameraLiquidStateError, PlayerCameraObstruction,
-    PlayerCameraObstructionError, PlayerCameraObstructionSettings, PlayerCameraPose,
-    PlayerCameraPoseError, PlayerCameraSceneQuery, PlayerCameraWaterInterfaceError,
-    PlayerCameraWaterSegment, PlayerCameraWaterSegmentError, resolve_camera_subject_height,
-    resolve_model_camera_subject_height, resolve_mounted_player_camera_pose,
-    resolve_player_camera_obstruction, resolve_player_camera_pose,
-    resolve_player_camera_water_interface,
+    PLAYER_CAMERA_WATER_CLEARANCE, PlayerCameraContacts, PlayerCameraHeightSample,
+    PlayerCameraHeightState, PlayerCameraLiquidState, PlayerCameraLiquidStateError,
+    PlayerCameraObstruction, PlayerCameraObstructionError, PlayerCameraObstructionSettings,
+    PlayerCameraPose, PlayerCameraPoseError, PlayerCameraSceneQuery,
+    PlayerCameraWaterInterfaceError, PlayerCameraWaterSegment, PlayerCameraWaterSegmentError,
+    resolve_camera_subject_height, resolve_model_camera_subject_height,
+    resolve_mounted_player_camera_pose, resolve_player_camera_obstruction,
+    resolve_player_camera_pose, resolve_player_camera_water_interface,
 };
 pub use camera::{
     PlayerCameraVolume, PlayerCameraVolumeError, PlayerCameraVolumeKind,

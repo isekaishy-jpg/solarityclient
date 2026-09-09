@@ -106,6 +106,35 @@ controlled ground geometry. Its 54 probes include the near-clip threshold,
 ground-contact zoom band, three pitches and two world origins. The regression
 compares resolved distance, height and eye through the public camera API.
 
+## Ground-contact view pivot
+
+`6020B0` routes mouse pitch into a separate `+0x130` view offset when
+`5FFDE0` admits pivoting. Ordinary units must have primary contact, nonpositive
+orbit pitch, no movement flags in `0xF`, and no first-person camera flag.
+Flying units require the orbit contact bit; other units also admit the vertical
+anchor contact bit. Actual hits are retained even when they do not shorten the
+resolved distance.
+
+`cameraPivotDXMax` defaults to 0.05 radians and `cameraPivotDYMin` to zero.
+A sufficiently vertical drag can tilt the view while the orbit remains fixed;
+ordinary orbit input still permits the eye to move inward against geometry.
+Reversing pitch consumes the offset before returning to orbit. Stock tests raw
+positive pitch before applying inversion, and a zero orbit pitch has its own
+branch that also advances orbit. These details are preserved.
+
+The final `606F90` view rotation follows primary and water collision, so it
+does not move the resolved eye. Contact loss requests `6012D0`'s return using
+`cameraTargetSmoothSpeed` (90 degrees/sec by default); `603D30` samples its
+independent cosine interpolation lane.
+
+`camera_pivot_oracle.py` executes the original mouse and interpolation code.
+The fixtures cover 3,600 admission/input cases and 192 inversion, threshold and
+return histories, with seven timed samples per history. They deliberately use
+a controlled 45-degree/sec return speed. Runtime tests also verify that a
+vertical drag preserves the eye exactly and that reversal restores ordinary
+orbit. Primary and ground fixtures verify both native contact bits. Special
+vehicle/remote camera subjects remain outside this ordinary-player path.
+
 ## Water pitch and control modes
 
 `606F90` requests pitch changes at surfaced/submerged transitions while

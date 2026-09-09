@@ -16,8 +16,8 @@ pub use controller::{
     resolve_mounted_player_camera_pose, resolve_player_camera_pose,
 };
 pub use obstruction::{
-    PlayerCameraObstruction, PlayerCameraObstructionError, PlayerCameraObstructionSettings,
-    PlayerCameraSceneQuery, resolve_player_camera_obstruction,
+    PlayerCameraContacts, PlayerCameraObstruction, PlayerCameraObstructionError,
+    PlayerCameraObstructionSettings, PlayerCameraSceneQuery, resolve_player_camera_obstruction,
 };
 pub use transition::PlayerCameraHeightState;
 pub use types::{
