@@ -16,6 +16,10 @@ use crate::support::ClientFixture;
 /// The composition root mounts assets and owns both executor classes.
 #[test]
 fn application_starts_foundations_and_shuts_down_cleanly() -> Result<(), Box<dyn Error>> {
+    // Both application tests own SDL's process-wide video thread and event pump.
+    let _sdl_test = super::support::SDL_TEST_LOCK
+        .lock()
+        .map_err(|_| "SDL test lock poisoned")?;
     let game_object_displays = empty_wdbc(19);
     let ui_sound_lookups = empty_wdbc(3);
     let fixture = ClientFixture::with_common_files(&[

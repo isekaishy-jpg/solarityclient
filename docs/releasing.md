@@ -1,15 +1,38 @@
 # Product versions and numbered builds
 
-The current product version is **0.0.2a**, marking the user-accepted basic
-locomotion slice. This milestone covers ground movement, jumping and landing,
-movement animation and sound, and the associated camera behavior. Swimming,
-mounts, flying, vehicles, and other dependent movement modes are backlog items
-waiting for their prerequisite implementations to catch up. They remain outside
-this milestone. See [local player movement](architecture/local-player-movement.md)
-for the implementation scope and remaining details.
+The current product version is **0.0.3a**. This user-authorized release boundary
+covers the work since 0.0.2a across world audio and movement, transports, water,
+player recovery, sky and lighting, and the associated UI and asset fixes. The
+water and lighting work overlaps the next development slice; the version change
+does not declare every affected system complete. See the
+[comprehensive 0.0.3a patch notes](releases/0.0.3a.md) and their complete commit
+ledger for implemented behavior, validation, and remaining integration work.
+
+The preceding **0.0.2a** release marked the accepted basic locomotion milestone;
+its historical scope is recorded in [local player movement](architecture/local-player-movement.md).
 
 A version bump is a release decision, not a side effect of committing a fix
 or compiling code. Numbered Testing builds continue across version changes.
+
+## Patch notes required for every version change
+
+Before changing a product version, identify the previous version-change commit
+and review every intervening commit, its description and affected behavior.
+Write `docs/releases/<product-version>.md` with comprehensive grouped notes,
+the exact comparison range, validation evidence, known limitations, and an
+accounting of every commit, including package-only and internal changes. A
+linked commit ledger may hold that accounting. Reconcile intermediate claims
+against the final source: a later integration can complete an earlier helper,
+while retained but unwired code must remain explicitly identified as such.
+
+Link each release from [CHANGELOG.md](../CHANGELOG.md) and this guide. Include
+the version and packaging changes themselves in the release record, and verify
+that all workspace package versions and the compiled product identity agree.
+Version changes may mark overlapping slices when the user chooses that boundary;
+patch notes must not turn that decision into a claim of complete stock parity
+or an unmeasured performance target.
+
+## Version spelling
 
 `Cargo.toml` is the version source. All workspace packages inherit its
 SemVer-compatible spelling; the runtime embeds the product spelling:

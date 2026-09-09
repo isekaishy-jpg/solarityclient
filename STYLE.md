@@ -206,10 +206,17 @@ Commits MUST follow [Conventional Commits](https://www.conventionalcommits.org/)
 - Product versions MUST use three numeric components followed by a release
   stage: `a` for alpha, `b` for beta, `rc` for release candidate, or `s` for
   stable. For example, `0.0.0a` is the initial alpha version.
-- The current product version is `0.0.0a`. Completion of the first major slice
-  advances it to `0.0.1a`; individual fixes MUST NOT prematurely claim that
-  milestone. Later version or stage changes MUST represent an explicit release
-  decision.
+- The current product version MUST be read from the workspace `Cargo.toml`;
+  [releasing](docs/releasing.md) records its product spelling and release scope.
+  Version or stage changes MUST represent an explicit release decision.
+- Every version change MUST include comprehensive patch notes covering all
+  commits since the previous version change. Review the complete commit range,
+  including fixes, features, internal work, validation, and numbered packages;
+  do not derive release scope from a recent subset of commits or memory alone.
+  Record the baseline and final included revision, account for every commit,
+  and distinguish implemented behavior from partial or unwired work. Link the
+  notes from the changelog and releasing guide. A version boundary MAY span
+  overlapping development slices; it MUST NOT imply unverified completion.
 - A separate monotonically increasing build number MUST identify numbered
   packaged Testing/release builds. It MUST NOT reset when the product version
   or release stage changes. Ordinary local compiles retain the current number.
