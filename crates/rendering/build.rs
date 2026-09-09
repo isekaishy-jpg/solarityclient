@@ -130,6 +130,14 @@ fn main() {
             &[],
         );
     }
+    for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+        compile(
+            &format!("src/shader/low_detail_spirv/source/low-detail.{stage}.glsl"),
+            kind,
+            &output.join(format!("low-detail.{stage}.spv")),
+            &[],
+        );
+    }
     for unified in 0..=1 {
         for shader in 0..=6 {
             let unified_value = unified.to_string();

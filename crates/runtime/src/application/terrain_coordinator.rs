@@ -3,13 +3,13 @@
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
     DecodedTerrainTile, M2ModelCache, MapCatalog, MapDefinition, TerrainDoodadPlacement,
-    TerrainMap, TerrainTileIndex, WmoModelCache, WorldModelDoodadSetError,
+    TerrainLowDetail, TerrainMap, TerrainTileIndex, WmoModelCache, WorldModelDoodadSetError,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{ActiveWorld, WorldStateError};
 use solarity_rendering::{
-    TerrainChunkDrawPlan, TerrainTileMeshPlan, TerrainTileMeshPlanError, WorldCameraError,
-    WorldFrustum,
+    TerrainChunkDrawPlan, TerrainLowDetailMap, TerrainTileMeshPlan, TerrainTileMeshPlanError,
+    WorldCameraError, WorldFrustum,
 };
 use solarity_systems::{
     M2CollisionError, M2CollisionScene, PlayerCameraObstructionError,
@@ -644,8 +644,10 @@ impl RuntimeTerrainCoordinator {
                 .map(map_id)
                 .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
             let terrain = TerrainMap::load(&mut self.assets.borrow_mut(), definition)?;
+            let low_detail = load_low_detail(&mut self.assets.borrow_mut(), &terrain)?;
             self.active = Some(ResidentTerrainMap {
                 terrain,
+                low_detail,
                 tile: None,
                 global_world_model: None,
                 nearby: Vec::new(),
@@ -732,6 +734,13 @@ impl RuntimeTerrainCoordinator {
             map_id,
             tile: tile_index,
         })
+    }
+
+    /// Shares the map-wide horizon independently of the currently streamed ADT.
+    pub fn low_detail(&self) -> Option<&Arc<TerrainLowDetailMap>> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.low_detail.as_ref())
     }
 
     /// Returns the active WDT manifest when a world is resident.
@@ -1197,7 +1206,20 @@ enum TerrainWorkerSource {
     Ready(Box<TerrainWorkerState>),
 }
 
+/// Decodes native WDL data once at the terrain asset boundary.
+fn load_low_detail(
+    assets: &mut AssetStore,
+    terrain: &TerrainMap,
+) -> Result<Option<Arc<TerrainLowDetailMap>>, RuntimeTerrainError> {
+    Ok(
+        TerrainLowDetail::load(assets, terrain)?
+            .map(|map| Arc::new(TerrainLowDetailMap::new(&map))),
+    )
+}
+
 struct TerrainWorkerState {
+    // One map is retained across tile jobs; None inside the pair caches absent WDLs.
+    low_detail: Option<(u32, Option<Arc<TerrainLowDetailMap>>)>,
     assets: AssetStore,
     textures: BlpTextureCache,
     models: M2ModelCache,
@@ -1209,6 +1231,7 @@ impl TerrainWorkerState {
     fn mount(catalog: ArchiveCatalog) -> Result<Self, RuntimeTerrainError> {
         Ok(Self {
             assets: AssetStore::mount(catalog)?,
+            low_detail: None,
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
             world_models: WmoModelCache::new(),
@@ -1222,6 +1245,15 @@ impl TerrainWorkerState {
         request: TerrainRequest,
     ) -> Result<ResidentTerrainMap, RuntimeTerrainError> {
         let terrain = TerrainMap::load(&mut self.assets, definition)?;
+        if self
+            .low_detail
+            .as_ref()
+            .is_none_or(|(map_id, _)| *map_id != request.map_id)
+        {
+            self.low_detail = Some((request.map_id, load_low_detail(&mut self.assets, &terrain)?));
+        }
+        // The immutable bank is shared by the worker, active map and frame fences.
+        let low_detail = self.low_detail.as_ref().and_then(|(_, map)| map.clone());
         if let Some(placement) = terrain.global_world_model() {
             let global_world_model = Some(ResidentGlobalWorldModel::prepare(
                 placement,
@@ -1233,6 +1265,7 @@ impl TerrainWorkerState {
             )?);
             return Ok(ResidentTerrainMap {
                 terrain,
+                low_detail,
                 tile: None,
                 global_world_model,
                 nearby: Vec::new(),
@@ -1257,6 +1290,7 @@ impl TerrainWorkerState {
         )?);
         Ok(ResidentTerrainMap {
             terrain,
+            low_detail,
             tile,
             global_world_model: None,
             nearby: Vec::new(),
@@ -1303,6 +1337,7 @@ fn prepare_terrain_on_worker(
 
 struct ResidentTerrainMap {
     terrain: TerrainMap,
+    low_detail: Option<Arc<TerrainLowDetailMap>>,
     tile: Option<ResidentTerrainTile>,
     global_world_model: Option<ResidentGlobalWorldModel>,
     nearby: Vec<ResidentTerrainTile>,

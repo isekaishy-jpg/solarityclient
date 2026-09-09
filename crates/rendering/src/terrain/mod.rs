@@ -6,11 +6,13 @@
 
 mod detail_doodad;
 mod gpu_state;
+mod low_detail;
 mod map_weather;
 mod mesh;
 mod tile_mesh;
 
 pub use gpu_state::TerrainSceneUniform;
+pub use low_detail::{TerrainLowDetailMap, TerrainLowDetailMesh, WorldLowDetailFrame};
 pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};
 pub use tile_mesh::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,

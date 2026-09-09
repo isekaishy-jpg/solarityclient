@@ -23,6 +23,7 @@ mod vulkan_frame;
 mod vulkan_glow;
 mod vulkan_instance;
 mod vulkan_liquid;
+mod vulkan_low_detail;
 mod vulkan_m2_draw;
 mod vulkan_m2_frame;
 mod vulkan_m2_particle_draw;

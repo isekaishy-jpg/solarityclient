@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use solarity_asset::{
-    ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap, TerrainTileIndex,
+    ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainLowDetail, TerrainMap,
+    TerrainTileIndex,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -51,6 +52,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         map.global_world_model().is_some(),
         map.source().relative_path().display(),
     );
+    match TerrainLowDetail::load(&mut store, &map)? {
+        Some(low_detail) => println!(
+            "wdl_tiles={} wdl_world_models={}",
+            low_detail.tiles().len(),
+            low_detail.world_models().len()
+        ),
+        None => println!("wdl=absent"),
+    }
     if let (Some(tile_x), Some(tile_y)) = (tile_x, tile_y) {
         let tile_x = parse_u8(&tile_x, "tile X")?;
         let tile_y = parse_u8(&tile_y, "tile Y")?;

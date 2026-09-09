@@ -829,9 +829,17 @@ impl TerrainFrame {
         )?;
         let depths = (!self.liquid_draws.is_empty()).then(|| liquid_depth_images(light));
         let mut scene = WorldFrameScene::new(terrain_scene, world_model_scene, m2_scene)
+            .with_world_depth_range()
             .with_m2_instance_scenes(m2.instance_scenes)
             .with_sky_models(sky_models)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
+        if let Some(map) = terrain.low_detail() {
+            scene = scene.with_low_detail(solarity_rendering::WorldLowDetailFrame::new(
+                map,
+                camera,
+                fog.color(),
+            )?);
+        }
         if default_sky {
             scene = scene
                 .with_celestials(

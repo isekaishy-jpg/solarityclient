@@ -7,6 +7,7 @@ mod portrait;
 mod terrain_retirement;
 
 use crate::device::vulkan_liquid::{LiquidMeshRegistry, LiquidPipelines};
+use crate::device::vulkan_low_detail::LowDetailPipelines;
 use crate::device::vulkan_m2_frame::PortraitRegistry;
 use crate::device::vulkan_pct_pipeline::{PctPipeline, PctPipelineKind};
 use std::collections::HashMap;
@@ -212,6 +213,7 @@ pub struct VulkanRenderer {
     ripple_pipeline: PctPipeline,
     underwater_pipeline: PctPipeline,
     sky_pipeline: PctPipeline,
+    low_detail_pipelines: LowDetailPipelines,
     cloud_pipeline: PctPipeline,
     celestial_pipeline: PctPipeline,
     terrain_materials: TerrainMaterialRegistry,
@@ -302,6 +304,7 @@ impl VulkanRenderer {
             ripple_pipeline: PctPipeline::default(),
             underwater_pipeline: PctPipeline::default(),
             sky_pipeline: PctPipeline::default(),
+            low_detail_pipelines: LowDetailPipelines::default(),
             cloud_pipeline: PctPipeline::default(),
             celestial_pipeline: PctPipeline::default(),
             terrain_retirements: std::collections::VecDeque::new(),
@@ -2420,6 +2423,13 @@ impl VulkanRenderer {
                 PctPipelineKind::Cloud,
             )?;
         }
+        if scene.low_detail().is_some() {
+            self.low_detail_pipelines.prepare(
+                &self.device,
+                self.color_format,
+                self.depth_format,
+            )?;
+        }
         if scene.sky().is_some() {
             self.sky_pipeline.prepare(
                 &self.device,
@@ -2459,6 +2469,7 @@ impl VulkanRenderer {
                 ripple_pipeline: &self.ripple_pipeline,
                 underwater_pipeline: &self.underwater_pipeline,
                 sky_pipeline: &self.sky_pipeline,
+                low_detail_pipelines: &self.low_detail_pipelines,
                 cloud_pipeline: &self.cloud_pipeline,
                 celestial_pipeline: &self.celestial_pipeline,
                 liquid_meshes: &self.liquid_meshes,
@@ -2820,6 +2831,7 @@ impl Drop for VulkanRenderer {
         self.ripple_pipeline.destroy(&self.device);
         self.underwater_pipeline.destroy(&self.device);
         self.sky_pipeline.destroy(&self.device);
+        self.low_detail_pipelines.destroy(&self.device);
         self.cloud_pipeline.destroy(&self.device);
         self.celestial_pipeline.destroy(&self.device);
         self.world_model_pipelines.destroy(&self.device);

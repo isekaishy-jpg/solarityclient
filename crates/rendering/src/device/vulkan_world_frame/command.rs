@@ -37,7 +37,9 @@ use crate::device::vulkan_world_model_pipeline::WorldModelPipelineRegistry;
 use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
 
 mod bindings;
+mod low_detail;
 use bindings::WorldCommandBindings;
+use low_detail::record_low_detail;
 
 use super::WorldFrameContext;
 use super::resource::WorldFrameSlot;
@@ -81,6 +83,10 @@ pub(super) struct RecordContext<'a> {
     pub(super) cloud_resources: &'a CloudFrameResources,
     pub(super) cloud_frame: Option<crate::WorldCloudFrame<'a>>,
     pub(super) sky_pipeline: &'a PctPipeline,
+    pub(super) low_detail_pipelines: &'a crate::device::vulkan_low_detail::LowDetailPipelines,
+    pub(super) low_detail_map: Option<&'a crate::device::vulkan_low_detail::LowDetailGpuMap>,
+    pub(super) low_detail_frame: Option<crate::WorldLowDetailFrame<'a>>,
+    pub(super) depth_maximum: f32,
     pub(super) sky_resources: &'a SkyFrameResources,
     pub(super) sky_frame: Option<crate::WorldSkyFrame<'a>>,
     pub(super) liquid_draws: &'a [LiquidPreparedDraw],
@@ -107,7 +113,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) image_index: u32,
 }
 
-pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
+pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
     let begin =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     // SAFETY: Slot pool was reset and this primary buffer is not pending.
@@ -209,6 +215,18 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     record_sky(&context, &mut bindings);
     record_clouds(&context, &mut bindings);
     record_sky_models(&context, true, &mut bindings)?;
+    let low_detail_draw_count = record_low_detail(&context, viewport, &mut bindings)?;
+    // 79A870 restores the ordinary world interval after horizon/sky work.
+    let world_viewport = vk::Viewport {
+        max_depth: context.depth_maximum,
+        ..viewport
+    };
+    // SAFETY: All subsequent world pipelines declare a dynamic viewport.
+    unsafe {
+        context
+            .device
+            .cmd_set_viewport(context.command_buffer, 0, &[world_viewport]);
+    }
     for draw in context.terrain_draws.iter().copied() {
         record_terrain(&context, draw, &mut bindings)?;
     }
@@ -238,7 +256,8 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<(), VulkanError> {
     transition_to_present(&context);
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
-        .map_err(|source| VulkanError::operation("end world command buffer", source))
+        .map_err(|source| VulkanError::operation("end world command buffer", source))?;
+    Ok(low_detail_draw_count)
 }
 
 /// Dispatches the typed streams in their one stock scene-element order.

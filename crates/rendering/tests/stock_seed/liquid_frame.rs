@@ -19,6 +19,9 @@ use crate::support::{Fixture, FixtureFile};
 #[path = "celestial_frame.rs"]
 mod celestial;
 
+#[path = "terrain_low_detail_frame.rs"]
+mod low_detail;
+
 /// Surface alpha zero isolates native depth alpha while opaque magma supplies
 /// the destination. Repeated changing frames exercise each slot and growth.
 #[test]

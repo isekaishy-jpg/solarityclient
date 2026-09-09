@@ -18,6 +18,8 @@ pub struct WorldFrameScene<'a> {
     ripples: Option<WaterRippleFrame<'a>>,
     underwater: Option<UnderwaterParticleFrame<'a>>,
     sky: Option<WorldSkyFrame<'a>>,
+    low_detail: Option<crate::WorldLowDetailFrame<'a>>,
+    world_depth_range: bool,
     clouds: Option<WorldCloudFrame<'a>>,
     celestials: Option<crate::WorldCelestialFrame<'a>>,
     sky_models: Option<WorldSkyModelFrame<'a>>,
@@ -42,9 +44,38 @@ impl<'a> WorldFrameScene<'a> {
             ripples: None,
             underwater: None,
             sky: None,
+            low_detail: None,
+            world_depth_range: false,
             clouds: None,
             celestials: None,
             sky_models: None,
+        }
+    }
+
+    /// Selects stock's ordinary world depth interval, below horizon and sky.
+    #[must_use]
+    pub const fn with_world_depth_range(mut self) -> Self {
+        self.world_depth_range = true;
+        self
+    }
+
+    /// Adds map-wide WDL terrain between the sky and ordinary world queues.
+    #[must_use]
+    pub const fn with_low_detail(mut self, frame: crate::WorldLowDetailFrame<'a>) -> Self {
+        self.low_detail = Some(frame);
+        self.world_depth_range = true;
+        self
+    }
+
+    pub(in crate::device) const fn low_detail(self) -> Option<crate::WorldLowDetailFrame<'a>> {
+        self.low_detail
+    }
+
+    pub(in crate::device) const fn depth_maximum(self) -> f32 {
+        if self.world_depth_range {
+            crate::WORLD_DEPTH_MAXIMUM
+        } else {
+            1.0
         }
     }
 
@@ -255,6 +286,7 @@ pub struct WorldFrameReport {
     ripple_draw_count: usize,
     underwater_draw_count: usize,
     sky_draw_count: usize,
+    low_detail_draw_count: usize,
     celestial_draw_count: usize,
     sky_model_draw_count: usize,
     terrain_draw_count: usize,
@@ -288,6 +320,7 @@ impl WorldFrameReport {
             ripple_draw_count: 0,
             underwater_draw_count: 0,
             sky_draw_count: 0,
+            low_detail_draw_count: 0,
             celestial_draw_count: 0,
             sky_model_draw_count: 0,
             liquid_draw_count,
@@ -300,6 +333,17 @@ impl WorldFrameReport {
             ribbon_vertex_count,
             bone_transform_count,
         }
+    }
+
+    pub(super) const fn with_low_detail_draw_count(mut self, count: usize) -> Self {
+        self.low_detail_draw_count = count;
+        self
+    }
+
+    /// Returns the number of WDL face banks submitted to the horizon interval.
+    #[must_use]
+    pub const fn low_detail_draw_count(self) -> usize {
+        self.low_detail_draw_count
     }
 
     pub(super) const fn with_sky_model_draw_count(mut self, count: usize) -> Self {

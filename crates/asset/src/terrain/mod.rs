@@ -22,4 +22,5 @@ pub use map_chunk::{
     TerrainTextureLayer, TerrainWorldModelPlacement,
 };
 pub use map_chunk_liquid::{TerrainLiquidChunk, TerrainLiquidLayer, TerrainLiquidTable};
+pub use map_low_detail::{TerrainLowDetail, TerrainLowDetailTile};
 pub use map_shadow::{TERRAIN_SHADOW_MAP_BYTE_COUNT, TERRAIN_SHADOW_MAP_WIDTH, TerrainShadowMap};

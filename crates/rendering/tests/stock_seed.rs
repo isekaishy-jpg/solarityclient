@@ -42,6 +42,8 @@ mod shader;
 mod support;
 #[path = "stock_seed/terrain.rs"]
 mod terrain;
+#[path = "stock_seed/terrain_low_detail.rs"]
+mod terrain_low_detail;
 #[path = "stock_seed/texture.rs"]
 mod texture;
 #[path = "stock_seed/ui.rs"]

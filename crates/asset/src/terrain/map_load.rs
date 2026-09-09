@@ -613,7 +613,7 @@ fn decode_world_models(
 
 /// Converts the client renderer's offset X/Y-up/Z placement basis to the
 /// server/ECS map X/Y/Z-up basis carried in world packets.
-const fn placement_position(position: [f32; 3]) -> [f32; 3] {
+pub(super) const fn placement_position(position: [f32; 3]) -> [f32; 3] {
     [
         CLIENT_MAP_ORIGIN - position[2],
         CLIENT_MAP_ORIGIN - position[0],
@@ -623,7 +623,7 @@ const fn placement_position(position: [f32; 3]) -> [f32; 3] {
 
 /// Converts both corners while preserving lower/upper ordering after the two
 /// horizontal axes are reflected around the client map origin.
-const fn placement_bounds(minimum: [f32; 3], maximum: [f32; 3]) -> [[f32; 3]; 2] {
+pub(super) const fn placement_bounds(minimum: [f32; 3], maximum: [f32; 3]) -> [[f32; 3]; 2] {
     [
         [
             CLIENT_MAP_ORIGIN - maximum[2],
