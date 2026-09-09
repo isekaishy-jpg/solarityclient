@@ -17,11 +17,15 @@ mod portrait;
 #[cfg(test)]
 #[path = "../../../tests/application/scenery_distance.rs"]
 mod scenery_distance_tests;
+mod shadow;
 pub(in crate::application) mod sky;
 pub(in crate::application) mod sound;
 mod streaming;
 pub(in crate::application) mod unit_effects;
 mod unit_registration;
+#[cfg(test)]
+#[path = "../../../tests/application/unit_shadow_scene.rs"]
+mod unit_shadow_tests;
 mod visibility;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{
@@ -724,6 +728,8 @@ pub(in crate::application) struct M2Frame {
     bone_pose_scratch: M2BonePose,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
+    shadow_draws: Vec<M2PreparedDraw>,
+    shadow_admission: Vec<bool>,
     transparent_elements: Vec<M2TransparentElement>,
     model_distance_sort: Vec<bool>,
     placement_topology_dirty: bool,
@@ -764,6 +770,7 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
     pub(in crate::application) water_scene_order: u32,
     pub(in crate::application) bone_transforms: &'frame [Mat4],
     pub(in crate::application) draws: &'frame [M2PreparedDraw],
+    pub(in crate::application) shadow_draws: &'frame [M2PreparedDraw],
     pub(in crate::application) particle_vertices: &'frame [M2ParticleRenderVertex],
     pub(in crate::application) particle_indices: &'frame [u32],
     pub(in crate::application) particle_draws: &'frame [M2ParticlePreparedDraw],
@@ -817,6 +824,8 @@ impl M2Frame {
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
+            shadow_draws: Vec::new(),
+            shadow_admission: Vec::new(),
             transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
@@ -949,6 +958,8 @@ impl M2Frame {
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
+            shadow_draws: Vec::new(),
+            shadow_admission: Vec::new(),
             transparent_elements: Vec::new(),
             model_distance_sort: Vec::new(),
             placement_topology_dirty: true,
@@ -2036,6 +2047,7 @@ impl M2Frame {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -2078,6 +2090,7 @@ impl M2Frame {
             &mut crate::application::terrain_coordinator::RuntimeTerrainCoordinator,
             solarity_systems::WorldEntityLightEnvironment,
         )>,
+        shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
@@ -2089,6 +2102,8 @@ impl M2Frame {
         }
         self.bone_transforms.clear();
         self.visible_draws.clear();
+        self.shadow_draws.clear();
+        self.shadow_admission.clear();
         self.transparent_elements.clear();
         self.particle_vertices.clear();
         self.particle_indices.clear();
@@ -2288,6 +2303,7 @@ impl M2Frame {
             }
             let placement_index = next_placement;
             next_placement += 1;
+            self.shadow_admission.push(false);
             let publishes_lights = world_lighting.is_some()
                 && self.sources[self.placements[placement_index].source_index]
                     .as_ref()
@@ -2745,6 +2761,38 @@ impl M2Frame {
             } else {
                 None
             };
+            // Native shadow traversal uses the light volume independently of
+            // camera visibility, and attached models inherit root admission.
+            let shadow_admitted = if let Some(projection) = shadow_projection {
+                if let Some(parent) = self.placement_visibility.light_parent(placement_index) {
+                    self.shadow_admission[parent]
+                } else {
+                    shadow::admits_root(projection, source, placement)?
+                }
+            } else {
+                false
+            };
+            self.shadow_admission[placement_index] = shadow_admitted;
+            let shadow_bone_offset = u32::try_from(self.bone_transforms.len())
+                .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
+            let first_shadow_draw = self.shadow_draws.len();
+            if shadow_admitted {
+                shadow::append_packets(
+                    renderer,
+                    source,
+                    placement,
+                    clock,
+                    model_view,
+                    placement_opacity,
+                    shadow_bone_offset,
+                    &mut self.shadow_draws,
+                )?;
+            }
+            let has_shadow_bones = self.shadow_draws.len() != first_shadow_draw;
+            if has_shadow_bones {
+                self.bone_transforms
+                    .extend_from_slice(bone_pose.transforms());
+            }
             if !static_visibility_resolved || (publishes_lights && placement.unit_effect.is_none())
             {
                 let (center, radius) =
@@ -2761,8 +2809,7 @@ impl M2Frame {
                 effect_time_ms.wrapping_sub(placement.last_effect_time_ms) as f32 * 0.001;
             placement.last_effect_time_ms = effect_time_ms;
 
-            let bone_offset = u32::try_from(self.bone_transforms.len())
-                .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
+            let bone_offset = shadow_bone_offset;
             let light_bank = placement_light_bank(placement.owner);
             let effect_retiring = placement
                 .unit_effect
@@ -2938,8 +2985,10 @@ impl M2Frame {
                 effect_delta_seconds,
                 effect_scale,
             )?;
-            self.bone_transforms
-                .extend_from_slice(bone_pose.transforms());
+            if !has_shadow_bones {
+                self.bone_transforms
+                    .extend_from_slice(bone_pose.transforms());
+            }
             let mut instance_color = placement_mesh_color(placement.owner, placement.color);
             if let Some(animation) = &placement.unit_animation {
                 instance_color *= placement_color(animation.model_color().to_le_bytes());
@@ -3155,6 +3204,7 @@ impl M2Frame {
             water_scene_order,
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,
+            shadow_draws: &self.shadow_draws,
             particle_vertices: &self.particle_vertices,
             particle_indices: &self.particle_indices,
             particle_draws: &self.particle_draws,

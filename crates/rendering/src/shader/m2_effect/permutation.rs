@@ -105,6 +105,13 @@ pub struct M2ShaderPermutation {
 }
 
 impl M2ShaderPermutation {
+    /// Replaces the disabled selector with stock's primary direct-depth map.
+    pub(crate) const fn with_primary_shadow(self) -> Self {
+        Self {
+            vertex_index: self.vertex_index % 30 + 30,
+            pixel_index: self.pixel_index / 8 * 8 + 1,
+        }
+    }
     /// Replays `CM2Scene::ComputeElementShaders` for the Vulkan shader path.
     ///
     /// Vulkan has no fixed-function alpha test, so every nonopaque stock blend

@@ -43,6 +43,12 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// The registered quality must remain in the original six-value range.
+    #[error("exterior shadow quality requires a finite cvar from zero through five")]
+    InvalidShadowQualityCvar,
+    /// Current world light and controlled-unit position cannot form a shadow map.
+    #[error(transparent)]
+    WorldShadow(#[from] solarity_rendering::WorldShadowProjectionError),
     /// The registered detail policy is absent or nonfinite.
     #[error("ground detail requires finite density and distance cvars")]
     InvalidGroundDetailCvar,
@@ -538,6 +544,7 @@ pub(super) struct TerrainFrame {
     tiles: Vec<TerrainGpuTile>,
     visible_draws: Vec<TerrainPreparedDraw>,
     ground_detail: ground_detail::GroundDetailWorld,
+    shadow_quality: solarity_rendering::WorldShadowQuality,
     liquid_materials: LiquidGpuMaterialCache,
     liquid_filtering: WorldModelTextureFiltering,
     liquid_draws: Vec<solarity_rendering::LiquidPreparedDraw>,
@@ -610,6 +617,7 @@ impl TerrainFrame {
                 liquids,
             }],
             visible_draws: Vec::with_capacity(plan.chunks().len()),
+            shadow_quality: solarity_rendering::WorldShadowQuality::UnitsHigh,
             ground_detail: ground_detail::GroundDetailWorld::new(
                 world_model_filtering,
                 world_model_base_mip,
@@ -656,6 +664,7 @@ impl TerrainFrame {
             map_id: None,
             tiles: Vec::new(),
             visible_draws: Vec::new(),
+            shadow_quality: solarity_rendering::WorldShadowQuality::UnitsHigh,
             ground_detail: ground_detail::GroundDetailWorld::new(
                 world_model_filtering,
                 world_model_base_mip,
@@ -687,6 +696,19 @@ impl TerrainFrame {
             .filter(|value| value.is_finite())
             .ok_or(RuntimeTerrainFrameError::InvalidEnvironmentDetailCvar)?;
         self.m2.environment_detail = value.clamp(0.5, 1.5);
+        Ok(())
+    }
+
+    /// Captures the registered 874210 quality, including live map disable/resize.
+    pub(super) fn set_shadow_quality(
+        &mut self,
+        value: Option<f32>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let value = value
+            .filter(|value| value.is_finite() && (0.0..=5.0).contains(value))
+            .ok_or(RuntimeTerrainFrameError::InvalidShadowQualityCvar)?;
+        self.shadow_quality = solarity_rendering::WorldShadowQuality::from_cvar(value as u8)
+            .ok_or(RuntimeTerrainFrameError::InvalidShadowQualityCvar)?;
         Ok(())
     }
 
@@ -804,6 +826,21 @@ impl TerrainFrame {
         if let Some(sources) = unit_effect_sources {
             self.m2.set_unit_effect_sources(sources);
         }
+        // 874210 registers extShadowQuality=2. 7BB3E0 centers its primary map
+        // on the controlled unit; 7BB570 consumes the raw day/night ray.
+        let shadow_projection = self
+            .shadow_quality
+            .texture_size()
+            .map(|_| {
+                solarity_rendering::WorldShadowProjection::primary(
+                    self.shadow_quality,
+                    environment.position(),
+                    camera.camera().position(),
+                    solarity_asset::exterior_light_ray_at(environment.day_fraction()),
+                )
+                .map(|projection| projection.with_camera_culling(camera))
+            })
+            .transpose()?;
         let m2 = self.m2.prepare_visible_draws_with_unit_effects(
             renderer,
             frustum,
@@ -836,6 +873,7 @@ impl TerrainFrame {
                     solarity_asset::exterior_light_ray_at(environment.day_fraction()),
                 ),
             )),
+            shadow_projection,
         )?;
         profile.mark("M2 packets");
         let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera);
@@ -889,6 +927,12 @@ impl TerrainFrame {
             .with_m2_instance_scenes(m2.instance_scenes)
             .with_sky_models(sky_models)
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
+        if let Some(projection) = shadow_projection {
+            scene = scene.with_primary_shadows(solarity_rendering::WorldPrimaryShadowFrame::new(
+                projection,
+                m2.shadow_draws,
+            ));
+        }
         if let Some(map) = terrain.low_detail() {
             // 7D5E70 consumes DayNight+8C, including liquid-depth darkening;
             // scene fog and camera-interior MFOG retain separate colors.

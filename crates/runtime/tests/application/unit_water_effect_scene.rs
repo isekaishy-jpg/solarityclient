@@ -205,6 +205,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
                 Some(&mut callback),
                 None,
                 None,
+                None,
             )?;
             assert_eq!(draws.draws.len(), if now == 1. { 1 } else { 2 });
             let effects: Vec<_> = frame

@@ -1,7 +1,7 @@
 //! Immutable draw data safe to consume during Vulkan command recording.
 
 use crate::device::{M2MeshHandle, M2PipelineHandle, M2TextureSetHandle};
-use crate::model::{M2DrawPushConstants, M2MaterialUniform};
+use crate::model::{M2DrawPushConstants, M2MaterialUniform, M2ShadowMaterial};
 
 use super::M2SceneLightBank;
 
@@ -21,6 +21,7 @@ pub struct M2PreparedDraw {
     priority_plane: i16,
     effect_interleave: bool,
     scene_order: u32,
+    shadow_material: Option<M2ShadowMaterial>,
 }
 
 impl M2PreparedDraw {
@@ -37,6 +38,7 @@ impl M2PreparedDraw {
         required_bone_transforms: usize,
         priority_plane: i16,
         effect_interleave: bool,
+        shadow_material: Option<M2ShadowMaterial>,
     ) -> Self {
         Self {
             mesh,
@@ -52,6 +54,7 @@ impl M2PreparedDraw {
             priority_plane,
             effect_interleave,
             scene_order: u32::MAX,
+            shadow_material,
         }
     }
 
@@ -109,6 +112,12 @@ impl M2PreparedDraw {
     #[must_use]
     pub const fn material(self) -> M2MaterialUniform {
         self.material
+    }
+
+    /// Returns the original caster-material queue, before instance spatial admission.
+    #[must_use]
+    pub const fn shadow_material(self) -> Option<M2ShadowMaterial> {
+        self.shadow_material
     }
 
     /// Returns the exact 16-byte per-draw push block.

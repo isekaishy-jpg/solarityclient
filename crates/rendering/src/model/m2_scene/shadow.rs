@@ -2,7 +2,7 @@
 
 use glam::{Vec2, Vec3, Vec4};
 
-/// One stock 3-by-4 world-to-shadow transform uploaded as three shader rows.
+/// One stock 3-by-4 view-to-shadow transform uploaded as three shader rows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2ShadowMatrix {
     rows: [Vec4; 3],

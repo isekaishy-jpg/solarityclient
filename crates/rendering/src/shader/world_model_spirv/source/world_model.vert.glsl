@@ -4,6 +4,21 @@
 #error WORLD_MODEL_UNIFIED must select MapObj or MapObjU
 #endif
 
+#ifndef WORLD_MODEL_PRIMARY_SHADOW
+#define WORLD_MODEL_PRIMARY_SHADOW 0
+#endif
+#if WORLD_MODEL_PRIMARY_SHADOW == 1
+// Shared with terrain: primary rows act on positions relative to the map origin.
+layout(std140, set = 3, binding = 0) uniform WorldShadow {
+    vec4 origin_and_texel;
+    vec4 receiver_rows[3];
+    vec4 light_direction;
+} shadow;
+layout(location = 6) out vec3 fragment_shadow_coordinates;
+layout(location = 7) out vec3 fragment_shadow_normal;
+layout(location = 8) out float fragment_eye_depth;
+#endif
+
 layout(std140, set = 0, binding = 0) uniform WorldModelSceneState {
     mat4 projection;
     vec4 camera_position;
@@ -44,6 +59,17 @@ void main() {
     vec3 world_normal = normalize(mat3(material.model) * model_normal);
     precise vec4 view_position = material.model_view * vec4(model_position, 1.0);
     gl_Position = scene.projection * view_position;
+#if WORLD_MODEL_PRIMARY_SHADOW == 1
+    // MapObjDiffuse_T1 variants 30/31 supply position, normalized normal, and
+    // c224..226 coordinates. World-space rows preserve the same dot products.
+    vec4 relative_position = vec4(world_position - shadow.origin_and_texel.xyz, 1.0);
+    fragment_shadow_coordinates = vec3(
+        dot(relative_position, shadow.receiver_rows[0]),
+        dot(relative_position, shadow.receiver_rows[1]),
+        dot(relative_position, shadow.receiver_rows[2]));
+    fragment_shadow_normal = world_normal;
+    fragment_eye_depth = -view_position.z;
+#endif
     fragment_texture_coordinates_0 = texture_coordinates_0;
     fragment_texture_coordinates_1 = texture_coordinates_1;
 

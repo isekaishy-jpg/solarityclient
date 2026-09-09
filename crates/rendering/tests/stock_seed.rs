@@ -58,5 +58,9 @@ mod weather;
 mod world_model;
 #[path = "stock_seed/world_model_lighting.rs"]
 mod world_model_lighting;
+#[path = "stock_seed/world_model_shadow.rs"]
+mod world_model_shadow;
+#[path = "stock_seed/world_shadow.rs"]
+mod world_shadow;
 #[path = "stock_seed/world_text.rs"]
 mod world_text;

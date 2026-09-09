@@ -1290,6 +1290,10 @@ impl ClientServices {
             .map(solarity_rendering::TerrainTileMeshPlan::tile);
         let global_animation_time_ms = self.m2_global_clock.elapsed().as_secs_f32() * 1_000.0;
         let specular_enabled = self.glue.cvar_boolean("specular");
+        let shadow_quality = self.world_ui.as_ref().map_or_else(
+            || self.glue.cvar_number("extShadowQuality"),
+            |ui| ui.cvar_number("extShadowQuality"),
+        );
         let environment_detail = self.world_ui.as_ref().map_or_else(
             || self.glue.cvar_number("environmentDetail"),
             |ui| ui.cvar_number("environmentDetail"),
@@ -1366,6 +1370,7 @@ impl ClientServices {
             };
         frame.set_environment_detail(environment_detail)?;
         frame.set_ground_detail(ground_detail[0], ground_detail[1])?;
+        frame.set_shadow_quality(shadow_quality)?;
         frame.present(
             &mut self.renderer,
             plan,

@@ -9,6 +9,7 @@ mod gpu_state;
 mod low_detail;
 mod map_weather;
 mod mesh;
+mod shadow;
 mod tile_mesh;
 
 pub use detail_doodad::{
@@ -18,6 +19,7 @@ pub use detail_doodad::{
 pub use gpu_state::TerrainSceneUniform;
 pub use low_detail::{TerrainLowDetailMap, TerrainLowDetailMesh, WorldLowDetailFrame};
 pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};
+pub use shadow::{WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality};
 pub use tile_mesh::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,
     TerrainTileMeshPlan, TerrainTileMeshPlanError,

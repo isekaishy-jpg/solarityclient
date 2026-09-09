@@ -4,6 +4,7 @@ mod gpu_state;
 mod mesh;
 mod order;
 mod shadow;
+mod shadow_material;
 mod status;
 mod types;
 
@@ -14,5 +15,6 @@ pub use order::{
     compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
 };
 pub use shadow::{M2ShadowMatrix, M2ShadowState};
+pub use shadow_material::M2ShadowMaterial;
 pub use status::M2MeshPlanError;
 pub use types::{M2DrawCall, M2RenderVertex, M2TextureBinding};

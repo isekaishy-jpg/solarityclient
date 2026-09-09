@@ -105,6 +105,7 @@ pub(in crate::device) struct WorldFrameWindow {
 }
 
 pub(in crate::device) struct WorldFrameRenderer {
+    shadows: crate::device::vulkan_shadow::ShadowPipelines,
     resources: WorldFrameResources,
     low_detail: LowDetailRegistry,
     ground_detail: DetailRegistry,
@@ -114,6 +115,7 @@ pub(in crate::device) struct WorldFrameRenderer {
 impl Default for WorldFrameRenderer {
     fn default() -> Self {
         Self {
+            shadows: crate::device::vulkan_shadow::ShadowPipelines::default(),
             resources: WorldFrameResources::default(),
             low_detail: LowDetailRegistry::default(),
             ground_detail: DetailRegistry::default(),
@@ -217,10 +219,13 @@ impl WorldFrameRenderer {
         let sky_models = scene.sky_models();
         let sky_bones = sky_models.map_or(&[][..], |frame| frame.bones);
         let sky_draw_count = sky_models.map_or(0, |frame| frame.draw_count());
+        let shadow_frame = scene.primary_shadows();
+        let shadow_draws = shadow_frame.map_or(&[][..], |frame| frame.casters());
         let all_draws = || {
             m2_draws
                 .iter()
                 .chain(sky_models.into_iter().flat_map(|frame| frame.draws()))
+                .chain(shadow_draws)
         };
         let bone_count = bone_transforms
             .len()
@@ -319,6 +324,16 @@ impl WorldFrameRenderer {
         {
             return Err(VulkanError::WorldFrameCapacity);
         }
+        if shadow_frame.is_some() {
+            self.shadows.ensure(
+                context.device,
+                context
+                    .m2_pipelines
+                    .caster_set_layouts()
+                    .ok_or(VulkanError::M2ShadowResourcesUnavailable)?,
+                context.depth_format,
+            )?;
+        }
         self.resources.ensure(FrameCreateContext {
             device: context.device,
             allocator: context.allocator,
@@ -329,6 +344,7 @@ impl WorldFrameRenderer {
             m2_draw_capacity: m2_draws
                 .len()
                 .checked_add(sky_draw_count)
+                .and_then(|count| count.checked_add(shadow_draws.len()))
                 .ok_or(VulkanError::WorldFrameCapacity)?,
             bone_capacity: bone_count,
             m2_scene_capacity: scene.m2_instance_scenes().len(),
@@ -348,6 +364,26 @@ impl WorldFrameRenderer {
         let (acquired, wait_write_elapsed, acquire_elapsed) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
+            if let Some(frame) = shadow_frame {
+                slot.shadows.ensure(
+                    context.device,
+                    context.allocator,
+                    [
+                        self.shadows.scene_layout(),
+                        context
+                            .terrain_pipelines
+                            .shadow_set_layout()
+                            .ok_or(VulkanError::M2ShadowResourcesUnavailable)?,
+                        context
+                            .m2_pipelines
+                            .shadow_set_layout()
+                            .ok_or(VulkanError::M2ShadowResourcesUnavailable)?,
+                    ],
+                    context.depth_format,
+                    context.uniform_alignment,
+                    frame.projection(),
+                )?;
+            }
             slot.ground_detail.clear();
             if let Some(frame) = scene.ground_detail() {
                 slot.ground_detail.extend(
@@ -485,6 +521,9 @@ impl WorldFrameRenderer {
         let slot = self.resources.slot_mut(slot_index)?;
         let record_started = std::time::Instant::now();
         let low_detail_draw_count = record(RecordContext {
+            shadow_pipeline: &self.shadows,
+            shadow_resources: &slot.shadows,
+            shadow_frame,
             device: context.device,
             capture: context.capture,
             command_buffer: slot.command_buffer(),
@@ -603,6 +642,12 @@ impl WorldFrameRenderer {
             bone_count,
         )
         .with_low_detail_draw_count(low_detail_draw_count)
+        .with_primary_shadow_draw_count(
+            shadow_draws
+                .iter()
+                .filter(|draw| draw.shadow_material().is_some())
+                .count(),
+        )
         .with_ground_detail_draw_count(scene.ground_detail().map_or(0, |frame| frame.draw_count()))
         .with_sky_model_draw_count(sky_draw_count)
         .with_celestial_draw_count(scene.celestials().map_or(0, |frame| frame.draw_count()))
@@ -613,6 +658,7 @@ impl WorldFrameRenderer {
 
     pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         self.resources.destroy(device, allocator);
+        self.shadows.destroy(device);
         self.low_detail.destroy(allocator);
         self.ground_detail.destroy(device, allocator);
     }

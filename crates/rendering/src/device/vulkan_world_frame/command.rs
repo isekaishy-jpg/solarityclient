@@ -39,6 +39,7 @@ use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
 mod bindings;
 mod ground_detail;
 mod low_detail;
+mod shadow;
 use bindings::WorldCommandBindings;
 use low_detail::record_low_detail;
 
@@ -52,6 +53,9 @@ pub(super) struct WorldSubmitTimings {
 }
 
 pub(super) struct RecordContext<'a> {
+    pub(super) shadow_pipeline: &'a crate::device::vulkan_shadow::ShadowPipelines,
+    pub(super) shadow_resources: &'a crate::device::vulkan_shadow::ShadowFrameResources,
+    pub(super) shadow_frame: Option<crate::WorldPrimaryShadowFrame<'a>>,
     pub(super) device: &'a Device,
     pub(super) capture: Option<&'a FrameReadback>,
     pub(super) command_buffer: vk::CommandBuffer,
@@ -127,6 +131,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
             .begin_command_buffer(context.command_buffer, &begin)
     }
     .map_err(|source| VulkanError::operation("begin world command buffer", source))?;
+    shadow::record_primary(&context)?;
     if !context.liquid_draws.is_empty() {
         context
             .liquid_resources
@@ -737,10 +742,14 @@ fn record_terrain(
     draw: TerrainPreparedDraw,
     bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
-    let (pipeline, layout) = context
-        .terrain_pipelines
-        .raw(draw.pipeline())
-        .ok_or(VulkanError::UnknownTerrainPipelineHandle)?;
+    let (pipeline, layout) = if context.shadow_frame.is_some() {
+        context
+            .terrain_pipelines
+            .raw_primary_shadow(draw.pipeline())
+    } else {
+        context.terrain_pipelines.raw(draw.pipeline())
+    }
+    .ok_or(VulkanError::UnknownTerrainPipelineHandle)?;
     let (vertex, index) = context
         .terrain_meshes
         .buffers(draw.mesh())
@@ -763,6 +772,16 @@ fn record_terrain(
             &sets,
             &[],
         );
+        if context.shadow_frame.is_some() {
+            context.device.cmd_bind_descriptor_sets(
+                context.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                2,
+                &[context.shadow_resources.receiver_set()],
+                &[],
+            );
+        }
         context.device.cmd_push_constants(
             context.command_buffer,
             layout,
@@ -788,10 +807,15 @@ fn record_world_model(
     draw: WorldModelPreparedDraw,
     bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
-    let (pipeline, layout) = context
-        .world_model_pipelines
-        .raw(draw.pipeline())
-        .ok_or(VulkanError::UnknownWorldModelPipelineHandle)?;
+    let receives_shadow = context.shadow_frame.is_some();
+    let (pipeline, layout) = if receives_shadow {
+        context
+            .world_model_pipelines
+            .raw_primary_shadow(draw.pipeline())
+    } else {
+        context.world_model_pipelines.raw(draw.pipeline())
+    }
+    .ok_or(VulkanError::UnknownWorldModelPipelineHandle)?;
     let (vertex, index) = context
         .world_model_meshes
         .buffers(draw.mesh())
@@ -801,7 +825,13 @@ fn record_world_model(
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownWorldModelTextureSetHandle)?;
     let dynamic_offset = dynamic_offset(draw_index, context.world_model_material_stride)?;
-    let sets = [context.frame_sets[1], context.frame_sets[2], texture];
+    let sets = [
+        context.frame_sets[1],
+        context.frame_sets[2],
+        texture,
+        context.shadow_resources.receiver_set(),
+    ];
+    let sets = &sets[..if receives_shadow { 4 } else { 3 }];
     let range = draw.index_range();
     // SAFETY: Prepared draw proves compatible pipeline, UINT32 mesh, and set.
     unsafe {
@@ -813,7 +843,7 @@ fn record_world_model(
             vk::PipelineBindPoint::GRAPHICS,
             layout,
             0,
-            &sets,
+            sets,
             &[dynamic_offset],
         );
         context
@@ -863,10 +893,15 @@ fn record_m2(
     scene_set: vk::DescriptorSet,
     bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
-    let (pipeline, layout) = context
-        .m2_pipelines
-        .raw(draw.pipeline())
-        .ok_or(VulkanError::UnknownM2PipelineHandle)?;
+    // Sky model packets follow the ordinary M2 material range but do not
+    // receive the ground-centered primary shadow map.
+    let receives_shadow = context.shadow_frame.is_some() && draw_index < context.m2_draws.len();
+    let (pipeline, layout) = if receives_shadow {
+        context.m2_pipelines.raw_primary_shadow(draw.pipeline())
+    } else {
+        context.m2_pipelines.raw(draw.pipeline())
+    }
+    .ok_or(VulkanError::UnknownM2PipelineHandle)?;
     let (vertex, index) = context
         .m2_meshes
         .buffers(draw.mesh())
@@ -882,6 +917,7 @@ fn record_m2(
         context.frame_sets[6],
         context.frame_sets[7],
         texture,
+        context.shadow_resources.m2_receiver_set(),
     ];
     // SAFETY: Prepared draw proves compatible resources and material range.
     unsafe {
@@ -893,7 +929,7 @@ fn record_m2(
             vk::PipelineBindPoint::GRAPHICS,
             layout,
             0,
-            &sets,
+            &sets[..if receives_shadow { 5 } else { 4 }],
             &[scene_offset, dynamic_offset],
         );
         context.device.cmd_push_constants(

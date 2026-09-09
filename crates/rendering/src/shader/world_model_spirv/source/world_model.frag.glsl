@@ -4,6 +4,49 @@
 #error WORLD_MODEL_SHADER must select a normalized MOMT effect
 #endif
 
+#ifndef WORLD_MODEL_PRIMARY_SHADOW
+#define WORLD_MODEL_PRIMARY_SHADOW 0
+#endif
+#if WORLD_MODEL_PRIMARY_SHADOW == 1
+layout(std140, set = 3, binding = 0) uniform WorldShadow {
+    vec4 origin_and_texel;
+    vec4 receiver_rows[3];
+    vec4 light_direction;
+} shadow;
+layout(set = 3, binding = 1) uniform sampler2D primary_shadow_map;
+layout(location = 6) in vec3 fragment_shadow_coordinates;
+layout(location = 7) in vec3 fragment_shadow_normal;
+layout(location = 8) in float fragment_eye_depth;
+
+// MapObj{Diffuse,Opaque,Specular,Metal,Env,EnvMetal,Composite} pixel variant
+// one shares this kernel. The primary fade plane is zero (875D30).
+float primary_shadow_factor() {
+    float edge = clamp(max(abs(fragment_shadow_coordinates.x), abs(fragment_shadow_coordinates.y))
+        * -3.4482758 + 3.41379309, 0.0, 1.0);
+    float visibility = 1.0;
+    if (edge > 0.01) {
+        vec2 coordinates = fragment_shadow_coordinates.xy * 0.5 + vec2(0.5);
+        const vec2 offsets[8] = vec2[8](
+            vec2(0.8, -1.0), vec2(-0.2, -0.8), vec2(0.2, -0.6), vec2(1.0, -0.4),
+            vec2(-0.6, -0.2), vec2(0.6, 0.2), vec2(-1.0, -0.4), vec2(-0.4, -0.6));
+        visibility = float(textureLod(primary_shadow_map, coordinates, 0.0).r
+            >= fragment_shadow_coordinates.z);
+        int step_size = fragment_eye_depth > 10.0 ? 2 : 1;
+        for (int index = 0; index < 8; index += step_size) {
+            float depth = textureLod(primary_shadow_map,
+                coordinates + offsets[index] * shadow.origin_and_texel.w, 0.0).r;
+            visibility += float(depth >= fragment_shadow_coordinates.z);
+        }
+        visibility = min(mix(1.0, visibility / (step_size == 2 ? 5.0 : 9.0), edge), 1.0);
+    }
+    // Stock interpolates the vertex-normalized normal without normalizing again.
+    float facing = 1.2 - abs(dot(shadow.light_direction.xyz, fragment_shadow_normal));
+    float squared = facing * facing;
+    visibility = mix(visibility, 1.0, clamp(squared * squared, 0.0, 1.0));
+    return 0.7 + 0.3 * visibility;
+}
+#endif
+
 layout(std140, set = 1, binding = 0) uniform WorldModelMaterialState {
     mat4 model;
     vec4 root_ambient;
@@ -58,7 +101,11 @@ void main() {
         discard;
     }
     float surface_alpha = material.behavior.w != 0u ? 1.0 : opacity;
-    vec3 result = diffuse * fragment_color.rgb * 2.0 + emissive;
+    vec3 lighting = fragment_color.rgb;
+#if WORLD_MODEL_PRIMARY_SHADOW == 1
+    lighting *= primary_shadow_factor();
+#endif
+    vec3 result = diffuse * lighting * 2.0 + emissive;
 
     uint fog_mode = material.behavior.z;
     if (fog_mode != 0u) {

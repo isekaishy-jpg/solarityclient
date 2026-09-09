@@ -46,6 +46,8 @@ pub struct WorldBenchmarkSample {
     pub evicted_tiles: usize,
     /// Visible native terrain-detail texture buckets submitted this frame.
     pub ground_detail_draws: usize,
+    /// Eligible unit material packets submitted to the primary shadow map.
+    pub primary_shadow_draws: usize,
     /// Fixture world position used for this frame's residency demand.
     pub position: Vec3,
 }
@@ -403,6 +405,9 @@ impl ClientServices {
             .set_environment_detail(ui.cvar_number("environmentDetail"))
             .map_err(ApplicationError::from)?;
         frame
+            .set_shadow_quality(ui.cvar_number("extShadowQuality"))
+            .map_err(ApplicationError::from)?;
+        frame
             .set_ground_detail(
                 ui.cvar_number("groundEffectDensity"),
                 ui.cvar_number("groundEffectDist"),
@@ -456,6 +461,7 @@ impl ClientServices {
             admitted_tiles,
             evicted_tiles,
             ground_detail_draws: report.ground_detail_draw_count(),
+            primary_shadow_draws: report.primary_shadow_draw_count(),
             position: world.local_player_transform()?.position(),
         })
     }

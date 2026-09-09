@@ -890,6 +890,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
             None,
             None,
             Some((&mut terrain, environment)),
+            None,
         )?;
         assert!(
             draws.draws.is_empty(),

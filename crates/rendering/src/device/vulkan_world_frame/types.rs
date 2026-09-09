@@ -20,6 +20,7 @@ pub struct WorldFrameScene<'a> {
     sky: Option<WorldSkyFrame<'a>>,
     low_detail: Option<crate::WorldLowDetailFrame<'a>>,
     ground_detail: Option<crate::GroundDetailFrame<'a>>,
+    primary_shadows: Option<crate::WorldPrimaryShadowFrame<'a>>,
     world_depth_range: bool,
     clouds: Option<WorldCloudFrame<'a>>,
     celestials: Option<crate::WorldCelestialFrame<'a>>,
@@ -27,6 +28,19 @@ pub struct WorldFrameScene<'a> {
 }
 
 impl<'a> WorldFrameScene<'a> {
+    /// Adds the primary unit-shadow caster pass before the terrain receiver queue.
+    #[must_use]
+    pub const fn with_primary_shadows(mut self, frame: crate::WorldPrimaryShadowFrame<'a>) -> Self {
+        self.primary_shadows = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn primary_shadows(
+        self,
+    ) -> Option<crate::WorldPrimaryShadowFrame<'a>> {
+        self.primary_shadows
+    }
+
     /// Joins the three stock world shader families at one camera/time sample.
     #[must_use]
     pub const fn new(
@@ -47,6 +61,7 @@ impl<'a> WorldFrameScene<'a> {
             sky: None,
             low_detail: None,
             ground_detail: None,
+            primary_shadows: None,
             world_depth_range: false,
             clouds: None,
             celestials: None,
@@ -301,6 +316,7 @@ pub struct WorldFrameReport {
     sky_draw_count: usize,
     low_detail_draw_count: usize,
     ground_detail_draw_count: usize,
+    primary_shadow_draw_count: usize,
     celestial_draw_count: usize,
     sky_model_draw_count: usize,
     terrain_draw_count: usize,
@@ -316,6 +332,17 @@ pub struct WorldFrameReport {
 }
 
 impl WorldFrameReport {
+    pub(super) const fn with_primary_shadow_draw_count(mut self, count: usize) -> Self {
+        self.primary_shadow_draw_count = count;
+        self
+    }
+
+    /// Returns the M2 batches rendered into this frame's primary shadow map.
+    #[must_use]
+    pub const fn primary_shadow_draw_count(self) -> usize {
+        self.primary_shadow_draw_count
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) const fn new(
         terrain_draw_count: usize,
@@ -336,6 +363,7 @@ impl WorldFrameReport {
             sky_draw_count: 0,
             low_detail_draw_count: 0,
             ground_detail_draw_count: 0,
+            primary_shadow_draw_count: 0,
             celestial_draw_count: 0,
             sky_model_draw_count: 0,
             liquid_draw_count,

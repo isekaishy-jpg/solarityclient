@@ -166,6 +166,7 @@ impl FrameBufferLayout {
 }
 
 pub(super) struct WorldFrameSlot {
+    pub(super) shadows: crate::device::vulkan_shadow::ShadowFrameResources,
     pub(super) liquids: LiquidFrameResources,
     pub(super) ripples: RippleFrameResources,
     pub(super) underwater: UnderwaterFrameResources,
@@ -335,6 +336,10 @@ impl WorldFrameSlot {
                 M2SceneLightBank::Character,
                 M2SceneLightBank::Pet,
             ] {
+                let mut m2_scene = scene.m2(light_bank);
+                if let Some(frame) = scene.primary_shadows() {
+                    m2_scene = m2_scene.with_world_shadow(frame.projection());
+                }
                 copy_bytes(
                     destination,
                     indexed_offset(
@@ -342,11 +347,15 @@ impl WorldFrameSlot {
                         self.layout.m2_scene_stride,
                         light_bank.index(),
                     )?,
-                    &scene.m2(light_bank).to_bytes(),
+                    &m2_scene.to_bytes(),
                     self.layout.total_bytes,
                 )?;
             }
             for (index, instance) in scene.m2_instance_scenes().iter().enumerate() {
+                let mut instance = *instance;
+                if let Some(frame) = scene.primary_shadows() {
+                    instance = instance.with_world_shadow(frame.projection());
+                }
                 copy_bytes(
                     destination,
                     indexed_offset(
@@ -418,6 +427,12 @@ impl WorldFrameSlot {
             for (index, draw) in m2_draws
                 .iter()
                 .chain(sky_models.into_iter().flat_map(|frame| frame.draws()))
+                .chain(
+                    scene
+                        .primary_shadows()
+                        .into_iter()
+                        .flat_map(|frame| frame.casters()),
+                )
                 .copied()
                 .enumerate()
             {
@@ -697,6 +712,7 @@ impl WorldFrameSlot {
     }
 
     fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        self.shadows.destroy(device, allocator);
         self.liquids.destroy(device, allocator);
         self.ripples.destroy(device, allocator);
         self.underwater.destroy(device, allocator);
@@ -742,8 +758,9 @@ impl WorldFrameSlot {
         }
     }
 
-    const fn empty(layout: FrameBufferLayout) -> Self {
+    fn empty(layout: FrameBufferLayout) -> Self {
         Self {
+            shadows: crate::device::vulkan_shadow::ShadowFrameResources::default(),
             liquids: LiquidFrameResources::empty(),
             ripples: RippleFrameResources::empty(),
             underwater: UnderwaterFrameResources::empty(),

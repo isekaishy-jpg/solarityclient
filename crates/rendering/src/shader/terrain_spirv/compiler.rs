@@ -14,11 +14,35 @@ const FRAGMENTS: [&[u8]; 4] = [
     include_bytes!(concat!(env!("OUT_DIR"), "/terrain-3.frag.spv")),
     include_bytes!(concat!(env!("OUT_DIR"), "/terrain-4.frag.spv")),
 ];
+const SHADOW_VERTICES: [&[u8]; 4] = [
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-1.vert.spv")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-2.vert.spv")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-3.vert.spv")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-4.vert.spv")),
+];
+const SHADOW_FRAGMENTS: [&[u8]; 4] = [
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-1.frag.spv")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-2.frag.spv")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-3.frag.spv")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/terrain-shadow-4.frag.spv")),
+];
 
 /// Selector for immutable terrain bytecode generated during the Cargo build.
 pub struct TerrainSpirvCompiler;
 
 impl TerrainSpirvCompiler {
+    /// Selects Terrain2/Terrain3's primary dynamic-shadow receiving path.
+    pub(crate) fn compile_primary_shadow(
+        &self,
+        layer_count: TerrainLayerCount,
+    ) -> TerrainSpirvProgram {
+        let index = usize::from(layer_count.get() - 1);
+        TerrainSpirvProgram::new(
+            layer_count,
+            spirv_words(SHADOW_VERTICES[index]),
+            spirv_words(SHADOW_FRAGMENTS[index]),
+        )
+    }
     /// Creates the build-generated shader selector.
     pub fn new() -> Result<Self, TerrainSpirvError> {
         Ok(Self)

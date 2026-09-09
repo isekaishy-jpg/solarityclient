@@ -9,7 +9,7 @@ use crate::{
     WorldModelBlendFactor, WorldModelMaterialState, WorldModelRenderVertex, WorldModelSpirvProgram,
 };
 
-const DESCRIPTOR_SET_COUNT: usize = 3;
+const DESCRIPTOR_SET_COUNT: usize = 4;
 
 /// Common scene/material/texture descriptor ABI for every MapObj variant.
 #[derive(Default)]
@@ -39,6 +39,19 @@ impl WorldModelPipelineLayout {
                     0,
                     vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                     vk::ShaderStageFlags::FRAGMENT,
+                ),
+                descriptor_binding(
+                    1,
+                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    vk::ShaderStageFlags::FRAGMENT,
+                ),
+            ],
+            // Identical to terrain's receiver set, shared by the world slot.
+            vec![
+                descriptor_binding(
+                    0,
+                    vk::DescriptorType::UNIFORM_BUFFER,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 ),
                 descriptor_binding(
                     1,

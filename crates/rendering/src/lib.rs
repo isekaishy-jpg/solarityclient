@@ -52,7 +52,7 @@ pub use device::{
     WorldModelPipelineInfo, WorldModelPreparedDraw, WorldModelSampledTexture,
     WorldModelSamplerHandle, WorldModelSamplerInfo, WorldModelTextureAddressMode,
     WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
-    WorldModelTextureSetInfo, WorldSkyModelBatch, WorldSkyModelFrame,
+    WorldModelTextureSetInfo, WorldPrimaryShadowFrame, WorldSkyModelBatch, WorldSkyModelFrame,
 };
 pub use lighting::{
     M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, ScenePointLightError,
@@ -81,13 +81,13 @@ pub use model::{
     M2CameraFrameError, M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2ElementAlphaState,
     M2EventTimeWindow, M2FingerPoseHands, M2LocalLightState, M2MaterialPose, M2MaterialPoseError,
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ModelSequenceBlend, M2ModelSequenceTimer,
-    M2RenderVertex, M2SampledLights, M2SceneUniform, M2SequenceStartPhase, M2ShadowMatrix,
-    M2ShadowState, M2TextureBinding, M2TransparentPass, M2TransparentSortKey, M2UiCameraViewport,
-    PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,
-    WorldModelMeshPlan, WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
-    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
-    sample_m2_lights_into, sample_m2_scene_lights_into, sample_m2_ui_camera_frame,
-    triggered_m2_event_indices,
+    M2RenderVertex, M2SampledLights, M2SceneUniform, M2SequenceStartPhase, M2ShadowMaterial,
+    M2ShadowMatrix, M2ShadowState, M2TextureBinding, M2TransparentPass, M2TransparentSortKey,
+    M2UiCameraViewport, PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange,
+    WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelMeshPlanError,
+    WorldModelPlacementError, WorldModelRenderVertex, WorldModelSceneUniform,
+    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
+    sample_m2_scene_lights_into, sample_m2_ui_camera_frame, triggered_m2_event_indices,
 };
 pub use model::{M2GroundNormal, M2GroundPlacementError};
 pub use model::{compare_m2_transparent, m2_model_distance_key, m2_section_distance_key};
@@ -119,7 +119,7 @@ pub use terrain::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,
     TerrainChunkMeshPlan, TerrainDetailChunk, TerrainLowDetailMap, TerrainLowDetailMesh,
     TerrainRenderVertex, TerrainSceneUniform, TerrainTileMeshPlan, TerrainTileMeshPlanError,
-    WorldLowDetailFrame,
+    WorldLowDetailFrame, WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality,
 };
 pub use ui::{
     UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderMask, UiRenderQuad,

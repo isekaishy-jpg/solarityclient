@@ -15,6 +15,7 @@ use super::{WorldModelPipelineHandle, WorldModelPipelineInfo};
 
 struct GpuWorldModelPipeline {
     handle: vk::Pipeline,
+    primary_shadow: vk::Pipeline,
     info: WorldModelPipelineInfo,
 }
 
@@ -73,12 +74,26 @@ impl WorldModelPipelineRegistry {
             pass.material(),
             &program,
         )?;
+        let shadow_program = compiler.compile_primary_shadow(effect);
+        let primary_shadow = create_pipeline(
+            device,
+            self.layout.handle(),
+            color_format,
+            depth_format,
+            pass.material(),
+            &shadow_program,
+        )
+        .inspect_err(|_error| {
+            // SAFETY: The ordinary pipeline was just created and never submitted.
+            unsafe { device.destroy_pipeline(pipeline, None) };
+        })?;
         let handle = WorldModelPipelineHandle {
             registry_id: self.registry_id,
             slot,
         };
         self.resources.push(GpuWorldModelPipeline {
             handle: pipeline,
+            primary_shadow,
             info,
         });
         self.handles.insert(info, handle);
@@ -143,11 +158,25 @@ impl WorldModelPipelineRegistry {
             .map(|resource| (resource.handle, self.layout.handle()))
     }
 
+    /// Resolves the paired receiver pipeline without allocating during submission.
+    pub(in crate::device) fn raw_primary_shadow(
+        &self,
+        handle: WorldModelPipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| (resource.primary_shadow, self.layout.handle()))
+    }
+
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();
         // SAFETY: The renderer idles before uniquely owned pipelines are freed.
         unsafe {
             for resource in self.resources.drain(..).rev() {
+                device.destroy_pipeline(resource.primary_shadow, None);
                 device.destroy_pipeline(resource.handle, None);
             }
         }

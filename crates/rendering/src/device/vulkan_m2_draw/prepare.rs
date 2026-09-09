@@ -85,5 +85,11 @@ pub(in crate::device) fn prepare_draw(
         required_bone_transforms,
         i16::from(draw.batch().priority_plane),
         draw.transparent_sort_unit() || runtime_alpha_fade,
+        crate::M2ShadowMaterial::select(
+            draw.batch(),
+            draw.material().flags(),
+            draw.material().blend_mode(),
+            material.alpha(),
+        ),
     ))
 }

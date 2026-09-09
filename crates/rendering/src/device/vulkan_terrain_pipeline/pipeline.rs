@@ -12,7 +12,7 @@ const DRAW_PUSH_CONSTANT_BYTES: u32 = 8;
 /// Common scene/material descriptor and push-constant ABI.
 #[derive(Default)]
 pub(super) struct TerrainPipelineLayout {
-    descriptor_sets: [vk::DescriptorSetLayout; 2],
+    descriptor_sets: [vk::DescriptorSetLayout; 3],
     handle: vk::PipelineLayout,
 }
 
@@ -35,7 +35,22 @@ impl TerrainPipelineLayout {
                 )
             })
             .collect::<Vec<_>>();
-        for (index, bindings) in [scene.as_slice(), material.as_slice()].iter().enumerate() {
+        let shadow = [
+            binding(
+                0,
+                vk::DescriptorType::UNIFORM_BUFFER,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            ),
+            binding(
+                1,
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                vk::ShaderStageFlags::FRAGMENT,
+            ),
+        ];
+        for (index, bindings) in [scene.as_slice(), material.as_slice(), shadow.as_slice()]
+            .iter()
+            .enumerate()
+        {
             let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(bindings);
             // SAFETY: Binding storage remains live and has no immutable samplers.
             self.descriptor_sets[index] =

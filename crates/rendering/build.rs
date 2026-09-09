@@ -81,6 +81,14 @@ fn main() {
             &[("UI_TEXTURED", textured), ("UI_MASKED", masked)],
         );
     }
+    for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+        compile(
+            &format!("src/shader/shadow_spirv/source/shadow.{stage}.glsl"),
+            kind,
+            &output.join(format!("shadow.{stage}.spv")),
+            &[],
+        );
+    }
     for layer_count in 1..=4 {
         let layer_count = layer_count.to_string();
         compile(
@@ -95,6 +103,17 @@ fn main() {
             &output.join(format!("terrain-{layer_count}.frag.spv")),
             &[("TERRAIN_LAYER_COUNT", &layer_count)],
         );
+        for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+            compile(
+                &format!("src/shader/terrain_spirv/source/terrain.{stage}.glsl"),
+                kind,
+                &output.join(format!("terrain-shadow-{layer_count}.{stage}.spv")),
+                &[
+                    ("TERRAIN_LAYER_COUNT", &layer_count),
+                    ("TERRAIN_PRIMARY_SHADOW", "1"),
+                ],
+            );
+        }
     }
     for (name, shader) in [("water", "0"), ("water-no-specular", "1"), ("magma", "2")] {
         for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
@@ -167,6 +186,20 @@ fn main() {
                 &output.join(format!("{stem}.frag.spv")),
                 &definitions,
             );
+            // Retain a receiver pair so shadow activation never compiles on the frame path.
+            let shadow_definitions = [
+                definitions[0],
+                definitions[1],
+                ("WORLD_MODEL_PRIMARY_SHADOW", "1"),
+            ];
+            for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
+                compile(
+                    &format!("src/shader/world_model_spirv/source/world_model.{stage}.glsl"),
+                    kind,
+                    &output.join(format!("{stem}-shadow.{stage}.spv")),
+                    &shadow_definitions,
+                );
+            }
         }
     }
     compile(

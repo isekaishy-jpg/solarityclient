@@ -118,6 +118,12 @@ impl M2SceneUniform {
         self
     }
 
+    /// Joins the primary map to the model/view coordinates emitted by Diffuse_T1.
+    pub(crate) fn with_world_shadow(mut self, projection: crate::WorldShadowProjection) -> Self {
+        self.shadow = projection.m2_state(self.view, self.camera_position);
+        self
+    }
+
     /// Replaces only the local-light bank while retaining one camera sample.
     #[must_use]
     pub const fn with_local_lights(mut self, local_lights: [M2LocalLightState; 4]) -> Self {
@@ -172,6 +178,12 @@ pub struct M2MaterialUniform {
 impl M2MaterialUniform {
     /// Byte size of the exact std140 material descriptor block.
     pub const BYTE_SIZE: usize = 304;
+
+    /// Returns the complete sampled batch opacity used for shadow admission.
+    #[must_use]
+    pub fn alpha(self) -> f32 {
+        self.mesh_color.w
+    }
 
     /// Creates one immutable material snapshot for a submitted draw.
     #[must_use]

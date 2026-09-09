@@ -5465,7 +5465,7 @@ fn render_u16_values(values: &[u16]) -> Vec<u8> {
 }
 
 /// Serializes one non-identity SKIN lookup and two-stage material batch.
-fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+pub(crate) fn render_skin_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     let skin = OldSkin {
         header: OldSkinHeader {
             bone_count_max: 32,

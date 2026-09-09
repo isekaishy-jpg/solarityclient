@@ -18,6 +18,7 @@ use super::types::{M2PipelineHandle, M2PipelineInfo};
 /// One driver pipeline and its stock-facing diagnostic identity.
 struct GpuM2Pipeline {
     handle: vk::Pipeline,
+    primary_shadow: vk::Pipeline,
     info: M2PipelineInfo,
 }
 
@@ -46,6 +47,32 @@ impl Default for M2PipelineRegistry {
 }
 
 impl M2PipelineRegistry {
+    /// Borrows the existing four-sampler receiver ABI after layout creation.
+    pub(in crate::device) fn shadow_set_layout(&self) -> Option<vk::DescriptorSetLayout> {
+        self.layout.descriptor_set(4)
+    }
+
+    /// Resolves the paired primary receiver without changing prepared packet identity.
+    pub(in crate::device) fn raw_primary_shadow(
+        &self,
+        handle: M2PipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .filter(|resource| resource.primary_shadow != vk::Pipeline::null())
+            .map(|resource| (resource.primary_shadow, self.layout.handle()))
+    }
+    /// Borrows the existing bone, material, and texture ABI for shadow casters.
+    pub(in crate::device) fn caster_set_layouts(&self) -> Option<[vk::DescriptorSetLayout; 3]> {
+        Some([
+            self.layout.descriptor_set(1)?,
+            self.layout.descriptor_set(2)?,
+            self.layout.descriptor_set(3)?,
+        ])
+    }
     /// Returns the initialized scene, bone, and material layouts in set order.
     pub(in crate::device) fn frame_set_layouts(
         &mut self,
@@ -161,8 +188,41 @@ impl M2PipelineRegistry {
             registry_id: self.registry_id,
             slot,
         };
+        let primary_shadow = if permutation.has_shadows() {
+            vk::Pipeline::null()
+        } else {
+            // Build alongside the source pipeline before publication, sharing
+            // immutable compiled modules with the ordinary material variant.
+            let result = (|| {
+                let program = M2SpirvCompiler::new()
+                    .map_err(shader_error)?
+                    .compile(plan, permutation.with_primary_shadow())
+                    .map_err(shader_error)?;
+                create_pipeline(
+                    device,
+                    pipeline_cache,
+                    self.layout.handle(),
+                    color_format,
+                    depth_format,
+                    plan.material(),
+                    &program,
+                    orientation,
+                )
+            })();
+            match result {
+                Ok(pipeline) => pipeline,
+                Err(error) => {
+                    // SAFETY: The unpublished base pipeline has never entered a command buffer.
+                    unsafe {
+                        device.destroy_pipeline(pipeline, None);
+                    }
+                    return Err(error);
+                }
+            }
+        };
         self.resources.push(GpuM2Pipeline {
             handle: pipeline,
+            primary_shadow,
             info: M2PipelineInfo::new(
                 plan.vertex_shader(),
                 plan.pixel_shader(),
@@ -192,6 +252,9 @@ impl M2PipelineRegistry {
         // flight after renderer idle, and is destroyed exactly once.
         unsafe {
             for resource in self.resources.drain(..).rev() {
+                if resource.primary_shadow != vk::Pipeline::null() {
+                    device.destroy_pipeline(resource.primary_shadow, None);
+                }
                 device.destroy_pipeline(resource.handle, None);
             }
         }

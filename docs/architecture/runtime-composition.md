@@ -104,6 +104,8 @@ Departed terrain GPU allocations retire after their queued frame uses complete.
 tables, first-SKIN models, and textures. Visible nearby chunks generate their
 grass, flowers, and stones once per density setting, with submitted GPU
 resources retained until the owning frame fences complete.
+[Primary unit shadows](world-shadows.md) share sampled body, mount, and attachment
+poses with the visible model queue, then feed terrain, WMO, and M2 receivers.
 
 `RuntimeGameObjectPresentation` admits all visible GameObjects, shares model
 preparation by canonical path, and publishes independent object lifetimes into

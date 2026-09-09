@@ -70,8 +70,8 @@ layout(location = 0) in vec2 fragment_texture_coordinates_0;
 layout(location = 1) in vec2 fragment_texture_coordinates_1;
 layout(location = 2) in vec4 fragment_input_color;
 layout(location = 3) in float fragment_fog_visibility;
-layout(location = 4) in vec3 fragment_world_position;
-layout(location = 5) in vec3 fragment_world_normal;
+layout(location = 4) in vec3 fragment_view_position;
+layout(location = 5) in vec3 fragment_view_normal;
 layout(location = 6) in vec3 fragment_shadow_coordinates_0;
 layout(location = 7) in vec3 fragment_shadow_coordinates_1;
 layout(location = 8) in vec3 fragment_shadow_coordinates_2;
@@ -121,7 +121,7 @@ float shadow_border(float visibility, vec2 coordinates, float scale, float bias)
     return mix(1.0, visibility, weight);
 }
 
-// The primary map changes from nine to five taps above world-space z=10.
+// Combiners_Opaque PS3 uses five taps beyond eye depth 10; our view is right-handed.
 float primary_shadow() {
     float edge = clamp(
         max(abs(fragment_shadow_coordinates_0.x), abs(fragment_shadow_coordinates_0.y))
@@ -129,14 +129,14 @@ float primary_shadow() {
         0.0, 1.0);
     float visibility = 1.0;
     if (edge > 0.01) {
-        bool short_kernel = M2_SHADOW_MODE == 3 || fragment_world_position.z > 10.0;
+        bool short_kernel = M2_SHADOW_MODE == 3 || -fragment_view_position.z > 10.0;
         visibility = short_kernel
             ? shadow_five(shadow_map_0, fragment_shadow_coordinates_0)
             : shadow_nine(shadow_map_0, fragment_shadow_coordinates_0);
         visibility = mix(1.0, visibility, edge);
     }
     float plane_fade = clamp(
-        dot(fragment_world_position, scene.shadow_fade_plane.xyz)
+        dot(fragment_view_position, scene.shadow_fade_plane.xyz)
             + scene.shadow_fade_plane.w,
         0.0, 1.0);
     return mix(visibility, 1.0, plane_fade);
@@ -164,7 +164,7 @@ float shadow_lighting_factor() {
     if (M2_SHADOW_MODE > 1) {
         visibility = min(visibility, cascade_shadow());
     }
-    float facing = 1.2 - abs(dot(scene.shadow_light_direction.xyz, fragment_world_normal));
+    float facing = 1.2 - abs(dot(scene.shadow_light_direction.xyz, fragment_view_normal));
     float facing_relief = clamp(facing * facing * facing * facing, 0.0, 1.0);
     visibility = mix(visibility, 1.0, facing_relief);
     return visibility * 0.3 + 0.7;

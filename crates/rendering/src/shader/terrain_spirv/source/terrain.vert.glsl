@@ -1,5 +1,17 @@
 #version 460
 
+#ifndef TERRAIN_PRIMARY_SHADOW
+#define TERRAIN_PRIMARY_SHADOW 0
+#endif
+
+#if TERRAIN_PRIMARY_SHADOW
+layout(set = 2, binding = 0) uniform TerrainShadow {
+    vec4 origin_and_texel;
+    vec4 receiver_rows[3];
+} shadow;
+layout(location = 5) out vec3 out_shadow_coordinates;
+#endif
+
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec2 in_texture_coordinates;
@@ -49,4 +61,11 @@ void main() {
     float diffuse_amount = clamp(dot(in_normal, scene.sun_direction.xyz), 0.0, 1.0);
     vec3 lighting = min(scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse_amount, vec3(1.0));
     out_vertex_light = lighting * in_color_rgb;
+#if TERRAIN_PRIMARY_SHADOW
+    vec4 relative_position = vec4(in_position - shadow.origin_and_texel.xyz, 1.0);
+    out_shadow_coordinates = vec3(
+        dot(relative_position, shadow.receiver_rows[0]),
+        dot(relative_position, shadow.receiver_rows[1]),
+        dot(relative_position, shadow.receiver_rows[2]));
+#endif
 }

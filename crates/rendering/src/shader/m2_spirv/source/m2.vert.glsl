@@ -63,8 +63,8 @@ layout(location = 0) out vec2 fragment_texture_coordinates_0;
 layout(location = 1) out vec2 fragment_texture_coordinates_1;
 layout(location = 2) out vec4 fragment_input_color;
 layout(location = 3) out float fragment_fog_visibility;
-layout(location = 4) out vec3 fragment_world_position;
-layout(location = 5) out vec3 fragment_world_normal;
+layout(location = 4) out vec3 fragment_view_position;
+layout(location = 5) out vec3 fragment_view_normal;
 layout(location = 6) out vec3 fragment_shadow_coordinates_0;
 layout(location = 7) out vec3 fragment_shadow_coordinates_1;
 layout(location = 8) out vec3 fragment_shadow_coordinates_2;
@@ -141,10 +141,10 @@ vec2 transform_coordinates(mat4 transform, vec2 coordinates) {
     return (transform * vec4(coordinates, 0.0, 1.0)).xy;
 }
 
-// Apply one of stock's four row-major 3-by-4 world-to-shadow transforms.
-vec3 shadow_coordinates(int map_index, vec3 world_position) {
+// Diffuse_T1 applies c224..235 to the already composed model/view position.
+vec3 shadow_coordinates(int map_index, vec3 view_position) {
     int row = map_index * 3;
-    vec4 position = vec4(world_position, 1.0);
+    vec4 position = vec4(view_position, 1.0);
     return vec3(
         dot(position, scene.shadow_matrix_rows[row]),
         dot(position, scene.shadow_matrix_rows[row + 1]),
@@ -194,18 +194,18 @@ void main() {
 
     // Selector one carries one transform; selectors two and three share the
     // four-transform vertex layout recovered from BLS permutations 60..89.
-    fragment_world_position = world_position;
-    fragment_world_normal = world_normal;
+    fragment_view_position = view_position.xyz;
+    fragment_view_normal = normalize(mat3(scene.view) * world_normal);
     fragment_shadow_coordinates_0 = M2_SHADOW_CLASS > 0
-        ? shadow_coordinates(0, world_position)
+        ? shadow_coordinates(0, view_position.xyz)
         : vec3(0.0);
     fragment_shadow_coordinates_1 = M2_SHADOW_CLASS > 1
-        ? shadow_coordinates(1, world_position)
+        ? shadow_coordinates(1, view_position.xyz)
         : vec3(0.0);
     fragment_shadow_coordinates_2 = M2_SHADOW_CLASS > 1
-        ? shadow_coordinates(2, world_position)
+        ? shadow_coordinates(2, view_position.xyz)
         : vec3(0.0);
     fragment_shadow_coordinates_3 = M2_SHADOW_CLASS > 1
-        ? shadow_coordinates(3, world_position)
+        ? shadow_coordinates(3, view_position.xyz)
         : vec3(0.0);
 }

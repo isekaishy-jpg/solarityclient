@@ -15,6 +15,7 @@ use super::{TerrainPipelineHandle, TerrainPipelineInfo};
 
 struct GpuTerrainPipeline {
     handle: vk::Pipeline,
+    primary_shadow: vk::Pipeline,
     info: TerrainPipelineInfo,
 }
 
@@ -93,12 +94,27 @@ impl TerrainPipelineRegistry {
             depth_format,
             &program,
         )?;
+        let primary_shadow = match create_pipeline(
+            device,
+            self.layout.handle(),
+            color_format,
+            depth_format,
+            &compiler.compile_primary_shadow(layer_count),
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                // SAFETY: This unregistered pipeline has never been submitted.
+                unsafe { device.destroy_pipeline(pipeline, None) };
+                return Err(error);
+            }
+        };
         let handle = TerrainPipelineHandle {
             registry_id: self.registry_id,
             slot,
         };
         self.resources.push(GpuTerrainPipeline {
             handle: pipeline,
+            primary_shadow,
             info: TerrainPipelineInfo::new(layer_count),
         });
         self.handles.insert(layer_count, handle);
@@ -129,11 +145,30 @@ impl TerrainPipelineRegistry {
             .map(|resource| (resource.handle, self.layout.handle()))
     }
 
+    /// Resolves the same material with the original primary-shadow receiver shader.
+    pub(in crate::device) fn raw_primary_shadow(
+        &self,
+        handle: TerrainPipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        self.resources
+            .get(handle.slot as usize)
+            .map(|resource| (resource.primary_shadow, self.layout.handle()))
+    }
+
+    /// Borrows the initialized receiver descriptor layout for frame-owned maps.
+    pub(in crate::device) fn shadow_set_layout(&self) -> Option<vk::DescriptorSetLayout> {
+        self.layout.descriptor_set(2)
+    }
+
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();
         // SAFETY: Renderer idle guarantees no pipeline is in flight.
         unsafe {
             for resource in self.resources.drain(..).rev() {
+                device.destroy_pipeline(resource.primary_shadow, None);
                 device.destroy_pipeline(resource.handle, None);
             }
         }

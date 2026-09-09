@@ -1,5 +1,37 @@
 #version 460
 
+#ifndef TERRAIN_PRIMARY_SHADOW
+#define TERRAIN_PRIMARY_SHADOW 0
+#endif
+
+#if TERRAIN_PRIMARY_SHADOW
+layout(set = 2, binding = 0) uniform TerrainShadow {
+    vec4 origin_and_texel;
+    vec4 receiver_rows[3];
+} shadow;
+layout(set = 2, binding = 1) uniform sampler2D primary_shadow_map;
+layout(location = 5) in vec3 in_shadow_coordinates;
+
+// Terrain2/Terrain3's primary map uses the center and four odd filter registers.
+float primary_shadow_visibility() {
+    float edge = clamp(max(abs(in_shadow_coordinates.x), abs(in_shadow_coordinates.y))
+        * -3.4482758 + 3.41379309, 0.0, 1.0);
+    if (edge <= 0.0) {
+        return 1.0;
+    }
+    vec2 coordinates = in_shadow_coordinates.xy * 0.5 + vec2(0.5);
+    vec2 offsets[5] = vec2[5](vec2(0.0), vec2(0.8, -1.0), vec2(0.2, -0.6),
+        vec2(-0.6, -0.2), vec2(-1.0, -0.4));
+    float visibility = 0.0;
+    for (int index = 0; index < 5; ++index) {
+        float depth = textureLod(primary_shadow_map,
+            coordinates + offsets[index] * shadow.origin_and_texel.w, 0.0).r;
+        visibility += depth >= in_shadow_coordinates.z ? 1.0 : 0.0;
+    }
+    return 1.0 + edge * (visibility * 0.2 - 1.0);
+}
+#endif
+
 #ifndef TERRAIN_LAYER_COUNT
 #error TERRAIN_LAYER_COUNT must be defined
 #endif
@@ -53,7 +85,11 @@ void main() {
 
     // Terrain1.bls multiplies shadow visibility by 0.3 and adds 0.7;
     // diffuse vertex colors are doubled after texture/shadow multiplication.
-    float baked_shadow = 0.7 + 0.3 * (1.0 - material.a);
+    float visibility = 1.0 - material.a;
+#if TERRAIN_PRIMARY_SHADOW
+    visibility = min(visibility, primary_shadow_visibility());
+#endif
+    float baked_shadow = 0.7 + 0.3 * visibility;
     vec3 lit = ground * baked_shadow * in_vertex_light * 2.0;
     out_color = vec4(mix(scene.fog_color.rgb, lit, in_fog_visibility), 1.0);
 }
