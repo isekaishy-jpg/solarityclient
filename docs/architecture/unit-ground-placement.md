@@ -89,6 +89,22 @@ Scene traversal needs both because `0x0079A870` visits the secondary root before
 the primary. Decoded camera fixtures cover both root visit orders and preserve
 each root's portal-adjacent group.
 
+The shared scene traversal now reports `0x007AC060`'s ordered group visits and
+first exterior-portal encounters across all camera groups in a root. Portal
+callbacks still occur at the maximum visited depth; `0x009CE7E0` initializes
+that depth to 10 from `0x00ADFE40`. A portal's first encounter consumes its cache
+entry even if its displaced projection subsequently rejects it. The 756 native
+scene-query fixtures cover order, cycles, independent group-info flags, shared
+initial groups, and depth boundaries.
+
+Exterior projection follows `0x007A8F20`: offset the local vertices by the portal
+normal times `0.01`, negate that offset for a positive reference side, and run
+`0x007A85E0` without the ordinary near-portal full-window shortcut. The first
+twelve vertices supply projection, while `0x007A70D0` scans all original vertices
+for maximum nonnegative local forward depth. The 1,188 native fixtures compare
+all four screen-window coordinates and depth exactly. These shared components
+are not yet connected to runtime indoor scene admission.
+
 An interior camera requires an admitted exterior portal window. WMO-bound units
 instead depend on visited group lists through `0x00793270`. That portal/group
 scene bridge, mounted model registrations, and special hidden-model registration

@@ -139,6 +139,64 @@ fn portal_polygon_projection_matches_original_transform_clip_and_near_rules()
 }
 
 #[test]
+fn exterior_portal_windows_match_original_displacement_and_full_vertex_depth()
+-> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::{WorldModelPortalProjectionFrame, WorldModelPortalProjector};
+    let mut projector = WorldModelPortalProjector::default();
+    let mut count = 0;
+    for (case, line) in include_str!("../fixtures/world_model_exterior_portal_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .enumerate()
+    {
+        let row = words(line);
+        let vertex_count: usize = row[0].parse()?;
+        let side: i16 = row[1].parse()?;
+        let values = row[3..row.len() - 7]
+            .iter()
+            .map(|value| float(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let vertices = values[..vertex_count * 3].as_chunks::<3>().0;
+        let blocks = &values[vertex_count * 3..];
+        let frame = WorldModelPortalProjectionFrame {
+            root_transform: Mat4::from_cols_slice(&blocks[10..26]),
+            local_camera: Vec3::from_slice(&blocks[4..7]),
+            world_camera: Vec3::from_slice(&blocks[7..10]),
+            relative_projection: Mat4::from_cols_slice(&blocks[26..42]),
+            clip_planes: blocks[42..62].as_chunks::<4>().0.try_into()?,
+        };
+        let actual = projector.project_exterior_polygon(
+            vertices,
+            Vec3::from_slice(&blocks[..3]),
+            side,
+            blocks[62..66].try_into()?,
+            frame,
+        )?;
+        let admitted = u32::from_str_radix(row[row.len() - 7], 16)? != 0;
+        assert_eq!(actual.is_some(), admitted, "admission case {case}");
+        if let Some(actual) = actual {
+            for (channel, (actual, expected)) in actual
+                .screen_window
+                .into_iter()
+                .chain([actual.depth])
+                .zip(&row[row.len() - 5..])
+                .enumerate()
+            {
+                assert_eq!(
+                    actual.to_bits(),
+                    u32::from_str_radix(expected, 16)?,
+                    "case {case} channel {channel}: {actual}"
+                );
+            }
+        }
+        count += 1;
+    }
+    assert_eq!(count, 1188);
+    Ok(())
+}
+
+#[test]
 fn portal_visibility_matches_original_visit_order_fog_and_clipping() -> Result<(), Box<dyn Error>> {
     let mut lines = include_str!("../fixtures/world_model_visibility_native.txt")
         .lines()
@@ -176,51 +234,7 @@ fn portal_visibility_matches_original_visit_order_fog_and_clipping() -> Result<(
                 .collect::<Result<Vec<_>, _>>()?;
             windows.push(Some([bounds[0], bounds[1], bounds[2], bounds[3]]));
         }
-        let (mut root, groups) = super::world_model_fog::graph(&flags, &info_flags, &edges);
-        let mut offset = 0;
-        while offset < root.len() {
-            let length = u32::from_le_bytes(root[offset + 4..offset + 8].try_into()?) as usize;
-            if &root[offset..offset + 4] == b"TPOM" {
-                for (index, plane) in planes.iter().enumerate() {
-                    for (channel, value) in plane.iter().enumerate() {
-                        let start = offset + 8 + index * 20 + 4 + channel * 4;
-                        root[start..start + 4].copy_from_slice(&value.to_le_bytes());
-                    }
-                }
-            } else if &root[offset..offset + 4] == b"RPOM" {
-                let mut reference = 0;
-                for group in 0..size as u32 {
-                    for &[a, b] in &edges {
-                        if group == a || group == b {
-                            let side = if group == a { 1i16 } else { -1i16 };
-                            let start = offset + 8 + reference * 8 + 4;
-                            root[start..start + 2].copy_from_slice(&side.to_le_bytes());
-                            reference += 1;
-                        }
-                    }
-                }
-            }
-            offset += length + 8;
-        }
-        let paths = (0..size)
-            .map(|i| format!("World\\Visible_{i:03}.wmo"))
-            .collect::<Vec<_>>();
-        let mut files = vec![FixtureFile {
-            path: "World\\Visible.wmo",
-            bytes: &root,
-        }];
-        files.extend(
-            paths
-                .iter()
-                .zip(&groups)
-                .map(|(path, bytes)| FixtureFile { path, bytes }),
-        );
-        let fixture = Fixture::new(&files)?;
-        let mut store = AssetStore::mount(ArchiveCatalog::discover(
-            ClientDataRoot::new(fixture.data_root())?,
-            Locale::EnUs,
-        )?)?;
-        let model = DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Visible.wmo")?)?;
+        let model = visibility_model(&flags, &info_flags, &edges, &planes)?;
         assert_eq!(
             query.query(&model, Vec3::ZERO, size, 4, true, &windows),
             Err(WorldModelVisibilityError::InvalidGroup)
@@ -264,4 +278,162 @@ fn portal_visibility_matches_original_visit_order_fog_and_clipping() -> Result<(
     }
     assert_eq!(count, 1440);
     Ok(())
+}
+
+/// 7AD1F0's initial groups share the portal cache, including rejected exteriors.
+#[test]
+fn camera_root_scene_events_match_original_order_cache_and_depth_limit()
+-> Result<(), Box<dyn Error>> {
+    use solarity_systems::WorldModelSceneVisibilityEvent;
+    let mut lines = include_str!("../fixtures/world_model_scene_visibility_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .peekable();
+    let mut query = WorldModelVisibilityQuery::default();
+    let mut count = 0;
+    while let Some(line) = lines.next() {
+        let row = words(line);
+        assert_eq!(row[0], "scene");
+        let size = row[1].parse::<usize>()?;
+        let flags = row[2..2 + size]
+            .iter()
+            .map(|v| v.parse::<u32>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let info = row[2 + size..2 + 2 * size]
+            .iter()
+            .map(|v| v.parse::<u32>())
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut edges = Vec::new();
+        let mut planes = Vec::new();
+        let mut windows = Vec::new();
+        for _ in 0..row[2 + 2 * size].parse::<usize>()? {
+            let edge = words(lines.next().ok_or("missing scene edge")?);
+            edges.push([edge[1].parse()?, edge[2].parse()?]);
+            let values = edge[3..]
+                .iter()
+                .map(|v| float(v))
+                .collect::<Result<Vec<_>, _>>()?;
+            planes.push(values[..4].try_into()?);
+            windows.push(Some(values[4..8].try_into()?));
+        }
+        let model = visibility_model(&flags, &info, &edges, &planes)?;
+        assert_eq!(
+            query.query_scene(&model, Vec3::ZERO, &[size], 10, &windows),
+            Err(WorldModelVisibilityError::InvalidGroup)
+        );
+        assert_eq!(
+            query.query_scene(&model, Vec3::splat(f32::NAN), &[0], 10, &windows),
+            Err(WorldModelVisibilityError::NonFiniteCoordinates)
+        );
+        while lines.peek().is_some_and(|line| line.starts_with("query ")) {
+            let line = lines.next().ok_or("missing scene query")?;
+            let row = words(line);
+            let maximum = row[1].parse()?;
+            let initial_count = row[2].parse::<usize>()?;
+            let initial = row[3..3 + initial_count]
+                .iter()
+                .map(|v| v.parse::<usize>())
+                .collect::<Result<Vec<_>, _>>()?;
+            let base = 3 + initial_count;
+            let point = Vec3::new(
+                float(row[base])?,
+                float(row[base + 1])?,
+                float(row[base + 2])?,
+            );
+            let events = query.query_scene(&model, point, &initial, maximum, &windows)?;
+            assert_eq!(
+                events.len(),
+                row[base + 3].parse::<usize>()?,
+                "case {count}: {line}, {flags:?}/{info:?}"
+            );
+            for event in events {
+                let expected = words(lines.next().ok_or("missing scene event")?);
+                match event {
+                    WorldModelSceneVisibilityEvent::Group(visit) => {
+                        assert_eq!(expected[0], "group", "case {count}");
+                        assert_eq!(visit.group, expected[1].parse::<usize>()?, "case {count}");
+                        assert_eq!(visit.indoor_fog, expected[2] == "1", "case {count}");
+                        assert_eq!(visit.depth, expected[3].parse::<u32>()?, "case {count}");
+                        for (actual, expected) in visit.screen_window.iter().zip(&expected[4..8]) {
+                            assert_eq!(
+                                actual.to_bits(),
+                                u32::from_str_radix(expected, 16)?,
+                                "case {count}"
+                            );
+                        }
+                    }
+                    WorldModelSceneVisibilityEvent::ExteriorPortal { reference } => {
+                        assert_eq!(expected[0], "portal", "case {count}");
+                        assert_eq!(*reference, expected[1].parse::<usize>()?, "case {count}");
+                    }
+                }
+            }
+            count += 1;
+        }
+        assert!(
+            query
+                .query_scene(&model, Vec3::ZERO, &[], 10, &windows)?
+                .is_empty()
+        );
+    }
+    assert_eq!(count, 756);
+    Ok(())
+}
+
+/// Loads the oracle graph through complete decoded MPQ root/group resources.
+fn visibility_model(
+    flags: &[u32],
+    info_flags: &[u32],
+    edges: &[[u32; 2]],
+    planes: &[[f32; 4]],
+) -> Result<DecodedWorldModel, Box<dyn Error>> {
+    let size = flags.len();
+    let (mut root, groups) = super::world_model_fog::graph(flags, info_flags, edges);
+    let mut offset = 0;
+    while offset < root.len() {
+        let length = u32::from_le_bytes(root[offset + 4..offset + 8].try_into()?) as usize;
+        if &root[offset..offset + 4] == b"TPOM" {
+            for (index, plane) in planes.iter().enumerate() {
+                for (channel, value) in plane.iter().enumerate() {
+                    let start = offset + 8 + index * 20 + 4 + channel * 4;
+                    root[start..start + 4].copy_from_slice(&value.to_le_bytes());
+                }
+            }
+        } else if &root[offset..offset + 4] == b"RPOM" {
+            let mut reference = 0;
+            for group in 0..size as u32 {
+                for &[a, b] in edges {
+                    if group == a || group == b {
+                        let side = if group == a { 1i16 } else { -1i16 };
+                        let start = offset + 8 + reference * 8 + 4;
+                        root[start..start + 2].copy_from_slice(&side.to_le_bytes());
+                        reference += 1;
+                    }
+                }
+            }
+        }
+        offset += length + 8;
+    }
+    let paths = (0..size)
+        .map(|i| format!("World\\Visible_{i:03}.wmo"))
+        .collect::<Vec<_>>();
+    let mut files = vec![FixtureFile {
+        path: "World\\Visible.wmo",
+        bytes: &root,
+    }];
+    files.extend(
+        paths
+            .iter()
+            .zip(&groups)
+            .map(|(path, bytes)| FixtureFile { path, bytes }),
+    );
+    let fixture = Fixture::new(&files)?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    Ok(DecodedWorldModel::load(
+        &mut store,
+        &AssetPath::new("World\\Visible.wmo")?,
+    )?)
 }

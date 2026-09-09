@@ -16,7 +16,7 @@ import wmo_registration_oracle as n
 from liquid_material_oracle import return_value
 
 
-def capture(flags, edges, start, point, maximum, indoor, info_flags=None):
+def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, scene_events=False, starts=None):
     u = n.emulator()
     info_flags = flags if info_flags is None else info_flags
     root, info, portals, refs, groups, window = [n.HEAP + i * 0x2000 for i in range(6)]
@@ -42,6 +42,7 @@ def capture(flags, edges, start, point, maximum, indoor, info_flags=None):
     for index, (_, _, plane, _) in enumerate(edges):
         u.mem_write(portals + index * 20, struct.pack('<HH4f', 0, 4, *plane))
     visits = []
+    events = []
 
     def ret(u, count=0, value=0):
         sp = u.reg_read(UC_X86_REG_ESP)
@@ -64,15 +65,24 @@ def capture(flags, edges, start, point, maximum, indoor, info_flags=None):
             group, _, clip, depth, _ = n.read_words(u, frame + 8, 5)
             visits.append((group, n.read_words(u, 0xcfbeb8, 1)[0], depth,
                            *n.read_words(u, clip, 4)))
+            events.append(('group', *visits[-1]))
             ret(u)
         elif address in (0x791950, 0x78fb50, 0x790e20):
             ret(u)
         elif address == 0x7a8f20:
+            portal, reference, cache, exterior = n.read_words(u, sp + 4, 4)
+            # Projection is separately covered by the original 7A8F20 oracle.
+            # Record its first encounter, reproducing the portal cache bit it
+            # sets even when the displaced polygon is later rejected.
+            if not (n.read_words(u, cache, 1)[0] & 4):
+                events.append(('portal', (reference - refs) // 8))
+                u.mem_write(cache, struct.pack('<H', (n.read_words(u, cache, 1)[0] & 0xffff) | 4))
             ret(u, 4)
     u.hook_add(UC_HOOK_CODE, hook)
-    u.reg_write(UC_X86_REG_ECX, root)
-    n.invoke(u, 0x7ac060, [start, 0xffff, window, 0, indoor])
-    return visits
+    for initial in starts if starts is not None else [start]:
+        u.reg_write(UC_X86_REG_ECX, root)
+        n.invoke(u, 0x7ac060, [initial, 0xffff, window, 0, indoor])
+    return events if scene_events else visits
 
 
 def main():
