@@ -16,11 +16,13 @@ impl ClientServices {
         let (Some(environment), Some(pose)) =
             (self.environment.current(), self.player.camera_pose())
         else {
+            self.player.update_camera_opacity(None);
             return Ok(None);
         };
         let (width, height) = self.platform.pixel_extent();
         let aspect_ratio = width as f32 / height as f32;
         let mut resolved_height = None;
+        let mut resolved_distance = None;
         let settings = solarity_systems::PlayerCameraObstructionSettings {
             height_target: self.player.camera_target_height(),
             ..self.player_movement.camera_collision_settings()
@@ -33,8 +35,10 @@ impl ClientServices {
                 self.player_movement
                     .camera_obstructed(distance, contacts, now);
                 resolved_height = Some(height);
+                resolved_distance = Some(distance);
             },
         )?;
+        self.player.update_camera_opacity(resolved_distance);
         if let Some(height) = resolved_height {
             self.player.camera_height_obstructed(height, now)?;
         }

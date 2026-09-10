@@ -382,6 +382,7 @@ pub struct RuntimePlayerPresentation {
     component_texture_level: CharacterComponentTextureLevel,
     resident: Option<ResidentPlayerModel>,
     unit_animations: UnitAnimationScene,
+    camera_opacity_subject: super::entity_opacity::CameraOpacitySubject,
     animation_mouse_turning: bool,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
@@ -421,6 +422,7 @@ impl RuntimePlayerPresentation {
             component_texture_level: CharacterComponentTextureLevel::DEFAULT,
             resident: None,
             unit_animations: UnitAnimationScene::default(),
+            camera_opacity_subject: Default::default(),
             animation_mouse_turning: false,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
@@ -2290,6 +2292,27 @@ impl RuntimePlayerPresentation {
             .and_then(|resident| resident.camera_pose)
     }
 
+    pub(super) fn update_camera_opacity(&mut self, distance: Option<f32>) {
+        let subject = self
+            .resident
+            .as_ref()
+            .zip(distance)
+            .and_then(|(resident, distance)| {
+                let owner = self.unit_animations.get(resident.guid)?.opacity_owner();
+                let byte = solarity_systems::player_camera_opacity(
+                    distance,
+                    resident.camera_height.value(),
+                    resident.view.pitch_radians(),
+                    solarity_rendering::WORLD_NEAR_CLIP,
+                );
+                Some((owner, byte))
+            });
+        self.camera_opacity_subject.update(
+            subject.map(|(owner, _)| owner),
+            subject.map_or(255, |(_, byte)| byte),
+        );
+    }
+
     pub(super) fn sample_camera_collision(&mut self, now: u32) -> Result<(), RuntimePlayerError> {
         let Some(resident) = self.resident.as_mut() else {
             return Ok(());
@@ -2403,6 +2426,7 @@ fn prepare_glue_character_on_worker(
     let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
         unit_animations: UnitAnimationScene::default(),
+        camera_opacity_subject: Default::default(),
         animation_mouse_turning: false,
         assets: AssetStoreHandle::new(store),
         animations: catalogs.animations,

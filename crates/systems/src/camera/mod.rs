@@ -5,6 +5,7 @@
 
 mod controller;
 mod obstruction;
+mod opacity;
 mod transition;
 mod types;
 mod volume;
@@ -19,6 +20,7 @@ pub use obstruction::{
     PlayerCameraContacts, PlayerCameraObstruction, PlayerCameraObstructionError,
     PlayerCameraObstructionSettings, PlayerCameraSceneQuery, resolve_player_camera_obstruction,
 };
+pub use opacity::player_camera_opacity;
 pub use transition::PlayerCameraHeightState;
 pub use types::{
     CameraSubjectGeometry, CameraSubjectHeight, CameraSubjectHeightError,

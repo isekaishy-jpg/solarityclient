@@ -3,7 +3,7 @@
 This work belongs to the open entity-fading row in
 [world completion](world-completion.md). Replicated object opacity has a
 different owner and policy from [static scenery distance fading](scenery-distance.md).
-Entry interpolation and ordinary detached disappearance are connected;
+Entry interpolation, ordinary detached disappearance and ordinary camera-subject fading are connected;
 exceptional owner policies and combined travel validation remain in progress.
 This document does not close the reported gap.
 
@@ -53,6 +53,21 @@ category flags, and model callbacks. The different `A40318` scene family and
 its `7C1150` callback are not this ordinary CObject allocation path.
 
 ## Implemented consumers
+
+`player_camera_opacity` implements the ordinary `606F90` camera branch. Its
+distance comes from `605D60`'s constrained output before water eye correction;
+the principal height and pitch remain separate from the final camera pivot
+tilt. After subtracting the near clip, the ordinary interval is
+`0.002777777845..1.831500172615`. A steep downward principal pitch can enlarge
+the upper bound when distance is below subject height. `8CA080` supplies cosine
+interpolation and `607991` explicitly selects truncation for the output byte.
+
+The shared runtime camera composition publishes that byte to the followed
+player's `+CB` owner before model preparation. It applies to the body's shared
+mount, equipment and enchant hierarchy without changing primary entry opacity
+or affecting other units. A weak subject reference restores the old multiplier
+on subject changes or loss, following `6066E0`, without retaining a removed unit.
+The settled far-camera path returns immediately without a cosine calculation.
 
 `solarity_systems::EntityOpacity` reproduces the byte state, native entry gate,
 and model scalar. `EntityRetirement` reproduces the detached time envelope.
@@ -122,6 +137,16 @@ locked workspace suite passes (1,218 tests, 23 ignored), followed by all three
 retirement scene tests after extending authored-source reuse coverage. Workspace
 Clippy checks all targets with warnings denied.
 
+The ordinary camera fragment has 1,864 checked-in native cases covering near
+and far endpoints, steep downward pitch, principal height and varied near clip.
+All byte results match. Runtime checks verify previous-subject restoration
+without altering primary entry timing or retaining removed owners, and actual
+GPU material opacity for the local player and eight attached models through
+material replacement. Other units retain their opacity. With this camera slice,
+the locked workspace suite passes (1,221 tests; 23 ignored), and workspace
+Clippy passes for all targets with warnings denied. This does not establish
+live populated-world camera/travel presentation or the overall FPS target.
+
 Remaining integration and validation are:
 
 - Project the exceptional `730F30` unit removal-visibility inputs: special
@@ -131,8 +156,10 @@ Remaining integration and validation are:
   scene `+7C` flag `0x4` exclusion also has no current ordinary-scene producer.
 - Project Vehicle/VehicleSeat presentation into the unit owner; the exact
   native seat policy is tested but the runtime currently has no seat-record input.
-- Connect the camera/vehicle `+CB` multiplier and specialized visual-kit model
-  ownership. These are separate from far-distance scenery fading.
+- Extend the ordinary camera `+CB` consumer to vehicle bounds/parent dispatch,
+  timed camera modes, the barber-shop reduced-range `BD19B8` global, and the local zero-byte
+  `6CEE50` visibility notification. Specialized visual-kit ownership also remains.
+  These are separate from far-distance scenery fading.
 - Verify when native model readiness starts interpolation relative to asynchronous
   resource publication, final removal-pose timing between movement publication
   and scene transfer, and combined appearance/disappearance during

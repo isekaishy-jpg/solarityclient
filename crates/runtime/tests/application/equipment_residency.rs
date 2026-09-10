@@ -7,6 +7,106 @@ use solarity_rendering::{
 };
 
 #[test]
+fn camera_opacity_reaches_player_equipment_without_fading_other_units() -> Result<(), Box<dyn Error>>
+{
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_equipment()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    for guid in [7, 20] {
+        add_unit(&mut world, guid, ObjectKind::Player, u8::from(guid == 20))?;
+        fields(
+            &mut world,
+            guid,
+            &[(122, 1), (283, 1000), (287, 2000), (313, 3000), (314, 900)],
+        )?;
+    }
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8., 0., 0.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-4., 4.],
+        [-2., 2.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    advance(&mut frame, &renderer, camera, 1200., &mut random)?;
+    let owner = |guid| -> Result<_, Box<dyn Error>> {
+        frame
+            .placements
+            .iter()
+            .find(|placement| {
+                super::super::super::placement_owner_guid(placement.owner) == Some(guid)
+            })
+            .and_then(|placement| placement.entity_opacity.clone())
+            .ok_or_else(|| "unit opacity".into())
+    };
+    let local = owner(7)?;
+    let remote = owner(20)?;
+    presentation.update_camera_opacity(Some(1.0));
+    assert!(local.opacity() > 0.39 && local.opacity() < 0.41);
+    assert_eq!(remote.opacity(), 1.0);
+    assert_character_opacity(&frame, 7, &local)?;
+    let faded = local.opacity();
+    advance(&mut frame, &renderer, camera, 1300., &mut random)?;
+    assert!(
+        frame
+            .visible_draws
+            .iter()
+            .any(|draw| (draw.material().alpha() - faded).abs() < 1e-6)
+    );
+    presentation.set_component_texture_level(
+        CharacterComponentTextureLevel::new(8).ok_or("texture level")?,
+    );
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_character_opacity(&frame, 7, &local)?;
+    assert_eq!(
+        local.opacity(),
+        faded,
+        "material replacement preserves camera opacity"
+    );
+    presentation.update_camera_opacity(Some(0.2));
+    advance(&mut frame, &renderer, camera, 1400., &mut random)?;
+    assert_eq!(local.opacity(), 0.0);
+    assert_eq!(remote.opacity(), 1.0);
+    presentation.update_camera_opacity(None);
+    assert_eq!(local.opacity(), 1.0);
+    presentation.update_camera_opacity(Some(5.0));
+    assert_eq!(local.opacity(), 1.0);
+    Ok(())
+}
+
+#[test]
 fn equipped_instances_survive_material_updates_and_follow_component_replacement()
 -> Result<(), Box<dyn Error>> {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;

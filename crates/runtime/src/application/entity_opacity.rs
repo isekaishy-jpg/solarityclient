@@ -1,6 +1,7 @@
 //! Shared model opacity survives material, equipment and GPU generation changes.
 
 use std::cell::Cell;
+use std::rc::{Rc, Weak};
 
 use solarity_systems::EntityOpacity;
 
@@ -14,6 +15,12 @@ pub(super) struct EntityOpacityOwner {
 }
 
 impl EntityOpacityOwner {
+    pub fn set_camera_opacity(&self, byte: u8) {
+        let mut state = self.state.get();
+        state.set_multiplier(f32::from(byte) / 255.0);
+        self.state.set(state);
+    }
+
     pub fn set_transport_guid(&self, guid: u64) {
         self.transport_guid.set(guid);
     }
@@ -74,5 +81,59 @@ impl EntityOpacityOwner {
 
     pub fn transitioning(&self) -> bool {
         self.state.get().transitioning()
+    }
+}
+
+/// 6066E0 restores the old subject before a new camera subject takes ownership.
+#[derive(Default)]
+pub(super) struct CameraOpacitySubject {
+    owner: Weak<EntityOpacityOwner>,
+}
+
+impl CameraOpacitySubject {
+    pub fn update(&mut self, owner: Option<&Rc<EntityOpacityOwner>>, byte: u8) {
+        if let Some(previous) = self.owner.upgrade()
+            && owner.is_none_or(|owner| !Rc::ptr_eq(owner, &previous))
+        {
+            previous.set_camera_opacity(255);
+        }
+        self.owner = owner.map_or_else(Weak::new, Rc::downgrade);
+        if let Some(owner) = owner {
+            owner.set_camera_opacity(byte);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changing_camera_subject_restores_only_the_previous_multiplier() {
+        let old = Rc::new(EntityOpacityOwner::default());
+        old.select_model(1, 1.0, 1000, 0);
+        old.advance(500);
+        let primary = old.opacity();
+        let mut camera = CameraOpacitySubject::default();
+        camera.update(Some(&old), 0);
+        assert_eq!(old.opacity(), 0.0);
+        assert!(old.transitioning());
+        let new = Rc::new(EntityOpacityOwner::default());
+        new.select_model(1, 1.0, 0, 0);
+        camera.update(Some(&new), 127);
+        assert_eq!(old.opacity(), primary);
+        assert!(old.transitioning());
+        assert!(new.opacity() > 0.49 && new.opacity() < 0.5);
+        camera.update(None, 255);
+        assert_eq!(new.opacity(), 1.0);
+        camera.update(Some(&old), 0);
+        let weak = Rc::downgrade(&old);
+        drop(old);
+        assert!(
+            weak.upgrade().is_none(),
+            "camera does not retain removed units"
+        );
+        camera.update(Some(&new), 255);
+        assert_eq!(new.opacity(), 1.0);
     }
 }

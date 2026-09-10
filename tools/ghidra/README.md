@@ -1,5 +1,17 @@
 # Stock client architecture analysis
 
+The ordinary camera-opacity fixture executes the original `606F90` fragment
+from `6077D0` through `6079FD`, including the complete `8CA080` cosine function:
+
+```powershell
+python tools/ghidra/camera_opacity_oracle.py <path-to-Wow.exe> --output crates/systems/tests/fixtures/camera_opacity_native.txt
+```
+
+Its 1,864 cases cover distance, principal height/pitch, near clip, fade endpoints,
+steep downward views and deterministic randomized inputs. Vehicle subjects,
+timed camera flags, the reduced-range global and final dispatch are excluded.
+The shared emulator rejects any executable outside the pinned build-12340 hash.
+
 `ExportStockArchitecture.java` extracts architecture evidence from a completed
 Ghidra analysis. It writes only program metadata, imports, RTTI names, embedded
 source-file strings, and their cross-references. It does not export decompiled
