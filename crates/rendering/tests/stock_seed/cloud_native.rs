@@ -181,6 +181,6 @@ fn clouds_match_original_incremental_noise_and_pixels() -> Result<(), Box<dyn Er
             other => panic!("unknown fixture row {other}"),
         }
     }
-    assert_eq!(frames, 39);
+    assert_eq!(frames, 44);
     Ok(())
 }

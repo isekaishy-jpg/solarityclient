@@ -784,6 +784,7 @@ impl TerrainFrame {
             liquid_time_ms,
             celestial_resources.colors,
         );
+        profile.mark("sky update");
         let fog = environment.fog();
         let (fog_start, fog_end) = fog.range();
         let fog_parameters = Vec4::new(fog_start, fog_end, 0.0, fog.exponent());
@@ -816,6 +817,7 @@ impl TerrainFrame {
             [M2LocalLightState::disabled(); 4],
         )
         .with_specular_enabled(specular_enabled);
+        profile.mark("scene uniforms");
         self.m2
             .update_player_state(player, local_animation_time_ms, random)?;
         self.m2

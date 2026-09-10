@@ -1,6 +1,7 @@
 //! One retained native sky simulation for the active map's world frames.
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
+use crate::application::frame_profile::RuntimeFrameProfile;
 use solarity_rendering::{
     BlpTextureHandle, WorldCameraFrame, WorldCelestialDraw, WorldCelestialFrame,
     WorldCelestialMesh, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,
@@ -38,6 +39,7 @@ impl WorldSky {
         time_ms: u32,
         celestial_colors: [u32; 3],
     ) {
+        let mut profile = RuntimeFrameProfile::new("World sky update");
         let light = environment.light();
         self.gradient.update_colors(
             light.sky_colors(),
@@ -46,6 +48,7 @@ impl WorldSky {
             light.highlight_sky(),
             camera,
         );
+        profile.mark("gradient colors");
         let celestials = WorldCelestials::sample(
             environment.day_fraction(),
             environment.calendar_days() as f32,
@@ -60,6 +63,7 @@ impl WorldSky {
                 celestial_colors[i],
             )
         });
+        profile.mark("celestials");
         let lighting = WorldCloudLighting::sample(
             light.cloud_colors(),
             environment.day_fraction(),
@@ -68,10 +72,12 @@ impl WorldSky {
             moon.position(),
             environment.weather_blend(),
         );
+        profile.mark("cloud lighting");
         let elapsed = self
             .last_update_ms
             .map_or(0., |previous| time_ms.wrapping_sub(previous) as f32 * 0.001);
         self.clouds.update(elapsed, light.sky_floats()[1], lighting);
+        profile.mark("cloud rows");
         self.last_update_ms = Some(time_ms);
     }
 

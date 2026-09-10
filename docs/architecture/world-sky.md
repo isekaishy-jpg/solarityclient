@@ -58,7 +58,7 @@ trigonometry, camera-centered radius 12, first-moon size multiplier 1.75, and
 the second moon's 1.7-day cycle with native 16-bit calendar-phase rounding.
 The native provider must supply both cyclic time and calendar day index.
 
-The cloud oracle compares every pixel across 39 original updates, all noise
+The cloud oracle compares every pixel across 44 original updates, all noise
 and grain tables, geometry and 56 lighting-provider samples. The celestial
 oracle executes the entire ephemeris unchanged for 1,250 camera/day/calendar
 samples, including neighboring floats at table boundaries. The hidden GPU
@@ -66,6 +66,16 @@ cloud test compares 20 captured frames against an independent scalar projection,
 bilinear texture sample and blend of the native mesh and pixels. The complete
 five-test sky/liquid/ripple/underwater frame group and rendering library checks
 pass, along with Clippy for all rendering targets.
+
+Cloud noise prepares the four octaves' Y/Z interpolation weights and permuted
+Y/Z bases once per row. Columns in the same X cell reuse its four left values
+and f32 corner differences; each pixel still performs the original f64
+interpolation in the original order. This scratch state lives for one row,
+with no allocation or retained phase cache. The eight-row update budget,
+initial/invalidated full refresh, derivative history, lighting, and texture
+bank switches retain their native paths. Five additional oracle updates enter
+through the original elapsed-time provider and cover phases 65,534, 65,535,
+0, and 1, checking every changed pixel across the 16-bit phase wrap.
 
 The active runtime now retains and submits both gradient and procedural cloud
 domes. It samples cloud lighting from the native sun/first-moon positions and

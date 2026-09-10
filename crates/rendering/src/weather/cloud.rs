@@ -88,8 +88,9 @@ impl WorldClouds {
         let threshold = ((1.0 - f64::from(density)) * 255.0) as i32 as u8;
         for row in start..start + count {
             let mut previous_pixel = 0.0_f32;
+            let mut noise_row = self.noise.row(row, self.phase);
             for column in 0..Self::SIZE {
-                let (sum, partial) = self.noise.sample(column, row, self.phase);
+                let (sum, partial) = noise_row.sample(column);
                 let dx = (f64::from(previous_pixel) - partial) as f32;
                 let dy = (f64::from(self.previous[column]) - partial) as f32;
                 previous_pixel = partial as f32;

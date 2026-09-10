@@ -324,6 +324,44 @@ lookup. Reported topology rebuild means were 1.561 ms for 89 changes before and
 remain necessary. This offline result does not establish populated-world FPS,
 complete stall elimination, or the requested 1,200 FPS target.
 
+## Procedural cloud noise
+
+The sky profile separates gradient colors, celestials, cloud lighting, and
+procedural texture rows. Scene preparation also separates sky and uniform
+construction from unit state updates. These scopes use the existing opt-in
+frame timing path and make no clock calls when profiling is disabled.
+
+Cloud noise shares Y/Z interpolation state across each row and corner values
+across adjacent columns in the same X cell. The original interpolation order,
+f32 corner differences, eight-row update schedule, lighting, and bank switches
+remain intact. The [native cloud oracle](world-sky.md) now checks 44 updates,
+including the 16-bit phase wrap; every earlier fixture record is unchanged.
+
+On 2026-09-09, two complete 2,400-frame-per-phase profiles on the 1280 x 720
+GTX 1070 travel route above measured 167.645 us before and 147.648 us after for
+cloud rows in their final two settled intervals (853 and 855 frames). Total
+sky update measured 186.007 and 166.267 us. This is approximately 12% less
+cloud work, or 20 us per frame in that sample.
+
+Separate replays with profiling and capture disabled, and no compiler workload,
+measured these total frame means:
+
+| Phase | Before | After |
+| --- | ---: | ---: |
+| Stationary | 4.652 ms | 4.541 ms |
+| Orbit | 3.805 ms | 3.737 ms |
+| Pointer | 5.055 ms | 5.054 ms |
+| Outbound travel | 3.584 ms | 3.572 ms |
+| Return travel | 3.544 ms | 3.555 ms |
+| Settled | 4.650 ms | 4.640 ms |
+
+The total-frame changes are small and mixed; the component timing establishes
+the cloud saving. Detail and primary-shadow draw counts match frame by frame
+in all six phases. Each direction still has 24 changed frames, 21 admissions,
+and 21 evictions. Return travel maximum frame time increased from 21.018 to
+24.339 ms in this pair. This does not establish reduced publication stalls,
+live populated-world performance, or the requested 1,200 FPS target.
+
 ## Per-instance lighting storage
 
 The lighting wrapper retains an optional owned allocation for spatial query

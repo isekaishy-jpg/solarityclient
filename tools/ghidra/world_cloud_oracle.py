@@ -87,7 +87,12 @@ def capture():
     u.reg_write(UC_X86_REG_ECX, owner)
     invoke(u, 0x7efae0, pointers)
     rows.append('lighting ' + ' '.join(bytes(u.mem_read(p, 4 if i == 4 else 12)).hex() for i,p in enumerate(pointers)))
-    for step, (density, delta, force) in enumerate([(0.6,0.,1)] + [(0.6,.033,0)] * 34 + [(0.,.033,1),(1.,.033,1),(.25,1.,1),(.9,1.,1)]):
+    # Finish with neighboring phases around the 16-bit wrap. Large elapsed time
+    # enters through the same native frame-delta provider as ordinary updates.
+    frames = ([(0.6,0.,1)] + [(0.6,.033,0)] * 34
+              + [(0.,.033,1),(1.,.033,1),(.25,1.,1),(.9,1.,1)]
+              + [(0.6,32764.,1),(0.6,.5,1),(0.6,.5,1),(0.6,.5,1),(0.6,.033,0)])
+    for step, (density, delta, force) in enumerate(frames):
         n.write_floats(u, 0xd38c34, [density])
         n.write_floats(u, 0xd38b48, [delta])
         u.mem_write(owner + 10, bytes([force]))
