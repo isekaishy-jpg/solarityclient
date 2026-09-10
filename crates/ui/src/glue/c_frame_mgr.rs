@@ -497,6 +497,12 @@ impl FrameManager {
         self.owner.cvar_number(name)
     }
 
+    /// Returns the native decimal-prefix integer for a retained CVar.
+    #[must_use]
+    pub fn cvar_integer(&self, name: &str) -> Option<i32> {
+        self.owner.cvar_integer(name)
+    }
+
     /// Returns the retained CVar generation for native policy caches.
     #[must_use]
     pub fn cvar_revision(&self) -> u64 {

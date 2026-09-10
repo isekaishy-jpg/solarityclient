@@ -30,7 +30,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             format!(
                 "usage: benchmark_world <frames per phase> <output.csv> <map> <x> <y> <z> \
                  [--travel-offset <dx> <dy> <dz>] [--camera-distance <yards>] \
-                 [--camera-pitch <radians>] [--camera-yaw <radians>] [--realm-hour <0..23>] {}",
+                 [--camera-pitch <radians>] [--camera-yaw <radians>] [--realm-hour <0..23>] \
+                 [--screen-effect <ScreenEffect.dbc ID>] {}",
                 RuntimeConfiguration::usage()
             ),
         )
@@ -59,6 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut pitch = PlayerViewState::STOCK_VIEW_2.pitch_radians();
     let mut yaw = 0.0;
     let mut hour = 12_u32;
+    let mut screen_effect = None;
     let mut runtime_args = Vec::new();
     while let Some(argument) = args.next() {
         match argument.to_str() {
@@ -78,6 +80,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .and_then(|v| v.into_string().ok())
                     .ok_or_else(usage)?
                     .parse()?;
+            }
+            Some("--screen-effect") => {
+                screen_effect = Some(
+                    args.next()
+                        .and_then(|value| value.into_string().ok())
+                        .ok_or_else(usage)?
+                        .parse()?,
+                );
             }
             _ => runtime_args.push(argument),
         }
@@ -144,6 +154,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         frames,
         capture_directory.as_deref(),
         travel_offset,
+        screen_effect,
     );
     let shutdown = application.shutdown();
     let samples = result?;

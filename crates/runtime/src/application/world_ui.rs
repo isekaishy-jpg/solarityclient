@@ -446,6 +446,10 @@ impl RuntimeWorldUi {
         self.manager.cvar_number(name)
     }
 
+    pub(super) fn cvar_integer(&self, name: &str) -> Option<i32> {
+        self.manager.cvar_integer(name)
+    }
+
     pub(super) fn cvar_revision(&self) -> u64 {
         self.manager.cvar_revision()
     }

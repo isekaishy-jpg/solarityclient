@@ -831,6 +831,12 @@ impl UiScriptEnvironment {
         self.cvars.number(name)
     }
 
+    /// Returns the native decimal-prefix integer without copying retained text.
+    #[must_use]
+    pub fn cvar_integer(&self, name: &str) -> Option<i32> {
+        self.cvars.integer(name)
+    }
+
     /// Changes whenever a retained CVar value changes, including profile loads.
     #[must_use]
     pub fn cvar_revision(&self) -> u64 {

@@ -1,4 +1,4 @@
-//! Swapchain-local image chain for stock FFXBox4, FFXGauss4, and FFXGlow.
+//! Swapchain-local image chain for stock blur, glow and ghost postprocessing.
 
 #![allow(unsafe_code)]
 
@@ -7,6 +7,9 @@ use vk_mem::Alloc;
 
 use crate::device::VulkanError;
 use crate::{GlowShaderPass, GlowSpirvCompiler, GlowSpirvProgram, WorldScreenWindow};
+
+mod effect;
+pub use effect::WorldFrameScreenEffect;
 
 /// Validated stock FFXGlow factor and display-gamma pair for one world frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -155,6 +158,7 @@ pub(in crate::device) struct VulkanGlowRenderer {
     sampler: vk::Sampler,
     descriptor_pool: vk::DescriptorPool,
     composite: vk::Pipeline,
+    ghost: vk::Pipeline,
     blur: vk::Pipeline,
     box_filter: vk::Pipeline,
     slots: Vec<GlowSlot>,
@@ -213,7 +217,7 @@ impl VulkanGlowRenderer {
         let sets = [self.set_layout];
         let push = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-            .size(16)];
+            .size(48)];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
             .push_constant_ranges(&push);
@@ -256,6 +260,14 @@ impl VulkanGlowRenderer {
                 .compile(GlowShaderPass::Box)
                 .map_err(glow_shader_error)?,
         )?;
+        self.ghost = create_pipeline(
+            device,
+            self.pipeline_layout,
+            format,
+            &compiler
+                .compile(GlowShaderPass::Ghost)
+                .map_err(glow_shader_error)?,
+        )?;
         let set_count = u32::try_from(slot_count.saturating_mul(4)).map_err(|_source| {
             VulkanError::operation("create glow descriptors", "too many slots")
         })?;
@@ -269,8 +281,8 @@ impl VulkanGlowRenderer {
         self.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }
             .map_err(|source| VulkanError::operation("create glow descriptor pool", source))?;
         let quarter = vk::Extent2D {
-            width: extent.width.div_ceil(4).max(1),
-            height: extent.height.div_ceil(4).max(1),
+            width: (extent.width / 4).max(1),
+            height: (extent.height / 4).max(1),
         };
         for _ in 0..slot_count {
             let mut slot = GlowSlot::empty();
@@ -350,7 +362,7 @@ impl VulkanGlowRenderer {
         swapchain_view: vk::ImageView,
         image_index: u32,
         window: WorldScreenWindow,
-        glow: WorldFrameGlow,
+        glow: WorldFrameScreenEffect,
     ) -> Result<(), VulkanError> {
         let slot = self
             .slots
@@ -413,8 +425,8 @@ impl VulkanGlowRenderer {
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         );
         let quarter = vk::Extent2D {
-            width: extent.width.div_ceil(4).max(1),
-            height: extent.height.div_ceil(4).max(1),
+            width: (extent.width / 4).max(1),
+            height: (extent.height / 4).max(1),
         };
         self.record_target(
             device,
@@ -423,6 +435,7 @@ impl VulkanGlowRenderer {
             quarter,
             self.box_filter,
             slot.sets[0],
+            sampling(extent, quarter),
             [
                 1.0 / extent.width as f32,
                 1.0 / extent.height as f32,
@@ -437,6 +450,7 @@ impl VulkanGlowRenderer {
             quarter,
             self.blur,
             slot.sets[1],
+            sampling(quarter, quarter),
             [
                 1.0 / quarter.width as f32,
                 1.0 / quarter.height as f32,
@@ -451,6 +465,7 @@ impl VulkanGlowRenderer {
             quarter,
             self.blur,
             slot.sets[2],
+            sampling(quarter, quarter),
             [
                 1.0 / quarter.width as f32,
                 1.0 / quarter.height as f32,
@@ -466,13 +481,21 @@ impl VulkanGlowRenderer {
             vk::AttachmentLoadOp::LOAD,
         );
         set_viewport_scissor(device, command_buffer, extent, Some(window));
+        let (pipeline, effect) = match glow {
+            WorldFrameScreenEffect::Glow(glow) => {
+                (self.composite, [glow.strength(), glow.gamma(), 0., 0.])
+            }
+            WorldFrameScreenEffect::Ghost { glow } => {
+                (self.ghost, [f32::from(glow) / 255., 0., 0., 0.])
+            }
+        };
         bind_and_draw(
             device,
             command_buffer,
-            self.composite,
+            pipeline,
             self.pipeline_layout,
             slot.sets[3],
-            [glow.strength(), glow.gamma(), 0.0, 0.0],
+            effect_parameters(effect, sampling(extent, extent), sampling(quarter, extent)),
         );
         // SAFETY: Composite rendering scope is active.
         unsafe { device.cmd_end_rendering(command_buffer) };
@@ -488,6 +511,7 @@ impl VulkanGlowRenderer {
         extent: vk::Extent2D,
         pipeline: vk::Pipeline,
         set: vk::DescriptorSet,
+        sample: [f32; 4],
         parameters: [f32; 4],
     ) {
         transition_image(
@@ -515,7 +539,7 @@ impl VulkanGlowRenderer {
             pipeline,
             self.pipeline_layout,
             set,
-            parameters,
+            effect_parameters(parameters, sample, sample),
         );
         // SAFETY: Target rendering scope is active.
         unsafe { device.cmd_end_rendering(command_buffer) };
@@ -543,7 +567,12 @@ impl VulkanGlowRenderer {
                 device.destroy_descriptor_pool(self.descriptor_pool, None);
                 self.descriptor_pool = vk::DescriptorPool::null();
             }
-            for pipeline in [&mut self.box_filter, &mut self.blur, &mut self.composite] {
+            for pipeline in [
+                &mut self.box_filter,
+                &mut self.blur,
+                &mut self.composite,
+                &mut self.ghost,
+            ] {
                 if *pipeline != vk::Pipeline::null() {
                     device.destroy_pipeline(*pipeline, None);
                     *pipeline = vk::Pipeline::null();
@@ -743,13 +772,31 @@ fn set_viewport_scissor(
     }
 }
 
+/// 8C0590 starts UVs at half an input texel and spans the used input dimensions.
+/// Account for Vulkan's half-pixel fragment centers relative to D3D9's centers.
+fn sampling(source: vk::Extent2D, target: vk::Extent2D) -> [f32; 4] {
+    [
+        1.,
+        1.,
+        0.5 / source.width as f32 - 0.5 / target.width as f32,
+        0.5 / source.height as f32 - 0.5 / target.height as f32,
+    ]
+}
+
+fn effect_parameters(effect: [f32; 4], scene: [f32; 4], blur: [f32; 4]) -> [f32; 12] {
+    [
+        effect[0], effect[1], effect[2], effect[3], scene[0], scene[1], scene[2], scene[3],
+        blur[0], blur[1], blur[2], blur[3],
+    ]
+}
+
 fn bind_and_draw(
     device: &Device,
     command_buffer: vk::CommandBuffer,
     pipeline: vk::Pipeline,
     layout: vk::PipelineLayout,
     set: vk::DescriptorSet,
-    parameters: [f32; 4],
+    parameters: [f32; 12],
 ) {
     let bytes = parameters.map(f32::to_ne_bytes).concat();
     // SAFETY: Pipeline/layout/set share the fixed ABI and the triangle has no vertex input.

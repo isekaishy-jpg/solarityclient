@@ -2384,6 +2384,9 @@ impl VulkanRenderer {
             m2_layouts[0],
             m2_layouts[0],
         ];
+        let glow = glow
+            .map(crate::WorldFrameScreenEffect::from)
+            .or(scene.screen_effect());
         if glow.is_some() {
             self.glow.ensure(
                 &self.device,

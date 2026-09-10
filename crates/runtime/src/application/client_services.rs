@@ -2456,13 +2456,17 @@ impl ClientServices {
         while let Some((update, time)) = self.gameplay.take_weather_update() {
             self.environment.receive_weather(update, time);
         }
-        while let Some(id) = self.gameplay.take_screen_effect_update() {
-            let ffx = self
-                .world_ui
+        let effect_policy = |name| {
+            self.world_ui
                 .as_ref()
-                .map_or_else(|| self.glue.cvar_number("ffx"), |ui| ui.cvar_number("ffx"));
-            self.environment
-                .set_full_screen_effects(ffx.is_some_and(|value| value as i32 != 0));
+                .map_or_else(|| self.glue.cvar_integer(name), |ui| ui.cvar_integer(name))
+                .is_some_and(|value| value != 0)
+        };
+        self.environment
+            .set_full_screen_effects(effect_policy("ffx"));
+        self.environment
+            .set_death_effects(effect_policy("ffxdeath"));
+        while let Some(id) = self.gameplay.take_screen_effect_update() {
             self.environment.select_screen_effect(id);
         }
         if let Some(farclip) = self.world_ui.as_ref().map_or_else(

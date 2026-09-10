@@ -9,7 +9,7 @@ use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_celestial::CelestialFrameResources;
 use crate::device::vulkan_cloud::CloudFrameResources;
 use crate::device::vulkan_frame::swapchain_error;
-use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
+use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameScreenEffect};
 use crate::device::vulkan_liquid::{
     LiquidDrawMaterial, LiquidFrameResources, LiquidMeshRegistry, LiquidPipelines,
     LiquidPreparedDraw,
@@ -119,7 +119,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) particle_index_buffer: (vk::Buffer, vk::DeviceSize),
     pub(super) ribbon_vertex_buffer: (vk::Buffer, vk::DeviceSize),
     pub(super) ui: Option<UiOverlayRecordContext<'a>>,
-    pub(super) glow: Option<(&'a VulkanGlowRenderer, WorldFrameGlow)>,
+    pub(super) glow: Option<(&'a VulkanGlowRenderer, WorldFrameScreenEffect)>,
     pub(super) image_index: u32,
 }
 

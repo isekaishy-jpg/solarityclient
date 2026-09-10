@@ -8,6 +8,8 @@ mod device;
 mod effect;
 #[path = "stock_seed/geometry.rs"]
 mod geometry;
+#[path = "stock_seed/ghost_screen.rs"]
+mod ghost_screen;
 #[path = "stock_seed/lighting.rs"]
 mod lighting;
 #[path = "stock_seed/liquid.rs"]

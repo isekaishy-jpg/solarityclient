@@ -218,6 +218,7 @@ fn main() {
         ("composite", "src/shader/glow_spirv/source/glow.frag.glsl"),
         ("blur", "src/shader/glow_spirv/source/glow_blur.frag.glsl"),
         ("box", "src/shader/glow_spirv/source/glow_box.frag.glsl"),
+        ("ghost", "src/shader/glow_spirv/source/ghost.frag.glsl"),
     ] {
         compile(
             source,

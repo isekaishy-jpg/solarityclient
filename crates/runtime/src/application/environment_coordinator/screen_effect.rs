@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 #[derive(Default)]
 pub(super) struct ScreenEffectFog {
     manual: Option<WorldManualFog>,
+    kind: u32,
     pending: VecDeque<Change>,
 }
 
@@ -16,6 +17,9 @@ struct Change {
 }
 
 impl ScreenEffectFog {
+    pub(super) const fn ghost(&self) -> bool {
+        self.kind == 1
+    }
     pub(super) fn select(
         &mut self,
         kind: Option<u32>,
@@ -31,6 +35,11 @@ impl ScreenEffectFog {
 
     pub(super) fn resolve(&mut self, context: WorldFogContext) -> Option<WorldManualFog> {
         while let Some(change) = self.pending.pop_front() {
+            match change.kind {
+                None => self.kind = 0,
+                Some(kind @ 0..=3) => self.kind = kind,
+                Some(_) => {}
+            }
             match change.kind {
                 Some(2) => {
                     let color = if change.full_screen_effects {

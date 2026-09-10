@@ -90,6 +90,16 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             &table(
                 10,
                 &[
+                    1,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    u32::MAX,
+                    0,
+                    0,
                     141,
                     0,
                     0,
@@ -452,6 +462,60 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         .ok_or("restored fog")?;
     assert!(restored.sky_enabled());
     assert_eq!(restored.fog(), overridden.fog());
+    environment.select_screen_effect(1);
+    let ghost = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("ghost frame")?;
+    assert!(ghost.ghost_effect_enabled());
+    assert!(ghost.sky_enabled());
+    assert_eq!(ghost.fog(), clear.fog());
+    for liquid_type in [1, 2] {
+        let wet = environment.resolve_liquid(
+            ghost,
+            Some(SubmergedLiquid {
+                liquid_type,
+                surface_height: 30.,
+                depth: 100.,
+            }),
+            &liquids,
+        )?;
+        assert!(wet.ghost_effect_enabled());
+    }
+    // Unknown declarations retain the selected shader owner, like manual fog.
+    environment.select_screen_effect(142);
+    for (ffx, death, expected) in [
+        (true, true, true),
+        (true, false, false),
+        (false, true, false),
+        (false, false, false),
+        (true, true, true),
+    ] {
+        environment.set_full_screen_effects(ffx);
+        environment.set_death_effects(death);
+        assert_eq!(
+            environment
+                .synchronize(Some(&world), Some(&clock))?
+                .ok_or("live effect switches")?
+                .ghost_effect_enabled(),
+            expected
+        );
+    }
+    for id in [81, 141, 0, 999] {
+        environment.select_screen_effect(1);
+        assert!(
+            environment
+                .synchronize(Some(&world), Some(&clock))?
+                .ok_or("reselect ghost")?
+                .ghost_effect_enabled()
+        );
+        environment.select_screen_effect(id);
+        assert!(
+            !environment
+                .synchronize(Some(&world), Some(&clock))?
+                .ok_or("retire ghost")?
+                .ghost_effect_enabled()
+        );
+    }
     for id in [0, 999] {
         environment.select_screen_effect(id);
         assert_eq!(
@@ -462,8 +526,14 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             clear.light()
         );
     }
-    environment.select_screen_effect(141);
+    environment.select_screen_effect(1);
     environment.disconnect();
+    assert!(
+        !environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("disconnect ghost")?
+            .ghost_effect_enabled()
+    );
     assert_eq!(
         environment
             .synchronize(Some(&world), Some(&clock))?

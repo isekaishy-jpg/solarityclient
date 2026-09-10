@@ -66,6 +66,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     fog_context: WorldFogContext,
     base_fog: WorldFogSample,
     manual_fog: Option<solarity_asset::WorldManualFog>,
+    ghost_effect: bool,
     liquid_flags: Option<u32>,
     world_model_skybox_weight: f32,
     fog: WorldFogSample,
@@ -171,6 +172,12 @@ impl RuntimeWorldEnvironmentFrame {
         self.manual_fog.is_none()
     }
 
+    /// FFXDeath is selected independently of whether the global light row exists.
+    #[must_use]
+    pub const fn ghost_effect_enabled(self) -> bool {
+        self.ghost_effect
+    }
+
     /// Any camera liquid type suppresses sky drawing, including flag-zero rows.
     #[must_use]
     pub const fn has_camera_liquid(self) -> bool {
@@ -230,6 +237,7 @@ pub struct RuntimeWorldEnvironment {
     screen_effect: Option<solarity_asset::ScreenEffectDefinition>,
     screen_effect_fog: screen_effect::ScreenEffectFog,
     full_screen_effects: bool,
+    death_effects: bool,
 }
 
 impl RuntimeWorldEnvironment {
@@ -258,6 +266,11 @@ impl RuntimeWorldEnvironment {
     /// Captures the native ffx setting for subsequent effect callbacks.
     pub fn set_full_screen_effects(&mut self, enabled: bool) {
         self.full_screen_effects = enabled;
+    }
+
+    /// Live ffxDeath policy gates rendering without changing effect selection.
+    pub fn set_death_effects(&mut self, enabled: bool) {
+        self.death_effects = enabled;
     }
     /// Retains the installed Weather.dbc selections for server updates.
     #[must_use]
@@ -313,6 +326,7 @@ impl RuntimeWorldEnvironment {
             screen_effect: None,
             screen_effect_fog: screen_effect::ScreenEffectFog::default(),
             full_screen_effects: true,
+            death_effects: true,
         })
     }
 
@@ -383,6 +397,9 @@ impl RuntimeWorldEnvironment {
             ordinary_fog: base_fog,
             base_fog,
             manual_fog,
+            ghost_effect: self.screen_effect_fog.ghost()
+                && self.full_screen_effects
+                && self.death_effects,
             liquid_flags: None,
             world_model_skybox_weight: 0.,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),

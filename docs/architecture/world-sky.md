@@ -313,7 +313,7 @@ the override; it does not resume searching older auras. Without a matching aura,
 PLAYER_FLAGS bit `0x10` selects effect one outside arenas. Otherwise, bit
 `0x40000000` of player field 1229 selects effect 81. Missing local-player state
 selects zero. The runtime reads these retained ECS fields and exact Spell words
-110–112. The arena classification is driven by `54AE40`'s battlefield-status receiver,
+110â€“112. The arena classification is driven by `54AE40`'s battlefield-status receiver,
 independently of the current world map. Status three installs an active queue
 and resolves its map through Map.dbc; an unknown map preserves the cached kind.
 Non-active statuses clear the matching active queue without clearing that kind.
@@ -417,3 +417,51 @@ without logged renderer errors. Stationary, orbit and settled captures retain
 the known purple distant-terrain silhouettes. This normal-world smoke does not
 establish live ghost/invisibility shader parity, and capture timings are not
 performance evidence.
+
+
+## Ghost screen composition
+
+ScreenEffect type 1 now selects the world FFXDeath pass after all world draws
+and before FrameXML. Its owner survives unknown effect types, while normal,
+invisibility, filter, missing declarations and disconnect retire it. Live `ffx`
+and `ffxDeath` integer switches gate drawing without reselecting the owner.
+The final environment palette, including camera-liquid changes, supplies glow.
+
+The native `7E87B0` producer packs `(glow * 255)` using a float store followed
+by x87 nearest-even integer conversion and the low byte. It does not clamp the
+input to one. The original FFXDeath shader adds squared quarter-resolution
+blur scaled by that byte, computes saturated luminance with weights
+`(0.299, 0.587, 0.144)`, then adds `(83, 147, 168)/255` weighted by
+`saturate(luminance * (1-luminance) * 4)`. Its output alpha is one.
+The blue luminance weight is intentionally 0.144, as encoded in the BLS shader.
+
+The shared box and separable Gaussian passes now floor quarter dimensions and
+map Vulkan fragment centers to `8C0590`'s Direct3D 9 texture coordinates. Images,
+descriptors and pipelines are retained for each swapchain generation; changing
+glow or switching the effect does not rebuild those resources. The disabled
+world path performs no postprocess copy or draw.
+
+`ghost_screen_shader_oracle.py` runs the original producer in the fingerprinted
+executable and the unchanged archive BOX4, GAUSS4 and DEATH pixel shaders on
+Direct3D 9, over explicit Vulkan world rasters. The checked-in binary and JSON
+provenance cover 21 frames: three viewport sizes (including odd dimensions) and
+seven glow values, including byte-rounding boundaries and values above one.
+Every Vulkan output channel agrees within two byte levels. Additional GPU
+checks verify an opaque UI overlay remains red and disabling ghost restores
+the original world raster exactly. Environment integration checks cover live
+switch changes, retained unknown types, underwater frames, restoration and
+world retirement.
+
+`7667B0` caches CVar integers through `76F0D0`: optional minus, decimal digits
+until the first other byte, wrapping 32-bit arithmetic, and no whitespace or
+plus-sign skipping. Effect switches now use that interpretation without string
+copies in the frame loop. A separate native oracle supplies 36 cases exercised
+through Lua SetCVar and the shared retained registry.
+
+The offline world benchmark accepts `--screen-effect <ScreenEffect.dbc ID>` to
+exercise the real installed environment and world/UI presentation path. It
+selects a declaration directly; packet and aura selection have separate tests.
+These checks establish the ghost component for normalized NPOT targets with
+quarter dimensions at least eight. Native minimum texture allocation, optional
+power-of-two allocation, invisibility/filter shaders, ordinary world glow,
+and combined live world appearance remain further parity work.

@@ -4,6 +4,8 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 
 layout(push_constant) uniform GlowState {
     vec4 parameters;
+    vec4 sceneSampling;
+    vec4 blurSampling;
 } glowState;
 
 layout(location = 0) in vec2 fragmentUv;
@@ -16,7 +18,7 @@ void main() {
     vec3 filtered = vec3(0.0);
     for (int tap = 0; tap < 4; ++tap) {
         filtered += texture(sceneColor,
-            fragmentUv + offsets[tap] * glowState.parameters.xy).rgb;
+            fragmentUv * glowState.sceneSampling.xy + glowState.sceneSampling.zw + offsets[tap] * glowState.parameters.xy).rgb;
     }
     outputColor = vec4(filtered * 0.25, 1.0);
 }

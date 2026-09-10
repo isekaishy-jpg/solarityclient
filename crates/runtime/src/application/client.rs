@@ -425,6 +425,7 @@ impl ClientApplication {
     /// represent live remote-unit or network load. Shut down after this replay.
     /// Optional framebuffer captures synchronize GPU completion; use a separate
     /// run without captures for performance measurements.
+    /// An optional ScreenEffect.dbc ID exercises its loaded lighting and shader policy.
     ///
     /// # Errors
     /// Returns a diagnostic failure for missing fixture facts, cancelled window,
@@ -436,6 +437,7 @@ impl ClientApplication {
         frames_per_phase: std::num::NonZeroUsize,
         capture_directory: Option<&std::path::Path>,
         travel_offset: Option<glam::Vec3>,
+        screen_effect: Option<u32>,
     ) -> Result<Vec<super::WorldBenchmarkSample>, super::WorldBenchmarkError> {
         self.services.benchmark_world(
             world,
@@ -443,6 +445,7 @@ impl ClientApplication {
             frames_per_phase,
             capture_directory,
             travel_offset,
+            screen_effect,
         )
     }
 

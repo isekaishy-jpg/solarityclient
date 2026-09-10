@@ -14,7 +14,7 @@ use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_detail::{DetailCreateContext, DetailPipeline, DetailRegistry};
 use crate::device::vulkan_frame::swapchain_error;
-use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
+use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameScreenEffect};
 use crate::device::vulkan_liquid::{LiquidFrameCreateContext, LiquidMeshRegistry, LiquidPipelines};
 use crate::device::vulkan_low_detail::{LowDetailPipelines, LowDetailRegistry};
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
@@ -87,7 +87,7 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) ui_pipelines: &'a UiPipelineRegistry,
     pub(in crate::device) ui_meshes: &'a UiMeshRegistry,
     pub(in crate::device) ui_texture_sets: &'a UiTextureSetRegistry,
-    pub(in crate::device) glow: Option<(&'a VulkanGlowRenderer, WorldFrameGlow)>,
+    pub(in crate::device) glow: Option<(&'a VulkanGlowRenderer, WorldFrameScreenEffect)>,
 }
 
 /// One color-only UI overlay appended after all world/M2 effect draws.

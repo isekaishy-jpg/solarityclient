@@ -27,6 +27,7 @@ pub struct WorldFrameScene<'a> {
     sky_models: Option<WorldSkyModelFrame<'a>>,
     sky_window: Option<crate::WorldSkyWindow>,
     background_color: glam::Vec4,
+    screen_effect: Option<crate::WorldFrameScreenEffect>,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -70,7 +71,22 @@ impl<'a> WorldFrameScene<'a> {
             sky_models: None,
             sky_window: Some(crate::WorldSkyWindow::FULL),
             background_color: glam::Vec4::new(0., 0., 0., 1.),
+            screen_effect: None,
         }
+    }
+
+    /// Applies one selected native screen effect after the world and before UI.
+    #[must_use]
+    pub const fn with_screen_effect(
+        mut self,
+        effect: Option<crate::WorldFrameScreenEffect>,
+    ) -> Self {
+        self.screen_effect = effect;
+        self
+    }
+
+    pub(in crate::device) const fn screen_effect(self) -> Option<crate::WorldFrameScreenEffect> {
+        self.screen_effect
     }
 
     /// Selects stock's ordinary world depth interval, below horizon and sky.

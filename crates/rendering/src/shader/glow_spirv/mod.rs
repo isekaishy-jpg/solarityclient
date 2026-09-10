@@ -6,6 +6,7 @@ const VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow.vert.spv"))
 const COMPOSITE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-composite.frag.spv"));
 const BLUR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-blur.frag.spv"));
 const BOX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-box.frag.spv"));
+const GHOST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-ghost.frag.spv"));
 
 /// Stable identity of one fragment stage in the stock glow chain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,6 +17,8 @@ pub enum GlowShaderPass {
     Blur,
     /// Four-tap full-to-quarter-resolution downsample.
     Box,
+    /// Stock FFXDeath grayscale, glow and blue tint composition.
+    Ghost,
 }
 
 /// Owned SPIR-V modules for one glow pass.
@@ -66,6 +69,7 @@ impl GlowSpirvCompiler {
             GlowShaderPass::Composite => COMPOSITE,
             GlowShaderPass::Blur => BLUR,
             GlowShaderPass::Box => BOX,
+            GlowShaderPass::Ghost => GHOST,
         };
         Ok(GlowSpirvProgram {
             pass,

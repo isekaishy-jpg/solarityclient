@@ -92,6 +92,7 @@ impl ClientServices {
         frames_per_phase: NonZeroUsize,
         capture_directory: Option<&Path>,
         travel_offset: Option<Vec3>,
+        screen_effect: Option<u32>,
     ) -> Result<Vec<WorldBenchmarkSample>, WorldBenchmarkError> {
         if self.gameplay.world().is_some()
             || self.terrain_frame.is_some()
@@ -120,6 +121,19 @@ impl ClientServices {
         self.player
             .synchronize(Some(world))
             .map_err(ApplicationError::from)?;
+        let effect_policy = |name| {
+            self.world_ui
+                .as_ref()
+                .map_or_else(|| self.glue.cvar_integer(name), |ui| ui.cvar_integer(name))
+                .is_some_and(|value| value != 0)
+        };
+        self.environment
+            .set_full_screen_effects(effect_policy("ffx"));
+        self.environment
+            .set_death_effects(effect_policy("ffxdeath"));
+        if let Some(id) = screen_effect {
+            self.environment.select_screen_effect(id);
+        }
         if let Some(farclip) = self.world_ui.as_ref().map_or_else(
             || self.glue.cvar_number("farclip"),
             |ui| ui.cvar_number("farclip"),
@@ -302,6 +316,16 @@ impl ClientServices {
         frame_start: Instant,
     ) -> Result<WorldBenchmarkSample, WorldBenchmarkError> {
         let start = Instant::now();
+        let effect_policy = |name| {
+            self.world_ui
+                .as_ref()
+                .map_or_else(|| self.glue.cvar_integer(name), |ui| ui.cvar_integer(name))
+                .is_some_and(|value| value != 0)
+        };
+        self.environment
+            .set_full_screen_effects(effect_policy("ffx"));
+        self.environment
+            .set_death_effects(effect_policy("ffxdeath"));
         if let Some(farclip) = self.world_ui.as_ref().map_or_else(
             || self.glue.cvar_number("farclip"),
             |ui| ui.cvar_number("farclip"),

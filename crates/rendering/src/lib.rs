@@ -48,11 +48,12 @@ pub use device::{
     UnderwaterParticleFog, UnderwaterParticleFrame, UnderwaterParticleFrameError, VulkanBootstrap,
     VulkanError, VulkanPresentMode, VulkanRenderer, VulkanReport, WaterRippleFrame,
     WaterRippleFrameError, WaterRipplePass, WorldFrameGlow, WorldFrameReport, WorldFrameScene,
-    WorldModelBaseMip, WorldModelMeshHandle, WorldModelMeshResourceInfo, WorldModelPipelineHandle,
-    WorldModelPipelineInfo, WorldModelPreparedDraw, WorldModelSampledTexture,
-    WorldModelSamplerHandle, WorldModelSamplerInfo, WorldModelTextureAddressMode,
-    WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
-    WorldModelTextureSetInfo, WorldPrimaryShadowFrame, WorldSkyModelBatch, WorldSkyModelFrame,
+    WorldFrameScreenEffect, WorldModelBaseMip, WorldModelMeshHandle, WorldModelMeshResourceInfo,
+    WorldModelPipelineHandle, WorldModelPipelineInfo, WorldModelPreparedDraw,
+    WorldModelSampledTexture, WorldModelSamplerHandle, WorldModelSamplerInfo,
+    WorldModelTextureAddressMode, WorldModelTextureFiltering, WorldModelTextureSet,
+    WorldModelTextureSetHandle, WorldModelTextureSetInfo, WorldPrimaryShadowFrame,
+    WorldSkyModelBatch, WorldSkyModelFrame,
 };
 pub use lighting::{
     M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, ScenePointLightError,

@@ -1,0 +1,16 @@
+{
+  "executable_sha256": "aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8",
+  "pixel_shader_sha256": {
+    "box": "c89222a5b217e1eb8b71f3fbbcba6acdbf2afff78cd018e71fed638df840050d",
+    "gauss": "ea8ea05e22bbe452510e0018b0ad09ac7d80f66f1a6ffdfada4316eb5dc4d256",
+    "ghost": "794545ab4dfbc8461b03aa6e6496dc6eb7151a6292891b934b32c807dc65bb3a"
+  },
+  "input_sha256": {
+    "world-64-64.rgba": "c890be9cf22421cd06634b7024f2a77095576326078c8e214caa41d1a515610d",
+    "world-65-61.rgba": "90c7ff3eadcee272f3e3c152ea0c0c16e2a59a2358af743f3f4a61a879a2a9f7",
+    "world-80-48.rgba": "ddf16903f66d79bfa0571ad4d5497eab4af73c03103476dae850c7836975dc29"
+  },
+  "fixture_sha256": "6d0a8ff691422f1f047c0bfd2d2c96afed7bf9065ee1d5340690f9abac05d3cd",
+  "native_frames": 21,
+  "texture_policy": "normalized NPOT, linear/clamp, no sRGB conversion"
+}

@@ -61,6 +61,28 @@ impl UiCVarRegistry {
             .filter(|value| value.is_finite())
     }
 
+    /// Samples the native cached integer (7667B0 -> 76F0D0) without allocating.
+    pub(in crate::script::simple_script) fn integer(&self, name: &str) -> Option<i32> {
+        let entries = self.entries.borrow();
+        let entry = entries
+            .get(name)
+            .or_else(|| entries.get(&canonical_name(name)))?;
+        let bytes = entry.value.as_bytes();
+        let negative = bytes.first() == Some(&b'-');
+        let mut value = 0_u32;
+        for &byte in &bytes[usize::from(negative)..] {
+            if !byte.is_ascii_digit() {
+                break;
+            }
+            value = value.wrapping_mul(10).wrapping_add(u32::from(byte - b'0'));
+        }
+        Some(if negative {
+            value.wrapping_neg()
+        } else {
+            value
+        } as i32)
+    }
+
     /// Returns a copy of the native default for one known CVar.
     pub(in crate::script::simple_script) fn default_value(&self, name: &str) -> Option<String> {
         self.entries
