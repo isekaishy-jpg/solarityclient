@@ -78,6 +78,11 @@ validate presentation and transitions; they are not performance measurements.
 The full workspace passed 1,205 tests with 23 ignored. After correcting the
 fixture reader's error handling, the focused environment regression passed
 again and workspace Clippy passed for all targets/features with warnings denied.
+Build 85 was installed from source revision
+`bb66cc63d12abc8a82df686377ad612cc0b46f0d`. Installed and packaged executables
+both report `0.0.3a`, build 85, and share SHA-256
+`a931c923c22d4315f2039ab1e51e51fe591103df7662b3d7ad78721d75369ec0`.
+The reported dirty flag reflects the build-number reservation before compilation.
 
 `tools/ghidra/terrain_low_detail_oracle.py` executes `7CC310`, `7D5150` and
 `7D5240` from the fingerprinted build-12340 executable. Archive reads,
