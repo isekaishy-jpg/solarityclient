@@ -81,6 +81,23 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     for time in [100.0, 300.0] {
         advance(&mut frame, &renderer, camera, time, &mut random)?;
     }
+    let opacity = frame
+        .placements
+        .iter()
+        .find(|placement| placement.owner == M2GpuPlacementOwner::RemotePlayerBody { guid: 20 })
+        .and_then(|placement| placement.entity_opacity.as_ref())
+        .ok_or("remote opacity")?;
+    let opacity = Rc::clone(opacity);
+    let fading_alpha = opacity.opacity();
+    assert!(fading_alpha > 0.29 && fading_alpha < 0.3);
+    assert_character_opacity(&frame, 20, &opacity)?;
+    assert!(
+        frame
+            .visible_draws
+            .iter()
+            .any(|draw| (draw.material().alpha() - fading_alpha).abs() < 1e-6),
+        "the primary fade must reach GPU mesh material packets"
+    );
     // 4EAA70 passes model, texture, visual, and particle-color inputs to the
     // child. ItemDisplayInfo flags 0x40/0x80/0x100 do not replace its animation
     // or reflect its authored transform in this build.
@@ -150,6 +167,12 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
         "material changes consume no component initialization rolls"
     );
     assert_eq!(snapshots(&frame)?, before);
+    assert_character_opacity(&frame, 20, &opacity)?;
+    assert_eq!(
+        opacity.opacity(),
+        fading_alpha,
+        "material replacement preserves the fade clock"
+    );
     let player = presentation
         .resident_frame_input()
         .ok_or("updated portrait player")?;
@@ -423,6 +446,35 @@ fn publish(
         &presentation.resident_remote_player_frame_inputs(),
         random,
     )?;
+    Ok(())
+}
+
+fn assert_character_opacity(
+    frame: &M2Frame,
+    guid: u64,
+    owner: &Rc<crate::application::entity_opacity::EntityOpacityOwner>,
+) -> Result<(), Box<dyn Error>> {
+    let mut children = 0;
+    for placement in &frame.placements {
+        if super::super::super::placement_owner_guid(placement.owner) != Some(guid) {
+            continue;
+        }
+        let opacity = placement
+            .entity_opacity
+            .as_ref()
+            .ok_or("attached opacity")?;
+        assert!(Rc::ptr_eq(opacity, owner), "{:?}", placement.owner);
+        if matches!(
+            placement.owner,
+            M2GpuPlacementOwner::PlayerItem { .. } | M2GpuPlacementOwner::PlayerItemVisual { .. }
+        ) {
+            children += 1;
+        }
+    }
+    assert_eq!(
+        children, 8,
+        "all equipment and enchant children share the primary scalar"
+    );
     Ok(())
 }
 

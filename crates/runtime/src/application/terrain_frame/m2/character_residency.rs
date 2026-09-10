@@ -26,10 +26,14 @@ pub(super) struct M2PreparedCharacter {
     new: Vec<(usize, M2GpuSource, M2GpuPlacement)>,
     retained: Vec<(usize, usize, RetainedCharacterState)>,
     ready: Vec<(usize, M2GpuPlacement)>,
+    opacity: Option<Rc<EntityOpacityOwner>>,
 }
 
 impl M2PreparedCharacter {
     pub(super) fn push(&mut self, source: M2GpuSource, placement: M2GpuPlacement) {
+        if let Some(animation) = &placement.unit_animation {
+            self.opacity = Some(Rc::clone(animation.opacity_owner()));
+        }
         self.new
             .push((self.new.len() + self.retained.len(), source, placement));
     }
@@ -93,7 +97,10 @@ impl M2Frame {
         }
         character.ready.sort_unstable_by_key(|(order, _)| *order);
         self.placements
-            .extend(character.ready.into_iter().map(|(_, placement)| placement));
+            .extend(character.ready.into_iter().map(|(_, mut placement)| {
+                placement.entity_opacity = character.opacity.as_ref().map(Rc::clone);
+                placement
+            }));
     }
 
     fn same_unit_owner(

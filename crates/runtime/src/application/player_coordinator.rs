@@ -1449,6 +1449,7 @@ impl RuntimePlayerPresentation {
         self.unit_animations.retain_world(world);
         self.unit_animations
             .bind(identity, &resident.model, &self.animations, input);
+        self.synchronize_unit_opacity(world, identity.guid());
         Ok(())
     }
 
@@ -1483,7 +1484,60 @@ impl RuntimePlayerPresentation {
                 )
                 .with_orientation(world, guid, false, false),
             );
+            self.synchronize_unit_opacity(world, guid);
         }
+    }
+
+    fn synchronize_unit_opacity(&self, world: &ActiveWorld, guid: u64) {
+        let (Some(owner), Some(presentation)) = (
+            self.unit_animations.get(guid),
+            world.unit_presentation(guid),
+        ) else {
+            return;
+        };
+        if owner.opacity_owner().has_model(presentation.display_id()) {
+            return;
+        }
+        let flags = world.unit_flags(guid).unwrap_or_default();
+        let bytes = world
+            .entity_by_guid(guid)
+            .and_then(|entity| {
+                world
+                    .storage()
+                    .get::<&solarity_ecs::ObjectFields>(entity)
+                    .ok()
+                    .map(|fields| fields.get(74))
+            })
+            .unwrap_or(0);
+        let transport = world
+            .movement_state(guid)
+            .and_then(|movement| movement.context().transport)
+            .map_or(0, |transport| transport.guid);
+        let parent_transitioning = world.object_identity(transport).map(|_| {
+            self.unit_animations
+                .get(transport)
+                .is_some_and(|parent| parent.opacity_owner().transitioning())
+        });
+        let duration = solarity_systems::EntityOpacity::unit_entry_duration(
+            flags.primary(),
+            flags.secondary(),
+            bytes,
+            transport,
+            parent_transitioning,
+            // Vehicle/VehicleSeat presentation is not yet projected by this owner.
+            None,
+        );
+        let alpha = self
+            .creatures
+            .display(presentation.display_id())
+            .map_or(255, |display| display.model_alpha());
+        let target = (f64::from(alpha as i32) * f64::from(f32::from_bits(0x3b80_8081))) as f32;
+        owner.opacity_owner().select_model(
+            presentation.display_id(),
+            target,
+            duration,
+            self.unit_animations.scene_time_ms(),
+        );
     }
 
     /// Synchronizes every visible non-player unit into shared M2 residency.

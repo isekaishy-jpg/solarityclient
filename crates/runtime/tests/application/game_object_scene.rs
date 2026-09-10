@@ -418,6 +418,8 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
         placement.owner = M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad {
             unique_id: index as u32,
         });
+        // These are terrain instances, without a replicated object's entry clock.
+        placement.entity_opacity = None;
         placement.transform = Mat4::from_translation(Vec3::Y * (index as f32 * 100.));
         placement.local_transform = placement.transform;
     }

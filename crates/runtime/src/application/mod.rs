@@ -10,6 +10,7 @@ mod cinematic_coordinator;
 mod client;
 mod client_services;
 mod developer_console;
+mod entity_opacity;
 mod environment_coordinator;
 mod frame_profile;
 mod game_object_behavior;

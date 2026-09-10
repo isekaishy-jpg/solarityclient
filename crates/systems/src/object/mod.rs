@@ -6,6 +6,7 @@
 mod animation;
 mod behavior;
 mod lifecycle;
+mod opacity;
 mod placement;
 mod transport_animation;
 mod transport_pose;
@@ -16,6 +17,7 @@ pub use animation::GameObjectAnimationRequest;
 pub use behavior::{
     GameObjectAnimationState, game_object_reversed_progress, game_object_sequence_offset,
 };
+pub use opacity::{EntityOpacity, EntityRetirement};
 pub use placement::{
     GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
     unpack_game_object_rotation,

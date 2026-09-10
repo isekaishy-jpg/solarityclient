@@ -207,7 +207,9 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
                 None,
                 None,
             )?;
-            assert_eq!(draws.draws.len(), if now == 1. { 1 } else { 2 });
+            // The one-ms entry sample still quantizes to byte zero; authored
+            // event/attachment updates continue while its mesh is transparent.
+            assert_eq!(draws.draws.len(), if now == 1. { 0 } else { 2 });
             let effects: Vec<_> = frame
                 .placements
                 .iter()

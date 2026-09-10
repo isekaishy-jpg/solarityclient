@@ -31,6 +31,7 @@ mod unit_registration;
 #[path = "../../../tests/application/unit_shadow_scene.rs"]
 mod unit_shadow_tests;
 mod visibility;
+use crate::application::entity_opacity::EntityOpacityOwner;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{
     M2PlayerItemIdentity, M2PreparedCharacter, UnitMountGpuInput, prepare_character_gpu,
@@ -206,6 +207,7 @@ struct M2GpuPlacement {
     color: [u8; 4],
     entity_lighting: entity_lighting::EntityLighting,
     opacity: f32,
+    entity_opacity: Option<Rc<EntityOpacityOwner>>,
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2PlaybackStorage>,
     unit_animation: Option<Rc<UnitAnimationBehavior>>,
@@ -951,6 +953,7 @@ impl M2Frame {
                 flags: 0,
                 color: [u8::MAX; 4],
                 opacity: 1.0,
+                entity_opacity: None,
                 particle_colors: None,
                 playback: Some(M2PlaybackStorage::Local(playback)),
                 unit_animation: None,
@@ -2369,7 +2372,12 @@ impl M2Frame {
                 continue;
             }
             let placement = &mut self.placements[placement_index];
-            let placement_opacity = placement.opacity * scenery_opacity;
+            let placement_opacity = placement.opacity
+                * scenery_opacity
+                * placement
+                    .entity_opacity
+                    .as_ref()
+                    .map_or(1.0, |owner| owner.opacity());
             self.unit_effects.prepare_attachment(placement);
             if let Some(effect) = &mut placement.unit_effect
                 && let Some(event) = effect.take_ready_sound(placement.transform.w_axis.truncate())
@@ -3669,6 +3677,7 @@ fn m2_gpu_placement(
         flags: 0,
         color: [255; 4],
         opacity: 1.0,
+        entity_opacity: None,
         particle_colors,
         playback,
         unit_animation: None,

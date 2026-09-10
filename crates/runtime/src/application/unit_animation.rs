@@ -31,6 +31,7 @@ use solarity_systems::{
     unit_movement_is_airborne,
 };
 
+use super::entity_opacity::EntityOpacityOwner;
 use super::model_playback::{M2Playback, M2PlaybackAdvance};
 use super::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
@@ -196,6 +197,10 @@ impl UnitAnimationScene {
         self.scene_time_ms = scene_time_ms;
     }
 
+    pub fn scene_time_ms(&self) -> u32 {
+        self.scene_time_ms
+    }
+
     pub fn retain_world(&mut self, world: &ActiveWorld) {
         self.owners
             .retain(|guid, owner| world.object_identity(*guid) == Some(owner.identity));
@@ -225,6 +230,11 @@ impl UnitAnimationScene {
             );
             // 7197D0's normal exists before and across CM2Model replacements.
             replacement.ground = self.ground_pose(identity);
+            if let Some(previous) = self.owners.get(&identity.guid())
+                && previous.identity == identity
+            {
+                replacement.opacity = Rc::clone(&previous.opacity);
+            }
             self.owners.insert(identity.guid(), Rc::new(replacement));
         }
     }
@@ -279,6 +289,7 @@ pub(super) struct UnitAnimationBehavior {
     body: RefCell<UnitBodyPose>,
     ground: Rc<UnitGroundPose>,
     model_color: Cell<u32>,
+    opacity: Rc<EntityOpacityOwner>,
     upper_body_wound: Cell<Option<(u16, M2ModelSequenceBlend)>>,
 }
 
@@ -342,6 +353,7 @@ impl UnitAnimationBehavior {
             playback: Rc::new(RefCell::new(M2Playback::unstarted(0, scene_time_ms))),
             scene_sample: RefCell::new(None),
             model_color: Cell::new(u32::MAX),
+            opacity: Rc::new(EntityOpacityOwner::default()),
             upper_body_wound: Cell::new(None),
             ground: Rc::new(UnitGroundPose::default()),
             body: RefCell::new(UnitBodyPose {
@@ -373,6 +385,10 @@ impl UnitAnimationBehavior {
     }
     pub fn model_color(&self) -> u32 {
         self.model_color.get()
+    }
+
+    pub fn opacity_owner(&self) -> &Rc<EntityOpacityOwner> {
+        &self.opacity
     }
 
     /// 73B140 routes wound behaviors through 736640; other kits use 7385C0.
@@ -878,6 +894,9 @@ impl UnitAnimationBehavior {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.synchronize(scene_time_ms as u32, random)?;
+        self.opacity
+            .resolve_initial_animation(self.behavior(&self.playback.borrow()) == 127);
+        self.opacity.advance(scene_time_ms as u32);
         let turn_changed = self.advance_body(scene_time_ms);
         let mut playback = self.playback.borrow_mut();
         if turn_changed {

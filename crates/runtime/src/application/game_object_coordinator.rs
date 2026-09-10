@@ -15,6 +15,7 @@ mod tests;
 #[path = "../../tests/application/game_object_transports.rs"]
 pub(in crate::application) mod transport_tests;
 
+use crate::application::entity_opacity::EntityOpacityOwner;
 use crate::application::liquid::LiquidAssetCache;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -185,6 +186,7 @@ pub(in crate::application) struct GameObjectInstance {
     behavior: Option<Rc<GameObjectBehavior>>,
     transport: Option<Rc<GameObjectTransportBehavior>>,
     world_model_state: RefCell<Option<Rc<GameObjectWorldModelState>>>,
+    opacity: Rc<EntityOpacityOwner>,
 }
 
 /// Borrowed object order and lifetime lookup for one renderer publication/update.
@@ -206,6 +208,9 @@ impl<'a> GameObjectFrameInput<'a> {
         self.scene_time_ms.set(scene_time_ms as u32);
         if let Some(world) = self.world {
             for instance in self.instances {
+                if matches!(instance.resource(), Some(GameObjectResource::M2(_))) {
+                    instance.opacity.advance(scene_time_ms as u32);
+                }
                 if let Some(behavior) = instance.behavior() {
                     behavior.advance_scene(world, scene_time_ms, random)?;
                 }
@@ -233,6 +238,9 @@ impl<'a> GameObjectFrameInput<'a> {
 }
 
 impl GameObjectInstance {
+    pub(in crate::application) fn opacity_owner(&self) -> &Rc<EntityOpacityOwner> {
+        &self.opacity
+    }
     pub(in crate::application) fn transport_model(
         &self,
     ) -> Option<&transport_model::TransportMapModel> {
@@ -555,6 +563,7 @@ impl RuntimeGameObjectPresentation {
                     behavior,
                     transport,
                     world_model_state: RefCell::new(None),
+                    opacity: Rc::new(EntityOpacityOwner::default()),
                 });
                 self.scene_revision = self.scene_revision.wrapping_add(1);
             }
@@ -798,6 +807,26 @@ impl RuntimeGameObjectPresentation {
             return Ok(());
         };
         for instance in &self.instances {
+            if matches!(instance.resource(), Some(GameObjectResource::M2(_))) {
+                // 70B9E0/70B9A0 delegate to the selected behavior. Generic
+                // Spawn skips the entry fade; the other families allow it.
+                let fade = instance.behavior().is_none_or(|behavior| {
+                    behavior.state() != Some(solarity_systems::GameObjectAnimationState::Spawn)
+                });
+                let target = if instance.presentation.object_type() == 31
+                    && instance.presentation.dynamic_word() & 2 == 0
+                {
+                    0.5 // 70DD50's fishing-hole behavior.
+                } else {
+                    1.0
+                };
+                instance.opacity.select_model(
+                    instance.display_id(),
+                    target,
+                    if fade { 1000 } else { 0 },
+                    self.scene_time_ms.get(),
+                );
+            }
             if let Some(GameObjectResource::WorldModel(source)) = instance.resource() {
                 let mut state = instance.world_model_state.borrow_mut();
                 if state

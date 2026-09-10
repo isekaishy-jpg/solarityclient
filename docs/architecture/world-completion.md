@@ -33,7 +33,7 @@ automatically reopen those fixes.
 
 | Area | Open work and current boundary |
 | --- | --- |
-| Item, NPC/creature, and other entity fading | Investigate and reproduce stock appearance/disappearance and distance fade-in/fade-out behavior for the relevant owner types. Static MDDF/MODD scenery fading exists, but its policy does not establish replicated unit, GameObject, or attached-item behavior. Keep this user-reported gap open. |
+| Item, NPC/creature, and other entity fading | Native entry byte interpolation and ordinary unit/GameObject M2 consumers are connected, with shared opacity across attached equipment. Detached disappearance, camera/vehicle multipliers, exceptional owners and combined travel validation remain open; see [entity opacity](entity-opacity.md). Static MDDF/MODD scenery fading has a separate policy. Keep this user-reported gap open. |
 | World and terrain lighting | Complete the remaining lighting consumers and shader/material variants, including terrain point-light/specular paths and specialized entity callbacks. The user reports continuing differences from stock; compare the combined presentation at matching camera, time, and settings. |
 | Environment shaders | Audit native material selection and the environment shader families exercised by actual world assets. The user suspects some are entirely missing; identify confirmed omissions and distinguish them from incorrect inputs or unconnected consumers. |
 | Buildings and portals | Surface, liquid, attached-doodad and sky admission/fog consumers are integrated with native and controlled GPU coverage. Validate their combined live presentation while entering, leaving and moving through buildings. |

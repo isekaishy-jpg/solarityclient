@@ -12,6 +12,91 @@ const POSES: &[u16] = &[
     115, 116, 127, 131, 132, 187, 201, 202, 224, 300, 301, 302, 304, 466, 468, 472,
 ];
 
+#[test]
+fn entry_opacity_survives_model_replacement_but_not_guid_reuse() -> Result<(), Box<dyn Error>> {
+    let original = owner_with_input(&[0], input(0))?;
+    let fixture = ClientFixture::with_common_files(&[
+        (
+            "Solarity\\Replacement.m2",
+            &models::model_with_animations(&[0, 4])?,
+        ),
+        ("Solarity\\Replacement00.skin", &models::skin()?),
+    ])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let replacement = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Solarity\\Replacement.m2")?,
+    )?);
+    let mut scene = UnitAnimationScene::default();
+    let identity = original.identity;
+    scene.bind(identity, &original.model, &original.animations, input(0));
+    let first = Rc::clone(scene.get(identity.guid()).ok_or("first owner")?);
+    first.opacity_owner().select_model(100, 1., 1000, 100);
+    let mut random = CrtRand::new();
+    first.advance_scene(600., &mut random)?;
+    let halfway = first.opacity_owner().opacity();
+    assert!((halfway - 127. / 255.).abs() < 0.000001);
+    scene.bind(identity, &replacement, &original.animations, input(0));
+    let second = Rc::clone(scene.get(identity.guid()).ok_or("replacement owner")?);
+    assert!(!Rc::ptr_eq(&first, &second));
+    assert!(Rc::ptr_eq(first.opacity_owner(), second.opacity_owner()));
+    // Material/atlas rebuilds cannot rearm a transition, even if the same
+    // display's current field policy would now choose an immediate target.
+    second.opacity_owner().select_model(100, 0.5, 0, 600);
+    second.advance_scene(600., &mut random)?;
+    assert_eq!(second.opacity_owner().opacity(), halfway);
+    second.advance_scene(1100., &mut random)?;
+    assert_eq!(second.opacity_owner().opacity(), 1.);
+
+    let world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        identity.guid(),
+        "Replacement",
+        Vec3::ZERO,
+        0.,
+    ));
+    scene.retain_world(&world);
+    assert!(scene.get(identity.guid()).is_none());
+    let reused = world
+        .object_identity(identity.guid())
+        .ok_or("reused GUID")?;
+    assert_ne!(identity, reused);
+    scene.bind(reused, &original.model, &original.animations, input(0));
+    let third = scene.get(identity.guid()).ok_or("new owner")?;
+    assert!(!Rc::ptr_eq(second.opacity_owner(), third.opacity_owner()));
+    third.opacity_owner().select_model(100, 1., 1000, 2000);
+    assert_eq!(third.opacity_owner().opacity(), 0.);
+    assert_eq!(second.opacity_owner().opacity(), 1.);
+    Ok(())
+}
+
+#[test]
+fn birth_suppresses_only_the_initial_entry_interpolation() -> Result<(), Box<dyn Error>> {
+    for initial_birth in [false, true] {
+        let owner = owner_with_input(&[0, 127], input(0))?;
+        owner.opacity_owner().select_model(100, 1., 1000, 100);
+        if initial_birth {
+            owner.request_visual_kit_animation(127);
+        }
+        let mut random = CrtRand::new();
+        owner.advance_scene(100., &mut random)?;
+        if initial_birth {
+            assert_eq!(owner.playback.borrow().animation_id, 127);
+            assert_eq!(owner.opacity_owner().opacity(), 1.);
+        } else {
+            assert_eq!(owner.opacity_owner().opacity(), 0.);
+            owner.request_visual_kit_animation(127);
+            owner.advance_scene(600., &mut random)?;
+            assert_eq!(owner.playback.borrow().animation_id, 127);
+            assert!((owner.opacity_owner().opacity() - 127. / 255.).abs() < 1e-6);
+        }
+    }
+    Ok(())
+}
+
 /// 738B34 installs the mounted rider pose after ordinary posture requests;
 /// 738CF3's death override still admits a full-body death sequence.
 #[test]

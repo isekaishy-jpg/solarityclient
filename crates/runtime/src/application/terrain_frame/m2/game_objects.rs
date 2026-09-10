@@ -137,7 +137,7 @@ impl M2Frame {
                         )?;
                         M2PlaybackStorage::Local(playback)
                     };
-                    self.placements.push(m2_gpu_placement(
+                    let mut placement = m2_gpu_placement(
                         source_index,
                         resolved.matrix(),
                         M2GpuPlacementOwner::GameObject {
@@ -149,7 +149,9 @@ impl M2Frame {
                         Some(playback),
                         None,
                         scene_time_ms as u32,
-                    )?);
+                    )?;
+                    placement.entity_opacity = Some(Rc::clone(instance.opacity_owner()));
+                    self.placements.push(placement);
                 }
                 GameObjectResource::WorldModel(cpu) => {
                     let Some(state) = instance.world_model_state() else {

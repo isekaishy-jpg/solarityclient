@@ -1,0 +1,26 @@
+{
+  "executable_sha256": "aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8",
+  "functions": [
+    "744030",
+    "743E10",
+    "71AC30",
+    "782F20",
+    "823E40",
+    "716650",
+    "74B8B0"
+  ],
+  "captures": {
+    "entity_opacity_native.txt": {
+      "records": 1189,
+      "sha256": "77ee8ee4ef2d592c272ff1723ddcca1f6ad6e4a58e865b63ad01bacedab1b51a"
+    },
+    "entity_retirement_native.txt": {
+      "records": 352,
+      "sha256": "694e9fa52a5978c026bf2dc9d63feb59ebbfa0013e356637c08408e09b5cddd9"
+    },
+    "entity_entry_policy_native.txt": {
+      "records": 560,
+      "sha256": "ce85aa75d19df8845f2e473f7fff1962b098e822ea5da1f6cf139a0112f6742c"
+    }
+  }
+}
