@@ -80,6 +80,14 @@ parent translation/rotation, shared resources, retirement, fully fogged mesh
 pixels, particle descriptor colors and hidden effect clocks. Scene collection
 tests separately check primary/secondary gates and frozen overlap snapshots.
 
+Testing Build 78 includes the surface, liquid and attached-model consumers.
+The optimized offline World harness was rebuilt from the same implementation
+and completed 1,260 frames over seven phases at the Orgrimmar gate, including
+camera orbit and a 200-unit outward/return travel segment. Captures were inspected;
+the run reported no runtime or Vulkan errors. This checks the combined installed
+asset path, not populated-server behavior, interior travel or stock visual parity.
+Captured-frame timings are not performance evidence.
+
 This implements the attached-model consumer. Native terrain-horizon and sphere
 occlusion, specialized particle/ribbon behavior, other entity fog consumers,
 and combined live-world acceptance remain separate work. No FPS or complete
