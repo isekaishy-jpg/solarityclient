@@ -17,19 +17,23 @@ const POSITIONS: [Vec3; 3] = [
 fn wmo_doodad_portal_visibility_and_fog_reach_static_and_moving_pixels()
 -> Result<(), Box<dyn Error>> {
     for moving in [false, true] {
-        verify(moving)?;
+        for publishes_light in [false, true] {
+            verify(moving, publishes_light)?;
+        }
     }
     Ok(())
 }
 
 #[allow(unsafe_code)] // The hidden test window transfers its surface to Vulkan.
-fn verify(moving: bool) -> Result<(), Box<dyn Error>> {
+fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
     let (_, floor, wdt, map) = fixture_files();
     let (root, outside, inside) = rooms(floor)?;
     let mut model_bytes = game_object_models::model_with_animations(&[0])?;
     let material = u32::from_le_bytes(model_bytes[0x74..0x78].try_into()?) as usize;
     model_bytes[material..material + 2].copy_from_slice(&5_u16.to_le_bytes()); // unlit, two-sided, fogged
-    add_point_light(&mut model_bytes);
+    if publishes_light {
+        add_point_light(&mut model_bytes);
+    }
     let fixture = ClientFixture::with_common_files(&[
         ("DBFilesClient\\Map.dbc", &map),
         ("DBFilesClient\\GameObjectDisplayInfo.dbc", &display()),
@@ -200,7 +204,7 @@ fn verify(moving: bool) -> Result<(), Box<dyn Error>> {
         assert_eq!(visible.draws.len(), 2, "moving {moving}, step {step}");
         assert_eq!(
             visible.scene_points.points().len(),
-            3,
+            if publishes_light { 3 } else { 0 },
             "the hidden WMO doodad still publishes its light"
         );
         let expected_colors = [colors[0], colors[usize::from(step == 1)]];

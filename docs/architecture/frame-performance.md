@@ -201,6 +201,42 @@ setters run. The next structural slices are:
 5. Apply the same retained-generation and priority rules to loading/world
    residency before raising the minimum idle target beyond 300 FPS.
 
+## World placement admission, September 10, 2026
+
+The M2 admission loop now reads cached owner flags before touching a rejected
+placement's simulation record. WMO attachments resolve their frame inputs only
+when visited by a group, except that hidden light owners retain their early
+preparation. Accepted indices alone commit fog state. These changes preserve
+scene order, distance fades, moving-parent bounds, light publication and hidden
+effect clocks; the Vulkan regression covers both lit and unlit attachments.
+
+On the GTX 1070 at 1280x720 with VSync disabled, the optimized offline benchmark
+at map 1, `(1100, -4500, 150)`, camera distance 25 and screen effect 0 ran 1,000
+frames in each of four phases. Stationary, orbit and pointer phases retained
+49 tiles. With capture and frame instrumentation disabled:
+
+| Total frame time | Build 81 baseline, two runs | Admission changes |
+| --- | ---: | ---: |
+| Stationary median | 3.944 / 3.925 ms | 2.937 ms |
+| Orbit median | 4.093 / 4.075 ms | 3.195 ms |
+| Pointer median | 4.193 / 4.163 ms | 3.238 ms |
+| Stationary p99 | 5.256 / 8.123 ms | 4.395 ms |
+| Pointer maximum | 35.302 / 35.469 ms | 34.607 ms |
+
+The stationary median decreased about 25%, corresponding to approximately
+340 FPS in this scene. Separately instrumented runs attribute the M2 frame
+reduction from 1.580 to 0.711 ms to instance traversal (1.004 to 0.435 ms) and
+WMO attachment preparation (0.411 to 0.103 ms), weighted over each run's final
+two timing windows. Windows cross phase boundaries and are supporting cost
+evidence, not an isolated GPU measurement. Pointer transitions still produce
+roughly 35 ms frames, with about 31 ms charged to UI in the instrumented runs.
+These measurements do not establish the 1,200 FPS target, freedom from stalls,
+populated-server performance or complete world appearance parity.
+
+Local evidence: `target/world-admission-optimized.csv`,
+`target/build81-normal-perf{1,2}.csv`, `target/build81-world-profile.log` and
+`target/world-lazy-doodad-profile.log`.
+
 ## Validation
 
 Performance changes require both contract tests and real-archive release

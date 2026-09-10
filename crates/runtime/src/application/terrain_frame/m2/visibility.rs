@@ -36,6 +36,10 @@ pub(super) struct M2PlacementVisibility {
     light_parents: Vec<Option<usize>>,
     model_distance_sort: Vec<bool>,
     has_lights: Vec<bool>,
+    /// Admission must not load the large simulation record for rejected scenery.
+    is_world_model_doodad: Vec<bool>,
+    /// Light owners are evaluated even without a visible MODR reference.
+    world_model_doodad_light_indices: Vec<usize>,
     /// First effect, or the placement count when no effect is resident.
     effect_start: usize,
     world_model_doodads: HashMap<
@@ -64,12 +68,16 @@ impl M2PlacementVisibility {
         self.light_parents.clear();
         self.model_distance_sort.clear();
         self.has_lights.clear();
+        self.is_world_model_doodad.clear();
+        self.world_model_doodad_light_indices.clear();
         self.effect_start = placements.len();
         self.world_model_doodads.clear();
         for (index, placement) in placements.iter().enumerate() {
-            if let Some(owner) = super::doodad_scene::owner_key(placement.owner) {
-                self.world_model_doodads.entry(owner).or_insert(index);
-            }
+            let doodad_owner = super::doodad_scene::owner_key(placement.owner);
+            self.is_world_model_doodad.push(doodad_owner.is_some());
+            let first_doodad = doodad_owner.is_some_and(|owner| {
+                *self.world_model_doodads.entry(owner).or_insert(index) == index
+            });
             self.source_indices.push(placement.source_index);
             let parent = super::placement_parent_index(placements, index, placement);
             self.light_parents.push(parent);
@@ -80,8 +88,12 @@ impl M2PlacementVisibility {
             self.model_distance_sort.push(
                 authored_sort && parent.is_none_or(|parent| self.model_distance_sort[parent]),
             );
-            self.has_lights
-                .push(source.is_some_and(|source| !source.model.animations().lights().is_empty()));
+            let has_lights =
+                source.is_some_and(|source| !source.model.animations().lights().is_empty());
+            self.has_lights.push(has_lights);
+            if first_doodad && has_lights {
+                self.world_model_doodad_light_indices.push(index);
+            }
             if placement.unit_effect.is_some() {
                 self.effect_start = self.effect_start.min(index);
             }
@@ -174,6 +186,14 @@ impl M2PlacementVisibility {
     /// Offscreen light owners still require their ordinary animation/light update.
     pub(super) fn has_lights(&self, index: usize) -> bool {
         self.has_lights[index]
+    }
+
+    pub(super) fn is_world_model_doodad(&self, index: usize) -> bool {
+        self.is_world_model_doodad[index]
+    }
+
+    pub(super) fn world_model_doodad_light_indices(&self) -> &[usize] {
+        &self.world_model_doodad_light_indices
     }
 
     pub(super) fn effect_start(&self) -> usize {

@@ -47,12 +47,16 @@ the fog bank.
 
 ## Runtime and validation
 
-Placement topology caches `(WMO owner, MODD index)` lookups. Each frame prepares
-compact spheres and distance classes, visits referenced models in native scene
-order, and retains reusable group, clip and bucket storage. Moving attachments
+Placement topology caches `(WMO owner, MODD index)` lookups and compact owner
+flags, so rejecting a placement does not fetch its large simulation record.
+Each frame prepares spheres and distance classes on the first group visit,
+visits referenced models in native scene order, and retains reusable group,
+clip and bucket storage. Only accepted indices commit their retained fog bank.
+Moving attachments
 use their current parent transform and the same `791CB0` scenery fade policy.
-Static spheres and classes remain cached. Hidden models that publish scene
-lights retain that publication; their mesh and effect draws still require
+Static spheres and classes remain cached. A cached list prepares hidden light
+owners before group traversal, preserving their distance opacity and scene
+light publication; their mesh and effect draws still require
 admission. Effect publication after ordinary models does not remap their saved
 admission indices.
 
@@ -77,7 +81,8 @@ The Vulkan fixture exercises a decoded two-group building with an exterior
 attachment, a visible room attachment and a room attachment outside the portal
 window. It checks static and replicated owners, outdoor/indoor camera changes,
 parent translation/rotation, shared resources, retirement, fully fogged mesh
-pixels, particle descriptor colors and hidden effect clocks. Scene collection
+pixels, particle descriptor colors and hidden effect clocks. Both lit and unlit
+models exercise early light preparation and lazy group preparation. Scene collection
 tests separately check primary/secondary gates and frozen overlap snapshots.
 
 Testing Build 78 includes the surface, liquid and attached-model consumers.

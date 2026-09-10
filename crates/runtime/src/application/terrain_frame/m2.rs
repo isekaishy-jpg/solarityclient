@@ -2334,7 +2334,9 @@ impl M2Frame {
                 world_lighting.is_some() && self.placement_visibility.has_lights(placement_index);
             let bounds = self.placement_visibility.bounds()[placement_index];
             let doodad_scene_active = spatial_lighting.is_some()
-                && doodad_scene::owner_key(self.placements[placement_index].owner).is_some();
+                && self
+                    .placement_visibility
+                    .is_world_model_doodad(placement_index);
             let doodad_fog = self.doodad_scene.fog_bank(placement_index);
             let doodad_visible = !doodad_scene_active || doodad_fog.is_some();
             if !doodad_visible && !publishes_lights {

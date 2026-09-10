@@ -47,6 +47,8 @@ pub(super) struct M2DoodadScene {
     outdoor_bins: Vec<Vec<usize>>,
     queued: Vec<bool>,
     retained_fog: Vec<bool>,
+    prepared: Vec<bool>,
+    accepted: Vec<usize>,
 }
 
 impl M2DoodadScene {
@@ -70,27 +72,17 @@ impl M2DoodadScene {
         self.queued.resize(placements.len(), false);
         self.retained_fog.clear();
         self.retained_fog.resize(placements.len(), false);
+        self.prepared.clear();
+        self.prepared.resize(placements.len(), false);
+        self.accepted.clear();
         self.outdoor_bins.resize_with(64, Vec::new);
         for bin in &mut self.outdoor_bins {
             bin.clear();
         }
-        for &index in visibility.world_model_doodads().values() {
-            let placement = &placements[index];
-            self.retained_fog[index] = placement.scene_indoor_fog;
-            if !placement.placement_valid {
-                continue;
-            }
-            let Some(source) = sources[placement.source_index].as_ref() else {
-                continue;
-            };
-            let (center, radius) = visibility.bounds()[index]
-                .unwrap_or_else(|| placement_bounding_sphere(&source.model, placement.transform));
-            let scenery = visibility.scenery(index).unwrap_or_else(|| {
-                let bounds = source.model.bounds();
-                SceneryDistance::new(bounds.minimum(), bounds.maximum(), placement.transform)
-            });
-            self.spheres[index] = Some((center, radius, scenery));
-            self.opacities[index] = scenery.opacity(camera, detail);
+        // Hidden light owners still advance and publish with their distance
+        // opacity. Other models need admission inputs only when a group visits them.
+        for &index in visibility.world_model_doodad_light_indices() {
+            self.prepare_model(index, visibility, placements, sources, camera, detail);
         }
         let mut drained = 0;
         let mut outdoor_clip = None;
@@ -110,6 +102,7 @@ impl M2DoodadScene {
                 if self.queued[index] || self.fog_banks[index].is_some() {
                     continue;
                 }
+                self.prepare_model(index, visibility, placements, sources, camera, detail);
                 let Some((center, radius, _)) = self.spheres[index] else {
                     continue;
                 };
@@ -133,15 +126,48 @@ impl M2DoodadScene {
                 else {
                     continue;
                 };
+                self.prepare_model(index, visibility, placements, sources, camera, detail);
                 self.admit(index, clips, depth, detail, indoor_fog);
             }
         });
-        for &index in visibility.world_model_doodads().values() {
+        for &index in &self.accepted {
             if let Some(bank) = self.fog_banks[index] {
                 placements[index].scene_indoor_fog = bank;
             }
         }
         Ok(())
+    }
+
+    /// Resolves each visited model once, after current moving-parent transforms.
+    fn prepare_model(
+        &mut self,
+        index: usize,
+        visibility: &M2PlacementVisibility,
+        placements: &[M2GpuPlacement],
+        sources: &[Option<M2GpuSource>],
+        camera: Vec3,
+        detail: f32,
+    ) {
+        if self.prepared[index] {
+            return;
+        }
+        self.prepared[index] = true;
+        let placement = &placements[index];
+        self.retained_fog[index] = placement.scene_indoor_fog;
+        if !placement.placement_valid {
+            return;
+        }
+        let Some(source) = sources[placement.source_index].as_ref() else {
+            return;
+        };
+        let (center, radius) = visibility.bounds()[index]
+            .unwrap_or_else(|| placement_bounding_sphere(&source.model, placement.transform));
+        let scenery = visibility.scenery(index).unwrap_or_else(|| {
+            let bounds = source.model.bounds();
+            SceneryDistance::new(bounds.minimum(), bounds.maximum(), placement.transform)
+        });
+        self.spheres[index] = Some((center, radius, scenery));
+        self.opacities[index] = scenery.opacity(camera, detail);
     }
 
     /// 7987A0 tests the current outdoor clip and preserves the model's fog bit.
@@ -159,6 +185,7 @@ impl M2DoodadScene {
             };
             if scenery.admits_group(class_depth, detail) && clip.intersects_sphere(center, radius) {
                 self.fog_banks[index] = Some(self.retained_fog[index]);
+                self.accepted.push(index);
             }
         }
     }
@@ -184,6 +211,7 @@ impl M2DoodadScene {
         {
             // 799B70 commits the bank before 791CB0 can fade to zero.
             self.fog_banks[index] = Some(indoor_fog);
+            self.accepted.push(index);
         }
     }
 
