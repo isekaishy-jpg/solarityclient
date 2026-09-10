@@ -76,7 +76,7 @@ tests ignored. The runtime library portion passes 275 tests, with 18 ignored.
 The targeted asset schema/reference tests and the real-archive inspection also pass.
 Workspace Clippy passes for all targets with warnings denied.
 
-## Remaining consumers
+## Passenger movement
 
 Movement geometry now resolves Unit/Player parents alongside GameObjects.
 `UnitPassengerFrames` retains vehicle matrices and admitted ancestor lifetimes,
@@ -84,8 +84,7 @@ using the native unscaled yaw frame for generic units and the cached frame for
 owners with a valid Vehicle.dbc row. The creation matrix uses world position and
 world facing, independently of the retained initial-facing lane. ECS retains
 this creation pose so later packets before the first frame cannot replace it.
-A failed parent
-lookup preserves a valid vehicle's matrix; its separately queried facing still
+A failed parent lookup preserves a valid vehicle's matrix; its separately queried facing still
 uses the native missing-parent zero contribution. Missing vehicle rows take
 the generic-unit branch. See [passenger coordinates](passenger-movement.md).
 
@@ -102,6 +101,8 @@ scaled ancestor matrices. Runtime integration covers local and remote riders,
 a later parent, a live GameObject root, missing rows/parents, cycles, removal
 and GUID reuse. These are fixture tests, not a combined live vehicle session.
 
+## Remaining consumers
+
 Trace and connect VehiclePassenger_C's state/flags and transfer lifecycle,
 seat attachment offsets and animation transitions, vehicle pitch updates,
 vehicle camera bounds/ancestor dispatch, and exceptional unit visibility.
@@ -111,11 +112,12 @@ This slice makes no FPS or stall-reduction claim.
 
 ## Testing package
 
-Build **000092** (`0.0.3a`) installs source revision
-`d58b75e4d80bd9e2608f30fccee67cdc2e495a86` through the persistent Testing launcher.
+Build **000093** (`0.0.3a`) installs source revision
+`c28ec3788954b241b145f7fb9329ad76330e0c41` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`ed8ed25a1f67ee460f401fd3ae71e0963544d6cb8c7d4713a31781626571151f`.
-It retains the vehicle definition and initial facing and connects the resolved
-seat attachment to entry opacity. The movement and camera work above remains open.
+`4d2672b063bec0a00052fa289d1295a1ce4d995c723ec18b4e8ae0a9b67462c4`.
+It includes vehicle creation state, resolved seat entry opacity, native unit
+passenger frames and final local/remote world projection. The animated-seat,
+transfer and special-camera work above remains open.
