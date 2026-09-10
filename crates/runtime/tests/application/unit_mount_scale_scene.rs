@@ -868,6 +868,17 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
         frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
         frame.replace_creatures(&mut renderer, &creatures, &mut random)?;
         let time = index as f32 * 100.;
+        // Exercise all six unit owner lookups with both current metadata and
+        // publication-dirtied indices through mount removal and re-admission.
+        if index % 2 == 0 {
+            frame
+                .placement_visibility
+                .rebuild(&frame.placements, &frame.sources);
+            frame.placement_topology_dirty = false;
+        }
+        if index == 5 {
+            assert!(frame.placement_topology_dirty, "dismount rebases owners");
+        }
         if index != 0 {
             frame.update_player_state(
                 presentation.resident_frame_input().ok_or("local")?,

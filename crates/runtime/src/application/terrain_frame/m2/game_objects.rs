@@ -209,7 +209,15 @@ impl M2Frame {
         animation_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        for placement in &mut self.placements {
+        // Missing inputs must still invalidate every resident object, including
+        // offscreen doodads. Candidate selection never depends on visibility.
+        let indices = if self.placement_topology_dirty {
+            super::visibility::PlacementStateIndices::All(0..self.placements.len())
+        } else {
+            self.placement_visibility.game_object_indices()
+        };
+        for index in indices {
+            let placement = &mut self.placements[index];
             let (identity, doodad) = match placement.owner {
                 M2GpuPlacementOwner::GameObject { identity, .. } => (identity, false),
                 M2GpuPlacementOwner::GameObjectWorldModelDoodad { identity, .. } => {

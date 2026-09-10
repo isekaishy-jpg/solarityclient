@@ -271,6 +271,59 @@ settled means in this pair. Settled mean frame time was 4.863 ms before and
 4.892 ms after. These offline measurements establish neither a latency bound
 nor populated-world performance or the requested 1,200 FPS target.
 
+## Dynamic M2 state lookup
+
+Settled frame preparation now locates unit bodies and mounts through the compact
+placement metadata instead of searching every static scenery instance. The
+metadata records the first index for each dynamic owner and a separate ordered
+list of GameObject roots and replicated WMO doodads. The hash table is used only
+for lookup; traversal and state updates retain their previous order. Static
+owners do not occupy the table.
+
+Placement publication, retirement, source compaction, and effect publication
+invalidate these indices with the existing topology flag. Before the next draw
+preparation rebuild, state updates search current placement records. Missing
+unit owners retain their existing errors. Missing GameObject input still
+invalidates resident roots and doodads, including offscreen owners; an empty
+input does not skip this work. This changes candidate lookup, without changing
+stock transforms, unit synchronization, playback, random draws, or culling.
+
+Existing mounted-unit regressions exercise all six body/mount owner categories
+with rebuilt metadata and with indices dirtied by dismount publication. The
+GameObject and WMO regressions cover moving parents, invalid placement, retained
+playback/random state, and empty CPU input before GPU retirement.
+
+On 2026-09-09, the same 1280 x 720 GTX 1070 route ran for 2,400 frames per
+phase, first with Build 69 functionality and then with this change. Primary and
+detail shadows were enabled; profiling, capture, and compiler activity were
+absent during both runs.
+
+| Input phase | Before | After |
+| --- | ---: | ---: |
+| Stationary mean frame | 4.845 ms | 4.624 ms |
+| Orbit mean frame | 4.024 ms | 3.790 ms |
+| Pointer mean frame | 5.224 ms | 5.001 ms |
+| Outbound mean frame | 3.815 ms | 3.586 ms |
+| Return mean frame | 3.803 ms | 3.561 ms |
+| Settled mean frame | 4.965 ms | 4.718 ms |
+
+These phase means fell by 4.3-6.4%. Detail and primary-shadow draw counts matched
+frame by frame in all six phases. Both runs had 24 changed frames, 21 admissions,
+and 21 evictions in each travel direction. Changed-frame streaming means were
+10.717/7.109 ms before and 9.737/7.013 ms after; this lookup change does not remove
+publication work. Travel maximum total frames were 39.902/28.506 ms before and
+23.033/17.704 ms after. These isolated maxima are not latency bounds.
+
+A separate production-profile run compared with the preceding Build 69 profile
+places the main saving in object-state preparation: the final two settled
+interval means fell from 191.7-193.8 microseconds to 2.85-3.09 microseconds. The
+broader unit-state stage still costs 189.4-192.6 microseconds (previously
+212.8-213.2); it includes sky updates and cannot be attributed entirely to unit
+lookup. Reported topology rebuild means were 1.561 ms for 89 changes before and
+1.585 ms for 90 changes after. Metadata rebuilds and dirty-frame full searches
+remain necessary. This offline result does not establish populated-world FPS,
+complete stall elimination, or the requested 1,200 FPS target.
+
 ## Per-instance lighting storage
 
 The lighting wrapper retains an optional owned allocation for spatial query

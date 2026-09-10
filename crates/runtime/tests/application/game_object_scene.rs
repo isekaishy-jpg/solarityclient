@@ -232,6 +232,10 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
+    frame
+        .placement_visibility
+        .rebuild(&frame.placements, &frame.sources);
+    frame.placement_topology_dirty = false;
     frame.update_game_object_states(objects.frame_input(Some(&world)), 400.0, &mut random)?;
     assert!(!frame.placements[0].placement_valid);
     assert_eq!(frame.placements.len(), 3);
@@ -251,6 +255,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
+    assert!(frame.placement_topology_dirty);
     frame.update_game_object_states(objects.frame_input(Some(&world)), 500.0, &mut random)?;
     assert!(frame.placements[0].placement_valid);
     assert_eq!(
@@ -298,7 +303,22 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
             .ok_or("missing recreated playback")?
             .event_timeline_started
     );
+    // A settled frame still invalidates owners when the CPU input becomes empty,
+    // even before resource synchronization retires their GPU placements.
+    frame
+        .placement_visibility
+        .rebuild(&frame.placements, &frame.sources);
+    frame.placement_topology_dirty = false;
     objects.disconnect();
+    let before_disconnect = random;
+    frame.update_game_object_states(objects.frame_input(None), 600.0, &mut random)?;
+    assert!(
+        frame
+            .placements
+            .iter()
+            .all(|placement| !placement.placement_valid)
+    );
+    assert_eq!(random, before_disconnect);
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
         &mut renderer,

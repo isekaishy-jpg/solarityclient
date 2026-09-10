@@ -172,6 +172,10 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
+    frame
+        .placement_visibility
+        .rebuild(&frame.placements, &frame.sources);
+    frame.placement_topology_dirty = false;
     frame.update_game_object_states(objects.frame_input(Some(&world)), 2500., &mut random)?;
     assert_eq!(
         frame.placements[0].transform,
@@ -200,6 +204,10 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
+    frame
+        .placement_visibility
+        .rebuild(&frame.placements, &frame.sources);
+    frame.placement_topology_dirty = false;
     frame.update_game_object_states(objects.frame_input(Some(&world)), 2700., &mut random)?;
     assert_eq!(frame.placements.len(), 2);
     assert!(

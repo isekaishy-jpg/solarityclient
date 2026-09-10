@@ -272,7 +272,7 @@ fn classify_particle_support(
 }
 
 /// Placement category retained for diagnostics and player replacement.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum M2GpuPlacementOwner {
     /// One CEffect instance; its unit and attachment lifetime are retained separately.
     UnitEffect { serial: u64 },
@@ -1476,6 +1476,20 @@ impl M2Frame {
         }
     }
 
+    /// Finds the first dynamic owner without scanning static scenery on settled
+    /// frames. Publication may have changed placement order since the previous
+    /// draw preparation, so dirty metadata must use the current records.
+    fn dynamic_placement_index(&self, owner: M2GpuPlacementOwner) -> Option<usize> {
+        debug_assert!(!matches!(owner, M2GpuPlacementOwner::Static(_)));
+        if self.placement_topology_dirty {
+            self.placements
+                .iter()
+                .position(|placement| placement.owner == owner)
+        } else {
+            self.placement_visibility.dynamic_owner_index(owner)
+        }
+    }
+
     /// Updates authoritative player movement and base animation in place.
     pub(super) fn update_player_state(
         &mut self,
@@ -1486,15 +1500,12 @@ impl M2Frame {
         let transform = if let Some(mount) = input.mount() {
             let transform =
                 unit_placement_transform(input.world_transform(), mount.object_scale())?;
-            let placement = self
-                .placements
-                .iter_mut()
-                .find(|placement| {
-                    placement.owner == (M2GpuPlacementOwner::PlayerMount { guid: input.guid() })
-                })
+            let placement_index = self
+                .dynamic_placement_index(M2GpuPlacementOwner::PlayerMount { guid: input.guid() })
                 .ok_or(RuntimeTerrainFrameError::MissingPlayerMountM2Placement {
                     guid: input.guid(),
                 })?;
+            let placement = &mut self.placements[placement_index];
             placement.transform = transform;
             placement.local_transform = transform;
             placement.ground_placement =
@@ -1522,13 +1533,10 @@ impl M2Frame {
         } else {
             unit_placement_transform(input.world_transform(), input.object_scale())?
         };
-        let placement = self
-            .placements
-            .iter_mut()
-            .find(|placement| {
-                placement.owner == (M2GpuPlacementOwner::PlayerBody { guid: input.guid() })
-            })
+        let placement_index = self
+            .dynamic_placement_index(M2GpuPlacementOwner::PlayerBody { guid: input.guid() })
             .ok_or(RuntimeTerrainFrameError::MissingPlayerM2Placement { guid: input.guid() })?;
+        let placement = &mut self.placements[placement_index];
         placement.transform = transform;
         placement.local_transform = transform;
         placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());
@@ -1578,16 +1586,14 @@ impl M2Frame {
             let transform = if let Some(mount) = input.mount() {
                 let transform =
                     unit_placement_transform(input.world_transform(), mount.object_scale())?;
-                let placement = self
-                    .placements
-                    .iter_mut()
-                    .find(|placement| {
-                        placement.owner
-                            == (M2GpuPlacementOwner::CreatureMount { guid: input.guid() })
+                let placement_index = self
+                    .dynamic_placement_index(M2GpuPlacementOwner::CreatureMount {
+                        guid: input.guid(),
                     })
                     .ok_or(RuntimeTerrainFrameError::MissingCreatureMountM2Placement {
                         guid: input.guid(),
                     })?;
+                let placement = &mut self.placements[placement_index];
                 placement.transform = transform;
                 placement.local_transform = transform;
                 placement.ground_placement =
@@ -1615,15 +1621,12 @@ impl M2Frame {
             } else {
                 unit_placement_transform(input.world_transform(), input.object_scale())?
             };
-            let placement = self
-                .placements
-                .iter_mut()
-                .find(|placement| {
-                    placement.owner == (M2GpuPlacementOwner::CreatureBody { guid: input.guid() })
-                })
+            let placement_index = self
+                .dynamic_placement_index(M2GpuPlacementOwner::CreatureBody { guid: input.guid() })
                 .ok_or(RuntimeTerrainFrameError::MissingCreatureM2Placement {
                     guid: input.guid(),
                 })?;
+            let placement = &mut self.placements[placement_index];
             placement.transform = transform;
             placement.local_transform = transform;
             placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());
@@ -1675,18 +1678,16 @@ impl M2Frame {
             let transform = if let Some(mount) = input.mount() {
                 let transform =
                     unit_placement_transform(input.world_transform(), mount.object_scale())?;
-                let placement = self
-                    .placements
-                    .iter_mut()
-                    .find(|placement| {
-                        placement.owner
-                            == (M2GpuPlacementOwner::RemotePlayerMount { guid: input.guid() })
+                let placement_index = self
+                    .dynamic_placement_index(M2GpuPlacementOwner::RemotePlayerMount {
+                        guid: input.guid(),
                     })
                     .ok_or(
                         RuntimeTerrainFrameError::MissingRemotePlayerMountM2Placement {
                             guid: input.guid(),
                         },
                     )?;
+                let placement = &mut self.placements[placement_index];
                 placement.transform = transform;
                 placement.local_transform = transform;
                 placement.ground_placement =
@@ -1714,16 +1715,14 @@ impl M2Frame {
             } else {
                 unit_placement_transform(input.world_transform(), input.object_scale())?
             };
-            let placement = self
-                .placements
-                .iter_mut()
-                .find(|placement| {
-                    placement.owner
-                        == (M2GpuPlacementOwner::RemotePlayerBody { guid: input.guid() })
+            let placement_index = self
+                .dynamic_placement_index(M2GpuPlacementOwner::RemotePlayerBody {
+                    guid: input.guid(),
                 })
                 .ok_or(RuntimeTerrainFrameError::MissingRemotePlayerM2Placement {
                     guid: input.guid(),
                 })?;
+            let placement = &mut self.placements[placement_index];
             placement.transform = transform;
             placement.local_transform = transform;
             placement.rider_scale = input.mount().map_or(1.0, |mount| mount.rider_scale());

@@ -6,7 +6,7 @@ use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState};
 use super::{CharacterAttachmentPlanError, CharacterEquipmentItem};
 
 /// One attachment identifier authored into build-12340 character M2s.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u32)]
 pub enum CharacterAttachmentPoint {
     /// Shield at the left forearm.
