@@ -8,6 +8,9 @@ does not declare every affected system complete. See the
 [comprehensive 0.0.3a patch notes](releases/0.0.3a.md) and their complete commit
 ledger for implemented behavior, validation, and remaining integration work.
 
+The active development scope and its implementation/validation boundaries are
+tracked in [world rendering and core UI completion](architecture/world-completion.md).
+
 The preceding **0.0.2a** release marked the accepted basic locomotion milestone;
 its historical scope is recorded in [local player movement](architecture/local-player-movement.md).
 
