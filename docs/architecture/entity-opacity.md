@@ -170,7 +170,17 @@ Remaining integration and validation are:
 
 ## Testing packages
 
-Build **000088** (`0.0.3a`) installs source revision
+Build **000089** (`0.0.3a`) installs source revision
+`f0c1ee366cd39619e64656726b084234a4f45d9d` through the persistent Testing launcher.
+The executable reports that revision and build number; its dirty marker records
+the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
+SHA-256 hashes match:
+`2eb9e2e6c58514d0ab82c6c996f2675f048975ea22ae407acf79931463f15d96`.
+It adds ordinary close-camera fading for the followed player's shared model
+hierarchy and restores opacity when the camera releases that subject. Vehicle,
+special camera and visibility policies and live travel checks remain open.
+
+Build **000088** (`0.0.3a`) installed source revision
 `986c8f023765043fada4084f011df800ca2620d0` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
