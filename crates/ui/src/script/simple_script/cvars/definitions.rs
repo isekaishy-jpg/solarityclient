@@ -77,6 +77,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("gxRefresh", "60", 0.0, 1_000.0),
     ranged("gxMultisample", "1", 1.0, 8.0),
     ranged("farclip", "777", 177.0, 1_277.0),
+    // 78E61D registers the default; 78D7C0 clamps the native horizon multiplier.
+    ranged("horizonFarclipScale", "4.0", 3.0, 6.0),
     ranged("shadowLevel", "0", 0.0, 1.0),
     ranged("particleDensity", "1", 0.1, 1.0),
     ranged("environmentDetail", "1", 0.5, 1.5),

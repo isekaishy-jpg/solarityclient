@@ -408,6 +408,9 @@ impl ClientServices {
             .set_shadow_quality(ui.cvar_number("extShadowQuality"))
             .map_err(ApplicationError::from)?;
         frame
+            .set_horizon_scale(ui.cvar_number("horizonFarclipScale"))
+            .map_err(ApplicationError::from)?;
+        frame
             .set_ground_detail(
                 ui.cvar_number("groundEffectDensity"),
                 ui.cvar_number("groundEffectDist"),

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use solarity_asset::TerrainLowDetail;
 use solarity_rendering::{
-    TerrainLowDetailMap, WorldCamera, WorldLowDetailFrame, WorldSkyDome, WorldSkyFrame,
+    TerrainLowDetailMap, WorldCamera, WorldHorizonScale, WorldLowDetailFrame, WorldSkyDome,
+    WorldSkyFrame,
 };
 
 use super::*;
@@ -20,13 +21,14 @@ fn horizon_preserves_main_camera_basis_when_world_target_rounds() -> Result<(), 
             let camera = WorldCamera::stock(eye, eye + direction, Vec3::Z, 777.)
                 .with_view_direction(direction)
                 .frame(16. / 9.)?;
-            let horizon = WorldLowDetailFrame::new(&map, camera, Vec3::ONE)?;
+            let horizon =
+                WorldLowDetailFrame::new(&map, camera, Vec3::ONE, WorldHorizonScale::default())?;
             assert_eq!(horizon.camera().view(), camera.view());
             assert_eq!(horizon.camera().forward(), camera.forward());
             assert_eq!(horizon.camera().right(), camera.right());
             assert_eq!(horizon.camera().up(), camera.up());
             assert_eq!(horizon.camera().camera().near_clip(), 727.);
-            assert_eq!(horizon.camera().camera().far_clip(), 777.);
+            assert_eq!(horizon.camera().camera().far_clip(), 3108.);
         }
     }
     Ok(())
@@ -74,6 +76,7 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
     let mut sky = WorldSkyDome::new();
     let mut covered = 0;
     let mut rejected = 0;
+    let mut distant_covered = 0;
     // Map changes release the CPU owner while earlier frame slots may still use it.
     for (case, (tile_xy, mask, below, yaw)) in [
         ([32, 32], 0_u16, false, 0_f32),
@@ -93,11 +96,14 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
         let sign = if below { -1. } else { 1. };
         let eye = base + Vec3::new(100., -266., sign * 100.);
         let forward = Vec3::new(-yaw.cos(), yaw.sin(), -sign * 0.3).normalize();
-        let camera = WorldCamera::stock(eye, eye + forward, Vec3::Z, 350.).frame(1.)?;
+        let main_far = if case % 2 == 0 { 100. } else { 350. };
+        let near = main_far - 50.;
+        let far = main_far * 4.;
+        let camera = WorldCamera::stock(eye, eye + forward, Vec3::Z, main_far).frame(1.)?;
         let fog = Vec3::new(50. + case as f32 * 7., 90., 140.) / 255.;
-        let frame = WorldLowDetailFrame::new(&map, camera, fog)?;
-        assert_eq!(frame.camera().camera().near_clip(), 300.);
-        assert_eq!(frame.camera().camera().far_clip(), 350.);
+        let frame = WorldLowDetailFrame::new(&map, camera, fog, WorldHorizonScale::default())?;
+        assert_eq!(frame.camera().camera().near_clip(), near);
+        assert_eq!(frame.camera().camera().far_clip(), far);
         sky.update_colors(
             [Vec3::new(0.04, 0.08, 0.12); 5],
             Vec3::new(0.04, 0.08, 0.12),
@@ -148,8 +154,8 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
                     let row = (base.x - point.x) / 33.333_332;
                     let column = (base.y - point.y) / 33.333_332;
                     // Exclude only clip/cell edges where rasterizer subpixel rules differ.
-                    if (distance - 300.).abs() < 0.1
-                        || (distance - 350.).abs() < 0.1
+                    if (distance - near).abs() < 0.1
+                        || (distance - far).abs() < 0.1
                         || (row - row.round()).abs() < 0.015
                         || (column - column.round()).abs() < 0.015
                     {
@@ -157,7 +163,7 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
                     }
                     let in_tile = (0.0..16.).contains(&row) && (0.0..16.).contains(&column);
                     let marked = in_tile && mask & (1 << column as u32) != 0;
-                    let visible = (300.0..350.).contains(&distance)
+                    let visible = (near..far).contains(&distance)
                         && in_tile
                         && mask != 0xffff
                         && (!marked || !below);
@@ -166,6 +172,7 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
                         Vec3::new(255., 0., 0.)
                     } else if visible {
                         covered += 1;
+                        distant_covered += usize::from(distance > main_far + 10.);
                         fog * 255.
                     } else {
                         rejected += 1;
@@ -187,7 +194,54 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
         }
     }
     assert!(covered > 1000 && rejected > 1000);
+    // These pixels disappear when ADEECC's pre-registration one is used.
+    assert!(distant_covered > 1000);
     renderer.retire_liquid_meshes(&[foreground])?;
+    Ok(())
+}
+
+/// The original registered callback, setter, and projection define this range.
+#[test]
+fn horizon_scale_and_projection_match_original_registered_cvar() -> Result<(), Box<dyn Error>> {
+    let map = Arc::new(flat_map([32, 32], 0)?);
+    assert_eq!(WorldHorizonScale::default().value(), 4.0);
+    assert!(WorldHorizonScale::new(f32::NAN).is_none());
+    let mut count = 0;
+    for line in include_str!("../fixtures/terrain_horizon_projection_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let values = line
+            .split_whitespace()
+            .map(|word| u32::from_str_radix(word, 16).map(f32::from_bits))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(values.len(), 25);
+        let scale = WorldHorizonScale::new(values[0]).ok_or("invalid native scale")?;
+        assert_eq!(scale.value().to_bits(), values[4].to_bits());
+        let camera = WorldCamera::new(Vec3::ZERO, Vec3::X, Vec3::Z, values[5], 0.2, values[1])
+            .frame(values[3])?;
+        let horizon = WorldLowDetailFrame::new(&map, camera, Vec3::ONE, scale)?;
+        let frame = horizon.camera();
+        assert_eq!(frame.camera().near_clip().to_bits(), values[7].to_bits());
+        assert_eq!(frame.camera().far_clip().to_bits(), values[8].to_bits());
+        let projection = frame.projection();
+        // Convert stock's positive-forward, minus-one-to-one depth to Vulkan.
+        // The renderer uses its common f32 projection builder, so compare the
+        // coefficients within its existing float precision, not bit identity.
+        for (actual, expected) in [
+            (projection.x_axis.x, values[9]),
+            (projection.y_axis.y, values[14]),
+            (projection.z_axis.z, -(values[19] + 1.) * 0.5),
+            (projection.w_axis.z, values[23] * 0.5),
+        ] {
+            assert!(
+                (actual - expected).abs() <= expected.abs() * 4. * f32::EPSILON,
+                "case {count}: {actual} differs from original {expected}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 80);
     Ok(())
 }
 

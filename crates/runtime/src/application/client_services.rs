@@ -1298,6 +1298,10 @@ impl ClientServices {
             || self.glue.cvar_number("environmentDetail"),
             |ui| ui.cvar_number("environmentDetail"),
         );
+        let horizon_scale = self.world_ui.as_ref().map_or_else(
+            || self.glue.cvar_number("horizonFarclipScale"),
+            |ui| ui.cvar_number("horizonFarclipScale"),
+        );
         let ground_detail = ["groundEffectDensity", "groundEffectDist"].map(|name| {
             self.world_ui
                 .as_ref()
@@ -1371,6 +1375,7 @@ impl ClientServices {
         frame.set_environment_detail(environment_detail)?;
         frame.set_ground_detail(ground_detail[0], ground_detail[1])?;
         frame.set_shadow_quality(shadow_quality)?;
+        frame.set_horizon_scale(horizon_scale)?;
         frame.present(
             &mut self.renderer,
             plan,

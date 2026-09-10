@@ -14,8 +14,14 @@ mesh preserves the original extended-precision stepping, stored base corners,
 and separately rounded lower bounds.
 
 `791170` uses the ordinary camera orientation and vertical FOV, with near
-distance `camera.farclip - 50` and far distance `ADEECC * CD7748`. ADEECC is
-initialized to one and has no executable writers. `795F80` selects viewport
+distance `camera.farclip - 50` and far distance `ADEECC * CD7748`. Registration
+at `78E61D` installs `horizonFarclipScale` with default `4.0`; callback `78D7C0`
+clamps it to `3..6` and setter `77F4A0` writes ADEECC. Its image initializer of
+one is therefore not the runtime default. The previous implementation missed
+that setter and clipped the horizon to the main camera's far plane. At the
+default effective distance of 777, the corrected horizon covers `727..3108`
+instead of `727..777`. Both normal play and the offline benchmark read the
+live CVar before frame preparation. `795F80` selects viewport
 depth `0.998046875..0.9990234375`. The fixed-function terrain pass sets fog
 start/end to zero/one and uses the packed DayNight color at offset `8C`.
 The Vulkan replacement keeps view and projection separate and outputs this
@@ -47,11 +53,34 @@ fixture covers four tile locations and all-clear, all-marked, checkerboard
 and diagonal masks. Tests compare all bounds, 545 positions, native vertex
 colors, face-bank counts and 3072 indices exactly.
 
+`tools/ghidra/terrain_horizon_projection_oracle.py` captures the actual CVar
+registration arguments and executes the original callback, setter and horizon
+projection for 80 cases. The only substituted inputs are the decimal parser's
+float result and the camera's virtual FOV getter. Tests compare the effective
+scale and near/far float stores exactly, and the Vulkan-converted projection
+coefficients within the existing common camera builder's float precision.
+
+`tools/ghidra/camera_fog_handoff_oracle.py` separately executes `4F8410`
+through its camera-to-DayNight far-plane store, then the original exterior
+`7ECD80`/`7F16F0` fog arithmetic. With the installed midnight Durotar sample
+at map 1, `(1300, -4530, 50)` (raw fog end `888.8889`, ratio `0.5`), changing
+the registered horizon scale between 3, 4 and 6 leaves the camera/fog far
+distance at 777 and the final fog at start 388.5, end 777, exponent 1.
+The ordinary fog distance must therefore remain independent of the horizon
+multiplier. This checks the exterior handoff and arithmetic; it does not
+establish that every reported fade or camera-dependent visual is corrected.
+
+Paired real-archive Vulkan captures at `(1300, -4400, 40)` and
+`(1300, -4530, 50)` show distant mountain ranges that were clipped by the
+previous projection, with the foreground preserved. These offline captures
+omit server GameObjects and do not measure gameplay performance.
+
 The hidden Vulkan test uses independent ray/plane coverage to check 32
 horizon frames across map changes and repeated frame-slot reuse. It exercises
 both sides of marked faces, yaw changes, translated coordinates, near/far
-clipping, sky preservation and ordinary geometry at almost-far depth covering
-the horizon. The real archive validator reads 988 Kalimdor, 687 Eastern
+clipping, sky preservation, more than 1000 sampled pixels beyond the ordinary
+far plane, and ordinary geometry at almost-far depth covering the horizon.
+The real archive validator reads 988 Kalimdor, 687 Eastern
 Kingdoms, 800 Outland and 1131 Northrend WDL tiles.
 
 ## Remaining horizon work

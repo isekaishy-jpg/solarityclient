@@ -43,6 +43,9 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// The registered horizon multiplier is absent or nonfinite.
+    #[error("horizon distance requires a finite horizonfarclipscale cvar")]
+    InvalidHorizonScaleCvar,
     /// The registered quality must remain in the original six-value range.
     #[error("exterior shadow quality requires a finite cvar from zero through five")]
     InvalidShadowQualityCvar,
@@ -556,6 +559,7 @@ pub(super) struct TerrainFrame {
     visible_draws: Vec<TerrainPreparedDraw>,
     ground_detail: ground_detail::GroundDetailWorld,
     shadow_quality: solarity_rendering::WorldShadowQuality,
+    horizon_scale: solarity_rendering::WorldHorizonScale,
     liquid_materials: LiquidGpuMaterialCache,
     liquid_filtering: WorldModelTextureFiltering,
     liquid_draws: Vec<solarity_rendering::LiquidPreparedDraw>,
@@ -629,6 +633,7 @@ impl TerrainFrame {
             }],
             visible_draws: Vec::with_capacity(plan.chunks().len()),
             shadow_quality: solarity_rendering::WorldShadowQuality::UnitsHigh,
+            horizon_scale: solarity_rendering::WorldHorizonScale::default(),
             ground_detail: ground_detail::GroundDetailWorld::new(
                 world_model_filtering,
                 world_model_base_mip,
@@ -676,6 +681,7 @@ impl TerrainFrame {
             tiles: Vec::new(),
             visible_draws: Vec::new(),
             shadow_quality: solarity_rendering::WorldShadowQuality::UnitsHigh,
+            horizon_scale: solarity_rendering::WorldHorizonScale::default(),
             ground_detail: ground_detail::GroundDetailWorld::new(
                 world_model_filtering,
                 world_model_base_mip,
@@ -707,6 +713,17 @@ impl TerrainFrame {
             .filter(|value| value.is_finite())
             .ok_or(RuntimeTerrainFrameError::InvalidEnvironmentDetailCvar)?;
         self.m2.environment_detail = value.clamp(0.5, 1.5);
+        Ok(())
+    }
+
+    /// Applies 78D7C0's horizon range before preparing this frame's projection.
+    pub(super) fn set_horizon_scale(
+        &mut self,
+        value: Option<f32>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.horizon_scale = value
+            .and_then(solarity_rendering::WorldHorizonScale::new)
+            .ok_or(RuntimeTerrainFrameError::InvalidHorizonScaleCvar)?;
         Ok(())
     }
 
@@ -954,6 +971,7 @@ impl TerrainFrame {
                 map,
                 camera,
                 light.fog_color(),
+                self.horizon_scale,
             )?);
         }
         if default_sky {

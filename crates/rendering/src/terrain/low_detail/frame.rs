@@ -5,7 +5,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use solarity_asset::TerrainLowDetail;
 
-use super::TerrainLowDetailMesh;
+use super::{TerrainLowDetailMesh, WorldHorizonScale};
 use crate::{WorldCamera, WorldCameraError, WorldCameraFrame, WorldFrustum, WorldScreenWindow};
 
 /// All authored WDL tiles, shared by terrain generations and fenced GPU readers.
@@ -39,7 +39,7 @@ pub struct WorldLowDetailFrame<'a> {
 }
 
 impl<'a> WorldLowDetailFrame<'a> {
-    /// Uses `791170`'s farclip-minus-50 near plane and `ADEECC`'s fixed factor one.
+    /// Uses `791170`'s farclip-minus-50 near plane and registered horizon scale.
     ///
     /// # Errors
     /// Returns camera validation failures for a non-perspective source or invalid far range.
@@ -47,6 +47,7 @@ impl<'a> WorldLowDetailFrame<'a> {
         map: &'a Arc<TerrainLowDetailMap>,
         camera: WorldCameraFrame,
         fog_color: Vec3,
+        scale: WorldHorizonScale,
     ) -> Result<Self, WorldCameraError> {
         let source = camera.camera();
         let fov = source
@@ -58,7 +59,7 @@ impl<'a> WorldLowDetailFrame<'a> {
             source.up(),
             fov,
             source.far_clip() - 50.0,
-            source.far_clip(),
+            source.far_clip() * scale.value(),
         )
         // 795F80 preserves the GX view while replacing its projection. In
         // particular, do not rebuild direction from a rounded world target.
