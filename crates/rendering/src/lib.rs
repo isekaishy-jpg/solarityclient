@@ -53,7 +53,8 @@ pub use device::{
     WorldModelSampledTexture, WorldModelSamplerHandle, WorldModelSamplerInfo,
     WorldModelTextureAddressMode, WorldModelTextureFiltering, WorldModelTextureSet,
     WorldModelTextureSetHandle, WorldModelTextureSetInfo, WorldNetherFrame, WorldNetherState,
-    WorldPrimaryShadowFrame, WorldSkyModelBatch, WorldSkyModelFrame,
+    WorldPrimaryShadowFrame, WorldSkyModelBatch, WorldSkyModelFrame, WorldSpecialFrame,
+    WorldSpecialState,
 };
 pub use lighting::{
     M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, ScenePointLightError,

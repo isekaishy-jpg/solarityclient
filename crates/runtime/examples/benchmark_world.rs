@@ -162,7 +162,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut writer = BufWriter::new(File::create(output)?);
     writeln!(
         writer,
-        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z,ground_detail_draws,primary_shadow_draws,screen_effect,screen_glow,screen_blur,camera_liquid_type,screen_fade"
+        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z,ground_detail_draws,primary_shadow_draws,screen_effect,screen_glow,screen_blur,camera_liquid_type,screen_fade,special_desaturation"
     )?;
     for sample in &samples {
         use solarity_rendering::WorldFrameScreenEffect;
@@ -170,6 +170,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             None => ("none", 0, 0),
             Some(WorldFrameScreenEffect::Glow(_)) => ("glue", 0, 0),
             Some(WorldFrameScreenEffect::Nether(_)) => ("nether", 0, 0),
+            Some(WorldFrameScreenEffect::Special(_)) => ("special", 0, 0),
             Some(WorldFrameScreenEffect::Ghost { glow }) => ("ghost", glow, 0),
             Some(WorldFrameScreenEffect::Normal {
                 glow,
@@ -187,7 +188,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         writeln!(
             writer,
-            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{},{},{},{},{},{},{:.6}",
+            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{},{},{},{},{},{},{:.6},{:.6}",
             sample.phase,
             sample.frame,
             sample.resident_tiles,
@@ -210,6 +211,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             sample.camera_liquid_type.unwrap_or(0),
             match sample.screen_effect {
                 Some(WorldFrameScreenEffect::Nether(frame)) => frame.fade(),
+                _ => 0.,
+            },
+            match sample.screen_effect {
+                Some(WorldFrameScreenEffect::Special(frame)) => frame.desaturation(),
                 _ => 0.,
             },
         )?;

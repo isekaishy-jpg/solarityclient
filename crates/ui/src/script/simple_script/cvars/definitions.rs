@@ -96,6 +96,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("ffxDeath", "1", 0.0, 1.0),
     // 7EA470 registers the unbounded native invisibility switch.
     value("ffxNetherWorld", "1"),
+    // 7EA5F0 registers the same unbounded policy for the procedural filter.
+    value("ffxSpecial", "1"),
     ranged("projectedTextures", "1", 0.0, 1.0),
     // 78E400 registers the default; 78D940 admits the inclusive unit interval.
     ranged("footstepBias", "0.125", 0.0, 1.0),

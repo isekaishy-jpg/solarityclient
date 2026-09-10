@@ -18,6 +18,9 @@ struct Change {
 }
 
 impl ScreenEffectFog {
+    pub(super) const fn special(&self) -> bool {
+        self.kind == 3
+    }
     pub(super) const fn nether(&self) -> bool {
         self.kind == 2
     }

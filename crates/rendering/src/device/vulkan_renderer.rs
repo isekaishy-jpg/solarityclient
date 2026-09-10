@@ -2400,6 +2400,14 @@ impl VulkanRenderer {
                 self.swapchain_images.len(),
             )?;
         }
+        if matches!(glow, Some(crate::WorldFrameScreenEffect::Special(_))) {
+            self.glow.ensure_special(TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            })?;
+        }
         if scene
             .liquids()
             .is_some_and(|frame| !frame.draws().is_empty())

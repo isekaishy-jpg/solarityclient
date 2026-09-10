@@ -726,6 +726,7 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
         .exec()?;
     assert_eq!(cvar_observer.cvar_revision(), revision + 1);
     assert_eq!(cvar_observer.cvar_number("camerasmoothstyle"), Some(0.));
+    assert_eq!(cvar_observer.cvar_integer("ffxSpecial"), Some(1));
     let set_cvar = bundle.lua().globals().get::<mlua::Function>("SetCVar")?;
     let mut integer_cases = 0;
     for row in include_str!("../fixtures/cvar_integer_native.txt")
@@ -743,7 +744,7 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
         };
         let value = String::from_utf8(bytes)?;
         let expected = u32::from_str_radix(expected, 16)? as i32;
-        for name in ["ffx", "ffxDeath", "ffxNetherWorld"] {
+        for name in ["ffx", "ffxDeath", "ffxNetherWorld", "ffxSpecial"] {
             set_cvar.call::<()>((name, value.as_str()))?;
             assert_eq!(
                 cvar_observer.cvar_integer(name),

@@ -2476,6 +2476,8 @@ impl ClientServices {
         self.environment.set_glow_effects(effect_policy("ffxglow"));
         self.environment
             .set_nether_effects(effect_policy("ffxnetherworld"));
+        self.environment
+            .set_special_effects(effect_policy("ffxspecial"));
         while let Some(id) = self.gameplay.take_screen_effect_update() {
             self.environment.select_screen_effect(id);
         }

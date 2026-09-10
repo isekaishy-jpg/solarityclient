@@ -42,6 +42,8 @@ mod recording;
 mod scene;
 #[path = "stock_seed/shader.rs"]
 mod shader;
+#[path = "stock_seed/special_screen.rs"]
+mod special_screen;
 #[path = "stock_seed/support.rs"]
 mod support;
 #[path = "stock_seed/terrain.rs"]

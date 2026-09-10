@@ -1,0 +1,18 @@
+{
+  "executable_sha256": "aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8",
+  "noise_sha256": "bb9e563511c5dbac5263ccda7117d92108e5206f422846839ffb0dbf6c94f121",
+  "mesh_sha256": "c5047b3d9cb765dab314094c881f2e7fc8cc446686ccf2eb60ee11ba18a4bdfc",
+  "seed_sha256": "aaa74b88b94da073c36ba3ec5cad5b7e10babf5a2194b135255aa2a4710939a5",
+  "functions": [
+    "7E8E40",
+    "985580",
+    "9854D0",
+    "9852A0",
+    "7E8410",
+    "7E8380",
+    "7E8600",
+    "7E9010",
+    "7E92A0",
+    "7E9670"
+  ]
+}

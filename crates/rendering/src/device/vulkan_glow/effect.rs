@@ -5,6 +5,8 @@ use super::WorldFrameGlow;
 /// The selected postprocessing operation after world draws and before UI draws.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WorldFrameScreenEffect {
+    /// Procedural history and the authored screen filter's activation ramp.
+    Special(super::WorldSpecialFrame),
     /// Invisibility's retained animation and activation fade.
     Nether(super::WorldNetherFrame),
     /// The ModelFFX glow and display-gamma inputs used by Glue scenes.

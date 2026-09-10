@@ -95,7 +95,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
                     [141, 0, 0, 0, 0, 0, 0, 4, 0, 0],
                     [81, 0, 2, 0, 0, 0, 0, u32::MAX, 0, 0],
                     [142, 0, 99, 0, 0, 0, 0, u32::MAX, 0, 0],
-                    [82, 0, 3, 0, 0, 0, 0, u32::MAX, 0, 0],
+                    [82, 0, 3, 0x8513131c, 1, 60, 0, u32::MAX, 0, 0],
                 ]
                 .concat(),
             ),
@@ -707,6 +707,45 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             environment.prepare_screen_effect(frame, 1234, 0.1, camera),
             Some(WorldFrameScreenEffect::Nether(expected.advance(0.1, axis)))
         );
+    }
+    let mut expected = solarity_rendering::WorldSpecialState::default();
+    // The preceding leave-Nether loop presented one Special frame. Selection
+    // resets its ramp/history but deliberately retains that advancing cursor.
+    let _ = expected.advance(2.);
+    for (id, ffx, enabled, delta) in [
+        (Some(82), true, true, 0.),
+        (None, true, true, 0.2),
+        (None, true, false, 2.),
+        (None, false, true, 3.),
+        (None, true, true, 0.1),
+        (Some(142), true, true, 0.1), // Unknown kind retains parameters and cursor.
+        (Some(82), true, false, 1.),  // Disabled selection still resets the ramp.
+        (None, true, true, 0.),
+        (Some(0), true, true, 0.5),
+        (Some(82), true, true, 0.25),
+    ] {
+        if let Some(id) = id {
+            environment.select_screen_effect(id);
+            if id == 82 {
+                expected.select([0x8513131c, 1, 60, 0]);
+            }
+        }
+        environment.set_full_screen_effects(ffx);
+        environment.set_special_effects(enabled);
+        let frame = environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("special frame")?;
+        let actual = environment.prepare_screen_effect(frame, 1234, delta, camera);
+        if id == Some(0) {
+            assert!(matches!(
+                actual,
+                Some(WorldFrameScreenEffect::Normal { .. })
+            ));
+        } else {
+            let want =
+                (ffx && enabled).then(|| WorldFrameScreenEffect::Special(expected.advance(delta)));
+            assert_eq!(actual, want);
+        }
     }
     Ok(())
 }

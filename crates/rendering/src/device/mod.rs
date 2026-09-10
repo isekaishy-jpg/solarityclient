@@ -69,7 +69,10 @@ pub use vulkan_capture::CapturedFrame;
 pub use vulkan_character_atlas::{CharacterAtlasTextureHandle, CharacterAtlasTextureResourceInfo};
 pub use vulkan_detail::{GroundDetailDraw, GroundDetailFrame, GroundDetailFrameError};
 pub use vulkan_frame::CinematicFrameIdentity;
-pub use vulkan_glow::{WorldFrameGlow, WorldFrameScreenEffect, WorldNetherFrame, WorldNetherState};
+pub use vulkan_glow::{
+    WorldFrameGlow, WorldFrameScreenEffect, WorldNetherFrame, WorldNetherState, WorldSpecialFrame,
+    WorldSpecialState,
+};
 pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_liquid::{LiquidDrawMaterial, LiquidFrame, LiquidMeshHandle, LiquidPreparedDraw};
 pub use vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};

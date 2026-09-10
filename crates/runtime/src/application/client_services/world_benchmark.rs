@@ -138,6 +138,8 @@ impl ClientServices {
         self.environment.set_glow_effects(effect_policy("ffxglow"));
         self.environment
             .set_nether_effects(effect_policy("ffxnetherworld"));
+        self.environment
+            .set_special_effects(effect_policy("ffxspecial"));
         if let Some(id) = screen_effect {
             self.environment.select_screen_effect(id);
         }
@@ -336,6 +338,8 @@ impl ClientServices {
         self.environment.set_glow_effects(effect_policy("ffxglow"));
         self.environment
             .set_nether_effects(effect_policy("ffxnetherworld"));
+        self.environment
+            .set_special_effects(effect_policy("ffxspecial"));
         if let Some(farclip) = self.world_ui.as_ref().map_or_else(
             || self.glue.cvar_number("farclip"),
             |ui| ui.cvar_number("farclip"),

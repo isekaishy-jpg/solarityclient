@@ -14,9 +14,14 @@ use crate::{GlowShaderPass, GlowSpirvCompiler, GlowSpirvProgram, WorldScreenWind
 mod effect;
 mod nether;
 mod nether_render;
+mod special;
+#[cfg(test)]
+mod special_noise;
+mod special_render;
 mod wave;
 pub use effect::WorldFrameScreenEffect;
 pub use nether::{WorldNetherFrame, WorldNetherState};
+pub use special::{WorldSpecialFrame, WorldSpecialState};
 
 /// Validated stock FFXGlow factor and display-gamma pair for one world frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -166,6 +171,7 @@ pub(in crate::device) struct VulkanGlowRenderer {
     wave_sampler: vk::Sampler,
     wave_texture: Option<GpuSampledImage>,
     wave_transfer: Option<DeferredTextureTransfer>,
+    special: Option<special_render::SpecialResources>,
     descriptor_pool: vk::DescriptorPool,
     composite: vk::Pipeline,
     ghost: vk::Pipeline,
@@ -511,6 +517,27 @@ impl VulkanGlowRenderer {
             );
             return Ok(());
         }
+        if let WorldFrameScreenEffect::Special(frame) = glow {
+            self.special
+                .as_ref()
+                .ok_or_else(|| {
+                    VulkanError::operation(
+                        "record special screen filter",
+                        "resources are unavailable",
+                    )
+                })?
+                .record(
+                    self,
+                    device,
+                    command_buffer,
+                    swapchain_view,
+                    image_index,
+                    extent,
+                    window,
+                    frame,
+                );
+            return Ok(());
+        }
         self.record_target(
             device,
             command_buffer,
@@ -565,7 +592,7 @@ impl VulkanGlowRenderer {
         );
         set_viewport_scissor(device, command_buffer, extent, Some(window));
         let (pipeline, effect, wave_time_ms) = match glow {
-            WorldFrameScreenEffect::Nether(_) => {
+            WorldFrameScreenEffect::Nether(_) | WorldFrameScreenEffect::Special(_) => {
                 unreachable!("handled before the ordinary blur chain")
             }
             WorldFrameScreenEffect::Glow(glow) => (
@@ -692,6 +719,9 @@ impl VulkanGlowRenderer {
     }
 
     pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        if let Some(mut special) = self.special.take() {
+            special.destroy(device, allocator);
+        }
         if let Some(mut transfer) = self.wave_transfer.take() {
             transfer.destroy(device, allocator);
         }

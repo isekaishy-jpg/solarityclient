@@ -69,6 +69,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     ghost_effect: bool,
     normal_effect: bool,
     nether_effect: bool,
+    special_effect: bool,
     player_inebriation: Option<f64>,
     liquid_flags: Option<u32>,
     world_model_skybox_weight: f32,
@@ -275,6 +276,8 @@ pub struct RuntimeWorldEnvironment {
     glow_effects: bool,
     nether_effects: bool,
     nether: solarity_rendering::WorldNetherState,
+    special_effects: bool,
+    special: solarity_rendering::WorldSpecialState,
 }
 
 impl RuntimeWorldEnvironment {
@@ -288,6 +291,11 @@ impl RuntimeWorldEnvironment {
     /// An absent declaration clears the native global Light-condition override.
     pub fn select_screen_effect(&mut self, id: u32) {
         self.screen_effect = self.screen_effects.definition(id);
+        if let Some(effect) = self.screen_effect
+            && effect.effect_type == 3
+        {
+            self.special.select(effect.parameters);
+        }
         self.screen_effect_fog.select(
             self.screen_effect.map(|effect| effect.effect_type),
             self.current.map(|frame| frame.fog_context),
@@ -320,6 +328,11 @@ impl RuntimeWorldEnvironment {
         self.nether_effects = enabled;
     }
 
+    /// Live ffxSpecial gates drawing while retaining selection and history.
+    pub fn set_special_effects(&mut self, enabled: bool) {
+        self.special_effects = enabled;
+    }
+
     /// Advances the selected draw owner once, after final camera/environment resolution.
     pub fn prepare_screen_effect(
         &mut self,
@@ -328,7 +341,11 @@ impl RuntimeWorldEnvironment {
         delta_seconds: f32,
         camera: solarity_rendering::WorldCameraFrame,
     ) -> Option<solarity_rendering::WorldFrameScreenEffect> {
-        if frame.nether_effect {
+        if frame.special_effect {
+            Some(solarity_rendering::WorldFrameScreenEffect::Special(
+                self.special.advance(delta_seconds),
+            ))
+        } else if frame.nether_effect {
             Some(solarity_rendering::WorldFrameScreenEffect::Nether(
                 self.nether
                     .advance(delta_seconds, camera.view().x_axis.truncate().to_array()),
@@ -395,6 +412,8 @@ impl RuntimeWorldEnvironment {
             glow_effects: true,
             nether_effects: true,
             nether: solarity_rendering::WorldNetherState::default(),
+            special_effects: true,
+            special: solarity_rendering::WorldSpecialState::default(),
         })
     }
 
@@ -477,6 +496,9 @@ impl RuntimeWorldEnvironment {
             nether_effect: self.screen_effect_fog.nether()
                 && self.full_screen_effects
                 && self.nether_effects,
+            special_effect: self.screen_effect_fog.special()
+                && self.full_screen_effects
+                && self.special_effects,
             player_inebriation: world
                 .storage()
                 .get::<&solarity_ecs::ObjectFields>(world.local_player())

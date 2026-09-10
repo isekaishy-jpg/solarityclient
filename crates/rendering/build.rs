@@ -8,11 +8,17 @@ use shaderc::{
     CompileOptions, Compiler, EnvVersion, OptimizationLevel, ShaderKind, SpirvVersion, TargetEnv,
 };
 
+#[path = "src/device/vulkan_glow/special_noise.rs"]
+mod special_noise;
+
 fn main() {
     let output = match env::var_os("OUT_DIR") {
         Some(output) => PathBuf::from(output),
         None => panic!("Cargo must define OUT_DIR for build-generated shaders"),
     };
+    println!("cargo:rerun-if-changed=src/device/vulkan_glow/special_noise.rs");
+    fs::write(output.join("special-noise.rgba"), special_noise::texture())
+        .unwrap_or_else(|error| panic!("could not generate special screen texture: {error}"));
     for (stage, kind) in [("vert", ShaderKind::Vertex), ("frag", ShaderKind::Fragment)] {
         compile(
             &format!("src/shader/detail_spirv/source/detail.{stage}.glsl"),
@@ -228,6 +234,18 @@ fn main() {
             "nether-combine",
             "src/shader/glow_spirv/source/nether_combine.frag.glsl",
         ),
+        (
+            "special-seed",
+            "src/shader/glow_spirv/source/special_seed.frag.glsl",
+        ),
+        (
+            "special-propagate",
+            "src/shader/glow_spirv/source/special_propagate.frag.glsl",
+        ),
+        (
+            "special-combine",
+            "src/shader/glow_spirv/source/special_combine.frag.glsl",
+        ),
     ] {
         compile(
             source,
@@ -240,6 +258,12 @@ fn main() {
         "src/shader/glow_spirv/source/nether.vert.glsl",
         ShaderKind::Vertex,
         &output.join("glow-nether.vert.spv"),
+        &[],
+    );
+    compile(
+        "src/shader/glow_spirv/source/special.vert.glsl",
+        ShaderKind::Vertex,
+        &output.join("glow-special.vert.spv"),
         &[],
     );
 }

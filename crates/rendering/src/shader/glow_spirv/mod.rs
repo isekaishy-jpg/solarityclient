@@ -12,6 +12,12 @@ const NETHER_VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-neth
 const NETHER_BLUR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-nether-blur.frag.spv"));
 const NETHER_COMBINE: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/glow-nether-combine.frag.spv"));
+const SPECIAL_VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-special.vert.spv"));
+const SPECIAL_SEED: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-special-seed.frag.spv"));
+const SPECIAL_PROPAGATE: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/glow-special-propagate.frag.spv"));
+const SPECIAL_COMBINE: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/glow-special-combine.frag.spv"));
 
 /// Stable identity of one fragment stage in the stock glow chain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,6 +36,12 @@ pub enum GlowShaderPass {
     NetherBlur,
     /// Invisibility's fade and tinted scene composition.
     NetherCombine,
+    /// Procedural noise strip and retained screen-filter history.
+    SpecialSeed,
+    /// Four-tap upward history propagation and alpha decay.
+    SpecialPropagate,
+    /// Polar history mesh and screen-filter desaturation/whitening.
+    SpecialCombine,
 }
 
 /// Owned SPIR-V modules for one glow pass.
@@ -84,13 +96,16 @@ impl GlowSpirvCompiler {
             GlowShaderPass::World => WORLD,
             GlowShaderPass::NetherBlur => NETHER_BLUR,
             GlowShaderPass::NetherCombine => NETHER_COMBINE,
+            GlowShaderPass::SpecialSeed => SPECIAL_SEED,
+            GlowShaderPass::SpecialPropagate => SPECIAL_PROPAGATE,
+            GlowShaderPass::SpecialCombine => SPECIAL_COMBINE,
         };
         Ok(GlowSpirvProgram {
             pass,
-            vertex_words: spirv_words(if pass == GlowShaderPass::NetherBlur {
-                NETHER_VERTEX
-            } else {
-                VERTEX
+            vertex_words: spirv_words(match pass {
+                GlowShaderPass::NetherBlur => NETHER_VERTEX,
+                GlowShaderPass::SpecialCombine => SPECIAL_VERTEX,
+                _ => VERTEX,
             }),
             fragment_words: spirv_words(fragment),
         })

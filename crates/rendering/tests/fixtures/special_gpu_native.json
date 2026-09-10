@@ -1,0 +1,12 @@
+{
+  "executable_sha256": "aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8",
+  "shader_sha256": {
+    "propagate": "99a63f14e8db32f17f240c1486d7da9d9bbc21f19078ba682b2b0518b1b90d79",
+    "combine": "9f90ecfb136d448991b90bb6cbe4f82d731bed3c732090fdd6f93d661a0cc093"
+  },
+  "fixture_sha256": "cd1d7cb4f5e2ecd444a81e4857977bf654e237da485eba4bcd2ab4c3ffd9fa81",
+  "frames": 48,
+  "history_comparisons": 813,
+  "feedback_max_difference": 0,
+  "feedback_differing_frames": 0
+}
