@@ -2099,7 +2099,7 @@ impl M2Frame {
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
         if let Some((terrain, _)) = spatial_lighting.as_mut() {
-            terrain.prepare_unit_scene(camera)?;
+            terrain.prepare_world_scene(camera)?;
         }
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, random)?;

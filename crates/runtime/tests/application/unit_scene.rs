@@ -15,7 +15,7 @@ use solarity_systems::{
 
 use super::{
     MovementCollisionBounds, PlacedWorldModelCollision, RuntimeWorldModelMovementOwner,
-    UnitSceneAdmission, WorldModelCameraRegistration, WorldSceneCameraFrame, WorldSceneDepthFrame,
+    WorldModelCameraRegistration, WorldSceneAdmission, WorldSceneCameraFrame, WorldSceneDepthFrame,
 };
 use crate::test_support::ClientFixture;
 
@@ -56,7 +56,7 @@ fn indoor_unit_uses_both_primary_roots_and_exact_owner_identity() -> Result<(), 
     assert_eq!(selection.primary().into_iter().flatten().count(), 2);
     let bounds = MovementCollisionBounds::new(Vec3::splat(10000.), Vec3::splat(10001.))?;
     for admitted in [first, second, owner(90)] {
-        let mut scene = UnitSceneAdmission::default();
+        let mut scene = WorldSceneAdmission::default();
         scene.record_camera_root(&root, camera()?, registration(admitted), first)?;
         assert_eq!(
             scene.admits_registration(selection, bounds)?,
@@ -90,7 +90,7 @@ fn secondary_camera_root_excludes_exterior_group_unit_callbacks() -> Result<(), 
                 .is_interior()
         );
         for primary in [selected, owner(17)] {
-            let mut scene = UnitSceneAdmission::default();
+            let mut scene = WorldSceneAdmission::default();
             scene.record_camera_root(&root, camera()?, registration(selected), primary)?;
             assert_eq!(
                 scene.admits_registration(selection, unit_bounds()?)?,
@@ -121,7 +121,7 @@ fn exterior_unit_requires_outdoor_depth_admission() -> Result<(), Box<dyn Error>
             .hit()
             .is_interior()
     );
-    let mut scene = UnitSceneAdmission::default();
+    let mut scene = WorldSceneAdmission::default();
     scene.record_camera_root(&root, camera()?, registration(selected), selected)?;
     assert!(!scene.admits_registration(selection, unit_bounds()?)?);
     scene.outdoor = Some(WorldSceneDepthFrame::new(
@@ -170,12 +170,11 @@ fn outdoor_building_portal_admits_registered_indoor_unit() -> Result<(), Box<dyn
             1.5,
             [0.1, 1000.],
         )?;
-        let mut scene = UnitSceneAdmission::default();
-        let _ = scene.record_outdoor_root(
-            &root,
+        let mut scene = WorldSceneAdmission::default();
+        record_outdoor_roots(
+            &mut scene,
+            &[(selected, &root)],
             camera,
-            selected,
-            None,
             WorldSceneDepthFrame::new(eye, eye + direction)?,
             window,
         )?;
@@ -194,16 +193,44 @@ fn outdoor_building_portal_admits_registered_indoor_unit() -> Result<(), Box<dyn
 #[test]
 fn outdoor_scene_cannot_enter_a_root_without_exterior_groups() -> Result<(), Box<dyn Error>> {
     let root = floor_root(0, 0)?;
-    let mut scene = UnitSceneAdmission::default();
-    let _ = scene.record_outdoor_root(
-        &root,
+    let mut scene = WorldSceneAdmission::default();
+    record_outdoor_roots(
+        &mut scene,
+        &[(owner(17), &root)],
         camera()?,
-        owner(17),
-        None,
         WorldSceneDepthFrame::new(Vec3::ZERO, Vec3::X)?,
         [0., 0., 1., 1.],
     )?;
     assert!(scene.groups.is_empty());
+    Ok(())
+}
+
+/// Uses the production queue and traversal to admit controlled resident roots.
+fn record_outdoor_roots(
+    scene: &mut WorldSceneAdmission,
+    roots: &[(RuntimeWorldModelMovementOwner, &PlacedWorldModelCollision)],
+    camera: WorldSceneCameraFrame,
+    depth: WorldSceneDepthFrame,
+    window: [f32; 4],
+) -> Result<(), Box<dyn Error>> {
+    scene.outdoor_groups.clear();
+    for moving in [false, true] {
+        for (index, &(owner, root)) in roots.iter().enumerate() {
+            if matches!(owner, RuntimeWorldModelMovementOwner::GameObject { .. }) != moving {
+                continue;
+            }
+            if scene
+                .queue_outdoor_root(root, camera, index, owner, depth)?
+                .is_break()
+            {
+                break;
+            }
+        }
+    }
+    while let Some(entry) = scene.outdoor_groups.next_group() {
+        let (owner, root) = roots[entry.root];
+        scene.record_outdoor_group(root, camera, owner, None, entry.group, window)?;
+    }
     Ok(())
 }
 

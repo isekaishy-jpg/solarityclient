@@ -219,6 +219,68 @@ fn assert_vec3_bytes(actual: Vec3, expected: [u8; 3]) {
     }
 }
 
+/// Native 7AC6A0 uses the exterior count as a prefix length, while colored
+/// and unified callbacks use all MOBA records, including transition batches.
+#[test]
+fn world_model_mesh_plan_uses_native_callback_batch_counts() -> Result<(), Box<dyn Error>> {
+    for (root_flags, group_flags, counts, expected) in [
+        (0_u16, 0, [1, 1, 1], 1),
+        (0, 0, [1, 2, 0], 0),
+        (0, 0, [0, 1, 2], 2),
+        (0, 0, [0, 0, 3], 3),
+        (0, 4, [1, 2, 0], 3),
+        (2, 0, [1, 2, 0], 3),
+        (2, 4, [1, 1, 1], 3),
+        (0, 0, [0, 0, 4], 4),
+    ] {
+        let mut root = root_fixture();
+        set_u16(&mut root, 20 + 60, root_flags);
+        let group = group_surface_fixture(group_flags, counts, 3);
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "World\\Wmo\\Render.wmo",
+                bytes: &root,
+            },
+            FixtureFile {
+                path: "World\\Wmo\\Render_000.wmo",
+                bytes: &group,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let model =
+            DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Render.wmo")?)?;
+        let plan = WorldModelMeshPlan::prepare(&model);
+        if expected == 4 {
+            assert!(matches!(
+                plan,
+                Err(solarity_rendering::WorldModelMeshPlanError::DrawRange {
+                    group_index: 0,
+                    batch_index: 4,
+                    ..
+                })
+            ));
+            continue;
+        }
+        let plan = plan?;
+        assert_eq!(
+            plan.draws().len(),
+            expected,
+            "flags {root_flags}/{group_flags}, {counts:?}"
+        );
+        assert_eq!(plan.groups()[0].draw_range(), 0..expected);
+        // Filtering draw callbacks retains the complete resident geometry.
+        assert_eq!(plan.vertices().len(), 3);
+        assert_eq!(plan.indices(), &[0, 1, 2]);
+        if counts[0] == 1 && expected != 0 {
+            assert_eq!(plan.draws()[0].class(), WorldModelBatchClass::Transition);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn root_fixture() -> Vec<u8> {
     let mut bytes = Vec::new();
     push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());
@@ -248,6 +310,11 @@ pub(crate) fn root_fixture() -> Vec<u8> {
 }
 
 pub(crate) fn group_fixture() -> Vec<u8> {
+    group_surface_fixture(4, [1, 0, 0], 1)
+}
+
+/// Authors independent MOGP counts and MOBA length for callback selection tests.
+fn group_surface_fixture(flags: u32, counts: [u16; 3], batches: usize) -> Vec<u8> {
     let mut nested = Vec::new();
     push_chunk(&mut nested, *b"YPOM", &[0x20, 0]);
     let mut indices = Vec::new();
@@ -297,12 +364,15 @@ pub(crate) fn group_fixture() -> Vec<u8> {
     // Stock's color fixer uses the transition range's final vertex, which is
     // independent of the batch's submitted index range.
     set_u16(&mut batch, 20, 0);
-    push_chunk(&mut nested, *b"ABOM", &batch);
+    push_chunk(&mut nested, *b"ABOM", &batch.repeat(batches));
 
     let mut group = vec![0_u8; 68];
+    set_u32(&mut group, 8, flags);
     set_vec3(&mut group, 12, [-1.0, -2.0, -3.0]);
     set_vec3(&mut group, 24, [4.0, 5.0, 6.0]);
-    set_u16(&mut group, 40, 1);
+    for (index, count) in counts.into_iter().enumerate() {
+        set_u16(&mut group, 40 + index * 2, count);
+    }
     group.extend_from_slice(&nested);
     let mut bytes = Vec::new();
     push_chunk(&mut bytes, *b"REVM", &17_u32.to_le_bytes());

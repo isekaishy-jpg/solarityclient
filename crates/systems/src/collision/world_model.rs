@@ -257,6 +257,13 @@ impl PlacedWorldModelCollision {
         &self.model
     }
 
+    /// Returns the retained world-to-root matrix used by native scene clips.
+    /// Owners may provide this float image independently of the forward matrix.
+    #[must_use]
+    pub const fn inverse_transform(&self) -> Mat4 {
+        self.inverse_transform
+    }
+
     /// Returns 7AE720's placed MOGI bounds used by scene and movement lists.
     ///
     /// # Errors

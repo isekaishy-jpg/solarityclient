@@ -1,10 +1,10 @@
 """Capture stock local WMO frusta and ordered resident MOBA selection.
 
 The fingerprinted image executes 790E20, 78FB00/983F40 and 7A7630 unhooked.
-The normal 7AC6A0 callback's selection loop executes at 7AC730..7AC9DB;
-the sole hook skips texture/shader/GPU submission after the native accepted
-flag store. This bounds the evidence to resident drawable batch selection,
-not shader setup, texture residency, or alternate renderer callbacks.
+The four renderer callbacks execute their original selection loops. The sole
+hook skips texture/shader/GPU submission after the native accepted flag store.
+This bounds the evidence to resident drawable batch selection, not shader
+setup, texture residency, or callback dispatch.
 """
 import argparse
 import random
@@ -22,15 +22,24 @@ from world_scene_bounds_oracle import floats
 from world_model_portal_projection_oracle import words
 
 
-def select(u, group, batches, ordinal):
-    """Run the original normal-renderer bounds, deduplication and loop order."""
+LOOPS = {
+    'normal': (0x7ac730, 0x7ac770, 0x7ac9c3, 0x7ac9db, UC_X86_REG_EDI),
+    'colored': (0x7aca99, 0x7acaf0, 0x7acfe3, 0x7ad001, UC_X86_REG_EDI),
+    'unified': (0x7a9432, 0x7a9474, 0x7a9bb3, 0x7a9bce, UC_X86_REG_ESI),
+    'untextured': (0x7a9c9c, 0x7a9ccc, 0x7a9cff, 0x7a9d0d, UC_X86_REG_ESI),
+}
+
+
+def select(u, group, batches, ordinal, variant='normal'):
+    """Run original bounds, deduplication, native count and loop order."""
     selected = []
+    start, accepted, next_batch, end, batch_register = LOOPS[variant]
 
     def submission(uc, address, size, user):
-        if address == 0x7ac770:
-            selected.append((uc.reg_read(UC_X86_REG_EDI) - batches) // 24)
-            uc.reg_write(UC_X86_REG_EIP, 0x7ac9c3)
-        elif address == 0x7ac9db:
+        if address == accepted:
+            selected.append((uc.reg_read(batch_register) - batches) // 24)
+            uc.reg_write(UC_X86_REG_EIP, next_batch)
+        elif address == end:
             uc.emu_stop()
 
     bp = n.STACK + 0x10000
@@ -39,10 +48,17 @@ def select(u, group, batches, ordinal):
     u.reg_write(UC_X86_REG_ESP, bp - 0x100)
     u.reg_write(UC_X86_REG_EBX, group)
     u.reg_write(UC_X86_REG_ESI, 0)
+    if variant == 'colored':
+        u.reg_write(UC_X86_REG_ESI, group)
+        n.write_words(u, bp - 0x20, 0)
+    elif variant in ('unified', 'untextured'):
+        u.reg_write(UC_X86_REG_EDI, group)
+        u.reg_write(UC_X86_REG_EBX, 0)
+        u.reg_write(UC_X86_REG_ESI, batches)
     hook = u.hook_add(UC_HOOK_CODE, submission)
     try:
-        u.emu_start(0x7ac730, n.STOP, timeout=1_000_000, count=100_000)
-        assert u.reg_read(UC_X86_REG_EIP) == 0x7ac9db
+        u.emu_start(start, n.STOP, timeout=1_000_000, count=100_000)
+        assert u.reg_read(UC_X86_REG_EIP) == end
     finally:
         u.hook_del(hook)
     return selected
@@ -101,25 +117,42 @@ def main():
             flags = [rng.randrange(256) for _ in boxes]
             u.mem_write(group + 0x60, struct.pack('<H', len(boxes)))
             n.write_words(u, group + 0xf8, batches)
-            for batch, (box, flag) in enumerate(zip(boxes, flags)):
-                u.mem_write(batches + 24 * batch, struct.pack('<6h10xBB', *box, flag, 0))
+            initial = b''.join(struct.pack('<6h10xBB', *box, flag, 0)
+                               for box, flag in zip(boxes, flags))
+            u.mem_write(batches, initial)
             row = [str(index), words(matrix), str(len(boxes))]
             row.extend(' '.join(map(str, box + [flag])) for box, flag in zip(boxes, flags))
             row.append(str(len(windows)))
             all_selected = []
+            baseline = []
             for ordinal, (window, clip) in enumerate(zip(windows, clips)):
                 u.mem_write(0xcdb168, clip)
                 selected = select(u, group, batches, ordinal)
+                baseline.append(selected)
                 assert not set(selected).intersection(all_selected)
                 all_selected.extend(selected)
                 row.extend([words(window), str(len(selected)), ' '.join(map(str, selected))])
             final = [u.mem_read(batches + 24 * i + 22, 1)[0] for i in range(len(boxes))]
             assert all((a & 15) == (b & 15) for a, b in zip(flags, final))
+            for variant in LOOPS:
+                for count in (0, 1, 17, len(boxes)):
+                    u.mem_write(batches, initial)
+                    # Deliberately disagree: each original must read its own
+                    # count field, rather than accidentally sharing a bound.
+                    u.mem_write(group + 0x60, struct.pack('<H', count if variant == 'normal' else 3))
+                    n.write_words(u, group + 0x16c, count if variant != 'normal' else 3)
+                    for ordinal, clip in enumerate(clips):
+                        u.mem_write(0xcdb168, clip)
+                        actual = select(u, group, batches, ordinal, variant)
+                        assert actual == [i for i in baseline[ordinal] if i < count], (variant, count, ordinal)
+                    actual_flags = [u.mem_read(batches + 24 * i + 22, 1)[0] for i in range(len(boxes))]
+                    assert actual_flags == final[:count] + flags[count:], (variant, count)
             row.extend(map(str, final))
             sequences.append(' '.join(row))
     args.frusta.write_text('\n'.join(frusta) + '\n', encoding='utf-8')
     args.batches.write_text('\n'.join(sequences) + '\n', encoding='utf-8')
-    print(f'Captured {len(frusta)-1} local frusta and {len(sequences)-1} native batch sequences')
+    print(f'Captured {len(frusta)-1} local frusta and {len(sequences)-1} native batch sequences; '
+          'all four renderer loops agree at four independent count limits')
 
 
 if __name__ == '__main__':

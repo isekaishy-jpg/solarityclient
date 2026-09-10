@@ -102,6 +102,17 @@ pub enum RuntimeTerrainFrameError {
     /// An authored MODF transform could not enter presentation state.
     #[error(transparent)]
     WorldModelPlacement(#[from] WorldModelPlacementError),
+    /// A scene callback references a group outside the renderer's generation.
+    #[error("world-model scene group {group_index} is outside {group_count} prepared groups")]
+    WorldModelGroupIndex {
+        /// Group requested by the current scene callback.
+        group_index: usize,
+        /// Groups available in the renderer's resident generation.
+        group_count: usize,
+    },
+    /// Native scene clips or local batch bounds cannot be represented.
+    #[error(transparent)]
+    WorldModelVisibility(#[from] solarity_systems::WorldModelVisibilityError),
     /// An M2 SKIN profile could not enter the direct-index mesh ABI.
     #[error(transparent)]
     M2Mesh(#[from] M2MeshPlanError),
@@ -906,12 +917,13 @@ impl TerrainFrame {
             &mut self.liquid_draws,
         )?;
         profile.mark("liquid packets");
-        let world_model_draws = self.world_models.prepare_visible_draws(
+        let (world_model_draws, last_world_model_group) = self.world_models.prepare_visible_draws(
             renderer,
-            frustum,
+            terrain.world_model_scene_groups(),
             environment.world_model_emissive(),
             fog.color(),
         )?;
+        terrain.complete_world_model_scene(last_world_model_group);
         profile.mark("WMO packets");
 
         let (default_sky, sky_models) = sky_resources.prepare_models(

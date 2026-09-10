@@ -1,7 +1,7 @@
-//! Unit collision admission retained from the scene for the next movement pass.
+//! Native scene traversal shared by graphics and subsequent unit movement.
 
 #[cfg(test)]
-#[path = "../../../../tests/application/unit_scene.rs"]
+#[path = "../../../../../tests/application/unit_scene.rs"]
 mod tests;
 
 use std::{
@@ -17,15 +17,21 @@ use solarity_systems::{
     WorldModelVisibilityError, WorldSceneCameraFrame, WorldSceneDepthFrame,
 };
 
-use super::{
+use super::super::{
     MovementRootReference, ResidentTerrainMap, RuntimeMovementRegistrationError,
     RuntimeTerrainCoordinator, RuntimeWorldModelMovementOwner,
+};
+use super::{
+    graphics::{WorldModelSceneGraphics, WorldModelSceneGroup},
+    outdoor::{OutdoorSceneGroup, OutdoorSceneGroups},
 };
 
 /// Reuses camera traversal scratch and eligible root/group destinations each frame.
 #[derive(Default)]
-pub(super) struct UnitSceneAdmission {
+pub(in crate::application::terrain_coordinator::movement) struct WorldSceneAdmission {
     query: WorldModelCameraSceneQuery,
+    graphics: WorldModelSceneGraphics,
+    outdoor_groups: OutdoorSceneGroups,
     groups: HashSet<(RuntimeWorldModelMovementOwner, usize)>,
     /// Every 799310 group callback participates in later moving-root overlap.
     visible_bounds: HashMap<(RuntimeWorldModelMovementOwner, usize), MovementCollisionBounds>,
@@ -34,7 +40,7 @@ pub(super) struct UnitSceneAdmission {
     outdoor: Option<WorldSceneDepthFrame>,
 }
 
-impl UnitSceneAdmission {
+impl WorldSceneAdmission {
     /// 79A870 visits both camera roots, but only the primary opens outdoor lists.
     fn prepare(
         &mut self,
@@ -42,6 +48,8 @@ impl UnitSceneAdmission {
         camera: WorldCameraFrame,
     ) -> Result<(), RuntimeMovementRegistrationError> {
         self.groups.clear();
+        self.graphics.begin();
+        self.outdoor_groups.clear();
         self.visible_bounds.clear();
         self.overlap_groups.clear();
         self.outdoor = None;
@@ -99,14 +107,7 @@ impl UnitSceneAdmission {
                     continue;
                 }
                 let root = active.registration_root_mut(reference)?;
-                let _ = self.record_outdoor_root(
-                    root,
-                    scene,
-                    reference.owner(),
-                    primary_owner,
-                    depth,
-                    window,
-                )?;
+                let _ = self.queue_outdoor_root(root, scene, index, reference.owner(), depth)?;
             }
             if primary_owner.is_none() {
                 // 792BD0 converts the moving list only for outdoor cameras.
@@ -118,12 +119,26 @@ impl UnitSceneAdmission {
                     }
                     let root = active.registration_root_mut(reference)?;
                     if self
-                        .record_outdoor_root(root, scene, reference.owner(), None, depth, window)?
+                        .queue_outdoor_root(root, scene, index, reference.owner(), depth)?
                         .is_break()
                     {
                         break;
                     }
                 }
+            }
+            // The native moving conversion joins existing static depth bins.
+            // Visit complete bins only after both insertion passes finish.
+            while let Some(entry) = self.outdoor_groups.next_group() {
+                let reference = active.movement.roots[entry.root];
+                let root = active.registration_root_mut(reference)?;
+                self.record_outdoor_group(
+                    root,
+                    scene,
+                    reference.owner(),
+                    primary_owner,
+                    entry.group,
+                    window,
+                )?;
             }
         }
         if let Some(primary) = primary_owner {
@@ -161,16 +176,14 @@ impl UnitSceneAdmission {
     }
 
     /// 792AD0 depth-lists exterior MOGI groups before 79A160/7B3A10 traversal.
-    /// All bins run; with optional occlusion disabled, their order cannot alter
-    /// the final set of 79A260 unit callback destinations.
-    fn record_outdoor_root(
+    /// The separate visitation pass preserves increasing depth and append order.
+    fn queue_outdoor_root(
         &mut self,
         root: &PlacedWorldModelCollision,
         camera: WorldSceneCameraFrame,
+        root_index: usize,
         owner: RuntimeWorldModelMovementOwner,
-        primary: Option<RuntimeWorldModelMovementOwner>,
         depth: WorldSceneDepthFrame,
-        screen_window: [f32; 4],
     ) -> Result<ControlFlow<()>, RuntimeMovementRegistrationError> {
         let envelope = camera.enclosing_bounds();
         for (group, info) in root.model().group_info().iter().enumerate() {
@@ -181,17 +194,33 @@ impl UnitSceneAdmission {
             if !envelope.intersects(MovementCollisionBounds::new(bounds[0], bounds[1])?) {
                 continue;
             }
-            if depth.depth_bin(bounds)?.is_none() {
+            let Some(bin) = depth.depth_bin(bounds)? else {
                 if matches!(owner, RuntimeWorldModelMovementOwner::GameObject { .. }) {
                     return Ok(ControlFlow::Break(()));
                 }
                 continue;
-            }
-            self.query
-                .query_outdoor_group(root, camera, group, screen_window)?;
-            self.record_group_callbacks(root, owner, primary)?;
+            };
+            self.outdoor_groups.bins[usize::from(bin)].push(OutdoorSceneGroup {
+                root: root_index,
+                group,
+            });
         }
         Ok(ControlFlow::Continue(()))
+    }
+
+    /// 79A160 enters one depth-listed group with the primary exterior window.
+    fn record_outdoor_group(
+        &mut self,
+        root: &PlacedWorldModelCollision,
+        camera: WorldSceneCameraFrame,
+        owner: RuntimeWorldModelMovementOwner,
+        primary: Option<RuntimeWorldModelMovementOwner>,
+        group: usize,
+        screen_window: [f32; 4],
+    ) -> Result<(), RuntimeMovementRegistrationError> {
+        self.query
+            .query_outdoor_group(root, camera, group, screen_window)?;
+        self.record_group_callbacks(root, owner, primary)
     }
 
     /// 799F80 visits moving exterior entries in original root/group list order.
@@ -249,7 +278,9 @@ impl UnitSceneAdmission {
         owner: RuntimeWorldModelMovementOwner,
         primary: Option<RuntimeWorldModelMovementOwner>,
     ) -> Result<(), RuntimeMovementRegistrationError> {
-        for &group in self.query.groups() {
+        for &visit in self.query.visits() {
+            let group = visit.group;
+            self.graphics.record(root, owner, visit)?;
             let [minimum, maximum] = root.scene_group_bounds(group)?;
             self.visible_bounds.insert(
                 (owner, group),
@@ -294,18 +325,32 @@ impl UnitSceneAdmission {
 }
 
 impl RuntimeTerrainCoordinator {
-    /// Prepares the current camera's scene destinations before dynamic unit updates.
-    pub(in crate::application) fn prepare_unit_scene(
+    /// Supplies the current ordered graphics groups after scene preparation.
+    pub(in crate::application) fn world_model_scene_groups(&self) -> &[WorldModelSceneGroup] {
+        self.active
+            .as_ref()
+            .map_or(&[], |active| active.movement.scene.graphics.groups())
+    }
+
+    /// Retains the bank restored by the final WMO group submitted this frame.
+    pub(in crate::application) fn complete_world_model_scene(&mut self, last: Option<usize>) {
+        if let Some(active) = &mut self.active {
+            active.movement.scene.graphics.complete(last);
+        }
+    }
+
+    /// Prepares graphics callbacks and unit destinations before dynamic updates.
+    pub(in crate::application) fn prepare_world_scene(
         &mut self,
         camera: WorldCameraFrame,
     ) -> Result<(), RuntimeMovementRegistrationError> {
         let Some(active) = &mut self.active else {
             return Ok(());
         };
-        let mut admission = std::mem::take(&mut active.movement.unit_scene);
+        let mut admission = std::mem::take(&mut active.movement.scene);
         let result = admission.prepare(active, camera);
         // Return retained storage even when resident geometry rejects the query.
-        active.movement.unit_scene = admission;
+        active.movement.scene = admission;
         result
     }
 
@@ -319,9 +364,6 @@ impl RuntimeTerrainCoordinator {
             return Ok(false);
         };
         let selection = active.unit_registration(position)?;
-        active
-            .movement
-            .unit_scene
-            .admits_registration(selection, bounds)
+        active.movement.scene.admits_registration(selection, bounds)
     }
 }

@@ -3,8 +3,9 @@
 use glam::Vec3;
 
 use super::{
-    WorldModelExteriorPortalWindow, WorldModelPortalProjector, WorldModelSceneVisibilityEvent,
-    WorldModelVisibilityError, WorldModelVisibilityQuery, WorldSceneCameraFrame,
+    WorldModelExteriorPortalWindow, WorldModelPortalProjector, WorldModelSceneFog,
+    WorldModelSceneGroupVisit, WorldModelSceneVisibilityEvent, WorldModelVisibilityError,
+    WorldModelVisibilityQuery, WorldSceneCameraFrame,
 };
 use crate::collision::{MovementCollisionBounds, PlacedWorldModelCollision};
 
@@ -14,6 +15,7 @@ pub struct WorldModelCameraSceneQuery {
     projector: WorldModelPortalProjector,
     visibility: WorldModelVisibilityQuery,
     groups: Vec<usize>,
+    visits: Vec<WorldModelSceneGroupVisit>,
     exterior_window: Option<WorldModelExteriorPortalWindow>,
 }
 
@@ -38,6 +40,7 @@ impl WorldModelCameraSceneQuery {
         initial_groups: &[usize],
     ) -> Result<bool, WorldModelVisibilityError> {
         self.groups.clear();
+        self.visits.clear();
         self.exterior_window = None;
         let frame = camera.for_root(root.transform, root.inverse_transform)?;
         let forward_plane = camera.local_forward_plane(root.inverse_transform)?;
@@ -54,6 +57,15 @@ impl WorldModelCameraSceneQuery {
             let WorldModelSceneVisibilityEvent::ExteriorPortal { reference } = event else {
                 if let WorldModelSceneVisibilityEvent::Group(visit) = event {
                     self.groups.push(visit.group);
+                    self.visits.push(WorldModelSceneGroupVisit {
+                        group: visit.group,
+                        fog: if visit.indoor_fog {
+                            WorldModelSceneFog::Indoor
+                        } else {
+                            WorldModelSceneFog::Outdoor
+                        },
+                        frustum: visit.frustum(camera, camera.frustum())?,
+                    });
                 }
                 continue;
             };
@@ -88,6 +100,11 @@ impl WorldModelCameraSceneQuery {
                 MovementCollisionBounds::new(minimum, maximum)?.transformed(root.transform)?;
             if camera.intersects_bounds(bounds) {
                 self.groups.push(group);
+                self.visits.push(WorldModelSceneGroupVisit {
+                    group,
+                    fog: WorldModelSceneFog::Inherited,
+                    frustum: camera.frustum(),
+                });
             }
         }
         Ok(self.exterior_window.is_some())
@@ -111,6 +128,7 @@ impl WorldModelCameraSceneQuery {
         screen_window: [f32; 4],
     ) -> Result<&[usize], WorldModelVisibilityError> {
         self.groups.clear();
+        self.visits.clear();
         self.exterior_window = None;
         let model = &root.model;
         let info = model
@@ -125,17 +143,35 @@ impl WorldModelCameraSceneQuery {
         }
         if info.flags() & 0x10000 != 0 {
             self.groups.push(group);
+            self.visits.push(WorldModelSceneGroupVisit {
+                group,
+                fog: WorldModelSceneFog::Inherited,
+                frustum,
+            });
         } else if info.flags() & 8 != 0 {
             let frame = camera.for_root(root.transform, root.inverse_transform)?;
             let projected = self.projector.project(model, frame)?;
             // 7B3A10 retains the multiply/subtract until each float store.
             let window = screen_window.map(|value| (f64::from(value) * 2. - 1.) as f32);
-            self.groups.extend(
-                self.visibility
-                    .query_outdoor(model, frame.local_camera, group, 10, window, projected)?
-                    .iter()
-                    .map(|visit| visit.group),
-            );
+            for visit in self.visibility.query_outdoor(
+                model,
+                frame.local_camera,
+                group,
+                10,
+                window,
+                projected,
+            )? {
+                self.groups.push(visit.group);
+                self.visits.push(WorldModelSceneGroupVisit {
+                    group: visit.group,
+                    fog: if visit.indoor_fog {
+                        WorldModelSceneFog::Indoor
+                    } else {
+                        WorldModelSceneFog::Outdoor
+                    },
+                    frustum: visit.frustum(camera, frustum)?,
+                });
+            }
         }
         Ok(&self.groups)
     }
@@ -151,6 +187,13 @@ impl WorldModelCameraSceneQuery {
     #[must_use]
     pub fn groups(&self) -> &[usize] {
         &self.groups
+    }
+
+    /// Returns every callback's exact clip and fog write in traversal order.
+    /// Repeated groups must retain all their regions for graphics consumption.
+    #[must_use]
+    pub fn visits(&self) -> &[WorldModelSceneGroupVisit] {
+        &self.visits
     }
 }
 

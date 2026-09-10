@@ -91,6 +91,12 @@ impl WorldSceneCameraFrame {
         self.frustum.corners()
     }
 
+    /// Returns the original full scene clip inherited by camera-root callbacks.
+    #[must_use]
+    pub const fn frustum(&self) -> WorldSceneFrustum {
+        self.frustum
+    }
+
     /// Returns 795400/984930's full-camera box used before scene list insertion.
     /// Strict comparisons preserve the first corner's signed-zero ties.
     #[must_use]

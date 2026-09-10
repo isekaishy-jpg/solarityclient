@@ -4,6 +4,7 @@ mod batch;
 mod camera_scene;
 mod projection;
 mod query;
+mod scene_visit;
 
 pub use batch::WorldModelBatchVisibilityQuery;
 pub use camera_scene::WorldModelCameraSceneQuery;
@@ -12,6 +13,7 @@ pub use projection::{
     WorldSceneCameraFrame, WorldSceneFrustum,
 };
 pub use query::WorldModelVisibilityQuery;
+pub use scene_visit::{WorldModelSceneFog, WorldModelSceneGroupVisit};
 
 use thiserror::Error;
 

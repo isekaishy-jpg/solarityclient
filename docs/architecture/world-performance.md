@@ -685,3 +685,38 @@ replay limitations described above.
 A separate profiled capture attributed about 1.04–1.13 ms to command recording,
 down from approximately 1.40 ms before the binding cache. These capture timings
 are component diagnostics; the frame means above come from uncaptured runs.
+
+## Portal-aware WMO surface submission
+
+Runtime surface drawing now consumes the scene's native ordered WMO group
+callbacks and their local portal frusta. It selects each group's first-accepted
+resident batches instead of testing every batch against the full camera.
+[The visibility evidence](world-model-batch-visibility.md) includes native
+selection loops, mixed static/moving depth lists, a Vulkan packet/pixel test,
+and the installed Orgrimmar graph at the captured benchmark camera.
+
+On 2026-09-10, Build 73 and this change were compared on the same 1280 x 720
+GTX 1070 travel route, with 2,400 frames per phase, shadows enabled, profiling
+and capture disabled, and no compiler running. The local playerbots server
+was running during both offline replays.
+
+| Input phase | Build 73 mean frame | Portal submission |
+| --- | ---: | ---: |
+| Stationary | 4.540 ms | 4.043 ms |
+| Orbit | 3.692 ms | 3.609 ms |
+| Pointer | 4.917 ms | 4.484 ms |
+| Travel outbound | 3.563 ms | 3.472 ms |
+| Travel return | 3.524 ms | 3.425 ms |
+| Settled after travel | 4.628 ms | 4.175 ms |
+
+The stationary mean fell about 11%, and travel means about 3%. Detail and
+primary-shadow counts matched frame by frame in all six phases. Both travel
+directions retained 24 changed frames, 21 admissions, and 21 evictions. This
+is a bounded offline comparison, not live populated-world FPS or evidence
+that the requested 1,200 FPS target has been reached.
+
+Separate captures exposed a changed Orgrimmar silhouette. Replaying the
+installed model through original portal projection, recursion, local clipping,
+and batch selection confirmed the new group and batch decisions before
+accepting the measurement. Per-group fog shaders, liquids, and attached
+doodads still have separate integration gaps described in the evidence.

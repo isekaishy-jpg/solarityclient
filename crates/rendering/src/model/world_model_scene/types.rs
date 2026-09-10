@@ -153,6 +153,8 @@ pub struct WorldModelGroupRange {
     index_count: u32,
     flags: u32,
     bounds: [[f32; 3]; 2],
+    /// Half-open range of logical drawable batches in the combined mesh plan.
+    draw_range: [usize; 2],
 }
 
 impl WorldModelGroupRange {
@@ -165,6 +167,7 @@ impl WorldModelGroupRange {
         index_count: u32,
         flags: u32,
         bounds: [[f32; 3]; 2],
+        draw_range: [usize; 2],
     ) -> Self {
         Self {
             group_index,
@@ -174,6 +177,7 @@ impl WorldModelGroupRange {
             index_count,
             flags,
             bounds,
+            draw_range,
         }
     }
 
@@ -205,5 +209,11 @@ impl WorldModelGroupRange {
     #[must_use]
     pub const fn bounds(self) -> [[f32; 3]; 2] {
         self.bounds
+    }
+
+    /// Returns this group's drawable logical MOBA indices in the combined plan.
+    #[must_use]
+    pub fn draw_range(self) -> std::ops::Range<usize> {
+        self.draw_range[0]..self.draw_range[1]
     }
 }

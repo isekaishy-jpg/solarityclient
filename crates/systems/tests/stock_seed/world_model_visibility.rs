@@ -737,15 +737,75 @@ fn camera_root_direct_groups_follow_authored_flags_and_transformed_bounds()
     let mut query = WorldModelCameraSceneQuery::default();
     assert!(!query.query_camera_root(&root, camera, &[])?);
     assert_eq!(query.groups(), &[0]);
+    assert_eq!(query.visits().len(), 1);
+    assert_eq!(
+        query.visits()[0].fog,
+        solarity_systems::WorldModelSceneFog::Inherited
+    );
+    assert_clip_bits(query.visits()[0].frustum, camera.frustum());
     assert!(!query.query_camera_root(&root, camera, &[2, 1])?);
     assert_eq!(query.groups(), &[2, 0]);
+    assert_eq!(
+        query
+            .visits()
+            .iter()
+            .map(|visit| visit.group)
+            .collect::<Vec<_>>(),
+        [2, 0]
+    );
+    assert_eq!(
+        query.visits()[0].fog,
+        solarity_systems::WorldModelSceneFog::Indoor
+    );
+    assert_eq!(
+        query.visits()[1].fog,
+        solarity_systems::WorldModelSceneFog::Inherited
+    );
+    for visit in query.visits() {
+        assert_clip_bits(visit.frustum, camera.frustum());
+    }
     root.set_transform(Mat4::from_translation(Vec3::new(-1000., 0., 0.)))?;
     assert!(!query.query_camera_root(&root, camera, &[])?);
     assert!(query.groups().is_empty());
+    assert!(query.visits().is_empty());
     root.set_transform(Mat4::IDENTITY)?;
     assert!(!query.query_camera_root(&root, camera, &[0])?);
     assert_eq!(query.groups(), &[0, 0]);
+    assert_eq!(
+        query
+            .visits()
+            .iter()
+            .map(|visit| visit.group)
+            .collect::<Vec<_>>(),
+        [0, 0]
+    );
+    assert_eq!(
+        query.visits()[0].fog,
+        solarity_systems::WorldModelSceneFog::Indoor
+    );
+    assert_eq!(
+        query.visits()[1].fog,
+        solarity_systems::WorldModelSceneFog::Inherited
+    );
+    for visit in query.visits() {
+        assert_clip_bits(visit.frustum, camera.frustum());
+    }
     Ok(())
+}
+
+/// Compares all native float stores, including signed zeros.
+pub(super) fn assert_clip_bits(
+    actual: solarity_systems::WorldSceneFrustum,
+    expected: solarity_systems::WorldSceneFrustum,
+) {
+    assert_eq!(
+        actual.corners().map(|v| v.to_array().map(f32::to_bits)),
+        expected.corners().map(|v| v.to_array().map(f32::to_bits))
+    );
+    assert_eq!(
+        actual.clip_planes().map(|v| v.map(f32::to_bits)),
+        expected.clip_planes().map(|v| v.map(f32::to_bits))
+    );
 }
 
 /// Loads the oracle graph through complete decoded MPQ root/group resources.

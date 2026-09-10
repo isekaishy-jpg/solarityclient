@@ -9,6 +9,8 @@ mod registration;
 mod scene;
 mod world_model;
 
+pub(in crate::application) use scene::WorldModelSceneGroup;
+
 pub use cache::{RuntimeMovementGeometry, RuntimeMovementGeometryFailure};
 pub(super) use camera::CameraGeometry;
 use dynamic::{DynamicMovementContext, ResidentDynamicMovement};
@@ -214,7 +216,7 @@ pub(super) struct ResidentMovementScene {
     dynamic: ResidentDynamicMovement,
     roots: Vec<MovementRootReference>,
     game_object_world_models: ResidentGameObjectWorldModels,
-    unit_scene: scene::UnitSceneAdmission,
+    scene: scene::WorldSceneAdmission,
 }
 
 /// Worker-prepared MCRF/MODR references into the corresponding M2 scene.

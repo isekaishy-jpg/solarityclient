@@ -56,7 +56,7 @@ pub use world_model_registration_scene::{
 };
 pub use world_model_visibility::{
     WorldModelBatchVisibilityQuery, WorldModelCameraSceneQuery, WorldModelExteriorPortalWindow,
-    WorldModelPortalProjectionFrame, WorldModelPortalProjector, WorldModelSceneVisibilityEvent,
-    WorldModelVisibilityError, WorldModelVisibilityQuery, WorldModelVisibilityVisit,
-    WorldSceneCameraFrame, WorldSceneFrustum,
+    WorldModelPortalProjectionFrame, WorldModelPortalProjector, WorldModelSceneFog,
+    WorldModelSceneGroupVisit, WorldModelSceneVisibilityEvent, WorldModelVisibilityError,
+    WorldModelVisibilityQuery, WorldModelVisibilityVisit, WorldSceneCameraFrame, WorldSceneFrustum,
 };

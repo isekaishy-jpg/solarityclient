@@ -3,7 +3,7 @@
 use glam::{Mat4, Vec3};
 use solarity_systems::{
     MovementCollisionBounds, WorldModelBatchVisibilityQuery, WorldModelVisibilityError,
-    WorldSceneCameraFrame,
+    WorldModelVisibilityVisit, WorldSceneCameraFrame,
 };
 use std::error::Error;
 
@@ -94,6 +94,64 @@ fn field<'a>(fields: &mut impl Iterator<Item = &'a str>) -> Result<&'a str, Box<
     fields
         .next()
         .ok_or_else(|| "missing native batch field".into())
+}
+
+/// Original recursive push/pop/crop code retains inherited initial clips.
+#[test]
+fn portal_callback_frusta_match_original_camera_and_outdoor_clip_stacks()
+-> Result<(), Box<dyn Error>> {
+    let cameras = cameras()?;
+    let mut count = 0;
+    for line in include_str!("../fixtures/world_model_scene_clip_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let mut fields = line.split_ascii_whitespace();
+        let camera = cameras[field(&mut fields)?.parse::<usize>()?];
+        let outdoor = field(&mut fields)? == "1";
+        let mut window = [0.; 4];
+        for value in &mut window {
+            *value = float(field(&mut fields)?)?;
+        }
+        let group = field(&mut fields)?.parse::<usize>()?;
+        let indoor_fog = field(&mut fields)? == "1";
+        let depth = field(&mut fields)?.parse::<u32>()?;
+        let mut screen_window = [0.; 4];
+        for value in &mut screen_window {
+            *value = float(field(&mut fields)?)?;
+        }
+        let inherited = if outdoor {
+            camera.frustum_for_window(window)?
+        } else {
+            camera.frustum()
+        };
+        let frustum = WorldModelVisibilityVisit {
+            group,
+            indoor_fog,
+            depth,
+            screen_window,
+        }
+        .frustum(camera, inherited)?;
+        let expected = fields.map(float).collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(expected.len(), 48);
+        for (channel, (actual, expected)) in frustum
+            .corners()
+            .iter()
+            .flat_map(|v| v.to_array())
+            .chain(frustum.clip_planes().iter().flatten().copied())
+            .zip(expected)
+            .enumerate()
+        {
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "callback {count}/{channel}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 360);
+    Ok(())
 }
 
 /// Native selection includes disjoint windows, duplicate revisits, initial

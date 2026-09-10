@@ -148,6 +148,38 @@ fn exterior_group_entry_combines_flags_bounds_and_portal_visibility() -> Result<
             query.query_outdoor_group(&root, camera, 0, [0., 0., 1., 1.])?,
             expected
         );
+        assert_eq!(
+            query
+                .visits()
+                .iter()
+                .map(|visit| visit.group)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        if let Some(visit) = query.visits().first() {
+            assert_eq!(
+                visit.fog,
+                if info & 0x10000 != 0 {
+                    solarity_systems::WorldModelSceneFog::Inherited
+                } else {
+                    solarity_systems::WorldModelSceneFog::Outdoor
+                }
+            );
+            super::world_model_visibility::assert_clip_bits(
+                visit.frustum,
+                camera.frustum_for_window([0., 0., 1., 1.])?,
+            );
+        }
+        // Irregular float values distinguish the exact inherited crop from
+        // round-tripping through the recursive clip coordinate conversion.
+        let window = [0.1234567, 0.2345678, 0.8123456, 0.9123456];
+        query.query_outdoor_group(&root, camera, 0, window)?;
+        if let Some(visit) = query.visits().first() {
+            super::world_model_visibility::assert_clip_bits(
+                visit.frustum,
+                camera.frustum_for_window(window)?,
+            );
+        }
         // The group bounds contain the camera, but the off-screen window
         // excludes the portal. Only the entry callback can survive.
         let entry = if expected.is_empty() {
@@ -157,6 +189,14 @@ fn exterior_group_entry_combines_flags_bounds_and_portal_visibility() -> Result<
         };
         assert_eq!(
             query.query_outdoor_group(&root, camera, 0, [3., 3., 4., 4.])?,
+            entry
+        );
+        assert_eq!(
+            query
+                .visits()
+                .iter()
+                .map(|visit| visit.group)
+                .collect::<Vec<_>>(),
             entry
         );
         root.set_transform(Mat4::from_translation(Vec3::splat(1000.)))?;
@@ -169,6 +209,7 @@ fn exterior_group_entry_combines_flags_bounds_and_portal_visibility() -> Result<
             query.query_outdoor_group(&root, camera, 2, [0., 0., 1., 1.]),
             Err(WorldModelVisibilityError::InvalidGroup)
         );
+        assert!(query.visits().is_empty());
     }
     Ok(())
 }

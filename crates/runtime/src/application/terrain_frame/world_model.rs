@@ -6,6 +6,10 @@ mod streaming;
 #[path = "../../../tests/application/world_model_liquid_frame.rs"]
 mod liquid_tests;
 
+#[cfg(test)]
+#[path = "../../../tests/application/world_model_surface_frame.rs"]
+mod surface_tests;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -19,12 +23,16 @@ use solarity_rendering::{
     WorldModelSurfacePassPlan, WorldModelTextureFiltering, WorldModelTextureSet,
     WorldModelTextureSetHandle,
 };
+use solarity_systems::{MovementCollisionBounds, WorldModelBatchVisibilityQuery};
 
 use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
 use crate::application::liquid::{LiquidGpuBatch, LiquidGpuMaterialCache};
 use crate::application::terrain_coordinator::world_model_residency::{
     ResidentWorldModelMaterialTextures, ResidentWorldModelScene, ResidentWorldModelSource,
     ResidentWorldModelTexture,
+};
+use crate::application::terrain_coordinator::{
+    RuntimeWorldModelMovementOwner, WorldModelSceneGroup,
 };
 
 use super::RuntimeTerrainFrameError;
@@ -48,6 +56,7 @@ struct WorldModelGpuSource {
     plan: Arc<WorldModelMeshPlan>,
     mesh: WorldModelMeshHandle,
     draws: Vec<LogicalDrawResource>,
+    draw_bounds: Vec<MovementCollisionBounds>,
     liquids: Vec<LiquidGpuBatch>,
 }
 
@@ -57,7 +66,6 @@ struct WorldModelGpuPlacement {
     source_index: usize,
     owner: WorldModelGpuPlacementOwner,
     plan: PlacedWorldModelDrawPlan,
-    visible_draw_indices: Vec<usize>,
 }
 
 /// Placement identity used to retire only the dynamic transport generation.
@@ -72,11 +80,25 @@ enum WorldModelGpuPlacementOwner {
     },
 }
 
+impl WorldModelGpuPlacementOwner {
+    /// Resolves the same owner identity retained by scene registration.
+    fn scene_owner(self) -> RuntimeWorldModelMovementOwner {
+        match self {
+            Self::Static { unique_id } => RuntimeWorldModelMovementOwner::Static { unique_id },
+            Self::GameObject { identity, .. } => {
+                RuntimeWorldModelMovementOwner::GameObject { identity }
+            }
+        }
+    }
+}
+
 /// Complete resident WMO generation for one terrain tile.
 pub(super) struct WorldModelFrame {
     sources: Vec<Option<WorldModelGpuSource>>,
     liquid_materials: LiquidGpuMaterialCache,
     placements: Vec<WorldModelGpuPlacement>,
+    placement_indices: HashMap<RuntimeWorldModelMovementOwner, usize>,
+    batch_visibility: WorldModelBatchVisibilityQuery,
     prepared_draws: Vec<WorldModelPreparedDraw>,
     filtering: WorldModelTextureFiltering,
     base_mip: WorldModelBaseMip,
@@ -185,7 +207,6 @@ impl WorldModelFrame {
                 owner: WorldModelGpuPlacementOwner::Static {
                     unique_id: placement.unique_id(),
                 },
-                visible_draw_indices: Vec::with_capacity(source.plan.draws().len()),
                 plan,
             });
         }
@@ -203,10 +224,17 @@ impl WorldModelFrame {
                 .map(|draw| draw.pass_count)
                 .sum::<usize>();
         }
+        let placement_indices = placements
+            .iter()
+            .enumerate()
+            .map(|(index, placement)| (placement.owner.scene_owner(), index))
+            .collect();
         Ok(Self {
             sources,
             liquid_materials,
             placements,
+            placement_indices,
+            batch_visibility: WorldModelBatchVisibilityQuery::default(),
             prepared_draws: Vec::with_capacity(prepared_capacity),
             filtering,
             base_mip,
@@ -303,7 +331,6 @@ impl WorldModelFrame {
                     Arc::clone(&gpu.plan),
                     resolved.matrix(),
                 )?,
-                visible_draw_indices: Vec::with_capacity(gpu.plan.draws().len()),
             });
         }
         self.compact_sources(renderer)?;
@@ -330,29 +357,44 @@ impl WorldModelFrame {
         Ok(())
     }
 
-    /// Culls placements and replaces the retained physical packet buffer.
+    /// Replays first-visited groups and their ordered root-local portal clips.
+    /// Returns the final submitted scene group for the native fog-bank carry.
     pub(super) fn prepare_visible_draws(
         &mut self,
         renderer: &mut VulkanRenderer,
-        frustum: WorldFrustum,
+        scene_groups: &[WorldModelSceneGroup],
         environment_emissive: f32,
         fog_color: Vec3,
-    ) -> Result<&[WorldModelPreparedDraw], RuntimeTerrainFrameError> {
+    ) -> Result<(&[WorldModelPreparedDraw], Option<usize>), RuntimeTerrainFrameError> {
         self.prepared_draws.clear();
-        for placement in &mut self.placements {
+        let mut last_group = None;
+        for (scene_index, scene) in scene_groups.iter().enumerate() {
+            let Some(&placement_index) = self.placement_indices.get(&scene.owner) else {
+                continue;
+            };
+            let placement = &self.placements[placement_index];
             if !placement.placement_valid {
                 continue;
             }
-            placement
-                .plan
-                .select_visible_draws(frustum, &mut placement.visible_draw_indices)?;
             let source = self.sources[placement.source_index].as_ref().ok_or(
                 RuntimeTerrainFrameError::WorldModelSourceIndex {
                     source_index: placement.source_index,
                     source_count: self.sources.len(),
                 },
             )?;
-            for draw_index in placement.visible_draw_indices.iter().copied() {
+            let group = source.plan.groups().get(scene.group).ok_or(
+                RuntimeTerrainFrameError::WorldModelGroupIndex {
+                    group_index: scene.group,
+                    group_count: source.plan.groups().len(),
+                },
+            )?;
+            let range = group.draw_range();
+            last_group = Some(scene_index);
+            for &batch in self
+                .batch_visibility
+                .query(&source.draw_bounds[range.clone()], &scene.frusta)
+            {
+                let draw_index = range.start + batch;
                 let resources =
                     source
                         .draws
@@ -381,7 +423,7 @@ impl WorldModelFrame {
                 }
             }
         }
-        Ok(&self.prepared_draws)
+        Ok((&self.prepared_draws, last_group))
     }
 
     /// Returns the number of independently transformed MODF owners.
@@ -456,12 +498,24 @@ fn prepare_gpu_source(
         renderer.prepare_world_model_texture_sets(&texture_requests)?
     };
     let draws = prepare_draw_resources(renderer, &plan, &texture_sets)?;
+    let draw_bounds = plan
+        .draws()
+        .iter()
+        .map(|draw| {
+            let [minimum, maximum] = draw
+                .bounds()
+                .map(|point| Vec3::from_array(point.map(f32::from)));
+            MovementCollisionBounds::new(minimum, maximum)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(solarity_systems::WorldModelVisibilityError::from)?;
     let liquids = liquid_materials.prepare_world_model(renderer, source.liquids())?;
     Ok(WorldModelGpuSource {
         model: Arc::clone(source.model()),
         plan,
         mesh,
         draws,
+        draw_bounds,
         liquids,
     })
 }

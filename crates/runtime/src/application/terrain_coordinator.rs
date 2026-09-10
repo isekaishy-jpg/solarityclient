@@ -37,6 +37,7 @@ pub(in crate::application) mod world_model_residency;
 use ground_detail::{GroundDetailAssetCache, ResidentGroundDetailTile};
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
 pub(in crate::application) use movement::UnitWorldModelLocation;
+pub(in crate::application) use movement::WorldModelSceneGroup;
 use movement::{ResidentMovementReferences, ResidentMovementScene};
 pub use movement::{
     RuntimeMovementGeometry, RuntimeMovementGeometryFailure, RuntimeMovementOwner,

@@ -91,7 +91,24 @@ impl WorldModelMeshPlan {
             for index in group.indices() {
                 indices.push(first_vertex + u32::from(*index));
             }
-            for (batch_index, batch) in group.batches().iter().copied().enumerate() {
+            // 7D8379 copies MOGP's exterior count to group+60. Without MOCV
+            // (7D7CE1, group flag 4), 7ABF50 selects 7AC6A0 and that count.
+            // MOCV and root flag 2's MapObjU dispatch use the complete MOBA
+            // count at group+16C instead (7AC9F0/7A9380).
+            let batch_count = if model.flags() & 2 == 0 && group.flags() & 4 == 0 {
+                usize::from(group.batch_counts()[2])
+            } else {
+                group.batches().len()
+            };
+            if batch_count > group.batches().len() {
+                return Err(WorldModelMeshPlanError::DrawRange {
+                    path: model.path().clone(),
+                    group_index: group.index(),
+                    batch_index: batch_count,
+                });
+            }
+            let first_draw = draws.len();
+            for (batch_index, batch) in group.batches()[..batch_count].iter().copied().enumerate() {
                 let batch_first =
                     first_index
                         .checked_add(batch.first_index())
@@ -132,6 +149,7 @@ impl WorldModelMeshPlan {
                 index_count,
                 group.flags(),
                 group.bounds(),
+                [first_draw, draws.len()],
             ));
         }
         Ok(Self {

@@ -81,7 +81,6 @@ impl WorldModelFrame {
                         unique_id: placement.unique_id(),
                     },
                     plan,
-                    visible_draw_indices: Vec::with_capacity(gpu.plan.draws().len()),
                 });
             }
         }
@@ -127,6 +126,13 @@ impl WorldModelFrame {
         for placement in &mut self.placements {
             placement.source_index = remap[placement.source_index];
         }
+        self.placement_indices.clear();
+        self.placement_indices.extend(
+            self.placements
+                .iter()
+                .enumerate()
+                .map(|(index, placement)| (placement.owner.scene_owner(), index)),
+        );
         Ok(())
     }
 }

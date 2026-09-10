@@ -9,10 +9,101 @@ use solarity_systems::{
 };
 
 use super::{
-    MovementCollisionBounds, RuntimeWorldModelMovementOwner, UnitSceneAdmission,
-    WorldSceneCameraFrame, WorldSceneDepthFrame, camera, floor_root, owner, registration,
-    scene_root, unit_bounds, unit_query,
+    MovementCollisionBounds, RuntimeWorldModelMovementOwner, WorldSceneAdmission,
+    WorldSceneCameraFrame, WorldSceneDepthFrame, camera, floor_root, owner, record_outdoor_roots,
+    registration, scene_root, unit_bounds, unit_query,
 };
+
+/// Actual 792AD0/792BD0/79A160 orders mixed roots before portal callbacks.
+#[test]
+fn outdoor_graphics_group_order_matches_original_mixed_depth_lists() -> Result<(), Box<dyn Error>> {
+    let mut lines = include_str!("../fixtures/world_model_outdoor_order_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'));
+    let templates = [0, 8, 0x10000, 0x10008].map(|flags| floor_root(flags, 8));
+    let templates = templates.into_iter().collect::<Result<Vec<_>, _>>()?;
+    let eye = Vec3::new(-30., -1., 1.);
+    let camera = WorldSceneCameraFrame::perspective(
+        eye,
+        eye + Vec3::X,
+        Vec3::X,
+        Vec3::Z,
+        1.,
+        1.5,
+        [0.1, 5000.],
+    )?;
+    let depth = WorldSceneDepthFrame::new(eye, eye + Vec3::X)?;
+    let mut scene = WorldSceneAdmission::default();
+    let mut cases = 0;
+    while let Some(line) = lines.next() {
+        let row = line.split_ascii_whitespace().collect::<Vec<_>>();
+        assert_eq!(row[0], "scene");
+        let count = row[1].parse::<usize>()?;
+        let mut roots = Vec::new();
+        for index in 0..count {
+            let row = lines
+                .next()
+                .ok_or("missing entry")?
+                .split_ascii_whitespace()
+                .collect::<Vec<_>>();
+            assert_eq!(row[0], "entry");
+            let flags = row[2].parse::<u32>()?;
+            let template = [0, 8, 0x10000, 0x10008]
+                .iter()
+                .position(|&value| value == flags)
+                .ok_or("unknown fixture flags")?;
+            let owner = if row[1] == "1" {
+                moving_owner(index as u64 + 90)?
+            } else {
+                owner(index as u32 + 90)
+            };
+            let root = super::PlacedWorldModelCollision::prepare_transform(
+                templates[template].model().clone(),
+                Mat4::from_translation(Vec3::X * float(row[3])?),
+            )?;
+            roots.push((owner, root));
+        }
+        let row = lines
+            .next()
+            .ok_or("missing visits")?
+            .split_ascii_whitespace()
+            .collect::<Vec<_>>();
+        assert_eq!(row[0], "visits");
+        let expected = row[2..]
+            .iter()
+            .map(|value| value.parse::<usize>())
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(expected.len(), row[1].parse::<usize>()?);
+        scene.graphics.begin();
+        record_outdoor_roots(
+            &mut scene,
+            &roots
+                .iter()
+                .map(|(owner, root)| (*owner, root))
+                .collect::<Vec<_>>(),
+            camera,
+            depth,
+            [0., 0., 1., 1.],
+        )?;
+        let actual = scene
+            .graphics
+            .groups()
+            .iter()
+            .map(|group| {
+                assert_eq!(group.group, 0);
+                assert_eq!(group.frusta.len(), 1);
+                roots
+                    .iter()
+                    .position(|(owner, _)| *owner == group.owner)
+                    .ok_or("unknown graphics owner")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(actual, expected, "native case {cases}");
+        cases += 1;
+    }
+    assert_eq!(cases, 24);
+    Ok(())
+}
 
 /// 792BD0 stops later moving roots only after the full-camera envelope filter.
 #[test]
@@ -45,15 +136,14 @@ fn moving_depth_list_preserves_early_return_and_initial_envelope() -> Result<(),
         (owner(18), 0., true),
     ] {
         distant.set_transform(Mat4::from_translation(Vec3::new(3000., y, 0.)))?;
-        let mut scene = UnitSceneAdmission::default();
-        for (root, owner) in [(&distant, first_owner), (&entrance, moving)] {
-            if scene
-                .record_outdoor_root(root, camera, owner, None, depth, [0., 0., 1., 1.])?
-                .is_break()
-            {
-                break;
-            }
-        }
+        let mut scene = WorldSceneAdmission::default();
+        record_outdoor_roots(
+            &mut scene,
+            &[(first_owner, &distant), (moving, &entrance)],
+            camera,
+            depth,
+            [0., 0., 1., 1.],
+        )?;
         assert_eq!(
             scene.admits_registration(selection, unit_bounds()?)?,
             admitted
@@ -85,7 +175,7 @@ fn indoor_moving_overlap_admits_exterior_registered_units() -> Result<(), Box<dy
             .is_interior()
     );
     for overlap in [false, true] {
-        let mut scene = UnitSceneAdmission::default();
+        let mut scene = WorldSceneAdmission::default();
         if overlap {
             scene.record_camera_root(&primary_root, camera()?, registration(primary), primary)?;
         }
@@ -128,7 +218,7 @@ fn moving_overlap_callbacks_admit_later_roots_in_native_order() -> Result<(), Bo
         1
     );
     for forward in [false, true] {
-        let mut scene = UnitSceneAdmission::default();
+        let mut scene = WorldSceneAdmission::default();
         scene.record_camera_root(&primary_root, camera()?, registration(primary), primary)?;
         let mut roots = [(&first_root, first), (&second_root, second)];
         if !forward {
@@ -164,7 +254,7 @@ fn moving_overlap_gate_matches_original_client() -> Result<(), Box<dyn Error>> {
             Vec3::from_slice(&coordinates[..3]),
             Vec3::from_slice(&coordinates[3..6]),
         )?;
-        let mut scene = UnitSceneAdmission::default();
+        let mut scene = WorldSceneAdmission::default();
         if fields[13] == "1" {
             scene.visible_bounds.insert(
                 (owner(1), 0),

@@ -16,7 +16,13 @@ import wmo_registration_oracle as n
 from liquid_material_oracle import return_value
 
 
-def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, scene_events=False, starts=None, camera_root=True, initial_window=None):
+def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, scene_events=False, starts=None, camera_root=True, initial_window=None, scene_corners=None, scene_window=None):
+    """Optionally retain complete native clip-stack stores at group callbacks.
+
+    Supplying scene corners executes the original push/pop/crop operations.
+    An optional normalized scene window models 7B3A10's inherited outdoor clip;
+    without it, initial callbacks inherit the unchanged 984240 camera frustum.
+    """
     u = n.emulator()
     info_flags = flags if info_flags is None else info_flags
     root, info, portals, refs, groups, window = [n.HEAP + i * 0x2000 for i in range(6)]
@@ -42,6 +48,14 @@ def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, sce
             reference += 1
     for index, (_, _, plane, _) in enumerate(edges):
         u.mem_write(portals + index * 20, struct.pack('<HH4f', 0, 4, *plane))
+    if scene_corners is not None:
+        n.write_words(u, 0xcd8798, 0)
+        n.write_floats(u, 0xcdb108, scene_corners)
+        u.reg_write(UC_X86_REG_ECX, 0xcdb168)
+        n.invoke(u, 0x984240, [0xcdb108])
+        if scene_window is not None:
+            n.write_floats(u, window + 0x100, scene_window)
+            n.invoke(u, 0x790e20, [0xcdb108, window + 0x100])
     visits = []
     events = []
 
@@ -64,11 +78,15 @@ def capture(flags, edges, start, point, maximum, indoor, info_flags=None, *, sce
             # Group callback is invoked before this group's portal loop.
             frame = u.reg_read(UC_X86_REG_EBP)
             group, _, clip, depth, _ = n.read_words(u, frame + 8, 5)
-            visits.append((group, n.read_words(u, 0xcfbeb8, 1)[0], depth,
-                           *n.read_words(u, clip, 4)))
+            visit = (group, n.read_words(u, 0xcfbeb8, 1)[0], depth,
+                     *n.read_words(u, clip, 4))
+            if scene_corners is not None:
+                current = 0xcdb168 + 0xfc * n.read_words(u, 0xcd8798, 1)[0]
+                visit += n.read_words(u, current + 0x60, 24) + n.read_words(u, current, 24)
+            visits.append(visit)
             events.append(('group', *visits[-1]))
             ret(u)
-        elif address in (0x791950, 0x78fb50, 0x790e20):
+        elif scene_corners is None and address in (0x791950, 0x78fb50, 0x790e20):
             ret(u)
         elif address in (0x794190, 0x6156c0):
             # Outdoor-root traversal clears graphics occluder/exclusion lists.
