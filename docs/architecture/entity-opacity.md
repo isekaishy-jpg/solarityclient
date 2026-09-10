@@ -212,8 +212,9 @@ Remaining integration and validation are:
 
 ## Testing packages
 
-Build **000093** (`0.0.3a`) includes the vehicle creation state and resolved seat
-attachment input to entry opacity, together with unit passenger movement frames.
+Build **000094** (`0.0.3a`) includes the vehicle creation state and resolved seat
+attachment input to entry opacity, together with unit passenger movement frames
+and settled animated seats with inherited visibility, lighting and shadows.
 Its source revision and verified executable
 hash are recorded in [vehicle presentation](vehicle-presentation.md#testing-package).
 

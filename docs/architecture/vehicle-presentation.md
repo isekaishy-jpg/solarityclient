@@ -155,12 +155,13 @@ tests ignored. The locked asset and systems suites pass as well, including the
 
 ## Testing package
 
-Build **000093** (`0.0.3a`) installs source revision
-`c28ec3788954b241b145f7fb9329ad76330e0c41` through the persistent Testing launcher.
+Build **000094** (`0.0.3a`) installs source revision
+`0456de59f8e5d388903f7a78689063e8b8b98dca` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`4d2672b063bec0a00052fa289d1295a1ce4d995c723ec18b4e8ae0a9b67462c4`.
+`ea1da59b85abbf8909b43ef94c86221d4c46f61339c42be2a6e294622972a1f5`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
-passenger frames and final local/remote world projection. The animated-seat,
-transfer and special-camera work above remains open.
+passenger frames, final local/remote world projection and settled animated
+seats with mounted riders and shared lighting/shadow/sorting ancestry.
+Boarding/exit transitions, transfer lifecycle and special-camera work remain open.
