@@ -1,5 +1,8 @@
 //! External stock-compatibility test modules for this crate.
 
+#[path = "stock_seed/world_model_batch_visibility.rs"]
+mod world_model_batch_visibility;
+
 #[path = "stock_seed/water_ripple.rs"]
 mod water_ripple;
 

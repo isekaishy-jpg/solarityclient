@@ -1,9 +1,11 @@
 //! Native 7AC060 traversal after each portal's polygon has been projected.
 
+mod batch;
 mod camera_scene;
 mod projection;
 mod query;
 
+pub use batch::WorldModelBatchVisibilityQuery;
 pub use camera_scene::WorldModelCameraSceneQuery;
 pub use projection::{
     WorldModelExteriorPortalWindow, WorldModelPortalProjectionFrame, WorldModelPortalProjector,

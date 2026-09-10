@@ -185,3 +185,14 @@ python tools/ghidra/combat_classification_oracle.py <path-to-Wow.exe> target/com
 python tools/ghidra/environmental_tint_oracle.py <path-to-Wow.exe> target/environmental_tint_native.txt
 python tools/ghidra/environmental_sound_oracle.py <path-to-Wow.exe> target/environmental_sound_native.txt
 ```
+
+## WMO local batch visibility
+
+The following capture executes the native corner transform and normal renderer
+batch-selection loop, with GPU submission skipped after native acceptance.
+[The visibility boundary](../../docs/architecture/world-model-batch-visibility.md)
+records the covered instructions and remaining runtime integration.
+
+```text
+python tools/ghidra/world_model_batch_visibility_oracle.py <path-to-Wow.exe> crates/systems/tests/fixtures/world_scene_projection_native.txt target/world_model_local_frusta_native.txt target/world_model_batch_visibility_native.txt
+```

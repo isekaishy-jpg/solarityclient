@@ -1,9 +1,9 @@
 //! Stock world bounds frusta, separate from fixed camera portal clipping.
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 use super::super::frame::frustum_planes;
-use super::bounds;
+use super::{bounds, matrix};
 use crate::collision::{MovementCollisionBounds, WorldModelVisibilityError};
 
 /// Eight world corners and six inward planes for native scene bounds tests.
@@ -14,6 +14,23 @@ pub struct WorldSceneFrustum {
 }
 
 impl WorldSceneFrustum {
+    /// Transforms a stored scene clip into a WMO root's local coordinates.
+    ///
+    /// 78FB00/983F40 transform all eight corners through 4C2300, then rebuild
+    /// the six planes. The affine point operation retains extended products
+    /// until each component store; transforming planes or using an f32 matrix
+    /// multiply changes native batch-boundary decisions. No W divide occurs.
+    ///
+    /// # Errors
+    /// Rejects non-finite transforms and degenerate or non-finite result planes.
+    pub fn transformed(self, transform: Mat4) -> Result<Self, WorldModelVisibilityError> {
+        if !transform.is_finite() {
+            return Err(WorldModelVisibilityError::NonFiniteCoordinates);
+        }
+        let transform = transform.to_cols_array();
+        Self::from_corners(self.corners.map(|corner| matrix::point(transform, corner)))
+    }
+
     /// Constructs 984240's scene planes, including the mirrored near face.
     pub(super) fn from_corners(corners: [Vec3; 8]) -> Result<Self, WorldModelVisibilityError> {
         let faces = frustum_planes(corners)?;
