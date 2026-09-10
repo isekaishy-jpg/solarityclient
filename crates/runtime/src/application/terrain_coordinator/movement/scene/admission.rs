@@ -171,7 +171,7 @@ impl WorldSceneAdmission {
         let count = 1 + usize::from(registration.secondary_group.is_some());
         self.query
             .query_camera_root(root, camera, &initial[..count])?;
-        self.record_group_callbacks(root, registration.owner, Some(primary))?;
+        self.record_group_callbacks(root, camera, registration.owner, Some(primary))?;
         Ok(self.query.exterior_window())
     }
 
@@ -220,7 +220,17 @@ impl WorldSceneAdmission {
     ) -> Result<(), RuntimeMovementRegistrationError> {
         self.query
             .query_outdoor_group(root, camera, group, screen_window)?;
-        self.record_group_callbacks(root, owner, primary)
+        self.record_group_callbacks(root, camera, owner, primary)?;
+        let depth = camera.depth_frame()?;
+        let frustum = camera.frustum_for_window(screen_window)?;
+        let bounds = root.scene_group_bounds(group)?;
+        if frustum.intersects_bounds(MovementCollisionBounds::new(bounds[0], bounds[1])?)
+            && let Some(bin) = depth.depth_bin(bounds)?
+        {
+            self.graphics
+                .record_outdoor_doodads(root, owner, group, bin, (depth, frustum));
+        }
+        Ok(())
     }
 
     /// 799F80 visits moving exterior entries in original root/group list order.
@@ -245,7 +255,8 @@ impl WorldSceneAdmission {
             }
             self.query
                 .query_outdoor_group(root, camera, group, [0., 0., 1., 1.])?;
-            self.record_group_callbacks(root, owner, Some(primary))?;
+            self.record_group_callbacks(root, camera, owner, Some(primary))?;
+            self.graphics.record_direct_doodads(owner, group);
             self.overlap_groups.insert((owner, group));
         }
         Ok(())
@@ -275,18 +286,28 @@ impl WorldSceneAdmission {
     fn record_group_callbacks(
         &mut self,
         root: &PlacedWorldModelCollision,
+        camera: WorldSceneCameraFrame,
         owner: RuntimeWorldModelMovementOwner,
         primary: Option<RuntimeWorldModelMovementOwner>,
     ) -> Result<(), RuntimeMovementRegistrationError> {
+        let depth = camera.depth_frame()?;
         for &visit in self.query.visits() {
             let group = visit.group;
-            self.graphics.record(root, owner, visit)?;
             let [minimum, maximum] = root.scene_group_bounds(group)?;
+            let models_allowed =
+                Some(owner) == primary || root.model().group_info()[group].flags() & 0x10008 == 0;
+            self.graphics.record(
+                root,
+                owner,
+                visit,
+                models_allowed,
+                depth.leading_depth([minimum, maximum])?,
+            )?;
             self.visible_bounds.insert(
                 (owner, group),
                 MovementCollisionBounds::new(minimum, maximum)?,
             );
-            if Some(owner) == primary || root.model().group_info()[group].flags() & 0x10008 == 0 {
+            if models_allowed {
                 self.groups.insert((owner, group));
             }
         }
@@ -325,6 +346,38 @@ impl WorldSceneAdmission {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Supplies 79A160's exterior-group references in increasing depth order.
+    pub(in crate::application) fn world_model_outdoor_doodads(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            WorldSceneDepthFrame,
+            solarity_systems::WorldSceneFrustum,
+            u8,
+            RuntimeWorldModelMovementOwner,
+            &[u16],
+        ),
+    > {
+        self.active
+            .as_ref()
+            .into_iter()
+            .flat_map(|active| active.movement.scene.graphics.outdoor_doodads())
+    }
+    /// Supplies native ordered WMO model callbacks after scene preparation.
+    pub(in crate::application) fn visit_world_model_doodads(
+        &self,
+        visitor: impl FnMut(
+            RuntimeWorldModelMovementOwner,
+            &[u16],
+            &[solarity_systems::WorldSceneFrustum],
+            f32,
+            bool,
+        ),
+    ) {
+        if let Some(active) = &self.active {
+            active.movement.scene.graphics.visit_doodads(visitor);
+        }
+    }
     /// Supplies the current ordered graphics groups after scene preparation.
     pub(in crate::application) fn world_model_scene_groups(&self) -> &[WorldModelSceneGroup] {
         self.active

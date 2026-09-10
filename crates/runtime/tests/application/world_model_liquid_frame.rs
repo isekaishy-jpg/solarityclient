@@ -123,6 +123,7 @@ fn replicated_water(interior: bool) -> Result<(), Box<dyn Error>> {
             owner: placement.owner.scene_owner(),
             group: 1,
             indoor_fog: false,
+            doodads: Default::default(),
             // Liquid admission does not require a surviving MOBA portal clip.
             frusta: Vec::new(),
         })

@@ -96,8 +96,95 @@ fn secondary_camera_root_excludes_exterior_group_unit_callbacks() -> Result<(), 
                 scene.admits_registration(selection, unit_bounds()?)?,
                 primary == selected || flags == 0
             );
+            let mut doodad_calls = 0;
+            scene.graphics.visit_doodads(|owner, _, _, _, _| {
+                assert_eq!(owner, selected);
+                doodad_calls += 1;
+            });
+            assert_eq!(doodad_calls, usize::from(primary == selected || flags == 0));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn moving_doodad_callbacks_retain_their_earlier_fog_and_clip_state() -> Result<(), Box<dyn Error>> {
+    use solarity_systems::{WorldModelSceneFog, WorldModelSceneGroupVisit};
+    let root = floor_root(0, 0)?;
+    let camera = camera()?;
+    let left = camera.frustum_for_window([0., 0., 1., 0.5])?;
+    let right = camera.frustum_for_window([0., 0.5, 1., 1.])?;
+    let mut scene = WorldSceneAdmission::default();
+    let primary = owner(7);
+    let moving = owner(90);
+    scene.graphics.record(
+        &root,
+        primary,
+        WorldModelSceneGroupVisit {
+            group: 0,
+            fog: WorldModelSceneFog::Indoor,
+            frustum: camera.frustum(),
+        },
+        true,
+        10.,
+    )?;
+    scene.graphics.record(
+        &root,
+        moving,
+        WorldModelSceneGroupVisit {
+            group: 0,
+            fog: WorldModelSceneFog::Outdoor,
+            frustum: right,
+        },
+        false,
+        7.,
+    )?;
+    scene.graphics.record_direct_doodads(moving, 0);
+    scene.graphics.record(
+        &root,
+        moving,
+        WorldModelSceneGroupVisit {
+            group: 0,
+            fog: WorldModelSceneFog::Indoor,
+            frustum: left,
+        },
+        false,
+        99.,
+    )?;
+    scene.graphics.record_direct_doodads(moving, 0);
+    let mut calls = Vec::new();
+    scene
+        .graphics
+        .visit_doodads(|owner, _, clips, depth, fog| calls.push((owner, clips.len(), depth, fog)));
+    assert_eq!(
+        calls,
+        [
+            (moving, 1, 7., false),
+            (moving, 2, 7., true),
+            (primary, 1, 10., true)
+        ]
+    );
+    scene.graphics.begin();
+    calls.clear();
+    scene
+        .graphics
+        .visit_doodads(|owner, _, clips, depth, fog| calls.push((owner, clips.len(), depth, fog)));
+    assert!(calls.is_empty());
+    scene.graphics.record(
+        &root,
+        owner(91),
+        WorldModelSceneGroupVisit {
+            group: 0,
+            fog: WorldModelSceneFog::Inherited,
+            frustum: left,
+        },
+        true,
+        -1.,
+    )?;
+    scene
+        .graphics
+        .visit_doodads(|owner, _, clips, depth, fog| calls.push((owner, clips.len(), depth, fog)));
+    assert_eq!(calls, [(owner(91), 1, -1., true)]);
     Ok(())
 }
 

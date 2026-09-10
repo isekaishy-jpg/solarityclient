@@ -10,6 +10,7 @@ mod unit_effect_model_tests;
 
 mod character_residency;
 mod distance;
+mod doodad_scene;
 mod entity_lighting;
 mod game_objects;
 mod playback;
@@ -183,6 +184,8 @@ struct M2GpuPlacement {
     sound_lifetime: std::cell::OnceCell<Rc<sound::M2SoundKind>>,
     light_lifetime: std::cell::OnceCell<Rc<()>>,
     placement_valid: bool,
+    /// CMapObj +0x0c fog bit survives exterior submissions without a bank write.
+    scene_indoor_fog: bool,
     world_model_state: Option<Rc<GameObjectWorldModelState>>,
     source_index: usize,
     /// Placement-local transform retained across animated parent resolution.
@@ -738,6 +741,7 @@ pub(in crate::application) struct M2Frame {
     transparent_elements: Vec<M2TransparentElement>,
     placement_topology_dirty: bool,
     placement_visibility: visibility::M2PlacementVisibility,
+    doodad_scene: doodad_scene::M2DoodadScene,
     /// Stock environmentDetail is clamped by its 78DC60 CVar callback.
     pub(super) environment_detail: f32,
     particle_vertices: Vec<M2ParticleRenderVertex>,
@@ -834,6 +838,7 @@ impl M2Frame {
             transparent_elements: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
+            doodad_scene: doodad_scene::M2DoodadScene::default(),
             environment_detail: 1.0,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
@@ -932,6 +937,7 @@ impl M2Frame {
                 light_lifetime: Default::default(),
                 entity_lighting: Default::default(),
                 placement_valid: true,
+                scene_indoor_fog: false,
                 world_model_state: None,
                 source_index: 0,
                 local_transform: transform,
@@ -968,6 +974,7 @@ impl M2Frame {
             transparent_elements: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
+            doodad_scene: doodad_scene::M2DoodadScene::default(),
             environment_detail: 1.0,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
@@ -2092,13 +2099,14 @@ impl M2Frame {
         mut spatial_lighting: Option<(
             &mut crate::application::terrain_coordinator::RuntimeTerrainCoordinator,
             solarity_systems::WorldEntityLightEnvironment,
+            glam::Vec3,
         )>,
         shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         let mut frame_profile = RuntimeFrameProfile::new("M2 frame preparation");
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
-        if let Some((terrain, _)) = spatial_lighting.as_mut() {
+        if let Some((terrain, ..)) = spatial_lighting.as_mut() {
             terrain.prepare_world_scene(camera)?;
         }
         if let Some(game_objects) = game_objects {
@@ -2227,7 +2235,7 @@ impl M2Frame {
             let placement = &mut self.placements[index];
             if let Some(animation) = &placement.unit_animation {
                 if let Some(registration) = placement.scene_registration
-                    && let Some((terrain, _)) = spatial_lighting.as_mut()
+                    && let Some((terrain, ..)) = spatial_lighting.as_mut()
                     && terrain.unit_scene_admits(registration.position, registration.bounds)?
                 {
                     animation.admit_scene_collision();
@@ -2293,6 +2301,17 @@ impl M2Frame {
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
         frame_profile.mark("dynamic models");
+        if let Some((terrain, ..)) = spatial_lighting.as_ref() {
+            self.doodad_scene.prepare(
+                terrain,
+                &self.placement_visibility,
+                &mut self.placements,
+                &self.sources,
+                camera.camera().position(),
+                self.environment_detail,
+            )?;
+        }
+        frame_profile.mark("WMO doodad admission");
         let effect_start = self.placement_visibility.effect_start();
         let mut next_placement = 0;
         loop {
@@ -2314,16 +2333,35 @@ impl M2Frame {
             let publishes_lights =
                 world_lighting.is_some() && self.placement_visibility.has_lights(placement_index);
             let bounds = self.placement_visibility.bounds()[placement_index];
-            let scenery_opacity = self.placement_visibility.opacity(
-                placement_index,
-                camera.camera().position(),
-                self.environment_detail,
-            );
+            let doodad_scene_active = spatial_lighting.is_some()
+                && doodad_scene::owner_key(self.placements[placement_index].owner).is_some();
+            let doodad_fog = self.doodad_scene.fog_bank(placement_index);
+            let doodad_visible = !doodad_scene_active || doodad_fog.is_some();
+            if !doodad_visible && !publishes_lights {
+                continue;
+            }
+            let placement_fog_color = if doodad_scene_active && doodad_fog == Some(false) {
+                spatial_lighting
+                    .as_ref()
+                    .map_or(fog_color, |(_, _, ordinary)| *ordinary)
+            } else {
+                fog_color
+            };
+            let scenery_opacity = if doodad_scene_active {
+                self.doodad_scene.opacity(placement_index)
+            } else {
+                self.placement_visibility.opacity(
+                    placement_index,
+                    camera.camera().position(),
+                    self.environment_detail,
+                )
+            };
             if scenery_opacity == 0.0 && !publishes_lights {
                 continue;
             }
             if let Some((center, radius)) = bounds
                 && !publishes_lights
+                && !doodad_scene_active
                 && !frustum.contains_sphere(center, radius)?
             {
                 continue;
@@ -2447,6 +2485,7 @@ impl M2Frame {
                 owner,
                 M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
             ) && !publishes_lights
+                && !doodad_scene_active
             {
                 let (center, radius) =
                     placement_bounding_sphere(&source.model, placement.transform);
@@ -2743,7 +2782,7 @@ impl M2Frame {
                 let center = placement.transform.w_axis.truncate();
                 let parent = self.placement_visibility.light_parent(placement_index);
                 let callback = if parent.is_none()
-                    && let Some((terrain, environment)) = spatial_lighting.as_mut()
+                    && let Some((terrain, environment, _)) = spatial_lighting.as_mut()
                 {
                     placement.entity_lighting.sample(
                         placement.owner,
@@ -2762,6 +2801,7 @@ impl M2Frame {
                     parent,
                     center,
                     callback,
+                    doodad_scene_active.then_some(placement_fog_color),
                 )?)
             } else {
                 None
@@ -2798,7 +2838,12 @@ impl M2Frame {
                 self.bone_transforms
                     .extend_from_slice(bone_pose.transforms());
             }
-            if !static_visibility_resolved || (publishes_lights && placement.unit_effect.is_none())
+            if doodad_scene_active {
+                if !doodad_visible || scenery_opacity == 0.0 {
+                    continue;
+                }
+            } else if !static_visibility_resolved
+                || (publishes_lights && placement.unit_effect.is_none())
             {
                 let (center, radius) =
                     placement_bounding_sphere(&source.model, placement.transform);
@@ -3022,7 +3067,7 @@ impl M2Frame {
                         pose.texture_transforms(),
                         model_view,
                         pose.mesh_color() * instance_color,
-                        fog_color.extend(1.0),
+                        placement_fog_color.extend(1.0),
                         glam::Vec4::new(
                             material_state.alpha_reference(instance_color.w),
                             material_state.fog_mode().shader_code(),
@@ -3608,6 +3653,7 @@ fn m2_gpu_placement(
         light_lifetime: Default::default(),
         entity_lighting: Default::default(),
         placement_valid: true,
+        scene_indoor_fog: false,
         world_model_state: None,
         source_index,
         local_transform: transform,

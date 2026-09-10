@@ -900,7 +900,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
             None,
             None,
             None,
-            Some((&mut terrain, environment)),
+            Some((&mut terrain, environment, Vec3::ZERO)),
             None,
         )?;
         assert!(

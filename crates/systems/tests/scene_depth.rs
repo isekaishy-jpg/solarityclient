@@ -5,6 +5,28 @@ use solarity_systems::WorldSceneDepthFrame;
 use std::{error::Error, str::SplitWhitespace};
 
 #[test]
+fn world_model_group_leading_depth_matches_original_store() -> Result<(), Box<dyn Error>> {
+    let mut count = 0;
+    for line in include_str!("fixtures/world_model_doodad_depth_native.txt")
+        .lines()
+        .filter_map(|line| line.strip_prefix("depth "))
+    {
+        let mut fields = line.split_whitespace();
+        let frame = WorldSceneDepthFrame::new(vector(&mut fields)?, vector(&mut fields)?)?;
+        let bounds = [vector(&mut fields)?, vector(&mut fields)?];
+        let expected = u32::from_str_radix(fields.next().ok_or("missing depth")?, 16)?;
+        assert_eq!(
+            frame.leading_depth(bounds)?.to_bits(),
+            expected,
+            "case {count}"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 489);
+    Ok(())
+}
+
+#[test]
 fn outdoor_m2_depth_lists_match_unhooked_original() -> Result<(), Box<dyn Error>> {
     for (index, line) in include_str!("fixtures/scene-depth-native.txt")
         .lines()

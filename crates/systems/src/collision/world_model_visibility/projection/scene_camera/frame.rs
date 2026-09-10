@@ -97,6 +97,14 @@ impl WorldSceneCameraFrame {
         self.frustum
     }
 
+    /// Builds the shared full-view group and horizontal outdoor depth planes.
+    ///
+    /// # Errors
+    /// Rejects coincident eye and target positions.
+    pub fn depth_frame(self) -> Result<crate::WorldSceneDepthFrame, crate::WorldSceneDepthError> {
+        crate::WorldSceneDepthFrame::new(self.eye, self.target)
+    }
+
     /// Returns 795400/984930's full-camera box used before scene list insertion.
     /// Strict comparisons preserve the first corner's signed-zero ties.
     #[must_use]

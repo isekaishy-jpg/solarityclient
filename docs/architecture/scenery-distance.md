@@ -2,9 +2,11 @@
 
 Build 12340's `CMapObj` scene submission at `00791CB0` fades and rejects whole
 M2 placements. It does not select another SKIN companion. Terrain-owned MDDF
-and static WMO MODD placements now use this policy before mesh/effect packet
-assembly. Replicated units, GameObjects, attached equipment, Glue models, and
-replicated WMO attachments retain their separate visibility paths.
+and WMO MODD placements now use this policy before mesh/effect packet assembly.
+Replicated WMO attachments use their current parent transform through the
+[WMO doodad admission path](world-model-doodad-visibility.md). Replicated units,
+ordinary GameObjects, attached equipment and Glue models retain their separate
+visibility paths.
 
 `007BDB10` reads the M2 render box through `004F5E20`, transforms its bounds
 with `007F9430`, and classifies the largest world-space box dimension. Equality
@@ -43,5 +45,5 @@ cover category boundaries, rotated/translated bounds, all three detail settings,
 fade endpoints and opacity snaps. The runtime regression compares resulting
 opacity, including exact visible/hidden snaps. No test requires a local client.
 
-The broader world renderer still needs independent work on distant terrain,
-ground-effect doodads, indoor fog-bank routing, shadows, and streaming stalls.
+The broader world renderer still needs independent work on far WMO placements,
+other entity fog consumers, shadows and streaming costs.

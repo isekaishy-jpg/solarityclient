@@ -87,7 +87,7 @@ all 192 local corner/plane float stores and all 42 selected batches match
 the public Systems queries bit for bit. The changed city silhouette in
 the runtime capture agrees with these native decisions. The older image,
 which drew additional interior groups, is not the reference for visibility.
-Attached effects can still remain visible through the separate doodad path.
+That installed check preceded integration of the separate attached-doodad path.
 
 Reproduce this bounded installed-data check with:
 
@@ -106,7 +106,7 @@ of camera registration, terrain occlusion, doodad visibility, or shaders.
 
 WMO liquids now consume these admitted groups and their fog flags; see
 [liquid admission and fog](liquid-rendering.md#group-admission-and-fog).
-Attached doodad visibility still needs its own integration.
+Attached doodads now use their separate [native admission paths](world-model-doodad-visibility.md).
 No runtime FPS improvement or complete WMO visibility parity is claimed by
 these selection fixtures.
 
@@ -134,4 +134,5 @@ each material's selected color bits, and checks all 64 resulting frames while
 the groups switch fog banks. It also retains the existing owner/portal ordering,
 hidden-region, and next-frame invalidation checks. These controlled fixtures
 establish the surface connection; they do not replace combined live-world
-comparisons or establish the separate M2 doodad fog consumer.
+comparisons. The separate [M2 doodad consumer](world-model-doodad-visibility.md)
+has its own native and GPU coverage.

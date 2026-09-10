@@ -131,6 +131,13 @@ impl M2SceneUniform {
         self
     }
 
+    /// Selects the model callback's fog color for its attached particle draws.
+    #[must_use]
+    pub const fn with_fog_color(mut self, color: Vec3) -> Self {
+        self.fog_color = color;
+        self
+    }
+
     /// Applies the live build-12340 `specular` CVar to additive M2 stages.
     #[must_use]
     pub const fn with_specular_enabled(mut self, enabled: bool) -> Self {

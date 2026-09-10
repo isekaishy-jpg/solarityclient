@@ -5,6 +5,9 @@ use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models};
 use solarity_asset::{AssetStoreHandle, MapCatalog};
 use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
 
+#[path = "world_model_doodad_frame.rs"]
+mod doodad_frame;
+
 #[test]
 fn authored_terrain_shadow_reaches_retained_entity_lighting() -> Result<(), Box<dyn Error>> {
     let mut manifest = wow_wdt::WdtFile::new(wow_wdt::version::WowVersion::WotLK);
@@ -222,8 +225,10 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
         0,
     )?);
     frame.placement_topology_dirty = true;
+    // Keep the camera registered over this fixture's interior floor. Its WMO
+    // has no exterior entry, so a camera outside the room cannot see its MODD.
     let camera = WorldCamera::stock(
-        unit_position + Vec3::new(8., 0., 4.),
+        unit_position + Vec3::new(0.5, 0., 1.),
         unit_position,
         Vec3::Z,
         100.,
@@ -260,7 +265,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
             None,
             None,
             Some((base, exterior)),
-            Some((&mut terrain, environment)),
+            Some((&mut terrain, environment, Vec3::ZERO)),
             None,
         )?;
         assert_eq!(visible.draws.len(), 2);

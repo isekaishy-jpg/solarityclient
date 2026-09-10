@@ -36,7 +36,7 @@ automatically reopen those fixes.
 | Item, NPC/creature, and other entity fading | Investigate and reproduce stock appearance/disappearance and distance fade-in/fade-out behavior for the relevant owner types. Static MDDF/MODD scenery fading exists, but its policy does not establish replicated unit, GameObject, or attached-item behavior. Keep this user-reported gap open. |
 | World and terrain lighting | Complete the remaining lighting consumers and shader/material variants, including terrain point-light/specular paths and specialized entity callbacks. The user reports continuing differences from stock; compare the combined presentation at matching camera, time, and settings. |
 | Environment shaders | Audit native material selection and the environment shader families exercised by actual world assets. The user suspects some are entirely missing; identify confirmed omissions and distinguish them from incorrect inputs or unconnected consumers. |
-| Buildings and portals | Surface and liquid selection and per-group fog routing are integrated, with native callback and controlled GPU coverage. Complete attached-doodad visibility/fog consumers and indoor/exterior sky visibility, then validate their combined live presentation. |
+| Buildings and portals | Surface, liquid and attached-doodad admission/fog consumers are integrated with native and controlled GPU coverage. Complete indoor/exterior sky visibility and validate their combined live presentation. |
 | Shadows | Primary unit shadows and terrain/ground-detail receivers are implemented. Remaining work includes higher-quality environment maps, static casters, cascade transitions, liquid receivers, the quality-zero projected entity-shadow path, and exceptional registration behavior. |
 | Weather and sky | Complete precipitation presentation and retirement, weather ambience, and remaining WMO sky visibility/global sky override integration. Weather palette/cloud-light transitions and authored skyboxes already have implemented paths. |
 | Particles, spells, and aura visuals | Complete the remaining specialized particle paths and general spell/aura visual consumers and lifecycles. Validate attachment, ordering, visibility, and retirement together. Track checks blocked by missing spell or other gameplay implementation explicitly. |
@@ -46,6 +46,7 @@ automatically reopen those fixes.
 Existing evidence and implementation boundaries:
 [scenery fading](scenery-distance.md), [terrain lighting](terrain-lighting.md),
 [scene lighting](world-scene-lights.md), [WMO visibility](world-model-batch-visibility.md),
+[attached WMO doodads](world-model-doodad-visibility.md),
 [fog](world-fog.md), [shadows](world-shadows.md), [sky](world-sky.md),
 [M2 effects](m2-effects.md), [aura state](unit-auras.md),
 [water effects](unit-water-effects.md), [distant terrain](terrain-low-detail.md),

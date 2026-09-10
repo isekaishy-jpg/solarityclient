@@ -11,6 +11,11 @@ pub(super) struct SceneryDistance {
 }
 
 impl SceneryDistance {
+    /// 78FB60 compares the stored group depth against native far squares.
+    /// 78F570 retains the scaled radius in x87 when forming each square.
+    pub(super) fn admits_group(self, depth: f32, detail: f32) -> bool {
+        self.category >= minimum_category(depth, detail)
+    }
     /// Replays 7F9430's affine bounds and 7BDD31's inclusive class thresholds.
     pub(super) fn new(minimum: Vec3, maximum: Vec3, transform: Mat4) -> Self {
         let mut world_minimum = transform.w_axis.truncate();
@@ -62,5 +67,51 @@ impl SceneryDistance {
         } else {
             opacity
         }
+    }
+}
+
+fn minimum_category(depth: f32, detail: f32) -> usize {
+    if depth <= 0.0 {
+        return 0;
+    }
+    let square = f64::from(depth) * f64::from(depth);
+    [30.0, 100.0, 200.0, 750.0]
+        .into_iter()
+        .enumerate()
+        .position(|(index, radius)| {
+            let radius = if index == 0 {
+                radius
+            } else {
+                radius * f64::from(detail)
+            };
+            square < f64::from((radius * radius) as f32)
+        })
+        .unwrap_or(4)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn minimum_doodad_class_matches_original_boundaries() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut count = 0;
+        for line in include_str!(
+            "../../../../../systems/tests/fixtures/world_model_doodad_depth_native.txt"
+        )
+        .lines()
+        .filter_map(|line| line.strip_prefix("class "))
+        {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            let detail = f32::from_bits(u32::from_str_radix(fields[0], 16)?);
+            let depth = f32::from_bits(u32::from_str_radix(fields[1], 16)?);
+            assert_eq!(
+                super::minimum_category(depth, detail),
+                fields[2].parse::<usize>()?,
+                "{line}"
+            );
+            count += 1;
+        }
+        assert_eq!(count, 80);
+        Ok(())
     }
 }

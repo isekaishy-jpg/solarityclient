@@ -83,6 +83,21 @@ impl WorldSceneFrustum {
     pub fn intersects_bounds(self, bounds: MovementCollisionBounds) -> bool {
         bounds::intersects(&self.clip_planes, bounds)
     }
+
+    /// Applies 983FB0/983D20's sphere test without the AABB tolerance.
+    /// Products remain extended until comparison, in native X, Z, Y order.
+    /// Invalid spheres are rejected.
+    #[must_use]
+    pub fn intersects_sphere(self, center: Vec3, radius: f32) -> bool {
+        if !center.is_finite() || !radius.is_finite() || radius < 0.0 {
+            return false;
+        }
+        let center = center.as_dvec3();
+        self.clip_planes.into_iter().all(|plane| {
+            let [x, y, z, offset] = plane.map(f64::from);
+            ((x * center.x + z * center.z) + y * center.y) + offset >= -f64::from(radius)
+        })
+    }
 }
 
 /// Interpolates one native near/far face. The asymmetric spills below come from

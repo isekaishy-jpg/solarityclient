@@ -116,18 +116,21 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
             group: 1,
             indoor_fog: false,
             frusta: vec![right, left, right],
+            doodads: Default::default(),
         },
         WorldModelSceneGroup {
             owner: first,
             group: 0,
             indoor_fog: false,
             frusta: vec![center],
+            doodads: Default::default(),
         },
         WorldModelSceneGroup {
             owner: RuntimeWorldModelMovementOwner::Static { unique_id: 999 },
             group: 0,
             indoor_fog: false,
             frusta: vec![center],
+            doodads: Default::default(),
         },
     ];
     let (draws, last) =

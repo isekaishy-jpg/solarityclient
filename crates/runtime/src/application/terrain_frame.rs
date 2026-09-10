@@ -902,6 +902,7 @@ impl TerrainFrame {
                     -environment.light_direction(),
                     solarity_asset::exterior_light_ray_at(environment.day_fraction()),
                 ),
+                environment.ordinary_model_fog().color(),
             )),
             shadow_projection,
         )?;

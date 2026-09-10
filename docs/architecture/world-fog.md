@@ -111,7 +111,8 @@ surface presentation now selects these colors from each group's accumulated
 portal fog flag; see [the group callback and GPU evidence](world-model-batch-visibility.md#per-group-surface-fog).
 WMO liquids also consume each admitted group's bank through their separate
 [liquid provider connection](liquid-rendering.md#group-admission-and-fog).
-M2 model consumers still require their separate routing integration.
+Attached WMO M2 models now use their [native visibility and fog routes](world-model-doodad-visibility.md).
+Other M2 owner types still require their separate routing integration.
 
 `WorldModelVisibilityQuery` now reproduces `7AC060`'s ordered traversal from
 an initial camera group using supplied projected portal rectangles. It retains
@@ -145,6 +146,7 @@ tests compare every accepted rectangle and all five planes by float bits.
 
 The projector, traversal, exterior-root admission, and camera adapter now feed
 [WMO surface and group selection](world-model-batch-visibility.md). WMO surface
-and liquid consumers select the admitted group's fog bank. Attached doodad
-visibility/fog and indoor/exterior sky consumers still need integration.
+and liquid consumers select the admitted group's fog bank. Attached doodads
+consume their separate exterior/group routes. Indoor/exterior sky consumers
+still need integration.
 The bounded captures above do not establish combined live visual/FPS parity.

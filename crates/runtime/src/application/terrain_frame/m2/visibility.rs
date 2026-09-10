@@ -38,6 +38,13 @@ pub(super) struct M2PlacementVisibility {
     has_lights: Vec<bool>,
     /// First effect, or the placement count when no effect is resident.
     effect_start: usize,
+    world_model_doodads: HashMap<
+        (
+            crate::application::terrain_coordinator::RuntimeWorldModelMovementOwner,
+            usize,
+        ),
+        usize,
+    >,
 }
 
 impl M2PlacementVisibility {
@@ -58,7 +65,11 @@ impl M2PlacementVisibility {
         self.model_distance_sort.clear();
         self.has_lights.clear();
         self.effect_start = placements.len();
+        self.world_model_doodads.clear();
         for (index, placement) in placements.iter().enumerate() {
+            if let Some(owner) = super::doodad_scene::owner_key(placement.owner) {
+                self.world_model_doodads.entry(owner).or_insert(index);
+            }
             self.source_indices.push(placement.source_index);
             let parent = super::placement_parent_index(placements, index, placement);
             self.light_parents.push(parent);
@@ -115,6 +126,22 @@ impl M2PlacementVisibility {
 
     pub(super) fn bounds(&self) -> &[Option<(glam::Vec3, f32)>] {
         &self.bounds
+    }
+
+    pub(super) fn world_model_doodads(
+        &self,
+    ) -> &HashMap<
+        (
+            crate::application::terrain_coordinator::RuntimeWorldModelMovementOwner,
+            usize,
+        ),
+        usize,
+    > {
+        &self.world_model_doodads
+    }
+
+    pub(super) fn scenery(&self, index: usize) -> Option<super::distance::SceneryDistance> {
+        self.scenery[index]
     }
 
     /// Static scenery alone follows the recovered CMapObj distance policy.

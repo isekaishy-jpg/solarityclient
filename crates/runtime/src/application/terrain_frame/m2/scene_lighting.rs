@@ -27,6 +27,7 @@ pub(super) struct SceneLighting {
     centers: Vec<Vec3>,
     placement_centers: Vec<Option<Vec3>>,
     receiver_lights: Vec<Option<M2DirectionalLight>>,
+    receiver_fog: Vec<Option<Vec3>>,
     placement_lights: Vec<Option<M2DirectionalLight>>,
 }
 
@@ -45,6 +46,7 @@ impl SceneLighting {
         self.centers.clear();
         self.placement_centers.clear();
         self.receiver_lights.clear();
+        self.receiver_fog.clear();
         self.placement_lights.clear();
     }
 
@@ -92,7 +94,7 @@ impl SceneLighting {
         parent: Option<usize>,
         center: Vec3,
     ) -> Result<u32, RuntimeTerrainFrameError> {
-        self.receiver_with_light(placement_index, parent, center, None)
+        self.receiver_with_light(placement_index, parent, center, None, None)
     }
 
     pub fn receiver_with_light(
@@ -101,6 +103,7 @@ impl SceneLighting {
         parent: Option<usize>,
         center: Vec3,
         light: Option<M2DirectionalLight>,
+        fog_color: Option<Vec3>,
     ) -> Result<u32, RuntimeTerrainFrameError> {
         let center = parent
             .and_then(|index| self.placement_centers.get(index).copied().flatten())
@@ -113,6 +116,7 @@ impl SceneLighting {
         self.placement_lights.resize(placement_index + 1, None);
         self.placement_lights[placement_index] = light;
         self.receiver_lights.push(light);
+        self.receiver_fog.push(fog_color);
         let index = u32::try_from(self.centers.len())
             .map_err(|_| solarity_rendering::VulkanError::WorldFrameCapacity)?;
         self.centers.push(center);
@@ -133,7 +137,12 @@ impl SceneLighting {
                 .map(|entry| entry.light),
         );
         self.directional.push(exterior);
-        for (center, light) in self.centers.iter().zip(&self.receiver_lights) {
+        for ((center, light), fog) in self
+            .centers
+            .iter()
+            .zip(&self.receiver_lights)
+            .zip(&self.receiver_fog)
+        {
             if let Some(last) = self.directional.last_mut() {
                 *last = light.unwrap_or(exterior);
             }
@@ -153,7 +162,9 @@ impl SceneLighting {
             {
                 lights[slot + 1] = self.points.points()[index].local_light_state();
             }
-            self.scenes.push(base.with_local_lights(lights));
+            let scene = base.with_local_lights(lights);
+            self.scenes
+                .push(fog.map_or(scene, |color| scene.with_fog_color(color)));
         }
         Ok(())
     }

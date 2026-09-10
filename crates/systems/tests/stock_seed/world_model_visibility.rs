@@ -280,6 +280,49 @@ fn scene_bounds_match_original_six_plane_tolerance_at_camera_edges() -> Result<(
 }
 
 #[test]
+fn scene_spheres_match_original_inclusive_planes_at_camera_edges() -> Result<(), Box<dyn Error>> {
+    use solarity_systems::WorldSceneCameraFrame;
+    let frames: Vec<_> = include_str!("../fixtures/world_scene_projection_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    let mut count = 0;
+    for line in include_str!("../fixtures/world_scene_sphere_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let fields = words(line);
+        let input = words(frames[fields[0].parse::<usize>()?])
+            .into_iter()
+            .map(float)
+            .collect::<Result<Vec<_>, _>>()?;
+        let camera = WorldSceneCameraFrame::perspective(
+            Vec3::from_slice(&input[..3]),
+            Vec3::from_slice(&input[3..6]),
+            Vec3::from_slice(&input[6..9]),
+            Vec3::from_slice(&input[9..12]),
+            input[12],
+            input[13],
+            [input[14], input[15]],
+        )?;
+        let sphere = fields[1..5]
+            .iter()
+            .map(|word| float(word))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            camera
+                .frustum()
+                .intersects_sphere(Vec3::from_slice(&sphere[..3]), sphere[3]),
+            fields[5] == "3",
+            "case {count}: {line}"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 1296);
+    Ok(())
+}
+
+#[test]
 fn portal_camera_planes_match_original_order_and_float_stores() -> Result<(), Box<dyn Error>> {
     use glam::Mat4;
     use solarity_systems::WorldModelPortalProjectionFrame;

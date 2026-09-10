@@ -339,6 +339,7 @@ pub(super) fn static_gpu_placement(
         light_lifetime: Default::default(),
         entity_lighting: Default::default(),
         placement_valid: true,
+        scene_indoor_fog: false,
         world_model_state: None,
         source_index,
         local_transform: placement.transform(),
