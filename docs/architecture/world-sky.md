@@ -294,3 +294,13 @@ Light condition, and `7F3230` resolves that condition against the global Light
 row. Its provider `4F7020` also drives screen effects and manual fog. That
 provider, manual-fog sky enable/clear behavior, precipitation, and combined
 live-world appearance checks remain separate completion work.
+
+Build 79 packages revision `d45c0a68`. Workspace tests, formatting and Clippy
+passed; the installed executable matches the packaged SHA-256
+`9E64ECAB22BB99B2287329E927674FAED8ADD7BBDF4D6252AAD7EABA5DE9C20B`.
+An optimized offline world smoke run completed 1,260 frames across seven
+stationary, travel and settling phases without logged renderer errors. Captures
+confirm world rendering through those transitions and retain the existing large
+purple distant-terrain silhouettes as an unresolved appearance issue. This run
+does not establish populated-world or interior parity, and capture timings are
+not performance evidence.
