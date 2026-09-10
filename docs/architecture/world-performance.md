@@ -209,6 +209,47 @@ and placement append samples still reached 16.4 ms and 7.5 ms respectively.
 Those remaining publication costs require further work; instrumented component
 timings are separate from the unprofiled frame measurements above.
 
+## Per-instance lighting storage
+
+The lighting wrapper retains an optional owned allocation for spatial query
+scratch, sampled floor colors, and transition history. It allocates on the first
+individual lighting sample for a unit, GameObject, or WMO doodad. Ordinary terrain
+doodads return without allocating this state. This reduces the inline lighting
+record from 368 bytes to 8 bytes on the tested x64 build; the newly compiled
+placement layout is 784 bytes. Tile retirement therefore moves less unused
+state while retaining each surviving owner's existing lighting allocation.
+
+Callback categories, transform/revision invalidation, floor sampling, and native
+transition equations remain unchanged. The first sample starts the transition
+clock, including when it arrives at a nonzero scene time. Runtime regressions
+cover that delayed first sample, terrain-shadow transitions, disconnection,
+interior floor and MODD colors in actual M2 uniforms, offscreen light sources,
+and shared owner retirement.
+
+The same x64 GTX 1070 travel replay used 2,400 frames per phase, 1280 x 720,
+primary/detail shadows, and no profiling, capture, or concurrent compiler work.
+
+| Travel phase | Changed-frame streaming before | After | Repeat after |
+| --- | ---: | ---: | ---: |
+| Outbound mean | 13.325 ms | 12.232 ms | 12.221 ms |
+| Return mean | 9.589 ms | 9.437 ms | 9.149 ms |
+
+The first pair's medians changed from 12.046/9.538 ms to 11.386/9.125 ms.
+Whole-frame travel means were 3.850/3.827 ms before, 3.835/3.847 ms after, and
+3.881/3.831 ms on the repeat: this does not establish a steady FPS improvement.
+All directions retained 24 changed frames, 21 admissions, and 21 evictions.
+The first pair's primary-shadow and ground-detail draw counts matched frame by
+frame across stationary, orbit, pointer, travel, and settled phases. Maximum
+travel frames were 36.867/20.242 ms before, 26.777/33.461 ms after, and
+28.056/21.631 ms on the repeat; isolated stalls remain.
+
+A separate profile reduced later M2 publication intervals from about 2.9–3.6 ms
+to 2.4–3.4 ms. Placement retirement fell from roughly 2.0–2.6 ms to 1.6–2.0 ms.
+Texture descriptor preparation still produced isolated 5–6 ms samples, while
+cached mesh pipeline lookup was much cheaper on this route. These measurements
+support a smaller placement footprint and less publication work, without proving
+the full stall-elimination or 1,200 FPS objective.
+
 ## Resident camera bounds
 
 Camera traces retain conservative bounds over each immutable ADT's actual chunk

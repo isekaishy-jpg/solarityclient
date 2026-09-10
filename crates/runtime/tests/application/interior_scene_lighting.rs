@@ -80,11 +80,26 @@ fn authored_terrain_shadow_reaches_retained_entity_lighting() -> Result<(), Box<
         -Vec3::Z,
         -Vec3::Z,
     );
+    // Ordinary terrain doodads have no individual light callback. A later first
+    // entity sample must still start its transition clock at that sample's time.
+    assert!(
+        light
+            .sample(
+                M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad { unique_id: 1 }),
+                &model,
+                Mat4::from_translation(shadowed),
+                [255; 4],
+                0.,
+                &mut terrain,
+                environment,
+            )?
+            .is_none()
+    );
     for (time, position, gain) in [
-        (0., shadowed, 1.),
-        (1000., shadowed, 0.5),
-        (2000., clear, 1.),
-        (3000., shadowed, 0.5),
+        (1000., shadowed, 1.),
+        (2000., shadowed, 0.5),
+        (3000., clear, 1.),
+        (4000., shadowed, 0.5),
     ] {
         let sample = light
             .sample(
@@ -112,7 +127,7 @@ fn authored_terrain_shadow_reaches_retained_entity_lighting() -> Result<(), Box<
             &model,
             Mat4::from_translation(shadowed),
             [255; 4],
-            4000.,
+            5000.,
             &mut terrain,
             environment,
         )?

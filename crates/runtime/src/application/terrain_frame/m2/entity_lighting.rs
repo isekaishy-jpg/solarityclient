@@ -7,8 +7,16 @@ use crate::application::terrain_coordinator::{
 use glam::Mat4;
 use solarity_systems::{WorldEntityLightEnvironment, WorldEntityLightState, WorldModelFloorLight};
 
+/// Ordinary terrain doodads never need an individual floor-light callback. Keep
+/// their placement records compact while preserving lazy state for other owners.
 #[derive(Default)]
 pub(super) struct EntityLighting {
+    retained: Option<Box<RetainedEntityLighting>>,
+}
+
+/// Spatial query scratch and transition history live only on sampled owners.
+#[derive(Default)]
+struct RetainedEntityLighting {
     cached: Option<(Mat4, u64, bool, Option<WorldModelFloorLight>, bool)>,
     state: Option<WorldEntityLightState>,
     last_time_ms: Option<f32>,
@@ -16,6 +24,8 @@ pub(super) struct EntityLighting {
 }
 
 impl EntityLighting {
+    /// Samples the existing owner-specific callback without starting a transition
+    /// clock before its first sample. Unsampled scenery allocates no retained state.
     #[allow(clippy::too_many_arguments)]
     pub fn sample(
         &mut self,
@@ -49,8 +59,12 @@ impl EntityLighting {
             _ => None,
         };
         let sample = if let Some((root, index)) = doodad {
-            if self.cached.is_none_or(|(_, old, _, _, _)| old != revision) {
-                self.cached = Some((
+            let retained = self.retained.get_or_insert_with(Box::default);
+            if retained
+                .cached
+                .is_none_or(|(_, old, _, _, _)| old != revision)
+            {
+                retained.cached = Some((
                     transform,
                     revision,
                     terrain.doodad_interior_lighting(root, index)?,
@@ -60,7 +74,9 @@ impl EntityLighting {
             }
             WorldEntityLightState::doodad(
                 color,
-                self.cached.is_some_and(|(_, _, interior, _, _)| interior),
+                retained
+                    .cached
+                    .is_some_and(|(_, _, interior, _, _)| interior),
                 environment,
             )
         } else if matches!(
@@ -73,7 +89,8 @@ impl EntityLighting {
                 | M2GpuPlacementOwner::CreatureMount { .. }
                 | M2GpuPlacementOwner::GameObject { .. }
         ) {
-            if self
+            let retained = self.retained.get_or_insert_with(Box::default);
+            if retained
                 .cached
                 .is_none_or(|(matrix, old, _, _, _)| old != revision || matrix != transform)
             {
@@ -88,18 +105,18 @@ impl EntityLighting {
                 let (interior, floor, terrain_shadow) = terrain.model_floor_light(
                     transform.w_axis.truncate(),
                     collision.as_ref(),
-                    &mut self.scratch,
+                    &mut retained.scratch,
                 )?;
-                self.cached = Some((transform, revision, interior, floor, terrain_shadow));
+                retained.cached = Some((transform, revision, interior, floor, terrain_shadow));
             }
-            let state = self
+            let state = retained
                 .state
                 .get_or_insert_with(|| WorldEntityLightState::new(environment));
-            if let Some((_, _, interior, floor, terrain_shadow)) = self.cached {
+            if let Some((_, _, interior, floor, terrain_shadow)) = retained.cached {
                 state.set_floor(interior, floor, environment);
                 state.set_terrain_shadow(terrain_shadow);
             }
-            let seconds = self
+            let seconds = retained
                 .last_time_ms
                 .replace(time_ms)
                 .map_or(0., |previous| (time_ms - previous).max(0.) * 0.001);
