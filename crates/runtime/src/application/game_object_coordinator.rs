@@ -235,6 +235,15 @@ impl<'a> GameObjectFrameInput<'a> {
             .get(&identity)
             .and_then(|index| self.instances.get(*index))
     }
+
+    /// 782F20 resolves a surviving GameObject's passenger matrix by GUID.
+    pub(in crate::application) fn retirement_parent(self, guid: u64) -> Option<glam::Mat4> {
+        let identity = self.world?.object_identity(guid)?;
+        self.get(identity)?
+            .passenger_placement
+            .ok()
+            .map(|placement| placement.matrix())
+    }
 }
 
 impl GameObjectInstance {
@@ -475,8 +484,12 @@ impl RuntimeGameObjectPresentation {
         let previous_revision = self.scene_revision;
         let before = self.instances.len();
         self.instances.retain(|instance| {
-            world.object_identity(instance.guid()) == Some(instance.identity)
-                && world.object_kind(instance.guid()) == Some(ObjectKind::GameObject)
+            let keep = world.object_identity(instance.guid()) == Some(instance.identity)
+                && world.object_kind(instance.guid()) == Some(ObjectKind::GameObject);
+            if !keep {
+                instance.opacity.mark_removed(self.scene_time_ms.get());
+            }
+            keep
         });
         if self.instances.len() != before {
             self.indices.clear();
@@ -807,6 +820,12 @@ impl RuntimeGameObjectPresentation {
             return Ok(());
         };
         for instance in &self.instances {
+            instance.opacity.set_transport_guid(
+                world
+                    .game_object_movement(instance.guid())
+                    .and_then(|movement| movement.transport())
+                    .map_or(0, |transport| transport.guid),
+            );
             if matches!(instance.resource(), Some(GameObjectResource::M2(_))) {
                 // 70B9E0/70B9A0 delegate to the selected behavior. Generic
                 // Spawn skips the entry fade; the other families allow it.

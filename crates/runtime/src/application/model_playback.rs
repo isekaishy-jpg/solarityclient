@@ -14,6 +14,7 @@ use solarity_rendering::{
 use solarity_systems::GameObjectAnimationRequest;
 
 /// Per-instance sequence state retained by stock's `CM2Model` owner.
+#[derive(Clone)]
 pub(in crate::application) struct M2Playback {
     pub(in crate::application) game_object_state: Option<u8>,
     pub(in crate::application) game_object_request: Option<u16>,

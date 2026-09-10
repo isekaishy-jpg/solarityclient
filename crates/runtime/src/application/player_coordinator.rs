@@ -1495,6 +1495,11 @@ impl RuntimePlayerPresentation {
         ) else {
             return;
         };
+        let transport = world
+            .movement_state(guid)
+            .and_then(|movement| movement.context().transport)
+            .map_or(0, |transport| transport.guid);
+        owner.opacity_owner().set_transport_guid(transport);
         if owner.opacity_owner().has_model(presentation.display_id()) {
             return;
         }
@@ -1509,10 +1514,6 @@ impl RuntimePlayerPresentation {
                     .map(|fields| fields.get(74))
             })
             .unwrap_or(0);
-        let transport = world
-            .movement_state(guid)
-            .and_then(|movement| movement.context().transport)
-            .map_or(0, |transport| transport.guid);
         let parent_transitioning = world.object_identity(transport).map(|_| {
             self.unit_animations
                 .get(transport)

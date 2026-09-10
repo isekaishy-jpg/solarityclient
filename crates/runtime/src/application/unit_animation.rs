@@ -202,8 +202,13 @@ impl UnitAnimationScene {
     }
 
     pub fn retain_world(&mut self, world: &ActiveWorld) {
-        self.owners
-            .retain(|guid, owner| world.object_identity(*guid) == Some(owner.identity));
+        self.owners.retain(|guid, owner| {
+            let keep = world.object_identity(*guid) == Some(owner.identity);
+            if !keep {
+                owner.opacity.mark_removed(self.scene_time_ms);
+            }
+            keep
+        });
         self.ground_poses
             .get_mut()
             .retain(|guid, (identity, _)| world.object_identity(*guid) == Some(*identity));
@@ -315,6 +320,31 @@ pub(super) struct UnitBodyPoseSample {
 impl UnitBodyPoseSample {
     pub fn bone_transforms(&self) -> &[(u16, Mat4)] {
         &self.transforms[..self.transform_count]
+    }
+}
+
+/// Model-side pose state survives detachment without retaining unit callbacks.
+#[derive(Clone, Copy)]
+pub(super) struct UnitRetiredPose {
+    pub body: UnitBodyPoseSample,
+    wound: Option<(u16, M2ModelSequenceBlend)>,
+    pub color: u32,
+}
+
+impl UnitRetiredPose {
+    pub fn bone_sequences(
+        self,
+        clock: M2AnimationClock,
+        now: u32,
+    ) -> Option<[(u16, M2AnimationClock); 1]> {
+        self.wound
+            .filter(|(_, blend)| blend.weight(now) > 0.0)
+            .map(|(key, blend)| {
+                [(
+                    key,
+                    blend.apply_to_clock(clock.without_secondary_sequence(), now),
+                )]
+            })
     }
 }
 
@@ -449,6 +479,14 @@ impl UnitAnimationBehavior {
 
     pub fn body_pose(&self) -> UnitBodyPoseSample {
         self.body.borrow().sample
+    }
+
+    pub fn retirement_pose(&self) -> UnitRetiredPose {
+        UnitRetiredPose {
+            body: self.body_pose(),
+            wound: self.upper_body_wound.get(),
+            color: self.model_color(),
+        }
     }
 
     fn advance_body(&self, scene_time_ms: f32) -> bool {

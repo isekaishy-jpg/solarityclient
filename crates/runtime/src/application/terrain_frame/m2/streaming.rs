@@ -351,6 +351,7 @@ pub(super) fn static_gpu_placement(
         color: placement.color(),
         opacity: 1.0,
         entity_opacity: None,
+        retirement: None,
         particle_colors: None,
         playback: playback.map(super::M2PlaybackStorage::Local),
         unit_animation: None,

@@ -3,6 +3,9 @@
 #[path = "equipment_residency.rs"]
 mod equipment_residency;
 
+#[path = "entity_retirement_scene.rs"]
+mod entity_retirement;
+
 #[path = "stock_npc_residency.rs"]
 mod stock_npc_residency;
 

@@ -189,6 +189,7 @@ fn mounted_creatures_publish_a_mount_and_attached_rider() -> Result<(), Box<dyn 
     let remounted_source = unit_source(&frame, mount_owner)?;
     assert_ne!(remounted_source, previous_source);
     assert!(effects(&frame, mount_owner)?.particles.is_empty());
+    presentation.set_animation_scene_time(previous_time as u32);
     world.remove_object(30)?;
     add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
     equipment_residency::fields(&mut world, 30, &[(69, 102)])?;
@@ -200,13 +201,30 @@ fn mounted_creatures_publish_a_mount_and_attached_rider() -> Result<(), Box<dyn 
         &mut random,
     )?;
     assert_ne!(unit_source(&frame, mount_owner)?, remounted_source);
-    assert!(frame.sources[remounted_source].is_none());
+    assert!(frame.sources[remounted_source].is_some());
+    assert!(frame.placements.iter().any(|placement| {
+        placement.source_index == remounted_source && placement.retirement.is_some()
+    }));
     world.remove_object(30)?;
     publish(
         &mut presentation,
         &world,
         &mut frame,
         &mut renderer,
+        &mut random,
+    )?;
+    assert_eq!(frame.placements.len(), 2);
+    assert!(
+        frame
+            .placements
+            .iter()
+            .all(|placement| placement.retirement.is_some())
+    );
+    equipment_residency::advance(
+        &mut frame,
+        &renderer,
+        camera,
+        previous_time + 2001.,
         &mut random,
     )?;
     assert!(frame.placements.is_empty());

@@ -128,5 +128,53 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
             if expected_draws == 0 { 0 } else { 21 }
         );
     }
+    let opacity = Rc::new(crate::application::entity_opacity::EntityOpacityOwner::default());
+    opacity.select_model(1, 1., 0, 21);
+    opacity.mark_removed(21);
+    frame.placements[0].entity_opacity = Some(opacity);
+    frame.retire_removed_models();
+    let camera = WorldCamera::orthographic(
+        Vec3::X * 8.,
+        Vec3::X * 9.,
+        Vec3::Z,
+        [-2., 2.],
+        [-2., 2.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    let shadow = WorldShadowProjection::primary(
+        WorldShadowQuality::UnitsHigh,
+        Vec3::ZERO,
+        camera.camera().position(),
+        -Vec3::Z,
+    )?;
+    for (time, expected) in [(521., 1), (1021., 0)] {
+        let visible = frame.prepare_visible_draws_with_unit_effects(
+            &renderer,
+            WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+            camera,
+            M2TransparentPass::One,
+            Vec3::ZERO,
+            time,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &mut random,
+            None,
+            None,
+            None,
+            None,
+            Some(shadow),
+        )?;
+        assert!(visible.draws.is_empty());
+        assert_eq!(
+            visible.shadow_draws.len(),
+            expected,
+            "retired units retain root admission and the native 0.55 material cutoff"
+        );
+        assert_eq!(
+            frame.placements[0].last_effect_time_ms, 21,
+            "offscreen retired effects retain their previous update timestamp"
+        );
+    }
     Ok(())
 }

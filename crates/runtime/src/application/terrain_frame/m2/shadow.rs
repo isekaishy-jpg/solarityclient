@@ -17,7 +17,10 @@ pub(super) fn admits_root(
     placement: &M2GpuPlacement,
 ) -> Result<bool, RuntimeTerrainFrameError> {
     if !matches!(
-        placement.owner,
+        placement
+            .retirement
+            .as_ref()
+            .map_or(placement.owner, |retired| retired.original_owner),
         M2GpuPlacementOwner::PlayerBody { .. }
             | M2GpuPlacementOwner::PlayerMount { .. }
             | M2GpuPlacementOwner::RemotePlayerBody { .. }
@@ -62,6 +65,12 @@ pub(super) fn append_packets(
     let mut instance_color = placement_mesh_color(placement.owner, placement.color);
     if let Some(animation) = &placement.unit_animation {
         instance_color *= placement_color(animation.model_color().to_le_bytes());
+    } else if let Some(pose) = placement
+        .retirement
+        .as_ref()
+        .and_then(|retired| retired.unit_pose)
+    {
+        instance_color *= placement_color(pose.color.to_le_bytes());
     }
     instance_color.w *= opacity;
     for (draw_index, resources) in source.draws.iter().enumerate() {

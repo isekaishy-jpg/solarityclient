@@ -3,8 +3,9 @@
 This work belongs to the open entity-fading row in
 [world completion](world-completion.md). Replicated object opacity has a
 different owner and policy from [static scenery distance fading](scenery-distance.md).
-Entry interpolation is connected; detached disappearance and exceptional owner
-policies remain in progress. This document does not close the reported gap.
+Entry interpolation and ordinary detached disappearance are connected;
+exceptional owner policies and combined travel validation remain in progress.
+This document does not close the reported gap.
 
 ## Native contract
 
@@ -43,6 +44,14 @@ The exact 2000-ms endpoint remains resident. A surviving GameObject transport
 updates the saved relative transform; losing that parent freezes the last
 transform. The live gameplay object itself is not retained by this list.
 
+The ordinary scene created by `743760 -> 781A10 -> 7C0670` retains vtable
+`A3FD90`. The model's light callback (`+2AC/+2B0`) points to `780CD0` and that
+scene; it delegates to `7C1730` and the projected-shadow callback `7C10C0`.
+`783630` replaces only the scene's visibility callback (`+90/+94`) with
+`7823D0` and the scene itself. It preserves the spatial lighting state, scene
+category flags, and model callbacks. The different `A40318` scene family and
+its `7C1150` callback are not this ordinary CObject allocation path.
+
 ## Implemented consumers
 
 `solarity_systems::EntityOpacity` reproduces the byte state, native entry gate,
@@ -59,6 +68,30 @@ It uses the existing translucent pipeline selection for opaque material batches
 during a fade. GameObject M2 instances own and advance the same state through
 their scene update. WMO GameObjects retain their separate renderer path.
 
+Removal now marks the exact CPU owner before it leaves the live identity table.
+M2 publication transfers its ready placements into a separate retirement group.
+Each model receives a group/member key; mounts, riders, equipment and enchant
+attachments resolve through those keys instead of a live GUID. Display or
+material replacement within a continuing identity does not trigger retirement.
+An initial scalar below 0.01 does not enter the detached list.
+
+Retirement copies model timers, variation/event intervals, body-bone overrides,
+held-hand pose and wound blend state. It releases the unit animation callback
+owner and retains GPU sources, particle/ribbon histories and lighting state.
+The saved unit or GameObject lighting category continues its ordinary floor
+callback; children inherit their retired parent receiver. Primary unit shadow
+admission retains the original category and uses the existing native material
+opacity cutoff. This does not implement the separate projected-shadow renderer.
+
+The group advances the native two-second envelope before culling and follows a
+surviving GameObject's passenger matrix. After parent loss, it cannot reacquire
+that GUID. Expiry or a missing child source removes the complete hierarchy and
+compacts unreferenced sources. Cached retired-model indices bound settled
+readiness work to detached models, rather than scanning scenery per group.
+New GameObjects can reuse authored GPU sources held by retired GameObjects;
+character material domains remain separate.
+World transfer drops the entire terrain frame and its retired scene lifetimes.
+
 ## Evidence and remaining work
 
 `tools/ghidra/entity_opacity_oracle.py` executes the pinned native routines under
@@ -72,24 +105,37 @@ Runtime checks pass for model replacement, GUID reuse, initial versus later
 Birth animations, FishingHole target retention/reselection, and shared equipment
 and enchant opacity through material replacement. The equipment test also
 verifies the scalar reaches GPU mesh material packets. The complete runtime
-library suite passes (263 tests; 18 archive-dependent tests ignored). The full
+library suite passed for the entry package (263 tests; 18 archive-dependent tests ignored). The full
 locked workspace suite passes (1,215 tests; 23 ignored), as does workspace
 Clippy for all targets with warnings denied. After replacing fixture-test
 unwraps with explicit diagnostics and optional-value comparisons, the three
-native opacity tests were rerun successfully. The pure
-retirement envelope is not yet a runtime disappearance consumer. Remaining
-integration and validation are:
+native opacity tests were rerun successfully.
 
-- Transfer removed model hierarchies into independent scene lifetimes, preserving
-  animation, attachments, effects and transport transforms without GUID reuse
-  collisions. Verify the native unit removal-visibility exclusions and lighting
-  callback handoff before treating retirement as complete.
+The disappearance checks exercise immediate GUID reuse with eight attached
+equipment/enchant models, retained mount/rider transforms, preserved effect
+histories, the exact retirement endpoint, recursive readiness failure,
+below-threshold admission, and transport movement/loss. They also verify that
+the old unit animation owner is released. The runtime suite passes with these
+three new checks (266 tests, 18 ignored). Existing GPU fixtures also pass for
+interior lighting retention and the retired unit shadow cutoff. The complete
+locked workspace suite passes (1,218 tests, 23 ignored), followed by all three
+retirement scene tests after extending authored-source reuse coverage. Workspace
+Clippy checks all targets with warnings denied.
+
+Remaining integration and validation are:
+
+- Project the exceptional `730F30` unit removal-visibility inputs: special
+  visibility/morph state, hidden-model child activation, vehicle flags and the
+  alternate effect owner. Ordinary unit retirement is connected; these missing
+  presentation systems are not replaced by guessed field mappings. The native
+  scene `+7C` flag `0x4` exclusion also has no current ordinary-scene producer.
 - Project Vehicle/VehicleSeat presentation into the unit owner; the exact
   native seat policy is tested but the runtime currently has no seat-record input.
 - Connect the camera/vehicle `+CB` multiplier and specialized visual-kit model
   ownership. These are separate from far-distance scenery fading.
 - Verify when native model readiness starts interpolation relative to asynchronous
-  resource publication, and compare combined appearance/disappearance during
+  resource publication, final removal-pose timing between movement publication
+  and scene transfer, and combined appearance/disappearance during
   populated-world travel. CPU arithmetic and controlled packet tests do not
   establish that live visual result.
 - Trace any additional replicated-distance or effect-owner policies from their

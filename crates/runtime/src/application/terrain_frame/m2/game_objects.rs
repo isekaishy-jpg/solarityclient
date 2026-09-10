@@ -20,6 +20,7 @@ impl M2Frame {
         game_objects: GameObjectFrameInput<'_>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.retire_removed_models();
         let sources = &self.sources;
         self.placements.retain(|placement| {
             let (identity, display_id, doodad_index) = match placement.owner {
@@ -84,13 +85,18 @@ impl M2Frame {
         // when they happen to reference the same decoded M2 generation.
         let mut sources = HashMap::new();
         for placement in &self.placements {
-            if matches!(
+            let authored = matches!(
                 placement.owner,
                 M2GpuPlacementOwner::Static(_)
                     | M2GpuPlacementOwner::GameObject { .. }
                     | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
-            ) && let Some(source) = self.sources[placement.source_index].as_ref()
-            {
+            ) || placement.retirement.as_ref().is_some_and(|retired| {
+                matches!(
+                    retired.original_owner,
+                    M2GpuPlacementOwner::GameObject { .. }
+                )
+            });
+            if authored && let Some(source) = self.sources[placement.source_index].as_ref() {
                 sources.insert(Arc::as_ptr(&source.model), placement.source_index);
             }
         }
@@ -211,6 +217,7 @@ impl M2Frame {
         animation_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.retire_removed_models();
         // Missing inputs must still invalidate every resident object, including
         // offscreen doodads. Candidate selection never depends on visibility.
         let indices = if self.placement_topology_dirty {

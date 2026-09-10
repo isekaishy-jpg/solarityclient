@@ -584,7 +584,16 @@ fn assert_replaced(
             .ok_or("previous component")?;
         if replaced(current.owner) {
             assert_ne!(current.source, previous.source);
-            assert!(frame.sources[previous.source].is_none());
+            let fading_previous = frame.placements.iter().any(|placement| {
+                placement.source_index == previous.source
+                    && placement
+                        .retirement
+                        .as_ref()
+                        .is_some_and(|retired| retired.original_owner == previous.owner)
+            });
+            // GUID reuse creates a fresh component while the removed hierarchy
+            // retains its old GPU resources for disappearance interpolation.
+            assert_eq!(frame.sources[previous.source].is_some(), fading_previous);
             assert!(current.effects.particles.is_empty());
             assert!(current.effects.ribbons.is_empty());
             assert_eq!(current.event_time, current.effects.last_update_ms);

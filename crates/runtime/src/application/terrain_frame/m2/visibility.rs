@@ -30,6 +30,7 @@ pub(super) struct M2PlacementVisibility {
     bounds: Vec<Option<(glam::Vec3, f32)>>,
     scenery: Vec<Option<super::distance::SceneryDistance>>,
     dynamic_indices: Vec<usize>,
+    retired_indices: Vec<usize>,
     /// First occurrence preserves the ordered lookup used by unit state updates.
     dynamic_owners: HashMap<M2GpuPlacementOwner, usize>,
     game_object_indices: Vec<usize>,
@@ -63,6 +64,7 @@ impl M2PlacementVisibility {
         self.bounds.clear();
         self.scenery.clear();
         self.dynamic_indices.clear();
+        self.retired_indices.clear();
         self.dynamic_owners.clear();
         self.game_object_indices.clear();
         self.light_parents.clear();
@@ -73,6 +75,9 @@ impl M2PlacementVisibility {
         self.effect_start = placements.len();
         self.world_model_doodads.clear();
         for (index, placement) in placements.iter().enumerate() {
+            if placement.retirement.is_some() {
+                self.retired_indices.push(index);
+            }
             let doodad_owner = super::doodad_scene::owner_key(placement.owner);
             self.is_world_model_doodad.push(doodad_owner.is_some());
             let first_doodad = doodad_owner.is_some_and(|owner| {
@@ -163,6 +168,10 @@ impl M2PlacementVisibility {
 
     pub(super) fn dynamic_indices(&self) -> &[usize] {
         &self.dynamic_indices
+    }
+
+    pub(super) fn retired_indices(&self) -> PlacementStateIndices<'_> {
+        PlacementStateIndices::Cached(self.retired_indices.iter().copied())
     }
 
     pub(super) fn dynamic_owner_index(&self, owner: M2GpuPlacementOwner) -> Option<usize> {

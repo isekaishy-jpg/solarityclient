@@ -15,6 +15,7 @@ mod entity_lighting;
 mod game_objects;
 mod playback;
 mod portrait;
+mod retirement;
 #[cfg(test)]
 #[path = "../../../tests/application/scenery_distance.rs"]
 mod scenery_distance_tests;
@@ -208,6 +209,7 @@ struct M2GpuPlacement {
     entity_lighting: entity_lighting::EntityLighting,
     opacity: f32,
     entity_opacity: Option<Rc<EntityOpacityOwner>>,
+    retirement: Option<Box<retirement::RetiredM2Placement>>,
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2PlaybackStorage>,
     unit_animation: Option<Rc<UnitAnimationBehavior>>,
@@ -279,6 +281,8 @@ fn classify_particle_support(
 /// Placement category retained for diagnostics and player replacement.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum M2GpuPlacementOwner {
+    /// Independent scene lifetime after the gameplay object leaves the world.
+    Retired(retirement::RetiredModelKey),
     /// One CEffect instance; its unit and attachment lifetime are retained separately.
     UnitEffect { serial: u64 },
     /// An ADT or WMO owner from the resident terrain generation.
@@ -735,6 +739,7 @@ pub(in crate::application) struct M2Frame {
     animation_started_at: std::time::Instant,
     /// Previous scene pass, independent of unit residency and draw admission.
     unit_scene_time_ms: f32,
+    retirement: retirement::M2RetirementScene,
     bone_pose_scratch: M2BonePose,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
@@ -832,6 +837,7 @@ impl M2Frame {
             particle_twinkle,
             animation_started_at: std::time::Instant::now(),
             unit_scene_time_ms: 0.0,
+            retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -954,6 +960,7 @@ impl M2Frame {
                 color: [u8::MAX; 4],
                 opacity: 1.0,
                 entity_opacity: None,
+                retirement: None,
                 particle_colors: None,
                 playback: Some(M2PlaybackStorage::Local(playback)),
                 unit_animation: None,
@@ -969,6 +976,7 @@ impl M2Frame {
             particle_twinkle,
             animation_started_at,
             unit_scene_time_ms: 0.0,
+            retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -1292,6 +1300,7 @@ impl M2Frame {
         input: Option<ResidentPlayerFrameInput<'_>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.retire_removed_models();
         let Some(input) = input else {
             self.remove_player();
             return Ok(());
@@ -1319,6 +1328,7 @@ impl M2Frame {
         inputs: &[ResidentCreatureFrameInput<'_>],
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.retire_removed_models();
         let mut prepared = Vec::with_capacity(inputs.len());
         let mut retained = Vec::with_capacity(inputs.len());
         for input in inputs {
@@ -1430,6 +1440,7 @@ impl M2Frame {
         inputs: &[ResidentPlayerFrameInput<'_>],
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.retire_removed_models();
         let mut prepared = Vec::with_capacity(inputs.len());
         let mut retained = Vec::with_capacity(inputs.len());
         for input in inputs {
@@ -1786,6 +1797,7 @@ impl M2Frame {
         let mut player_sources = Vec::new();
         self.placements.retain(|placement| {
             let owned = match placement.owner {
+                M2GpuPlacementOwner::Retired(_) => false,
                 M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::GluePet => true,
@@ -1851,6 +1863,7 @@ impl M2Frame {
         let mut remote_sources = Vec::new();
         self.placements.retain(|placement| {
             let owned = match placement.owner {
+                M2GpuPlacementOwner::Retired(_) => false,
                 M2GpuPlacementOwner::RemotePlayerBody { guid }
                 | M2GpuPlacementOwner::RemotePlayerMount { guid } => !retained.contains(&guid),
                 M2GpuPlacementOwner::PlayerItem { guid, .. }
@@ -2115,6 +2128,7 @@ impl M2Frame {
         if let Some(game_objects) = game_objects {
             game_objects.advance_scene(animation_time_ms, random)?;
         }
+        self.advance_retired_models(animation_time_ms as u32, game_objects);
         self.bone_transforms.clear();
         self.visible_draws.clear();
         self.shadow_draws.clear();
@@ -2163,6 +2177,7 @@ impl M2Frame {
                     self.placements
                         .iter()
                         .filter_map(|placement| match placement.owner {
+                            M2GpuPlacementOwner::Retired(_) => None,
                             M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
                             M2GpuPlacementOwner::UnitEffect { .. }
                             | M2GpuPlacementOwner::Static(_)
@@ -2185,6 +2200,7 @@ impl M2Frame {
                     self.placements
                         .iter()
                         .filter_map(|placement| match placement.owner {
+                            M2GpuPlacementOwner::Retired(_) => None,
                             M2GpuPlacementOwner::PlayerItemVisual {
                                 guid,
                                 item_point,
@@ -2375,10 +2391,17 @@ impl M2Frame {
             let placement_opacity = placement.opacity
                 * scenery_opacity
                 * placement
+                    .retirement
+                    .as_ref()
+                    .map_or(1.0, |owner| owner.opacity())
+                * placement
                     .entity_opacity
                     .as_ref()
                     .map_or(1.0, |owner| owner.opacity());
             self.unit_effects.prepare_attachment(placement);
+            if !self.retirement.prepare_attachment(placement) {
+                continue;
+            }
             if let Some(effect) = &mut placement.unit_effect
                 && let Some(event) = effect.take_ready_sound(placement.transform.w_axis.truncate())
             {
@@ -2549,7 +2572,14 @@ impl M2Frame {
             let body_pose = placement
                 .unit_animation
                 .as_ref()
-                .map(|animation| animation.body_pose());
+                .map(|animation| animation.body_pose())
+                .or_else(|| {
+                    placement
+                        .retirement
+                        .as_ref()?
+                        .unit_pose
+                        .map(|pose| pose.body)
+                });
             let bone_transforms = body_pose
                 .as_ref()
                 .map_or(&[][..], |pose| pose.bone_transforms());
@@ -2598,8 +2628,19 @@ impl M2Frame {
             let bone_sequences = placement
                 .unit_animation
                 .as_ref()
-                .and_then(|animation| animation.bone_sequences(clock, animation_time_ms as u32));
-            let finger_pose_hands = held_item_finger_pose(&self.requested_items, owner);
+                .and_then(|animation| animation.bone_sequences(clock, animation_time_ms as u32))
+                .or_else(|| {
+                    placement
+                        .retirement
+                        .as_ref()?
+                        .unit_pose?
+                        .bone_sequences(clock, animation_time_ms as u32)
+                });
+            let finger_pose_hands = placement
+                .retirement
+                .as_ref()
+                .and_then(|retired| retired.finger_hands)
+                .or_else(|| held_item_finger_pose(&self.requested_items, owner));
             let finger_pose = finger_pose_hands.and_then(|hands| {
                 source
                     .model
@@ -2636,6 +2677,8 @@ impl M2Frame {
                 },
             )?;
             let bone_pose = &self.bone_pose_scratch;
+            self.retirement
+                .publish_attachments(placement, &source.model, bone_pose, clock)?;
             let first_event = self.triggered_events.len();
             append_triggered_events(
                 &mut self.triggered_events,
@@ -2795,7 +2838,10 @@ impl M2Frame {
                     && let Some((terrain, environment, _)) = spatial_lighting.as_mut()
                 {
                     placement.entity_lighting.sample(
-                        placement.owner,
+                        placement
+                            .retirement
+                            .as_ref()
+                            .map_or(placement.owner, |retired| retired.original_owner),
                         &source.model,
                         placement.transform,
                         placement.color,
@@ -3052,6 +3098,12 @@ impl M2Frame {
             let mut instance_color = placement_mesh_color(placement.owner, placement.color);
             if let Some(animation) = &placement.unit_animation {
                 instance_color *= placement_color(animation.model_color().to_le_bytes());
+            } else if let Some(pose) = placement
+                .retirement
+                .as_ref()
+                .and_then(|retired| retired.unit_pose)
+            {
+                instance_color *= placement_color(pose.color.to_le_bytes());
             }
             instance_color.w *= placement_opacity;
             if let Some(mesh) = source.mesh
@@ -3399,12 +3451,20 @@ fn placement_parent_index(
     placement: &M2GpuPlacement,
 ) -> Option<usize> {
     let preceding = &placements[..placement_index];
+    if let Some(retired) = &placement.retirement {
+        return retired.parent().and_then(|parent| {
+            preceding
+                .iter()
+                .rposition(|candidate| candidate.owner == parent)
+        });
+    }
     if placement.glue_parent_attachment.is_some() {
         return preceding.iter().rposition(|candidate| {
             matches!(candidate.owner, M2GpuPlacementOwner::GlueModel { .. })
         });
     }
     match placement.owner {
+        M2GpuPlacementOwner::Retired(_) => None,
         M2GpuPlacementOwner::UnitEffect { .. } => preceding.iter().rposition(|candidate| {
             candidate.unit_animation.as_ref().is_some_and(|owner| {
                 placement
@@ -3556,6 +3616,7 @@ fn append_triggered_events(
 
 const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
     match owner {
+        M2GpuPlacementOwner::Retired(_) => None,
         M2GpuPlacementOwner::UnitEffect { .. }
         | M2GpuPlacementOwner::Static(_)
         | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
@@ -3576,6 +3637,7 @@ const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
 /// Maps resident ownership to the three independent banks populated by Glue Lua.
 const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
     match owner {
+        M2GpuPlacementOwner::Retired(_) => M2SceneLightBank::Environment,
         M2GpuPlacementOwner::PlayerBody { guid: 0 }
         | M2GpuPlacementOwner::PlayerItem { guid: 0, .. }
         | M2GpuPlacementOwner::PlayerItemVisual { guid: 0, .. } => M2SceneLightBank::Character,
@@ -3678,6 +3740,7 @@ fn m2_gpu_placement(
         color: [255; 4],
         opacity: 1.0,
         entity_opacity: None,
+        retirement: None,
         particle_colors,
         playback,
         unit_animation: None,

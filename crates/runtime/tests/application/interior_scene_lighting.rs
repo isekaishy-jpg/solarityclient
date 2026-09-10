@@ -252,7 +252,15 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
         exterior.direction(),
         exterior.direction(),
     );
-    for now in [0., 1000.] {
+    for now in [0., 1000., 1500.] {
+        if now == 1500. {
+            let opacity =
+                Rc::new(crate::application::entity_opacity::EntityOpacityOwner::default());
+            opacity.select_model(1, 1., 0, 1000);
+            opacity.mark_removed(1000);
+            frame.placements[1].entity_opacity = Some(opacity);
+            frame.retire_removed_models();
+        }
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
@@ -270,7 +278,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
         )?;
         assert_eq!(visible.draws.len(), 2);
         assert_ne!(visible.instance_scenes[0], visible.instance_scenes[1]);
-        if now == 1000. {
+        if now >= 1000. {
             let bytes = visible.instance_scenes[1].to_bytes();
             let expected = &native[84..88];
             for channel in 0..3 {
@@ -280,6 +288,18 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
                         < 0.00001
                 );
             }
+        }
+        if now == 1500. {
+            assert!(
+                visible
+                    .draws
+                    .iter()
+                    .any(|draw| (draw.material().alpha() - 0.84375).abs() < 0.00001)
+            );
+            assert!(
+                frame.placements[1].retirement.is_some(),
+                "the retained floor callback also serves the detached owner"
+            );
         }
     }
     assert_eq!(
