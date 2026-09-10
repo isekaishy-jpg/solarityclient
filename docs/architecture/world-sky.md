@@ -313,7 +313,7 @@ the override; it does not resume searching older auras. Without a matching aura,
 PLAYER_FLAGS bit `0x10` selects effect one outside arenas. Otherwise, bit
 `0x40000000` of player field 1229 selects effect 81. Missing local-player state
 selects zero. The runtime reads these retained ECS fields and exact Spell words
-110â€“112. The arena classification is driven by `54AE40`'s battlefield-status receiver,
+110Ã¢â‚¬â€œ112. The arena classification is driven by `54AE40`'s battlefield-status receiver,
 independently of the current world map. Status three installs an active queue
 and resolves its map through Map.dbc; an unknown map preserves the cached kind.
 Non-active statuses clear the matching active queue without clearing that kind.
@@ -465,3 +465,22 @@ These checks establish the ghost component for normalized NPOT targets with
 quarter dimensions at least eight. Native minimum texture allocation, optional
 power-of-two allocation, invisibility/filter shaders, ordinary world glow,
 and combined live world appearance remain further parity work.
+
+
+Build 81 packages source revision `97a303f5`. Workspace tests, formatting and
+Clippy passed. The installed and packaged executables share SHA-256
+`5217D16BAE38257F6A9652B996BAAB5CD8E10B3322CC8C9C31D99DA23AA57D8E`.
+An optimized offline ghost replay completed 1,260 frames across seven phases
+with no logged renderer errors. Inspected stationary, orbit and settled captures
+show the ghost world composition with colored FrameXML. Large flat terrain
+silhouettes remain visible, now tinted by ghost mode; the combined appearance
+is not established as fully stock-correct.
+
+Four separate uncaptured replays ran normal, ghost, ghost, normal, with 1,000
+frames per phase on the GTX 1070 at 1280x720. Stationary phases retained 49 ADT
+tiles in every run. Normal stationary medians were 3.9443 and 3.9249 ms; ghost
+medians were 3.7988 and 3.8502 ms (approximately 250?263 FPS across modes).
+Stationary p99 ranged from 4.4403 to 8.1230 ms, and orbit/pointer phases still
+had individual frames around 20?35 ms. These are complete world presentation
+measurements: the declaration also changes lighting/fog, so the comparison does
+not isolate shader cost. Neither the 1,200 FPS target nor stall removal is met.
