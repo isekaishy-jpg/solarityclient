@@ -18,8 +18,8 @@ use solarity_ecs::WorldObjectIdentity;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, LiquidFog, LiquidLighting,
     LiquidPreparedDraw, PlacedWorldModelDrawPlan, VulkanError, VulkanRenderer, WorldCameraFrame,
-    WorldFrustum, WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshHandle,
-    WorldModelMeshPlan, WorldModelPipelineHandle, WorldModelPreparedDraw, WorldModelSampledTexture,
+    WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshHandle, WorldModelMeshPlan,
+    WorldModelPipelineHandle, WorldModelPreparedDraw, WorldModelSampledTexture,
     WorldModelSurfacePassPlan, WorldModelTextureFiltering, WorldModelTextureSet,
     WorldModelTextureSetHandle,
 };
@@ -58,6 +58,7 @@ struct WorldModelGpuSource {
     draws: Vec<LogicalDrawResource>,
     draw_bounds: Vec<MovementCollisionBounds>,
     liquids: Vec<LiquidGpuBatch>,
+    liquid_indices: Vec<Option<usize>>,
 }
 
 /// One MODF transform with retained visibility scratch.
@@ -110,10 +111,11 @@ impl WorldModelFrame {
     pub(super) fn prepare_liquid_draws(
         &self,
         renderer: &VulkanRenderer,
-        frustum: WorldFrustum,
+        scene_groups: &[WorldModelSceneGroup],
         camera: WorldCameraFrame,
         lighting: LiquidLighting,
         fog: LiquidFog,
+        ordinary_fog_color: Vec3,
         time_ms: u32,
         specular_enabled: bool,
         scene_lights: Option<(
@@ -122,7 +124,11 @@ impl WorldModelFrame {
         )>,
         output: &mut Vec<LiquidPreparedDraw>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        for placement in &self.placements {
+        for scene in scene_groups {
+            let Some(&placement_index) = self.placement_indices.get(&scene.owner) else {
+                continue;
+            };
+            let placement = &self.placements[placement_index];
             if !placement.placement_valid {
                 continue;
             }
@@ -132,11 +138,27 @@ impl WorldModelFrame {
                     source_count: self.sources.len(),
                 },
             )?;
-            for batch in &source.liquids {
+            let index = source.liquid_indices.get(scene.group).ok_or(
+                RuntimeTerrainFrameError::WorldModelGroupIndex {
+                    group_index: scene.group,
+                    group_count: source.liquid_indices.len(),
+                },
+            )?;
+            // 799310 queues each admitted 0x1000 group once. 793D20/8A20C0
+            // submit its liquid without another camera or portal box test.
+            // 7964A0 passes the group's accumulated fog bit to 7D4F10;
+            // 7D4F40 chooses that bank independently of interior lighting.
+            if let Some(index) = *index {
+                let batch = &source.liquids[index];
+                let fog = if scene.indoor_fog {
+                    fog
+                } else {
+                    fog.with_color(ordinary_fog_color)
+                };
                 if let Some(draw) = batch.prepare_transformed_draw(
                     renderer,
                     placement.plan.transform(),
-                    frustum,
+                    None,
                     camera,
                     lighting,
                     fog,
@@ -520,6 +542,12 @@ fn prepare_gpu_source(
         .collect::<Result<Vec<_>, _>>()
         .map_err(solarity_systems::WorldModelVisibilityError::from)?;
     let liquids = liquid_materials.prepare_world_model(renderer, source.liquids())?;
+    let mut liquid_indices = vec![None; source.model().groups().len()];
+    for (index, batch) in source.liquids().iter().enumerate() {
+        if source.model().groups()[batch.group].flags() & 0x1000 != 0 {
+            liquid_indices[batch.group] = Some(index);
+        }
+    }
     Ok(WorldModelGpuSource {
         model: Arc::clone(source.model()),
         plan,
@@ -527,6 +555,7 @@ fn prepare_gpu_source(
         draws,
         draw_bounds,
         liquids,
+        liquid_indices,
     })
 }
 

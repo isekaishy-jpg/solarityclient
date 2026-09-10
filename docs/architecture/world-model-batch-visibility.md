@@ -104,7 +104,9 @@ portal projection/recursion, clip operations, and batch selection execute
 against the extracted data. This is not a stock-client screenshot or proof
 of camera registration, terrain occlusion, doodad visibility, or shaders.
 
-WMO liquids and attached doodad visibility still need their own integration.
+WMO liquids now consume these admitted groups and their fog flags; see
+[liquid admission and fog](liquid-rendering.md#group-admission-and-fog).
+Attached doodad visibility still needs its own integration.
 No runtime FPS improvement or complete WMO visibility parity is claimed by
 these selection fixtures.
 
@@ -132,4 +134,4 @@ each material's selected color bits, and checks all 64 resulting frames while
 the groups switch fog banks. It also retains the existing owner/portal ordering,
 hidden-region, and next-frame invalidation checks. These controlled fixtures
 establish the surface connection; they do not replace combined live-world
-comparisons or establish fog routing for liquids and M2 doodads.
+comparisons or establish the separate M2 doodad fog consumer.

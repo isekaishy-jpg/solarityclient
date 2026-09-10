@@ -7,8 +7,8 @@ depth lookup coordinates, generated water depth images, resident animated
 texture frame selection, terrain and WMO liquid meshes, and a Vulkan world-frame
 draw path. The runtime streams liquid materials and submits retained geometry
 with the world camera, light sample, animation clock, and current WMO instance
-transforms. Swimming and underwater environment selection remain under
-implementation; the current Testing package predates liquid submission.
+transforms. Underwater environment selection is documented in
+[world fog](world-fog.md).
 
 ## Terrain residency and scene composition
 
@@ -77,8 +77,8 @@ white downward directional light and zero ambient/specular terms.
 
 The terrain and GameObject resource owners load these factories before root
 publication. Static MODF, global-WMO, and replicated GameObject instances share
-renderer-local source meshes. Culling and shader matrices use the current
-instance transform. The last departing instance retires its liquid handles,
+renderer-local source meshes. Shader matrices use the current instance
+transform. The last departing instance retires its liquid handles,
 and complete world retirement includes all remaining WMO liquid factories.
 
 `liquid_wmo_geometry_oracle.py` captures 148 complete native meshes, including
@@ -88,6 +88,41 @@ the inputs as real WMO files and compare every vertex byte and strip index.
 `liquid_wmo_material_oracle.py` captures 224 native type, tint, UV, depth-column,
 and lighting choices. Runtime tests also capture every pixel from shared WMO
 water before and after a replicated transform change and verify final retirement.
+
+### Group admission and fog
+
+`799310` adds an admitted group's liquid to the native queue only when its
+loaded MOGP has flag `0x1000`. The group's first-visit marker deduplicates
+repeated portal callbacks. `793D20` resolves the liquid instance, and `8A20C0`
+adds it to its material queue once. The queue append `8A1C30` and material
+dispatch `8A2240` do not introduce another camera or portal-box test.
+
+Runtime retains the source group index beside each CPU liquid factory and
+builds a dense group-to-GPU-batch lookup when the source is uploaded. Frames
+iterate the already deduplicated admitted group list and resolve its current
+placement. This replaces the previous scan of every liquid in every resident
+placement. Groups without `0x1000` do not create factories, and a dry group's
+admission cannot submit another group's water. Terrain liquid bounds culling
+continues at its separate terrain submission boundary.
+
+Before drawing a WMO group, `7964A0` sends its accumulated indoor fog bit to
+the liquid provider's virtual setter `7D4F10`. Factory `7D5120` initializes that
+field separately from the interior lighting mode. Callback `7D4F40` chooses
+DayNight bank `8C` or `A0` and writes it through `834990`. Runtime uses the same
+group flag to select the liquid fog color; the two final banks share range and
+exponent. Interior lighting and tint remain independent of this selection.
+
+`world_model_liquid_fog_oracle.py` captures 64 original factory/setter/callback
+queries across both lighting modes, four color pairs, two fog ranges, and
+repeated bank changes on each provider. Allocation, the DayNight provider,
+process-exit registration, and unrelated scene-light append are substituted;
+fog arithmetic and private interior light initialization execute original code.
+The runtime Vulkan fixture uses two replicated owners and a dry group before
+the wet group. It checks 128 fogged frames across both lighting modes and
+owners, plus unfogged tint, missing admission, off-camera admitted packets,
+movement, stale departed-owner entries, shared mesh ownership, and retirement.
+These controlled checks do not establish combined live-world liquid parity or
+native sorting within a material queue.
 
 ## Depth coordinates and images
 

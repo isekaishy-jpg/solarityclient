@@ -181,7 +181,7 @@ impl LiquidGpuBatch {
         self.prepare_transformed_draw(
             renderer,
             Mat4::from_translation(self.origin),
-            frustum,
+            Some(frustum),
             camera,
             lighting,
             fog,
@@ -191,13 +191,13 @@ impl LiquidGpuBatch {
         )
     }
 
-    /// Applies the current WMO transform to both bounds and liquid vertices.
+    /// Applies the current transform; admitted WMO groups need no further clip.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare_transformed_draw(
         &self,
         renderer: &VulkanRenderer,
         transform: Mat4,
-        frustum: WorldFrustum,
+        frustum: Option<WorldFrustum>,
         camera: WorldCameraFrame,
         lighting: LiquidLighting,
         fog: LiquidFog,
@@ -210,12 +210,14 @@ impl LiquidGpuBatch {
     ) -> Result<Option<LiquidPreparedDraw>, RuntimeTerrainFrameError> {
         let center = transform.transform_point3((self.minimum + self.maximum) * 0.5 - self.origin);
         let half = (self.maximum - self.minimum) * 0.5;
-        if !frustum.intersects_box(
-            center,
-            transform.transform_vector3(Vec3::X * half.x),
-            transform.transform_vector3(Vec3::Y * half.y),
-            transform.transform_vector3(Vec3::Z * half.z),
-        )? {
+        if let Some(frustum) = frustum
+            && !frustum.intersects_box(
+                center,
+                transform.transform_vector3(Vec3::X * half.x),
+                transform.transform_vector3(Vec3::Y * half.y),
+                transform.transform_vector3(Vec3::Z * half.z),
+            )?
+        {
             return Ok(None);
         }
         // 7D4F40's private interior light has zero ambient/specular terms,

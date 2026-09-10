@@ -12,6 +12,7 @@ use super::{LiquidAssetCache, ResidentLiquidMaterial, RuntimeLiquidAssetError};
 
 /// One group-local mesh and the lighting mode retained by native 7D5120.
 pub(in crate::application) struct ResidentWorldModelLiquidBatch {
+    pub group: usize,
     pub material: Arc<ResidentLiquidMaterial>,
     pub mesh: WorldModelLiquidMeshPlan,
     pub lighting: WorldModelLiquidLighting,
@@ -35,6 +36,10 @@ pub(in crate::application) fn prepare_world_model_liquids(
 ) -> Result<Vec<ResidentWorldModelLiquidBatch>, RuntimeLiquidAssetError> {
     let mut batches = Vec::new();
     for (index, group) in model.groups().iter().enumerate() {
+        // 799310 admits liquid work only for a loaded MOGP with this bit set.
+        if group.flags() & 0x1000 == 0 {
+            continue;
+        }
         let Some(liquid) = group.liquid() else {
             continue;
         };
@@ -94,6 +99,7 @@ pub(in crate::application) fn prepare_world_model_liquids(
             maximum = maximum.max(point);
         }
         batches.push(ResidentWorldModelLiquidBatch {
+            group: index,
             material,
             mesh,
             minimum,

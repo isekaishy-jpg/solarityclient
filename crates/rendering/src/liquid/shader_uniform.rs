@@ -82,6 +82,12 @@ pub struct LiquidFog {
 }
 
 impl LiquidFog {
+    /// Selects another palette bank while retaining the shared fog coefficients.
+    #[must_use]
+    pub const fn with_color(self, color: Vec3) -> Self {
+        Self { color, ..self }
+    }
+
     /// Retains `(view_z_multiplier, offset, exponent)` from native register c4.
     ///
     /// Visibility is `min(max(view_z * multiplier + offset, 0)^exponent, 1)`.

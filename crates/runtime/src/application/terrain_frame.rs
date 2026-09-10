@@ -924,10 +924,11 @@ impl TerrainFrame {
         }
         self.world_models.prepare_liquid_draws(
             renderer,
-            frustum,
+            terrain.world_model_scene_groups(),
             camera,
             liquid_lighting,
             liquid_fog,
+            environment.ordinary_model_fog().color(),
             liquid_time_ms,
             specular_enabled,
             Some((m2.scene_points, m2.scene_directionals)),

@@ -13,21 +13,30 @@ use solarity_ecs::{
 };
 use solarity_rendering::{
     LiquidDepthTexture, LiquidDepthTextureKind, LiquidDrawMaterial, LiquidFog, LiquidFrame,
-    LiquidLighting, LiquidShaderUniform, M2LocalLightState, M2SceneUniform, TerrainSceneUniform,
-    VulkanBootstrap, VulkanRenderer, WorldCamera, WorldCameraFrame, WorldFrameScene, WorldFrustum,
-    WorldModelBaseMip, WorldModelSceneUniform, WorldModelTextureFiltering, WorldScreenWindow,
+    LiquidLighting, LiquidPreparedDraw, LiquidShaderUniform, M2LocalLightState, M2SceneUniform,
+    TerrainSceneUniform, VulkanBootstrap, VulkanRenderer, WorldCamera, WorldCameraFrame,
+    WorldFrameScene, WorldModelBaseMip, WorldModelSceneUniform, WorldModelTextureFiltering,
 };
 
 use super::WorldModelFrame;
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
+use crate::application::terrain_coordinator::WorldModelSceneGroup;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, liquid_models};
 
 /// Full source admission and real Vulkan pixels follow two replicated transforms.
 #[test]
-#[allow(unsafe_code)] // The hidden SDL test surface transfers to Vulkan ownership.
 fn replicated_world_model_water_moves_shares_and_retires_its_mesh() -> Result<(), Box<dyn Error>> {
-    let mut files = liquid_models::files(0, 0, 0, 1, 0xff335577);
+    for interior in [false, true] {
+        replicated_water(interior)?;
+    }
+    Ok(())
+}
+
+#[allow(unsafe_code)] // The hidden SDL test surface transfers to Vulkan ownership.
+fn replicated_water(interior: bool) -> Result<(), Box<dyn Error>> {
+    let flags = if interior { 0 } else { 0x48 };
+    let mut files = files_with_dry_group(flags)?;
     for (path, bytes) in &mut files {
         if path.ends_with(".blp") {
             let length = bytes.len();
@@ -97,9 +106,102 @@ fn replicated_world_model_water_moves_shares_and_retires_its_mesh() -> Result<()
         "shared decoded roots retain one liquid factory"
     );
     assert_eq!(frame.placements.len(), 2);
+    assert_eq!(
+        frame.sources[0]
+            .as_ref()
+            .ok_or("GPU source")?
+            .liquid_indices,
+        [None, Some(0)],
+        "MOGP liquid flag gates the factory; group and compact batch indices differ"
+    );
     let mesh = frame.sources[0].as_ref().ok_or("GPU source")?.liquids[0].mesh();
     let camera = camera(Vec3::new(2., 2., 1.))?;
-    capture(&frame, &mut renderer, camera)?;
+    let mut groups = frame
+        .placements
+        .iter()
+        .map(|placement| WorldModelSceneGroup {
+            owner: placement.owner.scene_owner(),
+            group: 1,
+            indoor_fog: false,
+            // Liquid admission does not require a surviving MOBA portal clip.
+            frusta: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let draws = prepare_draws(&frame, &renderer, camera, &groups, fog(), Vec3::ZERO)?;
+    assert_eq!(
+        draws.len(),
+        2,
+        "both admitted owners submit, including the off-camera liquid"
+    );
+    let tint = if interior {
+        [51, 85, 119, 255]
+    } else {
+        [0, 0, 0, 255]
+    };
+    capture(&mut renderer, &draws, tint)?;
+    assert!(
+        prepare_draws(&frame, &renderer, camera, &[], fog(), Vec3::ZERO)?.is_empty(),
+        "resident liquid without group admission emits no packet"
+    );
+    groups[0].group = 0;
+    assert!(
+        prepare_draws(&frame, &renderer, camera, &groups[..1], fog(), Vec3::ZERO)?.is_empty(),
+        "admitting a dry group cannot draw another group's water"
+    );
+    groups[0].group = 1;
+    let native = include_str!("../fixtures/world_model_liquid_fog_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            line.split_whitespace()
+                .map(|word| u32::from_str_radix(word, 16))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for row in native.iter().filter(|row| row[1] == u32::from(interior)) {
+        let other = native
+            .iter()
+            .find(|other| other[0] != row[0] && other[1..7] == row[1..7])
+            .ok_or("opposite native liquid fog bank")?;
+        let color = |row: &[u32]| Vec3::from_array([row[11], row[12], row[13]].map(f32::from_bits));
+        let selected = color(row);
+        let opposite = color(other);
+        groups[0].indoor_fog = row[0] != 0;
+        groups[1].indoor_fog = !groups[0].indoor_fog;
+        let (ordinary, indoor) = if groups[0].indoor_fog {
+            (opposite, selected)
+        } else {
+            (selected, opposite)
+        };
+        let inverse = f32::from_bits(row[9]);
+        let fog = LiquidFog::new(
+            Vec3::new(
+                inverse,
+                f32::from_bits(row[8]) * inverse,
+                f32::from_bits(row[10]),
+            ),
+            indoor,
+        );
+        for (index, expected) in [selected, opposite].into_iter().enumerate() {
+            let center = frame.placements[index]
+                .plan
+                .transform()
+                .transform_point3(Vec3::new(2., 2., 1.));
+            let draws = prepare_draws(
+                &frame,
+                &renderer,
+                self::camera(center)?,
+                &groups,
+                fog,
+                ordinary,
+            )?;
+            assert_eq!(draws.len(), 2);
+            let rgb = expected
+                .to_array()
+                .map(|channel| (channel * 255.).round() as u8);
+            capture(&mut renderer, &draws, [rgb[0], rgb[1], rgb[2], 255])?;
+        }
+    }
     world.update_transform(
         90,
         WorldTransform::new(Vec3::X * 15., std::f32::consts::FRAC_PI_2),
@@ -107,25 +209,20 @@ fn replicated_world_model_water_moves_shares_and_retires_its_mesh() -> Result<()
     objects.synchronize(Some(&world))?;
     frame.synchronize_game_objects(&mut renderer, objects.frame_input(Some(&world)))?;
     frame.update_game_object_states(objects.frame_input(Some(&world)))?;
-    let mut hidden = Vec::new();
-    frame.prepare_liquid_draws(
-        &renderer,
-        WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
-        camera,
-        lighting(),
-        fog(),
-        0,
-        false,
-        None,
-        &mut hidden,
-    )?;
-    assert!(hidden.is_empty(), "moved factory leaves the old view");
     let moved = frame.placements.iter().find(|placement| matches!(placement.owner, super::WorldModelGpuPlacementOwner::GameObject {identity, ..} if identity.guid()==90)).ok_or("moved placement")?;
     let center = moved
         .plan
         .transform()
         .transform_point3(Vec3::new(2., 2., 1.));
-    capture(&frame, &mut renderer, self::camera(center)?)?;
+    let draws = prepare_draws(
+        &frame,
+        &renderer,
+        self::camera(center)?,
+        &groups,
+        fog(),
+        Vec3::ZERO,
+    )?;
+    capture(&mut renderer, &draws, tint)?;
     assert_eq!(
         frame.sources[0].as_ref().ok_or("GPU source")?.liquids[0].mesh(),
         mesh
@@ -138,10 +235,15 @@ fn replicated_world_model_water_moves_shares_and_retires_its_mesh() -> Result<()
         1,
         "remaining instance retains the shared factory"
     );
+    assert_eq!(
+        prepare_draws(&frame, &renderer, camera, &groups, fog(), Vec3::ZERO)?.len(),
+        1
+    );
     world.remove_object(91)?;
     objects.synchronize(Some(&world))?;
     frame.synchronize_game_objects(&mut renderer, objects.frame_input(Some(&world)))?;
     assert!(frame.sources.is_empty());
+    assert!(prepare_draws(&frame, &renderer, camera, &groups, fog(), Vec3::ZERO)?.is_empty());
     let surface = renderer.upload_stock_m2_failure()?;
     assert!(
         renderer
@@ -164,6 +266,45 @@ fn replicated_world_model_water_moves_shares_and_retires_its_mesh() -> Result<()
     renderer.shutdown()?;
     Ok(())
 }
+
+/// Keep MLIQ bytes in group zero but clear its native admission flag; group one is wet.
+fn files_with_dry_group(flags: u32) -> Result<FixtureFiles, Box<dyn Error>> {
+    let mut files = liquid_models::files(flags, flags, 0, 1, 0xff335577);
+    let root = &mut files
+        .iter_mut()
+        .find(|(path, _)| path == "World\\Liquid.wmo")
+        .ok_or("root fixture")?
+        .1;
+    let mut rebuilt = Vec::new();
+    let mut offset = 0;
+    while offset < root.len() {
+        let magic = &root[offset..offset + 4];
+        let length = u32::from_le_bytes(root[offset + 4..offset + 8].try_into()?) as usize;
+        let mut payload = root[offset + 8..offset + 8 + length].to_vec();
+        if magic == b"DHOM" {
+            payload[4..8].copy_from_slice(&2u32.to_le_bytes());
+        } else if magic == b"IGOM" {
+            payload.extend_from_within(..);
+        }
+        rebuilt.extend(magic);
+        rebuilt.extend((payload.len() as u32).to_le_bytes());
+        rebuilt.extend(payload);
+        offset += length + 8;
+    }
+    *root = rebuilt;
+    let wet = files
+        .iter_mut()
+        .find(|(path, _)| path.ends_with("_000.wmo"))
+        .ok_or("group fixture")?;
+    let mut dry = wet.1.clone();
+    // MVER occupies 12 bytes; MOGP's payload starts at 20 and its flags at +8.
+    dry[28..32].copy_from_slice(&flags.to_le_bytes());
+    wet.0 = "World\\Liquid_001.wmo".to_owned();
+    files.push(("World\\Liquid_000.wmo".to_owned(), dry));
+    Ok(files)
+}
+
+type FixtureFiles = Vec<(String, Vec<u8>)>;
 
 /// A tight view of the interior of the transformed liquid cell.
 fn camera(center: Vec3) -> Result<WorldCameraFrame, Box<dyn Error>> {
@@ -189,25 +330,37 @@ fn fog() -> LiquidFog {
     LiquidFog::new(Vec3::new(0., 1., 1.), Vec3::ZERO)
 }
 
-/// Every pixel must carry the authored interior tint from the live WMO source.
-fn capture(
+/// Submit exactly the supplied native group queue with one coherent light sample.
+fn prepare_draws(
     frame: &WorldModelFrame,
-    renderer: &mut VulkanRenderer,
+    renderer: &VulkanRenderer,
     camera: WorldCameraFrame,
-) -> Result<(), Box<dyn Error>> {
+    groups: &[WorldModelSceneGroup],
+    fog: LiquidFog,
+    ordinary: Vec3,
+) -> Result<Vec<LiquidPreparedDraw>, Box<dyn Error>> {
     let mut draws = Vec::new();
     frame.prepare_liquid_draws(
         renderer,
-        WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+        groups,
         camera,
         lighting(),
-        fog(),
+        fog,
+        ordinary,
         0,
         false,
         None,
         &mut draws,
     )?;
-    assert_eq!(draws.len(), 1);
+    Ok(draws)
+}
+
+/// Every visible pixel must carry the expected liquid lighting or native fog.
+fn capture(
+    renderer: &mut VulkanRenderer,
+    draws: &[LiquidPreparedDraw],
+    expected: [u8; 4],
+) -> Result<(), Box<dyn Error>> {
     let depths = [
         LiquidDepthTextureKind::River,
         LiquidDepthTextureKind::Ocean,
@@ -244,17 +397,23 @@ fn capture(
         ),
     )
     .with_liquids(LiquidFrame::new(
-        &draws, &depths[0], &depths[1], &depths[2], 0,
+        draws, &depths[0], &depths[1], &depths[2], 0,
     ));
     renderer.request_frame_capture()?;
     let report =
         renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
-    assert_eq!(report.liquid_draw_count(), 1);
+    assert_eq!(report.liquid_draw_count(), draws.len());
     let image = renderer
         .take_captured_frame()?
         .ok_or("missing frame capture")?;
     for pixel in image.rgba8().as_chunks::<4>().0 {
-        assert_eq!(*pixel, [51, 85, 119, 255]);
+        assert!(
+            pixel
+                .iter()
+                .zip(expected)
+                .all(|(&actual, expected)| actual.abs_diff(expected) <= 1),
+            "liquid pixel {pixel:?}, expected {expected:?}"
+        );
     }
     Ok(())
 }
