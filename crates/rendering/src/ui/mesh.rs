@@ -326,12 +326,42 @@ impl UiMeshPlan {
         object_index: usize,
         delta: [f32; 2],
     ) -> Result<(), UiMeshPlanError> {
+        self.translate_object_batches(object_index, None, delta)
+    }
+
+    /// Moves one object's selected source while preserving its other draw sources.
+    ///
+    /// Font pixel alignment uses this after ordinary object motion so an
+    /// EditBox's glyphs can align independently of its border and backdrop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the delta or resulting translation is nonfinite.
+    pub fn translate_object_source(
+        &mut self,
+        object_index: usize,
+        source: &UiRenderSource,
+        delta: [f32; 2],
+    ) -> Result<(), UiMeshPlanError> {
+        self.translate_object_batches(object_index, Some(source), delta)
+    }
+
+    /// Applies source-filtered motion through the retained per-owner batch index.
+    fn translate_object_batches(
+        &mut self,
+        object_index: usize,
+        source: Option<&UiRenderSource>,
+        delta: [f32; 2],
+    ) -> Result<(), UiMeshPlanError> {
         validate_components(object_index, "visual translation", &delta)?;
         let Some(batch_indices) = self.object_batches.get(&object_index) else {
             return Ok(());
         };
         for &batch_index in batch_indices {
             let batch = &mut self.batches[batch_index];
+            if source.is_some_and(|source| batch.source() != source) {
+                continue;
+            }
             let current = batch.object_translation();
             let next = [current[0] + delta[0], current[1] + delta[1]];
             validate_components(object_index, "visual translation", &next)?;

@@ -1,4 +1,4 @@
-//! Offline diagnostic replay through the production Glue presentation path.
+//! Explicit diagnostic replay through the production Glue presentation path.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -47,10 +47,30 @@ pub enum GlueBenchmarkAction {
     Sequence(Vec<GlueBenchmarkAction>),
     /// Select a stock route through SET_GLUE_SCREEN and its authored fades.
     Screen(GlueBenchmarkScreen),
+    /// Publish one native Glue event through the same dispatcher as networking.
+    Event {
+        /// Stock event name subscribed by GlueXML.
+        name: String,
+        /// Native positional values consumed by the authored handler.
+        payload: UiEventPayload,
+    },
     /// Publish enum-time fixture data through CHARACTER_LIST_UPDATE.
     Directory(UiCharacterDirectory),
     /// Click the center of a named live button through normal pointer routing.
     Click(String),
+    /// Submit dummy credentials through login controls and wait for a real failure.
+    /// The caller must configure an isolated, unavailable loopback endpoint.
+    ConnectionFailure,
+}
+
+impl GlueBenchmarkAction {
+    fn services_network(&self) -> bool {
+        match self {
+            Self::ConnectionFailure => true,
+            Self::Sequence(actions) => actions.iter().any(Self::services_network),
+            _ => false,
+        }
+    }
 }
 
 /// One labelled action and the route that must actually reach the swapchain.
@@ -129,7 +149,7 @@ pub enum GlueBenchmarkError {
 }
 
 impl ClientServices {
-    /// Runs an offline replay without polling or initiating server operations.
+    /// Replays local stimuli; ConnectionFailure explicitly services the real login worker.
     pub(in crate::application) fn benchmark_glue_steps(
         &mut self,
         steps: &[GlueBenchmarkStep],
@@ -155,6 +175,7 @@ impl ClientServices {
         }
         let mut results = Vec::with_capacity(steps.len());
         for (index, step) in steps.iter().enumerate() {
+            let service_network = step.action.services_network();
             tracing::info!(step = %step.name, "started Glue benchmark step");
             let started = Instant::now();
             self.apply_benchmark_action(&step.action)?;
@@ -162,7 +183,7 @@ impl ClientServices {
             let mut last_present = started;
             let mut transition_frames = Vec::new();
             loop {
-                self.benchmark_frame()?;
+                self.benchmark_frame(service_network, capture_directory)?;
                 let presented = Instant::now();
                 transition_frames.push(presented.duration_since(last_present));
                 last_present = presented;
@@ -175,6 +196,7 @@ impl ClientServices {
                     && self.sound.glue_media_ready()
                     && self.glue.current_screen() == step.expected_screen.token()
                     && self.presented_glue_screen.as_deref() == Some(step.expected_screen.token())
+                    && (!service_network || !self.login_failures.is_empty())
                 {
                     break;
                 }
@@ -188,7 +210,7 @@ impl ClientServices {
             let ready_duration = last_present.duration_since(started);
             let mut following_frames = Vec::with_capacity(following_frame_count.get());
             for _ in 0..following_frame_count.get() {
-                self.benchmark_frame()?;
+                self.benchmark_frame(service_network, capture_directory)?;
                 let presented = Instant::now();
                 following_frames.push(presented.duration_since(last_present));
                 last_present = presented;
@@ -213,7 +235,7 @@ impl ClientServices {
                 self.renderer
                     .request_frame_capture()
                     .map_err(ApplicationError::from)?;
-                self.benchmark_frame()?;
+                self.benchmark_frame(service_network, capture_directory)?;
                 let frame = self
                     .renderer
                     .take_captured_frame()
@@ -232,12 +254,51 @@ impl ClientServices {
         Ok(results)
     }
 
-    /// Delivers only fixture events and actual button clicks, preserving Lua callbacks.
+    /// Delivers explicit fixture events and real input, preserving Lua callbacks.
     fn apply_benchmark_action(
         &mut self,
         action: &GlueBenchmarkAction,
     ) -> Result<(), GlueBenchmarkError> {
         match action {
+            GlueBenchmarkAction::ConnectionFailure => {
+                for name in ["AccountLoginAccountEdit", "AccountLoginPasswordEdit"] {
+                    let index = self
+                        .glue
+                        .objects()
+                        .iter()
+                        .position(|object| object.name() == Some(name))
+                        .ok_or_else(|| GlueBenchmarkError::Button {
+                            name: name.to_owned(),
+                        })?;
+                    let bounds = self
+                        .glue
+                        .geometry()
+                        .region(index)
+                        .ok_or_else(|| GlueBenchmarkError::Button {
+                            name: name.to_owned(),
+                        })?
+                        .presentation_bounds();
+                    let position = (
+                        (bounds.left() + bounds.right()) * 0.5,
+                        (bounds.bottom() + bounds.top()) * 0.5,
+                    );
+                    self.glue
+                        .pointer_motion(position)
+                        .map_err(ApplicationError::from)?;
+                    self.glue
+                        .pointer_button(position, UiPointerButton::Left, true)
+                        .map_err(ApplicationError::from)?;
+                    self.glue
+                        .pointer_button(position, UiPointerButton::Left, false)
+                        .map_err(ApplicationError::from)?;
+                    self.glue
+                        .text_input("DIAGNOSTIC")
+                        .map_err(ApplicationError::from)?;
+                }
+                self.apply_benchmark_action(&GlueBenchmarkAction::Click(
+                    "AccountLoginLoginButton".to_owned(),
+                ))?;
+            }
             GlueBenchmarkAction::Sequence(actions) => {
                 for action in actions {
                     self.apply_benchmark_action(action)?;
@@ -256,6 +317,11 @@ impl ClientServices {
                 let payload = UiEventPayload::new([UiEventArgument::Integer(count)]);
                 self.glue
                     .dispatch_event("CHARACTER_LIST_UPDATE", &payload)
+                    .map_err(ApplicationError::from)?;
+            }
+            GlueBenchmarkAction::Event { name, payload } => {
+                self.glue
+                    .dispatch_event(name, payload)
                     .map_err(ApplicationError::from)?;
             }
             GlueBenchmarkAction::Click(name) => {
@@ -297,8 +363,12 @@ impl ClientServices {
         Ok(())
     }
 
-    /// Services the real renderer and local selection dispatch while keeping networking offline.
-    fn benchmark_frame(&mut self) -> Result<(), GlueBenchmarkError> {
+    /// Services the renderer and, only when requested, the production login worker.
+    fn benchmark_frame(
+        &mut self,
+        service_network: bool,
+        capture_directory: Option<&Path>,
+    ) -> Result<(), GlueBenchmarkError> {
         let mut profile = RuntimeFrameProfile::new("benchmark frame");
         for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
             let Some(event) = self.poll_platform_event() else {
@@ -311,17 +381,41 @@ impl ClientServices {
             // stimuli above exclusively own UI input during the replay.
         }
         profile.mark("platform events");
-        while let Some(action) = self.glue.take_network_action() {
-            if let UiGlueNetworkAction::SelectCharacter { index } = action {
-                let payload = UiEventPayload::new([UiEventArgument::Integer(i64::from(index))]);
-                self.glue
-                    .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)
-                    .map_err(ApplicationError::from)?;
-                self.glue_ui_dirty = true;
+        let previous_failures = self.login_failures.len();
+        if service_network {
+            self.service_login()?;
+        } else {
+            while let Some(action) = self.glue.take_network_action() {
+                if let UiGlueNetworkAction::SelectCharacter { index } = action {
+                    let payload = UiEventPayload::new([UiEventArgument::Integer(i64::from(index))]);
+                    self.glue
+                        .dispatch_event("UPDATE_SELECTED_CHARACTER", &payload)
+                        .map_err(ApplicationError::from)?;
+                    self.glue_ui_dirty = true;
+                }
             }
+        }
+        let first_failure_capture =
+            capture_directory.filter(|_| self.login_failures.len() > previous_failures);
+        if first_failure_capture.is_some() {
+            self.renderer
+                .request_frame_capture()
+                .map_err(ApplicationError::from)?;
         }
         profile.mark("selection dispatch");
         self.present_frame()?;
+        if let Some(directory) = first_failure_capture {
+            let frame = self
+                .renderer
+                .take_captured_frame()
+                .map_err(ApplicationError::from)?
+                .ok_or_else(|| GlueBenchmarkError::CaptureMissing {
+                    name: "first-failure-frame".to_owned(),
+                })?;
+            let path = directory.join("first-failure-frame.ppm");
+            write_capture(&path, &frame)
+                .map_err(|source| GlueBenchmarkError::CaptureIo { path, source })?;
+        }
         profile.mark("application present");
         Ok(())
     }

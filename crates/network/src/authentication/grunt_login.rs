@@ -101,6 +101,15 @@ impl<S> AuthenticatedGrunt<S> {
             session_key: self.session_key,
         }
     }
+
+    /// Copies the world authentication identity while retaining realmd for realm queries.
+    #[must_use]
+    pub fn world_identity(&self) -> WorldIdentity {
+        WorldIdentity {
+            account_name: self.account_name.clone(),
+            session_key: self.session_key.clone(),
+        }
+    }
 }
 
 impl<S> AuthenticatedGrunt<S>

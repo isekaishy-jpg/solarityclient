@@ -201,7 +201,7 @@ async fn serve_exchanges(
 }
 
 /// Performs the real header-crypto proof exchange for the synthetic identity.
-async fn authenticate(
+pub(crate) async fn authenticate(
     stream: &mut TcpStream,
     session_key: [u8; 40],
 ) -> Result<ServerCrypto, TestError> {

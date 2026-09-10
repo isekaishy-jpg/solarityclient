@@ -861,6 +861,20 @@ impl UiCharacterCreationState {
             .map_or_else(String::new, |race| race.file_string.clone())
     }
 
+    /// GetSelectBackgroundModel uses ChrRaces row 2 before any character exists.
+    pub(crate) fn default_selection_background(&self) -> String {
+        let inner = self.inner.borrow();
+        if inner.catalog.streaming_trial {
+            return "CharacterSelect".to_owned();
+        }
+        inner
+            .catalog
+            .races
+            .iter()
+            .find(|race| race.id == 2)
+            .map_or_else(String::new, |race| race.file_string.clone())
+    }
+
     /// Returns the current race's hair label token.
     #[must_use]
     pub fn hair_customization(&self) -> String {

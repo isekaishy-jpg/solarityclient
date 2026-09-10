@@ -11,6 +11,35 @@ use solarity_rendering::{
     UiRenderTransform, UiRenderVertex, UiTextureAddressMode, UiTextureResidency,
 };
 
+/// Pixel alignment changes text and caret translation without moving its decoration.
+#[test]
+fn ui_mesh_translates_only_requested_owner_source() -> Result<(), Box<dyn Error>> {
+    let atlas = UiRenderSource::GlyphAtlas(17);
+    let mut mesh = UiMeshPlan::prepare(
+        [800.0, 600.0],
+        [
+            quad(4, UiRenderSource::VertexColor, [0.0, 0.0, 10.0, 10.0]),
+            quad(4, atlas.clone(), [0.0, 0.0, 10.0, 10.0]),
+            quad(4, atlas.clone(), [0.0, 0.0, 10.0, 10.0])
+                .with_state(UiRenderState::EditBoxCaret(4)),
+            quad(8, atlas.clone(), [0.0, 0.0, 10.0, 10.0]),
+        ]
+        .into_iter(),
+    )?;
+    let identity = mesh.geometry_identity();
+    mesh.translate_object(4, [0.25, 0.25])?;
+    mesh.translate_object_source(4, &atlas, [-0.25, 0.25])?;
+    assert_eq!(
+        mesh.batches()
+            .iter()
+            .map(|batch| batch.translation())
+            .collect::<Vec<_>>(),
+        [[0.25, 0.25], [0.0, 0.5], [0.0, 0.5], [0.0, 0.0]]
+    );
+    assert_eq!(mesh.geometry_identity(), identity);
+    Ok(())
+}
+
 /// Growing and shrinking one run keeps neighboring data and updates later lookups.
 #[test]
 fn ui_mesh_resizes_source_run_without_rebuilding_neighbor_payloads() -> Result<(), Box<dyn Error>> {

@@ -384,15 +384,18 @@ impl ClientApplication {
         }
     }
 
-    /// Replays explicit offline Glue diagnostics through real input and presentation.
+    /// Replays explicit Glue diagnostics through real input and presentation.
     ///
     /// Requires a fresh login scene and a separate diagnostic profile without
     /// startup movies or legal dialogs. It supplies fixture entitlement and
-    /// directory state, performs no server operations, and measures both scene
+    /// directory state and measures both scene
     /// publication and the following frames under the configured VSync policy.
     /// An optional capture directory receives numbered PPM framebuffers after
     /// each step's measurement. These runs include diagnostic GPU waits between
     /// steps; use a separate run without captures for performance evidence.
+    /// `ConnectionFailure` is the explicit exception to offline replay: it submits
+    /// dummy credentials and polls the real login worker. Its caller must configure
+    /// an isolated unavailable loopback endpoint. Captures include its first failure frame.
     ///
     /// # Errors
     ///

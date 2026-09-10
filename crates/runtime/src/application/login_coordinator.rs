@@ -157,6 +157,12 @@ impl RuntimeAuthenticatedLogin {
     pub fn into_parts(self) -> (AuthenticatedGrunt<TcpStream>, RealmDirectory) {
         (self.login, self.realms)
     }
+
+    /// Creates a world-login identity without consuming the realm-list connection.
+    #[must_use]
+    pub fn world_identity(&self) -> solarity_network::WorldIdentity {
+        self.login.world_identity()
+    }
 }
 
 /// Main-thread owner of at most one asynchronous login attempt.
@@ -164,6 +170,7 @@ pub struct RuntimeLoginCoordinator {
     configuration: LoginConfiguration,
     active: Option<ActiveLogin>,
     authenticated: Option<RuntimeAuthenticatedLogin>,
+    realms: Option<RealmDirectory>,
 }
 
 impl RuntimeLoginCoordinator {
@@ -174,6 +181,7 @@ impl RuntimeLoginCoordinator {
             configuration,
             active: None,
             authenticated: None,
+            realms: None,
         }
     }
 
@@ -304,6 +312,7 @@ impl RuntimeLoginCoordinator {
         self.active = None;
         match result {
             Ok(output) => {
+                self.realms = Some(output.authenticated.realms.clone());
                 self.authenticated = Some(output.authenticated);
                 Ok(match output.completion {
                     ActiveLoginCompletion::Authentication => RuntimeLoginPoll::Authenticated,
@@ -330,12 +339,19 @@ impl RuntimeLoginCoordinator {
     pub fn disconnect(&mut self) {
         self.cancel();
         self.authenticated = None;
+        self.realms = None;
     }
 
     /// Returns authenticated state for explicit realm selection.
     #[must_use]
     pub const fn authenticated(&self) -> Option<&RuntimeAuthenticatedLogin> {
         self.authenticated.as_ref()
+    }
+
+    /// Retains the last published rows while a refresh worker owns the transport.
+    #[must_use]
+    pub const fn realms(&self) -> Option<&RealmDirectory> {
+        self.realms.as_ref()
     }
 
     /// Transfers authenticated state to the next runtime phase.
@@ -408,3 +424,7 @@ async fn refresh_realm_directory(
         completion,
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/application/realm_selection.rs"]
+mod tests;

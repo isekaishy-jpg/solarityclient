@@ -1564,6 +1564,7 @@ impl GlueManager {
             &self.presentation,
             &self.scroll_frames,
             &self.live,
+            &self.glyphs,
         )?;
         Ok(true)
     }
@@ -2038,6 +2039,7 @@ impl GlueManager {
                     &self.presentation,
                     &self.scroll_frames,
                     &self.live,
+                    &self.glyphs,
                 )?;
             }
             // Visual-only mutations cannot change pointer ownership or input
@@ -2542,6 +2544,7 @@ impl GlueManager {
             &geometry,
             &self.presentation,
             &self.scroll_frames,
+            &self.glyphs,
         )? {
             return Err(crate::UiScriptError::Plan {
                 message: "visibility-only refresh changed immutable UI geometry".to_owned(),
@@ -2571,6 +2574,7 @@ impl GlueManager {
             &geometry,
             &presentation,
             &self.scroll_frames,
+            &self.glyphs,
         )? {
             self.render_plan = UiRenderPlan::prepare_with_glyphs(
                 &presentation,

@@ -28,6 +28,16 @@ without hooks. External font tests cover those captures and the retained-raster
 distinction. These checks do not establish complete glyph-atlas equivalence or
 pixel snapping during arbitrary animated/scaled UI transforms.
 
+The final ordinary FontString origin now follows `0x006C6190`'s floor in
+physical screen pixels after horizontal and vertical justification. The old
+centering test applied that floor itself, while the actual glyph renderer
+omitted it. `font_translation_oracle.py` captures 216 fractional-position
+cases at 720p and 1440p. Face, outline, shadow, and caret quads share one
+origin correction; individual glyph bearings keep their fractional values.
+Retained object movement updates glyph translation separately from an
+EditBox's border. Both the renderer and pointer-to-caret mapping consume the
+same correction. This does not claim complete native atlas equivalence.
+
 The login label also depends on the remembered realm. `GetServerName`
 (`0x004DD900`, `0x006B0DC0`) reads the `realmName` CVar, including an empty string
 when unset; returning nil makes `AccountLogin.lua` hide the region. Runtime

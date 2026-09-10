@@ -12,10 +12,8 @@ use solarity_network::{
     CharacterLoginProgress, CharacterLoginRejection, CharacterRename, CharacterRenameError,
     CharacterRenameResult, InWorldSession, RealmEntry, TcpEndpoint, TcpTransport, TransportError,
     WorldAddonManifest, WorldAddonPolicy, WorldAuthError, WorldAuthProgress, WorldConnection,
-    WorldServerPacket, WorldSession, WorldSessionError,
+    WorldIdentity, WorldServerPacket, WorldSession, WorldSessionError,
 };
-
-use crate::application::RuntimeAuthenticatedLogin;
 
 /// Stable main-thread ownership state of the selected world connection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -249,7 +247,7 @@ impl RuntimeWorldCoordinator {
     pub fn begin(
         &mut self,
         runtime: &Handle,
-        authenticated: RuntimeAuthenticatedLogin,
+        identity: WorldIdentity,
         realm: RealmEntry,
         addons: WorldAddonManifest,
     ) -> Result<(), RuntimeWorldError> {
@@ -264,7 +262,7 @@ impl RuntimeWorldCoordinator {
         }
         let (sender, receiver) = oneshot::channel();
         let task = runtime.spawn(async move {
-            let result = authenticate_world(authenticated, realm, addons).await;
+            let result = authenticate_world(identity, realm, addons).await;
             let _send_result = sender.send(result);
         });
         self.active = Some(ActiveWorld {
@@ -750,14 +748,12 @@ async fn rename_character(
 }
 
 async fn authenticate_world(
-    authenticated: RuntimeAuthenticatedLogin,
+    identity: WorldIdentity,
     realm: RealmEntry,
     addons: WorldAddonManifest,
 ) -> Result<ActiveWorldResult, RuntimeWorldError> {
     let endpoint = TcpEndpoint::parse(realm.address())?;
     let stream = TcpTransport::connect(&endpoint).await?;
-    let (login, _realms) = authenticated.into_parts();
-    let identity = login.into_world_identity();
     let mut progress = WorldConnection::authenticate(stream, identity, &realm, addons).await?;
     let session = loop {
         progress = match progress {

@@ -2634,13 +2634,19 @@ fn register_character_list_globals(
         })?,
     )?;
     let network = environment.network();
+    let creation = environment.character_creation_state();
     globals.raw_set(
         "GetSelectBackgroundModel",
         lua.create_function(move |_, index: u32| {
             let network = network.borrow();
             let characters = network.characters();
             Ok(characters.by_index(index).map_or_else(
-                || characters.default_background_model().to_owned(),
+                || {
+                    creation.as_ref().map_or_else(
+                        || characters.default_background_model().to_owned(),
+                        crate::UiCharacterCreationState::default_selection_background,
+                    )
+                },
                 |character| character.background_model().to_owned(),
             ))
         })?,

@@ -55,6 +55,34 @@ fn local_quad(object_index: usize, caret: bool) -> LocalGlyphQuad {
     }
 }
 
+/// Native rounding moves the entire string, preserving fractional glyph bearings.
+#[test]
+fn glyph_quads_use_one_floored_string_origin() {
+    let origin = super::TextOrigin::new([20.0, -2.25], 2.0);
+    let owner = super::GlyphOwnerTransform {
+        left: 100.375,
+        top: 710.625,
+        scale: 1.0,
+    }
+    .with_text_origin(Some(origin));
+    for (caret, offset) in [(false, 0.0), (false, -1.0), (true, 4.0)] {
+        let mut quad = local_quad(0, caret);
+        quad.bounds = [20.125 + offset, -12.125, 25.375 + offset, -2.25];
+        let resolved = super::resolve_quad_with_owner(&quad, owner);
+        assert_eq!(
+            resolved.bounds,
+            [120.125 + offset, 698.125, 125.375 + offset, 708.0]
+        );
+    }
+    let moved = super::GlyphOwnerTransform {
+        left: 100.5,
+        top: 710.875,
+        scale: 1.0,
+    }
+    .with_text_origin(Some(origin));
+    assert_eq!([moved.left - owner.left, moved.top - owner.top], [0.5, 0.5]);
+}
+
 /// Growth and removal only change requested owners; untouched payloads stay allocated.
 #[test]
 fn object_glyph_refresh_preserves_untouched_runs_and_draw_order() {

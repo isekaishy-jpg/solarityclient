@@ -468,7 +468,8 @@ fn validate_character_creation(manager: &mut GlueManager) -> Result<(), Box<dyn 
     manager.update(0.016)?;
     let up = manager.pointer_button(drag_finish, UiPointerButton::Left, false)?;
     let dragged_facing = get_facing.call::<f64>(())?;
-    let expected_facing = initial_facing + 64.0 * (720.0 / 768.0) * 0.6;
+    // Native GetCursorPosition reports the same UI canvas units as these inputs.
+    let expected_facing = initial_facing + 64.0 * 0.6;
     if down.object_index() != Some(create_input_index)
         || up.object_index() != Some(create_input_index)
         || (dragged_facing - expected_facing).abs() > 0.001
@@ -1406,7 +1407,8 @@ fn validate_character_selection(manager: &mut GlueManager) -> Result<(), Box<dyn
     manager.update(0.016)?;
     let up = manager.pointer_button(drag_finish, UiPointerButton::Left, false)?;
     let dragged_facing = get_facing.call::<f64>(())?;
-    let expected_facing = initial_facing + 64.0 * (720.0 / 768.0) * 0.6;
+    // Native GetCursorPosition reports the same UI canvas units as these inputs.
+    let expected_facing = initial_facing + 64.0 * 0.6;
     if down.object_index() != Some(select_input_index)
         || up.object_index() != Some(select_input_index)
         || (dragged_facing - expected_facing).abs() > 0.001

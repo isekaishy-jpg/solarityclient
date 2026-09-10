@@ -12,6 +12,7 @@ mod gxu_font_util;
 mod i_gxu_font_glyph;
 mod pixel_size;
 mod status;
+mod text_origin;
 
 pub use c_simple_font::{
     FontCatalog, FontColor, FontDefinition, FontOutline, FontShadow, HorizontalJustification,

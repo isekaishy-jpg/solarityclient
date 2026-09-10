@@ -10,6 +10,7 @@ use solarity_rendering::{
 };
 
 use super::EditBoxTextLayout;
+use super::text_origin::TextOrigin;
 use crate::script::{UiRuntimeObjectPlan, UiRuntimeText, UiRuntimeTextColorChange};
 use crate::widget::nearest_owning_scroll_frame;
 use crate::{
@@ -90,6 +91,7 @@ pub struct UiGlyphAtlasPlan {
     html_quads: Vec<LocalGlyphQuad>,
     html_runs: Vec<LocalGlyphRun>,
     live_quads: Vec<Vec<LocalGlyphQuad>>,
+    text_origins: Vec<Option<TextOrigin>>,
     edit_box_layouts: Vec<Option<EditBoxTextLayout>>,
     glyphs: HashMap<GlyphKey, RasterizedGlyph>,
     placements: HashMap<GlyphKey, AtlasPlacement>,
@@ -216,6 +218,7 @@ impl UiGlyphAtlasPlan {
             html_quads: Vec::new(),
             html_runs: Vec::new(),
             live_quads: Vec::new(),
+            text_origins: Vec::new(),
             edit_box_layouts: Vec::new(),
             glyphs,
             placements,
@@ -469,6 +472,7 @@ impl UiGlyphAtlasPlan {
             html_quads: html_layout.quads,
             html_runs: html_layout.runs,
             live_quads: group_live_quads(live_layout.quads),
+            text_origins: live_layout.origins,
             edit_box_layouts: live_layout.edit_boxes,
             glyphs,
             placements,
@@ -533,6 +537,7 @@ impl UiGlyphAtlasPlan {
             self.extent,
         )?;
         self.live_quads = group_live_quads(layout.quads);
+        self.text_origins = layout.origins;
         self.edit_box_layouts = layout.edit_boxes;
         Ok(())
     }
@@ -560,6 +565,12 @@ impl UiGlyphAtlasPlan {
         )?;
         replace_live_object_quads(&mut self.live_quads, &layout.quads, object_indices);
         for &object_index in object_indices {
+            if let (Some(target), Some(source)) = (
+                self.text_origins.get_mut(object_index),
+                layout.origins.get(object_index),
+            ) {
+                *target = *source;
+            }
             if let (Some(target), Some(source)) = (
                 self.edit_box_layouts.get_mut(object_index),
                 layout.edit_boxes.get(object_index),
@@ -609,9 +620,9 @@ impl UiGlyphAtlasPlan {
                     .and_then(|clip| scroll_frames.state(clip))
                     .is_some()
                 {
-                    resolve_quad_unclipped(quad, geometry, None)
+                    resolve_quad_unclipped(quad, geometry, None, self.text_origin(object_index))
                 } else {
-                    resolve_quad(quad, geometry, None)
+                    resolve_quad(quad, geometry, None, self.text_origin(object_index))
                 }
             })
             .map(|quad| [quad.color(); 4])
@@ -636,8 +647,11 @@ impl UiGlyphAtlasPlan {
         if !scale.is_finite() || scale <= 0.0 {
             return None;
         }
-        let local_x = (point.0 - owner.left()) / scale;
-        let local_y = (point.1 - owner.top()) / scale;
+        let offset = self.text_origin(object_index).map_or([0.0; 2], |origin| {
+            origin.offset([owner.left(), owner.top()], scale)
+        });
+        let local_x = (point.0 - owner.left() - offset[0]) / scale;
+        let local_y = (point.1 - owner.top() - offset[1]) / scale;
         layout.cursor_at((local_x, local_y))
     }
 
@@ -665,6 +679,26 @@ impl UiGlyphAtlasPlan {
     #[must_use]
     pub fn rgba8(&self) -> &[u8] {
         &self.rgba8
+    }
+
+    /// Looks up the shared alignment anchor without duplicating it per glyph.
+    fn text_origin(&self, object_index: usize) -> Option<TextOrigin> {
+        self.text_origins.get(object_index).copied().flatten()
+    }
+
+    /// Keeps retained glyph draws on the pixel grid during rigid owner motion.
+    pub(crate) fn text_origin_offset_change(
+        &self,
+        object_index: usize,
+        previous: [f64; 2],
+        current: [f64; 2],
+        scale: f64,
+    ) -> [f32; 2] {
+        self.text_origin(object_index).map_or([0.0; 2], |origin| {
+            let previous = origin.offset(previous, scale);
+            let current = origin.offset(current, scale);
+            std::array::from_fn(|axis| (current[axis] - previous[axis]) as f32)
+        })
     }
 
     /// Resolves visible glyph quads in object, line, and character order.
@@ -698,9 +732,21 @@ impl UiGlyphAtlasPlan {
         scroll_frames: &UiScrollFramePlan,
     ) -> Vec<UiGlyphQuad> {
         let mut resolved = Vec::new();
-        extend_retained_quads(&mut resolved, &self.html_quads, geometry, scroll_frames);
-        for quads in &self.live_quads {
-            extend_retained_object_quads(&mut resolved, quads, geometry, scroll_frames);
+        extend_retained_quads(
+            &mut resolved,
+            &self.html_quads,
+            geometry,
+            scroll_frames,
+            None,
+        );
+        for (index, quads) in self.live_quads.iter().enumerate() {
+            extend_retained_object_quads(
+                &mut resolved,
+                quads,
+                geometry,
+                scroll_frames,
+                self.text_origin(index),
+            );
         }
         resolved
     }
@@ -715,7 +761,13 @@ impl UiGlyphAtlasPlan {
         let mut resolved = Vec::new();
         for &object_index in object_indices {
             if let Some(quads) = self.live_quads.get(object_index) {
-                extend_retained_object_quads(&mut resolved, quads, geometry, scroll_frames);
+                extend_retained_object_quads(
+                    &mut resolved,
+                    quads,
+                    geometry,
+                    scroll_frames,
+                    self.text_origin(object_index),
+                );
             }
         }
         resolved
@@ -734,7 +786,7 @@ impl UiGlyphAtlasPlan {
             resolved.extend(
                 self.html_quads[run.first_quad..run.first_quad + run.quad_count]
                     .iter()
-                    .filter_map(|quad| resolve_quad(quad, geometry, scroll_frames)),
+                    .filter_map(|quad| resolve_quad(quad, geometry, scroll_frames, None)),
             );
         }
         resolved.extend(
@@ -742,7 +794,14 @@ impl UiGlyphAtlasPlan {
                 .iter()
                 .flatten()
                 .filter(|quad| !quad.reserved)
-                .filter_map(|quad| resolve_quad(quad, geometry, scroll_frames)),
+                .filter_map(|quad| {
+                    resolve_quad(
+                        quad,
+                        geometry,
+                        scroll_frames,
+                        self.text_origin(quad.object_index),
+                    )
+                }),
         );
         resolved
     }
@@ -798,16 +857,17 @@ fn extend_retained_object_quads(
     quads: &[LocalGlyphQuad],
     geometry: &UiRegionGeometryPlan,
     scroll_frames: &UiScrollFramePlan,
+    origin: Option<TextOrigin>,
 ) {
     if quads
         .first()
-        .and_then(|quad| retained_glyph_state(quad, geometry, scroll_frames))
+        .and_then(|quad| retained_glyph_state(quad, geometry, scroll_frames, origin))
         .is_none()
     {
         return;
     }
     output.reserve(quads.len());
-    extend_retained_quads(output, quads, geometry, scroll_frames);
+    extend_retained_quads(output, quads, geometry, scroll_frames, origin);
 }
 
 /// Resolves object-sorted local glyphs while looking up inherited geometry
@@ -817,6 +877,7 @@ fn extend_retained_quads(
     quads: &[LocalGlyphQuad],
     geometry: &UiRegionGeometryPlan,
     scroll_frames: &UiScrollFramePlan,
+    origin: Option<TextOrigin>,
 ) {
     let mut previous_key = None;
     let mut state = None;
@@ -824,7 +885,7 @@ fn extend_retained_quads(
         let key = (quad.object_index, quad.clip_object);
         if previous_key != Some(key) {
             previous_key = Some(key);
-            state = retained_glyph_state(quad, geometry, scroll_frames);
+            state = retained_glyph_state(quad, geometry, scroll_frames, origin);
         }
         let Some(state) = state else {
             continue;
@@ -870,10 +931,23 @@ struct GlyphOwnerTransform {
     scale: f64,
 }
 
+impl GlyphOwnerTransform {
+    /// Translates all face, outline, and shadow quads by the same native origin correction.
+    fn with_text_origin(mut self, origin: Option<TextOrigin>) -> Self {
+        if let Some(origin) = origin {
+            let offset = origin.offset([self.left, self.top], self.scale);
+            self.left += offset[0];
+            self.top += offset[1];
+        }
+        self
+    }
+}
+
 fn retained_glyph_state(
     quad: &LocalGlyphQuad,
     geometry: &UiRegionGeometryPlan,
     scroll_frames: &UiScrollFramePlan,
+    origin: Option<TextOrigin>,
 ) -> Option<RetainedGlyphState> {
     let region = geometry.region(quad.object_index)?;
     let retained_tooltip = quad
@@ -925,7 +999,8 @@ fn retained_glyph_state(
             left: owner.left(),
             top: owner.top(),
             scale: region.effective_scale(),
-        },
+        }
+        .with_text_origin(origin),
         clip,
         opacity: region.effective_alpha() as f32 * f32::from(region.effectively_shown()),
         transform,
@@ -1013,6 +1088,7 @@ struct HtmlGlyphLayout {
 struct LiveTextLayout {
     quads: Vec<LocalGlyphQuad>,
     edit_boxes: Vec<Option<EditBoxTextLayout>>,
+    origins: Vec<Option<TextOrigin>>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -1407,6 +1483,7 @@ fn layout_live_quads_for_objects(
 ) -> Result<LiveTextLayout, FontError> {
     let mut quads = Vec::new();
     let mut edit_boxes = vec![None; live.objects().len()];
+    let mut origins = vec![None; live.objects().len()];
     for object_index in object_indices {
         let Some(object) = live.objects().get(object_index) else {
             return Err(FontError::Presentation {
@@ -1519,6 +1596,12 @@ fn layout_live_quads_for_objects(
             text.text_insets,
             text.vertical,
         );
+        let anchor_x = match text.horizontal {
+            crate::HorizontalJustification::Left => inset_left,
+            crate::HorizontalJustification::Center => inset_left + available_width * 0.5,
+            crate::HorizontalJustification::Right => owner.width() - inset_right,
+        };
+        origins[object_index] = Some(TextOrigin::new([anchor_x, block_top], pixels_per_ui_unit));
         let ascender = metrics.ascender_26_6 as f64 / 64.0 / glyph_pixels_per_ui_unit;
         let color = text.color.map(|component| component as f32);
         // CSimpleScrollFrame clips every region beneath its assigned child,
@@ -1768,7 +1851,11 @@ fn layout_live_quads_for_objects(
         quads.extend(caret_quads);
         edit_boxes[object_index] = edit_box_layout;
     }
-    Ok(LiveTextLayout { quads, edit_boxes })
+    Ok(LiveTextLayout {
+        quads,
+        edit_boxes,
+        origins,
+    })
 }
 
 fn solid_coordinates(extent: (u32, u32)) -> [[f32; 2]; 4] {
@@ -2011,8 +2098,9 @@ fn resolve_quad(
     quad: &LocalGlyphQuad,
     geometry: &UiRegionGeometryPlan,
     scroll_frames: Option<&UiScrollFramePlan>,
+    origin: Option<TextOrigin>,
 ) -> Option<UiGlyphQuad> {
-    let resolved = resolve_quad_unclipped(quad, geometry, scroll_frames)?;
+    let resolved = resolve_quad_unclipped(quad, geometry, scroll_frames, origin)?;
     clip_quad(resolved, quad.clip_object, geometry)
 }
 
@@ -2020,6 +2108,7 @@ fn resolve_quad_unclipped(
     quad: &LocalGlyphQuad,
     geometry: &UiRegionGeometryPlan,
     scroll_frames: Option<&UiScrollFramePlan>,
+    origin: Option<TextOrigin>,
 ) -> Option<UiGlyphQuad> {
     let region = geometry.region(quad.object_index)?;
     if !region.effectively_shown() || region.effective_alpha() <= 0.0 && !region.animation_active()
@@ -2038,7 +2127,8 @@ fn resolve_quad_unclipped(
             left: owner.left(),
             top: owner.top(),
             scale,
-        },
+        }
+        .with_text_origin(origin),
         scroll,
     );
     resolved.opacity = region.effective_alpha() as f32;

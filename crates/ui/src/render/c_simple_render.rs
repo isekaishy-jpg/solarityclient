@@ -128,6 +128,7 @@ impl UiRenderPlan {
         current: &UiRegionGeometryPlan,
         presentation: &UiPresentationPlan,
         scroll_frames: &UiScrollFramePlan,
+        glyphs: &UiGlyphAtlasPlan,
     ) -> Result<bool, UiRenderError> {
         if previous.region_count() != current.region_count() {
             return Ok(false);
@@ -139,6 +140,7 @@ impl UiRenderPlan {
             else {
                 return Ok(false);
             };
+            let scale = current.effective_scale();
             let previous = previous.presentation_bounds();
             let current = current.presentation_bounds();
             let horizontal = current.left() - previous.left();
@@ -152,10 +154,21 @@ impl UiRenderPlan {
             if translation.iter().any(|value| !value.is_finite()) {
                 return Ok(false);
             }
-            translations.push(translation);
+            let correction = glyphs.text_origin_offset_change(
+                object_index,
+                [previous.left(), previous.top()],
+                [current.left(), current.top()],
+                scale,
+            );
+            translations.push((translation, correction));
         }
-        for (object_index, translation) in translations.into_iter().enumerate() {
+        for (object_index, (translation, correction)) in translations.into_iter().enumerate() {
             self.mesh.translate_object(object_index, translation)?;
+            self.mesh.translate_object_source(
+                object_index,
+                &UiRenderSource::GlyphAtlas(glyphs.identity()),
+                correction,
+            )?;
         }
         self.mesh.refresh_object_opacities(|object_index| {
             presentation.object_opacity(object_index).or_else(|| {
@@ -193,10 +206,29 @@ impl UiRenderPlan {
         presentation: &UiPresentationPlan,
         scroll_frames: &UiScrollFramePlan,
         live: &UiRuntimeObjectPlan,
+        glyphs: &UiGlyphAtlasPlan,
     ) -> Result<(), UiRenderError> {
         for change in changes {
             self.mesh
                 .translate_object(change.object_index, change.translation)?;
+            if let Some(region) = geometry.region(change.object_index) {
+                let current = region.presentation_bounds();
+                let previous = [
+                    current.left() - f64::from(change.translation[0]),
+                    current.top() - f64::from(change.translation[1]),
+                ];
+                let correction = glyphs.text_origin_offset_change(
+                    change.object_index,
+                    previous,
+                    [current.left(), current.top()],
+                    region.effective_scale(),
+                );
+                self.mesh.translate_object_source(
+                    change.object_index,
+                    &UiRenderSource::GlyphAtlas(glyphs.identity()),
+                    correction,
+                )?;
+            }
             let opacity = presentation
                 .object_opacity(change.object_index)
                 .or_else(|| {

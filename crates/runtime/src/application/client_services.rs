@@ -1773,7 +1773,6 @@ impl ClientServices {
                     }
                     match self.login.refresh_realms(&handle) {
                         Ok(()) | Err(RuntimeLoginError::AlreadyActive) => {}
-                        Err(RuntimeLoginError::NotAuthenticated) => {}
                         Err(error) => self.publish_login_failure(error)?,
                     }
                 }
@@ -2077,7 +2076,7 @@ impl ClientServices {
                 self.realm_directory_published = true;
                 self.begin_pending_world(&handle)?;
             }
-            Ok(RuntimeLoginPoll::RealmDirectoryCancelled) => {}
+            Ok(RuntimeLoginPoll::RealmDirectoryCancelled) => self.begin_pending_world(&handle)?,
             Err(error) => self.publish_login_failure(error)?,
         }
         match self.world.poll() {
@@ -3233,13 +3232,15 @@ impl ClientServices {
         else {
             return Ok(());
         };
-        let Some(authenticated) = self.login.take_authenticated() else {
+        let Some(authenticated) = self.login.authenticated() else {
             return Ok(());
         };
+        let identity = authenticated.world_identity();
         let selected = SelectedRealmFacts::new(&self.realm_metadata, &realm);
+        self.world.disconnect();
         match self
             .world
-            .begin(runtime, authenticated, realm, self.addon_manifest.clone())
+            .begin(runtime, identity, realm, self.addon_manifest.clone())
         {
             Ok(()) => {
                 self.pending_realm_id = None;
@@ -3280,15 +3281,14 @@ impl ClientServices {
         player_killing_allowed: bool,
         roleplaying: bool,
     ) -> Result<(), ApplicationError> {
-        let Some(authenticated) = self.login.authenticated() else {
-            return Ok(());
-        };
-        let event = self.realm_metadata.preferred_realm(
-            authenticated.realms(),
-            category_index,
-            player_killing_allowed,
-            roleplaying,
-        );
+        let event = self.login.realms().and_then(|realms| {
+            self.realm_metadata.preferred_realm(
+                realms,
+                category_index,
+                player_killing_allowed,
+                roleplaying,
+            )
+        });
         if let Some((_realm_id, realm_index)) = event {
             let payload = UiEventPayload::new([
                 UiEventArgument::Integer(i64::from(category_index)),
