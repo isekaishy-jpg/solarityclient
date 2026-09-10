@@ -56,6 +56,8 @@ mod underwater_particle;
 mod water_ripple;
 #[path = "stock_seed/weather.rs"]
 mod weather;
+#[path = "stock_seed/world_glow.rs"]
+mod world_glow;
 #[path = "stock_seed/world_model.rs"]
 mod world_model;
 #[path = "stock_seed/world_model_lighting.rs"]

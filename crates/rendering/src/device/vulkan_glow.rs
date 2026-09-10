@@ -6,9 +6,13 @@ use ash::{Device, vk};
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
+use crate::device::vulkan_texture::{
+    DeferredTextureTransfer, GpuSampledImage, TextureUploadContext, upload_rg8_snorm_image_deferred,
+};
 use crate::{GlowShaderPass, GlowSpirvCompiler, GlowSpirvProgram, WorldScreenWindow};
 
 mod effect;
+mod wave;
 pub use effect::WorldFrameScreenEffect;
 
 /// Validated stock FFXGlow factor and display-gamma pair for one world frame.
@@ -156,9 +160,13 @@ pub(in crate::device) struct VulkanGlowRenderer {
     set_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     sampler: vk::Sampler,
+    wave_sampler: vk::Sampler,
+    wave_texture: Option<GpuSampledImage>,
+    wave_transfer: Option<DeferredTextureTransfer>,
     descriptor_pool: vk::DescriptorPool,
     composite: vk::Pipeline,
     ghost: vk::Pipeline,
+    world: vk::Pipeline,
     blur: vk::Pipeline,
     box_filter: vk::Pipeline,
     slots: Vec<GlowSlot>,
@@ -167,12 +175,19 @@ pub(in crate::device) struct VulkanGlowRenderer {
 impl VulkanGlowRenderer {
     pub(in crate::device) fn ensure(
         &mut self,
-        device: &Device,
-        allocator: &vk_mem::Allocator,
+        context: TextureUploadContext<'_>,
         format: vk::Format,
         extent: (u32, u32),
         slot_count: usize,
     ) -> Result<(), VulkanError> {
+        let device = context.device;
+        let allocator = context.allocator;
+        if let Some(transfer) = self.wave_transfer.as_mut()
+            && transfer.is_complete(device)?
+        {
+            transfer.destroy(device, allocator);
+            self.wave_transfer = None;
+        }
         let extent = vk::Extent2D {
             width: extent.0,
             height: extent.1,
@@ -181,7 +196,7 @@ impl VulkanGlowRenderer {
             return Ok(());
         }
         self.destroy(device, allocator);
-        let result = self.create(device, allocator, format, extent, slot_count);
+        let result = self.create(context, format, extent, slot_count);
         if let Err(error) = result {
             self.destroy(device, allocator);
             return Err(error);
@@ -191,19 +206,20 @@ impl VulkanGlowRenderer {
 
     fn create(
         &mut self,
-        device: &Device,
-        allocator: &vk_mem::Allocator,
+        context: TextureUploadContext<'_>,
         format: vk::Format,
         extent: vk::Extent2D,
         slot_count: usize,
     ) -> Result<(), VulkanError> {
+        let device = context.device;
+        let allocator = context.allocator;
         if extent.width == 0 || extent.height == 0 || slot_count == 0 {
             return Err(VulkanError::operation(
                 "create glow resources",
                 "empty swapchain",
             ));
         }
-        let bindings = [0, 1].map(|binding| {
+        let bindings = [0, 1, 2].map(|binding| {
             vk::DescriptorSetLayoutBinding::default()
                 .binding(binding)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
@@ -217,7 +233,7 @@ impl VulkanGlowRenderer {
         let sets = [self.set_layout];
         let push = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-            .size(48)];
+            .size(80)];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
             .push_constant_ranges(&push);
@@ -235,6 +251,12 @@ impl VulkanGlowRenderer {
         // SAFETY: The sampler has no external pointers.
         self.sampler = unsafe { device.create_sampler(&sampler_info, None) }
             .map_err(|source| VulkanError::operation("create glow sampler", source))?;
+        let wave_sampler = sampler_info
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT);
+        // SAFETY: The generated displacement uses linear, repeating sampling.
+        self.wave_sampler = unsafe { device.create_sampler(&wave_sampler, None) }
+            .map_err(|source| VulkanError::operation("create glow wave sampler", source))?;
         let compiler = GlowSpirvCompiler::new().map_err(glow_shader_error)?;
         self.composite = create_pipeline(
             device,
@@ -268,16 +290,24 @@ impl VulkanGlowRenderer {
                 .compile(GlowShaderPass::Ghost)
                 .map_err(glow_shader_error)?,
         )?;
+        self.world = create_pipeline(
+            device,
+            self.pipeline_layout,
+            format,
+            &compiler
+                .compile(GlowShaderPass::World)
+                .map_err(glow_shader_error)?,
+        )?;
         let set_count = u32::try_from(slot_count.saturating_mul(4)).map_err(|_source| {
             VulkanError::operation("create glow descriptors", "too many slots")
         })?;
         let pool_sizes = [vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(set_count.saturating_mul(2))];
+            .descriptor_count(set_count.saturating_mul(3))];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
             .max_sets(set_count)
             .pool_sizes(&pool_sizes);
-        // SAFETY: Counts cover two bindings for every allocated set.
+        // SAFETY: Counts cover three bindings for every allocated set.
         self.descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }
             .map_err(|source| VulkanError::operation("create glow descriptor pool", source))?;
         let quarter = vk::Extent2D {
@@ -348,6 +378,25 @@ impl VulkanGlowRenderer {
             }
             self.slots.push(slot);
         }
+        // Submit only after the other fallible allocations. The returned owner
+        // retains staging until completion; subsequent draws use the same queue.
+        let (wave_texture, transfer) =
+            upload_rg8_snorm_image_deferred(context, (128, 128), &wave::texture())?;
+        for slot in &self.slots {
+            let image = [vk::DescriptorImageInfo::default()
+                .sampler(self.wave_sampler)
+                .image_view(wave_texture.view())
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            let writes = [vk::WriteDescriptorSet::default()
+                .dst_set(slot.sets[3])
+                .dst_binding(2)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image)];
+            // SAFETY: No draw references these new descriptor sets yet.
+            unsafe { device.update_descriptor_sets(&writes, &[]) };
+        }
+        self.wave_texture = Some(wave_texture);
+        self.wave_transfer = Some(transfer);
         self.extent = Some(extent);
         self.format = format;
         Ok(())
@@ -481,21 +530,44 @@ impl VulkanGlowRenderer {
             vk::AttachmentLoadOp::LOAD,
         );
         set_viewport_scissor(device, command_buffer, extent, Some(window));
-        let (pipeline, effect) = match glow {
-            WorldFrameScreenEffect::Glow(glow) => {
-                (self.composite, [glow.strength(), glow.gamma(), 0., 0.])
-            }
+        let (pipeline, effect, wave_time_ms) = match glow {
+            WorldFrameScreenEffect::Glow(glow) => (
+                self.composite,
+                [glow.strength(), glow.gamma(), 0., 0.],
+                None,
+            ),
             WorldFrameScreenEffect::Ghost { glow } => {
-                (self.ghost, [f32::from(glow) / 255., 0., 0., 0.])
+                (self.ghost, [f32::from(glow) / 255., 0., 0., 0.], None)
             }
+            WorldFrameScreenEffect::Normal {
+                glow,
+                blur,
+                wave_time_ms,
+            } => (
+                self.world,
+                [
+                    f32::from(glow) / 255.,
+                    f32::from(blur) / 255.,
+                    f32::from(wave_time_ms.is_some()),
+                    0.,
+                ],
+                wave_time_ms,
+            ),
         };
+        let mut parameters =
+            effect_parameters(effect, sampling(extent, extent), sampling(quarter, extent));
+        if let Some(milliseconds) = wave_time_ms {
+            let rows = wave::fragment_transform((extent.width, extent.height), milliseconds);
+            parameters[12..16].copy_from_slice(&rows[0]);
+            parameters[16..20].copy_from_slice(&rows[1]);
+        }
         bind_and_draw(
             device,
             command_buffer,
             pipeline,
             self.pipeline_layout,
             slot.sets[3],
-            effect_parameters(effect, sampling(extent, extent), sampling(quarter, extent)),
+            parameters,
         );
         // SAFETY: Composite rendering scope is active.
         unsafe { device.cmd_end_rendering(command_buffer) };
@@ -557,6 +629,12 @@ impl VulkanGlowRenderer {
     }
 
     pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        if let Some(mut transfer) = self.wave_transfer.take() {
+            transfer.destroy(device, allocator);
+        }
+        if let Some(mut texture) = self.wave_texture.take() {
+            texture.destroy(device, allocator);
+        }
         for slot in self.slots.iter_mut().rev() {
             slot.destroy(device, allocator);
         }
@@ -572,6 +650,7 @@ impl VulkanGlowRenderer {
                 &mut self.blur,
                 &mut self.composite,
                 &mut self.ghost,
+                &mut self.world,
             ] {
                 if *pipeline != vk::Pipeline::null() {
                     device.destroy_pipeline(*pipeline, None);
@@ -581,6 +660,10 @@ impl VulkanGlowRenderer {
             if self.sampler != vk::Sampler::null() {
                 device.destroy_sampler(self.sampler, None);
                 self.sampler = vk::Sampler::null();
+            }
+            if self.wave_sampler != vk::Sampler::null() {
+                device.destroy_sampler(self.wave_sampler, None);
+                self.wave_sampler = vk::Sampler::null();
             }
             if self.pipeline_layout != vk::PipelineLayout::null() {
                 device.destroy_pipeline_layout(self.pipeline_layout, None);
@@ -783,10 +866,10 @@ fn sampling(source: vk::Extent2D, target: vk::Extent2D) -> [f32; 4] {
     ]
 }
 
-fn effect_parameters(effect: [f32; 4], scene: [f32; 4], blur: [f32; 4]) -> [f32; 12] {
+fn effect_parameters(effect: [f32; 4], scene: [f32; 4], blur: [f32; 4]) -> [f32; 20] {
     [
         effect[0], effect[1], effect[2], effect[3], scene[0], scene[1], scene[2], scene[3],
-        blur[0], blur[1], blur[2], blur[3],
+        blur[0], blur[1], blur[2], blur[3], 0., 0., 0., 0., 0., 0., 0., 0.,
     ]
 }
 
@@ -796,9 +879,9 @@ fn bind_and_draw(
     pipeline: vk::Pipeline,
     layout: vk::PipelineLayout,
     set: vk::DescriptorSet,
-    parameters: [f32; 12],
+    parameters: [f32; 20],
 ) {
-    let bytes = parameters.map(f32::to_ne_bytes).concat();
+    let bytes = bytemuck::cast_slice(&parameters);
     // SAFETY: Pipeline/layout/set share the fixed ABI and the triangle has no vertex input.
     unsafe {
         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
@@ -815,7 +898,7 @@ fn bind_and_draw(
             layout,
             vk::ShaderStageFlags::FRAGMENT,
             0,
-            &bytes,
+            bytes,
         );
         device.cmd_draw(command_buffer, 3, 1, 0, 0);
     }

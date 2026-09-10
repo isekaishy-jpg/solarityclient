@@ -463,7 +463,7 @@ exercise the real installed environment and world/UI presentation path. It
 selects a declaration directly; packet and aura selection have separate tests.
 These checks establish the ghost component for normalized NPOT targets with
 quarter dimensions at least eight. Native minimum texture allocation, optional
-power-of-two allocation, invisibility/filter shaders, ordinary world glow,
+power-of-two allocation, invisibility/filter shaders,
 and combined live world appearance remain further parity work.
 
 
@@ -484,3 +484,77 @@ Stationary p99 ranged from 4.4403 to 8.1230 ms, and orbit/pointer phases still
 had individual frames around 20?35 ms. These are complete world presentation
 measurements: the declaration also changes lighting/fog, so the comparison does
 not isolate shader cost. Neither the 1,200 FPS target nor stall removal is met.
+
+## Ordinary world glow and underwater distortion
+
+The normal screen owner now consumes the final DayNight glow and the local
+player's actual/fake inebriation. Missing declarations and type 0 select this
+owner; types 1, 2 and 3 select their own owners, and unknown types retain the
+previous selection. Live `ffx` and `ffxGlow` integer settings gate drawing.
+Disabling `ffxDeath` while ghost is selected does not select normal glow.
+
+Native `4F8770` converts glow by storing `value * 255 + 512` as a float,
+shifting the stored bits right by 14, then retaining the low byte. The half
+glow input becomes 127. Player blur uses the same conversion on `4F7290`'s
+unspilled result: PLAYER_BYTES_3 byte one (field 155) and signed-comparison
+PLAYER_FAKE_INEBRIATION (field 322), capped at 100, times the native float 0.01.
+The existing systems implementation supplies that result. A nonzero camera
+liquid type selects underwater distortion and raises the blur byte to at least
+84. The missing-player branch skips both the player blur and liquid queries.
+Camera-liquid palette replacement happens before the glow input is resolved;
+local WMO fog does not replace that palette.
+
+Both branches run BOX4 and separable GAUSS4, then compute
+`mix(scene, blurred, blur_byte/255) + blurred*blurred*(glow_byte/255)` with output
+alpha one. The underwater GLOWWAVE branch offsets both samples with the original
+generated V8U8 texture: three full-resolution texels for the scene and 0.75
+quarter-resolution texels for the blur. Those scales retain their separate
+reciprocals for odd dimensions.
+
+`8C2920` builds a separable 128x128 signed displacement texture from the original
+cubic periodic function, truncation and signed-byte clamps. It consumes no
+random state. `8C2350` applies the native 10-degree rotation, width/128 and
+height*0.88/128 scales, and independent scrolling periods of 3,174 and 2,805
+milliseconds. The wrapping client clock supplies the phase. Displacement
+sampling repeats; scene and blur sampling clamp. A deferred upload on the
+graphics queue retains the generated texture and staging lifetime without a
+new synchronous frame wait. Effect switches reuse the swapchain generation's
+images, descriptors and pipelines. Shared push-constant publication also avoids
+its previous temporary heap allocation.
+
+`world_glow_oracle.py` captures 360 native producer cases (including 90 inactive
+owner traces), all 32,768 signed texture bytes, and 40 native vertex/constant
+publications through clock wraparound and dimensions up to 1280x720. Portable
+tests compare active input resolution, every generated texel and the animated
+coordinates. `world_glow_shader_oracle.py` executes unchanged archive BOX4,
+GAUSS4, GLOW and GLOWWAVE programs on Direct3D 9 using the native producers.
+Its 75 captured frames cover three viewport sizes, glow quantization, actual
+and fake intoxication, both underwater blur branches and clock boundaries.
+Every Vulkan output channel agrees within two byte levels. Additional captures
+check UI preservation in both branches and exact restoration after disabling.
+The environment test applies replicated fields, dry/wet/direct-parameter
+palettes, WMO fog, live CVar changes, other effect owners and disconnect.
+The offline benchmark CSV records the selected effect, glow/blur bytes and
+camera liquid type so real-archive replays can verify which branch ran.
+
+Two optimized real-archive replays each completed 1,260 frames across seven
+phases without logged renderer errors. The dry replay selected normal glow 102
+and blur zero throughout. The water replay began with camera liquid type 2,
+glow 255 and blur 84, switched to normal as the camera emerged, and restored
+the wave branch on re-entry. Inspected captures show the underwater composition
+and preserved UI; the large flat distant terrain silhouettes remain visible.
+
+Four separate uncaptured replays ran glow on, off, off, on at 1280x720 on the
+GTX 1070, with 1,000 frames per phase and 49 resident tiles throughout each
+stationary phase. Glow-on stationary medians were 2.9348 and 2.9444 ms
+(approximately 340 FPS); off medians were 2.9103 and 2.9046 ms. The paired
+median difference was 0.0245 to 0.0398 ms; it is a whole-frame measurement,
+not isolated GPU shader timing. Glow-on stationary p99 was 3.6629 to 3.6952 ms.
+Pointer phases still reached 34.6 to 36.0 ms with glow and 34.2 to 34.5 ms
+without it, while streaming maxima reached 40.6 to 44.8 ms across runs.
+The restored effect does not meet the 1,200 FPS target or remove those stalls.
+
+These checks establish the normal composition on normalized NPOT targets with
+quarter dimensions at least eight. They do not establish native small/POT
+allocation policy, the other screen-effect shader owners, corrected distant
+terrain, complete populated-world appearance or the frame-time target.

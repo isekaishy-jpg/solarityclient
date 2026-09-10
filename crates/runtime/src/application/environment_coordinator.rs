@@ -67,6 +67,8 @@ pub struct RuntimeWorldEnvironmentFrame {
     base_fog: WorldFogSample,
     manual_fog: Option<solarity_asset::WorldManualFog>,
     ghost_effect: bool,
+    normal_effect: bool,
+    player_inebriation: Option<f64>,
     liquid_flags: Option<u32>,
     world_model_skybox_weight: f32,
     fog: WorldFogSample,
@@ -178,6 +180,27 @@ impl RuntimeWorldEnvironmentFrame {
         self.ghost_effect
     }
 
+    /// Resolves the selected screen owner after camera immersion updates its palette.
+    #[must_use]
+    pub fn screen_effect(
+        self,
+        milliseconds: u32,
+    ) -> Option<solarity_rendering::WorldFrameScreenEffect> {
+        use solarity_rendering::WorldFrameScreenEffect;
+        if self.ghost_effect {
+            Some(WorldFrameScreenEffect::ghost(self.light.glow()))
+        } else if self.normal_effect {
+            Some(WorldFrameScreenEffect::normal(
+                self.light.glow(),
+                self.player_inebriation,
+                self.liquid_flags.is_some(),
+                milliseconds,
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Any camera liquid type suppresses sky drawing, including flag-zero rows.
     #[must_use]
     pub const fn has_camera_liquid(self) -> bool {
@@ -238,6 +261,7 @@ pub struct RuntimeWorldEnvironment {
     screen_effect_fog: screen_effect::ScreenEffectFog,
     full_screen_effects: bool,
     death_effects: bool,
+    glow_effects: bool,
 }
 
 impl RuntimeWorldEnvironment {
@@ -271,6 +295,11 @@ impl RuntimeWorldEnvironment {
     /// Live ffxDeath policy gates rendering without changing effect selection.
     pub fn set_death_effects(&mut self, enabled: bool) {
         self.death_effects = enabled;
+    }
+
+    /// Live ffxGlow policy gates the normal owner without changing its selection.
+    pub fn set_glow_effects(&mut self, enabled: bool) {
+        self.glow_effects = enabled;
     }
     /// Retains the installed Weather.dbc selections for server updates.
     #[must_use]
@@ -327,6 +356,7 @@ impl RuntimeWorldEnvironment {
             screen_effect_fog: screen_effect::ScreenEffectFog::default(),
             full_screen_effects: true,
             death_effects: true,
+            glow_effects: true,
         })
     }
 
@@ -400,6 +430,19 @@ impl RuntimeWorldEnvironment {
             ghost_effect: self.screen_effect_fog.ghost()
                 && self.full_screen_effects
                 && self.death_effects,
+            normal_effect: self.screen_effect_fog.normal()
+                && self.full_screen_effects
+                && self.glow_effects,
+            player_inebriation: world
+                .storage()
+                .get::<&solarity_ecs::ObjectFields>(world.local_player())
+                .ok()
+                .map(|fields| {
+                    solarity_systems::unit_player_inebriation(
+                        (fields.get(155) >> 8) as u8,
+                        fields.get(322),
+                    )
+                }),
             liquid_flags: None,
             world_model_skybox_weight: 0.,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),

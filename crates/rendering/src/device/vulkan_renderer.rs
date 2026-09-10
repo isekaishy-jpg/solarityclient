@@ -2389,8 +2389,12 @@ impl VulkanRenderer {
             .or(scene.screen_effect());
         if glow.is_some() {
             self.glow.ensure(
-                &self.device,
-                allocator,
+                TextureUploadContext {
+                    device: &self.device,
+                    allocator,
+                    graphics_queue: self.graphics_queue,
+                    graphics_queue_family: self.report.graphics_queue_family,
+                },
                 self.color_format,
                 self.report.extent,
                 self.swapchain_images.len(),

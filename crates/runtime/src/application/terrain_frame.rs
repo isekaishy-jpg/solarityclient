@@ -1022,11 +1022,7 @@ impl TerrainFrame {
         if let Some(underwater_particles) = underwater_particles {
             scene = scene.with_underwater_particles(underwater_particles);
         }
-        scene = scene.with_screen_effect(
-            environment
-                .ghost_effect_enabled()
-                .then(|| solarity_rendering::WorldFrameScreenEffect::ghost(light.glow())),
-        );
+        scene = scene.with_screen_effect(environment.screen_effect(liquid_time_ms));
         let report = renderer.present_world_frame_with_ui_layers(
             scene,
             m2.bone_transforms,

@@ -48,6 +48,10 @@ pub struct WorldBenchmarkSample {
     pub ground_detail_draws: usize,
     /// Eligible unit material packets submitted to the primary shadow map.
     pub primary_shadow_draws: usize,
+    /// Final effect inputs after the camera liquid and WMO fog queries.
+    pub screen_effect: Option<solarity_rendering::WorldFrameScreenEffect>,
+    /// Authored liquid type admitted at the collision-resolved camera.
+    pub camera_liquid_type: Option<u32>,
     /// Fixture world position used for this frame's residency demand.
     pub position: Vec3,
 }
@@ -131,6 +135,7 @@ impl ClientServices {
             .set_full_screen_effects(effect_policy("ffx"));
         self.environment
             .set_death_effects(effect_policy("ffxdeath"));
+        self.environment.set_glow_effects(effect_policy("ffxglow"));
         if let Some(id) = screen_effect {
             self.environment.select_screen_effect(id);
         }
@@ -326,6 +331,7 @@ impl ClientServices {
             .set_full_screen_effects(effect_policy("ffx"));
         self.environment
             .set_death_effects(effect_policy("ffxdeath"));
+        self.environment.set_glow_effects(effect_policy("ffxglow"));
         if let Some(farclip) = self.world_ui.as_ref().map_or_else(
             || self.glue.cvar_number("farclip"),
             |ui| ui.cvar_number("farclip"),
@@ -452,6 +458,8 @@ impl ClientServices {
                 ui.cvar_number("groundEffectDist"),
             )
             .map_err(ApplicationError::from)?;
+        let presentation_time_ms = sdl3::timer::ticks() as u32;
+        let screen_effect = environment.screen_effect(presentation_time_ms);
         let report = frame
             .present(
                 &mut self.renderer,
@@ -461,7 +469,7 @@ impl ClientServices {
                 environment,
                 &mut self.terrain,
                 camera,
-                sdl3::timer::ticks() as u32,
+                presentation_time_ms,
                 underwater.is_some(),
                 self.glue.cvar_boolean("specular"),
                 None,
@@ -501,6 +509,8 @@ impl ClientServices {
             evicted_tiles,
             ground_detail_draws: report.ground_detail_draw_count(),
             primary_shadow_draws: report.primary_shadow_draw_count(),
+            screen_effect,
+            camera_liquid_type: underwater.map(|liquid| liquid.liquid_type),
             position: world.local_player_transform()?.position(),
         })
     }

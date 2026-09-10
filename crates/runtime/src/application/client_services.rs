@@ -2466,6 +2466,7 @@ impl ClientServices {
             .set_full_screen_effects(effect_policy("ffx"));
         self.environment
             .set_death_effects(effect_policy("ffxdeath"));
+        self.environment.set_glow_effects(effect_policy("ffxglow"));
         while let Some(id) = self.gameplay.take_screen_effect_update() {
             self.environment.select_screen_effect(id);
         }

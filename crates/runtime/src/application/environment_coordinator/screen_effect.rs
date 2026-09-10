@@ -17,6 +17,10 @@ struct Change {
 }
 
 impl ScreenEffectFog {
+    pub(super) const fn normal(&self) -> bool {
+        self.kind == 0
+    }
+
     pub(super) const fn ghost(&self) -> bool {
         self.kind == 1
     }

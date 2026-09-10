@@ -51,7 +51,8 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         .enumerate()
     {
         let id = index as u32 + 1;
-        parameters.extend([id, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let glow = [0.5_f32, 1., 0., 0.2, 1.25][index];
+        parameters.extend([id, 0, 0, 0, glow.to_bits(), 0, 0, 0, 0]);
         for channel in 0..18 {
             colors.extend(band((id - 1) * 18 + channel + 1, color));
         }
@@ -90,47 +91,13 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             &table(
                 10,
                 &[
-                    1,
-                    0,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    u32::MAX,
-                    0,
-                    0,
-                    141,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    4,
-                    0,
-                    0,
-                    81,
-                    0,
-                    2,
-                    0,
-                    0,
-                    0,
-                    0,
-                    u32::MAX,
-                    0,
-                    0,
-                    142,
-                    0,
-                    99,
-                    0,
-                    0,
-                    0,
-                    0,
-                    u32::MAX,
-                    0,
-                    0,
-                ],
+                    [1, 0, 1, 0, 0, 0, 0, u32::MAX, 0, 0],
+                    [141, 0, 0, 0, 0, 0, 0, 4, 0, 0],
+                    [81, 0, 2, 0, 0, 0, 0, u32::MAX, 0, 0],
+                    [142, 0, 99, 0, 0, 0, 0, u32::MAX, 0, 0],
+                    [82, 0, 3, 0, 0, 0, 0, u32::MAX, 0, 0],
+                ]
+                .concat(),
             ),
         ),
         ("DBFilesClient\\LiquidType.dbc", &table(45, &liquids)),
@@ -315,7 +282,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         );
         assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
     }
-    let world = ActiveWorld::enter(WorldBootstrap::new(
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(571),
         1,
         "Weather",
@@ -540,6 +507,131 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             .ok_or("disconnect effect frame")?
             .light(),
         clear.light()
+    );
+    use solarity_rendering::WorldFrameScreenEffect;
+    for (actual, fake, blur) in [
+        (0, 0, 0_u8),
+        (1, 0, 2),
+        (25, 50, 127),
+        (99, 0, 252),
+        (0, 100, 255),
+        (255, 0, 255),
+        (0, u32::MAX, 0),
+        (0, i32::MAX as u32, 255),
+    ] {
+        world.update_fields(1, [(155, actual << 8), (322, fake)])?;
+        let dry = environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("normal glow")?;
+        assert_eq!(
+            dry.screen_effect(3174),
+            Some(WorldFrameScreenEffect::Normal {
+                glow: 127,
+                blur,
+                wave_time_ms: None,
+            })
+        );
+        for (liquid_type, glow) in [(1, 255), (2, 62)] {
+            let wet = environment.resolve_liquid(
+                dry,
+                Some(SubmergedLiquid {
+                    liquid_type,
+                    surface_height: 30.,
+                    depth: 100.,
+                }),
+                &liquids,
+            )?;
+            let expected = Some(WorldFrameScreenEffect::Normal {
+                glow,
+                blur: blur.max(84),
+                wave_time_ms: Some(u32::MAX),
+            });
+            assert_eq!(wet.screen_effect(u32::MAX), expected);
+            assert_eq!(
+                wet.with_world_model_fog(indoor_fog).screen_effect(u32::MAX),
+                expected
+            );
+            // A new exterior frame must not retain the previous wave selection.
+            assert_eq!(
+                environment
+                    .synchronize(Some(&world), Some(&clock))?
+                    .ok_or("exit water")?
+                    .screen_effect(0),
+                Some(WorldFrameScreenEffect::Normal {
+                    glow: 127,
+                    blur,
+                    wave_time_ms: None
+                })
+            );
+        }
+    }
+    world.update_fields(1, [(155, 0), (322, 0)])?;
+    for (ffx, glow, expected) in [
+        (true, true, true),
+        (true, false, false),
+        (false, true, false),
+        (false, false, false),
+        (true, true, true),
+    ] {
+        environment.set_full_screen_effects(ffx);
+        environment.set_glow_effects(glow);
+        assert_eq!(
+            environment
+                .synchronize(Some(&world), Some(&clock))?
+                .ok_or("glow policy")?
+                .screen_effect(0)
+                .is_some(),
+            expected
+        );
+    }
+    environment.select_screen_effect(142); // Unknown kinds preserve the normal owner.
+    assert!(matches!(
+        environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("unknown normal")?
+            .screen_effect(0),
+        Some(WorldFrameScreenEffect::Normal { .. })
+    ));
+    environment.set_glow_effects(false);
+    environment.select_screen_effect(1);
+    assert!(matches!(
+        environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("independent ghost policy")?
+            .screen_effect(0),
+        Some(WorldFrameScreenEffect::Ghost { .. })
+    ));
+    environment.set_death_effects(false);
+    assert!(
+        environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("disabled ghost")?
+            .screen_effect(0)
+            .is_none()
+    );
+    environment.set_death_effects(true);
+    environment.set_glow_effects(true);
+    for id in [1, 81, 82] {
+        environment.select_screen_effect(id);
+        assert!(!matches!(
+            environment
+                .synchronize(Some(&world), Some(&clock))?
+                .ok_or("other effect owner")?
+                .screen_effect(0),
+            Some(WorldFrameScreenEffect::Normal { .. })
+        ));
+    }
+    environment.disconnect();
+    assert_eq!(
+        environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("normal after disconnect")?
+            .screen_effect(0),
+        Some(WorldFrameScreenEffect::Normal {
+            glow: 127,
+            blur: 0,
+            wave_time_ms: None
+        })
     );
     Ok(())
 }

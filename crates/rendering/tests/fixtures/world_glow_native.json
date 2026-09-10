@@ -1,0 +1,11 @@
+{
+  "executable_sha256": "aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8",
+  "producer_cases": 360,
+  "wave_coordinate_cases": 40,
+  "texture": "128x128 V8U8, native generator 8C2920; no random inputs",
+  "fixture_sha256": {
+    "world_glow_producer_native.txt": "17dd2ec634e236a4e50bcb609abd376901287310e3ac6ed3445d5b0518b87fc4",
+    "world_glow_wave_native.bin": "1013dcde64b5cfdc192d122e63d784cb47438f0316b8c12dfea2aa7aba733d33",
+    "world_glow_wave_coordinates_native.txt": "be37ec72f2e30eeae0fb6cc5176275ff35502c0175b0e9f270148482c3e123fb"
+  }
+}

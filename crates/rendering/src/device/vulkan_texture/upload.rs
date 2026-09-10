@@ -630,6 +630,31 @@ pub(in crate::device) fn upload_rgba8_image_deferred(
     upload_sampled_image_deferred(context, format, extent, bytes, &mips)
 }
 
+/// Queues a generated two-channel signed displacement image on the graphics queue.
+pub(in crate::device) fn upload_rg8_snorm_image_deferred(
+    context: TextureUploadContext<'_>,
+    extent: (u32, u32),
+    bytes: &[u8],
+) -> Result<(GpuSampledImage, DeferredTextureTransfer), VulkanError> {
+    let expected = (u64::from(extent.0) * u64::from(extent.1)).checked_mul(2);
+    if extent.0 == 0
+        || extent.1 == 0
+        || expected.is_none()
+        || u64::try_from(bytes.len()).ok() != expected
+    {
+        return Err(VulkanError::operation(
+            "validate RG8 signed image",
+            "extent and displacement bytes differ",
+        ));
+    }
+    let mips = [UploadMip {
+        offset: 0,
+        width: extent.0,
+        height: extent.1,
+    }];
+    upload_sampled_image_deferred(context, vk::Format::R8G8_SNORM, extent, bytes, &mips)
+}
+
 /// Queues one complete RGBA8 mip chain and returns its staging retirement owner.
 ///
 /// The image may enter descriptor and draw preparation immediately when those

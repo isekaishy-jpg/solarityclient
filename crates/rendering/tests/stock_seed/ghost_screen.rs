@@ -11,7 +11,7 @@ use solarity_rendering::{
 };
 use std::error::Error;
 
-fn scene() -> WorldFrameScene<'static> {
+pub(super) fn scene() -> WorldFrameScene<'static> {
     WorldFrameScene::new(
         TerrainSceneUniform::new(
             Mat4::IDENTITY,

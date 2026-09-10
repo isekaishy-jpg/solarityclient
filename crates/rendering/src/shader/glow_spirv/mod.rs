@@ -7,6 +7,7 @@ const COMPOSITE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-composit
 const BLUR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-blur.frag.spv"));
 const BOX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-box.frag.spv"));
 const GHOST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-ghost.frag.spv"));
+const WORLD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-world.frag.spv"));
 
 /// Stable identity of one fragment stage in the stock glow chain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +20,8 @@ pub enum GlowShaderPass {
     Box,
     /// Stock FFXDeath grayscale, glow and blue tint composition.
     Ghost,
+    /// Ordinary world glow, player blur and the optional underwater distortion.
+    World,
 }
 
 /// Owned SPIR-V modules for one glow pass.
@@ -54,7 +57,7 @@ impl GlowSpirvProgram {
 #[error("build-generated glow SPIR-V is unavailable")]
 pub struct GlowSpirvError;
 
-/// Selector for the three fixed build-generated glow pipeline pairs.
+/// Selector for the fixed build-generated glow pipeline pairs.
 pub struct GlowSpirvCompiler;
 
 impl GlowSpirvCompiler {
@@ -70,6 +73,7 @@ impl GlowSpirvCompiler {
             GlowShaderPass::Blur => BLUR,
             GlowShaderPass::Box => BOX,
             GlowShaderPass::Ghost => GHOST,
+            GlowShaderPass::World => WORLD,
         };
         Ok(GlowSpirvProgram {
             pass,

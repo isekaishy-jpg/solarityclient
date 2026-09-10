@@ -219,6 +219,7 @@ fn main() {
         ("blur", "src/shader/glow_spirv/source/glow_blur.frag.glsl"),
         ("box", "src/shader/glow_spirv/source/glow_box.frag.glsl"),
         ("ghost", "src/shader/glow_spirv/source/ghost.frag.glsl"),
+        ("world", "src/shader/glow_spirv/source/world_glow.frag.glsl"),
     ] {
         compile(
             source,
