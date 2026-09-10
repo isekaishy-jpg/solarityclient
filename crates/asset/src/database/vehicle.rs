@@ -37,6 +37,8 @@ pub struct VehicleSeatDefinition {
     flags_b: u32,
     enter: [u32; 7],
     exit: [u32; 7],
+    enter_animations: [u32; 2],
+    exit_animations: [u32; 2],
 }
 
 impl VehicleSeatDefinition {
@@ -94,6 +96,18 @@ impl VehicleSeatDefinition {
     pub fn exit_transition(self) -> [f32; 7] {
         self.exit.map(f32::from_bits)
     }
+
+    /// Initial and looping passenger entry animations at row +34/+38; -1 is absent.
+    #[must_use]
+    pub fn enter_animations(self) -> [i32; 2] {
+        self.enter_animations.map(|animation| animation as i32)
+    }
+
+    /// Initial and looping passenger exit animations at row +68/+6C.
+    #[must_use]
+    pub fn exit_animations(self) -> [i32; 2] {
+        self.exit_animations.map(|animation| animation as i32)
+    }
 }
 
 /// Immutable vehicle and passenger-seat tables under normal archive precedence.
@@ -134,6 +148,8 @@ impl VehicleCatalog {
                 offset: fields(&table, row, 3)?,
                 enter: fields(&table, row, 6)?,
                 exit: fields(&table, row, 19)?,
+                enter_animations: fields(&table, row, 13)?,
+                exit_animations: fields(&table, row, 26)?,
                 rotation: fields(&table, row, 29)?,
                 passenger_attachment_id: field(&table, row, 32)? as i32,
                 flags_b: field(&table, row, 45)?,

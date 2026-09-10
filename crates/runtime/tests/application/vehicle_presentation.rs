@@ -9,6 +9,174 @@ use solarity_ecs::{
 use solarity_rendering::m2_model_distance_key;
 
 #[test]
+fn vehicle_passenger_transition_changes_render_parent_only_when_the_model_attaches()
+-> Result<(), Box<dyn Error>> {
+    use crate::application::unit_animation::{
+        UnitMovementAnimationEvent, UnitMovementAnimationEventKind,
+    };
+    use solarity_systems::VehiclePassengerPhase as Phase;
+
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_vehicle_seats()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    for guid in [10, 30] {
+        add_unit(&mut world, guid, ObjectKind::Unit, 0)?;
+    }
+    world.set_unit_vehicle(30, 1, 0.);
+    world.update_transform(10, WorldTransform::new(Vec3::X * 10., 0.))?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(30., 0., 10.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-30., 30.],
+        [-30., 30.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    let child_identity = world.object_identity(10).ok_or("child identity")?;
+    let parent_identity = world.object_identity(30).ok_or("parent identity")?;
+    let mut entry_origin = None;
+    let mut exit_origin = None;
+    for (now, phase, attached) in [
+        (0, Phase::Detached, false),
+        (100, Phase::EnterDelay, false),
+        (350, Phase::Entering, false),
+        (1350, Phase::Entering, false),
+        (2350, Phase::Seated, true),
+        (2400, Phase::ExitDelay, true),
+        (2525, Phase::Exiting, false),
+        (2775, Phase::Exiting, false),
+        (3025, Phase::Detached, false),
+    ] {
+        presentation.set_animation_scene_time(now);
+        if now == 100 || now == 2400 {
+            let previous_transform = world.object_transform(10).ok_or("previous transform")?;
+            let previous = world
+                .movement_state(10)
+                .and_then(|movement| movement.context().transport)
+                .map(|transport| (transport.guid, transport.seat));
+            let parent = (now == 100).then_some(parent_identity);
+            let movement = WorldMovementState::new(
+                if parent.is_some() { 0x200 } else { 0 },
+                WorldMovementSpeeds::new([0.; 9]),
+                WorldMovementContext {
+                    transport: parent.map(|parent| WorldMovementTransport {
+                        guid: parent.guid(),
+                        position: Vec3::X * 2.,
+                        orientation: 0.,
+                        time_ms: now,
+                        seat: 2,
+                        interpolated_time_ms: None,
+                    }),
+                    ..Default::default()
+                },
+            );
+            world.update_movement(10, movement)?;
+            world.update_transform(
+                10,
+                WorldTransform::new(Vec3::X * if parent.is_some() { 2. } else { 6. }, 0.),
+            )?;
+            presentation.notify_movement_animation(UnitMovementAnimationEvent {
+                identity: child_identity,
+                movement,
+                stand: 0,
+                kind: UnitMovementAnimationEventKind::Passenger {
+                    previous_transform,
+                    previous,
+                    parent,
+                    animated: true,
+                },
+            });
+        }
+        presentation.synchronize_creatures(Some(&world), |_| None)?;
+        frame.replace_creatures(
+            &mut renderer,
+            &presentation.resident_creature_frame_inputs(),
+            &mut random,
+        )?;
+        frame.update_creature_states(
+            &presentation.resident_creature_frame_inputs(),
+            now as f32,
+            &mut random,
+        )?;
+        equipment_residency::advance(&mut frame, &renderer, camera, now as f32, &mut random)?;
+        let child = frame
+            .placements
+            .iter()
+            .position(|placement| placement.owner == M2GpuPlacementOwner::CreatureBody { guid: 10 })
+            .ok_or("child")?;
+        let parent = frame
+            .placements
+            .iter()
+            .position(|placement| placement.owner == M2GpuPlacementOwner::CreatureBody { guid: 30 })
+            .ok_or("parent")?;
+        let owner = frame.placements[child]
+            .unit_animation
+            .as_ref()
+            .ok_or("child animation")?;
+        assert_eq!(owner.passenger_phase(), phase, "phase at {now}");
+        assert_eq!(
+            frame.placement_visibility.light_parent(child),
+            attached.then_some(parent),
+            "light parent at {now}"
+        );
+        assert_eq!(
+            frame.placement_visibility.light_root(child),
+            Some(if attached { parent } else { child }),
+            "light root at {now}"
+        );
+        assert_eq!(
+            frame.placements[child].last_effect_time_ms, now,
+            "effect clock at {now}"
+        );
+        let position = frame.placements[child].transform.w_axis.truncate();
+        match now {
+            0 => entry_origin = Some(position),
+            100 | 350 => assert_eq!(
+                Some(position),
+                entry_origin,
+                "entry starts at previous rendered pose"
+            ),
+            1350 => {
+                assert!(position.z > 5., "entry arc: {position:?}");
+                assert_ne!(
+                    position,
+                    world.object_transform(10).ok_or("unit pose")?.position()
+                );
+            }
+            2400 => exit_origin = Some(position),
+            2525 => assert_eq!(
+                Some(position),
+                exit_origin,
+                "exit starts at delayed seat pose"
+            ),
+            2775 => assert_ne!(Some(position), exit_origin),
+            3025 => assert_eq!(position, Vec3::X * 6.),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn vehicle_seats_follow_animated_nested_models_without_rescaling_passengers()
 -> Result<(), Box<dyn Error>> {
     nested_vehicle_scene(false)

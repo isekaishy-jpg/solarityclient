@@ -106,6 +106,9 @@ impl RuntimePlayerMovement {
         owner.published = (transform, movement);
         world.set_local_player_view(owner.camera.view(owner.world_orientation()))?;
         presentation.set_ground_normal(owner.identity, owner.world_ground_normal());
+        presentation
+            .passenger_frames
+            .set_velocity(owner.identity, owner.passenger_velocity());
         Ok(())
     }
 
@@ -203,6 +206,17 @@ impl RuntimePlayerMovement {
 }
 
 impl LocalMovement {
+    /// 6FED70 multiplies the movement owner's retained direction by its speed.
+    pub(super) fn passenger_velocity(&self) -> Vec3 {
+        match self.phase {
+            MovementPhase::Ground { .. } => self.ground.travel_direction() * self.ground.speed(),
+            MovementPhase::Swimming(trajectory) => trajectory.direction() * trajectory.speed(),
+            MovementPhase::Fall(fall) => {
+                fall.snapshot().direction * fall.snapshot().horizontal_speed
+            }
+        }
+    }
+
     /// Refreshes only the matrix lane. Native clock publication belongs to the
     /// simulation callback, so a final scene projection must not publish it twice.
     pub(super) fn reproject_passenger(

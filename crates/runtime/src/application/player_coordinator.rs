@@ -1046,6 +1046,8 @@ impl RuntimePlayerPresentation {
             self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::Idle);
         };
+        self.unit_animations
+            .synchronize_passengers(world, &self.vehicles, &self.passenger_frames);
         let guid = world.local_player_guid()?;
         let Some(identity) = world.object_identity(guid) else {
             return Ok(RuntimePlayerPoll::Pending);
@@ -1523,7 +1525,9 @@ impl RuntimePlayerPresentation {
         owner.synchronize_passenger(
             world,
             &self.vehicles,
+            &self.passenger_frames,
             self.passenger_frames.admitted_parent(owner.identity()),
+            self.unit_animations.scene_time_ms(),
         );
         let passenger = world
             .movement_state(guid)

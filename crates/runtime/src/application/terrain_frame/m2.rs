@@ -2256,6 +2256,15 @@ impl M2Frame {
             self.placement_topology_dirty = false;
         }
         frame_profile.mark("residency and topology");
+        self.vehicle_passengers.prepare_timing(
+            &mut self.placements,
+            &self.sources,
+            &self.placement_visibility,
+            &self.requested_items,
+            camera.view(),
+            animation_time_ms,
+            random,
+        )?;
         // Primary unit completion belongs to the scene update, including
         // bodies subsequently rejected by the camera's visibility test.
         for &index in self.placement_visibility.dynamic_indices() {

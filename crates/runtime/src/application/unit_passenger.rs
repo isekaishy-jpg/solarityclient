@@ -24,6 +24,7 @@ struct UnitFrame {
     admitted_parent: Option<WorldObjectIdentity>,
     vehicle: Option<MovementTransportFrame>,
     computed: Option<(FrameInput, MovementTransportFrame)>,
+    velocity: glam::Vec3,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -56,6 +57,28 @@ impl UnitPassengerFrames {
             .borrow()
             .get(&child)
             .and_then(|state| state.admitted_parent)
+    }
+
+    pub fn set_velocity(&self, identity: WorldObjectIdentity, velocity: glam::Vec3) {
+        self.units
+            .borrow_mut()
+            .entry(identity)
+            .or_default()
+            .velocity = velocity;
+    }
+
+    pub fn velocity(&self, identity: WorldObjectIdentity) -> glam::Vec3 {
+        self.units
+            .borrow()
+            .get(&identity)
+            .map_or(glam::Vec3::ZERO, |state| state.velocity)
+    }
+
+    pub fn current_frame(&self, identity: WorldObjectIdentity) -> Option<MovementTransportFrame> {
+        self.units
+            .borrow()
+            .get(&identity)
+            .and_then(|state| state.computed.map(|(_, frame)| frame).or(state.vehicle))
     }
 
     /// Registers creation matrices before movement can replace the wire pose.
@@ -215,6 +238,7 @@ fn register(
         admitted_parent: None,
         vehicle: None,
         computed: None,
+        velocity: glam::Vec3::ZERO,
     });
     if state.vehicle.is_none()
         && let Some(vehicle) = world.unit_vehicle(identity.guid())

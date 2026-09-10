@@ -16,6 +16,113 @@ use crate::application::{RuntimeMovementGeometry, RuntimeMovementQuery};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[test]
+fn passenger_notifications_follow_execution_and_distinguish_flush_from_playback() -> TestResult {
+    use crate::application::unit_animation::UnitMovementAnimationEventKind;
+
+    for flush in [false, true] {
+        let mut scene = Scene::passenger_deck()?;
+        let mut remote = owner(&scene)?;
+        let mut query = RuntimeMovementQuery::new();
+        let mut geometry = RuntimeMovementGeometry::new(
+            &mut scene.terrain,
+            &scene.world,
+            &scene.objects,
+            0x0010_0111,
+            MovementBspCacheMode::Enabled,
+            &mut query,
+        );
+        assert!(remote.receive(
+            command(WorldMovementKind::StartForward, 1, 0, -0.3),
+            0,
+            0,
+            &mut geometry
+        )?);
+        let first = remote
+            .animation_events
+            .pop_front()
+            .ok_or("initial passenger event")?;
+        assert!(matches!(
+            first.kind,
+            UnitMovementAnimationEventKind::Passenger {
+                previous: None,
+                parent: Some(_),
+                animated: false,
+                ..
+            }
+        ));
+        remote.animation_events.clear();
+        let mut changed_seat = command(WorldMovementKind::Stop, 0, 100, 0.4);
+        changed_seat
+            .context
+            .transport
+            .as_mut()
+            .ok_or("transport")?
+            .seat = 2;
+        assert!(!remote.receive(changed_seat, 10, 10, &mut geometry)?);
+        assert!(
+            remote.animation_events.is_empty(),
+            "receipt cannot start the transition"
+        );
+        if flush {
+            remote.flush(&mut geometry)?;
+        } else {
+            remote.advance(
+                100,
+                [0.1, 1.5, 0.5],
+                MovementGroundProfile::Other,
+                &mut geometry,
+                |_| None,
+            )?;
+        }
+        let events = remote
+            .animation_events
+            .iter()
+            .filter_map(|event| {
+                if let UnitMovementAnimationEventKind::Passenger {
+                    previous,
+                    parent,
+                    animated,
+                    ..
+                } = event.kind
+                {
+                    Some((previous, parent, animated, event.movement))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, Some((9, -1)), "seat-only changes reach F60");
+        assert_eq!(events[0].1, scene.world.object_identity(9));
+        assert_eq!(events[0].2, !flush);
+        assert_eq!(
+            events[0].3.context().transport.ok_or("new transport")?.seat,
+            2
+        );
+        remote.animation_events.clear();
+        remote.receive_path(&path(None), 110, 1., &mut geometry, |_| None)?;
+        let exit = remote
+            .animation_events
+            .iter()
+            .find(|event| matches!(event.kind, UnitMovementAnimationEventKind::Passenger { .. }))
+            .ok_or("path exit")?;
+        assert!(
+            matches!(
+                exit.kind,
+                UnitMovementAnimationEventKind::Passenger {
+                    previous: Some((9, 2)),
+                    parent: None,
+                    animated: true,
+                    ..
+                }
+            ),
+            "MonsterMove sets A30 bit 20000000 around parent admission"
+        );
+    }
+    Ok(())
+}
+
 /// Use independent wire world/local poses so a dropped transport block is visible.
 fn command(kind: WorldMovementKind, flags: u64, time_ms: u32, local_x: f32) -> RemoteMovement {
     RemoteMovement {

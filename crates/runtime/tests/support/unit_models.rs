@@ -256,6 +256,11 @@ fn build_fixture(
     seats[..3].copy_from_slice(&[10, 0, u32::MAX]);
     seats[58..61].copy_from_slice(&[12, 0x8000_0000, 21]);
     if vehicle_seats {
+        seats[59] |= 0x8001;
+        seats[64..71].copy_from_slice(&[0.25, 8., 20., 2., 2., 0., 20.].map(f32::to_bits));
+        seats[71..73].copy_from_slice(&[96, 91]);
+        seats[77..84].copy_from_slice(&[0.125, 8., 20., 0.5, 0.5, 0., 20.].map(f32::to_bits));
+        seats[84..86].copy_from_slice(&[99, 100]);
         seats[60] = 0; // Vehicle seat enum zero maps to M2 attachment 20.
         seats[61..64].copy_from_slice(&[
             0.5_f32.to_bits(),

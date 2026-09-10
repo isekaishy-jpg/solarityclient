@@ -18,6 +18,8 @@ fn vehicle_catalog_preserves_seat_slots_and_signed_attachment_ids() -> Result<()
     ]);
     first[6..13].copy_from_slice(&[1., 2., 3., 4., 5., 6., 7.].map(f32::to_bits));
     first[19..26].copy_from_slice(&[8., 9., 10., 11., 12., 13., 14.].map(f32::to_bits));
+    first[13..15].copy_from_slice(&[u32::MAX, 37]);
+    first[26..28].copy_from_slice(&[187, 39]);
     first[29..32].copy_from_slice(&[0.1, 0.2, -0.3].map(f32::to_bits));
     first[32] = u32::MAX;
     first[45] = 0x1234_5678;
@@ -48,6 +50,8 @@ fn vehicle_catalog_preserves_seat_slots_and_signed_attachment_ids() -> Result<()
     assert_eq!(seat.passenger_rotation().map(f32::to_bits), first[29..32]);
     assert_eq!(seat.enter_transition().map(f32::to_bits), first[6..13]);
     assert_eq!(seat.exit_transition().map(f32::to_bits), first[19..26]);
+    assert_eq!(seat.enter_animations(), [-1, 37]);
+    assert_eq!(seat.exit_animations(), [187, 39]);
     assert_eq!(seat.passenger_attachment_id(), -1);
     assert_eq!(seat.flags_b(), 0x1234_5678);
     Ok(())

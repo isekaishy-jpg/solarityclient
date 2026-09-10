@@ -1,7 +1,7 @@
 //! Retained unit posture/movement requests and their primary sequence callback.
 
 mod ground;
-mod passenger;
+pub(super) mod passenger;
 
 use ground::UnitGroundPose;
 
@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use glam::Mat4;
 use solarity_asset::{AnimationDataCatalog, DecodedM2Model, M2ModelAnimationMode};
-use solarity_ecs::{ActiveWorld, UnitAnimationTier, WorldMovementState, WorldObjectIdentity};
+use solarity_ecs::{
+    ActiveWorld, UnitAnimationTier, WorldMovementState, WorldObjectIdentity, WorldTransform,
+};
 use solarity_rendering::{
     M2AnimationClock, M2EventTimeWindow, M2ModelSequenceBlend, M2ModelSequenceTimer,
     M2SequenceStartPhase,
@@ -150,6 +152,13 @@ impl UnitAnimationInput {
 #[derive(Clone, Copy)]
 pub(super) enum UnitMovementAnimationEventKind {
     Changed,
+    /// Frozen when a parent/seat change executes, before model residency.
+    Passenger {
+        previous_transform: WorldTransform,
+        previous: Option<(u64, i8)>,
+        parent: Option<WorldObjectIdentity>,
+        animated: bool,
+    },
     VisualKit {
         animation: u16,
         attack_target_guid: u64,
@@ -184,6 +193,8 @@ pub(super) struct UnitAnimationScene {
     owners: BTreeMap<u64, Rc<UnitAnimationBehavior>>,
     /// Movement can publish before a model finishes loading for this unit.
     ground_poses: RefCell<BTreeMap<u64, (WorldObjectIdentity, Rc<UnitGroundPose>)>>,
+    passenger_states:
+        RefCell<BTreeMap<u64, (WorldObjectIdentity, passenger::SharedPassengerState)>>,
     scene_time_ms: u32,
 }
 
@@ -191,6 +202,7 @@ impl UnitAnimationScene {
     pub fn clear(&mut self) {
         self.owners.clear();
         self.ground_poses.get_mut().clear();
+        self.passenger_states.get_mut().clear();
         self.scene_time_ms = 0;
     }
 
@@ -211,6 +223,9 @@ impl UnitAnimationScene {
             keep
         });
         self.ground_poses
+            .get_mut()
+            .retain(|guid, (identity, _)| world.object_identity(*guid) == Some(*identity));
+        self.passenger_states
             .get_mut()
             .retain(|guid, (identity, _)| world.object_identity(*guid) == Some(*identity));
     }
@@ -236,11 +251,11 @@ impl UnitAnimationScene {
             );
             // 7197D0's normal exists before and across CM2Model replacements.
             replacement.ground = self.ground_pose(identity);
+            replacement.passenger = self.passenger_state(identity);
             if let Some(previous) = self.owners.get(&identity.guid())
                 && previous.identity == identity
             {
                 replacement.opacity = Rc::clone(&previous.opacity);
-                replacement.passenger = Rc::clone(&previous.passenger);
             }
             self.owners.insert(identity.guid(), Rc::new(replacement));
         }
@@ -251,6 +266,12 @@ impl UnitAnimationScene {
     }
 
     pub fn notify_movement(&self, event: UnitMovementAnimationEvent) {
+        if matches!(event.kind, UnitMovementAnimationEventKind::Passenger { .. }) {
+            self.passenger_state(event.identity)
+                .borrow_mut()
+                .queue(event);
+            return;
+        }
         if let Some(owner) = self.owners.get(&event.identity.guid())
             && owner.identity == event.identity
         {
@@ -647,6 +668,9 @@ impl UnitAnimationBehavior {
         if input.mounted {
             return Some(UnitLocomotionAnimation::MOUNT.animation_id());
         }
+        if let Some(animation) = self.passenger_transition_animation() {
+            return Some(animation);
+        }
         // 71DFF0 precedes ordinary movement/posture stages. 201's entry request
         // keeps ownership until its completion callback installs submerged 202.
         if input.stand == 9 {
@@ -850,6 +874,12 @@ impl UnitAnimationBehavior {
         scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        if self.take_passenger_animation_change() {
+            self.pending.borrow_mut().push_back(PendingUnitAnimation {
+                input: self.input.get(),
+                event: UnitMovementAnimationEventKind::Changed,
+            });
+        }
         let mut playback = self.playback.borrow_mut();
         loop {
             let Some(pending) = self.pending.borrow().front().copied() else {
@@ -967,11 +997,19 @@ impl UnitAnimationBehavior {
         }
         let mut completed = |playback: &mut M2Playback, random: &mut CrtRand| {
             let input = self.input.get();
+            self.complete_passenger_transition_animation();
             let behavior = self.behavior(playback);
             if matches!(behavior, 39 | 187) {
                 self.landing.set(false);
             }
-            let request = if !input.mounted || input.dead() {
+            let passenger = (!input.dead() && !input.mounted)
+                .then(|| self.passenger_transition_animation())
+                .flatten();
+            let request = if let Some(animation) = passenger {
+                // 7385C0 reapplies the passenger primary after completion's
+                // ordinary request (for example jump-start -> jump-end).
+                Some(animation.into())
+            } else if !input.mounted || input.dead() {
                 let movement_completion =
                     resolve_unit_movement_animation_completion(behavior, input.movement_flags);
                 let completion =

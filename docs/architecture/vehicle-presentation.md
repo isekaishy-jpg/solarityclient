@@ -1,8 +1,10 @@
 # Vehicle presentation
 
 Vehicle creation state, passenger movement frames, entry-opacity seat lookup,
-and settled animated seat placement are connected. Boarding/exit transitions
-and vehicle camera presentation remain open under [world completion](world-completion.md).
+and settled animated seat placement are connected. Remote boarding/exit motion
+now consumes the passenger controller. Local-player admission, remaining
+controller consumers and vehicle camera presentation remain open under
+[world completion](world-completion.md).
 
 ## Native evidence
 
@@ -102,8 +104,8 @@ and GUID reuse. These are fixture tests, not a combined live vehicle session.
 
 ## Remaining consumers
 
-Trace and connect VehiclePassenger_C's state/flags and transfer lifecycle,
-boarding/exit motion and animation requests, vehicle pitch updates,
+Complete VehiclePassenger_C's remaining flags and transfer lifecycle,
+local-player boarding/exit admission, seated animation routing, vehicle pitch updates,
 vehicle camera bounds/ancestor dispatch, and exceptional unit visibility.
 Do not infer the passenger controller's flags from similarly numbered DBC flags.
 Combined live entry, travel, seat switching and removal remain unverified.
@@ -152,6 +154,64 @@ These tests do not establish combined live boarding, travel or camera parity.
 For this slice, the runtime library passes 277 tests with 18 archive-dependent
 tests ignored. The locked asset and systems suites pass as well, including the
 512 exact seat-pose cases. Workspace Clippy passes all targets with warnings denied.
+
+## Boarding and exit execution
+
+The remote movement timeline publishes parent/seat changes when they execute.
+Queued snapshots and MonsterMove parent admission request animated transitions;
+immediate corrections, object baselines and flushed ordinary snapshots settle
+without them. This follows `6EA9B0`, `73C8E0` and `74B840`: the ordinary playback
+and path handlers set Unit `A30 & 20000000` around parent admission. A same-parent
+seat change also reaches the controller. Movement notifications retain their
+previous world pose and admitted parent identity until presentation consumes them.
+
+The per-unit controller owns phases 0 through 5 independently of its model.
+Seat flags, delay and speed select immediate seating, entry delay, entry travel,
+exit delay or exit travel. Secondary movement flag `40` selects the seat's
+special-exit flag `8`; ordinary exit uses seat flag `8000`. Delay completion
+starts travel at the current scene tick. Model replacement retains the phase,
+timer, last placement and static anchor. Exit keeps the former seat while its
+delay runs, then travels toward the unlinked unit's current movement position.
+
+`74A200` initializes duration, projected parent speed, gravity and bounded arc
+height. `747D70`, `747A30` and `74A7F0` supply wrapping elapsed time, seat easing,
+yaw wrapping and parabolic world placement. Entry targets use `7493B0`'s separate
+model/movement-frame compensation, including its near-unit-scale inverse and
+the parent-transition branch. Initial duration uses the preceding rendered
+parent placement; travel samples the current animated attachment. Entry and exit
+initial/loop animations come from seat columns 13/14 and 26/27. Primary completion
+selects the authored passenger loop before ordinary locomotion completion can
+replace it. Seated primary/upper-body routing is not included in this slice.
+
+The model timing pass precedes unit animation callbacks. The later ancestry
+pass publishes the interpolated world placement before visibility, lighting,
+shadows and effects. Airborne passengers have no attached-model parent; seated
+passengers and an exit delay use the bone attachment's inherited state.
+
+Two additional original-instruction fixtures check this arithmetic:
+
+- `vehicle_transition_oracle.py`: 2,560 exact initialization/pose records,
+  SHA-256 `d2cb73012386036b6374871a31eacd89dffcc3716ef299b79259e05aec6f89b7`.
+- `vehicle_entry_target_oracle.py`: 512 exact entry-target records,
+  SHA-256 `928619f8762f4de0188ce6046886691230d7b4d96d3dfbdad1c26ccca1e79c01`.
+
+Runtime tests cover execution versus receipt, immediate/flush/path policies,
+seat-only changes, initial-to-loop completion, model replacement during travel,
+exit after unlinking, CPU timers without loaded models, GUID reuse and render
+parent changes across the complete entry/exit sequence. The existing nested
+seat, mounted rider, light, shadow and effect tests continue to pass.
+
+Remaining gaps include local-player server-path admission, a resident parent's
+bone target when the child model has never loaded, seated dual animation slots,
+launch flags, exceptional transfer/removal callbacks and vehicle camera work.
+The CPU-only controller currently initializes travel from the unit-position
+fallback; this is exact when the parent model is absent. Combined live vehicle
+parity and performance gains are not established by these fixtures.
+
+This slice passes all 1,242 locked workspace tests, with 23 archive-dependent
+tests ignored. The runtime portion passes 282 tests with 18 ignored. The new
+fixtures account for 3,072 exact arithmetic records, independently of the
+existing 512 settled-seat matrices and 3,072 seat-lookup/opacity records.
 
 ## Testing package
 

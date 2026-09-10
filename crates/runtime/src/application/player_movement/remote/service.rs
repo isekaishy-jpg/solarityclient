@@ -182,6 +182,17 @@ impl RuntimeRemoteMovement {
                 |motion| motion.world_ground_normal(),
             );
             presentation.set_ground_normal(identity, normal);
+            let velocity = if let Some(path) = &owner.path {
+                path.direction() * solarity_systems::resolve_unit_movement_speed(owner.snapshot().1)
+            } else {
+                owner
+                    .motion
+                    .as_ref()
+                    .map_or(glam::Vec3::ZERO, |motion| motion.passenger_velocity())
+            };
+            presentation
+                .passenger_frames
+                .set_velocity(identity, velocity);
             self.animation_events.append(&mut owner.animation_events);
             if let Some(motion) = &mut owner.motion {
                 self.animation_events.append(&mut motion.animation_events);

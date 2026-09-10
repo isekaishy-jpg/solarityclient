@@ -100,7 +100,13 @@ impl RemoteUnit {
             },
         )?;
         let (world, movement) = project(prepared.transform, prepared.movement, parent, transport);
-        self.baseline(world, movement, receipt_ms);
+        self.baseline_with_passenger(
+            world,
+            movement,
+            receipt_ms,
+            parent.map(|parent| parent.identity),
+            true,
+        );
         self.path = prepared.spline;
         self.path_parent = parent.filter(|_| self.path.is_some());
         Ok(())

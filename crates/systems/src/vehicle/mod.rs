@@ -4,8 +4,15 @@
 //! `UnitVehicle_C.cpp` establish this stock behavior family.
 
 mod passenger;
+mod transition;
 mod unit_vehicle_c;
 mod vehicle_camera_c;
 mod vehicle_passenger_c;
+pub use transition::{
+    VehiclePassengerPhase, VehiclePassengerTransition, VehicleTransitionInput,
+    VehicleTransitionPose,
+};
 
-pub use vehicle_passenger_c::{VehicleSeatPose, vehicle_seat_attachment, vehicle_seat_transform};
+pub use vehicle_passenger_c::{
+    VehicleSeatPose, vehicle_entry_target, vehicle_seat_attachment, vehicle_seat_transform,
+};

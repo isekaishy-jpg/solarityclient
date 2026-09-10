@@ -158,6 +158,18 @@ impl RemoteUnit {
         movement: WorldMovementState,
         time_ms: u32,
     ) {
+        self.baseline_with_passenger(transform, movement, time_ms, None, false);
+    }
+
+    pub(super) fn baseline_with_passenger(
+        &mut self,
+        transform: WorldTransform,
+        movement: WorldMovementState,
+        time_ms: u32,
+        parent: Option<WorldObjectIdentity>,
+        animated: bool,
+    ) {
+        let previous = self.snapshot();
         if let Some(motion) = &mut self.motion {
             self.animation_events.append(&mut motion.animation_events);
             self.ground_normal = motion.ground_normal;
@@ -168,6 +180,39 @@ impl RemoteUnit {
         self.path = None;
         self.path_parent = None;
         self.commands.clear();
+        self.notify_passenger_change(previous, parent, animated);
+    }
+
+    /// 6EC400 notifies F60 at execution, independently of locomotion callbacks.
+    fn notify_passenger_change(
+        &mut self,
+        previous: (WorldTransform, WorldMovementState),
+        parent: Option<WorldObjectIdentity>,
+        animated: bool,
+    ) {
+        let movement = self.snapshot().1;
+        let key = |movement: WorldMovementState| {
+            movement
+                .context()
+                .transport
+                .filter(|transport| transport.guid != 0)
+                .map(|transport| (transport.guid, transport.seat))
+        };
+        let old = key(previous.1);
+        if old == key(movement) {
+            return;
+        }
+        self.animation_events.push_back(UnitMovementAnimationEvent {
+            identity: self.identity,
+            movement,
+            stand: 0,
+            kind: UnitMovementAnimationEventKind::Passenger {
+                previous_transform: previous.0,
+                previous: old,
+                parent,
+                animated,
+            },
+        });
     }
 
     pub fn snapshot(&self) -> (WorldTransform, WorldMovementState) {
@@ -318,7 +363,8 @@ impl RemoteUnit {
         geometry: &mut G,
     ) -> Result<(), RuntimePlayerMovementError> {
         let queued = application != SnapshotApplication::Immediate;
-        let previous = self.snapshot().1;
+        let previous_snapshot = self.snapshot();
+        let previous = previous_snapshot.1;
         let mut context = context(message);
         let next_parent = match context.transport {
             Some(parent) => geometry.passenger(parent.guid)?,
@@ -369,6 +415,11 @@ impl RemoteUnit {
                 }
                 motion.refresh_passenger(geometry)?;
             }
+            self.notify_passenger_change(
+                previous_snapshot,
+                None,
+                application == SnapshotApplication::Queued,
+            );
             return Ok(());
         }
         // 006EA9B0 changes the fall clock/height but keeps the launch bases
@@ -448,6 +499,11 @@ impl RemoteUnit {
             fall.direction = direction;
             motion.phase = MovementPhase::Fall(MovementFallState::new(fall)?);
         }
+        self.notify_passenger_change(
+            previous_snapshot,
+            next_parent.map(|parent| parent.identity),
+            application == SnapshotApplication::Queued,
+        );
         if application != SnapshotApplication::Flush
             && let Some(motion) = &mut self.motion
         {

@@ -193,6 +193,12 @@ impl MovementSpline {
         self.definition.id
     }
 
+    /// Retained native path direction consumed by movement-owner velocity queries.
+    #[must_use]
+    pub const fn direction(&self) -> Vec3 {
+        self.direction
+    }
+
     /// Evaluates the clock once and applies native endpoint/facing completion.
     /// Target lookup receives a GUID and must return a point in path coordinates.
     ///

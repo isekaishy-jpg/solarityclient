@@ -146,7 +146,11 @@ impl RuntimeSoundCoordinator {
     }
 
     pub(crate) fn notify_unit_movement(&mut self, event: UnitMovementAnimationEvent) {
-        if !matches!(event.kind, UnitMovementAnimationEventKind::Changed) {
+        if !matches!(
+            event.kind,
+            UnitMovementAnimationEventKind::Changed
+                | UnitMovementAnimationEventKind::Passenger { .. }
+        ) {
             self.movement_events.push_back(event);
         }
     }
