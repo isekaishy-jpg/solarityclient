@@ -11,7 +11,39 @@ pub struct WorldFogContext {
     power: bool,
 }
 
+/// Manual fog retains its exponent from the context at override activation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldManualFog {
+    end: f32,
+    ratio: f32,
+    exponent: f32,
+    color: Vec3,
+}
+
 impl WorldFogContext {
+    /// 7ED870 computes the manual curve even on maps using ordinary linear fog.
+    #[must_use]
+    pub fn manual_fog(self, end: f32, ratio: f32, color: Vec3) -> WorldManualFog {
+        WorldManualFog {
+            end,
+            ratio,
+            exponent: self.exponent(end * ratio, end),
+            color,
+        }
+    }
+
+    /// 7F16F0 reclamps the range while retaining the activation-time exponent.
+    #[must_use]
+    pub fn resolve_manual_fog(self, fog: WorldManualFog, camera_in_liquid: bool) -> WorldFogSample {
+        self.finish(
+            fog.end,
+            fog.ratio,
+            fog.exponent,
+            fog.color,
+            camera_in_liquid,
+        )
+    }
+
     /// Applies 7F16F0's MFOG bank eligibility, portal blend, and liquid exponent.
     /// `base` is camera-clamped scene fog before its camera-liquid multiplier.
     /// `boundary_distance` is absent when no registered group admits indoor fog.

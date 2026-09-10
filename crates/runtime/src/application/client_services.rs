@@ -2456,8 +2456,21 @@ impl ClientServices {
         while let Some((update, time)) = self.gameplay.take_weather_update() {
             self.environment.receive_weather(update, time);
         }
-        self.environment
-            .select_screen_effect(self.gameplay.screen_effect_id());
+        while let Some(id) = self.gameplay.take_screen_effect_update() {
+            let ffx = self
+                .world_ui
+                .as_ref()
+                .map_or_else(|| self.glue.cvar_number("ffx"), |ui| ui.cvar_number("ffx"));
+            self.environment
+                .set_full_screen_effects(ffx.is_some_and(|value| value as i32 != 0));
+            self.environment.select_screen_effect(id);
+        }
+        if let Some(farclip) = self.world_ui.as_ref().map_or_else(
+            || self.glue.cvar_number("farclip"),
+            |ui| ui.cvar_number("farclip"),
+        ) {
+            self.environment.set_view_distance(farclip);
+        }
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         self.water_ripples.synchronize_world(self.gameplay.world());

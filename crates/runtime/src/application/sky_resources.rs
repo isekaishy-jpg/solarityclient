@@ -148,7 +148,9 @@ impl RuntimeSkyResources {
                 global_skybox: environment.light().global_skybox().map(|id| (id, 1.)),
                 world_model: world_model
                     .map(|path| (path, environment.world_model_skybox_weight())),
-                visible: window.is_some() && !environment.has_camera_liquid(),
+                visible: window.is_some()
+                    && !environment.has_camera_liquid()
+                    && environment.sky_enabled(),
             },
             world_bone_count,
             random,

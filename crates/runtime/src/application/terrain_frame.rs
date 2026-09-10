@@ -967,10 +967,13 @@ impl TerrainFrame {
             .with_world_depth_range()
             .with_m2_instance_scenes(m2.instance_scenes)
             .with_sky_models(sky_models)
-            .with_sky_window(sky_window.filter(|_| !environment.has_camera_liquid()))
+            .with_sky_window(
+                sky_window
+                    .filter(|_| !environment.has_camera_liquid() && environment.sky_enabled()),
+            )
             .with_background_color(if !has_sky_window {
                 environment.fog().color().extend(1.)
-            } else if environment.has_camera_liquid() {
+            } else if environment.has_camera_liquid() || !environment.sky_enabled() {
                 environment.ordinary_model_fog().color().extend(1.)
             } else {
                 Vec4::ZERO

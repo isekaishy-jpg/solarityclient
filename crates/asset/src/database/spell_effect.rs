@@ -5,7 +5,7 @@ use crate::{AssetError, AssetPath, AssetStore};
 use std::collections::BTreeMap;
 
 /// The authored effect triplets and resurrection attribute in build 12340.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SpellEffectDefinition {
     /// Effect IDs from words 71–73, including self-resurrection effect 94.
     pub effects: [u32; 3],
@@ -13,6 +13,10 @@ pub struct SpellEffectDefinition {
     pub aura_types: [u32; 3],
     /// Effect misc values from words 110–112, including ScreenEffect IDs.
     pub misc_values: [u32; 3],
+    /// Signed visual replacement priority from word 135 (native Spell+21C).
+    pub visual_priority: i32,
+    /// Word 221, compressed to Spell+274 after localized strings are loaded.
+    pub required_aura_vision: i32,
     /// Native internal Spell record word 11, bit 08000000.
     pub resurrection_bypass: bool,
 }
@@ -47,6 +51,8 @@ impl SpellEffectCatalog {
                 effects: [word(71)?, word(72)?, word(73)?],
                 aura_types: [word(95)?, word(96)?, word(97)?],
                 misc_values: [word(110)?, word(111)?, word(112)?],
+                visual_priority: word(135)? as i32,
+                required_aura_vision: word(221)? as i32,
                 resurrection_bypass: word(11)? & 0x08000000 != 0,
             };
             if spells.insert(id, definition).is_some() {

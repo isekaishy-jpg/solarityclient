@@ -90,6 +90,8 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     ranged("weatherDensity", "3", 0.0, 3.0),
     ranged("componentTextureLevel", "9", 8.0, 9.0),
     ranged("specular", "1", 0.0, 1.0),
+    // 8C12F0 registers the unbounded native full-screen effects switch.
+    value("ffx", "1"),
     ranged("ffxGlow", "1", 0.0, 1.0),
     ranged("ffxDeath", "1", 0.0, 1.0),
     ranged("projectedTextures", "1", 0.0, 1.0),

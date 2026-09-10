@@ -1,5 +1,6 @@
 //! Active-world view distance and authored exterior-light composition.
 
+mod screen_effect;
 mod weather;
 
 #[cfg(test)]
@@ -64,6 +65,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     light: WorldLightSample,
     fog_context: WorldFogContext,
     base_fog: WorldFogSample,
+    manual_fog: Option<solarity_asset::WorldManualFog>,
     liquid_flags: Option<u32>,
     world_model_skybox_weight: f32,
     fog: WorldFogSample,
@@ -163,6 +165,12 @@ impl RuntimeWorldEnvironmentFrame {
         self.world_model_skybox_weight
     }
 
+    /// Invisibility's manual fog disables all sky drawing and sky animation.
+    #[must_use]
+    pub const fn sky_enabled(self) -> bool {
+        self.manual_fog.is_none()
+    }
+
     /// Any camera liquid type suppresses sky drawing, including flag-zero rows.
     #[must_use]
     pub const fn has_camera_liquid(self) -> bool {
@@ -220,6 +228,8 @@ pub struct RuntimeWorldEnvironment {
     weather: weather::WeatherTransition,
     screen_effects: solarity_asset::ScreenEffectCatalog,
     screen_effect: Option<solarity_asset::ScreenEffectDefinition>,
+    screen_effect_fog: screen_effect::ScreenEffectFog,
+    full_screen_effects: bool,
 }
 
 impl RuntimeWorldEnvironment {
@@ -233,6 +243,21 @@ impl RuntimeWorldEnvironment {
     /// An absent declaration clears the native global Light-condition override.
     pub fn select_screen_effect(&mut self, id: u32) {
         self.screen_effect = self.screen_effects.definition(id);
+        self.screen_effect_fog.select(
+            self.screen_effect.map(|effect| effect.effect_type),
+            self.current.map(|frame| frame.fog_context),
+            self.full_screen_effects,
+        );
+    }
+
+    /// Retains the CVar request; synchronization applies native map/memory clamps.
+    pub fn set_view_distance(&mut self, requested: f32) {
+        self.requested_view_distance = requested;
+    }
+
+    /// Captures the native ffx setting for subsequent effect callbacks.
+    pub fn set_full_screen_effects(&mut self, enabled: bool) {
+        self.full_screen_effects = enabled;
     }
     /// Retains the installed Weather.dbc selections for server updates.
     #[must_use]
@@ -286,13 +311,15 @@ impl RuntimeWorldEnvironment {
             weather: weather::WeatherTransition::default(),
             screen_effects: solarity_asset::ScreenEffectCatalog::default(),
             screen_effect: None,
+            screen_effect_fog: screen_effect::ScreenEffectFog::default(),
+            full_screen_effects: true,
         })
     }
 
     /// Samples one complete environment when world and realm time both exist.
     ///
     /// Absence is a pending state, not a request to use a local clock or generic
-    /// light. A later CVar owner can replace `requested_view_distance` directly.
+    /// light. The composition root supplies the live farclip CVar request.
     ///
     /// # Errors
     ///
@@ -329,6 +356,7 @@ impl RuntimeWorldEnvironment {
         ))?;
         let fog_context = WorldFogContext::new(map_id.value(), view_distance.value())
             .ok_or(RuntimeWorldEnvironmentError::InvalidFogClip)?;
+        let manual_fog = self.screen_effect_fog.resolve(fog_context);
         let weather_blend = self.weather.sample(crate::platform::client_milliseconds());
         let light = self.lights.sample(
             WorldLightQuery::new(map_id.value(), position, half_minutes)
@@ -336,6 +364,10 @@ impl RuntimeWorldEnvironment {
                 .with_global_condition(self.screen_effect.and_then(|effect| effect.light_condition))
                 .with_fog_context(fog_context),
         )?;
+        let base_fog = manual_fog.map_or_else(
+            || light.final_fog(fog_context, false),
+            |fog| fog_context.resolve_manual_fog(fog, false),
+        );
         let current = RuntimeWorldEnvironmentFrame {
             map_id: map_id.value(),
             position,
@@ -347,9 +379,10 @@ impl RuntimeWorldEnvironment {
             view_distance,
             light,
             fog_context,
-            fog: light.final_fog(fog_context, false),
-            ordinary_fog: light.final_fog(fog_context, false),
-            base_fog: light.final_fog(fog_context, false),
+            fog: base_fog,
+            ordinary_fog: base_fog,
+            base_fog,
+            manual_fog,
             liquid_flags: None,
             world_model_skybox_weight: 0.,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),
@@ -402,9 +435,19 @@ impl RuntimeWorldEnvironment {
         };
         // 7F3230 darkens the horizon's working color before 7F0530. The later
         // 7F16F0 scene-fog pass reads the undarkened palette color at D38BF4.
-        frame.base_fog = light.final_fog(frame.fog_context, false);
+        frame.base_fog = frame.manual_fog.map_or_else(
+            || light.final_fog(frame.fog_context, false),
+            |fog| frame.fog_context.resolve_manual_fog(fog, false),
+        );
         frame.liquid_flags = (submerged.liquid_type != 0).then_some(liquid.flags());
-        frame.fog = light.final_fog(frame.fog_context, submerged.liquid_type != 0);
+        frame.fog = frame.manual_fog.map_or_else(
+            || light.final_fog(frame.fog_context, submerged.liquid_type != 0),
+            |fog| {
+                frame
+                    .fog_context
+                    .resolve_manual_fog(fog, submerged.liquid_type != 0)
+            },
+        );
         frame.ordinary_fog = frame.fog;
         frame.light = light.with_liquid_depth(liquid, submerged.depth);
         Ok(frame)
@@ -415,5 +458,6 @@ impl RuntimeWorldEnvironment {
         self.current = None;
         self.weather = weather::WeatherTransition::default();
         self.screen_effect = None;
+        self.screen_effect_fog = screen_effect::ScreenEffectFog::default();
     }
 }

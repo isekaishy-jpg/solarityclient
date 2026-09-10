@@ -7,6 +7,8 @@ use solarity_network::{WorldObjectUpdate, WorldObjectUpdateBatch};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::application) enum UnitFieldNotification {
+    Initialize,
+    PlayerBytes2 { changed: u8 },
     Health { previous: u32 },
     MaximumHealth,
     PlayerFlags { previous: u32 },
@@ -17,6 +19,7 @@ pub(super) struct UnitFieldImage {
     health: u32,
     maximum: u32,
     player_flags: u32,
+    player_bytes_2: u32,
 }
 
 impl UnitFieldImage {
@@ -33,6 +36,7 @@ impl UnitFieldImage {
             health: fields.get(24),
             maximum: fields.get(32),
             player_flags: fields.get(150),
+            player_bytes_2: fields.get(1229),
         })
     }
 }
@@ -82,6 +86,9 @@ impl UnitFieldMirrors {
             let Some(previous) = self.previous.get(&identity) else {
                 continue;
             };
+            if create && guid == world.local_player_guid().unwrap_or(0) {
+                notify(world, identity, UnitFieldNotification::Initialize);
+            }
             if create && created.remove(&identity) {
                 continue;
             }
@@ -121,6 +128,18 @@ impl UnitFieldMirrors {
                     identity,
                     UnitFieldNotification::PlayerFlags {
                         previous: previous.player_flags,
+                    },
+                );
+            }
+            if world.object_kind(guid) == Some(ObjectKind::Player)
+                && touched(1229)
+                && (previous.player_bytes_2 ^ current.player_bytes_2) & 0xff000000 != 0
+            {
+                notify(
+                    world,
+                    identity,
+                    UnitFieldNotification::PlayerBytes2 {
+                        changed: ((previous.player_bytes_2 ^ current.player_bytes_2) >> 24) as u8,
                     },
                 );
             }

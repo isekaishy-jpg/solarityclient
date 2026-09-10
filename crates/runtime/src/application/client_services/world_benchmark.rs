@@ -120,6 +120,12 @@ impl ClientServices {
         self.player
             .synchronize(Some(world))
             .map_err(ApplicationError::from)?;
+        if let Some(farclip) = self.world_ui.as_ref().map_or_else(
+            || self.glue.cvar_number("farclip"),
+            |ui| ui.cvar_number("farclip"),
+        ) {
+            self.environment.set_view_distance(farclip);
+        }
         self.environment
             .synchronize(Some(world), Some(clock))
             .map_err(ApplicationError::from)?;
@@ -296,6 +302,12 @@ impl ClientServices {
         frame_start: Instant,
     ) -> Result<WorldBenchmarkSample, WorldBenchmarkError> {
         let start = Instant::now();
+        if let Some(farclip) = self.world_ui.as_ref().map_or_else(
+            || self.glue.cvar_number("farclip"),
+            |ui| ui.cvar_number("farclip"),
+        ) {
+            self.environment.set_view_distance(farclip);
+        }
         self.environment
             .synchronize(Some(world), Some(clock))
             .map_err(ApplicationError::from)?;

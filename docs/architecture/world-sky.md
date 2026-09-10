@@ -352,5 +352,58 @@ world-transfer/disconnect lifetime. Environment tests cover activation, clearing
 direct-liquid bypass and disconnect. GPU coverage adds hidden, partial, full,
 failed and missing global skyboxes, first-request alias flags and changing bone
 prefixes to the WMO sky scene test. These checks do not establish combined live
-ghost/quest appearance: type-specific postprocessing, manual fog and the two
-screen-effect sound overrides still require their respective consumers.
+ghost/quest appearance: type-specific postprocessing and the two screen-effect
+sound overrides still require their respective consumers.
+
+
+## Screen-effect callbacks and manual fog
+
+Screen selection is retained from native callbacks, not reevaluated each render
+frame. Player construction/world entry, changed ghost flags and the watched
+PLAYER_FIELD_BYTES2 visibility byte can refresh the selection; battlefield context changes
+alone do not. World replacement resets the effect. The bytes callback at
+`6DA770` refreshes the local screen owner on changed bit `40` without a local-GUID
+gate, then `6D7030`/`727A70` visit aura slots whose visibility masks intersect any
+changed byte bits. That visitor can retire or re-admit local aura visuals even
+when their raw effect flags are inactive. Remote player changes also run this
+visitor using the local player's current visibility byte. `6E0FD0` gates the
+ghost callback to the local player.
+
+`72F5D0` installs all raw aura records before two ascending visual callback passes.
+The first retires old active contributions; the second admits new active ones.
+`71E930` and `724820` can each dispatch once per authored aura-type-260 field.
+Those callbacks all see the final raw aura image. Timer/stack updates alone do
+not refresh screen effects. The retained visual spell bank, signed SpellPriority
+(word 135) and RequiredAuraVision (word 221, native offset `274`) preserve the
+native same-spell, priority and visibility gates. This bank is independent of
+raw server slots and resets with the player generation. Retained scratch storage
+avoids allocating a fresh old-aura image on each update.
+
+Type two activates manual fog with range 150 and start ratio 0.7, disables sky,
+and selects RGB 76/76/99 when the integer `ffx` setting is zero or white otherwise.
+`7ED870` computes its exponent at activation even on maps whose ordinary fog is
+linear. Later frames clamp the range to the current clip while retaining that
+exponent and color. Changing `ffx` or `farclip` without another effect callback
+therefore does not relatch them. The runtime now supplies the live `farclip`
+request to its existing map/memory clamp in both normal and benchmark frames.
+A callback received before an environment context exists waits for the first
+valid camera context.
+
+Normal, ghost, filter and missing declarations restore ordinary fog and sky;
+unknown effect types preserve the previous manual override. Fresh ordinary
+palettes remain available beneath the override, including WDL horizon colors.
+Manual fog survives either underwater palette route, then enters the existing
+WMO fog blend and liquid-exponent policy. Sky model requests still occur before
+the visibility gate, but manual sky suppression skips sky animation, random
+phase requests and draws. An open sky bank clears to ordinary manual fog color;
+closed interiors keep the indoor fog bank.
+
+`screen_effect_callbacks_oracle.py` covers 1,344 native aura callback cases through
+encrypted packet decoding and loaded Spell columns, plus 640 native visibility
+visitor cases. `screen_effect_fog_oracle.py`
+covers 1,616 native fog transitions and context-latching cases. Packet/field tests
+cover unchanged and unrelated bits, ghost/invisibility precedence, ordered
+callbacks and world retirement. Environment tests cover palette independence,
+manual restoration, underwater/direct-liquid paths, WMO blending and farclip
+changes. These are component and integration checks; full-screen shaders and
+combined live ghost/invisibility appearance remain separate work.

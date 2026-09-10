@@ -138,6 +138,7 @@ pub(in crate::application) struct RuntimePlayerUiState {
     offer: solarity_ui::UiPlayerResurrectionOffer,
     pub(super) corpse: super::player_corpse::RuntimePlayerCorpse,
     pub(super) arena: bool,
+    pub(super) screen_effect: super::screen_effect::RuntimePlayerScreenEffects,
     combat_clock: RuntimeCombatLogClock,
     impacts: VecDeque<RuntimeEnvironmentalDamageSnapshot>,
     pending: VecDeque<RuntimePlayerUiNotification>,
@@ -197,6 +198,8 @@ impl RuntimePlayerUiState {
     }
 
     pub(super) fn corpse_world_entry(&mut self, world: &solarity_ecs::ActiveWorld) {
+        self.screen_effect
+            .refresh(world, self.spells.as_deref(), self.arena);
         let ghost = RuntimePlayerHealthSnapshot::from_world(world).is_some_and(|v| v.ghost);
         let event = self.corpse.clear(ghost, self.arena);
         self.publish_corpse(event);
@@ -302,7 +305,12 @@ impl RuntimePlayerUiState {
         receipt_ms: u32,
     ) {
         let local = world.local_player_guid().ok() == Some(update.guid);
+        if local {
+            self.screen_effect.before_auras(world, &update);
+        }
         if super::unit_auras::apply(world, update, receipt_ms) && local {
+            self.screen_effect
+                .after_auras(world, self.spells.as_deref(), self.arena);
             self.refresh_resurrection(world);
             self.pending
                 .push_back(RuntimePlayerUiNotification::PlayerAuras);
@@ -374,6 +382,37 @@ impl RuntimePlayerUiState {
     ) {
         self.refresh_corpse_guid(world);
         let local = world.local_player_guid().ok() == Some(identity.guid());
+        use crate::application::gameplay_session::UnitFieldNotification;
+        // 6DA770 can refresh the local screen owner for any Player bytes callback.
+        if let UnitFieldNotification::PlayerBytes2 { changed } = notification {
+            self.screen_effect
+                .vision_changed(world, self.spells.as_deref(), self.arena, changed);
+        }
+        if local {
+            match notification {
+                UnitFieldNotification::Initialize => {
+                    self.screen_effect
+                        .initialize(world, self.spells.as_deref(), self.arena)
+                }
+                UnitFieldNotification::PlayerFlags { previous } => {
+                    let current = world
+                        .storage()
+                        .get::<&solarity_ecs::ObjectFields>(world.local_player())
+                        .map_or(0, |f| f.get(150));
+                    if (previous ^ current) & 0x10 != 0 {
+                        self.screen_effect
+                            .refresh(world, self.spells.as_deref(), self.arena);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if matches!(
+            notification,
+            UnitFieldNotification::Initialize | UnitFieldNotification::PlayerBytes2 { .. }
+        ) {
+            return;
+        }
         let entered_death = matches!(notification,
             crate::application::gameplay_session::UnitFieldNotification::Health { previous }
             if (previous as i32) > 0 && world.unit_vitals(identity.guid()).is_some_and(|vitals| (vitals.health() as i32) <= 0));
@@ -425,8 +464,8 @@ impl RuntimePlayerUiState {
         let Some(snapshot) = RuntimePlayerHealthSnapshot::from_world(world) else {
             return;
         };
-        use crate::application::gameplay_session::UnitFieldNotification;
         match notification {
+            UnitFieldNotification::Initialize | UnitFieldNotification::PlayerBytes2 { .. } => {}
             UnitFieldNotification::Health { previous } => {
                 // Global 73F330 runs before the per-unit 60C240 UI observer.
                 if (previous as i32) > 0 && (snapshot.health as i32) <= 0 {

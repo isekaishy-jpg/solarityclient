@@ -87,7 +87,41 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         ("DBFilesClient\\LightFloatBand.dbc", &table(34, &floats)),
         (
             "DBFilesClient\\ScreenEffect.dbc",
-            &table(10, &[141, 0, 0, 0, 0, 0, 0, 4, 0, 0]),
+            &table(
+                10,
+                &[
+                    141,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    4,
+                    0,
+                    0,
+                    81,
+                    0,
+                    2,
+                    0,
+                    0,
+                    0,
+                    0,
+                    u32::MAX,
+                    0,
+                    0,
+                    142,
+                    0,
+                    99,
+                    0,
+                    0,
+                    0,
+                    0,
+                    u32::MAX,
+                    0,
+                    0,
+                ],
+            ),
         ),
         ("DBFilesClient\\LiquidType.dbc", &table(45, &liquids)),
     ])?;
@@ -355,6 +389,69 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         );
         assert_eq!(resolved.light().global_skybox(), global);
     }
+    environment.set_full_screen_effects(false);
+    environment.select_screen_effect(81);
+    let manual = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("manual fog")?;
+    assert!(!manual.sky_enabled());
+    assert_eq!(manual.fog().range(), (105., 150.));
+    assert_eq!(manual.fog().exponent(), 6.505);
+    assert_eq!(manual.fog().color(), Vec3::new(76., 76., 99.) / 255.);
+    assert_eq!(manual.light(), clear.light()); // Manual fog leaves horizon/palette words intact.
+    environment.set_full_screen_effects(true);
+    let retained = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("retained manual")?;
+    assert_eq!(retained.fog(), manual.fog());
+    environment.select_screen_effect(142);
+    let unknown = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("unknown type")?;
+    assert_eq!(unknown.fog(), manual.fog());
+    assert!(!unknown.sky_enabled());
+    for liquid_type in [1, 2] {
+        let wet = environment.resolve_liquid(
+            manual,
+            Some(SubmergedLiquid {
+                liquid_type,
+                surface_height: 30.,
+                depth: 100.,
+            }),
+            &liquids,
+        )?;
+        assert_eq!(wet.fog().range(), manual.fog().range());
+        assert_eq!(wet.fog().color(), manual.fog().color());
+        assert_eq!(wet.fog().exponent(), manual.fog().exponent() * 2.);
+        assert!(!wet.sky_enabled());
+        let indoors = wet.with_world_model_fog(indoor_fog);
+        assert_eq!(indoors.ordinary_model_fog().color(), manual.fog().color());
+        assert_eq!(indoors.fog().range(), (25., 777.));
+        assert!(!indoors.sky_enabled());
+    }
+    environment.select_screen_effect(81);
+    let refreshed = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("refreshed manual")?;
+    assert_eq!(refreshed.fog().color(), Vec3::ONE);
+    environment.set_view_distance(300.);
+    let clipped = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("changed farclip")?;
+    assert_eq!(clipped.view_distance().value(), 300.);
+    assert_eq!(clipped.fog().exponent(), refreshed.fog().exponent());
+    environment.select_screen_effect(81);
+    let relatched = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("relatched curve")?;
+    assert_eq!(relatched.fog().exponent(), 4.525);
+    environment.set_view_distance(777.);
+    environment.select_screen_effect(141);
+    let restored = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("restored fog")?;
+    assert!(restored.sky_enabled());
+    assert_eq!(restored.fog(), overridden.fog());
     for id in [0, 999] {
         environment.select_screen_effect(id);
         assert_eq!(

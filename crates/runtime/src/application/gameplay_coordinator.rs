@@ -229,6 +229,13 @@ impl RuntimeGameplayCoordinator {
     ) -> Self {
         self.spells = Some(spells.clone());
         self.player_ui.set_spells(Some(spells));
+        if let Some(world) = self.world.as_ref() {
+            self.player_ui.screen_effect.initialize(
+                world,
+                self.spells.as_deref(),
+                self.player_ui.arena,
+            );
+        }
         self
     }
     pub(in crate::application) fn with_factions(
@@ -772,6 +779,7 @@ impl RuntimeGameplayCoordinator {
             *destination.world_state_values_mut() = std::mem::take(source.world_state_values_mut());
         }
         self.world = Some(destination);
+        self.player_ui.screen_effect.reset();
         self.creature_templates
             .synchronize_world(self.world.as_ref());
         let replacement = self
