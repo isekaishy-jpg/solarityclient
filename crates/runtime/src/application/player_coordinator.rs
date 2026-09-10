@@ -383,6 +383,7 @@ pub struct RuntimePlayerPresentation {
     resident: Option<ResidentPlayerModel>,
     unit_animations: UnitAnimationScene,
     camera_opacity_subject: super::entity_opacity::CameraOpacitySubject,
+    arena_map: bool,
     animation_mouse_turning: bool,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
@@ -423,6 +424,7 @@ impl RuntimePlayerPresentation {
             resident: None,
             unit_animations: UnitAnimationScene::default(),
             camera_opacity_subject: Default::default(),
+            arena_map: false,
             animation_mouse_turning: false,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
@@ -1426,6 +1428,10 @@ impl RuntimePlayerPresentation {
         self.unit_animations.set_scene_time(scene_time_ms);
     }
 
+    pub(super) fn set_visibility_map(&mut self, kind: Option<solarity_asset::MapKind>) {
+        self.arena_map = kind == Some(solarity_asset::MapKind::Arena);
+    }
+
     fn synchronize_local_animation(
         &mut self,
         world: &ActiveWorld,
@@ -1502,6 +1508,23 @@ impl RuntimePlayerPresentation {
             .and_then(|movement| movement.context().transport)
             .map_or(0, |transport| transport.guid);
         owner.opacity_owner().set_transport_guid(transport);
+        let player_hidden = world.object_kind(guid) == Some(solarity_ecs::ObjectKind::Player)
+            && world
+                .entity_by_guid(guid)
+                .and_then(|entity| {
+                    world
+                        .storage()
+                        .get::<&solarity_ecs::ObjectFields>(entity)
+                        .ok()
+                        .map(|fields| {
+                            solarity_systems::player_flags_hide_model(
+                                fields.get(150),
+                                self.arena_map,
+                            )
+                        })
+                })
+                .unwrap_or(false);
+        owner.opacity_owner().set_player_hidden(player_hidden);
         if owner.opacity_owner().has_model(presentation.display_id()) {
             return;
         }
@@ -2427,6 +2450,7 @@ fn prepare_glue_character_on_worker(
     let mut presentation = RuntimePlayerPresentation {
         unit_animations: UnitAnimationScene::default(),
         camera_opacity_subject: Default::default(),
+        arena_map: false,
         animation_mouse_turning: false,
         assets: AssetStoreHandle::new(store),
         animations: catalogs.animations,

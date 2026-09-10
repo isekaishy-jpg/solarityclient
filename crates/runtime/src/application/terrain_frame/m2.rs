@@ -2829,6 +2829,16 @@ impl M2Frame {
                         .push((guid, point, *effect_point, transform));
                 }
             }
+            // 4F8D10 updates unit state/placement before clearing model activity.
+            // Preserve attachment samples, but hidden player hierarchies publish
+            // no model lights, shadow packets, visible effects or mesh packets.
+            if placement
+                .entity_opacity
+                .as_ref()
+                .is_some_and(|owner| owner.hidden())
+            {
+                continue;
+            }
             let scene_index = if world_lighting.is_some() {
                 // 831AF0 queries matrix F4's translation at +124 with radius
                 // zero. Authored mesh bounds do not move the lighting center.

@@ -12,6 +12,17 @@ steep downward views and deterministic randomized inputs. Vehicle subjects,
 timed camera flags, the reduced-range global and final dispatch are excluded.
 The shared emulator rejects any executable outside the pinned build-12340 hash.
 
+The related player visibility and removal-admission capture executes the ordinary
+player override and its native unit/base delegates. Only local-GUID lookup is hooked:
+
+```powershell
+python tools/ghidra/player_visibility_oracle.py <path-to-Wow.exe> --output crates/systems/tests/fixtures/player_visibility_native.txt
+```
+
+The 1,152 cases vary PlayerFlags, current map lookup/type, camera visibility,
+local identity and scene masks. Async appearance publication, vehicle seats,
+hidden-root child activation and alternate effect owners are outside this bank.
+
 `ExportStockArchitecture.java` extracts architecture evidence from a completed
 Ghidra analysis. It writes only program metadata, imports, RTTI names, embedded
 source-file strings, and their cross-references. It does not export decompiled

@@ -12,6 +12,7 @@ mod transport_animation;
 mod transport_pose;
 mod types;
 mod update;
+mod visibility;
 
 pub use animation::GameObjectAnimationRequest;
 pub use behavior::{
@@ -28,3 +29,4 @@ pub use transport_animation::{
 };
 pub use transport_pose::game_object_transport_pose;
 pub use update::{ObjectProjectionError, project_object_fields, project_object_fields_deferred};
+pub use visibility::player_flags_hide_model;

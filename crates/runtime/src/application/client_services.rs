@@ -2661,6 +2661,11 @@ impl ClientServices {
                 .as_ref()
                 .map_or(0, |frame| frame.m2_animation_time_ms() as u32),
         );
+        self.player.set_visibility_map(
+            self.gameplay
+                .world()
+                .and_then(|world| self.terrain.map_kind(world.map_id().value())),
+        );
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (

@@ -99,10 +99,96 @@ fn camera_opacity_reaches_player_equipment_without_fading_other_units() -> Resul
     advance(&mut frame, &renderer, camera, 1400., &mut random)?;
     assert_eq!(local.opacity(), 0.0);
     assert_eq!(remote.opacity(), 1.0);
+    for placement in &frame.placements {
+        let guid = super::super::super::placement_owner_guid(placement.owner);
+        assert_eq!(
+            placement.last_effect_time_ms,
+            if guid == Some(7) { 1300 } else { 1400 }
+        );
+    }
     presentation.update_camera_opacity(None);
     assert_eq!(local.opacity(), 1.0);
     presentation.update_camera_opacity(Some(5.0));
     assert_eq!(local.opacity(), 1.0);
+    // The Player_C override also depends on PlayerFlags and current Map.dbc,
+    // independently of model alpha and without recreating equipment.
+    fields(&mut world, 20, &[(150, 0x80000)])?;
+    presentation.set_visibility_map(Some(solarity_asset::MapKind::World));
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(!remote.hidden());
+    advance(&mut frame, &renderer, camera, 1500., &mut random)?;
+    presentation.set_visibility_map(Some(solarity_asset::MapKind::Arena));
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(remote.hidden());
+    assert_eq!(remote.opacity(), 1.0);
+    advance(&mut frame, &renderer, camera, 1600., &mut random)?;
+    for placement in &frame.placements {
+        let guid = super::super::super::placement_owner_guid(placement.owner);
+        assert_eq!(
+            placement.last_effect_time_ms,
+            if guid == Some(20) { 1500 } else { 1600 }
+        );
+    }
+    presentation.set_visibility_map(Some(solarity_asset::MapKind::World));
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(!remote.hidden());
+    fields(&mut world, 20, &[(150, 0x480000)])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(remote.hidden());
+    presentation.update_camera_opacity(Some(0.2));
+    advance(&mut frame, &renderer, camera, 1700., &mut random)?;
+    assert!(
+        frame.visible_draws.is_empty(),
+        "both complete hierarchies are hidden"
+    );
+    presentation.update_camera_opacity(None);
+    assert!(!local.hidden());
+    assert!(
+        remote.hidden(),
+        "releasing the local camera preserves other visibility policy"
+    );
+    presentation.set_animation_scene_time(1700);
+    world.remove_object(20)?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert!(
+        frame
+            .placements
+            .iter()
+            .all(|placement| placement.retirement.is_none()),
+        "a hidden removed player must not reappear as a fading hierarchy"
+    );
+    advance(&mut frame, &renderer, camera, 1800., &mut random)?;
+    assert!(!frame.visible_draws.is_empty());
     Ok(())
 }
 

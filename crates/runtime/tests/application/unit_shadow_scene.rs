@@ -130,6 +130,45 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
     }
     let opacity = Rc::new(crate::application::entity_opacity::EntityOpacityOwner::default());
     opacity.select_model(1, 1., 0, 21);
+    opacity.set_player_hidden(true);
+    frame.placements[0].entity_opacity = Some(Rc::clone(&opacity));
+    let hidden_camera = WorldCamera::orthographic(
+        Vec3::X * 8.,
+        Vec3::ZERO,
+        Vec3::Z,
+        [-2., 2.],
+        [-2., 2.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    let hidden_shadow = WorldShadowProjection::primary(
+        WorldShadowQuality::UnitsHigh,
+        Vec3::ZERO,
+        hidden_camera.camera().position(),
+        -Vec3::Z,
+    )?;
+    let hidden = frame.prepare_visible_draws_with_unit_effects(
+        &renderer,
+        WorldFrustum::new(hidden_camera, WorldScreenWindow::FULL)?,
+        hidden_camera,
+        M2TransparentPass::One,
+        Vec3::ZERO,
+        25.,
+        M2CameraEffectScale::EXTERNAL_CAMERA,
+        &mut random,
+        None,
+        None,
+        None,
+        None,
+        Some(hidden_shadow),
+    )?;
+    assert!(
+        hidden.shadow_draws.is_empty(),
+        "explicit hiding suppresses a fully opaque caster"
+    );
+    assert_eq!(frame.placements[0].last_effect_time_ms, 21);
+    opacity.set_player_hidden(false);
     opacity.mark_removed(21);
     frame.placements[0].entity_opacity = Some(opacity);
     frame.retire_removed_models();

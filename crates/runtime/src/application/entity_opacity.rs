@@ -12,13 +12,32 @@ pub(super) struct EntityOpacityOwner {
     initial_animation_pending: Cell<bool>,
     transport_guid: Cell<u64>,
     removed_at: Cell<Option<u32>>,
+    camera_hidden: Cell<bool>,
+    player_hidden: Cell<bool>,
+    removed_hidden: Cell<bool>,
+}
+
+pub(super) struct RemovedEntityPresentation {
+    pub time_ms: u32,
+    pub opacity: f32,
+    pub transport_guid: u64,
+    pub visible: bool,
 }
 
 impl EntityOpacityOwner {
     pub fn set_camera_opacity(&self, byte: u8) {
+        self.camera_hidden.set(byte == 0);
         let mut state = self.state.get();
         state.set_multiplier(f32::from(byte) / 255.0);
         self.state.set(state);
+    }
+
+    pub fn set_player_hidden(&self, hidden: bool) {
+        self.player_hidden.set(hidden);
+    }
+
+    pub fn hidden(&self) -> bool {
+        self.camera_hidden.get() || self.player_hidden.get()
     }
 
     pub fn set_transport_guid(&self, guid: u64) {
@@ -27,18 +46,18 @@ impl EntityOpacityOwner {
 
     pub fn mark_removed(&self, now: u32) {
         if self.removed_at.get().is_none() {
+            self.removed_hidden.set(self.hidden());
             self.removed_at.set(Some(now));
         }
     }
 
     /// The model inherits the primary byte, independently of camera opacity.
-    pub fn retirement(&self) -> Option<(u32, f32, u64)> {
-        self.removed_at.get().map(|now| {
-            (
-                now,
-                self.state.get().retirement_opacity(),
-                self.transport_guid.get(),
-            )
+    pub fn retirement(&self) -> Option<RemovedEntityPresentation> {
+        self.removed_at.get().map(|now| RemovedEntityPresentation {
+            time_ms: now,
+            opacity: self.state.get().retirement_opacity(),
+            transport_guid: self.transport_guid.get(),
+            visible: !self.removed_hidden.get(),
         })
     }
 
@@ -135,5 +154,27 @@ mod tests {
         );
         camera.update(Some(&new), 255);
         assert_eq!(new.opacity(), 1.0);
+    }
+
+    #[test]
+    fn removal_keeps_its_visibility_even_after_camera_subject_release() {
+        let owner = Rc::new(EntityOpacityOwner::default());
+        owner.select_model(1, 1., 0, 0);
+        let mut camera = CameraOpacitySubject::default();
+        camera.update(Some(&owner), 0);
+        owner.mark_removed(100);
+        camera.update(None, 255);
+        assert!(!owner.hidden());
+        let removed = owner
+            .retirement()
+            .unwrap_or_else(|| panic!("removed snapshot"));
+        assert_eq!(removed.time_ms, 100);
+        assert_eq!(
+            removed.opacity, 1.0,
+            "camera visibility does not replace primary opacity"
+        );
+        assert!(!removed.visible);
+        owner.mark_removed(200);
+        assert_eq!(owner.retirement().map(|value| value.time_ms), Some(100));
     }
 }

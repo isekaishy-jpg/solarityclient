@@ -32,7 +32,7 @@ mod missile;
 mod movement;
 mod name_cache;
 mod object;
-pub use object::{EntityOpacity, EntityRetirement};
+pub use object::{EntityOpacity, EntityRetirement, player_flags_hide_model};
 mod pet;
 mod petition;
 mod player;

@@ -89,14 +89,15 @@ impl M2Frame {
         let mut rejected = Vec::new();
         for members in groups {
             let root = members[0];
-            let Some((now, initial, transport)) = self.placements[root]
+            let Some(removed) = self.placements[root]
                 .entity_opacity
                 .as_ref()
                 .and_then(|owner| owner.retirement())
             else {
                 continue;
             };
-            if initial < 0.01
+            if !removed.visible
+                || removed.opacity < 0.01
                 || members
                     .iter()
                     .any(|&index| self.sources[self.placements[index].source_index].is_none())
@@ -107,10 +108,10 @@ impl M2Frame {
             self.retirement.next_serial += 1;
             let serial = self.retirement.next_serial;
             let hierarchy = Rc::new(RetiredHierarchy {
-                envelope: EntityRetirement::new(now, initial),
+                envelope: EntityRetirement::new(removed.time_ms, removed.opacity),
                 ready: Cell::new(true),
-                opacity: Cell::new(initial),
-                transport_guid: Cell::new(transport),
+                opacity: Cell::new(removed.opacity),
+                transport_guid: Cell::new(removed.transport_guid),
                 relative: Cell::new(None),
                 transform: Cell::new(self.placements[root].transform),
             });

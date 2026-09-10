@@ -261,6 +261,10 @@ impl RuntimeTerrainCoordinator {
         self.maps.map(map_id).map(MapDefinition::name)
     }
 
+    pub(super) fn map_kind(&self, map_id: u32) -> Option<solarity_asset::MapKind> {
+        self.maps.map(map_id).map(MapDefinition::kind)
+    }
+
     /// Creates an empty terrain owner over the process-wide asset stack.
     #[must_use]
     pub fn new(assets: AssetStoreHandle, maps: MapCatalog) -> Self {

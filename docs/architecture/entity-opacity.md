@@ -69,6 +69,22 @@ or affecting other units. A weak subject reference restores the old multiplier
 on subject changes or loss, following `6066E0`, without retaining a removed unit.
 The settled far-camera path returns immediately without a cosine calculation.
 
+The ordinary Player_C visibility override is also connected. `6DE980` hides
+players with `PlayerFlags & 0x80000` when either `0x400000` is set or the current
+Map.dbc instance type is Arena (4). Missing map rows take the non-arena branch.
+`6E0840` additionally hides the local player when `6CEE50`'s camera-visible
+global is zero. These flags remain independent of entry and camera alpha.
+`4F8D10` updates unit state and placement before clearing root/attached model
+activity. The runtime retains unit updates and attachment samples, then skips
+mesh, shadow, authored-light and model-effect publication for hidden hierarchies.
+Independent spell/effect owners retain their separate visibility policies.
+
+`714C40` invokes the same visibility override for `743D50`'s removal decision.
+Removal therefore records visibility alongside the primary opacity. Releasing
+the camera afterward cannot make a previously hidden removed hierarchy appear
+in the two-second retirement list. A partially transparent, visible subject
+still transfers its primary byte independently of the camera multiplier.
+
 `solarity_systems::EntityOpacity` reproduces the byte state, native entry gate,
 and model scalar. `EntityRetirement` reproduces the detached time envelope.
 The runtime unit animation owner retains one `EntityOpacityOwner` across model,
@@ -147,18 +163,28 @@ the locked workspace suite passes (1,221 tests; 23 ignored), and workspace
 Clippy passes for all targets with warnings denied. This does not establish
 live populated-world camera/travel presentation or the overall FPS target.
 
+The player override adds 1,152 native comparisons that execute `6E0840`,
+`6DE980`, ordinary `730F30/743300`, and `714C40`. They cover local/remote identity,
+camera visibility, both player flag masks, arena/non-arena/missing map records,
+scene culling and retirement eligibility. All pass. The runtime suite passes
+(269 tests; 18 ignored), including hidden/resumed equipment effect clocks,
+map/flag changes without model replacement, hidden removal with no reappearance,
+camera-release snapshot stability, and suppression of a fully opaque shadow caster.
+The runtime all-targets check and workspace all-targets Clippy with warnings
+denied also pass for this visibility slice.
+
 Remaining integration and validation are:
 
 - Project the exceptional `730F30` unit removal-visibility inputs: special
-  visibility/morph state, hidden-model child activation, vehicle flags and the
+  visibility/model-publication state, hidden-model child activation, vehicle flags and the
   alternate effect owner. Ordinary unit retirement is connected; these missing
   presentation systems are not replaced by guessed field mappings. The native
   scene `+7C` flag `0x4` exclusion also has no current ordinary-scene producer.
 - Project Vehicle/VehicleSeat presentation into the unit owner; the exact
   native seat policy is tested but the runtime currently has no seat-record input.
 - Extend the ordinary camera `+CB` consumer to vehicle bounds/parent dispatch,
-  timed camera modes, the barber-shop reduced-range `BD19B8` global, and the local zero-byte
-  `6CEE50` visibility notification. Specialized visual-kit ownership also remains.
+  timed camera modes and the barber-shop reduced-range `BD19B8` global.
+  The Player_C `A30/18B8` publication override and specialized visual-kit ownership also remain.
   These are separate from far-distance scenery fading.
 - Verify when native model readiness starts interpolation relative to asynchronous
   resource publication, final removal-pose timing between movement publication
