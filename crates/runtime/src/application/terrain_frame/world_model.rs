@@ -364,7 +364,8 @@ impl WorldModelFrame {
         renderer: &mut VulkanRenderer,
         scene_groups: &[WorldModelSceneGroup],
         environment_emissive: f32,
-        fog_color: Vec3,
+        ordinary_fog_color: Vec3,
+        indoor_fog_color: Vec3,
     ) -> Result<(&[WorldModelPreparedDraw], Option<usize>), RuntimeTerrainFrameError> {
         self.prepared_draws.clear();
         let mut last_group = None;
@@ -390,6 +391,15 @@ impl WorldModelFrame {
             )?;
             let range = group.draw_range();
             last_group = Some(scene_index);
+            // 799310 accumulates the group's 0x8000 bit across portal visits;
+            // 7964A0 invokes 7B3F30 to select its ordinary or indoor fog bank.
+            // 7F16F0 gives both banks the same range and exponent, so only the
+            // material color varies while the scene fog parameters stay shared.
+            let fog_color = if scene.indoor_fog {
+                indoor_fog_color
+            } else {
+                ordinary_fog_color
+            };
             for &batch in self
                 .batch_visibility
                 .query(&source.draw_bounds[range.clone()], &scene.frusta)

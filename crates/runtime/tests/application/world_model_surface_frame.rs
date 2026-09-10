@@ -23,7 +23,7 @@ use crate::application::terrain_coordinator::world_model_residency::ResidentWorl
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, liquid_models};
 
 /// Two disjoint portal windows select right then left, leave the center hidden,
-/// and share one source across owners without confusing their transforms.
+/// and share one source across owners without confusing transforms or fog banks.
 #[test]
 #[allow(unsafe_code)] // Sole surface ownership transfers from the hidden SDL window.
 fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Result<(), Box<dyn Error>>
@@ -110,7 +110,7 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
     let first = RuntimeWorldModelMovementOwner::GameObject {
         identity: world.object_identity(90).ok_or("first owner")?,
     };
-    let groups = [
+    let mut groups = [
         WorldModelSceneGroup {
             owner: second,
             group: 1,
@@ -130,7 +130,8 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
             frusta: vec![center],
         },
     ];
-    let (draws, last) = frame.prepare_visible_draws(&mut renderer, &groups, 1., Vec3::ZERO)?;
+    let (draws, last) =
+        frame.prepare_visible_draws(&mut renderer, &groups, 1., Vec3::ZERO, Vec3::ZERO)?;
     assert_eq!(last, Some(1));
     assert_eq!(
         draws
@@ -153,38 +154,50 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
         100.,
     )
     .frame(1.)?;
-    let scene = WorldFrameScene::new(
-        TerrainSceneUniform::new(
-            camera.projection(),
-            camera.view(),
-            Vec3::ONE,
-            Vec3::ZERO,
-            Vec3::Z,
-        ),
-        WorldModelSceneUniform::new(
-            camera.projection(),
-            camera.view(),
-            camera.camera().position(),
-            Vec3::ONE,
-            Vec3::ZERO,
-            Vec3::Z,
-            Vec4::ZERO,
-        ),
-        M2SceneUniform::new(
-            camera.projection(),
-            camera.view(),
-            camera.camera().position(),
-            Vec3::ONE,
-            Vec3::ZERO,
-            Vec3::Z,
-            Vec4::ZERO,
-            Vec3::ZERO,
-            [M2LocalLightState::disabled(); 4],
-        ),
-    );
+    let scene = |fog_parameters| {
+        WorldFrameScene::new(
+            TerrainSceneUniform::new(
+                camera.projection(),
+                camera.view(),
+                Vec3::ONE,
+                Vec3::ZERO,
+                Vec3::Z,
+            ),
+            WorldModelSceneUniform::new(
+                camera.projection(),
+                camera.view(),
+                camera.camera().position(),
+                Vec3::ONE,
+                Vec3::ZERO,
+                Vec3::Z,
+                fog_parameters,
+            ),
+            M2SceneUniform::new(
+                camera.projection(),
+                camera.view(),
+                camera.camera().position(),
+                Vec3::ONE,
+                Vec3::ZERO,
+                Vec3::Z,
+                Vec4::ZERO,
+                Vec3::ZERO,
+                [M2LocalLightState::disabled(); 4],
+            ),
+        )
+    };
     renderer.request_frame_capture()?;
-    let report =
-        renderer.present_world_frame(scene, &[], &[], draws, &[], &[], &[], &[], &[], &[])?;
+    let report = renderer.present_world_frame(
+        scene(Vec4::new(100., 200., 0., 1.)),
+        &[],
+        &[],
+        draws,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    )?;
     assert_eq!(report.world_model_draw_count(), 3);
     let image = renderer
         .take_captured_frame()?
@@ -200,7 +213,7 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
     }
     // The next frame must release prior acceptance markers and clip regions.
     let (draws, last) =
-        frame.prepare_visible_draws(&mut renderer, &groups[1..2], 1., Vec3::ZERO)?;
+        frame.prepare_visible_draws(&mut renderer, &groups[1..2], 1., Vec3::ZERO, Vec3::ZERO)?;
     assert_eq!(last, Some(0));
     assert_eq!(
         draws
@@ -209,9 +222,97 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
             .collect::<Vec<_>>(),
         [[6, 6]]
     );
-    let (draws, last) = frame.prepare_visible_draws(&mut renderer, &[], 1., Vec3::ZERO)?;
+    let (draws, last) =
+        frame.prepare_visible_draws(&mut renderer, &[], 1., Vec3::ZERO, Vec3::ZERO)?;
     assert!(draws.is_empty());
     assert_eq!(last, None);
+
+    // Native 7B3F30 chooses the accumulated group flag, independently of the
+    // camera's bank. Put both groups on the visible owner: side and center
+    // surfaces must receive different colors, and switch correctly next frame.
+    groups[1].owner = second;
+    let native = include_str!("../fixtures/world_model_group_fog_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            line.split_whitespace()
+                .map(|word| u32::from_str_radix(word, 16))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(native.len(), 64);
+    for row in &native {
+        assert_eq!(row.len(), 13);
+        let other = native
+            .iter()
+            .find(|other| other[0] == row[0] ^ 0x8000 && other[1..6] == row[1..6])
+            .ok_or("missing opposite native fog bank")?;
+        let color = |row: &[u32]| {
+            Vec3::new(
+                f32::from_bits(row[10]),
+                f32::from_bits(row[11]),
+                f32::from_bits(row[12]),
+            )
+        };
+        let selected = color(row);
+        let opposite = color(other);
+        groups[0].indoor_fog = row[0] & 0x8000 != 0;
+        groups[1].indoor_fog = !groups[0].indoor_fog;
+        let (ordinary, indoor) = if groups[0].indoor_fog {
+            (opposite, selected)
+        } else {
+            (selected, opposite)
+        };
+        let (draws, last) =
+            frame.prepare_visible_draws(&mut renderer, &groups, 1., ordinary, indoor)?;
+        assert_eq!(last, Some(1));
+        assert_eq!(draws.len(), 3);
+        for (draw, expected) in draws.iter().zip([row, row, other]) {
+            let bytes = draw.material().to_bytes(camera.view());
+            let actual = bytes[96..108]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|word| u32::from_le_bytes(*word))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected[10..13], "group flag {:08x}", row[0]);
+        }
+        let fog_parameters = Vec4::new(
+            f32::from_bits(row[6]),
+            f32::from_bits(row[7]),
+            0.,
+            f32::from_bits(row[9]),
+        );
+        renderer.request_frame_capture()?;
+        renderer.present_world_frame(
+            scene(fog_parameters),
+            &[],
+            &[],
+            draws,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
+        let image = renderer
+            .take_captured_frame()?
+            .ok_or("missing fog capture")?;
+        for (x, expected) in [(12, selected), (32, opposite), (52, selected)] {
+            let offset = (32 * 64 + x) * 4;
+            for (actual, expected) in image.rgba8()[offset..offset + 3]
+                .iter()
+                .zip(expected.to_array())
+            {
+                let expected = (expected * 255.).round() as u8;
+                assert!(
+                    actual.abs_diff(expected) <= 1,
+                    "fog pixel {x}: {actual} != {expected}"
+                );
+            }
+        }
+    }
     renderer.shutdown()?;
     Ok(())
 }
@@ -231,7 +332,7 @@ fn surface_files() -> (Vec<u8>, Vec<u8>) {
     chunk(&mut root, b"DHOM", &header);
     chunk(&mut root, b"XTOM", &[0]);
     let mut material = [0; 64];
-    word(&mut material, 0, 7); // Unlit, unfogged, two-sided stock green.
+    word(&mut material, 0, 5); // Unlit, fogged, two-sided stock green.
     chunk(&mut root, b"TMOM", &material);
     let mut info = [0; 32];
     word(&mut info, 0, 8);

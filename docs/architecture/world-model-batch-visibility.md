@@ -104,6 +104,32 @@ portal projection/recursion, clip operations, and batch selection execute
 against the extracted data. This is not a stock-client screenshot or proof
 of camera registration, terrain occlusion, doodad visibility, or shaders.
 
-Per-group fog shader state, WMO liquids, and attached doodad visibility still
-need their own integration. No runtime FPS improvement or complete WMO
-visibility parity is claimed by these selection fixtures.
+WMO liquids and attached doodad visibility still need their own integration.
+No runtime FPS improvement or complete WMO visibility parity is claimed by
+these selection fixtures.
+
+## Per-group surface fog
+
+`799310` clears the scene group's fog bit on its first visit and accumulates
+`0x8000` for any indoor callback. `7966E7` reads that bit before the group is
+drawn. The actual group constructor `7B3DE0` installs `7B3F30` at vtable slot
+one; this callback reads the ordinary DayNight bank at `8C` or the indoor bank
+at `A0`, then writes the query through `834990`. The final `7F16F0` composition
+gives the two model banks identical range and exponent with separate colors.
+
+Runtime now passes both retained colors into WMO surface preparation and
+selects the material's fog color from the group's accumulated flag. Previously
+every visible group received the camera bank, even when traversal selected
+ordinary exterior fog. Scene parameters, material-specific disabled/black/white
+fog behavior, and the native final-group carry remain unchanged.
+
+`world_model_group_fog_oracle.py` executes the constructor and its actual virtual
+callback with only the current DayNight provider substituted. Its 64 captures
+include both banks, unrelated group flags, distinct packed colors, two common
+fog ranges, and repeated use of the same query storage. The runtime Vulkan
+regression submits adjacent groups through decoded WMO resources, compares
+each material's selected color bits, and checks all 64 resulting frames while
+the groups switch fog banks. It also retains the existing owner/portal ordering,
+hidden-region, and next-frame invalidation checks. These controlled fixtures
+establish the surface connection; they do not replace combined live-world
+comparisons or establish fog routing for liquids and M2 doodads.

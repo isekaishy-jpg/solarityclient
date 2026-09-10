@@ -938,6 +938,7 @@ impl TerrainFrame {
             renderer,
             terrain.world_model_scene_groups(),
             environment.world_model_emissive(),
+            environment.ordinary_model_fog().color(),
             fog.color(),
         )?;
         terrain.complete_world_model_scene(last_world_model_group);

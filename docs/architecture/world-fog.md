@@ -106,9 +106,10 @@ The final environment also retains both model-consumer banks from `7F16F0`.
 The ordinary bank keeps the exterior color (or the forced wet color); the indoor
 bank receives the portal-distance color blend. Both use the indoor bank's final
 range and exponent. The capture now records 2,016 bank outputs, and the runtime
-fixture verifies their distinct colors in dry and submerged interiors. Selecting
-those banks per visible model still requires the native portal visibility pass;
-the current presentation continues to use the camera bank.
+fixture verifies their distinct colors in dry and submerged interiors. WMO
+surface presentation now selects these colors from each group's accumulated
+portal fog flag; see [the group callback and GPU evidence](world-model-batch-visibility.md#per-group-surface-fog).
+Liquid and M2 model consumers still require their separate routing integration.
 
 `WorldModelVisibilityQuery` now reproduces `7AC060`'s ordered traversal from
 an initial camera group using supplied projected portal rectangles. It retains
