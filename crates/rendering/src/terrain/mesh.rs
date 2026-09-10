@@ -63,26 +63,34 @@ impl TerrainRenderVertex {
 
     /// Appends the stable little-endian payload consumed by the terrain pipeline.
     pub(super) fn append_bytes(self, bytes: &mut Vec<u8>) {
-        for value in self.position {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        for value in self.normal {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        for value in self.texture_coordinates {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        for value in self.alpha_coordinates {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
         // Terrain.bls uses exactly 0.5 when MCCV is absent, and the normalized
         // authored bytes when present. 0x7f is not exactly that same value.
         let color = self.color_bgra.map_or([0.5; 3], |[b, g, r, _]| {
             [r, g, b].map(|value| f32::from(value) / 255.0)
         });
-        for value in color {
-            bytes.extend_from_slice(&value.to_le_bytes());
+        // Encode into one fixed-size record so the output Vec grows once per
+        // vertex instead of once per component. Rust's CPU struct layout is
+        // deliberately irrelevant, including the optional raw MCCV field.
+        let mut record = [0; Self::BYTE_SIZE];
+        let values = [
+            self.position[0],
+            self.position[1],
+            self.position[2],
+            self.normal[0],
+            self.normal[1],
+            self.normal[2],
+            self.texture_coordinates[0],
+            self.texture_coordinates[1],
+            self.alpha_coordinates[0],
+            self.alpha_coordinates[1],
+            color[0],
+            color[1],
+            color[2],
+        ];
+        for (destination, value) in record.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+            destination.copy_from_slice(&value.to_le_bytes());
         }
+        bytes.extend_from_slice(&record);
     }
 }
 

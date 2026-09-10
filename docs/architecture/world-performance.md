@@ -300,6 +300,68 @@ cannot be attributed to descriptor allocation. The component profile establishes
 less descriptor work; this pair does not prove elimination of all loading stalls,
 populated-world performance, or the 1,200 FPS target.
 
+## Mesh upload serialization and staging
+
+Mesh uploads copy the borrowed vertex and index payloads directly into their
+aligned ranges in mapped staging memory. The previous intermediate combined
+CPU byte vector is no longer allocated, filled, and freed for each mesh. The
+shared path serves terrain, M2, liquids, WMO, and static UI geometry. Transfer
+padding is still zeroed, logical byte counts are unchanged, and the same flush,
+queue barriers, submission, and fence-owned retirement remain in place. The
+[VMA mapping contract](https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/memory_mapping.html)
+requires flushing noncoherent writes and favors copies that do not read mapped
+memory; both properties are retained.
+
+Terrain serialization assembles each 52-byte vertex on the stack and appends
+it once, instead of appending thirteen separate float components. Positions,
+normals, texture coordinates, and RGB remain explicitly little-endian. Authored
+MCCV remains raw optional BGRA in the CPU vertex; its GPU RGB conversion still
+normalizes authored bytes and uses exactly 0.5 when MCCV is absent.
+
+A temporary diagnostic on the same 1280 x 720 travel route measured 91 terrain
+uploads, including 49 initial tiles and 42 travel admissions. The mean timed
+interval through transfer submission was 1.929 ms: encoding accounted for
+0.888 ms, constructing the combined CPU vector for 0.473 ms, staging
+allocation/write and submission-object creation
+for 0.232 ms, device-buffer allocation for 0.024 ms, command recording for
+0.042 ms, and submission for 0.044 ms. Fence retirement averaged 0.00016 ms.
+These nested measurements omit combined-vector cleanup from the component sum;
+registry publication and source-vector cleanup follow the outer timed interval.
+The diagnostic was removed before validation and comparative benchmarking.
+
+Existing rendering regressions exercise the shared path through terrain pixel
+oracles with authored and absent MCCV, live terrain retirement/reload, M2
+geometry with a six-byte logical index buffer, and WMO/UI/liquid rendering.
+
+The ordinary frame profiler reported 85 tile uploads across eight intervals
+in each version. Weighted mean geometry upload fell from 2.056 to 1.273 ms
+(38%); total tile upload fell from 2.940 to 2.174 ms. The largest geometry
+sample was 5.055 ms before and 5.228 ms after, so this mean reduction does not
+establish elimination of individual upload spikes.
+
+The 2026-09-09 paired travel replay used 2,400 frames per phase, the GTX 1070,
+primary and detail shadows enabled, and no capture, profiling, or compiler
+workload. Both versions admitted and evicted 21 tiles in each direction across
+24 changed frames. Detail and primary-shadow draw counts matched frame by frame
+in the stationary, orbit, pointer, outbound, return, and settled phases.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Outbound mean frame | 3.802 ms | 3.771 ms |
+| Return mean frame | 3.751 ms | 3.742 ms |
+| Outbound changed-frame streaming mean | 13.086 ms | 11.388 ms |
+| Return changed-frame streaming mean | 9.278 ms | 8.384 ms |
+| Outbound changed-frame streaming median | 11.040 ms | 10.539 ms |
+| Return changed-frame streaming median | 9.322 ms | 8.500 ms |
+| Outbound maximum frame | 44.309 ms | 24.328 ms |
+| Return maximum frame | 20.308 ms | 19.733 ms |
+
+This reduces admission work; settled/orbit/pointer means do not show a consistent
+FPS improvement. The baseline outbound maximum includes a 38.710 ms streaming
+sample, so the change in maxima and means is not wholly attributable to this
+optimization. These runs establish neither a latency bound nor populated-world
+performance or the requested 1,200 FPS target.
+
 ## Resident camera bounds
 
 Camera traces retain conservative bounds over each immutable ADT's actual chunk

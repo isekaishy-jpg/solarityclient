@@ -176,8 +176,11 @@ impl DeferredMeshTransfer {
 
 impl<'a> TransferResources<'a> {
     /// Creates and fills one sequential staging allocation.
-    fn create(context: MeshUploadContext<'a>, bytes: &[u8]) -> Result<Self, VulkanError> {
-        let size = u64::try_from(bytes.len())
+    fn create(
+        context: MeshUploadContext<'a>,
+        bytes: MeshUploadBytes<'_>,
+    ) -> Result<Self, VulkanError> {
+        let size = u64::try_from(bytes.staging_size)
             .map_err(|source| VulkanError::operation("convert M2 staging size", source))?;
         let allocation_info = vk_mem::AllocationCreateInfo {
             flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
@@ -203,16 +206,37 @@ impl<'a> TransferResources<'a> {
         Ok(resources)
     }
 
-    /// Copies bytes into mapped host memory and flushes noncoherent ranges.
-    fn write(&mut self, bytes: &[u8]) -> Result<(), VulkanError> {
+    /// Copies both payloads directly into staging and zeroes only transfer padding.
+    fn write(&mut self, bytes: MeshUploadBytes<'_>) -> Result<(), VulkanError> {
         let allocation = self.staging.allocation.as_mut().ok_or_else(|| {
             VulkanError::operation("access M2 staging allocation", "allocation is unavailable")
         })?;
-        // SAFETY: The allocation is host-visible and exactly covers `bytes`.
+        // SAFETY: The allocation is host-visible and covers `bytes.staging_size`.
         let destination = unsafe { self.context.allocator.map_memory(allocation) }
             .map_err(|source| VulkanError::operation("map M2 staging buffer", source))?;
-        // SAFETY: Both pointers are valid for `bytes.len()` nonoverlapping bytes.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination, bytes.len()) };
+        // SAFETY: MeshUploadBytes checked both aligned ranges and their sum.
+        // The fresh allocation cannot alias the borrowed CPU slices. Every
+        // transferred byte is initialized, including the at-most-three-byte
+        // padding after each payload; mapped memory is never read here.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.vertices.as_ptr(),
+                destination,
+                bytes.vertices.len(),
+            );
+            std::ptr::write_bytes(
+                destination.add(bytes.vertices.len()),
+                0,
+                bytes.vertex_copy_size - bytes.vertices.len(),
+            );
+            let indices = destination.add(bytes.vertex_copy_size);
+            std::ptr::copy_nonoverlapping(bytes.indices.as_ptr(), indices, bytes.indices.len());
+            std::ptr::write_bytes(
+                indices.add(bytes.indices.len()),
+                0,
+                bytes.index_copy_size - bytes.indices.len(),
+            );
+        }
         let flush_result = self
             .context
             .allocator
@@ -367,22 +391,11 @@ pub(in crate::device) fn upload_mesh_buffers_deferred(
     vertex_bytes: &[u8],
     index_bytes: &[u8],
 ) -> Result<(GpuMeshBuffers, DeferredMeshTransfer), VulkanError> {
-    // Vulkan buffer copies operate in four-byte units. Preserve logical byte
-    // lengths in diagnostics while padding only transfer/allocation storage.
-    let vertex_copy_size = aligned_copy_size(vertex_bytes.len())?;
-    let index_copy_size = aligned_copy_size(index_bytes.len())?;
-    let staging_size = vertex_copy_size
-        .checked_add(index_copy_size)
-        .ok_or_else(|| VulkanError::operation("size M2 staging buffer", "size overflow"))?;
-    let vertex_device_size = u64::try_from(vertex_copy_size)
+    let bytes = MeshUploadBytes::new(vertex_bytes, index_bytes)?;
+    let vertex_device_size = u64::try_from(bytes.vertex_copy_size)
         .map_err(|source| VulkanError::operation("convert M2 vertex buffer size", source))?;
-    let index_device_size = u64::try_from(index_copy_size)
+    let index_device_size = u64::try_from(bytes.index_copy_size)
         .map_err(|source| VulkanError::operation("convert M2 index buffer size", source))?;
-    let mut staging_bytes = Vec::with_capacity(staging_size);
-    staging_bytes.extend_from_slice(vertex_bytes);
-    staging_bytes.resize(vertex_copy_size, 0);
-    staging_bytes.extend_from_slice(index_bytes);
-    staging_bytes.resize(staging_size, 0);
 
     let device_allocation = vk_mem::AllocationCreateInfo {
         usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -417,7 +430,7 @@ pub(in crate::device) fn upload_mesh_buffers_deferred(
             index_buffer,
         }),
     };
-    let transfer = TransferResources::create(context, &staging_bytes)?;
+    let transfer = TransferResources::create(context, bytes)?;
     let command_buffer = transfer.command_buffer()?;
     let buffers = guard.buffers.as_ref().ok_or_else(|| {
         VulkanError::operation("record mesh upload", "mesh buffers are unavailable")
@@ -441,7 +454,35 @@ pub(in crate::device) fn upload_mesh_buffers_deferred(
     }
 }
 
-/// Rounds a nonempty logical buffer length to Vulkan's four-byte copy unit.
+/// Borrowed logical payloads with checked ranges in the shared staging buffer.
+#[derive(Clone, Copy)]
+struct MeshUploadBytes<'a> {
+    vertices: &'a [u8],
+    indices: &'a [u8],
+    vertex_copy_size: usize,
+    index_copy_size: usize,
+    staging_size: usize,
+}
+
+impl<'a> MeshUploadBytes<'a> {
+    /// Pads transfer storage while preserving each caller's logical byte count.
+    fn new(vertices: &'a [u8], indices: &'a [u8]) -> Result<Self, VulkanError> {
+        let vertex_copy_size = aligned_copy_size(vertices.len())?;
+        let index_copy_size = aligned_copy_size(indices.len())?;
+        let staging_size = vertex_copy_size
+            .checked_add(index_copy_size)
+            .ok_or_else(|| VulkanError::operation("size M2 staging buffer", "size overflow"))?;
+        Ok(Self {
+            vertices,
+            indices,
+            vertex_copy_size,
+            index_copy_size,
+            staging_size,
+        })
+    }
+}
+
+/// Rounds a nonempty logical buffer length to the retained four-byte copy unit.
 fn aligned_copy_size(size: usize) -> Result<usize, VulkanError> {
     size.checked_add(3)
         .map(|value| value & !3)
