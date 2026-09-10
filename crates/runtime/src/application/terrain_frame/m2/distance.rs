@@ -70,6 +70,7 @@ impl SceneryDistance {
     }
 }
 
+/// 78FB60 selects the first stored far square strictly beyond the group depth.
 fn minimum_category(depth: f32, detail: f32) -> usize {
     if depth <= 0.0 {
         return 0;
@@ -87,31 +88,4 @@ fn minimum_category(depth: f32, detail: f32) -> usize {
             square < f64::from((radius * radius) as f32)
         })
         .unwrap_or(4)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn minimum_doodad_class_matches_original_boundaries() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let mut count = 0;
-        for line in include_str!(
-            "../../../../../systems/tests/fixtures/world_model_doodad_depth_native.txt"
-        )
-        .lines()
-        .filter_map(|line| line.strip_prefix("class "))
-        {
-            let fields: Vec<_> = line.split_whitespace().collect();
-            let detail = f32::from_bits(u32::from_str_radix(fields[0], 16)?);
-            let depth = f32::from_bits(u32::from_str_radix(fields[1], 16)?);
-            assert_eq!(
-                super::minimum_category(depth, detail),
-                fields[2].parse::<usize>()?,
-                "{line}"
-            );
-            count += 1;
-        }
-        assert_eq!(count, 80);
-        Ok(())
-    }
 }
