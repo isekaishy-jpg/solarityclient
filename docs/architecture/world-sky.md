@@ -638,6 +638,14 @@ These checks cover normalized NPOT targets with quarter dimensions at least
 eight. The native small/POT allocation rules and the special screen owner remain
 further work, as does combined populated-world appearance.
 
+The full workspace passed 1,205 tests with 23 ignored; workspace Clippy with
+all targets and features passed with warnings denied. Build 84 was installed
+from source revision `ff3ab9b918920aa31de7d6a18dfdbb356e9b625a`. The installed
+and packaged executable both report `0.0.3a`, build 84, and share SHA-256
+`4a7f29270998f9206dde3074d3023edd760f4a082ecdf77d9c9d2d63d5d06946`.
+The build reports `dirty=true` because packaging reserves `BUILD_NUMBER`
+before compiling.
+
 ## Remaining special screen owner
 
 Constructor `7EA5F0` separately registers `ffxSpecial` and allocates persistent
