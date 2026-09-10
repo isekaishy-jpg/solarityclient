@@ -362,6 +362,36 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns the unit's vehicle owner, including unresolved definition IDs.
+    #[must_use]
+    pub fn unit_vehicle(&self, guid: u64) -> Option<crate::UnitVehicle> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&crate::UnitVehicle>(entity)
+            .ok()
+            .map(|vehicle| **vehicle)
+    }
+
+    /// Creates or updates the resident unit's vehicle definition. Native 7580F0
+    /// replaces an existing owner's row without resetting its initial pitch.
+    pub fn set_unit_vehicle(&mut self, guid: u64, definition_id: u32, initial_pitch: f32) -> bool {
+        if !matches!(
+            self.object_kind(guid),
+            Some(ObjectKind::Unit | ObjectKind::Player)
+        ) {
+            return false;
+        }
+        let Some(entity) = self.objects.find(guid) else {
+            return false;
+        };
+        let pitch = self
+            .unit_vehicle(guid)
+            .map_or(initial_pitch, crate::UnitVehicle::initial_pitch);
+        self.storage
+            .add_component(entity, (crate::UnitVehicle::new(definition_id, pitch),));
+        true
+    }
+
     /// Returns Unit_C's retained attack GUID; newly created units start at zero.
     #[must_use]
     pub fn unit_attack_target(&self, guid: u64) -> u64 {

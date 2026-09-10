@@ -23,6 +23,20 @@ The 1,152 cases vary PlayerFlags, current map lookup/type, camera visibility,
 local identity and scene masks. Async appearance publication, vehicle seats,
 hidden-root child activation and alternate effect owners are outside this bank.
 
+The vehicle-seat capture executes `5D3340/756EC0`, `716650` and `74B8B0` with
+native-layout vehicle/seat tables. Only world GUID lookup and the transport
+virtual getter are supplied; the seat lookup itself runs unmodified:
+
+```powershell
+python tools/ghidra/vehicle_seat_oracle.py <path-to-Wow.exe> --output crates/runtime/tests/fixtures/vehicle_seat_native.txt
+```
+
+The 3,072 cases include every seat byte and sparse/missing row ownership. They
+distinguish the signed attachment ID at seat row `+8` from the flags at `+4`.
+The earlier entity-entry fixture's `seat_flags` column actually captures this
+attachment word. Vehicle movement, animated seat pose and camera dispatch are
+outside this comparison; see [vehicle presentation](../../docs/architecture/vehicle-presentation.md).
+
 `ExportStockArchitecture.java` extracts architecture evidence from a completed
 Ghidra analysis. It writes only program metadata, imports, RTTI names, embedded
 source-file strings, and their cross-references. It does not export decompiled

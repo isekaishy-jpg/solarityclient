@@ -79,7 +79,7 @@ fn unit_entry_eligibility_matches_native_flags_transports_and_vehicle_seats() {
             row[2],
             u64::from(row[3]) | (u64::from(row[4]) << 32),
             (row[5] != 0).then_some(row[6] != 0),
-            (row[7] != 0).then_some(row[8]),
+            (row[7] != 0).then_some(row[8] as i32),
         );
         assert_eq!(duration, row[9] * 1000, "record {count}: {row:x?}");
         count += 1;

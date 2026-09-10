@@ -5,3 +5,4 @@
 //! their occupants.
 
 mod vehicle_c;
+pub use vehicle_c::UnitVehicle;

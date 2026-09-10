@@ -25,7 +25,7 @@ use solarity_asset::{
     BlpTextureCache, CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
     CreatureCatalog, CreatureFamilyCatalog, GameObjectDisplayCatalog,
     HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
-    LightCatalog, LoadingScreenCatalog, MapCatalog, ParticleColorCatalog,
+    LightCatalog, LoadingScreenCatalog, MapCatalog, ParticleColorCatalog, VehicleCatalog,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_media::SoundOutputTarget;
@@ -222,6 +222,7 @@ impl ClientServices {
         let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
         let creatures = CreatureCatalog::load(&mut assets)?;
         let creature_families = CreatureFamilyCatalog::load(&mut assets)?;
+        let vehicles = VehicleCatalog::load(&mut assets)?;
         let characters = CharacterAppearanceCatalog::load(&mut assets)?;
         let races = CharacterRaceCatalog::load(&mut assets)?;
         let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
@@ -534,7 +535,8 @@ impl ClientServices {
                             item_visuals,
                         ),
                         particle_colors,
-                    ),
+                    )
+                    .with_vehicles(vehicles),
                 )
                 .with_glue_worker_catalog(player_catalog),
                 game_objects: RuntimeGameObjectPresentation::new(

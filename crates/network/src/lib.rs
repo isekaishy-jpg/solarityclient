@@ -35,7 +35,7 @@ pub use protocol::{
     CharacterPet, CharacterRace, CharacterRename, CharacterRenameError, CharacterRenameResult,
     MovementSplineFacing, MovementSplineSnapshot, ObjectFieldUpdate, ObjectMovementContext,
     ObjectMovementFall, ObjectMovementSpeeds, ObjectMovementTransport, ObjectMovementUpdate,
-    ObjectPositionTransport, ObjectUpdateError, WORLD_ACTION_BUTTON_COUNT,
+    ObjectPositionTransport, ObjectUpdateError, ObjectVehicleMovement, WORLD_ACTION_BUTTON_COUNT,
     WorldActionButtonPacketError, WorldActionButtonUpdate, WorldActionButtons,
     WorldEntryPacketError, WorldLivenessPacketError, WorldLocation, WorldLogout,
     WorldLogoutRequest, WorldMovementEncodeError, WorldMovementField, WorldMovementKind,

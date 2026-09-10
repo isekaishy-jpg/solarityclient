@@ -18,6 +18,9 @@ mod unit_mount_scale_scene;
 #[path = "unit_water_effect_scene.rs"]
 mod unit_water_effect_scene;
 
+#[path = "vehicle_presentation.rs"]
+mod vehicle_presentation;
+
 use super::super::{M2PlaybackStorage, m2_gpu_placement};
 use super::*;
 use crate::application::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};
@@ -572,7 +575,8 @@ fn unit_presentation_from_store(
             ItemVisualCatalog::load(&mut store)?,
         ),
         ParticleColorCatalog::load(&mut store)?,
-    );
+    )
+    .with_vehicles(solarity_asset::VehicleCatalog::load(&mut store)?);
     Ok(RuntimePlayerPresentation::new(
         AssetStoreHandle::new(store),
         catalogs,

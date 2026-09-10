@@ -37,6 +37,9 @@ mod unit_aura_tests;
 #[cfg(test)]
 #[path = "../../tests/application/unit_death_log.rs"]
 mod unit_death_log_tests;
+#[cfg(test)]
+#[path = "../../tests/application/vehicle_state.rs"]
+mod vehicle_state_tests;
 
 #[cfg(test)]
 #[path = "../../tests/application/tutorial_writer.rs"]

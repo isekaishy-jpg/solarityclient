@@ -45,8 +45,10 @@ pub use spell_effect::{SpellEffectCatalog, SpellEffectDefinition};
 mod spell_visual_effect;
 mod transport;
 mod ui_sound;
+mod vehicle;
 mod w_data_store;
 mod weather;
+pub use vehicle::{VehicleCatalog, VehicleDefinition, VehicleSeatDefinition};
 mod wow_client_db;
 pub use weather::{WeatherCatalog, WeatherDefinition};
 

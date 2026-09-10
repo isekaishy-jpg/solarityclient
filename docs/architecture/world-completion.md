@@ -33,7 +33,7 @@ automatically reopen those fixes.
 
 | Area | Open work and current boundary |
 | --- | --- |
-| Item, NPC/creature, and other entity fading | Native entry interpolation, ordinary detached disappearance, camera-subject fading and ordinary Player_C visibility are connected, including attached equipment. Vehicle/special camera modes, exceptional owner/visibility policies, publication timing and combined travel validation remain open; see [entity opacity](entity-opacity.md). Static MDDF/MODD scenery fading has a separate policy. Keep this user-reported gap open. |
+| Item, NPC/creature, and other entity fading | Native entry interpolation (including vehicle seat eligibility), ordinary detached disappearance, camera-subject fading and ordinary Player_C visibility are connected, including attached equipment. Vehicle/special camera modes, exceptional owner/visibility policies, publication timing and combined travel validation remain open; see [entity opacity](entity-opacity.md). Static MDDF/MODD scenery fading has a separate policy. Keep this user-reported gap open. |
 | World and terrain lighting | Complete the remaining lighting consumers and shader/material variants, including terrain point-light/specular paths and specialized entity callbacks. The user reports continuing differences from stock; compare the combined presentation at matching camera, time, and settings. |
 | Environment shaders | Audit native material selection and the environment shader families exercised by actual world assets. The user suspects some are entirely missing; identify confirmed omissions and distinguish them from incorrect inputs or unconnected consumers. |
 | Buildings and portals | Surface, liquid, attached-doodad and sky admission/fog consumers are integrated with native and controlled GPU coverage. Validate their combined live presentation while entering, leaving and moving through buildings. |
@@ -50,6 +50,7 @@ Existing evidence and implementation boundaries:
 [fog](world-fog.md), [shadows](world-shadows.md), [sky](world-sky.md),
 [M2 effects](m2-effects.md), [aura state](unit-auras.md),
 [water effects](unit-water-effects.md), [distant terrain](terrain-low-detail.md),
+[vehicle presentation](vehicle-presentation.md),
 [ground detail](terrain-ground-detail.md), and [world costs](world-performance.md).
 
 ## Core UI stage

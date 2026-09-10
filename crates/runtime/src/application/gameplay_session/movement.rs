@@ -20,6 +20,9 @@ pub(super) fn install(
     if let Some(target) = update.attacking_target() {
         world.set_unit_attack_target(guid, target);
     }
+    if let Some(vehicle) = update.vehicle() {
+        world.set_unit_vehicle(guid, vehicle.definition_id, vehicle.initial_pitch);
+    }
     let Some(mut movement) = movement_state(update) else {
         return Ok(());
     };

@@ -27,7 +27,7 @@ impl Default for EntityOpacity {
 impl EntityOpacity {
     /// 716650 selects the entry duration before publishing a newly admitted unit model.
     /// `parent_transitioning` is absent when the transport unit cannot be resolved;
-    /// seat flags are optional because the parent need not have a vehicle seat record.
+    /// the signed seat attachment is absent when the vehicle/seat lookup fails.
     #[must_use]
     pub fn unit_entry_duration(
         primary_flags: u32,
@@ -35,7 +35,7 @@ impl EntityOpacity {
         bytes1: u32,
         transport_guid: u64,
         parent_transitioning: Option<bool>,
-        seat_flags: Option<u32>,
+        seat_attachment_id: Option<i32>,
     ) -> u32 {
         if primary_flags & 2 != 0 || secondary_flags & 0x20 != 0 || bytes1 & 0x0002_0000 != 0 {
             return 0;
@@ -46,7 +46,7 @@ impl EntityOpacity {
         if unit_transport
             && (parent_transitioning.is_none()
                 || (parent_transitioning == Some(true)
-                    && seat_flags.is_none_or(|flags| flags & 0x8000_0000 == 0)))
+                    && seat_attachment_id.is_none_or(|attachment| attachment >= 0)))
         {
             0
         } else {

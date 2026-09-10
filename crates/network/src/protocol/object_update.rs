@@ -93,6 +93,16 @@ pub struct ObjectMovementUpdate {
     packed_rotation: Option<u64>,
     transport_progress_ms: Option<u32>,
     attacking_target: Option<u64>,
+    vehicle: Option<ObjectVehicleMovement>,
+}
+
+/// Vehicle owner initialization appended to a create movement block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ObjectVehicleMovement {
+    /// Exact Vehicle.dbc identifier, including zero or a missing row.
+    pub definition_id: u32,
+    /// Initial vehicle pitch, independent of unit facing and MovementInfo pitch.
+    pub initial_pitch: f32,
 }
 
 /// Non-living passenger position carried by `UPDATEFLAG_POSITION`.
@@ -107,6 +117,12 @@ pub struct ObjectPositionTransport {
 }
 
 impl ObjectMovementUpdate {
+    /// Returns the flag-0x80 payload; ordinary movement does not replace this owner.
+    #[must_use]
+    pub const fn vehicle(&self) -> Option<ObjectVehicleMovement> {
+        self.vehicle
+    }
+
     /// Create blocks always replace the attack GUID, using zero when flag 4
     /// is absent. Ordinary MovementInfo updates do not carry this owner state.
     #[must_use]
@@ -523,6 +539,7 @@ impl<'a> UpdateCursor<'a> {
                 packed_rotation: None,
                 transport_progress_ms: None,
                 attacking_target: None,
+                vehicle: None,
             }
         };
         movement.update_flags = update_flags;
@@ -559,7 +576,10 @@ impl<'a> UpdateCursor<'a> {
                 Some(self.read_u32("transport progress is truncated")?);
         }
         if update_flags & UPDATE_FLAG_VEHICLE != 0 {
-            self.skip(8, "vehicle movement is truncated")?;
+            movement.vehicle = Some(ObjectVehicleMovement {
+                definition_id: self.read_u32("vehicle definition is truncated")?,
+                initial_pitch: self.read_f32("vehicle initial pitch is truncated")?,
+            });
         }
         movement.packed_rotation = if update_flags & UPDATE_FLAG_ROTATION != 0 {
             let bytes = self.take(8, "packed local rotation is truncated")?;
@@ -650,6 +670,7 @@ impl<'a> UpdateCursor<'a> {
             packed_rotation: None,
             transport_progress_ms: None,
             attacking_target: None,
+            vehicle: None,
         })
     }
 

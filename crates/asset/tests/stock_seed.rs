@@ -32,6 +32,8 @@ mod database_spell_visual_effect;
 mod database_transport;
 #[path = "stock_seed/database_ui_sound.rs"]
 mod database_ui_sound;
+#[path = "stock_seed/database_vehicle.rs"]
+mod database_vehicle;
 #[path = "stock_seed/file_stack.rs"]
 mod file_stack;
 #[path = "stock_seed/liquid_light.rs"]

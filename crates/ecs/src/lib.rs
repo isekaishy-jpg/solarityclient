@@ -35,6 +35,7 @@ pub use unit::{
     UNIT_PRIMARY_STAT_COUNT, UnitAnimationTier, UnitAttackTarget, UnitAura, UnitAuras, UnitFlags,
     UnitHealthPrediction, UnitIdentity, UnitPresentation, UnitSheathState, UnitStats, UnitVitals,
 };
+pub use vehicle::UnitVehicle;
 pub use view::PlayerViewState;
 pub use world::WorldStateValues;
 pub use world::{ActiveWorld, WorldBootstrap, WorldMapId, WorldObjectIdentity, WorldStateError};

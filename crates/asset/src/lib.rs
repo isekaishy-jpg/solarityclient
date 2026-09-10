@@ -52,6 +52,7 @@ pub use database::{
     ZoneIntroMusicDefinition, ZoneMusicDefinition, ZoneSoundCatalog, ZoneSoundOverrideCatalog,
     exterior_light_direction, exterior_light_direction_at, exterior_light_ray_at,
 };
+pub use database::{VehicleCatalog, VehicleDefinition, VehicleSeatDefinition};
 pub use database::{WeatherCatalog, WeatherDefinition};
 pub use file_stack::{ArchiveCatalog, AssetRead, AssetStore, AssetStoreHandle, LocalizedDocument};
 pub use model::{

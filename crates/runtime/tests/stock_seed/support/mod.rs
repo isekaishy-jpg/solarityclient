@@ -162,6 +162,8 @@ fn build_archive(
         );
         builder = builder.add_file_data(empty_wdbc(28), "DBFilesClient\\CreatureModelData.dbc");
         builder = builder.add_file_data(empty_wdbc(28), "DBFilesClient\\CreatureFamily.dbc");
+        builder = builder.add_file_data(empty_wdbc(40), "DBFilesClient\\Vehicle.dbc");
+        builder = builder.add_file_data(empty_wdbc(58), "DBFilesClient\\VehicleSeat.dbc");
         builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\AnimationData.dbc");
         builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\ParticleColor.dbc");
         builder = builder.add_file_data(

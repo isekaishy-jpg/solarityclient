@@ -206,6 +206,22 @@ fn build_fixture(
     .into_iter()
     .map(|(path, bytes)| (path.to_owned(), bytes.to_vec()))
     .collect();
+    // Native vehicle-seat fixture deliberately separates the flags sign bit
+    // from the signed attachment ID used by passenger entry interpolation.
+    let mut vehicle = [0_u32; 40];
+    vehicle[0] = 1;
+    vehicle[6..14].copy_from_slice(&[10, 11, 12, 0, 9, 13, 10, 12]);
+    let mut seats = [0_u32; 116];
+    seats[..3].copy_from_slice(&[10, 0, u32::MAX]);
+    seats[58..61].copy_from_slice(&[12, 0x8000_0000, 21]);
+    files.push((
+        "DBFilesClient\\Vehicle.dbc".to_owned(),
+        dbc(40, &vehicle, b"\0"),
+    ));
+    files.push((
+        "DBFilesClient\\VehicleSeat.dbc".to_owned(),
+        dbc(58, &seats, b"\0"),
+    ));
     if water_attachment.is_some() {
         let mut effect = game_object_models::model_with_animations(&[0])?;
         append_effects(&mut effect, 1);

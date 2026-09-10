@@ -80,7 +80,8 @@ pub use movement_message::{
 pub use movement_spline::{MovementSplineFacing, MovementSplineSnapshot};
 pub use object_update::{
     ObjectFieldUpdate, ObjectMovementSpeeds, ObjectMovementUpdate, ObjectPositionTransport,
-    ObjectUpdateError, WorldObjectKind, WorldObjectUpdate, WorldObjectUpdateBatch,
+    ObjectUpdateError, ObjectVehicleMovement, WorldObjectKind, WorldObjectUpdate,
+    WorldObjectUpdateBatch,
 };
 pub use player_control::{WorldClientControlUpdate, WorldPlayerControlPacketError};
 pub use server_packet::WorldServerPacket;

@@ -23,8 +23,12 @@ model is admitted. The unit target comes from the signed
 `CreatureDisplayInfo.ModelAlpha` column (`715B50`); missing display data yields
 one. `716650` rejects primary flag `0x2`, secondary flag `0x20`, and `Bytes1`
 bit `0x00020000`. A unit transport additionally requires a resolved parent with
-no active opacity transition, unless its `VehicleSeat.Flags` sign bit permits
-entry interpolation. A GameObject transport does not use that unit-parent gate.
+no active opacity transition, unless its `VehicleSeat.AttachmentID` is negative.
+`5D3340/756EC0` resolve the parent's vehicle row and passenger seat byte;
+`716650` tests the signed word at seat row `+8`, not the flags word at `+4`.
+The earlier pure-policy fixture labels that word `seat_flags`; its numerical
+capture remains valid, and the typed consumer now names it correctly.
+A GameObject transport does not use that unit-parent gate.
 `73FCC0` finishes the initial transition for the resolved Birth behavior (127).
 
 GameObject virtuals `70B9E0/70B9A0` delegate to the selected behavior. Generic
@@ -91,6 +95,17 @@ The runtime unit animation owner retains one `EntityOpacityOwner` across model,
 material and GPU generation changes for the same `WorldObjectIdentity`; a new
 identity gets independent state. The unit scene advances this state before
 culling. Model admission reads the target and eligibility once per display.
+
+The runtime now supplies the resolved seat attachment to this admission rule.
+The flag-`0x80` create payload retains Vehicle.dbc ID and initial pitch in a
+unit-owned ECS component, including zero and unresolved IDs. `757FA0` seeds
+pitch; `7580F0` replaces the row while preserving that pitch. Updates without
+the payload leave the owner intact, duplicate remote creates remain ignored,
+and removal/GUID reuse ends its lifetime. `ClientServices` loads both exact
+vehicle tables through the normal asset stack and shares the catalog with
+presentation. Seat lookup occurs at model admission, not on every settled frame.
+See [vehicle presentation](vehicle-presentation.md) for the remaining movement,
+attachment, camera and visibility consumers.
 
 Character publication shares that owner with the body, mount, equipment and
 enchant models. The M2 frame multiplies the scalar into mesh materials,
@@ -180,8 +195,9 @@ Remaining integration and validation are:
   alternate effect owner. Ordinary unit retirement is connected; these missing
   presentation systems are not replaced by guessed field mappings. The native
   scene `+7C` flag `0x4` exclusion also has no current ordinary-scene producer.
-- Project Vehicle/VehicleSeat presentation into the unit owner; the exact
-  native seat policy is tested but the runtime currently has no seat-record input.
+- Complete vehicle passenger movement/attachment publication and the remaining
+  camera/visibility consumers. Vehicle creation state and the seat-record input
+  to entry interpolation are connected; this does not establish vehicle travel parity.
 - Extend the ordinary camera `+CB` consumer to vehicle bounds/parent dispatch,
   timed camera modes and the barber-shop reduced-range `BD19B8` global.
   The Player_C `A30/18B8` publication override and specialized visual-kit ownership also remain.

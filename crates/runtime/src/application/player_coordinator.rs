@@ -12,7 +12,7 @@ use solarity_asset::{
     CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog, CreatureFamilyCatalog,
     CreatureModelAppearance, DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType,
     ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, M2HardcodedTextureSource,
-    M2ModelCache, M2Texture, M2TextureKind, ParticleColorCatalog,
+    M2ModelCache, M2Texture, M2TextureKind, ParticleColorCatalog, VehicleCatalog,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{
@@ -285,6 +285,7 @@ pub enum RuntimeRemotePlayerPoll {
 
 /// Immutable client-table dependencies used to resolve player presentation.
 pub struct RuntimePlayerCatalogs {
+    vehicles: Arc<VehicleCatalog>,
     animations: Arc<AnimationDataCatalog>,
     creatures: Arc<CreatureCatalog>,
     creature_families: Arc<CreatureFamilyCatalog>,
@@ -336,6 +337,7 @@ impl RuntimePlayerCatalogs {
     ) -> Self {
         Self {
             animations: animations.into(),
+            vehicles: Arc::new(VehicleCatalog::default()),
             creatures: Arc::new(creatures),
             creature_families: Arc::new(creature_families),
             characters: Arc::new(characters),
@@ -346,10 +348,18 @@ impl RuntimePlayerCatalogs {
             particle_colors: Arc::new(particle_colors),
         }
     }
+
+    /// Supplies the stock vehicle and seat tables used by passenger presentation.
+    #[must_use]
+    pub fn with_vehicles(mut self, vehicles: VehicleCatalog) -> Self {
+        self.vehicles = Arc::new(vehicles);
+        self
+    }
 }
 
 #[derive(Clone)]
 struct RuntimePlayerSharedCatalogs {
+    vehicles: Arc<VehicleCatalog>,
     animations: Arc<AnimationDataCatalog>,
     creatures: Arc<CreatureCatalog>,
     creature_families: Arc<CreatureFamilyCatalog>,
@@ -365,6 +375,7 @@ struct RuntimePlayerSharedCatalogs {
 
 /// Resolves ECS appearance into a shared model without putting assets in ECS.
 pub struct RuntimePlayerPresentation {
+    vehicles: Arc<VehicleCatalog>,
     assets: AssetStoreHandle,
     animations: Arc<AnimationDataCatalog>,
     creatures: Arc<CreatureCatalog>,
@@ -407,6 +418,7 @@ impl RuntimePlayerPresentation {
         } = catalogs.items;
         Self {
             assets,
+            vehicles: catalogs.vehicles,
             animations: catalogs.animations,
             creatures: catalogs.creatures,
             creature_families: catalogs.creature_families,
@@ -447,6 +459,7 @@ impl RuntimePlayerPresentation {
 
     fn shared_catalogs(&self) -> RuntimePlayerSharedCatalogs {
         RuntimePlayerSharedCatalogs {
+            vehicles: Arc::clone(&self.vehicles),
             animations: Arc::clone(&self.animations),
             creatures: Arc::clone(&self.creatures),
             creature_families: Arc::clone(&self.creature_families),
@@ -1503,10 +1516,10 @@ impl RuntimePlayerPresentation {
         ) else {
             return;
         };
-        let transport = world
+        let passenger = world
             .movement_state(guid)
-            .and_then(|movement| movement.context().transport)
-            .map_or(0, |transport| transport.guid);
+            .and_then(|movement| movement.context().transport);
+        let transport = passenger.map_or(0, |transport| transport.guid);
         owner.opacity_owner().set_transport_guid(transport);
         let player_hidden = world.object_kind(guid) == Some(solarity_ecs::ObjectKind::Player)
             && world
@@ -1539,19 +1552,33 @@ impl RuntimePlayerPresentation {
                     .map(|fields| fields.get(74))
             })
             .unwrap_or(0);
-        let parent_transitioning = world.object_identity(transport).map(|_| {
-            self.unit_animations
-                .get(transport)
-                .is_some_and(|parent| parent.opacity_owner().transitioning())
-        });
+        let parent_transitioning = world
+            .object_kind(transport)
+            .filter(|kind| {
+                matches!(
+                    kind,
+                    solarity_ecs::ObjectKind::Unit | solarity_ecs::ObjectKind::Player
+                )
+            })
+            .map(|_| {
+                self.unit_animations
+                    .get(transport)
+                    .is_some_and(|parent| parent.opacity_owner().transitioning())
+            });
         let duration = solarity_systems::EntityOpacity::unit_entry_duration(
             flags.primary(),
             flags.secondary(),
             bytes,
             transport,
             parent_transitioning,
-            // Vehicle/VehicleSeat presentation is not yet projected by this owner.
-            None,
+            passenger.and_then(|passenger| {
+                self.vehicles
+                    .passenger_seat(
+                        world.unit_vehicle(passenger.guid)?.definition_id(),
+                        passenger.seat,
+                    )
+                    .map(|seat| seat.attachment_id())
+            }),
         );
         let alpha = self
             .creatures
@@ -2448,6 +2475,7 @@ fn prepare_glue_character_on_worker(
     };
     let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
+        vehicles: catalogs.vehicles,
         unit_animations: UnitAnimationScene::default(),
         camera_opacity_subject: Default::default(),
         arena_map: false,
