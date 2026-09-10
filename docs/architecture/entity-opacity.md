@@ -141,13 +141,23 @@ Remaining integration and validation are:
 - Trace any additional replicated-distance or effect-owner policies from their
   native callers instead of borrowing static MDDF/MODD distance classes.
 
-## Testing package
+## Testing packages
 
-Build **000087** (`0.0.3a`) installs source revision
+Build **000088** (`0.0.3a`) installs source revision
+`986c8f023765043fada4084f011df800ca2620d0` through the persistent Testing launcher.
+The executable reports that revision and build number; its dirty marker records
+the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
+SHA-256 hashes match:
+`d99ad5be83111c295d2a2ab6457df8097269959bbf17642e1cabeaff5bc1a827`.
+It adds ordinary disappearance, independent attachment lifetimes, retained
+lighting/shadow consumers and authored-source reuse. The exceptional policies
+and live travel validation listed above remain open.
+
+Build **000087** (`0.0.3a`) installed source revision
 `45658f53e403ba107abbe774fd93d238a1896e52` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
 `9c02c02ce453663f70cf5684cccebc5ab6db54af4cb7c1118314cbcf72c6b093`.
-This package contains the entry consumers above; it does not establish live
-populated-world appearance or implement the remaining disappearance consumer.
+That earlier package contained the entry consumers, before the disappearance
+consumer was connected.
