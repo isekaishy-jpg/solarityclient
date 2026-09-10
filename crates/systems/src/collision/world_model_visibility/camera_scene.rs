@@ -17,6 +17,8 @@ pub struct WorldModelCameraSceneQuery {
     groups: Vec<usize>,
     visits: Vec<WorldModelSceneGroupVisit>,
     exterior_window: Option<WorldModelExteriorPortalWindow>,
+    sky_window: Option<WorldModelExteriorPortalWindow>,
+    has_skybox_request: bool,
 }
 
 impl WorldModelCameraSceneQuery {
@@ -25,7 +27,8 @@ impl WorldModelCameraSceneQuery {
     /// 79A870 clears exterior windows after visiting a secondary camera root.
     /// The primary root's 7AD1F0 traversal then decides whether outdoor depth
     /// lists run. Only accepted portal callbacks to groups masked by 0x10008
-    /// reach 790AD0's exterior bank. Other 50148 callbacks affect a separate bank.
+    /// reach 790AD0's exterior bank. Every 50148 callback reaches 790AB0's sky
+    /// bank, including links that do not admit outdoor geometry.
     /// The native constructor 9CE7E0 installs the recursion limit of ten.
     /// Group callbacks are retained in order, including the final 0x10000
     /// group-info bounds pass. Callers consume them before querying another root.
@@ -42,6 +45,8 @@ impl WorldModelCameraSceneQuery {
         self.groups.clear();
         self.visits.clear();
         self.exterior_window = None;
+        self.sky_window = None;
+        self.has_skybox_request = false;
         let frame = camera.for_root(root.transform, root.inverse_transform)?;
         let forward_plane = camera.local_forward_plane(root.inverse_transform)?;
         let model = &root.model;
@@ -56,6 +61,8 @@ impl WorldModelCameraSceneQuery {
         for event in events {
             let WorldModelSceneVisibilityEvent::ExteriorPortal { reference } = event else {
                 if let WorldModelSceneVisibilityEvent::Group(visit) = event {
+                    // Only recursive 7AC060 visits publish the root's MOSB.
+                    self.has_skybox_request |= model.groups()[visit.group].flags() & 0x40000 != 0;
                     self.groups.push(visit.group);
                     self.visits.push(WorldModelSceneGroupVisit {
                         group: visit.group,
@@ -70,9 +77,6 @@ impl WorldModelCameraSceneQuery {
                 continue;
             };
             let reference = model.portal_references()[*reference];
-            if model.group_info()[usize::from(reference.group_index())].flags() & 0x10008 == 0 {
-                continue;
-            }
             let portal = model.portals()[usize::from(reference.portal_index())];
             let start = usize::from(portal.vertex_start());
             let end = start + usize::from(portal.vertex_count());
@@ -83,10 +87,16 @@ impl WorldModelCameraSceneQuery {
                 forward_plane,
                 frame,
             )? {
-                self.exterior_window = Some(match self.exterior_window {
+                self.sky_window = Some(match self.sky_window {
                     Some(previous) => merge_exterior_windows(previous, window),
                     None => window,
                 });
+                if model.group_info()[usize::from(reference.group_index())].flags() & 0x10008 != 0 {
+                    self.exterior_window = Some(match self.exterior_window {
+                        Some(previous) => merge_exterior_windows(previous, window),
+                        None => window,
+                    });
+                }
             }
         }
         // 7AD1F0 follows recursive visits with direct callbacks for 0x10000
@@ -130,6 +140,8 @@ impl WorldModelCameraSceneQuery {
         self.groups.clear();
         self.visits.clear();
         self.exterior_window = None;
+        self.sky_window = None;
+        self.has_skybox_request = false;
         let model = &root.model;
         let info = model
             .group_info()
@@ -181,6 +193,22 @@ impl WorldModelCameraSceneQuery {
     #[must_use]
     pub const fn exterior_window(&self) -> Option<WorldModelExteriorPortalWindow> {
         self.exterior_window
+    }
+
+    /// Returns 790AB0's merged sky window from all accepted exterior callbacks.
+    /// Camera registration may separately seed the primary bank with a full
+    /// window; that seed is owned by the caller's cross-root frame sequence.
+    #[must_use]
+    pub const fn sky_window(&self) -> Option<WorldModelExteriorPortalWindow> {
+        self.sky_window
+    }
+
+    /// Reports whether a recursive loaded MOGP selected this root's MOSB.
+    /// A root with no MOSB still replaces an earlier root's request with none.
+    /// Final direct callbacks and outdoor traversal never select a skybox.
+    #[must_use]
+    pub const fn has_skybox_request(&self) -> bool {
+        self.has_skybox_request
     }
 
     /// Returns ordered group callbacks; read only after a successful root query.

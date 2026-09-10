@@ -22,6 +22,7 @@ pub struct DecodedWorldModel {
     doodads: Vec<WorldModelDoodad>,
     groups: Vec<DecodedWorldModelGroup>,
     fogs: Vec<super::WorldModelFog>,
+    skybox: Option<String>,
 }
 
 impl DecodedWorldModel {
@@ -39,6 +40,7 @@ impl DecodedWorldModel {
         doodads: Vec<WorldModelDoodad>,
         groups: Vec<DecodedWorldModelGroup>,
         fogs: Vec<super::WorldModelFog>,
+        skybox: Option<String>,
     ) -> Self {
         Self {
             path,
@@ -53,6 +55,7 @@ impl DecodedWorldModel {
             doodads,
             groups,
             fogs,
+            skybox,
         }
     }
 
@@ -93,6 +96,7 @@ impl DecodedWorldModel {
     }
 
     /// Returns root MOGI flags and bounds in group order, independently of MOGP.
+    /// Empty MOSB clears the MOGI sky bit as in native root loading.
     #[must_use]
     pub fn group_info(&self) -> &[WorldModelGroupInfo] {
         &self.spatial.groups
@@ -128,6 +132,13 @@ impl DecodedWorldModel {
     #[must_use]
     pub fn fogs(&self) -> &[super::WorldModelFog] {
         &self.fogs
+    }
+
+    /// Returns the nonempty MOSB model name retained by native 7D7470.
+    /// Model loading belongs to the sky scene, independently of WMO admission.
+    #[must_use]
+    pub fn skybox(&self) -> Option<&str> {
+        self.skybox.as_deref()
     }
 
     /// Returns every MOMT material in authored table order.

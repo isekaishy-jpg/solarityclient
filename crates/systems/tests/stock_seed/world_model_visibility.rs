@@ -736,8 +736,17 @@ fn complete_camera_root_pipeline_opens_only_visible_exterior_links() -> Result<(
             );
             assert_eq!(query.groups().first(), Some(&0));
             assert_eq!(query.groups().contains(&1), adjacent_flags != 8);
+            assert_eq!(query.sky_window().is_some(), adjacent_flags & 0x50148 != 0);
+            assert_eq!(query.has_skybox_request(), adjacent_flags == 0x40000);
+            if query.exterior_window().is_some() {
+                assert_eq!(query.sky_window(), query.exterior_window());
+            }
             assert!(!query.query_camera_root(&root, camera(away)?, &[0])?);
+            assert!(query.sky_window().is_none());
+            assert!(!query.has_skybox_request());
             assert!(!query.query_camera_root(&root, camera(toward)?, &[])?);
+            assert!(query.sky_window().is_none());
+            assert!(!query.has_skybox_request());
             assert_eq!(
                 query.query_camera_root(&root, camera(toward)?, &[2]),
                 Err(WorldModelVisibilityError::InvalidGroup)
@@ -747,6 +756,47 @@ fn complete_camera_root_pipeline_opens_only_visible_exterior_links() -> Result<(
                 adjacent_flags & 0x10008 != 0
             );
         }
+    }
+    Ok(())
+}
+
+/// Only loaded recursive MOGP flags publish MOSB; MOGI direct callbacks and
+/// 7AD350 outdoor entries do not change the camera-root sky selection.
+#[test]
+fn camera_skybox_request_uses_recursive_loaded_flags() -> Result<(), Box<dyn Error>> {
+    use glam::Mat4;
+    use solarity_systems::{
+        PlacedWorldModelCollision, WorldModelCameraSceneQuery, WorldSceneCameraFrame,
+    };
+    use std::sync::Arc;
+    let camera = WorldSceneCameraFrame::perspective(
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::X,
+        Vec3::Z,
+        0.9424778,
+        1.,
+        [0.2, 100.],
+    )?;
+    let mut query = WorldModelCameraSceneQuery::default();
+    for (loaded_flags, info_flags, expected) in [
+        (0x40000, 0, true),
+        (0, 0x40000, false),
+        (0x50000, 0x10000, false),
+        (0x40000, 0x10000, true),
+        (0x40008, 8, true),
+    ] {
+        let model = Arc::new(visibility_model(&[loaded_flags], &[info_flags], &[], &[])?);
+        let root = PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;
+        query.query_camera_root(&root, camera, &[0])?;
+        assert_eq!(query.has_skybox_request(), expected);
+        assert!(query.sky_window().is_none());
+        query.query_camera_root(&root, camera, &[])?;
+        assert!(!query.has_skybox_request());
+        query.query_camera_root(&root, camera, &[0])?;
+        query.query_outdoor_group(&root, camera, 0, [0., 0., 1., 1.])?;
+        assert!(!query.has_skybox_request());
+        assert!(query.sky_window().is_none());
     }
     Ok(())
 }
@@ -860,6 +910,11 @@ pub(super) fn visibility_model(
 ) -> Result<DecodedWorldModel, Box<dyn Error>> {
     let size = flags.len();
     let (mut root, groups) = super::world_model_fog::graph(flags, info_flags, edges);
+    // Native traversal fixtures supply post-load MOGI flags. A nonempty MOSB
+    // prevents 7D7470 from clearing their authored sky bit during decoding.
+    root.extend_from_slice(b"BSOM");
+    root.extend_from_slice(&10u32.to_le_bytes());
+    root.extend_from_slice(b"Probe.m2\0\0");
     let mut offset = 0;
     while offset < root.len() {
         let length = u32::from_le_bytes(root[offset + 4..offset + 8].try_into()?) as usize;

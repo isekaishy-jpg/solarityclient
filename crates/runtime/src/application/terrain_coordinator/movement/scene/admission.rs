@@ -38,6 +38,7 @@ pub(in crate::application::terrain_coordinator::movement) struct WorldSceneAdmis
     /// 799F80's direct callbacks also accept exterior-registered units.
     overlap_groups: HashSet<(RuntimeWorldModelMovementOwner, usize)>,
     outdoor: Option<WorldSceneDepthFrame>,
+    sky: super::sky::WorldSceneSky,
 }
 
 impl WorldSceneAdmission {
@@ -53,6 +54,7 @@ impl WorldSceneAdmission {
         self.visible_bounds.clear();
         self.overlap_groups.clear();
         self.outdoor = None;
+        self.sky.begin();
         let source = camera.camera();
         let eye = source.position();
         let target = source.target();
@@ -80,6 +82,12 @@ impl WorldSceneAdmission {
                 let reference = active.movement.roots[selected.owner];
                 let owner = reference.owner();
                 let root = active.registration_root_mut(reference)?;
+                if registration.secondary.is_none() {
+                    self.sky.seed(
+                        root.model(),
+                        [Some(selected.group), selected.secondary_group],
+                    );
+                }
                 let exterior = self.record_camera_root(
                     root,
                     scene,
@@ -96,6 +104,7 @@ impl WorldSceneAdmission {
             }
         } else {
             outdoor_window = Some([0., 0., 1., 1.]);
+            self.sky.outdoors();
         }
         if let Some(window) = outdoor_window {
             let depth = WorldSceneDepthFrame::new(eye, target)?;
@@ -171,6 +180,10 @@ impl WorldSceneAdmission {
         let count = 1 + usize::from(registration.secondary_group.is_some());
         self.query
             .query_camera_root(root, camera, &initial[..count])?;
+        self.sky.record_root(root.model(), &self.query);
+        if registration.owner == primary {
+            self.sky.record_primary(&self.query);
+        }
         self.record_group_callbacks(root, camera, registration.owner, Some(primary))?;
         Ok(self.query.exterior_window())
     }
@@ -346,6 +359,29 @@ impl WorldSceneAdmission {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Supplies sky visibility after both camera roots and before GPU preparation.
+    pub(in crate::application) fn world_model_sky_window(
+        &self,
+    ) -> Result<Option<solarity_rendering::WorldSkyWindow>, solarity_rendering::WorldCameraError>
+    {
+        self.active
+            .as_ref()
+            .map_or(Ok(None), |active| active.movement.scene.sky.window())
+    }
+
+    /// Distinguishes a closed sky bank from an open bank clipped offscreen.
+    pub(in crate::application) fn has_world_model_sky_window(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.movement.scene.sky.has_window())
+    }
+
+    /// Borrows the last recursive camera-root MOSB selected for this frame.
+    pub(in crate::application) fn world_model_skybox(&self) -> Option<&str> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.movement.scene.sky.skybox())
+    }
     /// Supplies 79A160's exterior-group references in increasing depth order.
     pub(in crate::application) fn world_model_outdoor_doodads(
         &self,

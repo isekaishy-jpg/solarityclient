@@ -65,6 +65,8 @@ pub(super) struct RecordContext<'a> {
     pub(super) depth_view: vk::ImageView,
     pub(super) extent: (u32, u32),
     pub(super) screen_window: crate::WorldScreenWindow,
+    pub(super) sky_window: Option<crate::WorldSkyWindow>,
+    pub(super) background_color: glam::Vec4,
     pub(super) frame_sets: [vk::DescriptorSet; 12],
     pub(super) world_model_material_stride: vk::DeviceSize,
     pub(super) m2_material_stride: vk::DeviceSize,
@@ -150,7 +152,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
         .store_op(vk::AttachmentStoreOp::STORE)
         .clear_value(vk::ClearValue {
             color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.0, 1.0],
+                float32: context.background_color.to_array(),
             },
         });
     let depth = vk::RenderingAttachmentInfo::default()
@@ -219,11 +221,40 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
     let mut bindings = WorldCommandBindings::default();
-    record_sky_models(&context, false, &mut bindings)?;
-    record_celestials(&context, &mut bindings);
-    record_sky(&context, &mut bindings);
-    record_clouds(&context, &mut bindings);
-    record_sky_models(&context, true, &mut bindings)?;
+    if let Some(window) = context
+        .sky_window
+        .and_then(|window| window.clipped(context.screen_window))
+    {
+        let [left, top, right, bottom] = window.pixel_bounds([context.extent.0, context.extent.1]);
+        let sky_scissor = vk::Rect2D {
+            offset: vk::Offset2D {
+                x: left as i32,
+                y: top as i32,
+            },
+            extent: vk::Extent2D {
+                width: right - left,
+                height: bottom - top,
+            },
+        };
+        // SAFETY: Every sky pipeline declares a dynamic scissor. The clipped
+        // rectangle is bounded by the attachment; projection stays unchanged.
+        unsafe {
+            context
+                .device
+                .cmd_set_scissor(context.command_buffer, 0, &[sky_scissor]);
+        }
+        record_sky_models(&context, false, &mut bindings)?;
+        record_celestials(&context, &mut bindings);
+        record_sky(&context, &mut bindings);
+        record_clouds(&context, &mut bindings);
+        record_sky_models(&context, true, &mut bindings)?;
+        // SAFETY: WDL and subsequent world queues share the original scissor.
+        unsafe {
+            context
+                .device
+                .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
+        }
+    }
     let low_detail_draw_count = record_low_detail(&context, viewport, &mut bindings)?;
     // 79A870 restores the ordinary world interval after horizon/sky work.
     let world_viewport = vk::Viewport {

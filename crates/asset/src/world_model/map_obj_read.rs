@@ -91,6 +91,7 @@ impl DecodedWorldModel {
             doodads,
             groups,
             fogs,
+            root.skybox,
         ))
     }
 }

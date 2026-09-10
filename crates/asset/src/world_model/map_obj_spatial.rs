@@ -12,7 +12,7 @@ pub struct WorldModelGroupInfo {
 }
 
 impl WorldModelGroupInfo {
-    /// Returns the authored MOGI flags used by native group selection.
+    /// Returns MOGI flags after 7D7470 clears 0x40000 for an empty MOSB.
     #[must_use]
     pub const fn flags(self) -> u32 {
         self.flags
@@ -187,7 +187,13 @@ impl WorldModelSpatialData {
                 .group_info
                 .iter()
                 .map(|group| WorldModelGroupInfo {
-                    flags: group.flags,
+                    // 7D7470 disables sky-only portals and registration seeds
+                    // when MOSB begins with NUL. Loaded MOGP flags stay intact.
+                    flags: if root.skybox.is_some() {
+                        group.flags
+                    } else {
+                        group.flags & !0x40000
+                    },
                     bounds: [group.bounding_box_min, group.bounding_box_max],
                 })
                 .collect(),

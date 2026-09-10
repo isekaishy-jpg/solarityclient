@@ -131,8 +131,8 @@ tests cover weather updates, underwater lighting, direct overrides and reset.
 Weather particle rendering, particle drainage during resource-type switches,
 and weather ambient audio are not implemented by this lighting owner. Its
 current type follows accepted weather updates; particle residency must replace
-that input when the precipitation owner is introduced. WMO sky visibility
-and the separate global sky override provider remain outside this owner.
+that input when the precipitation owner is introduced. WMO sky visibility is
+connected below; the separate global sky override provider remains unwired.
 
 The three celestial texture requests now use `Textures/sunCenter.blp`,
 `Textures/moon.blp` and `Textures/moon02.blp`, as in `9AD0B0`. Their parsed
@@ -238,3 +238,59 @@ camera-translation invariance, opacity fades, cached flag reuse, overlapping
 slots and that dome's authored lighting. `world_skybox_oracle.py` captures the
 unaltered selection block and phase helper, including absent/empty paths,
 cutoff-adjacent floats and wide unsigned animation spans.
+
+## WMO sky visibility and replacement
+
+The camera scene retains two independent portal banks. Every accepted
+`7A8F20` callback reaches `790AB0`'s sky bank; only adjacent MOGI flags masked
+by `0x10008` also reach `790AD0`'s outdoor-object bank. `795D40` seeds full sky
+when either primary camera group has MOGI flags masked by `0x40140`. `79A870`
+clears that seed and both portal banks after a secondary camera root, then
+keeps the primary root's portal results. An outdoor camera starts with full
+sky. Outdoor group recursion and final direct callbacks do not select MOSB.
+
+Native root loader `7D7470` retains the MOSB string and nulls an empty name.
+It also clears MOGI flag `0x40000` when no name remains; the loaded MOGP flags
+are independent. Recursive `7AC060` visits with MOGP flag `0x40000` publish
+their root's MOSB, including a null value that clears an earlier selection.
+The runtime retains the selected decoded root until frame consumption, so
+the name stays valid without copying it each frame.
+
+When a sky bank exists, `79A870` applies the selected MOSB through `7F31C0`:
+slot zero receives that model and the stored DayNight `+0x9C` weight, slot one
+is cleared, and slot two retains its current DBC result. `7F16F0` computes
+the weight by multiplying the WMO boundary distance by float `0.04`, clamping
+to zero through one, and storing f32. Fog color blending retains its separate
+extended-precision calculation. MOSB aliases share the ordinary sky model
+cache and preserve the first request's animation phase flags. Authored names
+are resolved once, including empty/invalid requests.
+
+`7F09B0` intersects the sky bank with the viewport through `48ED60` and requires
+positive area. A missing bank or any submerged camera liquid suppresses sky
+drawing. Palette model requests still occur; resident model animation, phase
+updates and random consumption stop until the sky is visible again. WMO model
+requests require the bank, but precede the camera-liquid and viewport gates.
+
+`WorldSkyWindow` carries that rectangle to all sky queues. The Vulkan scissor
+uses the original D3D9 backbuffer calculation from `6A38D0`: lower edges add
+0.5 and upper edges add 1 before truncation and attachment clipping. The sky
+projection stays full-sized, and the world scissor is restored before WDL and
+ordinary geometry. A closed sky bank clears to camera indoor fog; an open bank
+with camera liquid clears to ordinary fog; the ordinary visible sky uses black.
+An admitted but fully hidden sky scene can present its background without any
+draw packets.
+
+`world_sky_visibility_oracle.py` captures 160 draw-gate/intersection/scissor
+cases, five native slot replacements and 28 stored boundary fades. Decoded
+WMO tests cover empty MOSB, independent MOGI/MOGP flags, primary/secondary
+selection, portal windows and per-frame reset. The compositor GPU test covers
+24 frames, including portal edges, background color, hidden sky, changing bone
+prefixes, and restoration of world drawing beyond the sky scissor. A synthetic
+runtime sky test exercises MOSB aliases, inherited phase flags, opacity pixels,
+hidden-scene random/phase retention and return to the three DBC slots.
+
+The global override at `D38B5C` is a separate owner. `7ECEC0` selects its
+Light condition, and `7F3230` resolves that condition against the global Light
+row. Its provider `4F7020` also drives screen effects and manual fog. That
+provider, manual-fog sky enable/clear behavior, precipitation, and combined
+live-world appearance checks remain separate completion work.

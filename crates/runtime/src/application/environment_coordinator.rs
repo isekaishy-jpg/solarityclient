@@ -2,6 +2,10 @@
 
 mod weather;
 
+#[cfg(test)]
+#[path = "../../tests/application/world_model_sky_fade.rs"]
+mod sky_fade_tests;
+
 use glam::Vec3;
 use solarity_asset::{
     LightCatalog, LiquidTypeCatalog, MapCatalog, WorldFogContext, WorldFogSample,
@@ -61,6 +65,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     fog_context: WorldFogContext,
     base_fog: WorldFogSample,
     liquid_flags: Option<u32>,
+    world_model_skybox_weight: f32,
     fog: WorldFogSample,
     ordinary_fog: WorldFogSample,
     light_direction: Vec3,
@@ -137,6 +142,10 @@ impl RuntimeWorldEnvironmentFrame {
         mut self,
         environment: Option<solarity_systems::WorldModelFogEnvironment>,
     ) -> Self {
+        // DayNight+9C is stored as f32 before 79A870 passes it to 7F31C0.
+        // Fog colors retain their independently recovered extended arithmetic.
+        self.world_model_skybox_weight =
+            world_model_skybox_weight(environment.and_then(|value| value.boundary_distance()));
         if let Some(environment) = environment {
             [self.ordinary_fog, self.fog] = self.fog_context.world_model_scene_banks(
                 self.base_fog,
@@ -146,6 +155,18 @@ impl RuntimeWorldEnvironmentFrame {
             );
         }
         self
+    }
+
+    /// Returns the stored WMO boundary fade shared with its MOSB skybox slot.
+    #[must_use]
+    pub const fn world_model_skybox_weight(self) -> f32 {
+        self.world_model_skybox_weight
+    }
+
+    /// Any camera liquid type suppresses sky drawing, including flag-zero rows.
+    #[must_use]
+    pub const fn has_camera_liquid(self) -> bool {
+        self.liquid_flags.is_some()
     }
 
     /// Returns stock's time-derived exterior sun direction.
@@ -159,6 +180,11 @@ impl RuntimeWorldEnvironmentFrame {
     pub fn world_model_emissive(self) -> f32 {
         world_model_environment_emissive(self.half_minutes)
     }
+}
+
+/// 7F16F0 stores the clamped boundary product before any skybox slot consumes it.
+fn world_model_skybox_weight(boundary_distance: Option<f32>) -> f32 {
+    boundary_distance.map_or(0., |distance| (distance * 0.04).clamp(0., 1.))
 }
 
 /// Resolves the cyclic DayNight scalar consumed by MapObj material color.
@@ -309,6 +335,7 @@ impl RuntimeWorldEnvironment {
             ordinary_fog: light.final_fog(fog_context, false),
             base_fog: light.final_fog(fog_context, false),
             liquid_flags: None,
+            world_model_skybox_weight: 0.,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),
         };
         self.current = Some(current);

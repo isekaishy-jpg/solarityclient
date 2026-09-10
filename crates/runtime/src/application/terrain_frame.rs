@@ -946,11 +946,18 @@ impl TerrainFrame {
         terrain.complete_world_model_scene(last_world_model_group);
         profile.mark("WMO packets");
 
+        let sky_window = terrain.world_model_sky_window()?;
+        let has_sky_window = terrain.has_world_model_sky_window();
+        let world_model_skybox = has_sky_window
+            .then(|| terrain.world_model_skybox())
+            .flatten();
         let (default_sky, sky_models) = sky_resources.prepare_models(
             renderer,
             camera,
             liquid_time_ms,
             environment,
+            sky_window,
+            world_model_skybox,
             m2.bone_transforms.len(),
             random,
         )?;
@@ -960,6 +967,14 @@ impl TerrainFrame {
             .with_world_depth_range()
             .with_m2_instance_scenes(m2.instance_scenes)
             .with_sky_models(sky_models)
+            .with_sky_window(sky_window.filter(|_| !environment.has_camera_liquid()))
+            .with_background_color(if !has_sky_window {
+                environment.fog().color().extend(1.)
+            } else if environment.has_camera_liquid() {
+                environment.ordinary_model_fog().color().extend(1.)
+            } else {
+                Vec4::ZERO
+            })
             .with_particle_capacity(m2.particle_vertex_capacity, m2.particle_index_capacity);
         if let Some(projection) = shadow_projection {
             scene = scene.with_primary_shadows(solarity_rendering::WorldPrimaryShadowFrame::new(

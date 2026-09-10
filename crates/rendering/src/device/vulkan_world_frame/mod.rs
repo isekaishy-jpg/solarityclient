@@ -216,6 +216,10 @@ impl WorldFrameRenderer {
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
         let ensure_started = std::time::Instant::now();
+        // An admitted world sky scene may be fully hidden inside a building.
+        // Its fog clear is still a complete frame even when no geometry draws.
+        let has_sky_scene = scene.sky_models().is_some() || scene.sky().is_some();
+        let scene = scene.clip_sky(window.screen);
         let sky_models = scene.sky_models();
         let sky_bones = sky_models.map_or(&[][..], |frame| frame.bones);
         let sky_draw_count = sky_models.map_or(0, |frame| frame.draw_count());
@@ -232,6 +236,7 @@ impl WorldFrameRenderer {
             .checked_add(sky_bones.len())
             .ok_or(VulkanError::WorldFrameCapacity)?;
         if terrain_draws.is_empty()
+            && !has_sky_scene
             && world_model_draws.is_empty()
             && m2_draws.is_empty()
             && sky_draw_count == 0
@@ -533,6 +538,8 @@ impl WorldFrameRenderer {
             depth_view: slot.depth_view(),
             extent: context.extent,
             screen_window: window.screen,
+            sky_window: scene.sky_window(),
+            background_color: scene.background_color(),
             frame_sets: slot.descriptor_sets(),
             world_model_material_stride: slot.world_model_material_stride(),
             m2_material_stride: slot.m2_material_stride(),

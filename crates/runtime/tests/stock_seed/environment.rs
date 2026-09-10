@@ -136,6 +136,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             indoor.fog().exponent()
         );
         assert_eq!(frame.with_world_model_fog(None), frame);
+        assert!(!frame.has_camera_liquid());
         assert_eq!(environment.resolve_liquid(frame, None, &liquids)?, frame);
         for (depth, expected) in [
             (-0.001, underwater),
@@ -152,6 +153,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
                 }),
                 &liquids,
             )?;
+            assert!(resolved.has_camera_liquid());
             assert_eq!(
                 resolved.light().ambient_color(),
                 Vec3::splat(expected / 255.)

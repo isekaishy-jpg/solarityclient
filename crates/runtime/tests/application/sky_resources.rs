@@ -1,5 +1,8 @@
 //! Real LightSkybox models through the retained world compositor and frame banks.
 
+#[path = "world_model_sky_resources.rs"]
+mod world_model;
+
 use super::*;
 use glam::{Mat4, Vec3, Vec4};
 use solarity_asset::{ArchiveCatalog, ClientDataRoot, Locale};
@@ -60,6 +63,8 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
                 day: 0.5,
                 realm_minute: 720,
                 skyboxes: [(row.id(), opacity), (0, 0.), (0, 0.)],
+                world_model: None,
+                visible: true,
             };
             let prefix = if case == 0 { 7 } else { 19 };
             let (default_sky, frame) =
@@ -154,6 +159,8 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
             day: 0.5,
             realm_minute: 900,
             skyboxes: [(2, weights[0]), (38, weights[1]), (40, weights[2])],
+            world_model: None,
+            visible: true,
         };
         let (default_sky, frame) =
             sky.prepare_model_input(&mut renderer, camera, 200000, input, 5, &mut random)?;
@@ -182,6 +189,8 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         day: 0.5,
         realm_minute: 900,
         skyboxes: [(2, 1.), (0, 0.), (0, 0.)],
+        world_model: None,
+        visible: true,
     };
     let (_, frame) =
         sky.prepare_model_input(&mut renderer, camera, 201000, input, 0, &mut random)?;

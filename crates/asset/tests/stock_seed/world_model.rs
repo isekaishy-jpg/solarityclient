@@ -10,6 +10,58 @@ use solarity_asset::{
 
 use crate::support::{Fixture, FixtureFile};
 
+/// 7D7470 nulls empty MOSB and clears only the root MOGI sky bit.
+#[test]
+fn world_model_skybox_name_controls_root_sky_flags() -> Result<(), Box<dyn Error>> {
+    for name in [
+        None,
+        Some(&b"\0ignored.m2\0"[..]),
+        Some(&b"Environments/Sky.mdl\0ignored"[..]),
+    ] {
+        let mut root = root_fixture(1);
+        let info = root
+            .windows(4)
+            .position(|bytes| bytes == b"IGOM")
+            .ok_or("fixture MOGI")?;
+        set_u32(&mut root, info + 8, 0x40140);
+        if let Some(name) = name {
+            push_chunk(&mut root, *b"BSOM", name);
+        }
+        let mut group = group_fixture(8);
+        let header = group
+            .windows(4)
+            .position(|bytes| bytes == b"PGOM")
+            .ok_or("fixture MOGP")?;
+        let flags = u32::from_le_bytes(group[header + 16..header + 20].try_into()?);
+        set_u32(&mut group, header + 16, flags | 0x40000);
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World/Sky.wmo",
+                bytes: &root,
+            },
+            FixtureFile {
+                archive: "common.MPQ",
+                path: "World/Sky_000.wmo",
+                bytes: &group,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let model = DecodedWorldModel::load(&mut store, &AssetPath::new("World/Sky.wmo")?)?;
+        let present = name.is_some_and(|name| name[0] != 0);
+        assert_eq!(model.skybox(), present.then_some("Environments/Sky.mdl"));
+        assert_eq!(
+            model.group_info()[0].flags(),
+            if present { 0x40140 } else { 0x140 }
+        );
+        assert_eq!(model.groups()[0].flags() & 0x40000, 0x40000);
+    }
+    Ok(())
+}
+
 /// Missing MOCV uses 7C8560's exact colors for both native vertex layouts.
 #[test]
 fn world_model_missing_vertex_colors_match_original_upload() -> Result<(), Box<dyn Error>> {

@@ -19,6 +19,7 @@ use solarity_rendering::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Process-retained celestial textures and shared authored sky model scenes.
 pub(super) struct RuntimeSkyResources {
     sources: [Option<BlpTextureSource>; 3],
     textures: [Option<BlpTextureHandle>; 3],
@@ -28,12 +29,15 @@ pub(super) struct RuntimeSkyResources {
     store: AssetStoreHandle,
     definitions: HashMap<u32, LightSkybox>,
     skyboxes: Vec<CachedSkybox>,
+    /// Raw authored names resolve once; aliases share the canonical model cache.
+    names: HashMap<String, Option<usize>>,
     model_cache: M2ModelCache,
     texture_cache: BlpTextureCache,
     bones: Vec<glam::Mat4>,
     skybox_draws: [Vec<M2PreparedDraw>; 3],
 }
 
+/// One canonical path owns its first phase flags even across name aliases.
 struct CachedSkybox {
     path: AssetPath,
     phase: skybox::SkyboxPhase,
@@ -41,19 +45,24 @@ struct CachedSkybox {
 }
 
 #[derive(Clone, Copy)]
-struct SkyModelInput {
+/// One palette request followed by WMO replacement and draw visibility.
+struct SkyModelInput<'a> {
     day: f32,
     realm_minute: i32,
     skyboxes: [(u32, f32); 3],
+    world_model: Option<(&'a str, f32)>,
+    visible: bool,
 }
 
 #[derive(Clone, Copy)]
+/// Uploaded celestial handles paired with the current packed light colors.
 pub(super) struct RuntimeCelestialResources {
     pub(super) textures: [BlpTextureHandle; 3],
     pub(super) colors: [u32; 3],
 }
 
 impl RuntimeSkyResources {
+    /// Requests the stock celestial names and retains their process lifetime.
     pub(super) fn load(
         store: AssetStoreHandle,
         lights: &LightCatalog,
@@ -103,6 +112,7 @@ impl RuntimeSkyResources {
                 .map(|row| (row.id(), row.clone()))
                 .collect(),
             skyboxes: Vec::new(),
+            names: HashMap::new(),
             model_cache: M2ModelCache::new(),
             texture_cache: BlpTextureCache::new(),
             bones: Vec::new(),
@@ -111,12 +121,15 @@ impl RuntimeSkyResources {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Combines current environment slots with camera-root sky admission.
     pub(super) fn prepare_models(
         &mut self,
         renderer: &mut VulkanRenderer,
         camera: solarity_rendering::WorldCameraFrame,
         time_ms: u32,
         environment: super::environment_coordinator::RuntimeWorldEnvironmentFrame,
+        window: Option<solarity_rendering::WorldSkyWindow>,
+        world_model: Option<&str>,
         world_bone_count: usize,
         random: &mut crate::random::CrtRand,
     ) -> Result<(bool, solarity_rendering::WorldSkyModelFrame<'_>), RuntimeTerrainFrameError> {
@@ -131,6 +144,9 @@ impl RuntimeSkyResources {
                     .light()
                     .skyboxes()
                     .map(|slot| (slot.id(), slot.weight())),
+                world_model: world_model
+                    .map(|path| (path, environment.world_model_skybox_weight())),
+                visible: window.is_some() && !environment.has_camera_liquid(),
             },
             world_bone_count,
             random,
@@ -138,18 +154,31 @@ impl RuntimeSkyResources {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Resolves requests before the native gate, then advances the visible scene.
     fn prepare_model_input(
         &mut self,
         renderer: &mut VulkanRenderer,
         camera: solarity_rendering::WorldCameraFrame,
         time_ms: u32,
-        input: SkyModelInput,
+        input: SkyModelInput<'_>,
         world_bone_count: usize,
         random: &mut crate::random::CrtRand,
     ) -> Result<(bool, solarity_rendering::WorldSkyModelFrame<'_>), RuntimeTerrainFrameError> {
-        let slots = skybox::select_slots::<RuntimeTerrainFrameError>(input.skyboxes, |id| {
+        let mut slots = skybox::select_slots::<RuntimeTerrainFrameError>(input.skyboxes, |id| {
             self.resolve_skybox(id, time_ms)
         })?;
+        if let Some((path, weight)) = input.world_model {
+            let model = self.resolve_name(path, 0, time_ms)?;
+            skybox::replace_world_model(&mut slots, model, weight);
+        }
+        // Palette requests and 7F31C0 precede the draw gate. Invisible scenes
+        // retain resident owners, but do not advance animation or consume RNG.
+        if !input.visible {
+            return Ok((
+                false,
+                solarity_rendering::WorldSkyModelFrame::new(sky_scene(camera), &[], &[], &[]),
+            ));
+        }
         let default_sky = !slots.iter().any(|slot| {
             slot.flags == 0
                 && slot.weight > 0.99
@@ -231,6 +260,7 @@ impl RuntimeSkyResources {
         ))
     }
 
+    /// Resolves a LightSkybox row while preserving its slot and phase flags.
     fn resolve_skybox(
         &mut self,
         id: u32,
@@ -240,18 +270,39 @@ impl RuntimeSkyResources {
             return Ok(None);
         };
         let flags = definition.flags();
-        if definition.model_path().is_empty() {
-            return Ok(Some((None, flags)));
+        if let Some(&model) = self.names.get(definition.model_path()) {
+            return Ok(Some((model, flags)));
         }
-        let path = match AssetPath::new(definition.model_path()) {
+        // Only a new DBC name needs independent ownership while resolving it.
+        let name = definition.model_path().to_owned();
+        Ok(Some((self.resolve_name(&name, flags, time_ms)?, flags)))
+    }
+
+    /// 7F30C0 reuses models by path and preserves their first phase flags.
+    fn resolve_name(
+        &mut self,
+        name: &str,
+        flags: u32,
+        time_ms: u32,
+    ) -> Result<Option<usize>, RuntimeTerrainFrameError> {
+        if let Some(&model) = self.names.get(name) {
+            return Ok(model);
+        }
+        if name.is_empty() {
+            self.names.insert(name.to_owned(), None);
+            return Ok(None);
+        }
+        let path = match AssetPath::new(name) {
             Ok(path) => path,
             Err(error) => {
-                tracing::warn!(model = definition.model_path(), %error, "invalid authored skybox path");
-                return Ok(Some((None, flags)));
+                tracing::warn!(model = name, %error, "invalid authored skybox path");
+                self.names.insert(name.to_owned(), None);
+                return Ok(None);
             }
         };
         if let Some(index) = self.skyboxes.iter().position(|entry| entry.path == path) {
-            return Ok(Some((Some(index), flags)));
+            self.names.insert(name.to_owned(), Some(index));
+            return Ok(Some(index));
         }
         let mut store = self.store.borrow_mut();
         let resident = self
@@ -302,7 +353,8 @@ impl RuntimeSkyResources {
                 ..Default::default()
             },
         });
-        Ok(Some((Some(index), flags)))
+        self.names.insert(name.to_owned(), Some(index));
+        Ok(Some(index))
     }
 
     /// Uploads once; all world generations keep the renderer-owned handles.

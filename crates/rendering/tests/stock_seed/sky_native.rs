@@ -3,6 +3,59 @@
 use super::*;
 use std::error::Error;
 
+/// Native draw admission includes strict viewport intersection and D3D9's
+/// asymmetric lower/upper pixel rounding, without changing sky projection.
+#[test]
+fn sky_portal_windows_match_native_draw_gate_and_backbuffer_scissor() -> Result<(), Box<dyn Error>>
+{
+    use crate::{WorldScreenWindow, WorldSkyWindow};
+    let mut count = 0;
+    for line in include_str!("../fixtures/world_sky_window_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        let floats = fields[4..12]
+            .iter()
+            .map(|field| Ok(f32::from_bits(u32::from_str_radix(field, 16)?)))
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+        let view = floats[..4]
+            .iter()
+            .map(|value| value * 2. - 1.)
+            .collect::<Vec<_>>();
+        let viewport = WorldScreenWindow::new(view[1], view[0], view[3], view[2]);
+        let input = [floats[4], floats[5], floats[6], floats[7]];
+        let window = if fields[1] == "1" {
+            WorldSkyWindow::new(input)
+                .ok()
+                .and_then(|window| window.clipped(viewport))
+        } else {
+            None
+        };
+        if fields[14] == "-" {
+            assert!(window.is_none(), "{line}");
+            assert_eq!(&fields[12..14], ["0", "0"]);
+        } else {
+            let window = window.ok_or("native sky window was rejected")?;
+            assert_eq!(&fields[12..14], ["6", "11345"]);
+            for (actual, expected) in window.bounds().into_iter().zip(&fields[14..18]) {
+                assert_eq!(
+                    actual.to_bits(),
+                    u32::from_str_radix(expected, 16)?,
+                    "{line}"
+                );
+            }
+            let pixels = window.pixel_bounds([fields[2].parse()?, fields[3].parse()?]);
+            for (actual, expected) in pixels.into_iter().zip(&fields[18..22]) {
+                assert_eq!(actual, expected.parse::<u32>()?, "{line}");
+            }
+        }
+        count += 1;
+    }
+    assert_eq!(count, 160);
+    Ok(())
+}
+
 fn unhex(raw: &str) -> Result<Vec<u8>, Box<dyn Error>> {
     raw.as_bytes()
         .as_chunks::<2>()

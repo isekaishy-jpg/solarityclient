@@ -117,11 +117,16 @@ fn sky_models_share_bone_storage_and_keep_native_compositor_order() -> Result<()
             [M2LocalLightState::disabled(); 4],
         )
     };
-    for (case, prefix) in [0_usize, 3, 12, 0, 9, 3, 24, 0, 3, 12, 3, 3]
-        .into_iter()
-        .enumerate()
+    for (case, prefix) in [
+        0_usize, 3, 12, 0, 9, 3, 24, 0, 3, 12, 3, 3, 0, 3, 12, 0, 9, 3, 24, 0, 3, 12, 3, 3,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let mode = case % 6;
+        let cropped = (12..18).contains(&case);
+        let hidden = case >= 18;
+        let background = if case < 12 { [0u8; 3] } else { [16, 24, 32] };
         let material = |color| {
             M2MaterialUniform::new(
                 Mat4::IDENTITY,
@@ -232,6 +237,18 @@ fn sky_models_share_bone_storage_and_keep_native_compositor_order() -> Result<()
         if mode == 3 || mode == 5 {
             scene = scene.with_sky(WorldSkyFrame::new(&gradient, camera));
         }
+        let sky_window = if hidden {
+            None
+        } else if cropped {
+            Some(solarity_rendering::WorldSkyWindow::new([
+                0.25, 0.25, 0.75, 0.75,
+            ])?)
+        } else {
+            Some(solarity_rendering::WorldSkyWindow::FULL)
+        };
+        scene = scene.with_sky_window(sky_window).with_background_color(
+            Vec3::from_array(background.map(|value| f32::from(value) / 255.)).extend(1.),
+        );
         renderer.request_frame_capture()?;
         let report = renderer.present_world_frame(
             scene,
@@ -245,10 +262,13 @@ fn sky_models_share_bone_storage_and_keep_native_compositor_order() -> Result<()
             &[],
             &[],
         )?;
-        assert_eq!(report.sky_model_draw_count(), stars.len() + boxes.len());
+        assert_eq!(
+            report.sky_model_draw_count(),
+            if hidden { 0 } else { stars.len() + boxes.len() }
+        );
         assert_eq!(
             report.bone_transform_count(),
-            world_bones.len() + sky_bones.len()
+            world_bones.len() + if hidden { 0 } else { sky_bones.len() }
         );
         let frame = renderer
             .take_captured_frame()?
@@ -261,9 +281,24 @@ fn sky_models_share_bone_storage_and_keep_native_compositor_order() -> Result<()
             4 => [0, 0, 255],
             _ => [128, 0, 32],
         };
-        for y in (8..56).step_by(8) {
-            for x in (8..56).step_by(8) {
+        for y in [8, 15, 16, 24, 32, 48, 49, 56] {
+            for x in [8, 15, 16, 24, 32, 48, 49, 56] {
                 let actual = rgba8_pixel(frame.rgba8(), 64, x, y);
+                let expected = if mode == 4 {
+                    expected
+                } else if hidden || (cropped && (!(16..49).contains(&x) || !(16..49).contains(&y)))
+                {
+                    background
+                } else {
+                    let remainder = match mode {
+                        0 | 5 => 0.5,
+                        1 => 0.75,
+                        _ => 0.375,
+                    };
+                    std::array::from_fn(|channel| {
+                        expected[channel] + (f32::from(background[channel]) * remainder) as u8
+                    })
+                };
                 for channel in 0..3 {
                     assert!(
                         actual[channel].abs_diff(expected[channel]) <= 2,

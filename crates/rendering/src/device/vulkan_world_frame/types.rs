@@ -25,6 +25,8 @@ pub struct WorldFrameScene<'a> {
     clouds: Option<WorldCloudFrame<'a>>,
     celestials: Option<crate::WorldCelestialFrame<'a>>,
     sky_models: Option<WorldSkyModelFrame<'a>>,
+    sky_window: Option<crate::WorldSkyWindow>,
+    background_color: glam::Vec4,
 }
 
 impl<'a> WorldFrameScene<'a> {
@@ -66,6 +68,8 @@ impl<'a> WorldFrameScene<'a> {
             clouds: None,
             celestials: None,
             sky_models: None,
+            sky_window: Some(crate::WorldSkyWindow::FULL),
+            background_color: glam::Vec4::new(0., 0., 0., 1.),
         }
     }
 
@@ -123,6 +127,41 @@ impl<'a> WorldFrameScene<'a> {
     pub const fn with_sky_models(mut self, frame: WorldSkyModelFrame<'a>) -> Self {
         self.sky_models = Some(frame);
         self
+    }
+
+    /// Restricts every sky queue to the native portal scissor. None suppresses
+    /// sky drawing; world geometry and UI retain their own full-frame scissor.
+    #[must_use]
+    pub const fn with_sky_window(mut self, window: Option<crate::WorldSkyWindow>) -> Self {
+        self.sky_window = window;
+        self
+    }
+
+    pub(in crate::device) const fn sky_window(self) -> Option<crate::WorldSkyWindow> {
+        self.sky_window
+    }
+
+    /// Rejects invisible queues before allocating or uploading frame resources.
+    pub(super) fn clip_sky(mut self, viewport: crate::WorldScreenWindow) -> Self {
+        self.sky_window = self.sky_window.and_then(|window| window.clipped(viewport));
+        if self.sky_window.is_none() {
+            self.sky_models = None;
+            self.sky = None;
+            self.celestials = None;
+            self.clouds = None;
+        }
+        self
+    }
+
+    /// Supplies 79A870's clear color, chosen from camera fog or black.
+    #[must_use]
+    pub const fn with_background_color(mut self, color: glam::Vec4) -> Self {
+        self.background_color = color;
+        self
+    }
+
+    pub(in crate::device) const fn background_color(self) -> glam::Vec4 {
+        self.background_color
     }
 
     pub(in crate::device) const fn sky_models(self) -> Option<WorldSkyModelFrame<'a>> {

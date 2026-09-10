@@ -3,6 +3,9 @@
 #[path = "unit_scene_overlap.rs"]
 mod overlap;
 
+#[path = "world_model_sky_scene.rs"]
+mod sky;
+
 use std::{error::Error, sync::Arc};
 
 use glam::{Mat4, Vec3};
@@ -384,6 +387,16 @@ fn scene_root(
     group_flags: u32,
     entrance: bool,
 ) -> Result<PlacedWorldModelCollision, Box<dyn Error>> {
+    scene_root_with_skybox(info_flags, group_flags, entrance, None)
+}
+
+/// A named skybox preserves root sky flags through the native loader policy.
+fn scene_root_with_skybox(
+    info_flags: u32,
+    group_flags: u32,
+    entrance: bool,
+    skybox: Option<&str>,
+) -> Result<PlacedWorldModelCollision, Box<dyn Error>> {
     let mut root = Vec::new();
     chunk(&mut root, b"REVM", &17u32.to_le_bytes());
     let mut header = vec![0; 64];
@@ -406,6 +419,11 @@ fn scene_root(
         info = exterior;
     }
     chunk(&mut root, b"IGOM", &info);
+    if let Some(skybox) = skybox {
+        let mut bytes = skybox.as_bytes().to_vec();
+        bytes.push(0);
+        chunk(&mut root, b"BSOM", &bytes);
+    }
     if entrance {
         let vertices = [
             [-3f32, -3., -1.],
