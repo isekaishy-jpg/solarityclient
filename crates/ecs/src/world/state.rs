@@ -373,8 +373,8 @@ impl ActiveWorld {
     }
 
     /// Creates or updates the resident unit's vehicle definition. Native 7580F0
-    /// replaces an existing owner's row without resetting its initial pitch.
-    pub fn set_unit_vehicle(&mut self, guid: u64, definition_id: u32, initial_pitch: f32) -> bool {
+    /// replaces an existing owner's row without resetting its initial facing.
+    pub fn set_unit_vehicle(&mut self, guid: u64, definition_id: u32, initial_facing: f32) -> bool {
         if !matches!(
             self.object_kind(guid),
             Some(ObjectKind::Unit | ObjectKind::Player)
@@ -384,11 +384,11 @@ impl ActiveWorld {
         let Some(entity) = self.objects.find(guid) else {
             return false;
         };
-        let pitch = self
+        let facing = self
             .unit_vehicle(guid)
-            .map_or(initial_pitch, crate::UnitVehicle::initial_pitch);
+            .map_or(initial_facing, crate::UnitVehicle::initial_facing);
         self.storage
-            .add_component(entity, (crate::UnitVehicle::new(definition_id, pitch),));
+            .add_component(entity, (crate::UnitVehicle::new(definition_id, facing),));
         true
     }
 

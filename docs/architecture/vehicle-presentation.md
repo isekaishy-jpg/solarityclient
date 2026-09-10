@@ -7,10 +7,13 @@ remain open under [world completion](world-completion.md).
 ## Native evidence
 
 The pinned build-12340 `4D3890` reader consumes the flag-`0x80` create tail as
-Vehicle.dbc ID at movement snapshot `+2C4` and initial pitch at `+2C8`.
+Vehicle.dbc ID at movement snapshot `+2C4` and initial facing at `+2C8`.
 `73F660 -> 73C260 -> 74C750` creates a UnitVehicle_C owner at unit `+F5C`.
-`757FA0` retains the vehicle row and initial pitch. `7580F0` changes the row
-without replacing the saved pitch; an absent row does not delete the owner.
+`757FA0` retains the vehicle row and initial facing. `7580F0` changes the row
+without replacing the saved angle; an absent row does not delete the owner.
+The constructor's fallback virtual `+38` is `6E6F60`, which returns the raw
+movement facing at `+20`; it is not the pitch getter. Virtual `+34` (`6E6F40`)
+converts that facing to world space through `4F42A0`.
 
 `5D3340 -> 756EC0` resolves the parent unit's vehicle owner, bounds the seat
 byte to `0..7`, reads the corresponding Vehicle.dbc column `6..13`, and looks
@@ -56,7 +59,8 @@ The checked fixture SHA-256 is
 `d62ff263c556e1cd854e078d56deff76e06617d53a59440229736c17c401e643`.
 
 Runtime comparisons pass for every captured case. Encrypted packet tests cover
-payload alignment with rotation/update fields, truncation, trailing bytes,
+payload alignment with rotation/update fields, distinct living pitch and vehicle
+facing values, truncation, trailing bytes,
 duplicate remote creates, local definition changes, missing/zero IDs, non-unit
 admission and lifetime replacement. A model-residency test verifies immediate
 versus interpolated passenger opacity, the midpoint, retained timing after a

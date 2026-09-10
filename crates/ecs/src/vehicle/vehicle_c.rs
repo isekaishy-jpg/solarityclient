@@ -6,14 +6,14 @@ use shipyard::Component;
 #[derive(Clone, Copy, Debug, PartialEq, Component)]
 pub struct UnitVehicle {
     definition_id: u32,
-    initial_pitch: f32,
+    initial_facing: f32,
 }
 
 impl UnitVehicle {
-    pub(crate) const fn new(definition_id: u32, initial_pitch: f32) -> Self {
+    pub(crate) const fn new(definition_id: u32, initial_facing: f32) -> Self {
         Self {
             definition_id,
-            initial_pitch,
+            initial_facing,
         }
     }
 
@@ -23,9 +23,9 @@ impl UnitVehicle {
         self.definition_id
     }
 
-    /// Returns the pitch captured on owner creation; definition changes retain it.
+    /// Returns the facing captured on owner creation; definition changes retain it.
     #[must_use]
-    pub const fn initial_pitch(self) -> f32 {
-        self.initial_pitch
+    pub const fn initial_facing(self) -> f32 {
+        self.initial_facing
     }
 }

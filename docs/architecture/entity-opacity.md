@@ -97,9 +97,9 @@ identity gets independent state. The unit scene advances this state before
 culling. Model admission reads the target and eligibility once per display.
 
 The runtime now supplies the resolved seat attachment to this admission rule.
-The flag-`0x80` create payload retains Vehicle.dbc ID and initial pitch in a
+The flag-`0x80` create payload retains Vehicle.dbc ID and initial facing in a
 unit-owned ECS component, including zero and unresolved IDs. `757FA0` seeds
-pitch; `7580F0` replaces the row while preserving that pitch. Updates without
+facing; `7580F0` replaces the row while preserving that angle. Updates without
 the payload leave the owner intact, duplicate remote creates remain ignored,
 and removal/GUID reuse ends its lifetime. `ClientServices` loads both exact
 vehicle tables through the normal asset stack and shares the catalog with

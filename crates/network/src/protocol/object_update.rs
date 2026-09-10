@@ -101,8 +101,8 @@ pub struct ObjectMovementUpdate {
 pub struct ObjectVehicleMovement {
     /// Exact Vehicle.dbc identifier, including zero or a missing row.
     pub definition_id: u32,
-    /// Initial vehicle pitch, independent of unit facing and MovementInfo pitch.
-    pub initial_pitch: f32,
+    /// Initial vehicle facing, retained separately from ongoing unit movement.
+    pub initial_facing: f32,
 }
 
 /// Non-living passenger position carried by `UPDATEFLAG_POSITION`.
@@ -578,7 +578,7 @@ impl<'a> UpdateCursor<'a> {
         if update_flags & UPDATE_FLAG_VEHICLE != 0 {
             movement.vehicle = Some(ObjectVehicleMovement {
                 definition_id: self.read_u32("vehicle definition is truncated")?,
-                initial_pitch: self.read_f32("vehicle initial pitch is truncated")?,
+                initial_facing: self.read_f32("vehicle initial facing is truncated")?,
             });
         }
         movement.packed_rotation = if update_flags & UPDATE_FLAG_ROTATION != 0 {
