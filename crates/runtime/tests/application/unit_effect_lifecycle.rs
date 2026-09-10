@@ -106,9 +106,35 @@ fn completion_uses_authored_despawn_or_pins_the_terminal_pose() -> Result<(), Bo
         drop(lifetime);
         scene.prepare_attachment(&mut placement);
         assert!(placement.unit_effect.as_ref().ok_or("effect")?.retiring());
-        let mut placements = vec![placement];
-        assert!(scene.retire_drained(&mut placements));
-        assert!(placements.is_empty());
+        // Dirty topology scans from zero; current topology can skip the
+        // ordinary prefix. Both retain a later ordinary placement in order.
+        let ordinary = |guid| {
+            m2_gpu_placement(
+                0,
+                Mat4::IDENTITY,
+                M2GpuPlacementOwner::CreatureBody { guid },
+                &model,
+                None,
+                None,
+                0,
+            )
+        };
+        let mut placements = vec![ordinary(10)?, placement, ordinary(20)?];
+        let first_effect = usize::from(despawn);
+        scene
+            .anchors
+            .insert(1, HashMap::from([(17, Some(Mat4::IDENTITY))]));
+        assert!(scene.retire_drained(&mut placements, first_effect));
+        assert_eq!(
+            placements.iter().map(|p| p.owner).collect::<Vec<_>>(),
+            [
+                M2GpuPlacementOwner::CreatureBody { guid: 10 },
+                M2GpuPlacementOwner::CreatureBody { guid: 20 },
+            ]
+        );
+        assert!(scene.anchors.is_empty());
+        let no_effects = placements.len();
+        assert!(!scene.retire_drained(&mut placements, no_effects));
     }
     Ok(())
 }

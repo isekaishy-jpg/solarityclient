@@ -163,6 +163,13 @@ Moving the camera cannot strand a retired particle pool. Destruction of the ECS 
 as well as attached breath; an ordinary body material rebuild preserves the
 unit lifetime.
 
+Runtime retirement uses the current placement metadata's first-effect boundary
+to exclude ordinary models from the drain scan. After a topology change it
+scans the complete current list until the metadata is rebuilt. Removal keeps
+surviving placements in order and uses the same retirement phase and live
+particle predicate; attachment cleanup searches only the surviving candidate
+range. Effect-free settled frames do not scan terrain M2 placement records.
+
 The opt-in runtime tests prepare all five archived models through the shared
 resident loader and shader compiler, advance the completion state, sample
 camera-aware bones, build particle geometry with the shared twinkle table,

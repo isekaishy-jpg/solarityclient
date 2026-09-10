@@ -2095,6 +2095,7 @@ impl M2Frame {
         )>,
         shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
+        let mut frame_profile = RuntimeFrameProfile::new("M2 frame preparation");
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
         if let Some((terrain, _)) = spatial_lighting.as_mut() {
@@ -2120,10 +2121,21 @@ impl M2Frame {
         self.scene_lighting.clear();
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
+        frame_profile.mark("scene setup");
         self.unit_effects
             .publish_loaded(&self.animations, animation_time_ms, random)?;
         self.unit_effects.begin_frame();
-        if self.unit_effects.retire_drained(&mut self.placements) {
+        // Current topology excludes every ordinary model before the first
+        // effect. Publication can invalidate that boundary before this pass.
+        let first_effect = if self.placement_topology_dirty {
+            0
+        } else {
+            self.placement_visibility.effect_start()
+        };
+        if self
+            .unit_effects
+            .retire_drained(&mut self.placements, first_effect)
+        {
             self.placement_topology_dirty = true;
             self.compact_sources();
         }
@@ -2208,6 +2220,7 @@ impl M2Frame {
             profile.mark("visibility rebuild");
             self.placement_topology_dirty = false;
         }
+        frame_profile.mark("residency and topology");
         // Primary unit completion belongs to the scene update, including
         // bodies subsequently rejected by the camera's visibility test.
         for &index in self.placement_visibility.dynamic_indices() {
@@ -2279,6 +2292,7 @@ impl M2Frame {
                 .len()
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
+        frame_profile.mark("dynamic models");
         let effect_start = self.placement_visibility.effect_start();
         let mut next_placement = 0;
         loop {
@@ -3141,6 +3155,7 @@ impl M2Frame {
                 );
             }
         }
+        frame_profile.mark("instance traversal");
         self.transparent_elements.sort_unstable_by(|left, right| {
             (left.pass != first_transparent_pass)
                 .cmp(&(right.pass != first_transparent_pass))
@@ -3188,9 +3203,11 @@ impl M2Frame {
         self.visible_draws.sort_by_key(|draw| draw.scene_order());
         self.particle_draws.sort_by_key(|draw| draw.scene_order());
         self.ribbon_draws.sort_by_key(|draw| draw.scene_order());
+        frame_profile.mark("transparent order");
         if let Some((base, exterior)) = world_lighting {
             self.scene_lighting.finish(base, exterior)?;
         }
+        frame_profile.mark("scene lights");
         Ok(M2VisibleFrame {
             instance_scenes: &self.scene_lighting.scenes,
             scene_points: &self.scene_lighting.points,

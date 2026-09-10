@@ -324,6 +324,48 @@ lookup. Reported topology rebuild means were 1.561 ms for 89 changes before and
 remain necessary. This offline result does not establish populated-world FPS,
 complete stall elimination, or the requested 1,200 FPS target.
 
+## Unit effect retirement
+
+The M2 preparation profile separates scene setup, residency/topology work,
+dynamic models, instance traversal, transparent ordering, and scene lighting.
+It identified a full placement scan in effect retirement even when a settled
+scene had no unit effects. Current metadata already records the first effect;
+retirement now extracts drained effects only from that candidate range and
+keeps all surviving placements in order. Dirty topology uses the full current
+list until its boundary is rebuilt. Attachment cleanup uses the surviving
+candidate range, and source compaction still follows an actual removal.
+
+The original retirement phase and live-particle predicate are unchanged.
+Focused coverage includes current/dirty boundaries, surviving ordinary models
+on both sides of an effect, completion timers/random draws, same-frame callback
+publication, attachment replacement, and offscreen particle draining. The two
+installed-archive checks also pass, including all twelve instances from nine
+GPU effect sources.
+
+On 2026-09-09, final settled profile intervals on the same 1280 x 720 GTX 1070
+route measured the residency/topology stage at 190.839 us before and 0.261 us
+after (852 and 889 frames). Total M2 preparation measured 1.559 and 1.372 ms.
+These intervals have current metadata; changed frames still rebuild topology.
+
+Separate 2,400-frame-per-phase replays, with profiling and capture disabled
+and no compiler workload, measured these total frame means:
+
+| Phase | Before | After |
+| --- | ---: | ---: |
+| Stationary | 4.555 ms | 4.394 ms |
+| Orbit | 3.753 ms | 3.549 ms |
+| Pointer | 4.955 ms | 4.812 ms |
+| Outbound travel | 3.558 ms | 3.388 ms |
+| Return travel | 3.541 ms | 3.400 ms |
+| Settled | 4.660 ms | 4.457 ms |
+
+The means fell by 2.9-5.5%. Detail and primary-shadow draw counts match frame
+by frame in all six phases. Each direction retains 24 changed frames, 21
+admissions, and 21 evictions. Return maximum frame time was 22.834 ms before
+and 24.490 ms after; this is not evidence of stall elimination or a latency
+bound. The offline route does not establish populated-world performance or
+the requested 1,200 FPS target.
+
 ## Procedural cloud noise
 
 The sky profile separates gradient colors, celestials, cloud lighting, and

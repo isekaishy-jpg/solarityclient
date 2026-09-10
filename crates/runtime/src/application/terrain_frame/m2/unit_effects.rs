@@ -219,21 +219,31 @@ pub(super) struct M2UnitEffectScene {
 }
 
 impl M2UnitEffectScene {
-    pub(super) fn retire_drained(&mut self, placements: &mut Vec<M2GpuPlacement>) -> bool {
+    /// Retires completed effects only after their particles drain, keeping all
+    /// surviving placements in order. The prefix before `first_effect` must
+    /// contain no effects; callers pass zero while topology metadata is dirty.
+    pub(super) fn retire_drained(
+        &mut self,
+        placements: &mut Vec<M2GpuPlacement>,
+        first_effect: usize,
+    ) -> bool {
         let previous = placements.len();
-        placements.retain(|placement| {
-            placement.unit_effect.as_ref().is_none_or(|effect| {
-                !effect.retiring()
-                    || placement
-                        .particles
-                        .iter()
-                        .any(|particle| !particle.simulation.particles().is_empty())
+        placements
+            .extract_if(first_effect.., |placement| {
+                placement.unit_effect.as_ref().is_some_and(|effect| {
+                    effect.retiring()
+                        && placement
+                            .particles
+                            .iter()
+                            .all(|particle| particle.simulation.particles().is_empty())
+                })
             })
-        });
+            .for_each(drop);
         let changed = previous != placements.len();
         if changed {
+            let effects = &placements[first_effect..];
             self.anchors.retain(|parent, attachments| {
-                attachments.retain(|id, _| placements.iter().any(|placement| {
+                attachments.retain(|id, _| effects.iter().any(|placement| {
                     placement.unit_effect.as_ref().is_some_and(|effect| {
                         matches!(&effect.binding, UnitEffectBinding::Attached { owner, attachment, .. } if owner.as_ptr().addr() == *parent && *attachment == *id)
                     })
