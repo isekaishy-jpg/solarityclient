@@ -237,6 +237,18 @@ Local evidence: `target/world-admission-optimized.csv`,
 `target/build81-normal-perf{1,2}.csv`, `target/build81-world-profile.log` and
 `target/world-lazy-doodad-profile.log`.
 
+Testing Build 82 packages source `08f4ed71`. The installed and packaged
+executables both report Build 82 and share SHA-256
+`683C9FEA8E126AA746A92012D6FC10AE6784467CE9AC7794A63AFA35A8C876E4`.
+All-feature runtime tests passed (353 passed, 19 ignored), as did workspace
+Clippy with warnings denied and formatting. The optimized benchmark built from
+the same admission implementation also completed 1,260 frames each in normal
+and ghost mode, including camera orbit and a 200-unit outward/return segment.
+Each produced 23 captures; inspected normal stationary/orbit and ghost return
+images retain the known distant-terrain shapes and heavy ghost fog. Neither
+run reported runtime or Vulkan errors. These captured runs overlapped package
+compilation and supply smoke coverage only; their timings are not used above.
+
 ## Validation
 
 Performance changes require both contract tests and real-archive release
