@@ -289,9 +289,9 @@ prefixes, and restoration of world drawing beyond the sky scissor. A synthetic
 runtime sky test exercises MOSB aliases, inherited phase flags, opacity pixels,
 hidden-scene random/phase retention and return to the three DBC slots.
 
-The global override at `D38B5C` is a separate owner, described below. Manual-fog
-sky enable/clear behavior, screen-filter rendering, precipitation, and combined
-live-world appearance checks remain separate completion work.
+The global override at `D38B5C` and manual-fog sky enable/clear behavior are
+described below. Screen-filter rendering, precipitation, and combined live-world
+appearance checks remain separate completion work.
 
 Build 79 packages revision `d45c0a68`. Workspace tests, formatting and Clippy
 passed; the installed executable matches the packaged SHA-256
@@ -407,3 +407,13 @@ callbacks and world retirement. Environment tests cover palette independence,
 manual restoration, underwater/direct-liquid paths, WMO blending and farclip
 changes. These are component and integration checks; full-screen shaders and
 combined live ghost/invisibility appearance remain separate work.
+
+Build 80 packages revision `4b90a4d8`, including the global-light and manual-fog
+changes. Workspace tests, formatting and Clippy passed. The installed executable
+matches the packaged SHA-256
+`7A30AE79A8E79849C274F20287CA3BA09D2F4BE9E69EC3B0B04C140985557039`.
+An optimized offline world smoke run completed 1,260 frames across seven phases
+without logged renderer errors. Stationary, orbit and settled captures retain
+the known purple distant-terrain silhouettes. This normal-world smoke does not
+establish live ghost/invisibility shader parity, and capture timings are not
+performance evidence.
