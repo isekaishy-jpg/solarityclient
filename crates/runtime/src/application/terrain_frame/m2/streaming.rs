@@ -106,16 +106,30 @@ impl StaticM2Residency {
         update
     }
 
-    /// Commits a prepared generation set without rebuilding all live owner counts.
-    fn publish_scenes(&mut self, update: StaticM2SceneUpdate) {
+    /// Commits references and returns only owners whose last scene reference left.
+    fn publish_scenes(&mut self, update: StaticM2SceneUpdate) -> HashSet<ResidentM2Owner> {
+        let mut retired = HashSet::new();
+        if self.scenes.is_empty() {
+            // Initial GPU preparation seeds owners before any scene references
+            // are published. That initial scene may already have departed, so
+            // its absent owners cannot be recovered from a departure delta.
+            retired.extend(
+                self.owners
+                    .iter()
+                    .copied()
+                    .filter(|owner| update.references.get(owner).copied().unwrap_or(0) == 0),
+            );
+        }
         for (owner, count) in update.references {
             if count == 0 {
                 self.references.remove(&owner);
+                retired.insert(owner);
             } else {
                 self.references.insert(owner, count);
             }
         }
         self.scenes = update.scenes;
+        retired
     }
 
     /// Follows the common static/dynamic source compactor without retaining dead slots.
@@ -195,29 +209,42 @@ impl M2Frame {
         profile.mark("new sources and placements");
         // Publish references only after every new owner is ready, so a failed
         // resource preparation cannot make the next attempt skip that owner.
-        self.static_residency.publish_scenes(update);
-        // Retirement already visits every live owner. Gather its source here
-        // instead of scanning the large animation/effect records a second time.
+        let retired = self.static_residency.publish_scenes(update);
+        // Both retention paths mark source use for the later compactor. Include
+        // new owners before they join the placement vector.
         let mut remap = vec![usize::MAX; self.sources.len()];
         for placement in &added {
             remap[placement.source_index] = 0;
         }
-        self.placements.retain(|placement| {
-            let keep = match placement.owner {
-                M2GpuPlacementOwner::Static(owner) => {
-                    let keep = self.static_residency.references.contains_key(&owner);
-                    if !keep {
-                        self.static_residency.owners.remove(&owner);
-                    }
-                    keep
+        if retired.is_empty() {
+            // Most tile admissions and departures leave every shared M2 owner
+            // alive. Mark source use directly; unchanged owner lifetimes need
+            // no membership checks or placement record compaction.
+            if self.placement_topology_dirty {
+                for placement in &self.placements {
+                    remap[placement.source_index] = 0;
                 }
-                _ => true,
-            };
-            if keep {
-                remap[placement.source_index] = 0;
+            } else {
+                self.placement_visibility.mark_source_references(&mut remap);
             }
-            keep
-        });
+        } else {
+            self.placements.retain(|placement| {
+                let keep = match placement.owner {
+                    M2GpuPlacementOwner::Static(owner) => {
+                        let keep = !retired.contains(&owner);
+                        if !keep {
+                            self.static_residency.owners.remove(&owner);
+                        }
+                        keep
+                    }
+                    _ => true,
+                };
+                if keep {
+                    remap[placement.source_index] = 0;
+                }
+                keep
+            });
+        }
         profile.mark("placement retirement");
         self.placements.extend(added);
         self.static_residency.owners.extend(added_owners);
@@ -251,6 +278,9 @@ impl M2Frame {
         if !remap.contains(&usize::MAX) {
             return;
         }
+        // The compact placement metadata also retains source slots. Rebuild it
+        // after a remap before any later publication can mark source liveness.
+        self.placement_topology_dirty = true;
         let mut index = 0;
         let mut next = 0;
         self.sources.retain(|_| {

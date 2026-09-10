@@ -6,6 +6,8 @@ use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, placement_bounding
 /// culling. Only terrain-owned placements have immutable world transforms.
 #[derive(Default)]
 pub(super) struct M2PlacementVisibility {
+    /// Source liveness can be marked without revisiting large instance records.
+    source_indices: Vec<usize>,
     bounds: Vec<Option<(glam::Vec3, f32)>>,
     scenery: Vec<Option<super::distance::SceneryDistance>>,
     dynamic_indices: Vec<usize>,
@@ -24,6 +26,7 @@ impl M2PlacementVisibility {
         placements: &[M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
     ) {
+        self.source_indices.clear();
         self.bounds.clear();
         self.scenery.clear();
         self.dynamic_indices.clear();
@@ -32,6 +35,7 @@ impl M2PlacementVisibility {
         self.has_lights.clear();
         self.effect_start = placements.len();
         for (index, placement) in placements.iter().enumerate() {
+            self.source_indices.push(placement.source_index);
             let parent = super::placement_parent_index(placements, index, placement);
             self.light_parents.push(parent);
             let source = sources[placement.source_index].as_ref();
@@ -65,6 +69,15 @@ impl M2PlacementVisibility {
             } else {
                 None
             });
+        }
+    }
+
+    /// Marks all placement-owned slots, including dynamic and empty geometry.
+    /// Callers must rebuild after any placement or source-index remap before
+    /// using this compact list; the ordinary topology dirty flag covers both.
+    pub(super) fn mark_source_references(&self, remap: &mut [usize]) {
+        for &source_index in &self.source_indices {
+            remap[source_index] = 0;
         }
     }
 

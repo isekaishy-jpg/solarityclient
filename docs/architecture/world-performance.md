@@ -132,11 +132,13 @@ Scene counts publish after new GPU owners are ready, preserving retry discovery
 if resource preparation fails. The initial GPU scene is not an extra reference:
 the first full publication can already exclude it.
 
-Static retirement also gathers source references while deciding which owners
-survive. Newly admitted placements contribute their references before the same
-source compactor runs. This avoids a second scan of all large instance records;
-dynamic retirement retains the separate collection path. An empty geometry slot
-still survives while any owner references it.
+Static retirement uses the changed scene counts to identify owners whose last
+reference left. When that set is empty, publication marks source use directly;
+otherwise it retains placements against the departing-owner set and gathers
+their source references in that pass. Newly admitted placements contribute their
+references before the same source compactor runs. Dynamic retirement retains the
+separate collection path. An empty geometry slot still survives while any owner
+references it.
 
 The Vulkan regression publishes overlapping MDDF identities, removes an earlier
 source slot, adds new owners through the remapped slot, and then removes and
@@ -208,6 +210,66 @@ Placement retirement remained around 2.0–2.6 ms, and isolated source preparati
 and placement append samples still reached 16.4 ms and 7.5 ms respectively.
 Those remaining publication costs require further work; instrumented component
 timings are separate from the unprofiled frame measurements above.
+
+## M2 owner retirement
+
+Published scene-reference changes also provide the retiring-owner set. Ordinary
+updates no longer probe every placement against the full retained reference map.
+The first publication still reconciles initially prepared owners with the complete
+incoming scene set, since an owner from the initial GPU scene may already be
+absent. All new owners prepare before these references publish. Shared owners
+retain their order, playback, effects, and random state across scene changes.
+
+The existing placement-metadata rebuild also records source slots in a compact
+array. When no owner retires and that metadata is current, publication marks
+source liveness from the array. Pending topology changes use the live placement
+records until metadata is rebuilt. New owners contribute their source slots
+separately before joining the placement vector. Source compaction invalidates
+the cached slots whenever it removes entries.
+
+This liveness pass includes dynamic placements and intentionally empty geometry.
+The regression includes an unreferenced prepared source beside a live dynamic
+empty mesh, and rebases source slots by compacting an earlier hole. It verifies
+that later publication retains the live sources with both current and invalidated
+metadata.
+
+A temporary two-pass diagnostic separated ownership/source decisions from
+record destruction and compaction on the 1280 x 720 travel route. Of 96
+publications, 90 removed no owner. In the last 48 travel publications, the
+decision pass averaged 1.832 ms and record compaction averaged 0.105 ms.
+The six publications with removals moved an average 6.845 MB of retained
+placement records; their decision/compaction means were 2.067/0.756 ms.
+The decision pass also allocated retention flags and warmed record memory, so
+these diagnostic times attribute the work rather than establish a frame-time
+comparison. The temporary split and instrumentation were removed.
+
+The final ordinary profiler reported 89 publications before and 88 after across
+seven intervals each. Weighted mean placement retirement fell from 1.403 to
+0.271 ms (81%); complete M2 residency publication fell from 3.356 to 2.235 ms.
+The maximum retirement sample was 3.889 ms before and 3.984 ms after, so actual
+owner destruction and compaction can still produce individual spikes.
+
+The final unprofiled comparison ran the new version first and the preceding
+build second, at 1280 x 720 with 2,400 frames per phase, primary/detail shadows
+enabled, and no capture or compiler workload. Both versions admitted and evicted
+21 tiles per direction. The baseline had 24 changed frames in each direction;
+the new version had 24 outbound and 23 returning because asynchronous admission
+coincided with another change in one frame. Detail and primary-shadow draw
+counts matched frame by frame throughout all six measured phases.
+
+| Measurement | Outbound before | After | Return before | After |
+| --- | ---: | ---: | ---: | ---: |
+| Mean total frame | 3.790 ms | 3.804 ms | 3.778 ms | 3.807 ms |
+| Changed-frame streaming mean | 11.479 ms | 9.967 ms | 8.514 ms | 7.170 ms |
+| Changed-frame streaming median | 10.989 ms | 9.261 ms | 8.208 ms | 6.855 ms |
+| Total changed-frame streaming | 275.496 ms | 239.202 ms | 204.328 ms | 164.911 ms |
+| Maximum total frame | 24.285 ms | 22.130 ms | 20.896 ms | 22.848 ms |
+
+The loading-component reduction does not establish an FPS gain: the overall
+means above were slightly higher, as were the stationary, orbit, pointer, and
+settled means in this pair. Settled mean frame time was 4.863 ms before and
+4.892 ms after. These offline measurements establish neither a latency bound
+nor populated-world performance or the requested 1,200 FPS target.
 
 ## Per-instance lighting storage
 
