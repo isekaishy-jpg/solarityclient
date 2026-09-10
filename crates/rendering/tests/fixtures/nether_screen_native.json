@@ -1,0 +1,17 @@
+{
+  "executable_sha256": "aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8",
+  "initial_banks_sha256": "c6b1e18e3829f8f13eb700ee9f0e45c9b4ddfeb4b3effec76ef5f82b69d631a1",
+  "fixture_sha256": "f671869025564c5aad42b1df325b8994fba4eec0afee51e369b3f17198b42bc3",
+  "frames": 168,
+  "native_functions": [
+    "7E8990",
+    "4C1510",
+    "464580",
+    "7E9B10",
+    "8C0740",
+    "8C0DE0",
+    "7E8C80",
+    "8C02E0",
+    "7E8E20"
+  ]
+}

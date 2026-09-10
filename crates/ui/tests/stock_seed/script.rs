@@ -743,7 +743,7 @@ RESULT = BETWEEN .. ":" .. LOAD_ORDER"#,
         };
         let value = String::from_utf8(bytes)?;
         let expected = u32::from_str_radix(expected, 16)? as i32;
-        for name in ["ffx", "ffxDeath"] {
+        for name in ["ffx", "ffxDeath", "ffxNetherWorld"] {
             set_cvar.call::<()>((name, value.as_str()))?;
             assert_eq!(
                 cvar_observer.cvar_integer(name),

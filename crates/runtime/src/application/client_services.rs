@@ -1349,6 +1349,12 @@ impl ClientServices {
             .map_or(&[][..], RuntimeWorldUi::draws);
         profile.mark("world sound and render inputs");
         let liquid_time_ms = sdl3::timer::ticks() as u32;
+        let screen_effect = self.environment.prepare_screen_effect(
+            environment,
+            liquid_time_ms,
+            developer_elapsed,
+            camera,
+        );
         let footprint_particles = self
             .world_ui
             .as_ref()
@@ -1386,6 +1392,7 @@ impl ClientServices {
             &mut self.terrain,
             camera,
             liquid_time_ms,
+            screen_effect,
             underwater.is_some(),
             specular_enabled,
             Some(ripples),
@@ -2467,6 +2474,8 @@ impl ClientServices {
         self.environment
             .set_death_effects(effect_policy("ffxdeath"));
         self.environment.set_glow_effects(effect_policy("ffxglow"));
+        self.environment
+            .set_nether_effects(effect_policy("ffxnetherworld"));
         while let Some(id) = self.gameplay.take_screen_effect_update() {
             self.environment.select_screen_effect(id);
         }

@@ -52,8 +52,8 @@ pub use device::{
     WorldModelPipelineHandle, WorldModelPipelineInfo, WorldModelPreparedDraw,
     WorldModelSampledTexture, WorldModelSamplerHandle, WorldModelSamplerInfo,
     WorldModelTextureAddressMode, WorldModelTextureFiltering, WorldModelTextureSet,
-    WorldModelTextureSetHandle, WorldModelTextureSetInfo, WorldPrimaryShadowFrame,
-    WorldSkyModelBatch, WorldSkyModelFrame,
+    WorldModelTextureSetHandle, WorldModelTextureSetInfo, WorldNetherFrame, WorldNetherState,
+    WorldPrimaryShadowFrame, WorldSkyModelBatch, WorldSkyModelFrame,
 };
 pub use lighting::{
     M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, ScenePointLightError,

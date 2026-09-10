@@ -136,6 +136,8 @@ impl ClientServices {
         self.environment
             .set_death_effects(effect_policy("ffxdeath"));
         self.environment.set_glow_effects(effect_policy("ffxglow"));
+        self.environment
+            .set_nether_effects(effect_policy("ffxnetherworld"));
         if let Some(id) = screen_effect {
             self.environment.select_screen_effect(id);
         }
@@ -332,6 +334,8 @@ impl ClientServices {
         self.environment
             .set_death_effects(effect_policy("ffxdeath"));
         self.environment.set_glow_effects(effect_policy("ffxglow"));
+        self.environment
+            .set_nether_effects(effect_policy("ffxnetherworld"));
         if let Some(farclip) = self.world_ui.as_ref().map_or_else(
             || self.glue.cvar_number("farclip"),
             |ui| ui.cvar_number("farclip"),
@@ -459,7 +463,12 @@ impl ClientServices {
             )
             .map_err(ApplicationError::from)?;
         let presentation_time_ms = sdl3::timer::ticks() as u32;
-        let screen_effect = environment.screen_effect(presentation_time_ms);
+        let screen_effect = self.environment.prepare_screen_effect(
+            environment,
+            presentation_time_ms,
+            elapsed.as_secs_f32(),
+            camera,
+        );
         let report = frame
             .present(
                 &mut self.renderer,
@@ -470,6 +479,7 @@ impl ClientServices {
                 &mut self.terrain,
                 camera,
                 presentation_time_ms,
+                screen_effect,
                 underwater.is_some(),
                 self.glue.cvar_boolean("specular"),
                 None,

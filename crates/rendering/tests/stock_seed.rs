@@ -30,6 +30,8 @@ mod minimap;
 mod model;
 #[path = "stock_seed/model_order.rs"]
 mod model_order;
+#[path = "stock_seed/nether_screen.rs"]
+mod nether_screen;
 #[path = "stock_seed/particle.rs"]
 mod particle;
 #[path = "stock_seed/projection.rs"]

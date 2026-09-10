@@ -68,6 +68,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     manual_fog: Option<solarity_asset::WorldManualFog>,
     ghost_effect: bool,
     normal_effect: bool,
+    nether_effect: bool,
     player_inebriation: Option<f64>,
     liquid_flags: Option<u32>,
     world_model_skybox_weight: f32,
@@ -180,7 +181,9 @@ impl RuntimeWorldEnvironmentFrame {
         self.ghost_effect
     }
 
-    /// Resolves the selected screen owner after camera immersion updates its palette.
+    /// Resolves stateless glow/ghost after camera immersion updates its palette.
+    /// Runtime presentation uses `RuntimeWorldEnvironment::prepare_screen_effect`
+    /// so retained invisibility animation also advances exactly once.
     #[must_use]
     pub fn screen_effect(
         self,
@@ -262,6 +265,8 @@ pub struct RuntimeWorldEnvironment {
     full_screen_effects: bool,
     death_effects: bool,
     glow_effects: bool,
+    nether_effects: bool,
+    nether: solarity_rendering::WorldNetherState,
 }
 
 impl RuntimeWorldEnvironment {
@@ -300,6 +305,29 @@ impl RuntimeWorldEnvironment {
     /// Live ffxGlow policy gates the normal owner without changing its selection.
     pub fn set_glow_effects(&mut self, enabled: bool) {
         self.glow_effects = enabled;
+    }
+
+    /// Live ffxNetherWorld gates drawing without changing the selected owner.
+    pub fn set_nether_effects(&mut self, enabled: bool) {
+        self.nether_effects = enabled;
+    }
+
+    /// Advances the selected draw owner once, after final camera/environment resolution.
+    pub fn prepare_screen_effect(
+        &mut self,
+        frame: RuntimeWorldEnvironmentFrame,
+        milliseconds: u32,
+        delta_seconds: f32,
+        camera: solarity_rendering::WorldCameraFrame,
+    ) -> Option<solarity_rendering::WorldFrameScreenEffect> {
+        if frame.nether_effect {
+            Some(solarity_rendering::WorldFrameScreenEffect::Nether(
+                self.nether
+                    .advance(delta_seconds, camera.view().x_axis.truncate().to_array()),
+            ))
+        } else {
+            frame.screen_effect(milliseconds)
+        }
     }
     /// Retains the installed Weather.dbc selections for server updates.
     #[must_use]
@@ -357,6 +385,8 @@ impl RuntimeWorldEnvironment {
             full_screen_effects: true,
             death_effects: true,
             glow_effects: true,
+            nether_effects: true,
+            nether: solarity_rendering::WorldNetherState::default(),
         })
     }
 
@@ -401,6 +431,9 @@ impl RuntimeWorldEnvironment {
         let fog_context = WorldFogContext::new(map_id.value(), view_distance.value())
             .ok_or(RuntimeWorldEnvironmentError::InvalidFogClip)?;
         let manual_fog = self.screen_effect_fog.resolve(fog_context);
+        if self.screen_effect_fog.take_nether_reset() {
+            self.nether.reset_fade();
+        }
         let weather_blend = self.weather.sample(crate::platform::client_milliseconds());
         let light = self.lights.sample(
             WorldLightQuery::new(map_id.value(), position, half_minutes)
@@ -433,6 +466,9 @@ impl RuntimeWorldEnvironment {
             normal_effect: self.screen_effect_fog.normal()
                 && self.full_screen_effects
                 && self.glow_effects,
+            nether_effect: self.screen_effect_fog.nether()
+                && self.full_screen_effects
+                && self.nether_effects,
             player_inebriation: world
                 .storage()
                 .get::<&solarity_ecs::ObjectFields>(world.local_player())
@@ -518,6 +554,7 @@ impl RuntimeWorldEnvironment {
         self.current = None;
         self.weather = weather::WeatherTransition::default();
         self.screen_effect = None;
+        self.nether.reset_fade();
         self.screen_effect_fog = screen_effect::ScreenEffectFog::default();
     }
 }

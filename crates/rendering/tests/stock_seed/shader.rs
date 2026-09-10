@@ -79,6 +79,10 @@ fn glow_shader_passes_compile_for_pinned_target() -> Result<(), Box<dyn Error>> 
         GlowShaderPass::Composite,
         GlowShaderPass::Blur,
         GlowShaderPass::Box,
+        GlowShaderPass::Ghost,
+        GlowShaderPass::World,
+        GlowShaderPass::NetherBlur,
+        GlowShaderPass::NetherCombine,
     ] {
         let program = compiler.compile(pass)?;
         assert_eq!(program.pass(), pass);

@@ -564,7 +564,7 @@ quarter dimensions at least eight. They do not establish native small/POT
 allocation policy, the other screen-effect shader owners, corrected distant
 terrain, complete populated-world appearance or the frame-time target.
 
-## Remaining invisibility and special screen owners
+## Invisibility screen composition
 
 The native constructor `7EA470` registers `ffxNetherWorld` (described in the
 executable as the invisibility effect), then installs `FFXNetherBlur` and
@@ -574,10 +574,72 @@ executable as the invisibility effect), then installs `FFXNetherBlur` and
 the next bank, and advances the phase by frame delta times 1.5. It also uses
 the view direction to orient distortion. The combine owner `7E8C80` advances
 its retained fade by frame delta, capped at 0.75, and publishes that value with
-the native `(0.6, 0.6, 0.78)` color. Callback `7E8E20` resets this fade on
-activation. These are recovered contracts for the next implementation; current
-environment selection/manual fog does not implement these draw consumers.
+the native `(0.6, 0.6, 0.78)` color. `8C02E0` calls the outgoing owner's
+`7E8E20` callback even when that same owner is reselected. The callback clears
+only the fade. Unknown declaration types do not replace the owner or clear it.
+
+The renderer now implements both passes and their retained state. Noise uses
+the existing exact `4C1510`/`464580` generator with its own seed and draw order.
+Each sample is the signed remainder of `2 * unit - 1` by one. A frame whose
+starting interpolation phase exceeds one rotates the banks once, retains the
+remainder, and generates 36 new values. Long deltas do not generate one bank
+per crossed interval. Interpolation stores each float before `8C0DE0` truncates
+`(noise + 1) * 127.5` into a gray vertex color. The separate oscillation clock
+advances by twice the frame delta modulo the native float approximation of tau.
+The saved view's first axis supplies the distortion orientation.
+
+The 6x6 mesh runs the archive vertex program's color-to-angle conversion and
+four successive texture offsets. Both normalized blur draws reuse the same
+mesh and constants, including the archive's fixed half-texel offsets and the
+producer's separate stored reciprocal dimensions. The final shader blends
+the original scene toward the tinted, partially desaturated blur using the
+retained fade, and writes alpha one. Packed push constants carry all 36 color
+bytes; no per-frame vertex buffer upload is introduced. Two existing quarter
+targets are reused, with UI drawn after composition.
+
+Runtime presentation resolves the final camera and environment, advances this
+owner once with the current frame delta, and supplies that same sample to the
+renderer and benchmark diagnostics. Live `ffx` and `ffxNetherWorld` integer
+settings gate drawing without replacing the owner or advancing its random
+sequence. Selection callbacks preserve their order across delayed environment
+resolution. The static normal/ghost accessor does not advance retained modes.
+
+`nether_screen_oracle.py` executes the original constructor, random generator,
+frame advancement, mesh publication, composition fade and owner-switch callback.
+The 168-frame fixture checks every retained bank value and quantized mesh color,
+phase/clock boundaries, long deltas, view directions, reselection and fade resets.
+`nether_screen_shader_oracle.py` runs the unchanged archive vertex and pixel
+programs on Direct3D 9. All 30 complete Vulkan compositions at three viewport
+sizes agree within two byte levels. Additional captures check preserved opaque
+UI and exact restoration after disabling the effect. Runtime tests cover
+normal/ghost/special transitions, unknown types, reselection and live CVar gates;
+the shared integer-CVar fixture also covers `ffxNetherWorld` parsing.
+
+Two optimized real-archive replays completed 1,260 frames each across seven
+phases, at `(1100, -4500, 150)` and `(1300, -4530, 50)` on map 1. The first
+recorded the nether owner throughout, with its contribution rising from
+0.000007 to 0.75 and remaining there. Inspected captures preserve colored UI
+and show the short manual-fog range. The lower camera retains textured nearby
+terrain and scenery; the distant flat silhouettes remain conspicuous against
+the pale fog. Combined horizon admission/color still needs investigation.
+
+Four separate uncaptured runs used nether on, off, off, on, with the same
+declaration, global `ffx` setting, camera and 49 resident tiles throughout the
+stationary phases. Only `ffxNetherWorld` differed. At 1280x720 on the GTX 1070,
+on medians were 2.89145 and 2.88465 ms (approximately 346 FPS), versus off
+medians of 2.88030 and 2.87135 ms. The paired whole-frame difference was
+0.01115 to 0.01330 ms. On stationary p99 was 3.4456 to 3.5423 ms, but one
+stationary frame reached 33.5627 ms. Pointer phases still reached 34.3 to
+34.9 ms across both modes; streaming maxima ranged from 48.6 to 59.6 ms.
+These results do not establish stall removal or
+the aspirational 1,200 FPS rate.
+
+These checks cover normalized NPOT targets with quarter dimensions at least
+eight. The native small/POT allocation rules and the special screen owner remain
+further work, as does combined populated-world appearance.
+
+## Remaining special screen owner
 
 Constructor `7EA5F0` separately registers `ffxSpecial` and allocates persistent
 256x256 and 256x128 effect images. Its propagation and composition owners also
-remain unimplemented. Neither mode should be substituted with ordinary glow.
+remain unimplemented. This mode must not be substituted with ordinary glow.

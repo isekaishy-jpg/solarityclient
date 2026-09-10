@@ -12,8 +12,11 @@ use crate::device::vulkan_texture::{
 use crate::{GlowShaderPass, GlowSpirvCompiler, GlowSpirvProgram, WorldScreenWindow};
 
 mod effect;
+mod nether;
+mod nether_render;
 mod wave;
 pub use effect::WorldFrameScreenEffect;
+pub use nether::{WorldNetherFrame, WorldNetherState};
 
 /// Validated stock FFXGlow factor and display-gamma pair for one world frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -167,6 +170,8 @@ pub(in crate::device) struct VulkanGlowRenderer {
     composite: vk::Pipeline,
     ghost: vk::Pipeline,
     world: vk::Pipeline,
+    nether_blur: vk::Pipeline,
+    nether_combine: vk::Pipeline,
     blur: vk::Pipeline,
     box_filter: vk::Pipeline,
     slots: Vec<GlowSlot>,
@@ -232,7 +237,7 @@ impl VulkanGlowRenderer {
             .map_err(|source| VulkanError::operation("create glow descriptor layout", source))?;
         let sets = [self.set_layout];
         let push = [vk::PushConstantRange::default()
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .size(80)];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
@@ -296,6 +301,22 @@ impl VulkanGlowRenderer {
             format,
             &compiler
                 .compile(GlowShaderPass::World)
+                .map_err(glow_shader_error)?,
+        )?;
+        self.nether_blur = create_pipeline(
+            device,
+            self.pipeline_layout,
+            format,
+            &compiler
+                .compile(GlowShaderPass::NetherBlur)
+                .map_err(glow_shader_error)?,
+        )?;
+        self.nether_combine = create_pipeline(
+            device,
+            self.pipeline_layout,
+            format,
+            &compiler
+                .compile(GlowShaderPass::NetherCombine)
                 .map_err(glow_shader_error)?,
         )?;
         let set_count = u32::try_from(slot_count.saturating_mul(4)).map_err(|_source| {
@@ -477,6 +498,19 @@ impl VulkanGlowRenderer {
             width: (extent.width / 4).max(1),
             height: (extent.height / 4).max(1),
         };
+        if let WorldFrameScreenEffect::Nether(frame) = glow {
+            self.record_nether(
+                device,
+                command_buffer,
+                swapchain_view,
+                slot,
+                extent,
+                quarter,
+                window,
+                frame,
+            );
+            return Ok(());
+        }
         self.record_target(
             device,
             command_buffer,
@@ -531,6 +565,9 @@ impl VulkanGlowRenderer {
         );
         set_viewport_scissor(device, command_buffer, extent, Some(window));
         let (pipeline, effect, wave_time_ms) = match glow {
+            WorldFrameScreenEffect::Nether(_) => {
+                unreachable!("handled before the ordinary blur chain")
+            }
             WorldFrameScreenEffect::Glow(glow) => (
                 self.composite,
                 [glow.strength(), glow.gamma(), 0., 0.],
@@ -568,6 +605,7 @@ impl VulkanGlowRenderer {
             self.pipeline_layout,
             slot.sets[3],
             parameters,
+            3,
         );
         // SAFETY: Composite rendering scope is active.
         unsafe { device.cmd_end_rendering(command_buffer) };
@@ -585,6 +623,30 @@ impl VulkanGlowRenderer {
         set: vk::DescriptorSet,
         sample: [f32; 4],
         parameters: [f32; 4],
+    ) {
+        self.record_target_data(
+            device,
+            command_buffer,
+            target,
+            extent,
+            pipeline,
+            set,
+            effect_parameters(parameters, sample, sample),
+            3,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_target_data(
+        &self,
+        device: &Device,
+        command_buffer: vk::CommandBuffer,
+        target: &GlowImage,
+        extent: vk::Extent2D,
+        pipeline: vk::Pipeline,
+        set: vk::DescriptorSet,
+        parameters: [f32; 20],
+        vertices: u32,
     ) {
         transition_image(
             device,
@@ -611,7 +673,8 @@ impl VulkanGlowRenderer {
             pipeline,
             self.pipeline_layout,
             set,
-            effect_parameters(parameters, sample, sample),
+            parameters,
+            vertices,
         );
         // SAFETY: Target rendering scope is active.
         unsafe { device.cmd_end_rendering(command_buffer) };
@@ -651,6 +714,8 @@ impl VulkanGlowRenderer {
                 &mut self.composite,
                 &mut self.ghost,
                 &mut self.world,
+                &mut self.nether_blur,
+                &mut self.nether_combine,
             ] {
                 if *pipeline != vk::Pipeline::null() {
                     device.destroy_pipeline(*pipeline, None);
@@ -880,6 +945,7 @@ fn bind_and_draw(
     layout: vk::PipelineLayout,
     set: vk::DescriptorSet,
     parameters: [f32; 20],
+    vertices: u32,
 ) {
     let bytes = bytemuck::cast_slice(&parameters);
     // SAFETY: Pipeline/layout/set share the fixed ABI and the triangle has no vertex input.
@@ -896,11 +962,11 @@ fn bind_and_draw(
         device.cmd_push_constants(
             command_buffer,
             layout,
-            vk::ShaderStageFlags::FRAGMENT,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
             bytes,
         );
-        device.cmd_draw(command_buffer, 3, 1, 0, 0);
+        device.cmd_draw(command_buffer, vertices, 1, 0, 0);
     }
 }
 

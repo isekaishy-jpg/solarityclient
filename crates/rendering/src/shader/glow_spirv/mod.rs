@@ -8,6 +8,10 @@ const BLUR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-blur.frag.spv
 const BOX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-box.frag.spv"));
 const GHOST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-ghost.frag.spv"));
 const WORLD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-world.frag.spv"));
+const NETHER_VERTEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-nether.vert.spv"));
+const NETHER_BLUR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/glow-nether-blur.frag.spv"));
+const NETHER_COMBINE: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/glow-nether-combine.frag.spv"));
 
 /// Stable identity of one fragment stage in the stock glow chain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,6 +26,10 @@ pub enum GlowShaderPass {
     Ghost,
     /// Ordinary world glow, player blur and the optional underwater distortion.
     World,
+    /// Invisibility's animated 6x6 four-tap mesh.
+    NetherBlur,
+    /// Invisibility's fade and tinted scene composition.
+    NetherCombine,
 }
 
 /// Owned SPIR-V modules for one glow pass.
@@ -74,10 +82,16 @@ impl GlowSpirvCompiler {
             GlowShaderPass::Box => BOX,
             GlowShaderPass::Ghost => GHOST,
             GlowShaderPass::World => WORLD,
+            GlowShaderPass::NetherBlur => NETHER_BLUR,
+            GlowShaderPass::NetherCombine => NETHER_COMBINE,
         };
         Ok(GlowSpirvProgram {
             pass,
-            vertex_words: spirv_words(VERTEX),
+            vertex_words: spirv_words(if pass == GlowShaderPass::NetherBlur {
+                NETHER_VERTEX
+            } else {
+                VERTEX
+            }),
             fragment_words: spirv_words(fragment),
         })
     }

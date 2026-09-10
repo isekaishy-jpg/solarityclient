@@ -1,0 +1,11 @@
+{
+  "executable_sha256": "aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8",
+  "vertex_shader_sha256": "ba68faa99db134d0590f7ef6b337a3d89ccb3fa0321e5bec07a59a51d7bd3c93",
+  "pixel_shader_sha256": {
+    "blur": "aec603e10a84789af926d2999d83387a226b33c405f3e25a71e21e34502c18fe",
+    "combine": "2a6adc31719f71f5bfdfb0d114e0873e273244445b0811bd5ff19b4d303a3d39"
+  },
+  "fixture_sha256": "e27593263976741ece8f786f7fe166a227ff55224e348bb6d8b1b8ce31af7658",
+  "frames": 30,
+  "texture_policy": "normalized NPOT, linear/clamp, no sRGB; native 6x6 mesh reused across two blur draws"
+}

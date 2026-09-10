@@ -5,6 +5,8 @@ use super::WorldFrameGlow;
 /// The selected postprocessing operation after world draws and before UI draws.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WorldFrameScreenEffect {
+    /// Invisibility's retained animation and activation fade.
+    Nether(super::WorldNetherFrame),
     /// The ModelFFX glow and display-gamma inputs used by Glue scenes.
     Glow(WorldFrameGlow),
     /// FFXDeath's contribution from the quantized DayNight glow field.

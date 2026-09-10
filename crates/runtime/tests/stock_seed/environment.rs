@@ -633,6 +633,63 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             wave_time_ms: None
         })
     );
+    let camera = solarity_rendering::WorldCamera::stock(
+        Vec3::new(4., 5., 6.),
+        Vec3::new(7., 2., 9.),
+        Vec3::Z,
+        777.,
+    )
+    .frame(16. / 9.)?;
+    let axis = camera.view().x_axis.truncate().to_array();
+    let mut expected = solarity_rendering::WorldNetherState::default();
+    environment.select_screen_effect(81);
+    for (id, ffx, enabled, delta, reset) in [
+        (None, true, true, 0.2, false),
+        (None, true, true, 0.4, false),
+        (None, true, false, 2., false),
+        (None, false, true, 3., false),
+        (None, true, true, 0.05, false),
+        (Some(142), true, true, 0.1, false), // Unknown kind preserves the owner and fade.
+        (Some(81), true, true, 0.02, true),  // Reselection calls the outgoing owner.
+        (None, true, true, 0.75, false),
+    ] {
+        if let Some(id) = id {
+            environment.select_screen_effect(id);
+        }
+        environment.set_full_screen_effects(ffx);
+        environment.set_nether_effects(enabled);
+        let frame = environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("nether frame")?;
+        if reset {
+            expected.reset_fade();
+        }
+        let want =
+            (ffx && enabled).then(|| WorldFrameScreenEffect::Nether(expected.advance(delta, axis)));
+        assert_eq!(
+            environment.prepare_screen_effect(frame, 1234, delta, camera),
+            want
+        );
+    }
+    for id in [0, 1, 82] {
+        environment.select_screen_effect(id);
+        let frame = environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("leave nether")?;
+        assert!(!matches!(
+            environment.prepare_screen_effect(frame, 1234, 2., camera),
+            Some(WorldFrameScreenEffect::Nether(_))
+        ));
+        expected.reset_fade();
+        environment.select_screen_effect(81);
+        let frame = environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("return nether")?;
+        assert_eq!(
+            environment.prepare_screen_effect(frame, 1234, 0.1, camera),
+            Some(WorldFrameScreenEffect::Nether(expected.advance(0.1, axis)))
+        );
+    }
     Ok(())
 }
 

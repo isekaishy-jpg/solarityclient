@@ -8,6 +8,7 @@ pub(super) struct ScreenEffectFog {
     manual: Option<WorldManualFog>,
     kind: u32,
     pending: VecDeque<Change>,
+    nether_reset: bool,
 }
 
 struct Change {
@@ -17,6 +18,13 @@ struct Change {
 }
 
 impl ScreenEffectFog {
+    pub(super) const fn nether(&self) -> bool {
+        self.kind == 2
+    }
+
+    pub(super) fn take_nether_reset(&mut self) -> bool {
+        std::mem::take(&mut self.nether_reset)
+    }
     pub(super) const fn normal(&self) -> bool {
         self.kind == 0
     }
@@ -39,6 +47,10 @@ impl ScreenEffectFog {
 
     pub(super) fn resolve(&mut self, context: WorldFogContext) -> Option<WorldManualFog> {
         while let Some(change) = self.pending.pop_front() {
+            // 8C02E0 invokes the outgoing owner's callback even when reselected.
+            if self.kind == 2 && matches!(change.kind, None | Some(0..=3)) {
+                self.nether_reset = true;
+            }
             match change.kind {
                 None => self.kind = 0,
                 Some(kind @ 0..=3) => self.kind = kind,

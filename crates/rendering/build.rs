@@ -220,6 +220,14 @@ fn main() {
         ("box", "src/shader/glow_spirv/source/glow_box.frag.glsl"),
         ("ghost", "src/shader/glow_spirv/source/ghost.frag.glsl"),
         ("world", "src/shader/glow_spirv/source/world_glow.frag.glsl"),
+        (
+            "nether-blur",
+            "src/shader/glow_spirv/source/nether_blur.frag.glsl",
+        ),
+        (
+            "nether-combine",
+            "src/shader/glow_spirv/source/nether_combine.frag.glsl",
+        ),
     ] {
         compile(
             source,
@@ -228,6 +236,12 @@ fn main() {
             &[],
         );
     }
+    compile(
+        "src/shader/glow_spirv/source/nether.vert.glsl",
+        ShaderKind::Vertex,
+        &output.join("glow-nether.vert.spv"),
+        &[],
+    );
 }
 
 fn compile(source: &str, kind: ShaderKind, output: &Path, definitions: &[(&str, &str)]) {

@@ -754,6 +754,7 @@ impl TerrainFrame {
         terrain: &mut super::terrain_coordinator::RuntimeTerrainCoordinator,
         camera: WorldCameraFrame,
         liquid_time_ms: u32,
+        screen_effect: Option<solarity_rendering::WorldFrameScreenEffect>,
         camera_submerged: bool,
         specular_enabled: bool,
         ripples: Option<solarity_rendering::WaterRippleFrame<'_>>,
@@ -1022,7 +1023,7 @@ impl TerrainFrame {
         if let Some(underwater_particles) = underwater_particles {
             scene = scene.with_underwater_particles(underwater_particles);
         }
-        scene = scene.with_screen_effect(environment.screen_effect(liquid_time_ms));
+        scene = scene.with_screen_effect(screen_effect);
         let report = renderer.present_world_frame_with_ui_layers(
             scene,
             m2.bone_transforms,
