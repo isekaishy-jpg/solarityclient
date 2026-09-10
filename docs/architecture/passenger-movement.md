@@ -191,3 +191,44 @@ provider instead of publishing local coordinates directly.
 
 Remaining transport integration includes remote destruction callbacks and
 type-11 animation paths.
+
+## Unit and vehicle parent frames
+
+Unit/Player virtual `+C4` (`722B50`) returns Vehicle_C `+10` when the unit has
+a vehicle owner and a valid database row. Otherwise it constructs translation
+from raw local position (`+30`), rotates by raw local facing (`+38`), and composes
+the parent `+C4` matrix. Unit model scale, pitch and seat bone animation are
+independent of this base frame. Virtual `+EC` (`8A1420`) and `+F0` (`959DE0`)
+both return true. Virtual `+F4` (`74B810 -> 757980`) maintains the passenger list;
+it does not publish the GameObject transport clock.
+
+`757FA0` seeds a vehicle matrix from the creation world pose. `73AB20 -> 758130`
+refreshes it from the unit's current local pose and resolved parent matrix;
+failed parent lookup leaves it unchanged. `757BE0` propagates matrix changes
+through nested vehicle passengers, and `7132E0` supplies a moving GameObject's
+matrix to vehicle passengers. Facing remains a separate getter: `4F42A0` adds
+parent world facing; `74B590` contributes zero for a missing parent and the
+caller still wraps the sum.
+
+`MovementTransportFrame::unit` follows `4C3380 -> 4C3290/4C1F00` and `4C2370`.
+The sixteen matrix entries preserve their distinct native addition orders.
+`tools/ghidra/unit_passenger_frame_oracle.py` executes these original functions
+without hooks and checks 512 records, including signed zero and nested pitched
+or scaled matrices. Fixture SHA-256:
+`755401fe132cefe1cab3472e83e6e34911aa0b636e18572a06acde7d06191a02`.
+
+The runtime shares `UnitPassengerFrames` between local movement, remote
+timelines and final projection. Parent links retain full object lifetimes;
+cycles are rejected, and GUID reuse cannot replace an admitted ancestor.
+An explicit movement-owner reattachment records the new parent lifetime,
+including removal and reattachment within one receive batch. The creation
+world pose is retained in ECS before subsequent packets can overwrite it.
+All local poses finish advancing before the final passenger world projections
+are published. This makes nested travel independent of GUID iteration order
+without resimulating motion or republishing the TLS clock. The local camera
+view receives the same final parent-facing projection. Runtime tests cover a
+moving later parent, nested vehicles, packet-only remote passengers, a real
+GameObject deck, missing database rows and ancestor lifetime replacement.
+
+Animated seat attachment, vehicle passenger transfer/destruction callbacks,
+special vehicle camera policy and combined live travel remain open.

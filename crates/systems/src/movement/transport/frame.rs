@@ -24,6 +24,31 @@ pub struct MovementTransportFrame {
 pub struct MovementTransportFrameError;
 
 impl MovementTransportFrame {
+    /// Builds Unit_C's unscaled local yaw frame (722B50/757BE0), optionally
+    /// composing it with the current passenger parent through native 4C2370.
+    ///
+    /// # Errors
+    /// Rejects non-finite poses or an unrepresentable composed matrix.
+    pub fn unit(
+        position: Vec3,
+        facing: f32,
+        parent: Option<Self>,
+    ) -> Result<Self, MovementTransportFrameError> {
+        let sine = f64::from(facing).sin() as f32;
+        let cosine = f64::from(facing).cos() as f32;
+        let rotation = Mat4::from_cols_array(&[
+            cosine, sine, 0., 0., -sine, cosine, 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ]);
+        let local = unit_matrix_product(rotation, Mat4::from_translation(position));
+        let (matrix, facing) = parent.map_or((local, facing), |parent| {
+            (
+                unit_matrix_product(local, parent.world),
+                parent.world_orientation(facing),
+            )
+        });
+        Self::new(matrix, facing)
+    }
+
     /// Retains the exact parent basis and constructs native 4C2FC0's reverse map.
     ///
     /// # Errors
@@ -75,6 +100,12 @@ impl MovementTransportFrame {
     #[must_use]
     pub const fn world_matrix(self) -> Mat4 {
         self.world
+    }
+
+    /// Returns the parent's independent world facing, without matrix decomposition.
+    #[must_use]
+    pub const fn facing(self) -> f32 {
+        self.facing
     }
 
     /// Returns the native reverse matrix, including its separately rounded translation.
@@ -150,6 +181,36 @@ impl MovementTransportFrame {
     pub fn local_orientation(self, orientation: f32) -> f32 {
         wrap_orientation((f64::from(orientation) - f64::from(self.facing)) as f32)
     }
+}
+
+/// 4C1F00's sixteen x87 dot products have distinct addition orders. Matrix
+/// storage is row-major in stock and column-major in glam, reversing the product.
+fn unit_matrix_product(local: Mat4, parent: Mat4) -> Mat4 {
+    let a = local.to_cols_array().map(f64::from);
+    let b = parent.to_cols_array().map(f64::from);
+    const ORDER: [[usize; 4]; 16] = [
+        [2, 1, 3, 0],
+        [2, 1, 0, 3],
+        [1, 3, 0, 2],
+        [2, 0, 1, 3],
+        [1, 2, 3, 0],
+        [1, 2, 3, 0],
+        [3, 2, 1, 0],
+        [1, 3, 2, 0],
+        [1, 2, 3, 0],
+        [1, 3, 2, 0],
+        [3, 2, 1, 0],
+        [1, 3, 2, 0],
+        [1, 2, 3, 0],
+        [1, 3, 2, 0],
+        [3, 2, 1, 0],
+        [1, 3, 2, 0],
+    ];
+    Mat4::from_cols_array(&std::array::from_fn(|index| {
+        let [i, j, k, l] = ORDER[index];
+        let term = |lane| a[(index / 4) * 4 + lane] * b[lane * 4 + index % 4];
+        (term(i) + term(j) + term(k) + term(l)) as f32
+    }))
 }
 
 /// 4C2300 multiplies in x/y/z order, retaining x87 intermediates until each store.

@@ -1,5 +1,17 @@
 # Stock client architecture analysis
 
+The unit passenger matrix fixture executes the original `4C3380`, `4C3290`,
+`4C1F00` and `4C2370` without hooks:
+
+```powershell
+python tools/ghidra/unit_passenger_frame_oracle.py <path-to-Wow.exe> --output crates/systems/tests/fixtures/unit-passenger-frame-native.txt
+```
+
+Its 512 records cover signed zero, ordinary yaw, and nested pitched/scaled parent
+matrices. The runtime separately tests Unit_C/Vehicle_C selection, missing parent
+matrix retention, lifetime replacement and local/remote publication order.
+This does not establish animated seat attachment or vehicle camera policy.
+
 The ordinary camera-opacity fixture executes the original `606F90` fragment
 from `6077D0` through `6079FD`, including the complete `8CA080` cosine function:
 

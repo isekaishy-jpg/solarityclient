@@ -74,6 +74,41 @@ impl PassengerClock {
 }
 
 impl RuntimePlayerMovement {
+    /// Parent simulation may run later in the frame. Publish its final projection
+    /// before camera/render consumers without advancing movement or transport time.
+    pub(in crate::application) fn refresh_passenger_projection(
+        &mut self,
+        world: Option<&ActiveWorld>,
+        objects: &RuntimeGameObjectPresentation,
+        presentation: &crate::application::RuntimePlayerPresentation,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        let (Some(world), Some(owner)) = (world, self.owner.as_mut()) else {
+            return Ok(());
+        };
+        if owner.passenger.is_none()
+            || world.object_identity(owner.identity.guid()) != Some(owner.identity)
+            || Some(owner.published.0) != world.object_transform(owner.identity.guid())
+            || Some(owner.published.1) != world.movement_state(owner.identity.guid())
+        {
+            return Ok(());
+        }
+        owner.reproject_passenger(world, objects, &presentation.passenger_frames)?;
+        let (transform, movement) = owner.snapshot();
+        let Some(entity) = world.entity_by_guid(owner.identity.guid()) else {
+            return Ok(());
+        };
+        if let Ok(mut stored) = world.storage().get::<&mut WorldTransform>(entity) {
+            **stored = transform;
+        }
+        if let Ok(mut stored) = world.storage().get::<&mut WorldMovementState>(entity) {
+            **stored = movement;
+        }
+        owner.published = (transform, movement);
+        world.set_local_player_view(owner.camera.view(owner.world_orientation()))?;
+        presentation.set_ground_normal(owner.identity, owner.world_ground_normal());
+        Ok(())
+    }
+
     /// Only an admitted local link contributes to the transport's native list.
     pub(in crate::application) fn passenger_transport(
         &self,
@@ -168,6 +203,26 @@ impl RuntimePlayerMovement {
 }
 
 impl LocalMovement {
+    /// Refreshes only the matrix lane. Native clock publication belongs to the
+    /// simulation callback, so a final scene projection must not publish it twice.
+    pub(super) fn reproject_passenger(
+        &mut self,
+        world: &ActiveWorld,
+        objects: &RuntimeGameObjectPresentation,
+        frames: &crate::application::unit_passenger::UnitPassengerFrames,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        if let Some(mut parent) = self.passenger {
+            if let Some(frame) = frames.resolve(world, objects, parent.identity)? {
+                parent.frame = frame;
+                self.passenger = Some(parent);
+            } else {
+                self.passenger = None;
+                self.passenger_seat = -1;
+            }
+        }
+        Ok(())
+    }
+
     /// Seeds an authoritative passenger from its transmitted local coordinates.
     /// Loading keeps ownership pending until the parent matrix is resident.
     pub(super) fn new_in_geometry<G: LocalMovementGeometry>(

@@ -384,11 +384,16 @@ impl ActiveWorld {
         let Some(entity) = self.objects.find(guid) else {
             return false;
         };
-        let facing = self
-            .unit_vehicle(guid)
-            .map_or(initial_facing, crate::UnitVehicle::initial_facing);
-        self.storage
-            .add_component(entity, (crate::UnitVehicle::new(definition_id, facing),));
+        let previous = self.unit_vehicle(guid);
+        let facing = previous.map_or(initial_facing, crate::UnitVehicle::initial_facing);
+        let transform = previous.map_or_else(
+            || self.object_transform(guid),
+            crate::UnitVehicle::initial_transform,
+        );
+        self.storage.add_component(
+            entity,
+            (crate::UnitVehicle::new(definition_id, facing, transform),),
+        );
         true
     }
 

@@ -25,6 +25,7 @@ pub struct RuntimeMovementGeometry<'a> {
     terrain: &'a mut RuntimeTerrainCoordinator,
     world: &'a ActiveWorld,
     objects: &'a RuntimeGameObjectPresentation,
+    units: Option<&'a crate::application::unit_passenger::UnitPassengerFrames>,
     flags: u32,
     cache: MovementBspCacheMode,
     output: &'a mut RuntimeMovementQuery,
@@ -56,13 +57,18 @@ impl<'a> RuntimeMovementGeometry<'a> {
     pub(in crate::application) fn passenger_frame(
         &self,
         identity: WorldObjectIdentity,
-    ) -> Result<Option<MovementTransportFrame>, solarity_systems::GameObjectPlacementError> {
-        self.objects.object_movement_frame(identity)
+    ) -> Result<Option<MovementTransportFrame>, crate::application::RuntimePlayerMovementError>
+    {
+        if let Some(units) = self.units {
+            return units.resolve(self.world, self.objects, identity);
+        }
+        Ok(self.objects.object_movement_frame(identity)?)
     }
 
     /// Reads virtual +0xEC independently of an already attached parent's retention.
     pub(in crate::application) fn can_board(&self, identity: WorldObjectIdentity) -> bool {
-        self.objects.object_can_board(identity)
+        crate::application::unit_passenger::is_unit(self.world, identity)
+            || self.objects.object_can_board(identity)
     }
 
     /// Reads the behavior's published phase rather than substituting the client clock.
@@ -79,7 +85,19 @@ impl<'a> RuntimeMovementGeometry<'a> {
         identity: WorldObjectIdentity,
         position: Vec3,
     ) -> Result<bool, solarity_systems::MovementCollectionError> {
+        if crate::application::unit_passenger::is_unit(self.world, identity) {
+            return Ok(true);
+        }
         self.objects.object_retains_passenger(identity, position)
+    }
+
+    /// Shares Unit_C and Vehicle_C frame ownership with the movement services.
+    pub(in crate::application) fn with_unit_parents(
+        mut self,
+        units: &'a crate::application::unit_passenger::UnitPassengerFrames,
+    ) -> Self {
+        self.units = Some(units);
+        self
     }
 
     /// Borrows one fixed context and invalidates any prior query's candidates.
@@ -96,6 +114,7 @@ impl<'a> RuntimeMovementGeometry<'a> {
             terrain,
             world,
             objects,
+            units: None,
             flags,
             cache,
             output,

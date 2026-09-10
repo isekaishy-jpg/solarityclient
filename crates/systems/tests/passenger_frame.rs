@@ -12,6 +12,40 @@ use solarity_systems::{
 };
 
 #[test]
+fn unit_passenger_matrices_match_original_yaw_and_nested_composition() -> Result<(), Box<dyn Error>>
+{
+    let mut count = 0;
+    for line in records(include_str!("fixtures/unit-passenger-frame-native.txt")) {
+        let mut fields = line.split_whitespace();
+        let attached = integer(&mut fields)? != 0;
+        let position = vector(&mut fields)?;
+        let yaw = scalar(&mut fields)?;
+        let ancestor = MovementTransportFrame::new(matrix(&mut fields)?, 0.25)?;
+        let frame = MovementTransportFrame::unit(position, yaw, attached.then_some(ancestor))?;
+        let expected = matrix(&mut fields)?;
+        assert_eq!(
+            frame.world_matrix().to_cols_array().map(f32::to_bits),
+            expected.to_cols_array().map(f32::to_bits),
+            "record {count}"
+        );
+        assert_eq!(
+            frame.facing().to_bits(),
+            if attached {
+                ancestor.world_orientation(yaw).to_bits()
+            } else {
+                yaw.to_bits()
+            }
+        );
+        assert!(fields.next().is_none());
+        count += 1;
+    }
+    assert_eq!(count, 512);
+    assert!(MovementTransportFrame::unit(Vec3::NAN, 0., None).is_err());
+    assert!(MovementTransportFrame::unit(Vec3::ZERO, f32::INFINITY, None).is_err());
+    Ok(())
+}
+
+#[test]
 fn passenger_rebased_trajectories_match_native_without_restarting_elapsed_time()
 -> Result<(), Box<dyn Error>> {
     let speeds = WorldMovementSpeeds::new([

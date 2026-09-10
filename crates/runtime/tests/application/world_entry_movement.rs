@@ -87,6 +87,7 @@ fn rfc_archive_world_entry_resolves_initial_support() -> Result<(), Box<dyn Erro
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -170,7 +171,15 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
     let mut movement = RuntimePlayerMovement::default();
     // Model readiness arrives after entry. No independent ground-ready flag
     // or direct position write is supplied to this production service.
-    movement.service(&mut gameplay, &mut terrain, &objects, &liquids, None, 0)?;
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        &liquids,
+        &Default::default(),
+        None,
+        0,
+    )?;
     assert!(!movement.initial_contact_ready());
     assert!(writer.try_recv().is_err());
     for time in [0, 100] {
@@ -179,6 +188,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             Some([0.5, 2., 1.]),
             time,
         )?;
@@ -213,6 +223,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             Some([0.5, 2., 1.]),
             time,
         )?;
@@ -236,6 +247,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1000,
     )?;
@@ -244,6 +256,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -288,6 +301,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -304,6 +318,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -319,6 +334,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1400,
     )?;
@@ -348,6 +364,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1400,
     )?;
@@ -366,6 +383,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -388,6 +406,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1520,
     )?;
@@ -402,6 +421,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1800,
     )?;
@@ -413,6 +433,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -437,6 +458,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -456,6 +478,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -485,6 +508,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         Some([0.5, 2., 1.]),
         2800,
     )?;

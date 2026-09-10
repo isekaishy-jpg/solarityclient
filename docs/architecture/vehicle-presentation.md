@@ -1,7 +1,7 @@
 # Vehicle presentation
 
-Vehicle creation state and the passenger entry-opacity seat lookup are connected.
-Full passenger movement, attachment animation and vehicle camera presentation
+Vehicle creation state, passenger movement frames, and the entry-opacity seat
+lookup are connected. Attachment animation and vehicle camera presentation
 remain open under [world completion](world-completion.md).
 
 ## Native evidence
@@ -71,18 +71,36 @@ seat rows through the typed catalog, with no unresolved nonzero seat references.
 It contains 27 seats with negative attachment IDs. Reproduce this table check
 with `cargo run --locked -p solarity-asset --example inspect_vehicles -- <Data>`.
 
-The full locked workspace suite passes: 1,228 tests, with 23 archive-dependent
-tests ignored. The runtime library portion passes 272 tests, with 18 ignored.
+The full locked workspace suite passes: 1,232 tests, with 23 archive-dependent
+tests ignored. The runtime library portion passes 275 tests, with 18 ignored.
 The targeted asset schema/reference tests and the real-archive inspection also pass.
 Workspace Clippy passes for all targets with warnings denied.
 
 ## Remaining consumers
 
-The movement geometry currently obtains passenger matrices from GameObject
-presentation. Unit vehicle matrices and animated seat attachments must be
-published into this path; unresolved parent handling can otherwise discard the
-movement transport context before later presentation. The new component alone
-does not fix that path or establish visible vehicle travel.
+Movement geometry now resolves Unit/Player parents alongside GameObjects.
+`UnitPassengerFrames` retains vehicle matrices and admitted ancestor lifetimes,
+using the native unscaled yaw frame for generic units and the cached frame for
+owners with a valid Vehicle.dbc row. The creation matrix uses world position and
+world facing, independently of the retained initial-facing lane. ECS retains
+this creation pose so later packets before the first frame cannot replace it.
+A failed parent
+lookup preserves a valid vehicle's matrix; its separately queried facing still
+uses the native missing-parent zero contribution. Missing vehicle rows take
+the generic-unit branch. See [passenger coordinates](passenger-movement.md).
+
+Local and remote movement consume this provider. After all timelines advance,
+passengers publish their world projections and local camera-facing input again
+without advancing analytic anchors, packet queues, or transport clocks. This
+covers nested units and a parent that runs after its passenger in GUID order.
+Packet-only remote modes retain their parent even without a ground/fall owner.
+Cached inputs include exact local-pose, parent-matrix and facing bits; unchanged
+frames reuse the result, and ancestry traversal reuses its scratch capacity.
+
+The native matrix oracle covers 512 exact cases, including nested, pitched and
+scaled ancestor matrices. Runtime integration covers local and remote riders,
+a later parent, a live GameObject root, missing rows/parents, cycles, removal
+and GUID reuse. These are fixture tests, not a combined live vehicle session.
 
 Trace and connect VehiclePassenger_C's state/flags and transfer lifecycle,
 seat attachment offsets and animation transitions, vehicle pitch updates,

@@ -98,6 +98,12 @@ pub enum RuntimePlayerMovementError {
     /// A resident passenger parent has an invalid placement.
     #[error(transparent)]
     PassengerPlacement(#[from] solarity_systems::GameObjectPlacementError),
+    /// A unit's passenger ancestry contains a cycle.
+    #[error("unit passenger ancestry contains a cycle")]
+    PassengerCycle,
+    /// A unit's local pose or composed passenger matrix is invalid.
+    #[error(transparent)]
+    UnitPassengerFrame(#[from] solarity_systems::MovementTransportFrameError),
     /// This mode still requires its native movement response owner.
     #[error("local movement mode is not implemented: flags={flags:#x}")]
     UnsupportedMode {
@@ -474,12 +480,14 @@ impl RuntimePlayerMovement {
     }
 
     /// The composition root calls this before presentation samples ECS.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn service(
         &mut self,
         gameplay: &mut RuntimeGameplayCoordinator,
         terrain: &mut RuntimeTerrainCoordinator,
         objects: &RuntimeGameObjectPresentation,
         liquids: &solarity_asset::LiquidTypeCatalog,
+        frames: &super::unit_passenger::UnitPassengerFrames,
         dimensions: Option<[f32; 3]>,
         now_ms: u32,
     ) -> Result<(), RuntimePlayerMovementError> {
@@ -515,7 +523,8 @@ impl RuntimePlayerMovement {
             0x8010_8111,
             MovementBspCacheMode::Enabled,
             &mut self.geometry,
-        );
+        )
+        .with_unit_parents(frames);
         if self.owner.is_none() {
             let Some(mut owner) =
                 LocalMovement::new_in_geometry(identity, transform, movement, now_ms, &geometry)?
@@ -654,6 +663,9 @@ impl RuntimePlayerMovement {
             now_ms,
         );
         let (transform, movement) = owner.snapshot();
+        if let Some(parent) = owner.passenger {
+            frames.admit_parent(owner.identity, parent.identity);
+        }
         self.water_sample = Some(super::unit_water::UnitWaterSample {
             identity: owner.identity,
             transform,

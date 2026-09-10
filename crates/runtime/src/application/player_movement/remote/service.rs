@@ -161,7 +161,8 @@ impl RuntimeRemoteMovement {
                 query_flags,
                 MovementBspCacheMode::Enabled,
                 &mut self.geometry,
-            );
+            )
+            .with_unit_parents(&presentation.passenger_frames);
             owner.scene_collision = presentation.take_scene_collision(identity);
             owner.process(
                 events,
@@ -186,6 +187,16 @@ impl RuntimeRemoteMovement {
                 self.animation_events.append(&mut motion.animation_events);
             }
             let (transform, movement) = owner.snapshot();
+            if let Some(parent) = owner
+                .motion
+                .as_ref()
+                .and_then(|motion| motion.passenger)
+                .or(owner.path_parent)
+            {
+                presentation
+                    .passenger_frames
+                    .admit_parent(owner.identity, parent.identity);
+            }
             let liquid = terrain.unit_submerged_liquid(transform.position(), liquids)?;
             let context = movement.context();
             let mut splash = false;
@@ -238,6 +249,72 @@ impl RuntimeRemoteMovement {
             if let Ok(mut stored) = world.storage().get::<&mut WorldMovementState>(entity) {
                 **stored = movement;
             }
+        }
+        presentation
+            .passenger_frames
+            .synchronize(Some(world), objects)?;
+        self.refresh_passenger_projections(world, objects, presentation)?;
+        Ok(())
+    }
+
+    /// All local timelines have advanced; resolve complete ancestry before
+    /// publishing passenger world poses, independent of the unit GUID order.
+    fn refresh_passenger_projections(
+        &mut self,
+        world: &ActiveWorld,
+        objects: &RuntimeGameObjectPresentation,
+        presentation: &RuntimePlayerPresentation,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        for owner in self.owners.values_mut() {
+            let attached = owner
+                .motion
+                .as_ref()
+                .is_some_and(|motion| motion.passenger.is_some())
+                || owner.path_parent.is_some();
+            if !attached {
+                continue;
+            }
+            if let Some(motion) = &mut owner.motion {
+                motion.reproject_passenger(world, objects, &presentation.passenger_frames)?;
+            }
+            if let Some(mut parent) = owner.path_parent {
+                if let Some(frame) =
+                    presentation
+                        .passenger_frames
+                        .resolve(world, objects, parent.identity)?
+                {
+                    parent.frame = frame;
+                    owner.path_parent = Some(parent);
+                    if let Some(transport) = owner.published.1.context().transport {
+                        owner.published.0 = WorldTransform::new(
+                            frame.world_position(transport.position),
+                            frame.world_orientation(transport.orientation),
+                        );
+                    }
+                } else {
+                    owner.path_parent = None;
+                }
+            }
+            let (transform, movement) = owner.snapshot();
+            owner.published = (transform, movement);
+            let Some(entity) = world.entity_by_guid(owner.identity.guid()) else {
+                continue;
+            };
+            if let Ok(mut stored) = world.storage().get::<&mut WorldTransform>(entity) {
+                **stored = transform;
+            }
+            if let Ok(mut stored) = world.storage().get::<&mut WorldMovementState>(entity) {
+                **stored = movement;
+            }
+            let normal = owner.motion.as_ref().map_or_else(
+                || {
+                    owner.path_parent.map_or(owner.ground_normal, |parent| {
+                        parent.frame.world_direction(owner.ground_normal)
+                    })
+                },
+                |motion| motion.world_ground_normal(),
+            );
+            presentation.set_ground_normal(owner.identity, normal);
         }
         Ok(())
     }

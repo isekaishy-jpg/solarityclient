@@ -2566,11 +2566,15 @@ impl ClientServices {
             &self.character_metadata,
             crate::platform::client_milliseconds(),
         )?;
+        self.player
+            .passenger_frames
+            .synchronize(self.gameplay.world(), &self.game_objects)?;
         self.player_movement.service(
             &mut self.gameplay,
             &mut self.terrain,
             &self.game_objects,
             &self.liquids,
+            &self.player.passenger_frames,
             self.player.movement_dimensions(),
             crate::platform::client_milliseconds(),
         )?;
@@ -2620,6 +2624,11 @@ impl ClientServices {
             &self.player,
             &self.liquids,
             crate::platform::client_milliseconds(),
+        )?;
+        self.player_movement.refresh_passenger_projection(
+            self.gameplay.world(),
+            &self.game_objects,
+            &self.player,
         )?;
         while let Some(event) = self.remote_movement.take_water_splash() {
             self.sound.notify_water_splash(event);

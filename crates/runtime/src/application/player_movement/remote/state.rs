@@ -54,7 +54,7 @@ pub(super) struct RemoteUnit {
     pub time_ms: u32,
     pub motion: Option<LocalMovement>,
     pub path: Option<MovementSpline>,
-    /// Retained lifetime/frame while spline travel owns the local pose.
+    /// Retained lifetime/frame while a spline or packet-only mode owns the local pose.
     pub path_parent: Option<PassengerParent>,
     /// Local collision normal retained when packet/path input replaces motion.
     pub ground_normal: glam::Vec3,
@@ -188,7 +188,7 @@ impl RemoteUnit {
         &mut self,
         geometry: &mut G,
     ) -> Result<(), RuntimePlayerMovementError> {
-        if self.path.is_some() {
+        if self.path.is_some() || self.motion.is_none() {
             self.refresh_path_parent(geometry)?;
         }
         let (transform, movement) = self.published;
@@ -241,6 +241,9 @@ impl RemoteUnit {
             motion.ground_normal = self.ground_normal;
             motion.context.transport = transport.filter(|_| parent.is_some());
             self.motion = Some(motion);
+            if self.path.is_none() {
+                self.path_parent = None;
+            }
         }
         if let Some(motion) = &mut self.motion {
             motion.refresh_passenger(geometry)?;

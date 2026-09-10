@@ -375,6 +375,7 @@ struct RuntimePlayerSharedCatalogs {
 
 /// Resolves ECS appearance into a shared model without putting assets in ECS.
 pub struct RuntimePlayerPresentation {
+    pub(super) passenger_frames: super::unit_passenger::UnitPassengerFrames,
     vehicles: Arc<VehicleCatalog>,
     assets: AssetStoreHandle,
     animations: Arc<AnimationDataCatalog>,
@@ -418,6 +419,9 @@ impl RuntimePlayerPresentation {
         } = catalogs.items;
         Self {
             assets,
+            passenger_frames: super::unit_passenger::UnitPassengerFrames::new(Arc::clone(
+                &catalogs.vehicles,
+            )),
             vehicles: catalogs.vehicles,
             animations: catalogs.animations,
             creatures: catalogs.creatures,
@@ -2475,6 +2479,9 @@ fn prepare_glue_character_on_worker(
     };
     let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
+        passenger_frames: super::unit_passenger::UnitPassengerFrames::new(Arc::clone(
+            &catalogs.vehicles,
+        )),
         vehicles: catalogs.vehicles,
         unit_animations: UnitAnimationScene::default(),
         camera_opacity_subject: Default::default(),

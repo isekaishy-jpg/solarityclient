@@ -7,13 +7,19 @@ use shipyard::Component;
 pub struct UnitVehicle {
     definition_id: u32,
     initial_facing: f32,
+    initial_transform: Option<crate::WorldTransform>,
 }
 
 impl UnitVehicle {
-    pub(crate) const fn new(definition_id: u32, initial_facing: f32) -> Self {
+    pub(crate) const fn new(
+        definition_id: u32,
+        initial_facing: f32,
+        initial_transform: Option<crate::WorldTransform>,
+    ) -> Self {
         Self {
             definition_id,
             initial_facing,
+            initial_transform,
         }
     }
 
@@ -27,5 +33,12 @@ impl UnitVehicle {
     #[must_use]
     pub const fn initial_facing(self) -> f32 {
         self.initial_facing
+    }
+
+    /// Returns the creation world pose used to seed Vehicle_C's cached matrix.
+    /// Later snapshots and definition changes cannot replace this seed.
+    #[must_use]
+    pub const fn initial_transform(self) -> Option<crate::WorldTransform> {
+        self.initial_transform
     }
 }

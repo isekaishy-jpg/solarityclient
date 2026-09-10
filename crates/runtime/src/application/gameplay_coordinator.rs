@@ -61,6 +61,10 @@ mod movement_entry_tests;
 #[path = "../../tests/application/remote_movement.rs"]
 mod remote_movement_tests;
 
+#[cfg(test)]
+#[path = "../../tests/application/unit_passenger_frames.rs"]
+mod unit_passenger_tests;
+
 use std::collections::VecDeque;
 use std::time::Duration;
 
