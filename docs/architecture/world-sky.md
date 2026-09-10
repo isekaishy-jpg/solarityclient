@@ -554,7 +554,30 @@ Pointer phases still reached 34.6 to 36.0 ms with glow and 34.2 to 34.5 ms
 without it, while streaming maxima reached 40.6 to 44.8 ms across runs.
 The restored effect does not meet the 1,200 FPS target or remove those stalls.
 
+Build 83 packages source revision `bc2400d9`. All 1,203 workspace tests passed
+(23 ignored), along with formatting and all-target/all-feature Clippy. The
+installed and packaged executables report Build 83 and share SHA-256
+`D04BE5267A552948CF14F804FBD8627CCA2E8883B75E9FDB266FEBF81DA21143`.
+
 These checks establish the normal composition on normalized NPOT targets with
 quarter dimensions at least eight. They do not establish native small/POT
 allocation policy, the other screen-effect shader owners, corrected distant
 terrain, complete populated-world appearance or the frame-time target.
+
+## Remaining invisibility and special screen owners
+
+The native constructor `7EA470` registers `ffxNetherWorld` (described in the
+executable as the invisibility effect), then installs `FFXNetherBlur` and
+`FFXNetherCombine` through `7E8990` and `7E8BD0`. The first owner retains three
+36-float noise banks and its own random state initialized with `0xABCDEF01`.
+`7E9B10` rotates those banks when the interpolation phase exceeds one, generates
+the next bank, and advances the phase by frame delta times 1.5. It also uses
+the view direction to orient distortion. The combine owner `7E8C80` advances
+its retained fade by frame delta, capped at 0.75, and publishes that value with
+the native `(0.6, 0.6, 0.78)` color. Callback `7E8E20` resets this fade on
+activation. These are recovered contracts for the next implementation; current
+environment selection/manual fog does not implement these draw consumers.
+
+Constructor `7EA5F0` separately registers `ffxSpecial` and allocates persistent
+256x256 and 256x128 effect images. Its propagation and composition owners also
+remain unimplemented. Neither mode should be substituted with ordinary glow.
