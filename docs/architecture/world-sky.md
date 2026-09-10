@@ -744,3 +744,10 @@ These checks establish the Special owner on normalized textures with linear,
 clamped sampling. They do not close the other owners' small/POT allocation
 policies, combined populated-world appearance, gameplay-dependent activation,
 or the outstanding frame-time and stall work.
+
+Build 86 packages this implementation from source revision
+`f7a1d7c349b4afd9dd09be15780183ea9bac1a6b`. The Testing executable reports
+version `0.0.3a`, build number `86`, and that revision. Its installed SHA-256
+matches the optimized Cargo artifact:
+`ea4c95c970fad57d570e1eaf4926c2b8a95b2b40324f3edf7221f9a4508c3684`.
+The packaging-time dirty flag records the reserved build-number change.
