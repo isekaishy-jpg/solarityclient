@@ -215,13 +215,15 @@ existing 512 settled-seat matrices and 3,072 seat-lookup/opacity records.
 
 ## Testing package
 
-Build **000094** (`0.0.3a`) installs source revision
-`0456de59f8e5d388903f7a78689063e8b8b98dca` through the persistent Testing launcher.
+Build **000095** (`0.0.3a`) installs source revision
+`34b9fd982647f186e7c4c03652bf3f8c9bbeafdd` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`ea1da59b85abbf8909b43ef94c86221d4c46f61339c42be2a6e294622972a1f5`.
+`4f9cddf362d0099bf310d85c44e834bb8f4336ef5f636b9d8bcb593928f439f9`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
 passenger frames, final local/remote world projection and settled animated
-seats with mounted riders and shared lighting/shadow/sorting ancestry.
-Boarding/exit transitions, transfer lifecycle and special-camera work remain open.
+seats with mounted riders and shared lighting/shadow/sorting ancestry. Remote
+boarding/exit delays, arcs, primary animation loops and retained transition
+state are included. Local-player admission, the remaining transition consumers,
+transfer lifecycle and special-camera work remain open.
