@@ -201,7 +201,7 @@ impl WorldFrameRenderer {
     pub(in crate::device) fn present(
         &mut self,
         context: WorldFrameContext<'_>,
-        descriptor_layouts: [vk::DescriptorSetLayout; 12],
+        descriptor_layouts: [vk::DescriptorSetLayout; 13],
         scene: WorldFrameScene<'_>,
         bone_transforms: &[Mat4],
         terrain_draws: &[TerrainPreparedDraw],

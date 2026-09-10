@@ -294,13 +294,13 @@ impl<'a> WorldSkyModelBatch<'a> {
     }
 }
 
-/// Stars and the three native LightSkybox slots in one frame's retained bank.
+/// Stars, three ordinary LightSkybox slots, and the independent global override.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldSkyModelFrame<'a> {
     pub(in crate::device) scene: M2SceneUniform,
     pub(in crate::device) bones: &'a [glam::Mat4],
     pub(in crate::device) stars: &'a [crate::M2PreparedDraw],
-    pub(in crate::device) skyboxes: [WorldSkyModelBatch<'a>; 3],
+    pub(in crate::device) skyboxes: [WorldSkyModelBatch<'a>; 4],
 }
 
 impl<'a> WorldSkyModelFrame<'a> {
@@ -320,6 +320,7 @@ impl<'a> WorldSkyModelFrame<'a> {
                 WorldSkyModelBatch::new(scene, skyboxes),
                 WorldSkyModelBatch::new(scene, &[]),
                 WorldSkyModelBatch::new(scene, &[]),
+                WorldSkyModelBatch::new(scene, &[]),
             ],
         }
     }
@@ -327,7 +328,16 @@ impl<'a> WorldSkyModelFrame<'a> {
     /// Preserves palette slot order and an independent light bank for each model.
     #[must_use]
     pub const fn with_skybox_batches(mut self, batches: [WorldSkyModelBatch<'a>; 3]) -> Self {
-        self.skyboxes = batches;
+        self.skyboxes[0] = batches[0];
+        self.skyboxes[1] = batches[1];
+        self.skyboxes[2] = batches[2];
+        self
+    }
+
+    /// Draws the global override after all admitted ordinary skyboxes.
+    #[must_use]
+    pub const fn with_global_skybox(mut self, batch: WorldSkyModelBatch<'a>) -> Self {
+        self.skyboxes[3] = batch;
         self
     }
 
@@ -338,6 +348,7 @@ impl<'a> WorldSkyModelFrame<'a> {
             + self.skyboxes[0].draws.len()
             + self.skyboxes[1].draws.len()
             + self.skyboxes[2].draws.len()
+            + self.skyboxes[3].draws.len()
     }
 
     pub(in crate::device) fn draws(self) -> impl Iterator<Item = &'a crate::M2PreparedDraw> {

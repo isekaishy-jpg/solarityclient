@@ -40,7 +40,7 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
     let lights = LightCatalog::load(&mut store)?;
     let animations = Arc::new(solarity_asset::AnimationDataCatalog::load(&mut store)?);
     let store = AssetStoreHandle::new(store);
-    let mut sky = RuntimeSkyResources::load(store, &lights, animations)?;
+    let mut sky = RuntimeSkyResources::load(store.clone(), &lights, Arc::clone(&animations))?;
     let _lock = crate::test_support::SDL_TEST_LOCK
         .lock()
         .map_err(|_| "SDL lock poisoned")?;
@@ -78,6 +78,7 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
             realm_minute: minute,
             skyboxes: [(1, 0.2), (2, 0.3), (3, 0.4)],
             world_model: wmo.then_some(("b.m2", opacity)),
+            global_skybox: None,
             visible,
         };
         let (default_sky, frame) =
@@ -156,14 +157,84 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
             assert_eq!(sky.skyboxes[1].phase.last_minute, minute);
         }
     }
+    // A fresh process resolves the global B alias before the ordinary B request.
+    // It owns flag one, even though the ordinary row carries flag three.
+    let mut sky = RuntimeSkyResources::load(store, &lights, animations)?;
+    for (step, global, visible, expected_draws, expected_default) in [
+        (0, Some((5, 1.)), false, 0, false),
+        (1, Some((5, 0.5)), true, 4, true),
+        (2, Some((5, 1.)), true, 1, false),
+        (3, Some((4, 1.)), true, 0, true), // Resident failed model still hides ordinary models.
+        (4, Some((999, 1.)), true, 3, true), // Missing DBC row does not create that owner.
+        (5, None, true, 3, true),
+    ] {
+        let before_random = random;
+        let minute = 100 + step as i32 * 3;
+        let input = SkyModelInput {
+            day: 0.5,
+            realm_minute: minute,
+            skyboxes: [(1, 0.2), (2, 0.3), (3, 0.4)],
+            global_skybox: global,
+            world_model: None,
+            visible,
+        };
+        let prefix = if step & 1 == 0 { 7 } else { 19 };
+        let (default_sky, frame) = sky.prepare_model_input(
+            &mut renderer,
+            camera,
+            step * 1000,
+            input,
+            prefix,
+            &mut random,
+        )?;
+        assert_eq!(default_sky, expected_default, "global step {step}");
+        assert_eq!(frame.draw_count(), expected_draws, "global step {step}");
+        renderer.request_frame_capture()?;
+        let report = renderer.present_world_frame(
+            world_scene(camera).with_sky_models(frame),
+            &vec![Mat4::IDENTITY; prefix],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
+        assert_eq!(report.sky_model_draw_count(), expected_draws);
+        let capture = renderer
+            .take_captured_frame()?
+            .ok_or("global sky capture")?;
+        let lit = capture
+            .rgba8()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[0] > 0)
+            .count();
+        if expected_draws == 0 {
+            assert_eq!(lit, 0);
+        } else {
+            assert!(lit > 500, "global step {step}: only {lit} lit pixels");
+        }
+        assert_eq!(sky.skyboxes[0].phase.flags, 1);
+        if visible && step < 3 {
+            assert_eq!(sky.skyboxes[0].phase.last_minute, minute);
+        }
+        if !visible {
+            assert_eq!(random, before_random);
+            assert_eq!(sky.skyboxes[0].phase.last_minute, 0);
+        }
+    }
     Ok(())
 }
 
 /// Three overlay slots preserve authored order until the WMO replaces 0/1.
 fn skybox_table() -> Vec<u8> {
-    let strings = b"\0A.m2\0B.m2\0C.m2\0";
+    let strings = b"\0A.m2\0B.m2\0C.m2\0Missing.m2\0";
     let words = [
-        3u32,
+        5u32,
         3,
         12,
         strings.len() as u32,
@@ -176,6 +247,12 @@ fn skybox_table() -> Vec<u8> {
         3,
         11,
         2,
+        4,
+        16,
+        0,
+        5,
+        6,
+        1,
     ];
     let mut bytes = b"WDBC".to_vec();
     bytes.extend(words.into_iter().flat_map(u32::to_le_bytes));

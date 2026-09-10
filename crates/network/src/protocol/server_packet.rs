@@ -39,7 +39,22 @@ pub struct WorldServerPacket {
     payload: Vec<u8>,
 }
 
+#[cfg(test)]
+#[path = "../../tests/protocol/battlefield_status.rs"]
+mod battlefield_status_tests;
+
 impl WorldServerPacket {
+    /// Decodes the battlefield context fields from SMSG_BATTLEFIELD_STATUS.
+    ///
+    /// # Errors
+    /// Returns an error when a required status field is truncated.
+    pub fn battlefield_status(
+        &self,
+    ) -> Result<Option<super::WorldBattlefieldStatus>, super::WorldBattlefieldStatusPacketError>
+    {
+        super::WorldBattlefieldStatus::decode(self.opcode, &self.payload)
+    }
+
     /// Decodes the authoritative weather selection and transition flag.
     ///
     /// # Errors
@@ -138,6 +153,7 @@ impl WorldServerPacket {
             SMSG_PONG => Some("SMSG_PONG"),
             0x1d9 => Some("SMSG_START_MIRROR_TIMER"),
             0x2f4 => Some("SMSG_WEATHER"),
+            0x2d4 => Some("SMSG_BATTLEFIELD_STATUS"),
             0x1da => Some("SMSG_PAUSE_MIRROR_TIMER"),
             0x1db => Some("SMSG_STOP_MIRROR_TIMER"),
             0xfd => Some("SMSG_TUTORIAL_FLAGS"),

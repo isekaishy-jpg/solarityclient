@@ -34,7 +34,7 @@ pub(super) struct RuntimeSkyResources {
     model_cache: M2ModelCache,
     texture_cache: BlpTextureCache,
     bones: Vec<glam::Mat4>,
-    skybox_draws: [Vec<M2PreparedDraw>; 3],
+    skybox_draws: [Vec<M2PreparedDraw>; 4],
 }
 
 /// One canonical path owns its first phase flags even across name aliases.
@@ -50,6 +50,7 @@ struct SkyModelInput<'a> {
     day: f32,
     realm_minute: i32,
     skyboxes: [(u32, f32); 3],
+    global_skybox: Option<(u32, f32)>,
     world_model: Option<(&'a str, f32)>,
     visible: bool,
 }
@@ -144,6 +145,7 @@ impl RuntimeSkyResources {
                     .light()
                     .skyboxes()
                     .map(|slot| (slot.id(), slot.weight())),
+                global_skybox: environment.light().global_skybox().map(|id| (id, 1.)),
                 world_model: world_model
                     .map(|path| (path, environment.world_model_skybox_weight())),
                 visible: window.is_some() && !environment.has_camera_liquid(),
@@ -164,6 +166,20 @@ impl RuntimeSkyResources {
         world_bone_count: usize,
         random: &mut crate::random::CrtRand,
     ) -> Result<(bool, solarity_rendering::WorldSkyModelFrame<'_>), RuntimeTerrainFrameError> {
+        // 7F3230 resolves the global override before its three ordinary requests.
+        // An alias therefore inherits the flags of whichever request came first.
+        let global = if let Some((id, weight)) = input.global_skybox {
+            self.resolve_skybox(id, time_ms)?.map_or_else(
+                skybox::SkyboxSlot::default,
+                |(model, _)| skybox::SkyboxSlot {
+                    model,
+                    weight,
+                    flags: 0,
+                },
+            )
+        } else {
+            skybox::SkyboxSlot::default()
+        };
         let mut slots = skybox::select_slots::<RuntimeTerrainFrameError>(input.skyboxes, |id| {
             self.resolve_skybox(id, time_ms)
         })?;
@@ -179,14 +195,8 @@ impl RuntimeSkyResources {
                 solarity_rendering::WorldSkyModelFrame::new(sky_scene(camera), &[], &[], &[]),
             ));
         }
-        let default_sky = !slots.iter().any(|slot| {
-            slot.flags == 0
-                && slot.weight > 0.99
-                && slot
-                    .model
-                    .and_then(|index| self.skyboxes.get(index))
-                    .is_some_and(|entry| entry.model.is_some())
-        });
+        let slots = [slots[0], slots[1], slots[2], global];
+        let default_sky = skybox::default_sky(&slots, |index| self.skyboxes[index].model.is_some());
         let alpha = if default_sky {
             solarity_rendering::world_stars_alpha(input.day)
         } else {
@@ -230,9 +240,14 @@ impl RuntimeSkyResources {
                 }
             }
         }
-        let mut scenes = [sky_scene(camera); 3];
+        let mut scenes = [sky_scene(camera); 4];
         for (slot_index, slot) in slots.into_iter().enumerate() {
             self.skybox_draws[slot_index].clear();
+            // Readiness controls default-sky suppression separately. A resident
+            // owner at full global weight suppresses ordinary model submissions.
+            if !skybox::admits_slot(slot_index, global) {
+                continue;
+            }
             if let Some(index) = slot.model
                 && let Some(model) = &mut self.skyboxes[index].model
             {
@@ -256,7 +271,8 @@ impl RuntimeSkyResources {
             )
             .with_skybox_batches(std::array::from_fn(|index| {
                 WorldSkyModelBatch::new(scenes[index], &self.skybox_draws[index])
-            })),
+            }))
+            .with_global_skybox(WorldSkyModelBatch::new(scenes[3], &self.skybox_draws[3])),
         ))
     }
 

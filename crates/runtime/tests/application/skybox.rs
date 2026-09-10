@@ -3,6 +3,62 @@
 use super::*;
 
 #[test]
+fn global_skybox_draw_admission_matches_native() -> Result<(), Box<dyn std::error::Error>> {
+    let mut count = 0;
+    for line in include_str!("../fixtures/screen_effect_native.txt").lines() {
+        let Some(line) = line.strip_prefix("draw ") else {
+            continue;
+        };
+        let row = line.split_whitespace().collect::<Vec<_>>();
+        let weight = f32::from_bits(u32::from_str_radix(row[2], 16)?);
+        let global = SkyboxSlot {
+            model: (row[0] == "1").then_some(3),
+            weight,
+            flags: 2,
+        };
+        let slots = [
+            SkyboxSlot {
+                model: Some(0),
+                weight: 1.,
+                flags: row[3].parse()?,
+            },
+            SkyboxSlot {
+                model: Some(1),
+                weight: 0.3,
+                flags: 2,
+            },
+            SkyboxSlot {
+                model: Some(2),
+                weight: 0.4,
+                flags: 2,
+            },
+            global,
+        ];
+        assert_eq!(
+            default_sky(&slots, |index| index < 3 || row[1] == "1"),
+            row[4] == "6",
+            "{line}"
+        );
+        assert_eq!((row[5], row[6]), ("1", "4"));
+        let admitted = (0..4)
+            .filter(|&index| admits_slot(index, global))
+            .collect::<Vec<_>>();
+        assert_eq!(admitted.len(), row[7].parse::<usize>()?, "{line}");
+        for (&index, native) in admitted.iter().zip(row[8..].as_chunks::<2>().0) {
+            assert_eq!(index, native[0].parse::<usize>()?, "{line}");
+            assert_eq!(
+                slots[index].weight.to_bits(),
+                u32::from_str_radix(native[1], 16)?,
+                "{line}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 56);
+    Ok(())
+}
+
+#[test]
 fn world_model_skybox_replacement_matches_native_slot_writes()
 -> Result<(), Box<dyn std::error::Error>> {
     for line in include_str!("../fixtures/world_model_sky_native.txt")

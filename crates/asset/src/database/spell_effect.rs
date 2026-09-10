@@ -11,6 +11,8 @@ pub struct SpellEffectDefinition {
     pub effects: [u32; 3],
     /// Aura type IDs from words 95–97.
     pub aura_types: [u32; 3],
+    /// Effect misc values from words 110–112, including ScreenEffect IDs.
+    pub misc_values: [u32; 3],
     /// Native internal Spell record word 11, bit 08000000.
     pub resurrection_bypass: bool,
 }
@@ -44,6 +46,7 @@ impl SpellEffectCatalog {
             let definition = SpellEffectDefinition {
                 effects: [word(71)?, word(72)?, word(73)?],
                 aura_types: [word(95)?, word(96)?, word(97)?],
+                misc_values: [word(110)?, word(111)?, word(112)?],
                 resurrection_bypass: word(11)? & 0x08000000 != 0,
             };
             if spells.insert(id, definition).is_some() {

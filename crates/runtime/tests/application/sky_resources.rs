@@ -63,6 +63,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
                 day: 0.5,
                 realm_minute: 720,
                 skyboxes: [(row.id(), opacity), (0, 0.), (0, 0.)],
+                global_skybox: None,
                 world_model: None,
                 visible: true,
             };
@@ -159,6 +160,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
             day: 0.5,
             realm_minute: 900,
             skyboxes: [(2, weights[0]), (38, weights[1]), (40, weights[2])],
+            global_skybox: None,
             world_model: None,
             visible: true,
         };
@@ -189,6 +191,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         day: 0.5,
         realm_minute: 900,
         skyboxes: [(2, 1.), (0, 0.), (0, 0.)],
+        global_skybox: None,
         world_model: None,
         visible: true,
     };

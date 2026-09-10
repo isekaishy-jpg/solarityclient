@@ -22,6 +22,8 @@ mod database_environmental_damage;
 mod database_game_object;
 #[path = "stock_seed/database_movement_sound.rs"]
 mod database_movement_sound;
+#[path = "stock_seed/database_screen_effect.rs"]
+mod database_screen_effect;
 #[path = "stock_seed/database_sound_environment.rs"]
 mod database_sound_environment;
 #[path = "stock_seed/database_spell_visual_effect.rs"]

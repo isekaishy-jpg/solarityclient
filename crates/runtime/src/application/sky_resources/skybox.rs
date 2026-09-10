@@ -7,6 +7,22 @@ pub(super) struct SkyboxSlot {
     pub(super) flags: u32,
 }
 
+/// 7F09B0 checks readiness before suppressing the default sky compositor.
+pub(super) fn default_sky(slots: &[SkyboxSlot; 4], mut ready: impl FnMut(usize) -> bool) -> bool {
+    !slots.iter().enumerate().any(|(index, slot)| {
+        (index == 3 || slot.flags == 0) && slot.weight > 0.99 && slot.model.is_some_and(&mut ready)
+    })
+}
+
+/// Full global weight suppresses ordinary draws even before that model is ready.
+pub(super) fn admits_slot(index: usize, global: SkyboxSlot) -> bool {
+    if index == 3 {
+        global.model.is_some() && global.weight > 0.
+    } else {
+        global.model.is_none() || global.weight < 1.
+    }
+}
+
 /// 79A870 replaces slot zero and clears slot one, retaining the third DBC slot.
 pub(super) fn replace_world_model(slots: &mut [SkyboxSlot; 3], model: Option<usize>, weight: f32) {
     slots[0] = SkyboxSlot {

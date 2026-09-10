@@ -67,7 +67,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) screen_window: crate::WorldScreenWindow,
     pub(super) sky_window: Option<crate::WorldSkyWindow>,
     pub(super) background_color: glam::Vec4,
-    pub(super) frame_sets: [vk::DescriptorSet; 12],
+    pub(super) frame_sets: [vk::DescriptorSet; 13],
     pub(super) world_model_material_stride: vk::DeviceSize,
     pub(super) m2_material_stride: vk::DeviceSize,
     pub(super) m2_scene_stride: vk::DeviceSize,
@@ -998,7 +998,7 @@ fn instance_scene(
     match index {
         Some(index) => Ok((
             context.frame_sets[3],
-            dynamic_offset(index as usize + 7, context.m2_scene_stride)?,
+            dynamic_offset(index as usize + 8, context.m2_scene_stride)?,
         )),
         None => Ok((fixed, 0)),
     }

@@ -172,6 +172,11 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
         0,
         0,
     ]);
+    for row in light_words.as_chunks_mut::<15>().0 {
+        row[11] = if row[0] % 100 == 0 { 2 } else { 4 };
+        row[12] = 999;
+        row[14] = 3;
+    }
     let light_bytes = light_words
         .into_iter()
         .flat_map(u32::to_le_bytes)
@@ -268,5 +273,37 @@ fn world_light_matches_original_cyclic_sampling_and_ordered_overlays() -> Result
         }
     }
     assert_eq!(counts, [68, 231, 392, 392]);
+    let query = WorldLightQuery::new(5, Vec3::ZERO, 1234).with_weather(0.6);
+    let ordinary = lights.sample(query)?;
+    let override_palette = lights.sample_parameter(2, 1234)?;
+    let overridden =
+        lights.sample(query.with_global_condition(solarity_asset::WorldLightCondition::new(4)))?;
+    for channel in 0..18 {
+        assert_eq!(
+            overridden.color_channel(channel),
+            override_palette.color_channel(channel)
+        );
+    }
+    assert_eq!(overridden.fog_range(), override_palette.fog_range());
+    assert_eq!(overridden.sky_floats(), override_palette.sky_floats());
+    assert_eq!(overridden.highlight_sky(), override_palette.highlight_sky());
+    assert_eq!(overridden.glow(), ordinary.glow());
+    assert_eq!(overridden.liquid_alphas(), ordinary.liquid_alphas());
+    assert_eq!(overridden.skyboxes(), ordinary.skyboxes());
+    assert_eq!(overridden.cloud_type(), ordinary.cloud_type());
+    assert_eq!(
+        overridden.global_skybox(),
+        Some(lights.parameter(2).ok_or("parameter")?.skybox_id())
+    );
+    for condition in [
+        None,
+        solarity_asset::WorldLightCondition::new(5),
+        solarity_asset::WorldLightCondition::new(6),
+    ] {
+        assert_eq!(
+            lights.sample(query.with_global_condition(condition))?,
+            ordinary
+        );
+    }
     Ok(())
 }

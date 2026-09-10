@@ -142,6 +142,7 @@ fn build_archive(
         builder = builder.add_file_data(empty_wdbc(66), "DBFilesClient\\Map.dbc");
         builder = builder.add_file_data(empty_wdbc(15), "DBFilesClient\\Light.dbc");
         builder = builder.add_file_data(empty_wdbc(8), "DBFilesClient\\Weather.dbc");
+        builder = builder.add_file_data(empty_wdbc(10), "DBFilesClient\\ScreenEffect.dbc");
         builder = builder.add_file_data(empty_wdbc(30), "DBFilesClient\\SoundEntries.dbc");
         builder = builder.add_file_data(empty_wdbc(24), "DBFilesClient\\SoundEntriesAdvanced.dbc");
         builder = builder.add_file_data(empty_wdbc(38), "DBFilesClient\\CreatureSoundData.dbc");

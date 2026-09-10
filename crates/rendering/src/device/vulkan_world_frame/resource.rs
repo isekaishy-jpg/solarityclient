@@ -22,7 +22,7 @@ use crate::{
     TerrainSceneUniform, WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
-const DESCRIPTOR_SET_COUNT: usize = 12;
+const DESCRIPTOR_SET_COUNT: usize = 13;
 const BONE_TRANSFORM_BYTES: vk::DeviceSize = 64;
 
 pub(super) struct FrameCreateContext<'a> {
@@ -92,7 +92,7 @@ impl FrameBufferLayout {
         let m2_scene_stride = align_up(M2SceneUniform::BYTE_SIZE as u64, uniform_alignment)?;
         let scene_count = context
             .m2_scene_capacity
-            .checked_add(M2SceneLightBank::COUNT + 4)
+            .checked_add(M2SceneLightBank::COUNT + 5)
             .ok_or(VulkanError::WorldFrameCapacity)?;
         validate_dynamic_range(scene_count, m2_scene_stride)?;
         let m2_scene_bytes = (scene_count as u64)
@@ -361,7 +361,7 @@ impl WorldFrameSlot {
                     indexed_offset(
                         self.layout.m2_scene_offset,
                         self.layout.m2_scene_stride,
-                        index + 7,
+                        index + 8,
                     )?,
                     &instance.to_bytes(),
                     self.layout.total_bytes,
@@ -380,7 +380,7 @@ impl WorldFrameSlot {
                     .to_bytes(),
                 self.layout.total_bytes,
             )?;
-            for slot in 0..3 {
+            for slot in 0..4 {
                 copy_bytes(
                     destination,
                     self.layout.m2_scene_offset + self.layout.m2_scene_stride * (4 + slot as u64),
@@ -522,7 +522,7 @@ impl WorldFrameSlot {
                 .descriptor_count(2),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .descriptor_count(9),
+                .descriptor_count(10),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1),
@@ -605,6 +605,11 @@ impl WorldFrameSlot {
                 self.layout.m2_scene_offset + self.layout.m2_scene_stride * 6,
                 M2SceneUniform::BYTE_SIZE,
             ),
+            buffer_info(
+                self.buffer,
+                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 7,
+                M2SceneUniform::BYTE_SIZE,
+            ),
         ];
         let descriptor_types = [
             vk::DescriptorType::UNIFORM_BUFFER,
@@ -615,6 +620,7 @@ impl WorldFrameSlot {
             vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             vk::DescriptorType::STORAGE_BUFFER,
             M2_MATERIAL_DESCRIPTOR_TYPE,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,

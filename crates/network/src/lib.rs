@@ -45,6 +45,7 @@ pub use protocol::{
 };
 pub use protocol::{CreatureQueryPacketError, CreatureQueryResponse, CreatureTemplate};
 pub use protocol::{GameObjectQueryPacketError, GameObjectQueryResponse, GameObjectTemplate};
+pub use protocol::{WorldBattlefieldStatus, WorldBattlefieldStatusPacketError};
 pub use protocol::{WorldClientControlUpdate, WorldPlayerControlPacketError};
 pub use protocol::{WorldEnvironmentalDamage, WorldEnvironmentalDamagePacketError};
 pub use protocol::{WorldMirrorTimerPacketError, WorldMirrorTimerUpdate};

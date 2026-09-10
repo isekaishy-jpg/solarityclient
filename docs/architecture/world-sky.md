@@ -132,7 +132,7 @@ Weather particle rendering, particle drainage during resource-type switches,
 and weather ambient audio are not implemented by this lighting owner. Its
 current type follows accepted weather updates; particle residency must replace
 that input when the precipitation owner is introduced. WMO sky visibility is
-connected below; the separate global sky override provider remains unwired.
+connected below, along with the separate global sky override provider.
 
 The three celestial texture requests now use `Textures/sunCenter.blp`,
 `Textures/moon.blp` and `Textures/moon02.blp`, as in `9AD0B0`. Their parsed
@@ -289,10 +289,8 @@ prefixes, and restoration of world drawing beyond the sky scissor. A synthetic
 runtime sky test exercises MOSB aliases, inherited phase flags, opacity pixels,
 hidden-scene random/phase retention and return to the three DBC slots.
 
-The global override at `D38B5C` is a separate owner. `7ECEC0` selects its
-Light condition, and `7F3230` resolves that condition against the global Light
-row. Its provider `4F7020` also drives screen effects and manual fog. That
-provider, manual-fog sky enable/clear behavior, precipitation, and combined
+The global override at `D38B5C` is a separate owner, described below. Manual-fog
+sky enable/clear behavior, screen-filter rendering, precipitation, and combined
 live-world appearance checks remain separate completion work.
 
 Build 79 packages revision `d45c0a68`. Workspace tests, formatting and Clippy
@@ -304,3 +302,55 @@ confirm world rendering through those transitions and retain the existing large
 purple distant-terrain silhouettes as an unresolved appearance issue. This run
 does not establish populated-world or interior parity, and capture timings are
 not performance evidence.
+
+## Global screen-effect lighting and skybox
+
+`4F88B0` searches the local player's aura slots in descending order. For each
+existing Spell row, it selects the first of the three aura-type fields equal to
+260 and uses the corresponding misc value as a ScreenEffect ID. Aura effect-enable
+flags do not mask that search. A selected zero or absent ScreenEffect row clears
+the override; it does not resume searching older auras. Without a matching aura,
+PLAYER_FLAGS bit `0x10` selects effect one outside arenas. Otherwise, bit
+`0x40000000` of player field 1229 selects effect 81. Missing local-player state
+selects zero. The runtime reads these retained ECS fields and exact Spell words
+110–112. The arena classification is driven by `54AE40`'s battlefield-status receiver,
+independently of the current world map. Status three installs an active queue
+and resolves its map through Map.dbc; an unknown map preserves the cached kind.
+Non-active statuses clear the matching active queue without clearing that kind.
+A zero GUID clears the kind only for the currently active queue. Native admits
+queue slots zero and one and skips larger indices. Setup and active packets feed
+this context for screen effects and the existing corpse owner; world transfers
+preserve it and disconnect resets it.
+
+ScreenEffect.dbc's exact ten-word row retains type, four raw filter arguments,
+Light condition and two sound references. `7ECEC0` admits condition values zero
+through seven and clears other values. `7F3230` looks up that condition only on
+the selected global Light row through `7EB180`; an absent LightParams row leaves
+the ordinary result intact. A valid override replaces the fully blended palette,
+then restores ordinary glow, liquid alphas, three ordinary skybox contributions
+and cloud-type selection. Colors, fog, highlight and all four sky scalars come
+from the override without weather blending. A direct LiquidType.LightID bypasses
+this override; the ordinary underwater bank does not.
+
+The global model request precedes the three ordinary requests and WMO replacement,
+so aliases preserve the first model request's phase flags. Its weight is one.
+The compositor gives it a fourth scene and draw bank after the ordinary skyboxes.
+A ready global model above 0.99 suppresses default sky regardless of its flags.
+A non-null global model at weight one suppresses ordinary model submissions even
+while loading has failed or is pending. Visible scenes still advance every cached
+model and update the three ordinary phases followed by the global phase. Hidden
+sky retains the previous clock/random behavior. The additional scene bank also
+shifts per-object lighting offsets, preserving their separate storage.
+
+`screen_effect_oracle.py` captures 448 native player/aura selections, nine exact
+global-palette copies and 56 global draw-admission cases. Portable archive tests
+exercise the ScreenEffect schema, condition bounds, Spell misc fields and live
+ECS selection. `battlefield_status_oracle.py` supplies 864 native packet/context
+cases; protocol tests reject truncated status branches while retaining native
+trailing-byte acceptance. Packet-pump tests cover map lookup, queue clearing and
+world-transfer/disconnect lifetime. Environment tests cover activation, clearing, ordinary immersion,
+direct-liquid bypass and disconnect. GPU coverage adds hidden, partial, full,
+failed and missing global skyboxes, first-request alias flags and changing bone
+prefixes to the WMO sky scene test. These checks do not establish combined live
+ghost/quest appearance: type-specific postprocessing, manual fog and the two
+screen-effect sound overrides still require their respective consumers.

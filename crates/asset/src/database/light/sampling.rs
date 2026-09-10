@@ -55,7 +55,17 @@ pub(super) fn sample(
         return Err(WorldLightSampleError::NonFiniteWeather);
     }
     let candidates = weighted_lights(catalog, query)?;
-    accumulate(catalog, &candidates, query)
+    let mut sample = accumulate(catalog, &candidates, query)?;
+    if let Some(condition) = query.global_condition
+        && let Some(global) = candidates.first()
+        && let Some(parameter) = catalog.parameter(global.light.parameter_ids[condition.index()])
+    {
+        let palette =
+            parameter_palette(catalog, parameter, query.half_minutes, query.fog_context)?.finish();
+        sample.replace_global_palette(palette);
+        sample.global_skybox = Some(parameter.skybox_id);
+    }
+    Ok(sample)
 }
 
 /// Selects the base global light and applies local overlays farthest-to-nearest.
@@ -485,6 +495,7 @@ impl Accumulator {
             liquid_colors: LIQUID_COLOR_CHANNELS.map(|i| color_vector(self.colors[i as usize])),
             liquid_alphas: self.liquid_alphas,
             skyboxes: self.skyboxes,
+            global_skybox: None,
             cloud_type_id: self.cloud_type_id,
             cloud_type_weight: self.cloud_type_weight,
         }

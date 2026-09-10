@@ -1,5 +1,6 @@
 //! Persistent active-world packet pump and main-thread ECS dispatch.
 
+mod battlefield;
 mod creature_cache;
 pub(in crate::application) mod environmental_damage;
 mod game_object_cache;
@@ -12,6 +13,7 @@ mod player_names;
 #[path = "../../tests/application/player_resurrection_offer.rs"]
 mod player_resurrection_offer_tests;
 pub(in crate::application) mod player_ui;
+mod screen_effect;
 mod template_cache;
 mod unit_auras;
 pub(in crate::application) mod unit_death;
@@ -141,6 +143,9 @@ pub enum RuntimeGameplayError {
     /// An authoritative weather packet was malformed.
     #[error(transparent)]
     Weather(#[from] solarity_network::WorldWeatherPacketError),
+    /// An authoritative battlefield status was malformed.
+    #[error(transparent)]
+    BattlefieldStatus(#[from] solarity_network::WorldBattlefieldStatusPacketError),
     /// A server-authored environmental impact was malformed.
     #[error(transparent)]
     EnvironmentalDamage(#[from] solarity_network::WorldEnvironmentalDamagePacketError),
@@ -195,6 +200,8 @@ pub struct RuntimeGameplayCoordinator {
     player_ui: player_ui::RuntimePlayerUiState,
     factions: Option<std::rc::Rc<solarity_asset::CharacterFactionCatalog>>,
     spells: Option<std::rc::Rc<solarity_asset::SpellEffectCatalog>>,
+    battlefield_maps: std::collections::HashMap<u32, bool>,
+    battlefield: battlefield::BattlefieldState,
     player_control: Option<RuntimePlayerControl>,
     unhandled_packets: VecDeque<WorldServerPacket>,
     weather_updates: VecDeque<(solarity_network::WorldWeatherUpdate, u32)>,
@@ -207,6 +214,15 @@ pub struct RuntimeGameplayCoordinator {
 }
 
 impl RuntimeGameplayCoordinator {
+    /// Retains Map.dbc's arena classification for player-view and corpse owners.
+    pub(in crate::application) fn with_maps(mut self, maps: &solarity_asset::MapCatalog) -> Self {
+        self.battlefield_maps = maps
+            .maps()
+            .iter()
+            .map(|map| (map.id(), map.kind() == solarity_asset::MapKind::Arena))
+            .collect();
+        self
+    }
     pub(in crate::application) fn with_spells(
         mut self,
         spells: std::rc::Rc<solarity_asset::SpellEffectCatalog>,
@@ -245,6 +261,8 @@ impl RuntimeGameplayCoordinator {
             player_ui: player_ui::RuntimePlayerUiState::default(),
             factions: None,
             spells: None,
+            battlefield_maps: std::collections::HashMap::new(),
+            battlefield: battlefield::BattlefieldState::default(),
             player_control: None,
             unhandled_packets: VecDeque::new(),
             weather_updates: VecDeque::new(),
@@ -293,9 +311,14 @@ impl RuntimeGameplayCoordinator {
         let mut action_buttons = None;
         let mut player_ui = player_ui::RuntimePlayerUiState::default();
         player_ui.set_spells(self.spells.clone());
+        let mut battlefield = battlefield::BattlefieldState::default();
         let mut game_object_templates = GameObjectTemplateCache::new();
         let mut creature_templates = CreatureTemplateCache::new();
         for packet in setup_packets {
+            if let Some(update) = packet.battlefield_status()? {
+                battlefield.receive(update, &self.battlefield_maps, &mut player_ui.arena);
+                continue;
+            }
             if let Some(update) = packet.weather()? {
                 weather_updates.push_back((update, crate::platform::client_milliseconds()));
                 continue;
@@ -377,6 +400,7 @@ impl RuntimeGameplayCoordinator {
         self.realm_clock = realm_clock;
         self.action_buttons = action_buttons;
         self.player_ui = player_ui;
+        self.battlefield = battlefield;
         self.player_control = Some(player_control);
         self.unhandled_packets = retained;
         self.weather_updates = weather_updates;
@@ -457,6 +481,14 @@ impl RuntimeGameplayCoordinator {
                         .game_object_query()
                         .map_err(RuntimeGameplayError::from)
                         .and_then(|response| {
+                            if let Some(update) = packet.battlefield_status()? {
+                                self.battlefield.receive(
+                                    update,
+                                    &self.battlefield_maps,
+                                    &mut self.player_ui.arena,
+                                );
+                                return Ok(true);
+                            }
                             if let Some(update) = packet.weather()? {
                                 self.weather_updates
                                     .push_back((update, crate::platform::client_milliseconds()));
@@ -1005,6 +1037,7 @@ impl RuntimeGameplayCoordinator {
 
     /// Aborts packet I/O and drops active ECS state.
     pub fn disconnect(&mut self) {
+        self.battlefield = battlefield::BattlefieldState::default();
         self.weather_updates.clear();
         self.player_ui = player_ui::RuntimePlayerUiState::default();
         self.player_ui.set_spells(self.spells.clone());

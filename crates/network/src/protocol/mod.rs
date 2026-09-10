@@ -4,6 +4,8 @@
 //! `wow_world_messages` crates into stable Solarity types. Opcode dispatch and
 //! malformed-packet behavior must remain build-12340 specific.
 
+mod battlefield_status;
+pub use battlefield_status::{WorldBattlefieldStatus, WorldBattlefieldStatusPacketError};
 mod action_buttons;
 mod addon_manifest;
 mod addon_policy;

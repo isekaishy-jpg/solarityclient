@@ -2,6 +2,10 @@
 
 use glam::Vec3;
 
+#[cfg(test)]
+#[path = "../../../tests/stock_seed/global_light_native.rs"]
+mod global_tests;
+
 pub(super) const BAND_KEY_COUNT: usize = 16;
 pub(super) const COLOR_BAND_COUNT: u32 = 18;
 pub(super) const FLOAT_BAND_COUNT: u32 = 6;
@@ -203,6 +207,7 @@ pub struct WorldLightQuery {
     pub(super) position: Vec3,
     pub(super) half_minutes: u32,
     pub(super) condition: WorldLightCondition,
+    pub(super) global_condition: Option<WorldLightCondition>,
     pub(super) light_id_override: Option<u32>,
     pub(super) weather_blend: f32,
     pub(super) fog_context: Option<super::WorldFogContext>,
@@ -217,6 +222,7 @@ impl WorldLightQuery {
             position,
             half_minutes,
             condition: WorldLightCondition::EXTERIOR,
+            global_condition: None,
             light_id_override: None,
             weather_blend: 0.0,
             fog_context: None,
@@ -242,6 +248,14 @@ impl WorldLightQuery {
     #[must_use]
     pub const fn with_condition(mut self, condition: WorldLightCondition) -> Self {
         self.condition = condition;
+        self
+    }
+
+    /// Selects the screen-effect condition on the map-global Light row only.
+    /// Ordinary weather/local skybox contributions remain independently retained.
+    #[must_use]
+    pub const fn with_global_condition(mut self, condition: Option<WorldLightCondition>) -> Self {
+        self.global_condition = condition;
         self
     }
 
@@ -293,11 +307,22 @@ pub struct WorldLightSample {
     pub(super) liquid_colors: [Vec3; 4],
     pub(super) liquid_alphas: [f32; 4],
     pub(super) skyboxes: [SkyboxBlend; 3],
+    pub(super) global_skybox: Option<u32>,
     pub(super) cloud_type_id: u32,
     pub(super) cloud_type_weight: f32,
 }
 
 impl WorldLightSample {
+    /// 7F3230 restores ordinary glow, liquid opacity and model/cloud selections
+    /// after sampling the override into the complete global palette.
+    pub(super) fn replace_global_palette(&mut self, mut palette: Self) {
+        palette.glow = self.glow;
+        palette.liquid_alphas = self.liquid_alphas;
+        palette.skyboxes = self.skyboxes;
+        palette.cloud_type_id = self.cloud_type_id;
+        palette.cloud_type_weight = self.cloud_type_weight;
+        *self = palette;
+    }
     /// Returns the authored fog start and end distances in world units.
     #[must_use]
     pub const fn fog_range(self) -> (f32, f32) {
@@ -408,6 +433,12 @@ impl WorldLightSample {
     #[must_use]
     pub const fn skyboxes(self) -> [SkyboxBlend; 3] {
         self.skyboxes
+    }
+
+    /// Returns the independent global skybox request selected by a screen effect.
+    #[must_use]
+    pub const fn global_skybox(self) -> Option<u32> {
+        self.global_skybox
     }
 }
 

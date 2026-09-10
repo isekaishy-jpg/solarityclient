@@ -41,6 +41,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
     for row in rows.as_chunks_mut::<15>().0 {
         row[9] = if row[0] == 14 { 1 } else { 3 };
         row[10] = if row[0] == 14 { 2 } else { 4 };
+        row[11] = if row[0] == 14 { 5 } else { 3 };
     }
     let mut parameters = Vec::new();
     let mut colors = Vec::new();
@@ -84,6 +85,10 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         ("DBFilesClient\\LightParams.dbc", &table(9, &parameters)),
         ("DBFilesClient\\LightIntBand.dbc", &table(34, &colors)),
         ("DBFilesClient\\LightFloatBand.dbc", &table(34, &floats)),
+        (
+            "DBFilesClient\\ScreenEffect.dbc",
+            &table(10, &[141, 0, 0, 0, 0, 0, 0, 4, 0, 0]),
+        ),
         ("DBFilesClient\\LiquidType.dbc", &table(45, &liquids)),
     ])?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(
@@ -101,6 +106,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
     )?;
     let indoor_fog = fog_placement.fog_environment(0, None, Vec3::ZERO)?;
     let mut environment = RuntimeWorldEnvironment::new(LightCatalog::load(&mut store)?, 8 << 30)?
+        .with_screen_effects(solarity_asset::ScreenEffectCatalog::load(&mut store)?)
         .with_weather(solarity_asset::WeatherCatalog::load(&mut store)?);
     let clock = RealmClock::new(WorldTimeSpeed::new(0, 0., 0)?);
     for (position, exterior, underwater) in [
@@ -327,6 +333,47 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         .ok_or("reset frame")?;
     assert_eq!(cleared.weather_blend(), 0.);
     assert_eq!(cleared.light(), clear.light());
+    environment.select_screen_effect(141);
+    let overridden = environment
+        .synchronize(Some(&world), Some(&clock))?
+        .ok_or("screen effect frame")?;
+    assert_eq!(overridden.light().ambient_color(), Vec3::splat(64. / 255.));
+    assert_eq!(overridden.light().global_skybox(), Some(0));
+    for (liquid_type, expected, global) in [(1, 64., Some(0)), (2, 240., None)] {
+        let resolved = environment.resolve_liquid(
+            overridden,
+            Some(SubmergedLiquid {
+                liquid_type,
+                surface_height: 30.,
+                depth: 0.,
+            }),
+            &liquids,
+        )?;
+        assert_eq!(
+            resolved.light().ambient_color(),
+            Vec3::splat(expected / 255.)
+        );
+        assert_eq!(resolved.light().global_skybox(), global);
+    }
+    for id in [0, 999] {
+        environment.select_screen_effect(id);
+        assert_eq!(
+            environment
+                .synchronize(Some(&world), Some(&clock))?
+                .ok_or("clear effect frame")?
+                .light(),
+            clear.light()
+        );
+    }
+    environment.select_screen_effect(141);
+    environment.disconnect();
+    assert_eq!(
+        environment
+            .synchronize(Some(&world), Some(&clock))?
+            .ok_or("disconnect effect frame")?
+            .light(),
+        clear.light()
+    );
     Ok(())
 }
 

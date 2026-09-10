@@ -245,6 +245,7 @@ impl ClientServices {
         let loading_directory = LoadingScreenDirectory::new(&maps, loading_screens);
         let lights = LightCatalog::load(&mut assets)?;
         let weather = solarity_asset::WeatherCatalog::load(&mut assets)?;
+        let screen_effects = solarity_asset::ScreenEffectCatalog::load(&mut assets)?;
         let liquids = solarity_asset::LiquidTypeCatalog::load(&mut assets)?;
         let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
         let underwater_particles =
@@ -506,12 +507,14 @@ impl ClientServices {
                 login,
                 world,
                 gameplay: RuntimeGameplayCoordinator::new()
+                    .with_maps(&maps)
                     .with_spells(spells)
                     .with_factions(character_metadata.faction_catalog()),
                 world_transfer: RuntimeWorldTransferCoordinator::new(),
                 area_triggers,
                 environment: RuntimeWorldEnvironment::new(lights, total_physical_memory_bytes)?
                     .with_map_time_overrides(&maps)
+                    .with_screen_effects(screen_effects)
                     .with_weather(weather),
                 player_movement: super::player_movement::RuntimePlayerMovement::default(),
                 remote_movement: super::player_movement::remote::RuntimeRemoteMovement::default(),
@@ -2453,6 +2456,8 @@ impl ClientServices {
         while let Some((update, time)) = self.gameplay.take_weather_update() {
             self.environment.receive_weather(update, time);
         }
+        self.environment
+            .select_screen_effect(self.gameplay.screen_effect_id());
         self.environment
             .synchronize(self.gameplay.world(), self.gameplay.realm_clock())?;
         self.water_ripples.synchronize_world(self.gameplay.world());

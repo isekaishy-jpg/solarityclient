@@ -218,9 +218,22 @@ pub struct RuntimeWorldEnvironment {
     map_time_overrides: Vec<(u32, i32)>,
     weather_catalog: solarity_asset::WeatherCatalog,
     weather: weather::WeatherTransition,
+    screen_effects: solarity_asset::ScreenEffectCatalog,
+    screen_effect: Option<solarity_asset::ScreenEffectDefinition>,
 }
 
 impl RuntimeWorldEnvironment {
+    /// Retains authored world-view declarations alongside the environment tables.
+    #[must_use]
+    pub fn with_screen_effects(mut self, catalog: solarity_asset::ScreenEffectCatalog) -> Self {
+        self.screen_effects = catalog;
+        self
+    }
+
+    /// An absent declaration clears the native global Light-condition override.
+    pub fn select_screen_effect(&mut self, id: u32) {
+        self.screen_effect = self.screen_effects.definition(id);
+    }
     /// Retains the installed Weather.dbc selections for server updates.
     #[must_use]
     pub fn with_weather(mut self, catalog: solarity_asset::WeatherCatalog) -> Self {
@@ -271,6 +284,8 @@ impl RuntimeWorldEnvironment {
             map_time_overrides: Vec::new(),
             weather_catalog: solarity_asset::WeatherCatalog::default(),
             weather: weather::WeatherTransition::default(),
+            screen_effects: solarity_asset::ScreenEffectCatalog::default(),
+            screen_effect: None,
         })
     }
 
@@ -318,6 +333,7 @@ impl RuntimeWorldEnvironment {
         let light = self.lights.sample(
             WorldLightQuery::new(map_id.value(), position, half_minutes)
                 .with_weather(weather_blend)
+                .with_global_condition(self.screen_effect.and_then(|effect| effect.light_condition))
                 .with_fog_context(fog_context),
         )?;
         let current = RuntimeWorldEnvironmentFrame {
@@ -371,6 +387,9 @@ impl RuntimeWorldEnvironment {
             self.lights.sample(
                 WorldLightQuery::new(frame.map_id, frame.position, frame.half_minutes)
                     .with_condition(WorldLightCondition::UNDERWATER)
+                    .with_global_condition(
+                        self.screen_effect.and_then(|effect| effect.light_condition),
+                    )
                     .with_weather(frame.weather_blend)
                     .with_fog_context(frame.fog_context),
             )?
@@ -395,5 +414,6 @@ impl RuntimeWorldEnvironment {
     pub fn disconnect(&mut self) {
         self.current = None;
         self.weather = weather::WeatherTransition::default();
+        self.screen_effect = None;
     }
 }
