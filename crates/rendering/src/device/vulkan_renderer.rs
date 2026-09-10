@@ -2554,11 +2554,11 @@ impl VulkanRenderer {
         self.m2_samplers.info(handle)
     }
 
-    /// Creates persistent sampled-image descriptor sets in one exact-size batch.
+    /// Creates persistent sampled-image descriptor sets in material-batch order.
     ///
     /// Existing sets are shared by their image/sampler stage identity. A single
-    /// descriptor pool is created for only the unique new sets in this call,
-    /// matching a decoded model's known material count without a guessed limit.
+    /// allocation consumes only the unique new sets in this call. Pool capacity
+    /// is shared across model batches and grows from observed material demand.
     ///
     /// # Errors
     ///

@@ -3328,6 +3328,45 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         renderer.prepare_m2_texture_sets(&[two_stage, one_stage])?,
         texture_sets[..2]
     );
+    // Later model batches share capacity, cross pool boundaries, and retain
+    // earlier descriptors. The draws below still sample the original sets.
+    let linear_texture = renderer.upload_blp_texture(&texture_source, BlpColorSpace::Linear)?;
+    let stages = [
+        M2SampledTexture::new(texture_handle, wrap_u_sampler),
+        M2SampledTexture::new(texture_handle, clamped_sampler),
+        M2SampledTexture::new(linear_texture, wrap_u_sampler),
+        M2SampledTexture::new(linear_texture, clamped_sampler),
+    ];
+    let mut materials = Vec::new();
+    for first in stages {
+        materials.push(M2TextureSet::One(first));
+        for second in stages {
+            materials.push(M2TextureSet::Two([first, second]));
+        }
+    }
+    let mut retained_sets = Vec::new();
+    for batch in materials.chunks(3) {
+        let mut requested = batch.to_vec();
+        requested.push(batch[0]);
+        let handles = renderer.prepare_m2_texture_sets(&requested)?;
+        assert_eq!(handles[0], handles[batch.len()]);
+        retained_sets.extend_from_slice(&handles[..batch.len()]);
+    }
+    assert_eq!(renderer.prepare_m2_texture_sets(&materials)?, retained_sets);
+    for (material, handle) in materials.iter().zip(retained_sets) {
+        assert_eq!(
+            renderer
+                .m2_texture_set_info(handle)
+                .ok_or("retained material")?
+                .stage_count(),
+            material.stage_count()
+        );
+    }
+    assert!(renderer.prepare_m2_texture_sets(&[])?.is_empty());
+    assert_eq!(
+        renderer.prepare_m2_texture_sets(&[two_stage, one_stage])?,
+        texture_sets[..2]
+    );
     let particle_emitter = model
         .animations()
         .particles()

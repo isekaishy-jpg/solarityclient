@@ -1,5 +1,6 @@
 //! Persistent sampled-texture descriptors for stock M2 material stages.
 
+mod pool;
 mod registry;
 mod types;
 

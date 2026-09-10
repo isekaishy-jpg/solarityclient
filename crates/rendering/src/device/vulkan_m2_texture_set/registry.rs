@@ -1,4 +1,4 @@
-//! Exact-size bulk descriptor allocation and renderer-lifetime ownership.
+//! Shared material identities and growing descriptor capacity across model batches.
 
 #![allow(unsafe_code)]
 
@@ -12,6 +12,7 @@ use crate::device::vulkan_character_atlas::CharacterAtlasTextureRegistry;
 use crate::device::vulkan_sampler::M2SamplerRegistry;
 use crate::device::vulkan_texture::BlpTextureRegistry;
 
+use super::pool::M2DescriptorPool;
 use super::types::{M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo};
 
 /// One live descriptor set owned transitively by a registry descriptor pool.
@@ -20,12 +21,12 @@ struct GpuM2TextureSet {
     info: M2TextureSetInfo,
 }
 
-/// Caches material texture-stage sets and owns exact-size pool batches.
+/// Caches material texture-stage sets and owns their persistent descriptor pools.
 pub(in crate::device) struct M2TextureSetRegistry {
     registry_id: u64,
     handles: HashMap<M2TextureSet, M2TextureSetHandle>,
     resources: Vec<GpuM2TextureSet>,
-    pools: Vec<vk::DescriptorPool>,
+    pools: Vec<M2DescriptorPool>,
 }
 
 impl Default for M2TextureSetRegistry {
@@ -107,16 +108,13 @@ impl M2TextureSetRegistry {
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         self.handles.clear();
         self.resources.clear();
-        // SAFETY: Every pool belongs to this device and all descriptor use is
-        // retired before renderer teardown.
-        unsafe {
-            for pool in self.pools.drain(..).rev() {
-                device.destroy_descriptor_pool(pool, None);
-            }
+        // Every descriptor use has retired before renderer teardown.
+        for pool in self.pools.drain(..).rev() {
+            pool.destroy(device);
         }
     }
 
-    /// Allocates one pool sized from this exact unique material batch.
+    /// Allocates and publishes exactly the unique materials in this batch.
     fn allocate_batch(
         &mut self,
         device: &Device,
@@ -133,41 +131,7 @@ impl M2TextureSetRegistry {
         first_slot
             .checked_add(added)
             .ok_or(VulkanError::M2TextureSetCapacity)?;
-        // Vulkan charges pool capacity from the compatible layout rather than
-        // from the subset of bindings statically consumed by a shader. The
-        // common M2 set-three layout declares two descriptors for every set.
-        let descriptor_count = added
-            .checked_mul(2)
-            .ok_or(VulkanError::M2TextureSetCapacity)?;
-        let pool_size = vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(descriptor_count);
-        let pool_sizes = [pool_size];
-        let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(added)
-            .pool_sizes(&pool_sizes);
-        // SAFETY: Counts are nonzero because this method receives a nonempty
-        // pending batch and each type contains one or two stages.
-        let pool =
-            unsafe { device.create_descriptor_pool(&pool_info, None) }.map_err(|source| {
-                VulkanError::operation("create M2 texture descriptor pool", source)
-            })?;
-        let layouts = vec![layout; pending.len()];
-        let allocate_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(pool)
-            .set_layouts(&layouts);
-        // SAFETY: The pool and repeated compatible layouts are live for the call.
-        let sets = match unsafe { device.allocate_descriptor_sets(&allocate_info) } {
-            Ok(sets) => sets,
-            Err(source) => {
-                // SAFETY: No successful allocation escaped this failed pool.
-                unsafe { device.destroy_descriptor_pool(pool, None) };
-                return Err(VulkanError::operation(
-                    "allocate M2 texture descriptor sets",
-                    source,
-                ));
-            }
-        };
+        let sets = self.allocate_descriptors(device, layout, added)?;
 
         for (key, descriptor_set) in pending.iter().copied().zip(sets) {
             write_texture_set(
@@ -190,8 +154,40 @@ impl M2TextureSetRegistry {
             });
             self.handles.insert(key, handle);
         }
-        self.pools.push(pool);
         Ok(())
+    }
+
+    /// Reuses the latest pool before growing from observed material demand.
+    /// Capacity doubles to amortize driver allocation across later models; this
+    /// is an allocation policy, not a fixed material or residency limit.
+    fn allocate_descriptors(
+        &mut self,
+        device: &Device,
+        layout: vk::DescriptorSetLayout,
+        count: u32,
+    ) -> Result<Vec<vk::DescriptorSet>, VulkanError> {
+        if let Some(pool) = self
+            .pools
+            .last_mut()
+            .filter(|pool| pool.can_allocate(count))
+        {
+            return pool.allocate(device, layout, count);
+        }
+        // Each set charges two descriptors, whose Vulkan count is a u32.
+        let capacity = self.pools.last().map_or(count, |pool| {
+            count.max(pool.capacity().saturating_mul(2).min(u32::MAX / 2))
+        });
+        let mut pool = M2DescriptorPool::new(device, capacity)?;
+        match pool.allocate(device, layout, count) {
+            Ok(sets) => {
+                self.pools.push(pool);
+                Ok(sets)
+            }
+            Err(error) => {
+                pool.destroy(device);
+                Err(error)
+            }
+        }
     }
 }
 

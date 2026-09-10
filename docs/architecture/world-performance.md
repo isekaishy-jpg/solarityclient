@@ -250,6 +250,56 @@ cached mesh pipeline lookup was much cheaper on this route. These measurements
 support a smaller placement footprint and less publication work, without proving
 the full stall-elimination or 1,200 FPS objective.
 
+## M2 texture descriptor allocation
+
+Material batches allocate their unique new descriptor sets from the latest pool
+while it has capacity. A new pool grows from the previous capacity and current
+batch demand, amortizing driver allocation across models. Each set still charges
+two combined image/sampler descriptors for the common two-binding layout. The
+allocator reserves spare capacity but adds no fixed material or residency limit.
+
+Pools retain every successful allocation until renderer teardown, after all draws
+retire. Image/sampler identity, material-stage ordering, and cached handles keep
+their existing rules. The Vulkan allocation counter advances only after a full
+batch succeeds; a failed first allocation destroys its unused pool. No sets are
+freed individually. These rules follow the Vulkan guarantees for
+[pool fragmentation](https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorPoolCreateInfo.html)
+and [atomic descriptor allocation failure](https://docs.vulkan.org/refpages/latest/refpages/source/vkAllocateDescriptorSets.html).
+
+The regression mixes one- and two-stage materials across successive batches,
+includes duplicates and empty requests, and renders earlier descriptors after
+pool growth. A separate framebuffer regression grows later pools before checking
+the original particle texture's expected fogged pixel values.
+
+On 2026-09-09, temporary instrumentation attributed 27.427 ms of 29.304 ms across
+715 new material batches to descriptor allocation. Pool creation, descriptor
+writes, and registry publication totaled 0.874, 0.288, and 0.378 ms respectively.
+The largest allocation was 6.658 ms for a single new set without registry growth.
+This instrumentation was removed before the optimized replay.
+
+Separate full travel profiles each reported 1,724 M2 source publications. Mean
+texture-descriptor preparation fell from 20.400 to 2.062 microseconds, and the
+maximum fell from 5.504 to 0.424 ms after sharing pool capacity. These are component
+measurements; other resource uploads and scene preparation still take time.
+
+The unprofiled comparison used the same 2,400-frame travel route, GTX 1070,
+1280 x 720 extent, and primary/detail shadows, with captures and compilers absent.
+
+| Travel phase | Mean changed-frame streaming before | After | Mean total frame before | After |
+| --- | ---: | ---: | ---: | ---: |
+| Outbound | 13.048 ms | 12.306 ms | 3.833 ms | 3.782 ms |
+| Return | 9.200 ms | 9.098 ms | 3.868 ms | 3.747 ms |
+
+Both directions retained 24 changed frames, 21 admissions, and 21 evictions.
+Streaming medians were 11.452/9.216 ms before and 11.629/8.974 ms after; the
+outbound median did not improve. Primary-shadow and ground-detail draw counts
+matched frame by frame across stationary, orbit, pointer, travel, and settled
+phases. Maximum travel frames changed from 39.702/43.679 ms to 27.185/20.214 ms,
+but these single-run maxima are not latency bounds, and the entire difference
+cannot be attributed to descriptor allocation. The component profile establishes
+less descriptor work; this pair does not prove elimination of all loading stalls,
+populated-world performance, or the 1,200 FPS target.
+
 ## Resident camera bounds
 
 Camera traces retain conservative bounds over each immutable ADT's actual chunk

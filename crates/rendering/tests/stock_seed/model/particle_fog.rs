@@ -74,6 +74,23 @@ fn particle_framebuffer_uses_stock_depth_and_fog_exponent() -> Result<(), Box<dy
     let sampler = renderer.prepare_m2_sampler(&model.textures()[0])?;
     let texture_set = renderer
         .prepare_m2_texture_sets(&[M2TextureSet::One(M2SampledTexture::new(texture, sampler))])?[0];
+    // Grow later material batches before sampling the original descriptor. The
+    // pixel assertions below must still see its authored texture after growth.
+    let white = renderer.upload_stock_m2_white()?;
+    let green = renderer.upload_stock_m2_failure()?;
+    let stages = [
+        M2SampledTexture::new(texture, sampler),
+        M2SampledTexture::new(white, sampler),
+        M2SampledTexture::new(green, sampler),
+    ];
+    for first in stages {
+        for second in stages {
+            renderer.prepare_m2_texture_sets(&[
+                M2TextureSet::One(first),
+                M2TextureSet::Two([first, second]),
+            ])?;
+        }
+    }
     let eye = Vec3::new(7.0, -4.0, 2.0);
     let cameras = [
         WorldCamera::stock(eye, eye + Vec3::X, Vec3::Z, 100.0),
