@@ -29,10 +29,13 @@ Terrain, WMO, M2, water and underwater particle range inputs consume that same
 frame. Particle families that originally use linear fog retain that shader ABI.
 
 The order around underwater depth is significant: `0x007F3230` darkens the
-working horizon color at `D38B8C` before calling `0x007F0530`, whereas the later
+temporary working color at `D38B8C` before calling `0x007F0530`, whereas the later
 `0x007F16F0` scene-fog pass restores the palette color from `D38BF4`. The runtime
 therefore prepares scene fog before applying the horizon/ambient/diffuse depth
-operation. Scene fog does not inherit the horizon's HSV depth attenuation.
+operation. Scene fog does not inherit that HSV depth attenuation.
+WDL draws after that final publication and therefore also consumes the restored
+ordinary fog bank. The temporary depth-darkened palette color is not its draw
+color; see [the horizon publication capture](terrain-low-detail.md).
 
 The native MFOG bank conversion at `0x007ED1B0` differs from DBC palettes. It
 first computes the absolute start using the camera-clamped end, then raises

@@ -142,6 +142,14 @@ impl RuntimeWorldEnvironmentFrame {
         self.ordinary_fog
     }
 
+    /// Returns DayNight+8C after 7816F0 publishes camera fog through 7F16F0.
+    /// WDL uses this ordinary bank, including manual fog and native liquid
+    /// bank overrides, rather than the earlier depth-darkened palette word.
+    #[must_use]
+    pub fn horizon_fog_color(self) -> Vec3 {
+        self.ordinary_fog.color()
+    }
+
     /// Applies camera-owned MFOG banks after the liquid palette is resolved.
     #[must_use]
     pub fn with_world_model_fog(
@@ -529,8 +537,8 @@ impl RuntimeWorldEnvironment {
                 frame.fog_context,
             )?
         };
-        // 7F3230 darkens the horizon's working color before 7F0530. The later
-        // 7F16F0 scene-fog pass reads the undarkened palette color at D38BF4.
+        // 7F3230 temporarily darkens +8C before sky preparation at 7F0530.
+        // 7816F0 then calls 7F16F0, restoring +8C before WDL and scene draws.
         frame.base_fog = frame.manual_fog.map_or_else(
             || light.final_fog(frame.fog_context, false),
             |fog| frame.fog_context.resolve_manual_fog(fog, false),

@@ -987,12 +987,12 @@ impl TerrainFrame {
             ));
         }
         if let Some(map) = terrain.low_detail() {
-            // 7D5E70 consumes DayNight+8C, including liquid-depth darkening;
-            // scene fog and camera-interior MFOG retain separate colors.
+            // 7D5E70 consumes DayNight+8C after 7816F0/7F16F0 resolution;
+            // the blended camera-interior color remains separately at +A0.
             scene = scene.with_low_detail(solarity_rendering::WorldLowDetailFrame::new(
                 map,
                 camera,
-                light.fog_color(),
+                environment.horizon_fog_color(),
                 self.horizon_scale,
             )?);
         }

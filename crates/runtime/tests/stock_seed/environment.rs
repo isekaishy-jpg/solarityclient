@@ -137,7 +137,10 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         assert_eq!(frame.light().ambient_color(), Vec3::splat(exterior / 255.));
         assert_eq!(frame.fog().range(), (388.5, 777.));
         assert_eq!(frame.fog().exponent(), 4.25);
+        let horizon = native_horizon_color(exterior as u32, 0., false, 0)?;
+        assert_eq!(frame.horizon_fog_color(), horizon);
         let indoor = frame.with_world_model_fog(indoor_fog);
+        assert_eq!(indoor.horizon_fog_color(), horizon);
         assert_eq!(indoor.fog().range(), (25., 777.));
         assert_eq!(indoor.fog().exponent(), 6.175);
         assert_eq!(
@@ -171,6 +174,8 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
                 &liquids,
             )?;
             assert!(resolved.has_camera_liquid());
+            let horizon = native_horizon_color(underwater as u32, depth.max(0.), true, 0)?;
+            assert_eq!(resolved.horizon_fog_color(), horizon);
             assert_eq!(
                 resolved.light().ambient_color(),
                 Vec3::splat(expected / 255.)
@@ -187,6 +192,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
             assert_eq!(resolved.fog().exponent(), 8.5);
             assert_eq!(resolved.fog().color(), Vec3::splat(underwater / 255.));
             let indoor = resolved.with_world_model_fog(indoor_fog);
+            assert_eq!(indoor.horizon_fog_color(), horizon);
             assert_eq!(indoor.fog().range(), (25., 777.));
             assert_eq!(indoor.fog().exponent(), 13.45);
             assert_eq!(
@@ -375,7 +381,11 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
     assert_eq!(manual.fog().range(), (105., 150.));
     assert_eq!(manual.fog().exponent(), 6.505);
     assert_eq!(manual.fog().color(), Vec3::new(76., 76., 99.) / 255.);
-    assert_eq!(manual.light(), clear.light()); // Manual fog leaves horizon/palette words intact.
+    assert_eq!(manual.light(), clear.light()); // The source palette remains intact.
+    assert_eq!(
+        manual.horizon_fog_color(),
+        native_horizon_color(16, 0., false, 0xff4c4c63)?
+    );
     environment.set_full_screen_effects(true);
     let retained = environment
         .synchronize(Some(&world), Some(&clock))?
@@ -399,9 +409,17 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         )?;
         assert_eq!(wet.fog().range(), manual.fog().range());
         assert_eq!(wet.fog().color(), manual.fog().color());
+        let horizon = native_horizon_color(
+            if liquid_type == 1 { 32 } else { 240 },
+            50.,
+            true,
+            0xff4c4c63,
+        )?;
+        assert_eq!(wet.horizon_fog_color(), horizon);
         assert_eq!(wet.fog().exponent(), manual.fog().exponent() * 2.);
         assert!(!wet.sky_enabled());
         let indoors = wet.with_world_model_fog(indoor_fog);
+        assert_eq!(indoors.horizon_fog_color(), horizon);
         assert_eq!(indoors.ordinary_model_fog().color(), manual.fog().color());
         assert_eq!(indoors.fog().range(), (25., 777.));
         assert!(!indoors.sky_enabled());
@@ -694,6 +712,26 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
 }
 
 /// Authored dry/wet banks in a closed interior, independent of Light.dbc.
+fn native_horizon_color(
+    gray: u32,
+    depth: f32,
+    liquid: bool,
+    manual: u32,
+) -> Result<Vec3, Box<dyn Error>> {
+    let palette = 0xff000000 | (gray * 0x010101);
+    let key = format!("{palette:08x} {depth} {} {manual:08x} ", u32::from(liquid));
+    let row = include_str!("../fixtures/terrain_horizon_fog_native.txt")
+        .lines()
+        .find(|row| row.starts_with(&key))
+        .ok_or("native horizon publication case")?;
+    let color = u32::from_str_radix(row.split_whitespace().last().ok_or("native GX color")?, 16)?;
+    Ok(Vec3::new(
+        ((color >> 16) & 255) as f32,
+        ((color >> 8) & 255) as f32,
+        (color & 255) as f32,
+    ) / 255.)
+}
+
 fn indoor_fog_model() -> (Vec<u8>, Vec<u8>) {
     fn chunk(bytes: &mut Vec<u8>, name: [u8; 4], payload: &[u8]) {
         bytes.extend(name);

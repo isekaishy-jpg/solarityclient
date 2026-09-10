@@ -30,9 +30,14 @@ view. The replacement therefore carries the source camera's retained direction
 instead of subtracting its rounded one-unit world target. A regression checks
 identical main/horizon views across yaw and large world coordinates.
 
-The runtime supplies the working light palette's horizon color, including
-`7F3230` liquid-depth darkening. The later `7F16F0` scene fog and local MFOG
-camera bank have separate colors and must not replace this input.
+The runtime supplies the ordinary fog bank published at DayNight `+8C`.
+`7831A0` calls `7816F0`, which calls `7F3920` (including `7F3230` depth
+darkening), `7F1010`, `7EEA80`, and finally `7F16F0`. That final publication
+overwrites the temporary darkened `+8C` with the undarkened palette or retained
+manual fog color before world drawing. Native liquid bank overrides also
+apply here. The camera's blended interior color remains separate at `+A0`.
+The previous runtime incorrectly retained the earlier darkened palette word,
+making distant terrain disagree with underwater and Nether fog.
 Ordinary world queues use their existing documented
 `0..0.94` interval; Glue frames retain their own depth interval. Sky keeps its
 existing reserved projection and is drawn before the horizon.
@@ -45,6 +50,34 @@ retains it. This avoids copying map geometry into each frame slot or uploading
 it again when the resident ADT changes.
 
 ## Evidence and checks
+
+`tools/ghidra/terrain_horizon_fog_oracle.py` executes native `7F3230` depth
+arithmetic, the `7816F0` publication sequence through `7F16F0`, and `7D5E70`
+through its GX fog-state stores. Its 108 cases retain the intermediate color,
+ordinary color and actual published GX color for six palettes, three depths,
+dry/wet cameras and normal/two manual fog colors. Sky/model/device providers
+are controlled; the already captured depth result stands in for the full sky
+producer. WMO queries report no interior. The runtime environment regression
+checks the captured GX colors for dry, submerged, manual and indoor frames,
+with existing separate native MFOG fixtures covering the interior banks.
+The fixture SHA-256 is
+`716e9cc338312e344a90be3c9e188b34b039f271ef15e13b6bdb89874c84e31d`.
+
+Three optimized real-archive replays completed 1,260 frames each. Normal and
+Nether runs used map 1 at `(1300, -4530, 50)`, camera distance 25 and a
+200-unit outward/return travel offset. The Nether run selected that owner in
+all 1,260 frames. Its matching settled capture no longer contains the blue
+distant silhouettes against pale manual fog; nearby terrain and colored UI
+remain visible. The normal capture still contains conspicuous distant shapes,
+so the color correction does not establish complete horizon appearance.
+The water replay at `(1100, -5500, -20)` moved vertically by 60 units and back,
+recording 1,015 wave/liquid-type-2 frames and 245 normal/dry frames. Inspected
+submerged captures retain textured seabed, the underwater effect and UI.
+All three logs contain no renderer warnings or errors. These captured runs
+validate presentation and transitions; they are not performance measurements.
+The full workspace passed 1,205 tests with 23 ignored. After correcting the
+fixture reader's error handling, the focused environment regression passed
+again and workspace Clippy passed for all targets/features with warnings denied.
 
 `tools/ghidra/terrain_low_detail_oracle.py` executes `7CC310`, `7D5150` and
 `7D5240` from the fingerprinted build-12340 executable. Archive reads,

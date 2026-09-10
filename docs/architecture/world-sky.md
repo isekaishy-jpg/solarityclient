@@ -622,6 +622,9 @@ recorded the nether owner throughout, with its contribution rising from
 and show the short manual-fog range. The lower camera retains textured nearby
 terrain and scenery; the distant flat silhouettes remain conspicuous against
 the pale fog. Combined horizon admission/color still needs investigation.
+The subsequent [WDL fog publication correction](terrain-low-detail.md) removes
+those blue Nether silhouettes by consuming the native final ordinary fog bank.
+Other distant-world appearance and admission work remains open.
 
 Four separate uncaptured runs used nether on, off, off, on, with the same
 declaration, global `ffx` setting, camera and 49 resident tiles throughout the
