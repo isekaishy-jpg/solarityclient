@@ -196,7 +196,17 @@ Remaining integration and validation are:
 
 ## Testing packages
 
-Build **000089** (`0.0.3a`) installs source revision
+Build **000090** (`0.0.3a`) installs source revision
+`a28310ae55d9c864a5bafeca46fd57c04236b70b` through the persistent Testing launcher.
+The executable reports that revision and build number; its dirty marker records
+the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
+SHA-256 hashes match:
+`5305ce404c418f12d17a1f7ab5e05cb66667654ff5047b2184a3ccda89163edc`.
+It connects ordinary Player_C visibility to model, effect and shadow publication
+and excludes hidden removed player hierarchies from disappearance fading.
+The exceptional policies and live travel checks listed above remain open.
+
+Build **000089** (`0.0.3a`) installed source revision
 `f0c1ee366cd39619e64656726b084234a4f45d9d` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
