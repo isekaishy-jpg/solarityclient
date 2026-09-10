@@ -94,3 +94,14 @@ integration and validation are:
   establish that live visual result.
 - Trace any additional replicated-distance or effect-owner policies from their
   native callers instead of borrowing static MDDF/MODD distance classes.
+
+## Testing package
+
+Build **000087** (`0.0.3a`) installs source revision
+`45658f53e403ba107abbe774fd93d238a1896e52` through the persistent Testing launcher.
+The executable reports that revision and build number; its dirty marker records
+the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
+SHA-256 hashes match:
+`9c02c02ce453663f70cf5684cccebc5ab6db54af4cb7c1118314cbcf72c6b093`.
+This package contains the entry consumers above; it does not establish live
+populated-world appearance or implement the remaining disappearance consumer.
