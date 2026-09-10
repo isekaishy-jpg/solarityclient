@@ -1,6 +1,7 @@
 //! Retained unit posture/movement requests and their primary sequence callback.
 
 mod ground;
+mod passenger;
 
 use ground::UnitGroundPose;
 
@@ -239,6 +240,7 @@ impl UnitAnimationScene {
                 && previous.identity == identity
             {
                 replacement.opacity = Rc::clone(&previous.opacity);
+                replacement.passenger = Rc::clone(&previous.passenger);
             }
             self.owners.insert(identity.guid(), Rc::new(replacement));
         }
@@ -296,6 +298,7 @@ pub(super) struct UnitAnimationBehavior {
     model_color: Cell<u32>,
     opacity: Rc<EntityOpacityOwner>,
     upper_body_wound: Cell<Option<(u16, M2ModelSequenceBlend)>>,
+    passenger: Rc<RefCell<passenger::UnitPassengerModel>>,
 }
 
 /// Instance state survives GPU rebuilds alongside the primary sequence owner.
@@ -385,6 +388,7 @@ impl UnitAnimationBehavior {
             model_color: Cell::new(u32::MAX),
             opacity: Rc::new(EntityOpacityOwner::default()),
             upper_body_wound: Cell::new(None),
+            passenger: Rc::new(RefCell::new(passenger::UnitPassengerModel::default())),
             ground: Rc::new(UnitGroundPose::default()),
             body: RefCell::new(UnitBodyPose {
                 controller: UnitBodyOrientation::new(input.facing),

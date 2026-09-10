@@ -4,28 +4,28 @@ use super::{ClientFixture, game_object_models};
 use std::error::Error;
 
 pub fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, None, None, None)
+    build_fixture(false, false, None, None, None, None, false)
 }
 
 pub fn fixture_with_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false, None, None, None, None)
+    build_fixture(true, false, None, None, None, None, false)
 }
 
 pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, true, None, None, None, None)
+    build_fixture(false, true, None, None, None, None, false)
 }
 
 pub fn fixture_with_hairless_npc() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, Some(9), None, None, None)
+    build_fixture(false, false, Some(9), None, None, None, false)
 }
 
 pub fn fixture_with_water_effects(attachment: u32) -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, Some(attachment), None, None)
+    build_fixture(false, false, None, Some(attachment), None, None, false)
 }
 
 /// Distinct display/model scales and a family interval for live scale updates.
 pub fn fixture_with_body_scale() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, None, Some((0.4, 1.25)), None)
+    build_fixture(false, false, None, None, Some((0.4, 1.25)), None, false)
 }
 
 /// Display 102 is a mount with independently authored display/model scales.
@@ -37,12 +37,26 @@ pub fn fixture_with_mount_scale() -> Result<ClientFixture, Box<dyn Error>> {
         None,
         Some((0.4, 1.25)),
         Some((1.6, 3.5)),
+        false,
     )
 }
 
 /// Live mount emitters and a saddle exercise independent component lifetime.
 pub fn fixture_with_mount_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false, None, None, Some((0.4, 1.25)), Some((1.6, 3.5)))
+    build_fixture(
+        true,
+        false,
+        None,
+        None,
+        Some((0.4, 1.25)),
+        Some((1.6, 3.5)),
+        false,
+    )
+}
+
+/// Animated vehicle bones, a passenger anchor, and authored seat offsets.
+pub fn fixture_with_vehicle_seats() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(true, false, None, None, None, None, true)
 }
 
 fn build_fixture(
@@ -52,6 +66,7 @@ fn build_fixture(
     water_attachment: Option<u32>,
     body_scale: Option<(f32, f32)>,
     mount_scale: Option<(f32, f32)>,
+    vehicle_seats: bool,
 ) -> Result<ClientFixture, Box<dyn Error>> {
     let ids = [0, 91, 96, 97, 98, 99, 100, 101];
     let mut model = game_object_models::model_with_animations(&ids)?;
@@ -100,6 +115,20 @@ fn build_fixture(
         model[event + 26..event + 28].copy_from_slice(&u16::MAX.to_le_bytes());
         array(&mut model, event + 28, ids.len(), channels);
         array(&mut model, 0x100, 1, event);
+    }
+    if vehicle_seats {
+        model[0x44..0x48].copy_from_slice(&2_u32.to_le_bytes());
+        append_attachments(&mut model, &[0, 20], ids.len());
+        let records = u32::from_le_bytes(model[0xf4..0xf8].try_into()?) as usize;
+        for (index, position) in [[0.25_f32, 0.5, 1.], [2., -1., 3.]].into_iter().enumerate() {
+            for (axis, value) in position.into_iter().enumerate() {
+                model[records + index * 40 + 8 + axis * 4..records + index * 40 + 12 + axis * 4]
+                    .copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        let bone = u32::from_le_bytes(model[0x30..0x34].try_into()?) as usize;
+        animated_vec3(&mut model, bone + 16, ids.len(), [0., 0., 0.], [0., 0., 2.]);
+        animated_vec3(&mut model, bone + 56, ids.len(), [1., 1., 1.], [2., 2., 2.]);
     }
     let animations: Vec<_> = ids
         .iter()
@@ -206,6 +235,18 @@ fn build_fixture(
     .into_iter()
     .map(|(path, bytes)| (path.to_owned(), bytes.to_vec()))
     .collect();
+    if vehicle_seats {
+        files.extend([
+            (
+                "Character\\Human\\Male\\HumanMale01.skin".to_owned(),
+                game_object_models::skin()?,
+            ),
+            (
+                "Creature\\Alternate01.skin".to_owned(),
+                game_object_models::skin()?,
+            ),
+        ]);
+    }
     // Native vehicle-seat fixture deliberately separates the flags sign bit
     // from the signed attachment ID used by passenger entry interpolation.
     let mut vehicle = [0_u32; 40];
@@ -214,6 +255,20 @@ fn build_fixture(
     let mut seats = [0_u32; 116];
     seats[..3].copy_from_slice(&[10, 0, u32::MAX]);
     seats[58..61].copy_from_slice(&[12, 0x8000_0000, 21]);
+    if vehicle_seats {
+        seats[60] = 0; // Vehicle seat enum zero maps to M2 attachment 20.
+        seats[61..64].copy_from_slice(&[
+            0.5_f32.to_bits(),
+            0.25_f32.to_bits(),
+            (-0.5_f32).to_bits(),
+        ]);
+        seats[87..90].copy_from_slice(&[
+            0.3_f32.to_bits(),
+            0.2_f32.to_bits(),
+            (-0.4_f32).to_bits(),
+        ]);
+        seats[90] = 0; // Passenger attachment 0 has a distinct static offset.
+    }
     files.push((
         "DBFilesClient\\Vehicle.dbc".to_owned(),
         dbc(40, &vehicle, b"\0"),
@@ -569,6 +624,36 @@ fn append_effects(bytes: &mut Vec<u8>, sequences: usize) {
     bytes[ribbon + 174] = u8::MAX;
     bytes[ribbon + 175] = u8::MAX;
     array(bytes, 0x120, 1, ribbon);
+}
+
+fn animated_vec3(
+    bytes: &mut Vec<u8>,
+    track: usize,
+    sequences: usize,
+    first: [f32; 3],
+    last: [f32; 3],
+) {
+    let time = bytes.len();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&1000_u32.to_le_bytes());
+    let data = bytes.len();
+    for value in first.into_iter().chain(last) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    let times = bytes.len();
+    for _ in 0..sequences {
+        bytes.extend_from_slice(&2_u32.to_le_bytes());
+        bytes.extend_from_slice(&(time as u32).to_le_bytes());
+    }
+    let values = bytes.len();
+    for _ in 0..sequences {
+        bytes.extend_from_slice(&2_u32.to_le_bytes());
+        bytes.extend_from_slice(&(data as u32).to_le_bytes());
+    }
+    bytes[track..track + 2].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[track + 2..track + 4].copy_from_slice(&u16::MAX.to_le_bytes());
+    array(bytes, track + 4, sequences, times);
+    array(bytes, track + 12, sequences, values);
 }
 
 fn constant_track(bytes: &mut Vec<u8>, track: usize, sequences: usize, value: &[u8]) {

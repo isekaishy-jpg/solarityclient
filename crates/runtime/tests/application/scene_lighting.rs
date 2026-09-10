@@ -53,6 +53,12 @@ fn directional_reenable_order_matches_native_and_attached_receivers_inherit()
         bank.receiver(0, None, Vec3::ZERO)?;
         bank.receiver(1, Some(0), Vec3::X * 40.)?;
         bank.receiver(2, None, Vec3::X * 40.)?;
+        bank.receiver(3, Some(5), Vec3::Y * 80.)?;
+        bank.receiver(5, Some(7), Vec3::Y * 100.)?;
+        let callback = M2DirectionalLight::new(Vec3::X, Vec3::Y, Vec3::Z);
+        bank.receiver_with_light(7, None, Vec3::ZERO, Some(callback), None)?;
+        // Registration indices need not be monotonic either.
+        bank.receiver(4, Some(3), Vec3::Z * 60.)?;
         bank.finish(base, exterior)?;
         assert_eq!(
             bank.directionals()
@@ -68,6 +74,16 @@ fn directional_reenable_order_matches_native_and_attached_receivers_inherit()
         assert_ne!(
             bank.scenes[0], bank.scenes[2],
             "a separate model queries its own position"
+        );
+        for child in [3, 4, 6] {
+            assert_eq!(
+                bank.scenes[child], bank.scenes[5],
+                "nested later parents supply both point query and entity callback"
+            );
+        }
+        assert_ne!(
+            bank.scenes[5], bank.scenes[0],
+            "root callback survives forward inheritance"
         );
         assert_eq!(bank.points.points()[0].diffuse(), Vec3::splat(0.5));
     }

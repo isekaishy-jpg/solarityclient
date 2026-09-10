@@ -1,5 +1,20 @@
 # Stock client architecture analysis
 
+The settled vehicle-seat fixture executes original `7490F0` arithmetic and
+matrix routines. Model attachment lookup and unit virtual getters supply its
+inputs:
+
+```powershell
+python tools/ghidra/vehicle_seat_pose_oracle.py <path-to-Wow.exe> --output crates/systems/tests/fixtures/vehicle-seat-pose-native.txt
+```
+
+Its 512 records cover attachment presence, passenger anchors, seat rotations,
+offsets, scale cancellation and the missing-attachment world-frame fallback.
+All matrix words compare exactly. Runtime tests separately exercise animated
+bone ancestry, mounted riders, visibility and lighting/shadow inheritance.
+Boarding/exit state transitions and vehicle camera dispatch are outside this
+fixture; see [vehicle presentation](../../docs/architecture/vehicle-presentation.md).
+
 The unit passenger matrix fixture executes the original `4C3380`, `4C3290`,
 `4C1F00` and `4C2370` without hooks:
 

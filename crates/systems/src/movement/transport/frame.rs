@@ -185,7 +185,7 @@ impl MovementTransportFrame {
 
 /// 4C1F00's sixteen x87 dot products have distinct addition orders. Matrix
 /// storage is row-major in stock and column-major in glam, reversing the product.
-fn unit_matrix_product(local: Mat4, parent: Mat4) -> Mat4 {
+pub(crate) fn unit_matrix_product(local: Mat4, parent: Mat4) -> Mat4 {
     let a = local.to_cols_array().map(f64::from);
     let b = parent.to_cols_array().map(f64::from);
     const ORDER: [[usize; 4]; 16] = [

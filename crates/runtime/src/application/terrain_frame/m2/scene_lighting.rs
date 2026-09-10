@@ -29,6 +29,8 @@ pub(super) struct SceneLighting {
     receiver_lights: Vec<Option<M2DirectionalLight>>,
     receiver_fog: Vec<Option<Vec3>>,
     placement_lights: Vec<Option<M2DirectionalLight>>,
+    placement_parents: Vec<Option<usize>>,
+    receiver_placements: Vec<usize>,
 }
 
 impl SceneLighting {
@@ -48,6 +50,8 @@ impl SceneLighting {
         self.receiver_lights.clear();
         self.receiver_fog.clear();
         self.placement_lights.clear();
+        self.placement_parents.clear();
+        self.receiver_placements.clear();
     }
 
     pub fn publish(
@@ -105,16 +109,14 @@ impl SceneLighting {
         light: Option<M2DirectionalLight>,
         fog_color: Option<Vec3>,
     ) -> Result<u32, RuntimeTerrainFrameError> {
-        let center = parent
-            .and_then(|index| self.placement_centers.get(index).copied().flatten())
-            .unwrap_or(center);
-        self.placement_centers.resize(placement_index + 1, None);
+        let size = self.placement_centers.len().max(placement_index + 1);
+        self.placement_centers.resize(size, None);
         self.placement_centers[placement_index] = Some(center);
-        let light = parent
-            .and_then(|index| self.placement_lights.get(index).copied().flatten())
-            .or(light);
-        self.placement_lights.resize(placement_index + 1, None);
+        self.placement_lights.resize(size, None);
         self.placement_lights[placement_index] = light;
+        self.placement_parents.resize(size, None);
+        self.placement_parents[placement_index] = parent;
+        self.receiver_placements.push(placement_index);
         self.receiver_lights.push(light);
         self.receiver_fog.push(fog_color);
         let index = u32::try_from(self.centers.len())
@@ -137,12 +139,35 @@ impl SceneLighting {
                 .map(|entry| entry.light),
         );
         self.directional.push(exterior);
-        for ((center, light), fog) in self
+        for (((center, light), fog), placement) in self
             .centers
             .iter()
             .zip(&self.receiver_lights)
             .zip(&self.receiver_fog)
+            .zip(&self.receiver_placements)
         {
+            // A vehicle may be published after its passenger. Resolve only
+            // after every source and entity callback has joined this frame.
+            let (mut center, mut light) = (*center, *light);
+            let mut current = *placement;
+            for _ in 0..self.placement_parents.len() {
+                let Some(parent) = self.placement_parents.get(current).copied().flatten() else {
+                    break;
+                };
+                if parent == *placement {
+                    break;
+                }
+                if let Some(value) = self.placement_centers.get(parent).copied().flatten() {
+                    center = value;
+                }
+                light = self
+                    .placement_lights
+                    .get(parent)
+                    .copied()
+                    .flatten()
+                    .or(light);
+                current = parent;
+            }
             if let Some(last) = self.directional.last_mut() {
                 *last = light.unwrap_or(exterior);
             }
@@ -153,7 +178,7 @@ impl SceneLighting {
             }
             for (slot, index) in self
                 .points
-                .query(*center, 0.0)?
+                .query(center, 0.0)?
                 .indices()
                 .into_iter()
                 .flatten()

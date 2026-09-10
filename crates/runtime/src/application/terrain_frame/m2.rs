@@ -31,6 +31,7 @@ mod unit_registration;
 #[cfg(test)]
 #[path = "../../../tests/application/unit_shadow_scene.rs"]
 mod unit_shadow_tests;
+mod vehicle_passengers;
 mod visibility;
 use crate::application::entity_opacity::EntityOpacityOwner;
 use crate::application::unit_animation::UnitAnimationBehavior;
@@ -212,6 +213,8 @@ struct M2GpuPlacement {
     retirement: Option<Box<retirement::RetiredM2Placement>>,
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2PlaybackStorage>,
+    /// Attachment evaluation may require a mount clock before its draw visit.
+    passenger_playback_advance: Option<M2PlaybackAdvance>,
     unit_animation: Option<Rc<UnitAnimationBehavior>>,
     unit_presentation: Option<UnitPresentationGeneration>,
     /// An unchanged mount survives character atlas and equipment rebuilds.
@@ -766,6 +769,7 @@ pub(in crate::application) struct M2Frame {
     requested_visuals: Vec<(u64, CharacterAttachmentPoint, u32)>,
     mounted_guids: Vec<u64>,
     rider_transforms: Vec<(u64, Option<Mat4>)>,
+    vehicle_passengers: vehicle_passengers::M2VehiclePassengers,
     item_transforms: Vec<(u64, CharacterAttachmentPoint, Option<Mat4>)>,
     visual_transforms: Vec<(u64, CharacterAttachmentPoint, u32, Option<Mat4>)>,
     glue_attachment_ids: Vec<u32>,
@@ -863,6 +867,7 @@ impl M2Frame {
             requested_visuals: Vec::new(),
             mounted_guids: Vec::new(),
             rider_transforms: Vec::new(),
+            vehicle_passengers: vehicle_passengers::M2VehiclePassengers::default(),
             item_transforms: Vec::new(),
             visual_transforms: Vec::new(),
             glue_attachment_ids: Vec::new(),
@@ -963,6 +968,7 @@ impl M2Frame {
                 retirement: None,
                 particle_colors: None,
                 playback: Some(M2PlaybackStorage::Local(playback)),
+                passenger_playback_advance: None,
                 unit_animation: None,
                 unit_presentation: None,
                 mount_key: None,
@@ -1002,6 +1008,7 @@ impl M2Frame {
             requested_visuals: Vec::new(),
             mounted_guids: Vec::new(),
             rider_transforms: Vec::new(),
+            vehicle_passengers: vehicle_passengers::M2VehiclePassengers::default(),
             item_transforms: Vec::new(),
             visual_transforms: Vec::new(),
             glue_attachment_ids: Vec::new(),
@@ -2244,6 +2251,7 @@ impl M2Frame {
             profile.mark("attachment membership");
             self.placement_visibility
                 .rebuild(&self.placements, &self.sources);
+            self.vehicle_passengers.invalidate();
             profile.mark("visibility rebuild");
             self.placement_topology_dirty = false;
         }
@@ -2272,6 +2280,9 @@ impl M2Frame {
             let Some(ground) = &placement.ground_placement else {
                 continue;
             };
+            if ground.owner.passenger_input().is_some() {
+                continue;
+            }
             if !ground.owner.uses_ground_placement() {
                 continue;
             }
@@ -2295,6 +2306,17 @@ impl M2Frame {
                 )?;
             }
         }
+        self.vehicle_passengers.prepare(
+            &mut self.placements,
+            &self.sources,
+            &self.placement_visibility,
+            &self.requested_items,
+            camera.view(),
+            animation_time_ms,
+            random,
+        )?;
+        self.placement_visibility
+            .set_vehicle_parents(self.vehicle_passengers.parents());
         self.rider_transforms.clear();
         self.rider_transforms.reserve(
             self.mounted_guids
@@ -2342,6 +2364,8 @@ impl M2Frame {
                 self.placement_topology_dirty = true;
                 self.placement_visibility
                     .rebuild(&self.placements, &self.sources);
+                self.placement_visibility
+                    .set_vehicle_parents(self.vehicle_passengers.parents());
             }
             if next_placement == self.placements.len() {
                 break;
@@ -2387,7 +2411,55 @@ impl M2Frame {
             {
                 continue;
             }
+            // Forward vehicle parents already have their final model matrices
+            // from the ancestry pass. Admission needs no second animation tick.
+            let forward_shadow = if let Some(projection) = shadow_projection
+                && self
+                    .placement_visibility
+                    .light_parent(placement_index)
+                    .is_some_and(|parent| parent >= placement_index)
+            {
+                if let Some(root) = self.placement_visibility.light_root(placement_index) {
+                    let placement = &self.placements[root];
+                    if root < placement_index {
+                        self.shadow_admission[root]
+                    } else if placement.placement_valid
+                        && !placement
+                            .entity_opacity
+                            .as_ref()
+                            .is_some_and(|owner| owner.hidden())
+                        && let Some(source) = &self.sources[placement.source_index]
+                    {
+                        shadow::admits_root(projection, source, placement)?
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            // 82F0F0 retains the containing model's +88 distance for ordinary
+            // attachments; mesh, particle and ribbon queues consume that lane.
+            let inherited_model_distance = self
+                .placement_visibility
+                .light_parent(placement_index)
+                .and_then(|_| self.placement_visibility.light_root(placement_index))
+                .map(|root| m2_model_distance_key(camera.view() * self.placements[root].transform));
             let placement = &mut self.placements[placement_index];
+            if self.vehicle_passengers.hidden(placement_index) {
+                if let M2GpuPlacementOwner::PlayerMount { guid }
+                | M2GpuPlacementOwner::RemotePlayerMount { guid }
+                | M2GpuPlacementOwner::CreatureMount { guid }
+                | M2GpuPlacementOwner::PlayerBody { guid }
+                | M2GpuPlacementOwner::RemotePlayerBody { guid }
+                | M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
+                {
+                    self.rider_transforms.push((guid, None));
+                }
+                continue;
+            }
             let placement_opacity = placement.opacity
                 * scenery_opacity
                 * placement
@@ -2553,22 +2625,25 @@ impl M2Frame {
                     .and_then(|animation| animation.take_scene_sample())
                     .map(|sample| (sample.advance, sample.event_window))
             };
-            let (advance, prepared_event_window) =
-                if let Some((advance, event_window)) = scene_sample {
-                    (advance, Some(event_window))
+            let (advance, prepared_event_window) = if let Some((advance, event_window)) =
+                scene_sample
+            {
+                (advance, Some(event_window))
+            } else {
+                let advance = if let Some(advance) = placement.passenger_playback_advance.take() {
+                    advance
+                } else if let Some(effect) = &mut placement.unit_effect {
+                    effect.advance(&mut playback, &source.model, animation_time_ms, random)?
+                } else if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
+                    self.pending_glue_playback_advance.take().map_or_else(
+                        || playback.clock(&source.model, animation_time_ms, random),
+                        Ok,
+                    )?
                 } else {
-                    let advance = if let Some(effect) = &mut placement.unit_effect {
-                        effect.advance(&mut playback, &source.model, animation_time_ms, random)?
-                    } else if matches!(owner, M2GpuPlacementOwner::GlueModel { .. }) {
-                        self.pending_glue_playback_advance.take().map_or_else(
-                            || playback.clock(&source.model, animation_time_ms, random),
-                            Ok,
-                        )?
-                    } else {
-                        playback.clock(&source.model, animation_time_ms, random)?
-                    };
-                    (advance, None)
+                    playback.clock(&source.model, animation_time_ms, random)?
                 };
+                (advance, None)
+            };
             let body_pose = placement
                 .unit_animation
                 .as_ref()
@@ -2662,7 +2737,8 @@ impl M2Frame {
             drop(playback);
             let model_view = camera.view() * placement.transform;
             let instance_identity = std::ptr::from_ref(&*placement).addr();
-            let instance_distance = m2_model_distance_key(model_view);
+            let instance_distance =
+                inherited_model_distance.unwrap_or_else(|| m2_model_distance_key(model_view));
             self.bone_pose_scratch.recompose_with_overrides(
                 source.model.animations(),
                 clock,
@@ -2876,7 +2952,11 @@ impl M2Frame {
             // camera visibility, and attached models inherit root admission.
             let shadow_admitted = if let Some(projection) = shadow_projection {
                 if let Some(parent) = self.placement_visibility.light_parent(placement_index) {
-                    self.shadow_admission[parent]
+                    if parent < placement_index {
+                        self.shadow_admission[parent]
+                    } else {
+                        forward_shadow
+                    }
                 } else {
                     shadow::admits_root(projection, source, placement)?
                 }
@@ -3179,7 +3259,7 @@ impl M2Frame {
                             .placement_visibility
                             .model_distance_sort(placement_index)
                         {
-                            m2_model_distance_key(model_view)
+                            instance_distance
                         } else {
                             section_distance
                         };
@@ -3753,6 +3833,7 @@ fn m2_gpu_placement(
         retirement: None,
         particle_colors,
         playback,
+        passenger_playback_advance: None,
         unit_animation: None,
         unit_presentation: None,
         mount_key: None,

@@ -8,6 +8,8 @@ mod route;
 mod timing;
 mod volume;
 
+pub(crate) use frame::unit_matrix_product;
+
 pub use change::MovementTransportChange;
 pub use clock::{TransportRouteClock, TransportRouteMotion};
 pub use frame::{MovementTransportFrame, MovementTransportFrameError};

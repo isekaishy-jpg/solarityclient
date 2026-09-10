@@ -31,6 +31,12 @@ pub struct VehicleSeatDefinition {
     id: u32,
     flags: u32,
     attachment_id: i32,
+    offset: [u32; 3],
+    rotation: [u32; 3],
+    passenger_attachment_id: i32,
+    flags_b: u32,
+    enter: [u32; 7],
+    exit: [u32; 7],
 }
 
 impl VehicleSeatDefinition {
@@ -51,6 +57,42 @@ impl VehicleSeatDefinition {
     #[must_use]
     pub const fn attachment_id(self) -> i32 {
         self.attachment_id
+    }
+
+    /// Seat attachment offset in model units (row +0C).
+    #[must_use]
+    pub fn attachment_offset(self) -> [f32; 3] {
+        self.offset.map(f32::from_bits)
+    }
+
+    /// Passenger yaw, pitch and roll in radians (row +74).
+    #[must_use]
+    pub fn passenger_rotation(self) -> [f32; 3] {
+        self.rotation.map(f32::from_bits)
+    }
+
+    /// Attachment on the passenger model, whose static position anchors the seat.
+    #[must_use]
+    pub const fn passenger_attachment_id(self) -> i32 {
+        self.passenger_attachment_id
+    }
+
+    /// Second flags word at row +B4.
+    #[must_use]
+    pub const fn flags_b(self) -> u32 {
+        self.flags_b
+    }
+
+    /// Pre-delay, speed, gravity, minimum/maximum duration, and minimum/maximum arc.
+    #[must_use]
+    pub fn enter_transition(self) -> [f32; 7] {
+        self.enter.map(f32::from_bits)
+    }
+
+    /// Exit counterpart of the entry transition parameters, starting at row +4C.
+    #[must_use]
+    pub fn exit_transition(self) -> [f32; 7] {
+        self.exit.map(f32::from_bits)
     }
 }
 
@@ -89,6 +131,12 @@ impl VehicleCatalog {
                 id: field(&table, row, 0)?,
                 flags: field(&table, row, 1)?,
                 attachment_id: field(&table, row, 2)? as i32,
+                offset: fields(&table, row, 3)?,
+                enter: fields(&table, row, 6)?,
+                exit: fields(&table, row, 19)?,
+                rotation: fields(&table, row, 29)?,
+                passenger_attachment_id: field(&table, row, 32)? as i32,
+                flags_b: field(&table, row, 45)?,
             });
         }
         sort_unique(&table, &mut seats, |row| row.id)?;
@@ -138,6 +186,18 @@ fn field(table: &WdbcTable, row: u32, column: u32) -> Result<u32, AssetError> {
     table
         .field_u32(row, column)
         .ok_or_else(|| error(table, format!("record {row} field {column} is truncated")))
+}
+
+fn fields<const N: usize>(
+    table: &WdbcTable,
+    row: u32,
+    column: u32,
+) -> Result<[u32; N], AssetError> {
+    let mut result = [0; N];
+    for (index, value) in result.iter_mut().enumerate() {
+        *value = field(table, row, column + index as u32)?;
+    }
+    Ok(result)
 }
 
 fn sort_unique<T>(

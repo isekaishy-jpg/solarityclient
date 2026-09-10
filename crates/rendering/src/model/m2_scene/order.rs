@@ -109,6 +109,12 @@ pub struct M2TransparentSortKey {
 }
 
 impl M2TransparentSortKey {
+    /// Returns the primary model or section distance used by the scene comparator.
+    #[must_use]
+    pub const fn primary_distance(self) -> f32 {
+        self.primary_distance
+    }
+
     /// Captures the exact common comparator fields of one transparent mesh.
     ///
     /// Distances may be negative for the stock radius-adjusted branch behind

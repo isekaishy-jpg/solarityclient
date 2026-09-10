@@ -159,6 +159,7 @@ pub use object::{
     game_object_transport_pose, project_object_fields, project_object_fields_deferred,
     unpack_game_object_rotation,
 };
+pub use vehicle::{VehicleSeatPose, vehicle_seat_attachment, vehicle_seat_transform};
 pub use world::{
     AreaTriggerVolume, DEFAULT_WORLD_VIEW_DISTANCE, EXTENDED_WORLD_VIEW_DISTANCE_MAXIMUM,
     LEGACY_WORLD_VIEW_DISTANCE_MAXIMUM, TerrainStreamingError, TerrainStreamingWindow,

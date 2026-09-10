@@ -25,6 +25,8 @@ mod transport;
 mod unit_animation;
 mod unit_wound;
 
+pub(crate) use transport::unit_matrix_product;
+
 pub use airborne::{
     MovementFallAdvance, MovementFallAdvanceError, MovementFallAdvancePolicy,
     MovementFallContinuation, MovementFallInterval, MovementFallPhase, MovementFallSnapshot,

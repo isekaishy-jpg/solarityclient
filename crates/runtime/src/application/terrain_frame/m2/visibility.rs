@@ -35,6 +35,7 @@ pub(super) struct M2PlacementVisibility {
     dynamic_owners: HashMap<M2GpuPlacementOwner, usize>,
     game_object_indices: Vec<usize>,
     light_parents: Vec<Option<usize>>,
+    vehicle_parents: HashMap<usize, usize>,
     model_distance_sort: Vec<bool>,
     has_lights: Vec<bool>,
     /// Admission must not load the large simulation record for rejected scenery.
@@ -68,6 +69,7 @@ impl M2PlacementVisibility {
         self.dynamic_owners.clear();
         self.game_object_indices.clear();
         self.light_parents.clear();
+        self.vehicle_parents.clear();
         self.model_distance_sort.clear();
         self.has_lights.clear();
         self.is_world_model_doodad.clear();
@@ -185,11 +187,43 @@ impl M2PlacementVisibility {
     }
 
     pub(super) fn light_parent(&self, index: usize) -> Option<usize> {
-        self.light_parents[index]
+        self.vehicle_parents
+            .get(&index)
+            .copied()
+            .or(self.light_parents[index])
+    }
+
+    pub(super) fn set_vehicle_parents(&mut self, parents: &HashMap<usize, usize>) {
+        self.vehicle_parents.clone_from(parents);
+    }
+
+    /// Vehicle ancestry is independent of scene insertion order. Invalid cycles
+    /// cannot admit a shadow hierarchy or traverse indefinitely.
+    pub(super) fn light_root(&self, mut index: usize) -> Option<usize> {
+        for _ in 0..self.light_parents.len() {
+            match self.light_parent(index) {
+                Some(parent) => index = parent,
+                None => return Some(index),
+            }
+        }
+        None
     }
 
     pub(super) fn model_distance_sort(&self, index: usize) -> bool {
-        self.model_distance_sort[index]
+        if self.vehicle_parents.is_empty() {
+            return self.model_distance_sort[index];
+        }
+        let mut index = index;
+        for _ in 0..self.light_parents.len() {
+            if !self.model_distance_sort[index] {
+                return false;
+            }
+            match self.light_parent(index) {
+                Some(parent) => index = parent,
+                None => return true,
+            }
+        }
+        false
     }
 
     /// Offscreen light owners still require their ordinary animation/light update.

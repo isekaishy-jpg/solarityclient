@@ -21,6 +21,7 @@ pub(super) struct UnitPassengerFrames {
 struct UnitFrame {
     parent_guid: u64,
     parent: Option<WorldObjectIdentity>,
+    admitted_parent: Option<WorldObjectIdentity>,
     vehicle: Option<MovementTransportFrame>,
     computed: Option<(FrameInput, MovementTransportFrame)>,
 }
@@ -47,6 +48,14 @@ impl UnitPassengerFrames {
         let state = units.entry(child).or_default();
         state.parent_guid = parent.guid();
         state.parent = Some(parent);
+        state.admitted_parent = Some(parent);
+    }
+
+    pub fn admitted_parent(&self, child: WorldObjectIdentity) -> Option<WorldObjectIdentity> {
+        self.units
+            .borrow()
+            .get(&child)
+            .and_then(|state| state.admitted_parent)
     }
 
     /// Registers creation matrices before movement can replace the wire pose.
@@ -203,6 +212,7 @@ fn register(
     let state = units.entry(identity).or_insert(UnitFrame {
         parent_guid: 0,
         parent: None,
+        admitted_parent: None,
         vehicle: None,
         computed: None,
     });
@@ -220,6 +230,7 @@ fn register(
     if state.parent_guid != guid {
         state.parent_guid = guid;
         state.parent = None;
+        state.admitted_parent = None;
     }
     if state.parent.is_none() && guid != 0 {
         state.parent = world.object_identity(guid);

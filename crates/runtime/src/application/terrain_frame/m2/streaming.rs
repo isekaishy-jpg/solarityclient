@@ -354,6 +354,7 @@ pub(super) fn static_gpu_placement(
         retirement: None,
         particle_colors: None,
         playback: playback.map(super::M2PlaybackStorage::Local),
+        passenger_playback_advance: None,
         unit_animation: None,
         unit_presentation: None,
         mount_key: None,

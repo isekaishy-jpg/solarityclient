@@ -1520,6 +1520,11 @@ impl RuntimePlayerPresentation {
         ) else {
             return;
         };
+        owner.synchronize_passenger(
+            world,
+            &self.vehicles,
+            self.passenger_frames.admitted_parent(owner.identity()),
+        );
         let passenger = world
             .movement_state(guid)
             .and_then(|movement| movement.context().transport);

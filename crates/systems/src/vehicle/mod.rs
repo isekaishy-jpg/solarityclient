@@ -7,3 +7,5 @@ mod passenger;
 mod unit_vehicle_c;
 mod vehicle_camera_c;
 mod vehicle_passenger_c;
+
+pub use vehicle_passenger_c::{VehicleSeatPose, vehicle_seat_attachment, vehicle_seat_transform};

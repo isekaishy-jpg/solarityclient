@@ -1,8 +1,8 @@
 # Vehicle presentation
 
-Vehicle creation state, passenger movement frames, and the entry-opacity seat
-lookup are connected. Attachment animation and vehicle camera presentation
-remain open under [world completion](world-completion.md).
+Vehicle creation state, passenger movement frames, entry-opacity seat lookup,
+and settled animated seat placement are connected. Boarding/exit transitions
+and vehicle camera presentation remain open under [world completion](world-completion.md).
 
 ## Native evidence
 
@@ -71,10 +71,9 @@ seat rows through the typed catalog, with no unresolved nonzero seat references.
 It contains 27 seats with negative attachment IDs. Reproduce this table check
 with `cargo run --locked -p solarity-asset --example inspect_vehicles -- <Data>`.
 
-The full locked workspace suite passes: 1,232 tests, with 23 archive-dependent
-tests ignored. The runtime library portion passes 275 tests, with 18 ignored.
-The targeted asset schema/reference tests and the real-archive inspection also pass.
-Workspace Clippy passes for all targets with warnings denied.
+Build 93's full locked workspace validation passed 1,232 tests, with 23
+archive-dependent tests ignored. Its runtime portion passed 275 tests, with
+18 ignored. The real-archive inspection above also passed.
 
 ## Passenger movement
 
@@ -104,11 +103,55 @@ and GUID reuse. These are fixture tests, not a combined live vehicle session.
 ## Remaining consumers
 
 Trace and connect VehiclePassenger_C's state/flags and transfer lifecycle,
-seat attachment offsets and animation transitions, vehicle pitch updates,
+boarding/exit motion and animation requests, vehicle pitch updates,
 vehicle camera bounds/ancestor dispatch, and exceptional unit visibility.
 Do not infer the passenger controller's flags from similarly numbered DBC flags.
 Combined live entry, travel, seat switching and removal remain unverified.
 This slice makes no FPS or stall-reduction claim.
+
+## Animated seat models
+
+The settled (`74A7F0` state 3) model path now consumes the seat's attachment
+remap, offset, yaw/pitch/roll, and static passenger attachment. `7490F0` cancels
+the vehicle attachment's animated scale against the passenger's own scale.
+Absent attachments instead use the vehicle's unscaled world yaw frame and scale
+the authored offset by its unit scale. Missing seats or parent models use the
+passenger's upright world placement. These overrides bypass ordinary terrain tilt.
+
+`748400/827460` captures the passenger model's static attachment position; it
+does not sample the passenger's animated attachment bone. Native `6E6F80`
+selects a mount when present, then the body. The runtime follows that choice for
+both vehicle and passenger, preserving the body's separate saddle attachment.
+
+An ancestry pass resolves nested vehicle models before culling, lights, shadows
+and effect anchors, even with children earlier in the placement list. Body
+sequence callbacks keep their existing update order. A parent mount clock
+needed by the pass is retained for its later render consumer. One parent bone
+palette serves all its seats during the pass. Attachment enable channels hide
+descendants while their transforms remain attached, matching `828A00` child
+traversal and the separate `831410` matrix getter.
+
+Lighting queries resolve parent chains after source and entity-callback
+publication. Shadow admission and whole-model sorting also follow vehicle
+ancestry independently of insertion order. Ordinary attachments inherit the
+root model's retained distance (`82F0F0 +88`) for multi-view mesh, particle and
+ribbon sorting. Missing admitted parent generations
+freeze the last model pose; explicit movement admission permits reattachment
+after GUID reuse. Retirement/transfer callbacks and their exceptional ownership
+cases remain part of the unfinished passenger controller.
+
+`tools/ghidra/vehicle_seat_pose_oracle.py` executes original `7490F0` rotation,
+scale, anchor and matrix composition instructions with supplied model lookups
+and unit getters. All 512 resulting matrices match bit for bit. Fixture SHA-256:
+`6f3cd3438508311e92436d94300d138551f734928b2a34cae3d1ecb3f172408e`.
+Runtime Vulkan tests cover two nested animated seats with later parents,
+independent passenger scales, lighting/shadow/sorting inheritance, mounted riders,
+hidden ancestors, missing seats, removal and explicit reattachment. Separate
+lighting tests cover later ancestors and nonmonotonic receiver registration.
+These tests do not establish combined live boarding, travel or camera parity.
+For this slice, the runtime library passes 277 tests with 18 archive-dependent
+tests ignored. The locked asset and systems suites pass as well, including the
+512 exact seat-pose cases. Workspace Clippy passes all targets with warnings denied.
 
 ## Testing package
 

@@ -11,6 +11,16 @@ fn vehicle_catalog_preserves_seat_slots_and_signed_attachment_ids() -> Result<()
     vehicle[6..14].copy_from_slice(&[10, 11, 12, 0, 9, 13, 10, 12]);
     let mut first = [0_u32; 58];
     first[..3].copy_from_slice(&[12, 0x8000_0000, 21]);
+    first[3..6].copy_from_slice(&[
+        1.25_f32.to_bits(),
+        (-0.0_f32).to_bits(),
+        (-3.5_f32).to_bits(),
+    ]);
+    first[6..13].copy_from_slice(&[1., 2., 3., 4., 5., 6., 7.].map(f32::to_bits));
+    first[19..26].copy_from_slice(&[8., 9., 10., 11., 12., 13., 14.].map(f32::to_bits));
+    first[29..32].copy_from_slice(&[0.1, 0.2, -0.3].map(f32::to_bits));
+    first[32] = u32::MAX;
+    first[45] = 0x1234_5678;
     let mut second = [0_u32; 58];
     second[..3].copy_from_slice(&[10, 0, u32::MAX]);
     let fixture = fixture(&dbc(40, &vehicle), &dbc(58, &[first, second].concat()))?;
@@ -33,6 +43,13 @@ fn vehicle_catalog_preserves_seat_slots_and_signed_attachment_ids() -> Result<()
     assert_eq!(catalog.vehicle(1).and_then(|row| row.seat_id(3)), Some(0));
     assert_eq!(catalog.passenger_seat(0, 0), None);
     assert_eq!(catalog.passenger_seat(2, 0), None);
+    let seat = catalog.passenger_seat(1, 7).ok_or("seat")?;
+    assert_eq!(seat.attachment_offset().map(f32::to_bits), first[3..6]);
+    assert_eq!(seat.passenger_rotation().map(f32::to_bits), first[29..32]);
+    assert_eq!(seat.enter_transition().map(f32::to_bits), first[6..13]);
+    assert_eq!(seat.exit_transition().map(f32::to_bits), first[19..26]);
+    assert_eq!(seat.passenger_attachment_id(), -1);
+    assert_eq!(seat.flags_b(), 0x1234_5678);
     Ok(())
 }
 
