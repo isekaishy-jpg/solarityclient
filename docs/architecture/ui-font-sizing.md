@@ -38,6 +38,29 @@ Retained object movement updates glyph translation separately from an
 EditBox's border. Both the renderer and pointer-to-caret mapping consume the
 same correction. This does not claim complete native atlas equivalence.
 
+The text projection is a separate final step. `0x006C0BA0` calls `0x006BF5B0`
+with a D3D9 viewport offset of `(-0.5, +0.5)`, projecting an integer glyph
+origin half a framebuffer pixel right and down. D3D9 samples at integer
+pixel centers, whereas Vulkan samples at half-integer centers
+([Direct3D 9 coordinates](https://learn.microsoft.com/en-us/windows/win32/direct3d9/directly-mapping-texels-to-pixels),
+[Vulkan framebuffer coordinates](https://github.khronos.org/Vulkan-Site/spec/latest/appendices/glossary.html)).
+Preserving the native texel sampled by each output pixel therefore places
+the Vulkan origin one physical pixel right and down from the floored origin.
+This correction follows UI and owner scaling; it does not change font metrics,
+line heights, or authored anchors. `font_projection_oracle.py` executes the
+original projection and captures device submission at 720p and 1440p.
+
+A saved original-client login screenshot at 2560x1440
+(`WoWScrnShot_080226_040700.jpg`) independently confirms the vertical difference:
+the email hint, Login, Options, Credits, Quit, Manage Account, Password, and
+account caption were one pixel higher in the pre-correction capture. The
+hint's best mask alignment is one pixel right and down. Centered labels also
+have horizontal advance/kerning differences; this correction does not claim
+to resolve those or make all glyph coverage identical.
+After correction, the hint has the same pixel bounds as the reference, and
+all seven gold labels have zero residual vertical translation. Login and
+status-dialog captures also complete at 1280x720 and 2560x1440.
+
 The login label also depends on the remembered realm. `GetServerName`
 (`0x004DD900`, `0x006B0DC0`) reads the `realmName` CVar, including an empty string
 when unset; returning nil makes `AccountLogin.lua` hide the region. Runtime

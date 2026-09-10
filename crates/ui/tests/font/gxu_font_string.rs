@@ -71,7 +71,7 @@ fn glyph_quads_use_one_floored_string_origin() {
         let resolved = super::resolve_quad_with_owner(&quad, owner);
         assert_eq!(
             resolved.bounds,
-            [120.125 + offset, 698.125, 125.375 + offset, 708.0]
+            [120.625 + offset, 697.625, 125.875 + offset, 707.5]
         );
     }
     let moved = super::GlyphOwnerTransform {

@@ -16,11 +16,17 @@ impl TextOrigin {
         }
     }
 
-    /// Applies 006C6190's final floor in physical pixels, before glyph bearings.
+    /// Applies the native origin floor and font projection before glyph bearings.
     pub(super) fn offset(self, owner: [f64; 2], scale: f64) -> [f64; 2] {
         std::array::from_fn(|axis| {
             let anchor = owner[axis] + self.anchor[axis] * scale;
-            (anchor * self.pixels_per_ui_unit).floor() / self.pixels_per_ui_unit - anchor
+            // 006C0BA0 projects the floored 006C6190 origin half a pixel right
+            // and down on D3D9's integer sample grid. Vulkan's half-integer
+            // grid needs another half pixel to sample the same glyph texels.
+            // This is one physical pixel, independent of UI or owner scale.
+            let projection = if axis == 0 { 1.0 } else { -1.0 };
+            ((anchor * self.pixels_per_ui_unit).floor() + projection) / self.pixels_per_ui_unit
+                - anchor
         })
     }
 }
