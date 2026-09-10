@@ -90,3 +90,14 @@ vehicle camera bounds/ancestor dispatch, and exceptional unit visibility.
 Do not infer the passenger controller's flags from similarly numbered DBC flags.
 Combined live entry, travel, seat switching and removal remain unverified.
 This slice makes no FPS or stall-reduction claim.
+
+## Testing package
+
+Build **000092** (`0.0.3a`) installs source revision
+`d58b75e4d80bd9e2608f30fccee67cdc2e495a86` through the persistent Testing launcher.
+The executable reports that revision and build number; its dirty marker records
+the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
+SHA-256 hashes match:
+`ed8ed25a1f67ee460f401fd3ae71e0963544d6cb8c7d4713a31781626571151f`.
+It retains the vehicle definition and initial facing and connects the resolved
+seat attachment to entry opacity. The movement and camera work above remains open.

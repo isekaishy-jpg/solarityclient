@@ -212,7 +212,11 @@ Remaining integration and validation are:
 
 ## Testing packages
 
-Build **000090** (`0.0.3a`) installs source revision
+Build **000092** (`0.0.3a`) adds the vehicle creation state and resolved seat
+attachment input to entry opacity. Its source revision and verified executable
+hash are recorded in [vehicle presentation](vehicle-presentation.md#testing-package).
+
+Build **000090** (`0.0.3a`) installed source revision
 `a28310ae55d9c864a5bafeca46fd57c04236b70b` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
