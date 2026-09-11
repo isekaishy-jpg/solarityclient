@@ -3,6 +3,7 @@
 use glam::{Mat4, Vec3, Vec4};
 use thiserror::Error;
 
+use super::WorldEnvironmentShadowMap;
 use super::quality::WorldShadowQuality;
 
 /// Invalid inputs to the original nondegenerate shadow-camera contract.
@@ -11,6 +12,12 @@ pub enum WorldShadowProjectionError {
     /// The disabled quality has no shadow texture or projection.
     #[error("disabled shadow quality has no projection")]
     Disabled,
+    /// The selected quality allocates only the primary unit map.
+    #[error("shadow quality has no environment maps")]
+    NoEnvironmentMaps,
+    /// Partial-map bounds must form a finite, nonempty rectangle.
+    #[error("shadow update has invalid crop bounds")]
+    InvalidCrop,
     /// World positions and day/night direction must be finite.
     #[error("shadow projection inputs must be finite")]
     NonFinite,
@@ -23,6 +30,7 @@ pub enum WorldShadowProjectionError {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldShadowProjection {
     texture_size: u32,
+    radius: f32,
     origin: Vec3,
     light_direction: Vec3,
     receiver_center: Vec3,
@@ -34,6 +42,29 @@ pub struct WorldShadowProjection {
 }
 
 impl WorldShadowProjection {
+    /// Restricts the caster projection and admission volume to one cached region.
+    /// Receiver rows retain the complete map's extent, as in original 874890.
+    ///
+    /// # Errors
+    /// Rejects nonfinite or empty light-space regions.
+    pub fn with_caster_region(
+        mut self,
+        crop: [f32; 4],
+    ) -> Result<Self, WorldShadowProjectionError> {
+        if !crop.iter().all(|value| value.is_finite()) || crop[0] >= crop[1] || crop[2] >= crop[3] {
+            return Err(WorldShadowProjectionError::InvalidCrop);
+        }
+        self.caster_projection =
+            Mat4::orthographic_lh(crop[0], crop[1], crop[2], crop[3], 1., 4000.);
+        (self.caster_bounds, self.caster_planes) = caster_volume(
+            self.caster_view,
+            self.origin,
+            [crop[0], crop[1]],
+            [crop[2], crop[3]],
+        );
+        Ok(self)
+    }
+
     /// Applies 7BAFD0's default camera-footprint crop to root-caster admission.
     ///
     /// The rendered map and receiver transform retain their full extent. A
@@ -63,8 +94,8 @@ impl WorldShadowProjection {
             (self.caster_bounds, self.caster_planes) = caster_volume(
                 self.caster_view,
                 self.origin,
-                [minimum.x * 20., maximum.x * 20.],
-                [minimum.y * 20., maximum.y * 20.],
+                [minimum.x * self.radius, maximum.x * self.radius],
+                [minimum.y * self.radius, maximum.y * self.radius],
             );
         }
         self
@@ -73,7 +104,12 @@ impl WorldShadowProjection {
     // The private size is established by primary(), which rejects Disabled;
     // this assertion guards an internal invariant rather than caller input.
     #[allow(clippy::expect_used)]
-    pub(crate) fn m2_state(self, view: Mat4, camera_position: Vec3) -> crate::M2ShadowState {
+    pub(crate) fn m2_state(
+        self,
+        view: Mat4,
+        camera_position: Vec3,
+        environment: Option<crate::WorldEnvironmentShadowFrame<'_>>,
+    ) -> crate::M2ShadowState {
         // Diffuse_T1 VS31 applies c224..226 to its model/view result. Convert
         // our camera-relative world rows without cancelling large translations.
         let inverse_rotation = glam::Mat3::from_mat4(view).inverse();
@@ -88,6 +124,14 @@ impl WorldShadowProjection {
             .map(|row| eye_to_relative_world.transpose() * row);
         let mut matrices = [crate::M2ShadowMatrix::disabled(); 4];
         matrices[0] = crate::M2ShadowMatrix::new(rows[0], rows[1], rows[2]);
+        if let Some(environment) = environment {
+            for (index, projection) in environment.receivers().into_iter().enumerate() {
+                let rows = projection
+                    .receiver_rows()
+                    .map(|row| eye_to_relative_world.transpose() * row);
+                matrices[index + 1] = crate::M2ShadowMatrix::new(rows[0], rows[1], rows[2]);
+            }
+        }
         crate::M2ShadowState::new(
             matrices,
             Vec4::ZERO,
@@ -96,6 +140,7 @@ impl WorldShadowProjection {
             crate::M2ShadowState::stock_filter_offsets(self.texture_size)
                 .expect("enabled primary shadow projection has a nonzero texture size"),
         )
+        .with_world_mode(environment.map_or(1, |frame| frame.quality().shader_mode()))
     }
     /// Creates the primary map shared by all enabled quality levels.
     ///
@@ -113,6 +158,37 @@ impl WorldShadowProjection {
         origin: Vec3,
         day_night_direction: Vec3,
     ) -> Result<Self, WorldShadowProjectionError> {
+        Self::build(quality, center, origin, day_night_direction, None)
+    }
+
+    /// Constructs an environment map using its published or pending center.
+    ///
+    /// The persistent refresh owner supplies the center; this constructor does
+    /// not snap it again or advance the cache. Original 7BAC10 gives each extent
+    /// a separate depth bias while keeping the primary light-view convention.
+    ///
+    /// # Errors
+    /// Rejects qualities without environment maps and invalid light views.
+    pub fn environment(
+        quality: WorldShadowQuality,
+        map: WorldEnvironmentShadowMap,
+        center: Vec3,
+        origin: Vec3,
+        day_night_direction: Vec3,
+    ) -> Result<Self, WorldShadowProjectionError> {
+        if quality.shader_mode() < 2 {
+            return Err(WorldShadowProjectionError::NoEnvironmentMaps);
+        }
+        Self::build(quality, center, origin, day_night_direction, Some(map))
+    }
+
+    fn build(
+        quality: WorldShadowQuality,
+        center: Vec3,
+        origin: Vec3,
+        day_night_direction: Vec3,
+        environment: Option<WorldEnvironmentShadowMap>,
+    ) -> Result<Self, WorldShadowProjectionError> {
         let texture_size = quality
             .texture_size()
             .ok_or(WorldShadowProjectionError::Disabled)?;
@@ -126,28 +202,39 @@ impl WorldShadowProjection {
             (day_night_direction.z * 5.0).max(-1.2),
         );
         let light_direction = normalize(direction)?;
-        let receiver_center = Vec3::new(
-            quantize(center.x, texture_size),
-            quantize(center.y, texture_size),
-            center.z,
+        let (radius, bias, receiver_center) = environment.map_or_else(
+            || {
+                (
+                    20.,
+                    0.1,
+                    Vec3::new(
+                        quantize(center.x, texture_size),
+                        quantize(center.y, texture_size),
+                        center.z,
+                    ),
+                )
+            },
+            |map| (map.radius(), map.depth_bias(), center),
         );
         // 875F80 retains the unsnapped scene center for 7BBC50's caster camera.
         let caster_view = light_view(center, origin, light_direction)?;
         let receiver_view = light_view(receiver_center, origin, light_direction)?;
-        let caster_projection = Mat4::orthographic_lh(-20.0, 20.0, -20.0, 20.0, 1.0, 4000.0);
-        let mut x = receiver_view.row(0) * 0.05;
-        let mut y = receiver_view.row(1) * -0.05;
+        let caster_projection =
+            Mat4::orthographic_lh(-radius, radius, -radius, radius, 1.0, 4000.0);
+        let mut x = receiver_view.row(0) * radius.recip();
+        let mut y = receiver_view.row(1) * -radius.recip();
         let mut depth = receiver_view.row(2);
         // Direct-depth backend: primary bias is 0.5 * 0.2, then depth / 4000.
-        depth.w -= 0.1;
+        depth.w -= bias;
         depth *= 0.00025;
         let half_texel = 0.5 / texture_size as f32;
         x.w += half_texel;
         y.w += half_texel;
         let (caster_bounds, caster_planes) =
-            caster_volume(caster_view, origin, [-20., 20.], [-20., 20.]);
+            caster_volume(caster_view, origin, [-radius, radius], [-radius, radius]);
         Ok(Self {
             texture_size,
+            radius,
             origin,
             light_direction,
             receiver_center,
@@ -165,8 +252,14 @@ impl WorldShadowProjection {
     /// Attached children inherit root admission and bypass this spatial test.
     #[must_use]
     pub fn admits_unit(self, minimum: Vec3, maximum: Vec3, radius: f32) -> bool {
-        if !(0.25..=10_000.0).contains(&radius)
-            || !minimum.is_finite()
+        (0.25..=10_000.0).contains(&radius) && self.admits_bounds(minimum, maximum)
+    }
+
+    /// Applies the world-box and six-plane tests shared by scenery collectors.
+    /// Per-owner flags, distance limits, and group admission remain with callers.
+    #[must_use]
+    pub fn admits_bounds(self, minimum: Vec3, maximum: Vec3) -> bool {
+        if !minimum.is_finite()
             || !maximum.is_finite()
             || !minimum.cmple(maximum).all()
             || !minimum.cmple(self.caster_bounds[1]).all()

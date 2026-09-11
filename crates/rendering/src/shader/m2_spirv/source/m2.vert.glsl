@@ -199,13 +199,15 @@ void main() {
     fragment_shadow_coordinates_0 = M2_SHADOW_CLASS > 0
         ? shadow_coordinates(0, view_position.xyz)
         : vec3(0.0);
-    fragment_shadow_coordinates_1 = M2_SHADOW_CLASS > 1
+    bool environment_shadows = M2_SHADOW_CLASS > 0
+        && max(M2_SHADOW_CLASS, int(scene.shadow_light_direction.w)) > 1;
+    fragment_shadow_coordinates_1 = environment_shadows
         ? shadow_coordinates(1, view_position.xyz)
         : vec3(0.0);
-    fragment_shadow_coordinates_2 = M2_SHADOW_CLASS > 1
+    fragment_shadow_coordinates_2 = environment_shadows
         ? shadow_coordinates(2, view_position.xyz)
         : vec3(0.0);
-    fragment_shadow_coordinates_3 = M2_SHADOW_CLASS > 1
+    fragment_shadow_coordinates_3 = environment_shadows
         ? shadow_coordinates(3, view_position.xyz)
         : vec3(0.0);
 }

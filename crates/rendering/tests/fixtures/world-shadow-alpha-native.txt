@@ -1,0 +1,15 @@
+# shadow_alpha filter reference_byte alpha_byte result_rgba
+# SHADERS_VERTEX_VS_2_0_SHADOWMAP.BLS sha256=7ee60a4933e26814c9ce221f5cbe788c9c445161d71f20e86d3a1d2d3af5e718
+# SHADERS_PIXEL_PS_2_0_SHADOWMAPSL.BLS sha256=d39a75d86e952fb608488237f57151d528b54eb7d3a832905bb94d742f1cf9b2
+shadow_alpha 1 128 127 00000000
+shadow_alpha 1 128 128 7f7f00ff
+shadow_alpha 1 128 129 7f7f00ff
+shadow_alpha 1 224 223 00000000
+shadow_alpha 1 224 224 7f7f00ff
+shadow_alpha 1 224 225 7f7f00ff
+shadow_alpha 2 128 127 00000000
+shadow_alpha 2 128 128 7f7f00ff
+shadow_alpha 2 128 129 7f7f00ff
+shadow_alpha 2 224 223 00000000
+shadow_alpha 2 224 224 7f7f00ff
+shadow_alpha 2 224 225 7f7f00ff

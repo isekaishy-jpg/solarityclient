@@ -119,8 +119,12 @@ impl M2SceneUniform {
     }
 
     /// Joins the primary map to the model/view coordinates emitted by Diffuse_T1.
-    pub(crate) fn with_world_shadow(mut self, projection: crate::WorldShadowProjection) -> Self {
-        self.shadow = projection.m2_state(self.view, self.camera_position);
+    pub(crate) fn with_world_shadow(
+        mut self,
+        projection: crate::WorldShadowProjection,
+        environment: Option<crate::WorldEnvironmentShadowFrame<'_>>,
+    ) -> Self {
+        self.shadow = projection.m2_state(self.view, self.camera_position, environment);
         self
     }
 

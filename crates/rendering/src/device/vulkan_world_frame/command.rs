@@ -56,6 +56,8 @@ pub(super) struct RecordContext<'a> {
     pub(super) shadow_pipeline: &'a crate::device::vulkan_shadow::ShadowPipelines,
     pub(super) shadow_resources: &'a crate::device::vulkan_shadow::ShadowFrameResources,
     pub(super) shadow_frame: Option<crate::WorldPrimaryShadowFrame<'a>>,
+    pub(super) environment_frame: Option<crate::WorldEnvironmentShadowFrame<'a>>,
+    pub(super) environment_images: &'a crate::device::vulkan_shadow::EnvironmentShadowImages,
     pub(super) device: &'a Device,
     pub(super) capture: Option<&'a FrameReadback>,
     pub(super) command_buffer: vk::CommandBuffer,

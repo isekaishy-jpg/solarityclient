@@ -1,4 +1,4 @@
-# Primary world shadow map
+# World shadow maps
 
 The world renderer now builds the animated unit shadow map before its main
 terrain, WMO, and M2 pass. Player and creature bodies, mounts, and admitted
@@ -71,6 +71,51 @@ The offline world replay records `primary_shadow_draws` alongside terrain-detail
 counts and frame/streaming timings. Captures remain separate from performance
 runs because readback waits change the measured workload.
 
+## Environment rendering backend
+
+`WorldEnvironmentShadowState` and `WorldEnvironmentShadowFrame` now expose the
+three additional map passes to the renderer. The runtime scenery collector is
+still being connected; ordinary gameplay currently supplies only the primary
+unit frame described above.
+
+Original `00874890` refreshes the 40/160/640-unit environment extents. Qualities
+three and four retain pairs of textures and publish only after nine, nine, or
+twenty-five regions finish. Refresh starts after squared movement exceeds
+4/16/1024 and keeps its pending center fixed through the cycle. Quality five
+updates all three maps every frame, snapping centers to 2/4/16-unit grids.
+`00681F60` and `006A99E0` define the normalized clamp and pixel viewport rounding;
+the implementation retains those results even at partial-map boundaries.
+
+Environment color images belong to the world renderer across swapchain slots.
+An ordered graphics queue and explicit image barriers serialize partial writes
+against earlier receiver reads. New owners clear all textures to visibility one,
+matching `00875760`. A region clears only its render area. Its receiver image and
+center change together when the refresh completes. Callers must commit the CPU
+state only after successful frame submission.
+
+WMO caster packets identify a logical material batch, so specular secondary
+passes do not duplicate its silhouette. `007AB760` applies alpha reference
+224/255 only to AlphaKey materials; equality survives. Other WMO blends cast
+opaque silhouettes. M2 casters retain their existing material admission,
+128/255 coverage, and shared animation palette. Packet membership also admits
+scenery into the primary map where required by the original quality policy.
+
+The terrain, M2, WMO, and ground-detail receivers consume all four maps without
+compiling shaders on the frame path. Original Terrain3 PS8 takes the minimum
+of its faded primary result and the first containing environment map. PS16
+instead selects an unfaded nine-sample primary result whenever its primary
+footprint contains the receiver. Both omit baked MCSH. Original MapObj,
+Combiners, and DetailDoodad environment modes take the primary/environment
+minimum and apply normal relief; mode three uses an unfaded five-sample primary
+result. The final environment map fades at its outer border. Primary-only
+terrain and detail modes continue to combine with their authored shadows.
+
+Native fixtures cover 576 refresh/viewport cases, 72 environment projections,
+and 1728 unchanged Terrain3/MapObjDiffuse/DetailDoodad receiver executions.
+Vulkan regressions add 240 cached M2-caster frames and 216 WMO-caster frames,
+covering publication delay, same-quality owner replacement, quality transitions,
+empty caches, primary scenery, and the 223/224 WMO alpha boundary.
+
 ## Validation and limits
 
 External fixtures execute the original instructions for 24 projection cases,
@@ -130,9 +175,10 @@ populated-world GPU benchmark or a worst-case latency guarantee. Whole-tile
 publication stalls remain, with changed-frame streaming means of 20.326 ms
 outbound and 15.886 ms returning in the enabled run.
 
-This implementation supplies the primary unit map. Higher quality settings'
-additional environment maps, cached static casters, cascade transitions, and
-hardware comparison sampling are unfinished. Liquid receiver variants and the
+The runtime currently supplies the primary unit map. The environment rendering
+backend above still needs runtime scenery/unit collection and installed-world
+validation, including cascade admission and streaming ownership. Hardware
+comparison sampling, liquid receiver variants, and the
 quality-zero projected entity-shadow path remain
 separate work. Native exceptional registration flags outside the ordinary typed
 unit owners also need dedicated evidence and runtime coverage. These limits

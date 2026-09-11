@@ -8,27 +8,59 @@
 layout(set = 2, binding = 0) uniform TerrainShadow {
     vec4 origin_and_texel;
     vec4 receiver_rows[3];
+    vec4 light_direction;
+    vec4 environment_rows[9];
+    vec4 fade_plane;
+    vec4 settings;
 } shadow;
 layout(set = 2, binding = 1) uniform sampler2D primary_shadow_map;
+layout(set = 2, binding = 2) uniform sampler2D environment_shadow_0;
+layout(set = 2, binding = 3) uniform sampler2D environment_shadow_1;
+layout(set = 2, binding = 4) uniform sampler2D environment_shadow_2;
 layout(location = 5) in vec3 in_shadow_coordinates;
+layout(location = 10) in vec3 environment_coordinates[3];
 
-// Terrain2/Terrain3's primary map uses the center and four odd filter registers.
-float primary_shadow_visibility() {
+// The direct-depth kernels use c3..10 (terrain) or c5..12 (MapObj/detail).
+float filtered_shadow(sampler2D map, vec3 coordinates, int step_size) {
+    const vec2 offsets[8] = vec2[8](
+        vec2(0.8, -1.0), vec2(-0.2, -0.8), vec2(0.2, -0.6), vec2(1.0, -0.4),
+        vec2(-0.6, -0.2), vec2(0.6, 0.2), vec2(-1.0, -0.4), vec2(-0.4, -0.6));
+    vec2 uv = coordinates.xy * 0.5 + vec2(0.5);
+    float visibility = float(textureLod(map, uv, 0.0).r >= coordinates.z);
+    for (int index = 0; index < 8; index += step_size) {
+        visibility += float(textureLod(map,
+            uv + offsets[index] * shadow.origin_and_texel.w, 0.0).r >= coordinates.z);
+    }
+    return visibility / (step_size == 2 ? 5.0 : 9.0);
+}
+
+// Original PS3 selects the first containing environment map and fades the far edge.
+float environment_shadow_visibility() {
+    if (max(abs(environment_coordinates[0].x), abs(environment_coordinates[0].y)) < 1.0) {
+        return filtered_shadow(environment_shadow_0, environment_coordinates[0], 2);
+    }
+    if (max(abs(environment_coordinates[1].x), abs(environment_coordinates[1].y)) < 1.0) {
+        return filtered_shadow(environment_shadow_1, environment_coordinates[1], 2);
+    }
+    float visibility = filtered_shadow(environment_shadow_2, environment_coordinates[2], 2);
+    float edge = clamp(max(abs(environment_coordinates[2].x), abs(environment_coordinates[2].y))
+        * -11.1111107 + 11.0, 0.0, 1.0);
+    return mix(1.0, visibility, edge);
+}
+
+// Terrain3 PS8 takes the minimum; PS16 selects the primary nine-tap result
+// without fading whenever its map contains the receiver. Both omit baked MCSH.
+float world_shadow_visibility(float baked_visibility) {
     float edge = clamp(max(abs(in_shadow_coordinates.x), abs(in_shadow_coordinates.y))
         * -3.4482758 + 3.41379309, 0.0, 1.0);
-    if (edge <= 0.0) {
-        return 1.0;
+    int mode = int(shadow.settings.x);
+    if (mode == 3) {
+        return edge > 0.0 ? filtered_shadow(primary_shadow_map, in_shadow_coordinates, 1)
+            : environment_shadow_visibility();
     }
-    vec2 coordinates = in_shadow_coordinates.xy * 0.5 + vec2(0.5);
-    vec2 offsets[5] = vec2[5](vec2(0.0), vec2(0.8, -1.0), vec2(0.2, -0.6),
-        vec2(-0.6, -0.2), vec2(-1.0, -0.4));
-    float visibility = 0.0;
-    for (int index = 0; index < 5; ++index) {
-        float depth = textureLod(primary_shadow_map,
-            coordinates + offsets[index] * shadow.origin_and_texel.w, 0.0).r;
-        visibility += depth >= in_shadow_coordinates.z ? 1.0 : 0.0;
-    }
-    return 1.0 + edge * (visibility * 0.2 - 1.0);
+    float primary = edge > 0.0
+        ? mix(1.0, filtered_shadow(primary_shadow_map, in_shadow_coordinates, 2), edge) : 1.0;
+    return min(primary, mode == 2 ? environment_shadow_visibility() : baked_visibility);
 }
 #endif
 
@@ -132,7 +164,7 @@ void main() {
     // diffuse vertex colors are doubled after texture/shadow multiplication.
     float visibility = 1.0 - material.a;
 #if TERRAIN_PRIMARY_SHADOW
-    visibility = min(visibility, primary_shadow_visibility());
+    visibility = world_shadow_visibility(visibility);
 #endif
     float baked_shadow = 0.7 + 0.3 * visibility;
     vec3 lit = ground.rgb * baked_shadow;

@@ -7,10 +7,11 @@ use solarity_asset::{
     Locale,
 };
 use solarity_rendering::{
-    BlpColorSpace, M2PreparedDraw, VulkanRenderer, WorldFrameScene, WorldModelBaseMip,
-    WorldModelMaterialState, WorldModelMeshPlan, WorldModelSampledTexture,
-    WorldModelSurfacePassPlan, WorldModelTextureFiltering, WorldModelTextureSet,
-    WorldPrimaryShadowFrame, WorldShadowProjection,
+    BlpColorSpace, M2PreparedDraw, TerrainPreparedDraw, VulkanRenderer,
+    WorldEnvironmentShadowFrame, WorldEnvironmentShadowState, WorldEnvironmentWmoCaster,
+    WorldFrameScene, WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshPlan,
+    WorldModelSampledTexture, WorldModelSurfacePassPlan, WorldModelTextureFiltering,
+    WorldModelTextureSet, WorldPrimaryShadowFrame, WorldShadowProjection, WorldShadowQuality,
 };
 use std::error::Error;
 
@@ -150,6 +151,169 @@ pub(super) fn compare_receivers(
                 "shadowed WMO: unified={unified}, shader={shader}, {colors:?}"
             );
             assert_eq!(colors[0][3], colors[2][3], "shadow retains surface opacity");
+        }
+    }
+    Ok(())
+}
+
+/// 7AB760 cuts only AlphaKey at 224/255; other MOMT blends cast opaque silhouettes.
+pub(super) fn compare_environment_casters(
+    renderer: &mut VulkanRenderer,
+    scene: WorldFrameScene<'_>,
+    terrain: TerrainPreparedDraw,
+    center: Vec3,
+    eye: Vec3,
+) -> Result<(), Box<dyn Error>> {
+    for blend in [0_u32, 1, 2] {
+        for alpha in [223_u32, 224] {
+            let model_name = format!("Caster{blend}_{alpha}.wmo");
+            let group_name = format!("Caster{blend}_{alpha}_000.wmo");
+            let texture_name = format!("Caster{alpha}.blp");
+            let texture_string = format!("{texture_name}\0");
+            let mut root = crate::world_model::root_fixture();
+            let strings = root
+                .windows(4)
+                .position(|bytes| bytes == b"XTOM")
+                .ok_or("caster texture strings")?;
+            root.splice(strings + 8..strings + 9, texture_string.bytes());
+            root[strings + 4..strings + 8]
+                .copy_from_slice(&u32::try_from(texture_string.len())?.to_le_bytes());
+            let material = chunk_mut(&mut root, b"TMOM")?;
+            material[0..4].copy_from_slice(&6_u32.to_le_bytes());
+            material[4..8].fill(0);
+            material[8..12].copy_from_slice(&blend.to_le_bytes());
+            material[16..20].fill(0);
+            let mut group = crate::world_model::group_fixture();
+            group[28..32].copy_from_slice(&8_u32.to_le_bytes());
+            group[60..64].fill(0);
+            group[64..66].copy_from_slice(&1_u16.to_le_bytes());
+            let vertices = chunk_mut(&mut group[88..], b"TVOM")?;
+            for (destination, position) in vertices.as_chunks_mut::<12>().0.iter_mut().zip([
+                [-12_f32, -12., 2.],
+                [12., -12., 2.],
+                [0., 12., 2.],
+            ]) {
+                for (bytes, component) in
+                    destination.as_chunks_mut::<4>().0.iter_mut().zip(position)
+                {
+                    bytes.copy_from_slice(&component.to_le_bytes());
+                }
+            }
+            let texture = crate::model::solid_raw3_blp(2, 2, &[(alpha << 24) | 0xffffff]);
+            let fixture = Fixture::new(&[
+                FixtureFile {
+                    path: &model_name,
+                    bytes: &root,
+                },
+                FixtureFile {
+                    path: &group_name,
+                    bytes: &group,
+                },
+                FixtureFile {
+                    path: &texture_name,
+                    bytes: &texture,
+                },
+            ])?;
+            let mut store = AssetStore::mount(ArchiveCatalog::discover(
+                ClientDataRoot::new(fixture.data_root())?,
+                Locale::EnUs,
+            )?)?;
+            let model = DecodedWorldModel::load(&mut store, &AssetPath::new(&model_name)?)?;
+            let plan = WorldModelMeshPlan::prepare(&model)?;
+            let mesh = renderer.upload_world_model_mesh(&plan)?;
+            let material = &plan.materials()[0];
+            let sampler = renderer.prepare_world_model_sampler(
+                WorldModelMaterialState::from_material(material),
+                WorldModelTextureFiltering::Bilinear,
+                WorldModelBaseMip::Zero,
+            )?;
+            let source = BlpTextureSource::load(&mut store, &AssetPath::new(&texture_name)?)?;
+            assert_eq!(source.decode_mip(0)?.rgba8()[3], alpha as u8);
+            let texture = renderer.upload_blp_texture(&source, BlpColorSpace::Linear)?;
+            let textures =
+                renderer.prepare_world_model_texture_sets(&[WorldModelTextureSet::One(
+                    WorldModelSampledTexture::new(texture, sampler),
+                )])?[0];
+            let passes = WorldModelSurfacePassPlan::prepare(
+                plan.root_flags(),
+                plan.groups()[0].flags(),
+                plan.draws()[0].class(),
+                material,
+            );
+            let pipeline = renderer.prepare_world_model_pipeline(false, passes.passes()[0])?;
+            let draw = renderer.prepare_world_model_draw(
+                mesh,
+                pipeline,
+                textures,
+                &plan,
+                0,
+                0,
+                Mat4::from_translation(center),
+                1.,
+                Vec3::ZERO,
+            )?;
+            for quality in [
+                WorldShadowQuality::EnvironmentLow,
+                WorldShadowQuality::Cascaded,
+            ] {
+                for primary_map in [false, true] {
+                    let mut state = WorldEnvironmentShadowState::new(quality);
+                    let primary = WorldShadowProjection::primary(
+                        quality,
+                        center
+                            + if primary_map {
+                                Vec3::ZERO
+                            } else {
+                                Vec3::X * 100.
+                            },
+                        eye,
+                        -Vec3::Z,
+                    )?;
+                    let casters = [WorldEnvironmentWmoCaster {
+                        draw,
+                        maps: if primary_map { 8 } else { 7 },
+                        blend_mode: material.blend_mode(),
+                    }];
+                    for _ in 0..9 {
+                        let updates = state.advance(center)?;
+                        let environment =
+                            WorldEnvironmentShadowFrame::new(&state, updates, eye, -Vec3::Z)?
+                                .with_casters(&[], &casters);
+                        renderer.request_frame_capture()?;
+                        renderer.present_world_frame(
+                            scene
+                                .with_primary_shadows(WorldPrimaryShadowFrame::new(primary, &[]))
+                                .with_environment_shadows(environment),
+                            &[],
+                            &[terrain],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                            &[],
+                        )?;
+                        let image = renderer
+                            .take_captured_frame()?
+                            .ok_or("WMO caster capture")?;
+                        if quality == WorldShadowQuality::Cascaded
+                            || state.published_maps()[0].0 == center
+                        {
+                            let expected = if blend == 1 && alpha == 223 {
+                                64_u8
+                            } else {
+                                45
+                            };
+                            let green = image.rgba8()[(32 * 64 + 32) * 4 + 1];
+                            assert!(
+                                green.abs_diff(expected) <= 2,
+                                "WMO caster blend={blend}, alpha={alpha}, quality={quality:?}, primary={primary_map}: green={green}, expected={expected}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())

@@ -47,18 +47,7 @@ impl WorldModelPipelineLayout {
                 ),
             ],
             // Identical to terrain's receiver set, shared by the world slot.
-            vec![
-                descriptor_binding(
-                    0,
-                    vk::DescriptorType::UNIFORM_BUFFER,
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                ),
-                descriptor_binding(
-                    1,
-                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    vk::ShaderStageFlags::FRAGMENT,
-                ),
-            ],
+            crate::device::vulkan_shadow::receiver_bindings().to_vec(),
         ];
         for (index, set_bindings) in bindings.iter().enumerate() {
             let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(set_bindings);

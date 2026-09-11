@@ -127,13 +127,17 @@ float primary_shadow() {
         max(abs(fragment_shadow_coordinates_0.x), abs(fragment_shadow_coordinates_0.y))
             * -3.4482758 + 3.41379309,
         0.0, 1.0);
+    int mode = max(M2_SHADOW_MODE, int(scene.shadow_light_direction.w));
     float visibility = 1.0;
-    if (edge > 0.01) {
-        bool short_kernel = M2_SHADOW_MODE == 3 || -fragment_view_position.z > 10.0;
+    if (edge > (mode == 3 ? 0.0 : 0.01)) {
+        bool short_kernel = mode == 3
+            || -fragment_view_position.z > 10.0;
         visibility = short_kernel
             ? shadow_five(shadow_map_0, fragment_shadow_coordinates_0)
             : shadow_nine(shadow_map_0, fragment_shadow_coordinates_0);
-        visibility = mix(1.0, visibility, edge);
+        if (mode != 3) {
+            visibility = mix(1.0, visibility, edge);
+        }
     }
     float plane_fade = clamp(
         dot(fragment_view_position, scene.shadow_fade_plane.xyz)
@@ -161,7 +165,7 @@ float shadow_lighting_factor() {
         return 1.0;
     }
     float visibility = primary_shadow();
-    if (M2_SHADOW_MODE > 1) {
+    if (max(M2_SHADOW_MODE, int(scene.shadow_light_direction.w)) > 1) {
         visibility = min(visibility, cascade_shadow());
     }
     float facing = 1.2 - abs(dot(scene.shadow_light_direction.xyz, fragment_view_normal));

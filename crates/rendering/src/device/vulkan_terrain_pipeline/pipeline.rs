@@ -35,18 +35,7 @@ impl TerrainPipelineLayout {
                 )
             })
             .collect::<Vec<_>>();
-        let shadow = [
-            binding(
-                0,
-                vk::DescriptorType::UNIFORM_BUFFER,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-            ),
-            binding(
-                1,
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                vk::ShaderStageFlags::FRAGMENT,
-            ),
-        ];
+        let shadow = crate::device::vulkan_shadow::receiver_bindings();
         for (index, bindings) in [scene.as_slice(), material.as_slice(), shadow.as_slice()]
             .iter()
             .enumerate()

@@ -2,8 +2,11 @@
 
 #![allow(unsafe_code)]
 
-use super::{RecordContext, dynamic_offset};
-use crate::{M2ShadowMaterial, device::VulkanError};
+mod casters;
+mod environment;
+
+use super::RecordContext;
+use crate::device::VulkanError;
 use ash::vk;
 
 /// Clears every active primary map, including frames where all casters disappeared.
@@ -99,75 +102,9 @@ pub(super) fn record_primary(context: &RecordContext<'_>) -> Result<(), VulkanEr
     }
     let material_base =
         context.m2_draws.len() + context.sky_models.map_or(0, |models| models.draw_count());
+    casters::record_scenery(context, resources.caster_set(), 8)?;
     for (index, draw) in frame.casters().iter().copied().enumerate() {
-        let Some(material) = draw.shadow_material() else {
-            continue;
-        };
-        let info = context
-            .m2_pipelines
-            .info(draw.pipeline())
-            .ok_or(VulkanError::UnknownM2PipelineHandle)?;
-        let bone_class = info.permutation().vertex_index() / 10 % 3;
-        let pipeline = context
-            .shadow_pipeline
-            .raw(bone_class, material == M2ShadowMaterial::AlphaTest)
-            .ok_or(VulkanError::M2ShadowResourcesUnavailable)?;
-        let (vertex, indices) = context
-            .m2_meshes
-            .buffers(draw.mesh())
-            .ok_or(VulkanError::UnknownM2MeshHandle)?;
-        let texture = context
-            .m2_texture_sets
-            .raw(draw.texture_set())
-            .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-        let offset = dynamic_offset(material_base + index, context.m2_material_stride)?;
-        let sets = [
-            resources.caster_set(),
-            context.frame_sets[6],
-            context.frame_sets[7],
-            texture,
-        ];
-        let layout = context.shadow_pipeline.layout();
-        // SAFETY: Prepared packets and the frame's palette/range validation establish each resource join.
-        unsafe {
-            context.device.cmd_bind_pipeline(
-                context.command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline,
-            );
-            context
-                .device
-                .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
-            context.device.cmd_bind_index_buffer(
-                context.command_buffer,
-                indices,
-                0,
-                vk::IndexType::UINT16,
-            );
-            context.device.cmd_bind_descriptor_sets(
-                context.command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                layout,
-                0,
-                &sets,
-                &[offset],
-            );
-            context.device.cmd_push_constants(
-                context.command_buffer,
-                layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                0,
-                &draw.push_constants().to_bytes(),
-            );
-            context.device.cmd_draw_indexed(
-                context.command_buffer,
-                draw.index_count(),
-                1,
-                draw.first_index(),
-                0,
-                0,
-            );
-        }
+        casters::record_m2(context, material_base + index, draw, resources.caster_set())?;
     }
     let barrier = [vk::ImageMemoryBarrier2::default()
         .image(resources.color_image())
@@ -188,6 +125,7 @@ pub(super) fn record_primary(context: &RecordContext<'_>) -> Result<(), VulkanEr
             .device
             .cmd_pipeline_barrier2(context.command_buffer, &dependency);
     }
+    environment::record(context)?;
     Ok(())
 }
 

@@ -21,6 +21,7 @@ pub struct WorldFrameScene<'a> {
     low_detail: Option<crate::WorldLowDetailFrame<'a>>,
     ground_detail: Option<crate::GroundDetailFrame<'a>>,
     primary_shadows: Option<crate::WorldPrimaryShadowFrame<'a>>,
+    environment_shadows: Option<crate::WorldEnvironmentShadowFrame<'a>>,
     world_depth_range: bool,
     clouds: Option<WorldCloudFrame<'a>>,
     celestials: Option<crate::WorldCelestialFrame<'a>>,
@@ -31,6 +32,21 @@ pub struct WorldFrameScene<'a> {
 }
 
 impl<'a> WorldFrameScene<'a> {
+    /// Adds the three persistent environment maps alongside the primary frame.
+    #[must_use]
+    pub const fn with_environment_shadows(
+        mut self,
+        frame: crate::WorldEnvironmentShadowFrame<'a>,
+    ) -> Self {
+        self.environment_shadows = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn environment_shadows(
+        self,
+    ) -> Option<crate::WorldEnvironmentShadowFrame<'a>> {
+        self.environment_shadows
+    }
     /// Adds the primary unit-shadow caster pass before the terrain receiver queue.
     #[must_use]
     pub const fn with_primary_shadows(mut self, frame: crate::WorldPrimaryShadowFrame<'a>) -> Self {
@@ -65,6 +81,7 @@ impl<'a> WorldFrameScene<'a> {
             low_detail: None,
             ground_detail: None,
             primary_shadows: None,
+            environment_shadows: None,
             world_depth_range: false,
             clouds: None,
             celestials: None,
@@ -383,6 +400,7 @@ pub struct WorldFrameReport {
     low_detail_draw_count: usize,
     ground_detail_draw_count: usize,
     primary_shadow_draw_count: usize,
+    environment_shadow_draw_counts: [usize; 3],
     celestial_draw_count: usize,
     sky_model_draw_count: usize,
     terrain_draw_count: usize,
@@ -398,12 +416,23 @@ pub struct WorldFrameReport {
 }
 
 impl WorldFrameReport {
+    pub(super) const fn with_environment_shadow_draw_counts(mut self, counts: [usize; 3]) -> Self {
+        self.environment_shadow_draw_counts = counts;
+        self
+    }
+
+    /// Returns actual caster draws into this frame's near, middle, and far updates.
+    #[must_use]
+    pub const fn environment_shadow_draw_counts(self) -> [usize; 3] {
+        self.environment_shadow_draw_counts
+    }
+
     pub(super) const fn with_primary_shadow_draw_count(mut self, count: usize) -> Self {
         self.primary_shadow_draw_count = count;
         self
     }
 
-    /// Returns the M2 batches rendered into this frame's primary shadow map.
+    /// Returns the unit and scenery batches rendered into the primary shadow map.
     #[must_use]
     pub const fn primary_shadow_draw_count(self) -> usize {
         self.primary_shadow_draw_count
@@ -430,6 +459,7 @@ impl WorldFrameReport {
             low_detail_draw_count: 0,
             ground_detail_draw_count: 0,
             primary_shadow_draw_count: 0,
+            environment_shadow_draw_counts: [0; 3],
             celestial_draw_count: 0,
             sky_model_draw_count: 0,
             liquid_draw_count,

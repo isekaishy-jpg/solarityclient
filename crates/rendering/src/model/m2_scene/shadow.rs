@@ -36,6 +36,7 @@ impl M2ShadowMatrix {
 /// Per-scene constants consumed by stock's four M2 shadow-map samplers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2ShadowState {
+    world_mode: u8,
     matrices: [M2ShadowMatrix; 4],
     fade_plane: Vec4,
     light_direction: Vec3,
@@ -55,6 +56,7 @@ impl M2ShadowState {
         filter_offsets: [Vec2; 8],
     ) -> Self {
         Self {
+            world_mode: 0,
             matrices,
             fade_plane,
             light_direction,
@@ -66,11 +68,17 @@ impl M2ShadowState {
     #[must_use]
     pub const fn disabled() -> Self {
         Self {
+            world_mode: 0,
             matrices: [M2ShadowMatrix::disabled(); 4],
             fade_plane: Vec4::ZERO,
             light_direction: Vec3::ZERO,
             filter_offsets: [Vec2::ZERO; 8],
         }
+    }
+
+    pub(crate) const fn with_world_mode(mut self, mode: u8) -> Self {
+        self.world_mode = mode;
+        self
     }
 
     /// Reproduces stock's fixed eight-tap pattern for a square shadow map.
@@ -102,7 +110,11 @@ impl M2ShadowState {
             matrix.write_bytes(bytes, offset);
         }
         super::gpu_state::write_vec4(bytes, offset, self.fade_plane);
-        super::gpu_state::write_vec4(bytes, offset, self.light_direction.extend(0.0));
+        super::gpu_state::write_vec4(
+            bytes,
+            offset,
+            self.light_direction.extend(f32::from(self.world_mode)),
+        );
         for filter_offset in self.filter_offsets {
             super::gpu_state::write_vec4(bytes, offset, filter_offset.extend(0.0).extend(0.0));
         }

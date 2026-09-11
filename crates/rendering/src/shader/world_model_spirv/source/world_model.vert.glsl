@@ -13,10 +13,14 @@ layout(std140, set = 3, binding = 0) uniform WorldShadow {
     vec4 origin_and_texel;
     vec4 receiver_rows[3];
     vec4 light_direction;
+    vec4 environment_rows[9];
+    vec4 fade_plane;
+    vec4 settings;
 } shadow;
 layout(location = 6) out vec3 fragment_shadow_coordinates;
 layout(location = 7) out vec3 fragment_shadow_normal;
 layout(location = 8) out float fragment_eye_depth;
+layout(location = 9) out vec3 environment_coordinates[3];
 #endif
 
 layout(std140, set = 0, binding = 0) uniform WorldModelSceneState {
@@ -67,6 +71,12 @@ void main() {
         dot(relative_position, shadow.receiver_rows[0]),
         dot(relative_position, shadow.receiver_rows[1]),
         dot(relative_position, shadow.receiver_rows[2]));
+    for (int map = 0; map < 3; ++map) {
+        environment_coordinates[map] = vec3(
+            dot(relative_position, shadow.environment_rows[map * 3]),
+            dot(relative_position, shadow.environment_rows[map * 3 + 1]),
+            dot(relative_position, shadow.environment_rows[map * 3 + 2]));
+    }
     fragment_shadow_normal = world_normal;
     fragment_eye_depth = -view_position.z;
 #endif

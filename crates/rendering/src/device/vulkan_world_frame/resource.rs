@@ -338,7 +338,8 @@ impl WorldFrameSlot {
             ] {
                 let mut m2_scene = scene.m2(light_bank);
                 if let Some(frame) = scene.primary_shadows() {
-                    m2_scene = m2_scene.with_world_shadow(frame.projection());
+                    m2_scene =
+                        m2_scene.with_world_shadow(frame.projection(), scene.environment_shadows());
                 }
                 copy_bytes(
                     destination,
@@ -354,7 +355,8 @@ impl WorldFrameSlot {
             for (index, instance) in scene.m2_instance_scenes().iter().enumerate() {
                 let mut instance = *instance;
                 if let Some(frame) = scene.primary_shadows() {
-                    instance = instance.with_world_shadow(frame.projection());
+                    instance =
+                        instance.with_world_shadow(frame.projection(), scene.environment_shadows());
                 }
                 copy_bytes(
                     destination,
@@ -412,7 +414,17 @@ impl WorldFrameSlot {
                     )?;
                 }
             }
-            for (index, draw) in world_model_draws.iter().copied().enumerate() {
+            for (index, draw) in world_model_draws
+                .iter()
+                .copied()
+                .chain(
+                    scene
+                        .environment_shadows()
+                        .into_iter()
+                        .flat_map(|frame| frame.wmo_casters().iter().map(|caster| caster.draw)),
+                )
+                .enumerate()
+            {
                 copy_bytes(
                     destination,
                     indexed_offset(
@@ -432,6 +444,12 @@ impl WorldFrameSlot {
                         .primary_shadows()
                         .into_iter()
                         .flat_map(|frame| frame.casters()),
+                )
+                .chain(
+                    scene
+                        .environment_shadows()
+                        .into_iter()
+                        .flat_map(|frame| frame.m2_casters().iter().map(|caster| &caster.draw)),
                 )
                 .copied()
                 .enumerate()

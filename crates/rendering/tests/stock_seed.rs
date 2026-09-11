@@ -6,6 +6,8 @@ mod camera;
 mod device;
 #[path = "stock_seed/effect.rs"]
 mod effect;
+#[path = "stock_seed/environment_shadow.rs"]
+mod environment_shadow;
 #[path = "stock_seed/geometry.rs"]
 mod geometry;
 #[path = "stock_seed/ghost_screen.rs"]

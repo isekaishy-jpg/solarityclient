@@ -12,32 +12,63 @@ layout(std140, set = 3, binding = 0) uniform WorldShadow {
     vec4 origin_and_texel;
     vec4 receiver_rows[3];
     vec4 light_direction;
+    vec4 environment_rows[9];
+    vec4 fade_plane;
+    vec4 settings;
 } shadow;
 layout(set = 3, binding = 1) uniform sampler2D primary_shadow_map;
+layout(set = 3, binding = 2) uniform sampler2D environment_shadow_0;
+layout(set = 3, binding = 3) uniform sampler2D environment_shadow_1;
+layout(set = 3, binding = 4) uniform sampler2D environment_shadow_2;
 layout(location = 6) in vec3 fragment_shadow_coordinates;
 layout(location = 7) in vec3 fragment_shadow_normal;
 layout(location = 8) in float fragment_eye_depth;
+layout(location = 9) in vec3 environment_coordinates[3];
 
-// MapObj{Diffuse,Opaque,Specular,Metal,Env,EnvMetal,Composite} pixel variant
-// one shares this kernel. The primary fade plane is zero (875D30).
+// The direct-depth kernels use c3..10 (terrain) or c5..12 (MapObj/detail).
+float filtered_shadow(sampler2D map, vec3 coordinates, int step_size) {
+    const vec2 offsets[8] = vec2[8](
+        vec2(0.8, -1.0), vec2(-0.2, -0.8), vec2(0.2, -0.6), vec2(1.0, -0.4),
+        vec2(-0.6, -0.2), vec2(0.6, 0.2), vec2(-1.0, -0.4), vec2(-0.4, -0.6));
+    vec2 uv = coordinates.xy * 0.5 + vec2(0.5);
+    float visibility = float(textureLod(map, uv, 0.0).r >= coordinates.z);
+    for (int index = 0; index < 8; index += step_size) {
+        visibility += float(textureLod(map,
+            uv + offsets[index] * shadow.origin_and_texel.w, 0.0).r >= coordinates.z);
+    }
+    return visibility / (step_size == 2 ? 5.0 : 9.0);
+}
+
+// Original PS3 selects the first containing environment map and fades the far edge.
+float environment_shadow_visibility() {
+    if (max(abs(environment_coordinates[0].x), abs(environment_coordinates[0].y)) < 1.0) {
+        return filtered_shadow(environment_shadow_0, environment_coordinates[0], 2);
+    }
+    if (max(abs(environment_coordinates[1].x), abs(environment_coordinates[1].y)) < 1.0) {
+        return filtered_shadow(environment_shadow_1, environment_coordinates[1], 2);
+    }
+    float visibility = filtered_shadow(environment_shadow_2, environment_coordinates[2], 2);
+    float edge = clamp(max(abs(environment_coordinates[2].x), abs(environment_coordinates[2].y))
+        * -11.1111107 + 11.0, 0.0, 1.0);
+    return mix(1.0, visibility, edge);
+}
+
+// MapObj PS2 retains primary edge fading and eye-depth filtering; PS3 uses
+// five taps with no primary edge fade. Both take the environment-map minimum.
 float primary_shadow_factor() {
+    int mode = int(shadow.settings.x);
     float edge = clamp(max(abs(fragment_shadow_coordinates.x), abs(fragment_shadow_coordinates.y))
         * -3.4482758 + 3.41379309, 0.0, 1.0);
     float visibility = 1.0;
-    if (edge > 0.01) {
-        vec2 coordinates = fragment_shadow_coordinates.xy * 0.5 + vec2(0.5);
-        const vec2 offsets[8] = vec2[8](
-            vec2(0.8, -1.0), vec2(-0.2, -0.8), vec2(0.2, -0.6), vec2(1.0, -0.4),
-            vec2(-0.6, -0.2), vec2(0.6, 0.2), vec2(-1.0, -0.4), vec2(-0.4, -0.6));
-        visibility = float(textureLod(primary_shadow_map, coordinates, 0.0).r
-            >= fragment_shadow_coordinates.z);
-        int step_size = fragment_eye_depth > 10.0 ? 2 : 1;
-        for (int index = 0; index < 8; index += step_size) {
-            float depth = textureLod(primary_shadow_map,
-                coordinates + offsets[index] * shadow.origin_and_texel.w, 0.0).r;
-            visibility += float(depth >= fragment_shadow_coordinates.z);
+    if (edge > (mode == 3 ? 0.0 : 0.01)) {
+        int step_size = mode == 3 || fragment_eye_depth > 10.0 ? 2 : 1;
+        visibility = filtered_shadow(primary_shadow_map, fragment_shadow_coordinates, step_size);
+        if (mode != 3) {
+            visibility = min(mix(1.0, visibility, edge), 1.0);
         }
-        visibility = min(mix(1.0, visibility / (step_size == 2 ? 5.0 : 9.0), edge), 1.0);
+    }
+    if (mode > 1) {
+        visibility = min(visibility, environment_shadow_visibility());
     }
     // Stock interpolates the vertex-normalized normal without normalizing again.
     float facing = 1.2 - abs(dot(shadow.light_direction.xyz, fragment_shadow_normal));

@@ -106,6 +106,7 @@ pub(in crate::device) struct WorldFrameWindow {
 
 pub(in crate::device) struct WorldFrameRenderer {
     shadows: crate::device::vulkan_shadow::ShadowPipelines,
+    environment_shadows: crate::device::vulkan_shadow::EnvironmentShadowImages,
     resources: WorldFrameResources,
     low_detail: LowDetailRegistry,
     ground_detail: DetailRegistry,
@@ -116,6 +117,7 @@ impl Default for WorldFrameRenderer {
     fn default() -> Self {
         Self {
             shadows: crate::device::vulkan_shadow::ShadowPipelines::default(),
+            environment_shadows: crate::device::vulkan_shadow::EnvironmentShadowImages::default(),
             resources: WorldFrameResources::default(),
             low_detail: LowDetailRegistry::default(),
             ground_detail: DetailRegistry::default(),
@@ -224,12 +226,19 @@ impl WorldFrameRenderer {
         let sky_bones = sky_models.map_or(&[][..], |frame| frame.bones);
         let sky_draw_count = sky_models.map_or(0, |frame| frame.draw_count());
         let shadow_frame = scene.primary_shadows();
+        let environment_frame = scene.environment_shadows();
+        if environment_frame.is_some() && shadow_frame.is_none() {
+            return Err(VulkanError::M2ShadowResourcesUnavailable);
+        }
+        let environment_m2 = environment_frame.map_or(&[][..], |frame| frame.m2_casters());
+        let environment_wmo = environment_frame.map_or(&[][..], |frame| frame.wmo_casters());
         let shadow_draws = shadow_frame.map_or(&[][..], |frame| frame.casters());
         let all_draws = || {
             m2_draws
                 .iter()
                 .chain(sky_models.into_iter().flat_map(|frame| frame.draws()))
                 .chain(shadow_draws)
+                .chain(environment_m2.iter().map(|caster| &caster.draw))
         };
         let bone_count = bone_transforms
             .len()
@@ -336,7 +345,20 @@ impl WorldFrameRenderer {
                     .m2_pipelines
                     .caster_set_layouts()
                     .ok_or(VulkanError::M2ShadowResourcesUnavailable)?,
+                context
+                    .world_model_pipelines
+                    .caster_set_layouts()
+                    .ok_or(VulkanError::M2ShadowResourcesUnavailable)?,
                 context.depth_format,
+            )?;
+        }
+        if let Some(frame) = environment_frame {
+            self.environment_shadows.ensure(
+                context.device,
+                context.allocator,
+                context.depth_format,
+                frame.quality(),
+                frame.cache_id(),
             )?;
         }
         self.resources.ensure(FrameCreateContext {
@@ -345,11 +367,15 @@ impl WorldFrameRenderer {
             descriptor_layouts,
             graphics_queue_family: context.graphics_queue_family,
             slot_count: context.swapchain_images.len(),
-            world_model_draw_capacity: world_model_draws.len(),
+            world_model_draw_capacity: world_model_draws
+                .len()
+                .checked_add(environment_wmo.len())
+                .ok_or(VulkanError::WorldFrameCapacity)?,
             m2_draw_capacity: m2_draws
                 .len()
                 .checked_add(sky_draw_count)
                 .and_then(|count| count.checked_add(shadow_draws.len()))
+                .and_then(|count| count.checked_add(environment_m2.len()))
                 .ok_or(VulkanError::WorldFrameCapacity)?,
             bone_capacity: bone_count,
             m2_scene_capacity: scene.m2_instance_scenes().len(),
@@ -387,6 +413,13 @@ impl WorldFrameRenderer {
                     context.depth_format,
                     context.uniform_alignment,
                     frame.projection(),
+                    environment_frame.map(|environment| {
+                        (
+                            environment,
+                            self.environment_shadows
+                                .receiver_views(environment.buffers()),
+                        )
+                    }),
                 )?;
             }
             slot.ground_detail.clear();
@@ -529,6 +562,8 @@ impl WorldFrameRenderer {
             shadow_pipeline: &self.shadows,
             shadow_resources: &slot.shadows,
             shadow_frame,
+            environment_frame,
+            environment_images: &self.environment_shadows,
             device: context.device,
             capture: context.capture,
             command_buffer: slot.command_buffer(),
@@ -623,6 +658,9 @@ impl WorldFrameRenderer {
         if scene.clouds().is_some() {
             slot.clouds.submitted();
         }
+        if environment_frame.is_some() {
+            self.environment_shadows.submitted();
+        }
         if let Some(profiler) = self.profiler.as_mut() {
             let submit_timings = submit_timings.ok_or_else(|| {
                 VulkanError::operation("profile world frame", "queue timings are unavailable")
@@ -636,6 +674,9 @@ impl WorldFrameRenderer {
                 submit_timings.queue_present,
             ]);
         }
+        let environment_counts = scene
+            .environment_shadows()
+            .map_or([0; 4], |frame| frame.draw_counts());
         Ok(WorldFrameReport::new(
             terrain_draws.len(),
             scene.liquids().map_or(0, |frame| frame.draws().len()),
@@ -653,8 +694,14 @@ impl WorldFrameRenderer {
             shadow_draws
                 .iter()
                 .filter(|draw| draw.shadow_material().is_some())
-                .count(),
+                .count()
+                + environment_counts[3],
         )
+        .with_environment_shadow_draw_counts([
+            environment_counts[0],
+            environment_counts[1],
+            environment_counts[2],
+        ])
         .with_ground_detail_draw_count(scene.ground_detail().map_or(0, |frame| frame.draw_count()))
         .with_sky_model_draw_count(sky_draw_count)
         .with_celestial_draw_count(scene.celestials().map_or(0, |frame| frame.draw_count()))
@@ -665,6 +712,7 @@ impl WorldFrameRenderer {
 
     pub(in crate::device) fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         self.resources.destroy(device, allocator);
+        self.environment_shadows.destroy(device, allocator);
         self.shadows.destroy(device);
         self.low_detail.destroy(allocator);
         self.ground_detail.destroy(device, allocator);

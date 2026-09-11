@@ -2,8 +2,8 @@
 
 #![allow(unsafe_code)]
 
-use crate::M2RenderVertex;
 use crate::device::VulkanError;
+use crate::{M2RenderVertex, WorldModelRenderVertex};
 use ash::{Device, vk};
 
 /// Owns the caster layout and pipelines for one rendering device.
@@ -12,6 +12,8 @@ pub(in crate::device) struct ShadowPipelines {
     scene_layout: vk::DescriptorSetLayout,
     layout: vk::PipelineLayout,
     handles: [[vk::Pipeline; 2]; 3],
+    wmo_layout: vk::PipelineLayout,
+    wmo_handles: [vk::Pipeline; 2],
 }
 
 impl ShadowPipelines {
@@ -20,6 +22,7 @@ impl ShadowPipelines {
         &mut self,
         device: &Device,
         m2_layouts: [vk::DescriptorSetLayout; 3],
+        wmo_layouts: [vk::DescriptorSetLayout; 2],
         depth_format: vk::Format,
     ) -> Result<(), VulkanError> {
         if self.layout != vk::PipelineLayout::null() {
@@ -62,8 +65,26 @@ impl ShadowPipelines {
                         depth_format,
                         bone_class as u32,
                         alpha as u32,
+                        CasterGeometry::M2,
                     )?;
                 }
+            }
+            let layouts = [self.scene_layout, wmo_layouts[0], wmo_layouts[1]];
+            let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts);
+            // SAFETY: Shared WMO material and texture layouts outlive these pipelines.
+            self.wmo_layout =
+                unsafe { device.create_pipeline_layout(&info, None) }.map_err(|source| {
+                    VulkanError::operation("create WMO shadow caster layout", source)
+                })?;
+            for alpha in 0..2 {
+                self.wmo_handles[alpha] = create_pipeline(
+                    device,
+                    self.wmo_layout,
+                    depth_format,
+                    0,
+                    alpha as u32,
+                    CasterGeometry::Wmo,
+                )?;
             }
             Ok(())
         })();
@@ -79,6 +100,9 @@ impl ShadowPipelines {
     pub(in crate::device) const fn layout(&self) -> vk::PipelineLayout {
         self.layout
     }
+    pub(in crate::device) fn wmo(&self, alpha: bool) -> (vk::Pipeline, vk::PipelineLayout) {
+        (self.wmo_handles[usize::from(alpha)], self.wmo_layout)
+    }
 
     /// Resolves a validated stock influence class and material queue.
     pub(in crate::device) fn raw(&self, bone_class: usize, alpha: bool) -> Option<vk::Pipeline> {
@@ -92,6 +116,15 @@ impl ShadowPipelines {
     pub(in crate::device) fn destroy(&mut self, device: &Device) {
         // SAFETY: The renderer waits for its slots before destroying shared pipelines.
         unsafe {
+            for handle in &mut self.wmo_handles {
+                if *handle != vk::Pipeline::null() {
+                    device.destroy_pipeline(*handle, None);
+                }
+                *handle = vk::Pipeline::null();
+            }
+            if self.wmo_layout != vk::PipelineLayout::null() {
+                device.destroy_pipeline_layout(self.wmo_layout, None);
+            }
             for pair in &mut self.handles {
                 for handle in pair {
                     if *handle != vk::Pipeline::null() {
@@ -108,19 +141,27 @@ impl ShadowPipelines {
             }
         }
         self.layout = vk::PipelineLayout::null();
+        self.wmo_layout = vk::PipelineLayout::null();
         self.scene_layout = vk::DescriptorSetLayout::null();
     }
 }
 
 /// Builds native two-sided, depth-writing silhouettes with direct floating depth.
+#[derive(Clone, Copy)]
+enum CasterGeometry {
+    M2,
+    Wmo,
+}
+
 fn create_pipeline(
     device: &Device,
     layout: vk::PipelineLayout,
     depth_format: vk::Format,
     bone_class: u32,
     alpha_test: u32,
+    geometry: CasterGeometry,
 ) -> Result<vk::Pipeline, VulkanError> {
-    let modules = ShaderModules::new(device)?;
+    let modules = ShaderModules::new(device, geometry)?;
     let vertex_entries = [vk::SpecializationMapEntry {
         constant_id: 0,
         offset: 0,
@@ -153,21 +194,35 @@ fn create_pipeline(
     ];
     let bindings = [vk::VertexInputBindingDescription::default()
         .binding(0)
-        .stride(M2RenderVertex::BYTE_SIZE as u32)
+        .stride(match geometry {
+            CasterGeometry::M2 => M2RenderVertex::BYTE_SIZE,
+            CasterGeometry::Wmo => WorldModelRenderVertex::BYTE_SIZE,
+        } as u32)
         .input_rate(vk::VertexInputRate::VERTEX)];
-    let attributes = [
+    let m2_attributes = [
         (0, vk::Format::R32G32B32_SFLOAT, 0),
         (1, vk::Format::R8G8B8A8_UNORM, 12),
         (2, vk::Format::R16G16B16A16_UINT, 16),
         (4, vk::Format::R32G32_SFLOAT, 36),
-    ]
+    ];
+    let wmo_attributes = [
+        (0, vk::Format::R32G32B32_SFLOAT, 0),
+        (4, vk::Format::R32G32_SFLOAT, 24),
+    ];
+    let attributes: Vec<_> = match geometry {
+        CasterGeometry::M2 => m2_attributes.as_slice(),
+        CasterGeometry::Wmo => wmo_attributes.as_slice(),
+    }
+    .iter()
+    .copied()
     .map(|(location, format, offset)| {
         vk::VertexInputAttributeDescription::default()
             .location(location)
             .binding(0)
             .format(format)
             .offset(offset)
-    });
+    })
+    .collect();
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&bindings)
         .vertex_attribute_descriptions(&attributes);
@@ -237,7 +292,7 @@ struct ShaderModules<'a> {
 
 impl<'a> ShaderModules<'a> {
     /// Loads build-generated native shader translations into temporary driver objects.
-    fn new(device: &'a Device) -> Result<Self, VulkanError> {
+    fn new(device: &'a Device, geometry: CasterGeometry) -> Result<Self, VulkanError> {
         let mut result = Self {
             device,
             vertex: vk::ShaderModule::null(),
@@ -246,11 +301,25 @@ impl<'a> ShaderModules<'a> {
         for (destination, bytes) in [
             (
                 &mut result.vertex,
-                include_bytes!(concat!(env!("OUT_DIR"), "/shadow.vert.spv")).as_slice(),
+                match geometry {
+                    CasterGeometry::M2 => {
+                        include_bytes!(concat!(env!("OUT_DIR"), "/shadow.vert.spv")).as_slice()
+                    }
+                    CasterGeometry::Wmo => {
+                        include_bytes!(concat!(env!("OUT_DIR"), "/shadow-wmo.vert.spv")).as_slice()
+                    }
+                },
             ),
             (
                 &mut result.fragment,
-                include_bytes!(concat!(env!("OUT_DIR"), "/shadow.frag.spv")).as_slice(),
+                match geometry {
+                    CasterGeometry::M2 => {
+                        include_bytes!(concat!(env!("OUT_DIR"), "/shadow.frag.spv")).as_slice()
+                    }
+                    CasterGeometry::Wmo => {
+                        include_bytes!(concat!(env!("OUT_DIR"), "/shadow-wmo.frag.spv")).as_slice()
+                    }
+                },
             ),
         ] {
             let words = bytes

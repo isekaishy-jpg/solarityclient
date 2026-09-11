@@ -1,6 +1,65 @@
 use glam::Vec3;
 use solarity_rendering::{WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality};
 
+#[test]
+fn environment_projections_match_original_receiver_rows() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut cases = 0;
+    for line in include_str!("../fixtures/world-environment-shadow-projection-native.txt")
+        .lines()
+        .filter(|line| line.starts_with("environment "))
+    {
+        let values = line
+            .split_whitespace()
+            .skip(1)
+            .map(str::parse::<f32>)
+            .collect::<Result<Vec<_>, _>>()?;
+        let vector = |index| Vec3::from_slice(&values[index..index + 3]);
+        let quality = if values[0] == 1024. {
+            WorldShadowQuality::EnvironmentLow
+        } else {
+            WorldShadowQuality::EnvironmentHigh
+        };
+        let map = solarity_rendering::WorldEnvironmentShadowMap::ALL[values[1] as usize];
+        let projection =
+            WorldShadowProjection::environment(quality, map, vector(2), vector(5), vector(8))?;
+        assert_eq!(projection.receiver_center(), vector(2));
+        assert!(
+            (projection.light_direction() - vector(11))
+                .abs()
+                .max_element()
+                < 0.000001
+        );
+        for (index, (actual, expected)) in projection
+            .caster_view()
+            .to_cols_array()
+            .into_iter()
+            .zip(&values[14..30])
+            .enumerate()
+        {
+            assert!(
+                (actual - expected).abs() < 0.0015,
+                "case {cases} view {index}: {actual} versus {expected}"
+            );
+        }
+        for (index, (actual, expected)) in projection
+            .receiver_rows()
+            .into_iter()
+            .flat_map(|row| row.to_array())
+            .zip(&values[30..])
+            .enumerate()
+        {
+            assert!(
+                (actual - expected).abs() < 0.00015,
+                "case {cases} receiver {index}: {actual} versus {expected}"
+            );
+        }
+        cases += 1;
+    }
+    assert_eq!(cases, 72);
+    Ok(())
+}
+
 /// Original shadowCull=1 transforms eight frustum corners before cropping admission.
 #[test]
 fn primary_unit_admission_matches_original_camera_crop() -> Result<(), Box<dyn std::error::Error>> {

@@ -9,9 +9,14 @@ layout(std140, set = 2, binding = 0) uniform DetailShadow {
     vec4 origin_and_texel;
     vec4 receiver_rows[3];
     vec4 light_direction;
+    vec4 environment_rows[9];
+    vec4 fade_plane;
+    vec4 settings;
 } shadow;
 layout(location = 4) out vec3 shadow_coordinates;
 layout(location = 5) out vec3 shadow_normal;
+layout(location = 6) out vec3 environment_coordinates[3];
+layout(location = 9) out float shadow_eye_depth;
 #endif
 
 layout(location = 0) in vec3 in_position;
@@ -65,6 +70,13 @@ void main() {
     shadow_coordinates = vec3(dot(relative_position, shadow.receiver_rows[0]),
         dot(relative_position, shadow.receiver_rows[1]),
         dot(relative_position, shadow.receiver_rows[2]));
+    for (int map = 0; map < 3; ++map) {
+        environment_coordinates[map] = vec3(
+            dot(relative_position, shadow.environment_rows[map * 3]),
+            dot(relative_position, shadow.environment_rows[map * 3 + 1]),
+            dot(relative_position, shadow.environment_rows[map * 3 + 2]));
+    }
+    shadow_eye_depth = depth;
     // Native relief uses the interpolated terrain normal without normalization.
     shadow_normal = in_normal;
 #endif

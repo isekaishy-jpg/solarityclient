@@ -19,9 +19,10 @@ def float_word(value):
     return struct.unpack('<I', struct.pack('<f', value))[0]
 
 
-def capture(executable):
+def capture(executable, environment=False):
     native.initialize(executable)
-    lines = ['# primary size center_xyz origin_xyz daynight_direction_xyz adjusted_xyz snapped_xyz caster_view16 receiver_rows12']
+    lines = ['# primary size center_xyz origin_xyz daynight_direction_xyz adjusted_xyz snapped_xyz caster_view16 receiver_rows12',
+             '# environment size map center_xyz origin_xyz daynight_direction_xyz adjusted_xyz caster_view16 receiver_rows12']
     identity = [float(index % 5 == 0) for index in range(16)]
     for size, center, origin, sunlight in itertools.product(
             [1024, 2048],
@@ -73,7 +74,23 @@ def capture(executable):
         native.write_floats(uc, 0xd43278, [1., 0., 0.])
         native.write_floats(uc, 0xd431bc, [float(size)])
         native.write_floats(uc, 0xd431c8, [0.00025])
+        if environment:
+            for index in range(3):
+                native.write_floats(uc, 0xd43298 + index * 0x3c,
+                                    native.read_floats(uc, 0xb1d520 + index * 4, 1))
+                native.write_floats(uc, 0xd432a0 + index * 0x3c,
+                                    native.read_floats(uc, anchor, 3))
+                native.write_floats(uc, 0xd432b8 + index * 0x3c, [1., 0., 0.])
         native.invoke(uc, 0x8750b0, [])
+        if environment:
+            for index in range(3):
+                radius = native.read_words(uc, 0xb1d520 + index * 4, 1)[0]
+                native.invoke(uc, 0x7bac10, [anchor, radius, output, up, index])
+                receiver = native.read_floats(uc, 0xd43378 + index * 48, 12)
+                values = [size, index, *native.read_floats(uc, anchor, 3), *origin,
+                          *sunlight, *adjusted, *caster_view, *receiver]
+                lines.append('environment ' + ' '.join(map(str, values)))
+            continue
         receiver = native.read_floats(uc, 0xd43348, 12)
         # Execute the common original eye/look-at path with the unsnapped caster center.
         native.invoke(uc, 0x7bac10, [anchor, float_word(20.), output, up, 0xffffffff])
@@ -87,5 +104,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--environment', action='store_true')
     args = parser.parse_args()
-    args.output.write_text(capture(args.executable))
+    args.output.write_text(capture(args.executable, args.environment))

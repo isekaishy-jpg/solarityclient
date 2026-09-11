@@ -218,6 +218,18 @@ fn compare_bone_class(
                     }
                 }
                 cases += 1;
+                if bone_class == 1
+                    && quality_value == 2
+                    && scale_x == 1.
+                    && ray == -Vec3::Z
+                    && texture_index == 0
+                    && movement == 0.
+                    && count == 1
+                {
+                    crate::environment_shadow::compare_cache(
+                        renderer, scene, terrain, caster, &bones, center, eye,
+                    )?;
+                }
             }
         }
     }

@@ -59,18 +59,7 @@ impl DetailPipeline {
         // SAFETY: This scene layout exactly matches the existing terrain frame descriptor ABI.
         self.scene = unsafe { device.create_descriptor_set_layout(&info, None) }
             .map_err(|source| VulkanError::operation("create detail scene layout", source))?;
-        let bindings = [
-            vk::DescriptorSetLayoutBinding::default()
-                .binding(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(1)
-                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
-            vk::DescriptorSetLayoutBinding::default()
-                .binding(1)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(1)
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-        ];
+        let bindings = crate::device::vulkan_shadow::receiver_bindings();
         let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
         // SAFETY: This is the slot-retained terrain/WMO receiver descriptor ABI.
         self.shadow = unsafe { device.create_descriptor_set_layout(&info, None) }

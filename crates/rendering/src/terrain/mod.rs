@@ -24,7 +24,10 @@ pub use low_detail::{
 };
 pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};
 pub use point_light::TerrainPointLight;
-pub use shadow::{WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality};
+pub use shadow::{
+    WorldEnvironmentShadowMap, WorldEnvironmentShadowState, WorldEnvironmentShadowUpdate,
+    WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality,
+};
 pub use texture_animation::TerrainTextureAnimationState;
 pub use tile_mesh::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,

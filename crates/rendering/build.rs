@@ -101,6 +101,18 @@ fn main() {
             &[],
         );
     }
+    compile(
+        "src/shader/shadow_spirv/source/wmo.vert.glsl",
+        ShaderKind::Vertex,
+        &output.join("shadow-wmo.vert.spv"),
+        &[],
+    );
+    compile(
+        "src/shader/shadow_spirv/source/shadow.frag.glsl",
+        ShaderKind::Fragment,
+        &output.join("shadow-wmo.frag.spv"),
+        &[("SHADOW_WMO", "1")],
+    );
     for layer_count in 1..=4 {
         let layer_count = layer_count.to_string();
         compile(

@@ -158,6 +158,13 @@ impl WorldModelPipelineRegistry {
             .map(|resource| (resource.handle, self.layout.handle()))
     }
 
+    pub(in crate::device) fn caster_set_layouts(&self) -> Option<[vk::DescriptorSetLayout; 2]> {
+        Some([
+            self.layout.descriptor_set(1)?,
+            self.layout.descriptor_set(2)?,
+        ])
+    }
+
     /// Resolves the paired receiver pipeline without allocating during submission.
     pub(in crate::device) fn raw_primary_shadow(
         &self,

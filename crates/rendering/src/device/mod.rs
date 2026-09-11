@@ -89,7 +89,10 @@ pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{VulkanPresentMode, VulkanRenderer, VulkanReport};
 pub use vulkan_ripple::{WaterRippleFrame, WaterRippleFrameError, WaterRipplePass};
 pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
-pub use vulkan_shadow::WorldPrimaryShadowFrame;
+pub use vulkan_shadow::{
+    WorldEnvironmentM2Caster, WorldEnvironmentShadowFrame, WorldEnvironmentShadowPass,
+    WorldEnvironmentWmoCaster, WorldPrimaryShadowFrame,
+};
 pub use vulkan_terrain_draw::TerrainPreparedDraw;
 pub use vulkan_terrain_frame::TerrainFrameReport;
 pub use vulkan_terrain_material::{TerrainMaterialHandle, TerrainMaterialResourceInfo};
