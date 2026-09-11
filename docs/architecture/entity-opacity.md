@@ -50,7 +50,10 @@ transform. The live gameplay object itself is not retained by this list.
 
 The ordinary scene created by `743760 -> 781A10 -> 7C0670` retains vtable
 `A3FD90`. The model's light callback (`+2AC/+2B0`) points to `780CD0` and that
-scene; it delegates to `7C1730` and the projected-shadow callback `7C10C0`.
+scene; it delegates to `7C1730` and the liquid-state callback `7C10C0`.
+The latter copies the cached liquid classification into flags `0x20/0x40`
+and, for intersecting models, writes the horizontal water plane. It is not
+evidence for the quality-zero entity-shadow renderer.
 `783630` replaces only the scene's visibility callback (`+90/+94`) with
 `7823D0` and the scene itself. It preserves the spatial lighting state, scene
 category flags, and model callbacks. The different `A40318` scene family and

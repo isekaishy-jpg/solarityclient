@@ -1,9 +1,10 @@
 # World shadow maps
 
-The world renderer now builds the animated unit shadow map before its main
-terrain, WMO, and M2 pass. Player and creature bodies, mounts, and admitted
-attachments contribute eligible material batches. Terrain and model receivers
-sample that same frame's map. Sky models retain their separate scene state.
+The world renderer builds the primary shadow map and the selected cached or
+cascaded environment maps before its main terrain, WMO, and M2 pass. Player
+and creature bodies, mounts, admitted attachments, scenery, and WMO groups
+contribute their eligible material batches. Terrain, model, and ground-detail
+receivers sample the published maps. Sky models retain their separate scene state.
 
 ## Original-client evidence
 
@@ -218,10 +219,41 @@ populated-world GPU benchmark or a worst-case latency guarantee. Whole-tile
 publication stalls remain, with changed-frame streaming means of 20.326 ms
 outbound and 15.886 ms returning in the enabled run.
 
-The environment path still needs installed-world validation, including cascade
-admission and streaming ownership. Hardware
-comparison sampling, liquid receiver variants, and the
-quality-zero projected entity-shadow path remain
-separate work. Native exceptional registration flags outside the ordinary typed
-unit owners also need dedicated evidence and runtime coverage. These limits
-prevent describing the entire stock shadow system as complete.
+Installed-data quality-three and quality-five Valley of Trials captures retain
+equipped NPCs and the corrected UI scale while adding scenery shadows. Cached
+maps stop submitting casters after their initial updates; cascaded maps continue
+updating as the camera orbits. Strong terrain specular highlights remain visible.
+These controlled captures use a different location from the user's original
+Orgrimmar-gate screenshot and do not establish a matched lighting comparison.
+
+On 2026-09-11, one executable containing the environment path and empty-bounds
+correction replayed the elevated route above at qualities two, three, and five.
+All three runs completed 16,800 frames, with capture/profiling disabled and no
+compiler running. These are ordered single runs on the GTX 1070 at 1280 x 720.
+
+| Shadow quality | Stationary mean | Outbound mean | Return mean |
+| --- | ---: | ---: | ---: |
+| 2, primary only | 3.329 ms | 3.682 ms | 3.630 ms |
+| 3, cached environment | 5.395 ms | 6.130 ms | 6.173 ms |
+| 5, cascaded environment | 7.099 ms | 6.905 ms | 6.829 ms |
+
+Each direction retains 24 residency-change frames, 21 admissions, and 21
+evictions at every quality. Stationary quality three submits no environment
+casters after publication. Stationary quality five submits 16 primary packets
+and 19/158/739 near/middle/far packets per frame. Moving and returning refresh
+the cached maps and change cascade membership without registration failures.
+The first quality-three replay exposed a collision-only Orgrimmar auction-house
+M2 with wholly reversed render bounds; the native point-bounds fallback now
+passes 294 original-code comparisons and the complete installed route.
+
+These runs establish ordinary travel and collection, not complete cache coverage
+during asynchronous initial asset arrival. The initial cached update can finish
+before all neighboring scenery publishes; native forced-residency refresh and
+the runtime publication boundary still need reconciliation. Isolated frame
+maxima reach 85.571 ms across these runs, and populated-world latency remains
+unmeasured. The [liquid shader audit](liquid-rendering.md#shader-selection-audit)
+found no original liquid shadow receiver; ProcWater and model/water clipping
+have separate incomplete consumers. Hardware comparison sampling,
+quality-zero entity-shadow behavior, and exceptional registration flags outside
+the ordinary typed unit owners still need dedicated evidence and coverage.
+These limits prevent describing the entire stock shadow system as complete.

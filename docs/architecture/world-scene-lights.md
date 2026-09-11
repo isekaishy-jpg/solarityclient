@@ -113,7 +113,7 @@ continue to use the independently verified graphics-scene publication path.
 
 This covers graphics-scene M2 source publication, model/water consumers and
 the ordinary entity/doodad color callbacks. It does not establish the separate
-`7C10C0` projected shadow plane, dynamic shadow-map modes, or every specialized
+`7C10C0` liquid classification and clipping plane, or every specialized
 map-entity callback. Native visibility passes also choose an ordinary/WMO fog
 bank per model (`793270`/`7C1730`); routing those banks through M2 consumers
 remains distinct from shared camera fog. WMO surfaces now consume their own

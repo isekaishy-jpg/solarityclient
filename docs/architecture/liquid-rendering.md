@@ -34,6 +34,32 @@ The camera's existing liquid query chooses transparent M2 pass two before
 water above the surface and pass one before water below it, matching `4F8EA0`.
 Glue continues to use its explicit pass-one-first ordering.
 
+The per-model half-space routing remains incomplete. `7C23F0` queries the
+registered terrain/WMO liquid at the model's scene bounds; `7C10C0` publishes
+flags `0x20/0x40` and, when needed, the plane `(0, 0, 1, -height)` into its
+light-query state. `821A20` uses that state to place translucent meshes on one
+or both sides of the water pass, with clipping for intersecting meshes. Runtime
+mesh and ribbon submission still defaults to pass one; the global camera order
+alone does not implement this model-dependent behavior.
+
+## Shader selection audit
+
+Native `8A1FA0` dispatches material IDs one, two, and three to water, magma, and
+procedural-water factories. Constructors `8A3F70`, `8A4070`, and `8A4190` request
+fixed Water, WaterNoSpec, and Magma shader names. `8A3E00` formats ProcWater with
+the suffix supplied by `8A1770`; the world initializer `7997D0` supplies an empty
+suffix. This selection does not append an exterior-shadow quality variant.
+
+The installed Water, WaterNoSpec, and ProcWater BLS files each contain four
+vertex variants and one pixel variant; Magma contains one of each. The original
+pixel instructions contain no shadow-map sampler or receiver operation.
+ProcWater's six samplers instead cover two cube maps, two depth inputs, and two
+animated surface inputs. A liquid shadow receiver is therefore not a confirmed
+missing feature. ProcWater itself remains unimplemented: LiquidType 100 selects
+material three, which the runtime currently rejects explicitly. Its wave
+generation, cube-map inputs, full material constants, and native GPU comparison
+are separate work from ordinary water and the model/water clipping boundary.
+
 Native `7EBFF0` reads LightParams glow from field four, ocean alphas from
 fields five/six, and river alphas from seven/eight. Liquid color bands 14/15
 are river and 16/17 are ocean. `liquid_environment_oracle.py` executes that
