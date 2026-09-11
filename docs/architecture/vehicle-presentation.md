@@ -297,12 +297,12 @@ evidence above.
 
 ## Testing package
 
-Build **000100** (`0.0.3a`) installs source revision
-`a1ff09e4bf11e44095ec57ff4e4a9d242699d808` through the persistent Testing launcher.
+Build **000101** (`0.0.3a`) installs source revision
+`62adf096585c15bb5918b6c808ca0f012d10fa93` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`d56e0e1b3c5382d550af392eeca48e3dde50ce30a779183b849d9cd3d8d6e7a7`.
+`27ac78db539003f3348ffb9986f77fe6d95876d8c1c4ade93177446e9a76b4ea`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
 passenger frames, final local/remote world projection and settled animated
 seats with mounted riders and shared lighting/shadow/sorting ancestry. Remote
@@ -323,9 +323,12 @@ attached callback poses refresh after parent updates.
 Mounts now construct native default primaries and retain native timers through
 movement updates. Their authored events dispatch before the rider, preserving
 mount event positions while resolving breath attachments through the unit body.
+Mount creation and movement updates use their own authored stride speed and
+outgoing variation phase. Rate changes beyond the native 0.01 tolerance submit
+a new weighted primary; unchanged requests retain the timer and random stream.
 
-This package passes 1,262 locked workspace tests with 23 archive-dependent
-tests ignored; runtime passes 299 with 18 ignored. Three explicit stock archive
+This package passes 1,265 locked workspace tests with 23 archive-dependent
+tests ignored; runtime passes 302 with 18 ignored. Three explicit stock archive
 tests also pass, covering character movement, jump variations and drowning/death
 playback, plus the stock water-effect prepare/simulate/retire test. Native scene
 traversal matches 480 captured cases; a GPU regression checks callback ordering
@@ -333,6 +336,9 @@ and current moved positions for offscreen units. Another 48 original-instruction
 cases verify body/mount effect-factory binding; renderer checks use distinct
 mount/body event points and opposite breath attachments. Mount timer tests retain
 weighted selections and replace constructor fallback modes for forward movement.
+Another 240 native mount-commit cases establish the rate threshold and submitted
+arguments. Timer tests cover phase and random draws; GPU tests verify mount
+creation and speed changes for local players, remote players and creatures.
 Workspace/all-target Clippy with warnings denied, formatting and
 whitespace checks pass. Vehicle active mover selection, active spell/control
 providers, transfer lifecycle, special cameras and combined live travel remain
