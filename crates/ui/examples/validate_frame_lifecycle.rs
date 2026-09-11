@@ -170,8 +170,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .find(|texture| manager.object_name(texture.object_index()) == Some("ChatFrame1Background"))
         .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "stock chat background missing"))?;
-    if (chat_background.bounds().width() - 434.0).abs() > 0.01
-        || (chat_background.bounds().height() - 129.0).abs() > 0.01
+    let chat_scale = manager
+        .geometry()
+        .region(chat_background.object_index())
+        .ok_or_else(|| IoError::other("stock chat background geometry missing"))?
+        .effective_scale();
+    if (chat_background.bounds().width() - 434.0 * chat_scale).abs() > 0.01
+        || (chat_background.bounds().height() - 129.0 * chat_scale).abs() > 0.01
         || chat_background
             .vertex_colors()
             .iter()
@@ -179,7 +184,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Err(IoError::new(
             ErrorKind::InvalidData,
-            "stock chat background dimensions or tint were not initialized",
+            format!("stock chat background dimensions or tint were not initialized: bounds={:?}, scale={chat_scale}", chat_background.bounds()),
         )
         .into());
     }

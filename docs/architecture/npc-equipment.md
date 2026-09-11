@@ -106,4 +106,9 @@ latching, weapon flags, attack GUIDs, disarms and template restrictions. The
 separate non-immediate branch starts upper-body sheath animations; that branch,
 spell providers and local-player rules are outside this capture. Their owners
 must deliver those requests when the corresponding gameplay slice is active.
-The combined Durotar comparison remains required before closing the user's report.
+A controlled real-archive Durotar capture additionally renders displays 1836
+and 1906 together with terrain, world lighting and FrameXML. Stationary and
+orbit images show their distinct authored armor, swords and shields in the
+combined renderer. This validates the equipment integration for those selected
+actors; the exact reported scene comparison remains part of the broader world
+shader and lighting gate.

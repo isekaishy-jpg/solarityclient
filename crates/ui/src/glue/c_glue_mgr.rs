@@ -315,6 +315,9 @@ impl GlueManager {
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?;
         report_phase("Lua runtime", &mut phase_started);
         runtime.execute_all(&bundle, &tree, &scripts)?;
+        if manifest_kind == UiManifestKind::Frame {
+            runtime.initialize_frame_scale(&bundle, &environment)?;
+        }
         if let Some(initial_screen) = initial_screen {
             let _dispatch =
                 runtime.dispatch_glue_event(&bundle, "FRAMES_LOADED", &UiEventPayload::empty())?;

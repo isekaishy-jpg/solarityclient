@@ -5,6 +5,8 @@ mod support;
 
 #[path = "stock_seed/sound_admission.rs"]
 mod sound_admission;
+#[path = "stock_seed/world_scale.rs"]
+mod world_scale;
 
 #[path = "stock_seed/addon.rs"]
 mod addon;

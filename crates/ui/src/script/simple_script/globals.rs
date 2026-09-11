@@ -33,11 +33,25 @@ pub(super) fn register_base_globals(
     let (screen_width, screen_height) = environment.ui_extent();
     globals.raw_set(
         "GetScreenWidth",
-        lua.create_function(move |_, ()| Ok(screen_width))?,
+        lua.create_function(move |lua, ()| {
+            Ok(screen_width
+                / if manifest_kind == UiManifestKind::Frame {
+                    super::world_scale::root_scale(lua)?
+                } else {
+                    1.0
+                })
+        })?,
     )?;
     globals.raw_set(
         "GetScreenHeight",
-        lua.create_function(move |_, ()| Ok(screen_height))?,
+        lua.create_function(move |lua, ()| {
+            Ok(screen_height
+                / if manifest_kind == UiManifestKind::Frame {
+                    super::world_scale::root_scale(lua)?
+                } else {
+                    1.0
+                })
+        })?,
     )?;
     globals.raw_set(
         "IsWindowsClient",
@@ -63,7 +77,7 @@ pub(super) fn register_base_globals(
     register_localized_class_list(lua, &globals, environment)?;
     register_static_constants(lua, &globals)?;
     register_item_quality_color(lua, &globals)?;
-    register_client_runtime_globals(lua, &globals, environment)?;
+    register_client_runtime_globals(lua, &globals, environment, manifest_kind)?;
     register_sound_globals(lua, &globals, environment)?;
     register_portrait_globals(lua, &globals, environment)?;
     register_addon_globals(
@@ -1792,6 +1806,7 @@ fn register_client_runtime_globals(
     lua: &Lua,
     globals: &Table,
     environment: &UiScriptEnvironment,
+    manifest_kind: UiManifestKind,
 ) -> mlua::Result<()> {
     let process = environment.process();
     let screenshot = process.clone();
@@ -1934,6 +1949,7 @@ fn register_client_runtime_globals(
     )?;
     let cvars = environment.cvars();
     let sound_devices = environment.media_intent();
+    let display_height = environment.logical_extent().1;
     globals.raw_set(
         "SetCVar",
         lua.create_function(move |lua, (name, value): (Value, Value)| {
@@ -1941,7 +1957,16 @@ fn register_client_runtime_globals(
             let value = lua
                 .coerce_string(value)?
                 .map_or_else(|| "0".to_owned(), |value| value.to_string_lossy());
+            // 7668C0 invokes native callbacks before 7667B0 publishes the new
+            // cached value. Nested DISPLAY_SIZE_CHANGED observes the old CVar
+            // while layout and GetScreenWidth/Height already use the new scale.
+            let callback = if manifest_kind == UiManifestKind::Frame {
+                super::world_scale::cvar_changing(lua, display_height, &cvars, &name, &value)
+            } else {
+                Ok(())
+            };
             set_cvar(&cvars, &name, value)?;
+            callback?;
             // 4D0DD0 updates the saved driver name immediately, but changing
             // the index alone does not restart playback.
             if name.eq_ignore_ascii_case("Sound_OutputDriverIndex")

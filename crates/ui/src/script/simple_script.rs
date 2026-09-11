@@ -8,6 +8,7 @@ mod messages;
 pub(super) mod minimap;
 pub(super) mod status_bars;
 mod tooltips;
+mod world_scale;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1170,6 +1171,14 @@ impl UiScriptEnvironment {
 }
 
 impl UiScriptRuntime {
+    pub(crate) fn initialize_frame_scale(
+        &self,
+        bundle: &UiBundle,
+        environment: &UiScriptEnvironment,
+    ) -> Result<(), UiScriptError> {
+        world_scale::initialize(bundle.lua(), environment)
+            .map_err(|error| execution_error("UI scale", error))
+    }
     /// Creates an empty object registry and the stock identity method table.
     ///
     /// # Errors
@@ -1887,44 +1896,14 @@ impl UiScriptRuntime {
         let object_generation =
             object_state_generation(lua).map_err(|error| execution_error(event, error))?;
         let object_count = self.registered_object_count();
-        let globals = lua.globals();
-        let previous_event = globals
-            .raw_get::<Value>("event")
-            .map_err(|error| execution_error(event, error))?;
-        let mut previous_arguments =
-            Vec::with_capacity(crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS);
-        for index in 1..=crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS {
-            previous_arguments.push(
-                globals
-                    .raw_get::<Value>(format!("arg{index}"))
-                    .map_err(|error| execution_error(event, error))?,
-            );
-        }
         let arguments = payload
             .arguments()
             .iter()
             .map(|argument| event_argument(lua, argument))
             .collect::<mlua::Result<Vec<_>>>()
             .map_err(|error| execution_error(event, error))?;
-        globals
-            .raw_set("event", event)
+        let subscriber_count = dispatch_event_callbacks(lua, object_count, event, &arguments)
             .map_err(|error| execution_error(event, error))?;
-        for index in 1..=crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS {
-            globals
-                .raw_set(
-                    format!("arg{index}"),
-                    arguments.get(index - 1).cloned().unwrap_or(Value::Nil),
-                )
-                .map_err(|error| execution_error(event, error))?;
-        }
-
-        let dispatch = dispatch_subscribers(lua, self.registered_object_count(), event, &arguments);
-        let restore = restore_event_globals(lua, previous_event, previous_arguments);
-        let subscriber_count = match (dispatch, restore) {
-            (Ok(count), Ok(())) => Ok(count),
-            (Err(error), _) => Err(execution_error(event, error)),
-            (Ok(_), Err(error)) => Err(execution_error(event, error)),
-        }?;
         let current_generation =
             live_state_generation(lua).map_err(|error| execution_error(event, error))?;
         let current_fallback_generation =
@@ -4384,6 +4363,35 @@ fn call_legacy_string_handler(
     }
 }
 
+/// Nested native callbacks preserve the enclosing event's legacy globals and
+/// leave dirty-object accounting to the outer dispatch transaction.
+fn dispatch_event_callbacks(
+    lua: &Lua,
+    object_count: usize,
+    event: &str,
+    arguments: &[Value],
+) -> mlua::Result<usize> {
+    let globals = lua.globals();
+    let previous_event = globals.raw_get::<Value>("event")?;
+    let mut previous_arguments = Vec::with_capacity(crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS);
+    for index in 1..=crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS {
+        previous_arguments.push(globals.raw_get::<Value>(format!("arg{index}"))?);
+    }
+    globals.raw_set("event", event)?;
+    for index in 1..=crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS {
+        globals.raw_set(
+            format!("arg{index}"),
+            arguments.get(index - 1).cloned().unwrap_or(Value::Nil),
+        )?;
+    }
+    let dispatch = dispatch_subscribers(lua, object_count, event, arguments);
+    let restore = restore_event_globals(lua, previous_event, previous_arguments);
+    match (dispatch, restore) {
+        (Ok(count), Ok(())) => Ok(count),
+        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+    }
+}
+
 fn dispatch_subscribers(
     lua: &Lua,
     object_count: usize,
@@ -5832,6 +5840,18 @@ fn register_player_model_methods(lua: &Lua, methods: &Table) -> mlua::Result<()>
                 != Some(&unit)
             {
                 model.raw_set(model_unit_key(), unit)?;
+                mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
+            }
+            Ok(())
+        })?,
+    )?;
+    methods.raw_set(
+        "RefreshUnit",
+        lua.create_function(|lua, model: Table| {
+            // 597B00 reapplies the retained selection through 5977E0. An
+            // unselected paper-doll widget has no unit to refresh; the stock
+            // DISPLAY_SIZE_CHANGED handler also invokes this while hidden.
+            if model.raw_get::<Option<String>>(model_unit_key())?.is_some() {
                 mark_object_state_changed(lua, &model, DIRTY_MODEL)?;
             }
             Ok(())

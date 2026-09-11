@@ -64,6 +64,7 @@ pub(super) const STOCK_INITIAL_DEFINITIONS: &[UiCVarDefinition] = &[
     value("screenshotQuality", "3"),
     ranged("useUiScale", "0", 0.0, 1.0),
     ranged("uiScale", "1", 0.64, 1.0),
+    value("widescreen", "1"), // 76A640; consumed by 50F7C0's configured aspect.
     ranged("gxVSync", "1", 0.0, 1.0),
     ranged("gxTripleBuffer", "0", 0.0, 1.0),
     ranged("gxCursor", "1", 0.0, 1.0),

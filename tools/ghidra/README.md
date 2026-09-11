@@ -362,6 +362,18 @@ spell providers, forced poses, and local-player behavior are excluded.
 python tools/ghidra/npc_weapon_state_oracle.py <path-to-Wow.exe> crates/rendering/tests/fixtures/npc_weapon_state_native.txt
 ```
 
+## World UI scale
+
+`ui_scale_oracle.py` executes 504 original FrameXML root-scale cases across
+initialization, both CVar callbacks, seven viewport sizes, widescreen settings
+and manual scale values. Root propagation and event delivery are intercepted;
+the Rust scene tests separately exercise layout and pointer input.
+See [world UI scale](../../docs/architecture/world-ui-scale.md).
+
+```text
+python tools/ghidra/ui_scale_oracle.py <path-to-Wow.exe> crates/ui/tests/fixtures/ui_scale_native.txt
+```
+
 ## WMO local batch visibility
 
 The following capture executes the native corner transform and normal renderer

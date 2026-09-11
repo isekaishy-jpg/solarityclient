@@ -67,7 +67,11 @@ impl UiCVarRegistry {
         let entry = entries
             .get(name)
             .or_else(|| entries.get(&canonical_name(name)))?;
-        let bytes = entry.value.as_bytes();
+        Some(Self::parse_integer(&entry.value))
+    }
+
+    pub(in crate::script::simple_script) fn parse_integer(value: &str) -> i32 {
+        let bytes = value.as_bytes();
         let negative = bytes.first() == Some(&b'-');
         let mut value = 0_u32;
         for &byte in &bytes[usize::from(negative)..] {
@@ -76,11 +80,11 @@ impl UiCVarRegistry {
             }
             value = value.wrapping_mul(10).wrapping_add(u32::from(byte - b'0'));
         }
-        Some(if negative {
+        (if negative {
             value.wrapping_neg()
         } else {
             value
-        } as i32)
+        }) as i32
     }
 
     /// Returns a copy of the native default for one known CVar.
