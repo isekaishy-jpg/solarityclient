@@ -155,6 +155,7 @@ pub(crate) struct ClientServices {
     /// Shared authored liquid behavior for the camera's resident water query.
     liquids: solarity_asset::LiquidTypeCatalog,
     water_ripples: super::water_ripples::RuntimeWaterRipples,
+    terrain_texture_animation: solarity_rendering::TerrainTextureAnimationState,
     unit_effects: super::unit_effects::RuntimeUnitEffects,
     underwater_particles: super::underwater_particles::RuntimeUnderwaterParticles,
     sky_resources: super::sky_resources::RuntimeSkyResources,
@@ -570,6 +571,8 @@ impl ClientServices {
                 terrain_frame: None,
                 liquids,
                 water_ripples,
+                terrain_texture_animation:
+                    solarity_rendering::TerrainTextureAnimationState::default(),
                 unit_effects,
                 underwater_particles,
                 sky_resources,
@@ -1405,6 +1408,7 @@ impl ClientServices {
         frame.set_ground_detail(ground_detail[0], ground_detail[1])?;
         frame.set_shadow_quality(shadow_quality)?;
         frame.set_horizon_scale(horizon_scale)?;
+        self.terrain_texture_animation.advance(developer_elapsed);
         frame.present(
             &mut self.renderer,
             plan,
@@ -1412,6 +1416,7 @@ impl ClientServices {
             &mut self.terrain,
             camera,
             liquid_time_ms,
+            &self.terrain_texture_animation,
             screen_effect,
             underwater.is_some(),
             specular_enabled,

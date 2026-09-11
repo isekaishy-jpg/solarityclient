@@ -1,5 +1,6 @@
 //! Explicit serialization for the terrain scene descriptor ABI.
 
+use super::TerrainTextureAnimationState;
 use glam::{Mat4, Vec3, Vec4};
 
 /// Per-frame camera and outdoor directional-light state shared by all MCNKs.
@@ -14,11 +15,12 @@ pub struct TerrainSceneUniform {
     fog_parameters: Vec4,
     fog_color: Vec4,
     specular_color_and_power: Vec4,
+    texture_offsets: [Vec4; 64],
 }
 
 impl TerrainSceneUniform {
     /// Byte size of the exact std140 scene block consumed by both stages.
-    pub const BYTE_SIZE: usize = 240;
+    pub const BYTE_SIZE: usize = 1264;
 
     /// Captures one camera/light snapshot without introducing lighting defaults.
     ///
@@ -43,7 +45,20 @@ impl TerrainSceneUniform {
             fog_parameters: Vec4::ZERO,
             fog_color: Vec4::ZERO,
             specular_color_and_power: Vec4::ZERO,
+            texture_offsets: [Vec4::ZERO; 64],
         }
+    }
+
+    /// Captures all native MCLY direction/speed combinations once per frame.
+    #[must_use]
+    pub fn with_texture_animation(mut self, animation: &TerrainTextureAnimationState) -> Self {
+        for (index, offset) in self.texture_offsets.iter_mut().enumerate() {
+            *offset = animation
+                .texture_offset(index as u32 | 0x40)
+                .extend(0.0)
+                .extend(0.0);
+        }
+        self
     }
 
     /// Enables Terrain.bls's vertex specular term with native power 20.
@@ -83,6 +98,9 @@ impl TerrainSceneUniform {
         write_vec4(&mut bytes, &mut offset, self.fog_color);
         write_mat4(&mut bytes, &mut offset, self.view);
         write_vec4(&mut bytes, &mut offset, self.specular_color_and_power);
+        for texture_offset in self.texture_offsets {
+            write_vec4(&mut bytes, &mut offset, texture_offset);
+        }
         debug_assert_eq!(offset, Self::BYTE_SIZE);
         bytes
     }

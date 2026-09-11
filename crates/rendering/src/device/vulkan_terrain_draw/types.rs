@@ -11,7 +11,7 @@ pub struct TerrainPreparedDraw {
     first_index: u32,
     index_count: u32,
     atlas_chunk: [u8; 2],
-    material_flags: [u32; 2],
+    material_flags: [u32; 3],
 }
 
 impl TerrainPreparedDraw {
@@ -22,7 +22,7 @@ impl TerrainPreparedDraw {
         first_index: u32,
         index_count: u32,
         atlas_chunk: [u8; 2],
-        material_flags: [u32; 2],
+        material_flags: [u32; 3],
     ) -> Self {
         Self {
             mesh,
@@ -65,16 +65,35 @@ impl TerrainPreparedDraw {
         self.index_count
     }
 
-    /// Serializes atlas coordinates, weighted blending, and the unlit layer mask.
+    /// Serializes atlas coordinates, lighting flags, and packed layer animation.
     #[must_use]
-    pub const fn push_bytes(self) -> [u8; 16] {
+    pub const fn push_bytes(self) -> [u8; 20] {
         let x = (self.atlas_chunk[0] as u32).to_le_bytes();
         let y = (self.atlas_chunk[1] as u32).to_le_bytes();
         let blend = self.material_flags[0].to_le_bytes();
         let unlit = self.material_flags[1].to_le_bytes();
+        let animation = self.material_flags[2].to_le_bytes();
         [
-            x[0], x[1], x[2], x[3], y[0], y[1], y[2], y[3], blend[0], blend[1], blend[2], blend[3],
-            unlit[0], unlit[1], unlit[2], unlit[3],
+            x[0],
+            x[1],
+            x[2],
+            x[3],
+            y[0],
+            y[1],
+            y[2],
+            y[3],
+            blend[0],
+            blend[1],
+            blend[2],
+            blend[3],
+            unlit[0],
+            unlit[1],
+            unlit[2],
+            unlit[3],
+            animation[0],
+            animation[1],
+            animation[2],
+            animation[3],
         ]
     }
 }

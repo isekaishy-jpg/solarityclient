@@ -45,11 +45,21 @@ layout(location = 2) in vec2 in_atlas_coordinates;
 layout(location = 3) in vec3 in_vertex_light;
 layout(location = 4) in float in_fog_visibility;
 layout(location = 6) in vec3 in_vertex_specular;
+#if TERRAIN_LAYER_COUNT > 1
+layout(location = 7) in vec2 in_layer1_coordinates;
+#endif
+#if TERRAIN_LAYER_COUNT > 2
+layout(location = 8) in vec2 in_layer2_coordinates;
+#endif
+#if TERRAIN_LAYER_COUNT > 3
+layout(location = 9) in vec2 in_layer3_coordinates;
+#endif
 
 layout(push_constant) uniform TerrainDraw {
     uvec2 atlas_chunk;
     uint weighted_blending;
     uint unlit_layers;
+    uint texture_animation;
 } draw;
 
 layout(set = 0, binding = 0) uniform TerrainScene {
@@ -62,6 +72,7 @@ layout(set = 0, binding = 0) uniform TerrainScene {
     vec4 fog_color;
     mat4 view;
     vec4 specular_color_and_power;
+    vec4 texture_offsets[64];
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D material_atlas;
@@ -95,17 +106,17 @@ void main() {
         ground *= 1.0 - clamp(dot(material.rgb, vec3(1.0)), 0.0, 1.0);
     }
 #if TERRAIN_LAYER_COUNT > 1
-    vec4 layer1 = light_layer(texture(diffuse_1, in_texture_coordinates), 1);
+    vec4 layer1 = light_layer(texture(diffuse_1, in_layer1_coordinates), 1);
     ground = draw.weighted_blending != 0 ? ground + layer1 * material.r
         : mix(ground, layer1, material.r);
 #endif
 #if TERRAIN_LAYER_COUNT > 2
-    vec4 layer2 = light_layer(texture(diffuse_2, in_texture_coordinates), 2);
+    vec4 layer2 = light_layer(texture(diffuse_2, in_layer2_coordinates), 2);
     ground = draw.weighted_blending != 0 ? ground + layer2 * material.g
         : mix(ground, layer2, material.g);
 #endif
 #if TERRAIN_LAYER_COUNT > 3
-    vec4 layer3 = light_layer(texture(diffuse_3, in_texture_coordinates), 3);
+    vec4 layer3 = light_layer(texture(diffuse_3, in_layer3_coordinates), 3);
     ground = draw.weighted_blending != 0 ? ground + layer3 * material.b
         : mix(ground, layer3, material.b);
 #endif

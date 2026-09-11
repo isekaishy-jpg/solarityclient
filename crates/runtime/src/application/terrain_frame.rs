@@ -757,6 +757,7 @@ impl TerrainFrame {
         terrain: &mut super::terrain_coordinator::RuntimeTerrainCoordinator,
         camera: WorldCameraFrame,
         liquid_time_ms: u32,
+        texture_animation: &solarity_rendering::TerrainTextureAnimationState,
         screen_effect: Option<solarity_rendering::WorldFrameScreenEffect>,
         camera_submerged: bool,
         specular_enabled: bool,
@@ -828,6 +829,7 @@ impl TerrainFrame {
             environment.light_direction(),
         )
         .with_fog(camera.view(), fog_parameters, fog.color())
+        .with_texture_animation(texture_animation)
         .with_specular(light.specular_color(), specular_enabled);
         let world_model_scene = WorldModelSceneUniform::new(
             camera.projection(),

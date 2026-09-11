@@ -97,6 +97,13 @@ pub(in crate::device) fn prepare_draw(
                 .fold(0, |mask, (index, layer)| {
                     mask | (u32::from(layer.flags() & 0x80 != 0) << index)
                 }),
+            chunk
+                .layers()
+                .iter()
+                .enumerate()
+                .fold(0, |flags, (index, layer)| {
+                    flags | ((layer.flags() & 0x7f) << (index * 8))
+                }),
         ],
     ))
 }

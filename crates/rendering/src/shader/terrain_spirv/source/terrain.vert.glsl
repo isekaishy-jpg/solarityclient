@@ -28,12 +28,14 @@ layout(set = 0, binding = 0) uniform TerrainScene {
     vec4 fog_color;
     mat4 view;
     vec4 specular_color_and_power;
+    vec4 texture_offsets[64];
 } scene;
 
 layout(push_constant) uniform TerrainDraw {
     uvec2 atlas_chunk;
     uint weighted_blending;
     uint unlit_layers;
+    uint texture_animation;
 } draw;
 
 layout(location = 1) out vec2 out_texture_coordinates;
@@ -41,6 +43,21 @@ layout(location = 2) out vec2 out_atlas_coordinates;
 layout(location = 3) out vec3 out_vertex_light;
 layout(location = 4) out float out_fog_visibility;
 layout(location = 6) out vec3 out_vertex_specular;
+#if TERRAIN_LAYER_COUNT > 1
+layout(location = 7) out vec2 out_layer1_coordinates;
+#endif
+#if TERRAIN_LAYER_COUNT > 2
+layout(location = 8) out vec2 out_layer2_coordinates;
+#endif
+#if TERRAIN_LAYER_COUNT > 3
+layout(location = 9) out vec2 out_layer3_coordinates;
+#endif
+
+vec2 layer_coordinates(uint layer) {
+    uint flags = (draw.texture_animation >> (layer * 8u)) & 127u;
+    return in_texture_coordinates + ((flags & 64u) != 0u
+        ? scene.texture_offsets[flags & 63u].xy : vec2(0.0));
+}
 
 void main() {
     const float chunk_texels = 64.0;
@@ -57,7 +74,16 @@ void main() {
     float visibility = max((scene.fog_parameters.y - eye_depth) * inverse_range, 0.0);
     out_fog_visibility = scene.fog_color.w > 0.0
         ? min(pow(visibility, scene.fog_parameters.w), 1.0) : 1.0;
-    out_texture_coordinates = in_texture_coordinates;
+    out_texture_coordinates = layer_coordinates(0);
+#if TERRAIN_LAYER_COUNT > 1
+    out_layer1_coordinates = layer_coordinates(1);
+#endif
+#if TERRAIN_LAYER_COUNT > 2
+    out_layer2_coordinates = layer_coordinates(2);
+#endif
+#if TERRAIN_LAYER_COUNT > 3
+    out_layer3_coordinates = layer_coordinates(3);
+#endif
     out_atlas_coordinates = (atlas_origin + in_alpha_coordinates * chunk_texels) / atlas_texels;
 
     // Terrain.bls lights vertices before interpolation. The normal and light

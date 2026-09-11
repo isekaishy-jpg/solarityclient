@@ -406,6 +406,14 @@ blend modes, all unlit layer masks, MCCV, shadows, and unequal texture alpha.
 python tools/ghidra/terrain_material_shader_oracle.py <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_material_shader_native.txt
 ```
 
+`terrain_animation_oracle.py` executes the original world clock update and MCLY
+offset calculation before rendering unchanged Terrain/Terrain1 shaders.
+It captures 384 offsets and 12 mixed animated/stationary four-layer frames.
+
+```text
+python tools/ghidra/terrain_animation_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_animation_native.txt
+```
+
 `world_texture_filter_oracle.py` captures 960 native filtering/cache-prefix cases.
 It substitutes the device-capability query and stops before texture-cache lookup
 or allocation. See [world texture sampling](../../docs/architecture/world-texture-sampling.md)

@@ -10,6 +10,7 @@ mod low_detail;
 mod map_weather;
 mod mesh;
 mod shadow;
+mod texture_animation;
 mod tile_mesh;
 
 pub use detail_doodad::{
@@ -22,6 +23,7 @@ pub use low_detail::{
 };
 pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};
 pub use shadow::{WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality};
+pub use texture_animation::TerrainTextureAnimationState;
 pub use tile_mesh::{
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,
     TerrainTileMeshPlan, TerrainTileMeshPlanError,

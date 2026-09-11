@@ -491,6 +491,8 @@ impl ClientServices {
             elapsed.as_secs_f32(),
             camera,
         );
+        self.terrain_texture_animation
+            .advance(elapsed.as_secs_f32());
         let report = frame
             .present(
                 &mut self.renderer,
@@ -501,6 +503,7 @@ impl ClientServices {
                 &mut self.terrain,
                 camera,
                 presentation_time_ms,
+                &self.terrain_texture_animation,
                 screen_effect,
                 underwater.is_some(),
                 self.glue.cvar_boolean("specular"),

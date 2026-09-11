@@ -14,8 +14,17 @@ absolute-world mapping halved visible texture density. This correction changes
 texture coordinates, not world geometry, camera projection or alpha-map density.
 
 The [shared file texture policy](world-texture-sampling.md) independently controls
-filtering and authored mip selection. Animated layer offsets and other native
-material families retain their separate implementation work.
+filtering and authored mip selection.
+
+Animated MCLY layers retain the original eight world clocks across tile changes.
+`7831A0` advances each direction using the frame interval, spills to float32,
+and resets positive components to zero at 64 while negative components continue.
+`7D2D70` uses bits 0..2 for direction and 3..5 for the divisor
+`[64, 48, 32, 16, 8, 4, 2, 1]`; bit `0x40` enables animation. It computes
+`-clock * (1 / float32(0.24000001)) / divisor * 0.125`, and Terrain.bls adds the
+swapped XY offset to each layer independently. CPU serialization retains native
+rounding, with a shared 64-entry offset table in the per-frame scene block.
+The material alpha and shadow coordinates remain stationary.
 
 Terrain layers preserve the WDT MPHD `0x0004` blend selection through decoded
 tiles, mesh plans and Vulkan draws. Without that flag, layers use successive
@@ -28,8 +37,9 @@ MCLY `0x80` selects unlit diffuse color independently for each layer. `7D2D70`
 writes the pixel constant mask; Terrain1 variants 16..31 apply diffuse lighting
 to ordinary layers before composition and retain the unlit layer's sampled RGB.
 Both kinds retain texture alpha for specular and still receive shadows and fog.
-The shared 16-byte draw push block carries atlas coordinates, blend mode and
-the unlit mask in both terrain-only and combined-world command recording.
+The shared 20-byte draw push block carries atlas coordinates, blend mode,
+the unlit mask and four packed animation flags in both terrain-only and
+combined-world command recording.
 
 MCNR components retain their stored XYZ order. The dependency names its three
 stored fields `x, z, y` and exposes a Y-up conversion; using that conversion
@@ -78,6 +88,12 @@ permutation using `CE049D`, derived from the specular setting and shader support
   The conspicuous bright highlights remain a separate lighting investigation.
 - `terrain_shadow_texture_oracle.py`: 12 complete native shadow textures,
   including absent input, both texture formats, and edge modes.
+- `terrain_animation_oracle.py`: 384 original offset calculations covering every
+  direction/speed pair and six successive updates across the native reset.
+  Float32 results match bit for bit. Twelve unchanged D3D9 shader frames combine
+  four patterned layers, different speeds and directions, and stationary layers.
+  Authored ADT/BLP Vulkan draws compare nine RGB samples per frame within two
+  byte values. The former renderer fails after the first nonzero update.
 - `terrain_lighting_shader_oracle.py`: 72 colored D3D9 outputs from the original
   Terrain.bls/Terrain1.bls bytecode. The Vulkan ADT/BLP integration checks the
   48 binary-shadow cases, including no MCCV, neutral MCCV, bright tints,
