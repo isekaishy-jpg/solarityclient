@@ -5,14 +5,55 @@ use crate::application::player_coordinator::{ResidentMountFrameInput, ResidentPl
 use solarity_ecs::{PlayerEquipmentSlot, VisibleEquipmentItem};
 
 #[derive(Clone, Copy)]
-pub(super) struct M2PlayerItemIdentity {
-    slot: PlayerEquipmentSlot,
-    visible: VisibleEquipmentItem,
+pub(super) enum M2UnitItemIdentity {
+    Player {
+        slot: PlayerEquipmentSlot,
+        visible: VisibleEquipmentItem,
+    },
+    NpcArmor {
+        slot: PlayerEquipmentSlot,
+        display_id: u32,
+    },
+}
+
+impl M2UnitItemIdentity {
+    fn same_component(self, other: Self) -> bool {
+        match (self, other) {
+            (
+                Self::Player { slot, visible },
+                Self::Player {
+                    slot: other_slot,
+                    visible: other_visible,
+                },
+            ) => slot == other_slot && visible.entry_id() == other_visible.entry_id(),
+            (
+                Self::NpcArmor { slot, display_id },
+                Self::NpcArmor {
+                    slot: other_slot,
+                    display_id: other_display,
+                },
+            ) => slot == other_slot && display_id == other_display,
+            _ => false,
+        }
+    }
+
+    fn same_enchantment(self, other: Self) -> bool {
+        match (self, other) {
+            (
+                Self::Player { visible, .. },
+                Self::Player {
+                    visible: other_visible,
+                    ..
+                },
+            ) => visible.enchantment_word() == other_visible.enchantment_word(),
+            _ => false,
+        }
+    }
 }
 
 /// Inputs committed only after every replacement GPU source has prepared.
 enum RetainedCharacterState {
-    Item(Option<M2PlayerItemIdentity>),
+    Item(Option<M2UnitItemIdentity>),
     Mount {
         key: MountModelKey,
         transform: Mat4,
@@ -127,7 +168,7 @@ impl M2Frame {
     ) -> Option<usize> {
         self.placements.iter().position(|placement| {
             placement.owner
-                == (M2GpuPlacementOwner::PlayerItem {
+                == (M2GpuPlacementOwner::UnitItem {
                     guid,
                     point: attachment.point(),
                 })
@@ -276,22 +317,6 @@ pub(super) fn prepare_character_gpu(
         unit_placement_transform(input.world_transform(), input.object_scale())?
     };
     let mut prepared = M2PreparedCharacter::default();
-    let same_unit = frame.same_unit_owner(input.unit_animation(), body_owner);
-    // 4EF710 admits the shoulder pair only when both live model paths match.
-    let same_shoulders = same_unit
-        && [
-            CharacterAttachmentPoint::ShoulderLeft,
-            CharacterAttachmentPoint::ShoulderRight,
-        ]
-        .into_iter()
-        .all(|point| {
-            input
-                .attachments()
-                .iter()
-                .find(|attachment| attachment.point() == point)
-                .and_then(|attachment| frame.matching_item_model(input.guid(), attachment))
-                .is_some()
-        });
     if let Some(mount) = mount {
         prepare_mount_gpu(
             frame,
@@ -362,33 +387,90 @@ pub(super) fn prepare_character_gpu(
     body.unit_presentation = Some(input.generation().clone());
     body.rider_scale = mount.map_or(1.0, |mount| mount.rider_scale());
     prepared.push(source, body);
-    for attachment in input.attachments() {
-        if input.model().attachment(attachment.point().id()).is_none() {
+    prepare_unit_equipment_gpu(
+        frame,
+        renderer,
+        &mut prepared,
+        UnitEquipmentGpuInput {
+            guid: input.guid(),
+            model: input.model(),
+            attachments: input.attachments(),
+            animation: input.unit_animation(),
+            body_owner,
+            world_transform,
+            atlas: Some(input.atlas()),
+        },
+        |slot| {
+            Some(M2UnitItemIdentity::Player {
+                slot,
+                visible: input.visible_item(slot),
+            })
+        },
+        scene_time_ms,
+        random,
+    )?;
+    Ok(prepared)
+}
+
+/// Body and equipment inputs shared by Player_C and ordinary Unit_C models.
+pub(super) struct UnitEquipmentGpuInput<'a> {
+    pub(super) guid: u64,
+    pub(super) model: &'a Arc<DecodedM2Model>,
+    pub(super) attachments: &'a [ResidentPlayerAttachment],
+    pub(super) animation: Option<&'a Rc<UnitAnimationBehavior>>,
+    pub(super) body_owner: M2GpuPlacementOwner,
+    pub(super) world_transform: Mat4,
+    pub(super) atlas: Option<&'a solarity_rendering::CharacterAtlasTexture>,
+}
+
+/// Publishes equipment through the same native component lifetime rules for
+/// players and NPCs. Display-only NPC armor has no public item entry identity.
+pub(super) fn prepare_unit_equipment_gpu(
+    frame: &M2Frame,
+    renderer: &mut VulkanRenderer,
+    prepared: &mut M2PreparedCharacter,
+    input: UnitEquipmentGpuInput<'_>,
+    item_identity: impl Fn(PlayerEquipmentSlot) -> Option<M2UnitItemIdentity>,
+    scene_time_ms: f32,
+    random: &mut CrtRand,
+) -> Result<(), RuntimeTerrainFrameError> {
+    let same_unit = frame.same_unit_owner(input.animation, input.body_owner);
+    // 4EF710 admits the shoulder pair only when both live model paths match.
+    let same_shoulders = same_unit
+        && [
+            CharacterAttachmentPoint::ShoulderLeft,
+            CharacterAttachmentPoint::ShoulderRight,
+        ]
+        .into_iter()
+        .all(|point| {
+            input
+                .attachments
+                .iter()
+                .find(|attachment| attachment.point() == point)
+                .and_then(|attachment| frame.matching_item_model(input.guid, attachment))
+                .is_some()
+        });
+    for attachment in input.attachments {
+        if input.model.attachment(attachment.point().id()).is_none() {
             return Err(RuntimeTerrainFrameError::MissingPlayerM2Attachment {
-                model: input.model().path().clone(),
+                model: input.model.path().clone(),
                 attachment_id: attachment.point().id(),
             });
         }
-        let identity = attachment.slot().map(|slot| M2PlayerItemIdentity {
-            slot,
-            visible: input.visible_item(slot),
-        });
+        let identity = attachment.slot().and_then(&item_identity);
         let candidate = same_unit
-            .then(|| frame.matching_item_model(input.guid(), attachment))
+            .then(|| frame.matching_item_model(input.guid, attachment))
             .flatten();
         let retained = candidate.filter(|index| {
-            let unchanged_entry = frame.placements[*index]
+            let unchanged_component = frame.placements[*index]
                 .item_identity
                 .zip(identity)
-                .is_some_and(|(previous, current)| {
-                    previous.slot == current.slot
-                        && previous.visible.entry_id() == current.visible.entry_id()
-                });
+                .is_some_and(|(previous, current)| previous.same_component(current));
             match attachment.point() {
                 CharacterAttachmentPoint::Helmet => true, // 4EF020 compares the model path.
                 CharacterAttachmentPoint::ShoulderLeft
-                | CharacterAttachmentPoint::ShoulderRight => unchanged_entry || same_shoulders,
-                _ => unchanged_entry,
+                | CharacterAttachmentPoint::ShoulderRight => unchanged_component || same_shoulders,
+                _ => unchanged_component,
             }
         });
         if let Some(index) = retained {
@@ -400,16 +482,14 @@ pub(super) fn prepare_character_gpu(
             ) || frame.placements[index]
                 .item_identity
                 .zip(identity)
-                .is_some_and(|(previous, current)| {
-                    previous.visible.enchantment_word() == current.visible.enchantment_word()
-                });
+                .is_some_and(|(previous, current)| previous.same_enchantment(current));
             prepared.retain(index, RetainedCharacterState::Item(identity));
             if unchanged_visuals {
                 for (index, placement) in frame.placements.iter().enumerate() {
-                    if let M2GpuPlacementOwner::PlayerItemVisual {
+                    if let M2GpuPlacementOwner::UnitItemVisual {
                         guid, item_point, ..
                     } = placement.owner
-                        && guid == input.guid()
+                        && guid == input.guid
                         && item_point == attachment.point()
                     {
                         prepared.retain(index, RetainedCharacterState::Item(None));
@@ -429,9 +509,10 @@ pub(super) fn prepare_character_gpu(
                     }
                     ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
                     ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                    ResidentPlayerTexture::BodyAtlas => {
-                        M2ResolvedTexture::CharacterAtlas(input.atlas())
-                    }
+                    ResidentPlayerTexture::BodyAtlas => input.atlas.map_or(
+                        M2ResolvedTexture::Unresolved(solarity_asset::M2TextureKind::Body),
+                        M2ResolvedTexture::CharacterAtlas,
+                    ),
                     ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
                 })
                 .collect::<Vec<_>>();
@@ -445,9 +526,9 @@ pub(super) fn prepare_character_gpu(
             )?;
             let mut placement = default_gpu_placement(
                 scene_time_ms,
-                world_transform,
-                M2GpuPlacementOwner::PlayerItem {
-                    guid: input.guid(),
+                input.world_transform,
+                M2GpuPlacementOwner::UnitItem {
+                    guid: input.guid,
                     point: attachment.point(),
                 },
                 attachment.model(),
@@ -469,9 +550,10 @@ pub(super) fn prepare_character_gpu(
                     }
                     ResidentPlayerTexture::StockWhite => M2ResolvedTexture::StockWhite,
                     ResidentPlayerTexture::StockFailure => M2ResolvedTexture::StockFailure,
-                    ResidentPlayerTexture::BodyAtlas => {
-                        M2ResolvedTexture::CharacterAtlas(input.atlas())
-                    }
+                    ResidentPlayerTexture::BodyAtlas => input.atlas.map_or(
+                        M2ResolvedTexture::Unresolved(solarity_asset::M2TextureKind::Body),
+                        M2ResolvedTexture::CharacterAtlas,
+                    ),
                     ResidentPlayerTexture::Unresolved(kind) => M2ResolvedTexture::Unresolved(*kind),
                 })
                 .collect::<Vec<_>>();
@@ -485,9 +567,9 @@ pub(super) fn prepare_character_gpu(
             )?;
             let placement = default_gpu_placement(
                 scene_time_ms,
-                world_transform,
-                M2GpuPlacementOwner::PlayerItemVisual {
-                    guid: input.guid(),
+                input.world_transform,
+                M2GpuPlacementOwner::UnitItemVisual {
+                    guid: input.guid,
                     item_point: attachment.point(),
                     effect_point: effect.point(),
                 },
@@ -499,5 +581,5 @@ pub(super) fn prepare_character_gpu(
             prepared.push(source, placement);
         }
     }
-    Ok(prepared)
+    Ok(())
 }

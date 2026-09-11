@@ -125,7 +125,7 @@ impl M2Frame {
             let requested_items = members
                 .iter()
                 .filter_map(|&index| match self.placements[index].owner {
-                    M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
+                    M2GpuPlacementOwner::UnitItem { guid, point } => Some((guid, point)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -135,10 +135,10 @@ impl M2Frame {
                 let owner = placement.owner;
                 let parent = parent.map(|member| {
                     let (attachment, local) = match owner {
-                        M2GpuPlacementOwner::PlayerItem { point, .. } => {
+                        M2GpuPlacementOwner::UnitItem { point, .. } => {
                             (point.id(), placement.orientation.local_transform())
                         }
-                        M2GpuPlacementOwner::PlayerItemVisual { effect_point, .. } => {
+                        M2GpuPlacementOwner::UnitItemVisual { effect_point, .. } => {
                             (effect_point, Mat4::IDENTITY)
                         }
                         _ => (

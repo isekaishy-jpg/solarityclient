@@ -1756,7 +1756,7 @@ impl RuntimePlayerPresentation {
                 .resolve_model(desired.key.display_id)
                 .map_err(UnitModelAppearanceError::from)?;
             let model = self.models.load(&mut assets, appearance.model_path())?;
-            let (textures, geosets) = if let Some(extra) = appearance.extra() {
+            let (textures, geosets, attachment_plan) = if let Some(extra) = appearance.extra() {
                 let character = self.characters.resolve_player(
                     extra.race_id(),
                     extra.gender_id(),
@@ -1788,7 +1788,19 @@ impl RuntimePlayerPresentation {
                     &self.helmet_visibility,
                     equipment.iter().copied(),
                 )?;
-                (textures, Some(ResidentCreatureGeosets::Character(geosets)))
+                // 730100 walks all eleven CreatureDisplayInfoExtra components
+                // through 4F2830/4F2640, including separate head/shoulder M2s.
+                let attachment_plan = CharacterAttachmentPlan::npc_armor(
+                    equipment.iter().copied(),
+                    &self.races,
+                    character.race_id(),
+                    character.gender_id(),
+                )?;
+                (
+                    textures,
+                    Some(ResidentCreatureGeosets::Character(geosets)),
+                    attachment_plan,
+                )
             } else {
                 (
                     prepare_creature_textures(
@@ -1800,8 +1812,17 @@ impl RuntimePlayerPresentation {
                     ResidentCreatureGeosets::from_packed_selector(
                         appearance.display().geoset_data(),
                     ),
+                    CharacterAttachmentPlan::default(),
                 )
             };
+            let attachments = load_player_attachments(
+                &attachment_plan,
+                &self.item_visuals,
+                &self.particle_colors,
+                &mut self.models,
+                &mut self.textures,
+                &mut assets,
+            )?;
             // 73D5D0 and 717910 give every Unit_C its own mount model;
             // NPC residency preserves the same independent child as players.
             let mount_appearance = desired
@@ -1841,6 +1862,10 @@ impl RuntimePlayerPresentation {
                 model,
                 textures,
                 geosets,
+                attachments,
+                armor_display_ids: appearance
+                    .extra()
+                    .map_or([0; 11], |extra| extra.npc_item_display_ids()),
                 particle_colors: M2ParticleColorReplacement::resolve(
                     &self.particle_colors,
                     appearance.display().particle_color_id(),
@@ -2963,6 +2988,8 @@ struct ResidentCreatureModel {
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
     geosets: Option<ResidentCreatureGeosets>,
+    attachments: Vec<ResidentPlayerAttachment>,
+    armor_display_ids: [u32; 11],
     particle_colors: Option<M2ParticleColorReplacement>,
     world_transform: WorldTransform,
     animation: UnitModelAnimation,
@@ -3232,6 +3259,8 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
     model: &'a Arc<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
     geosets: Option<&'a ResidentCreatureGeosets>,
+    attachments: &'a [ResidentPlayerAttachment],
+    armor_display_ids: &'a [u32; 11],
     world_transform: WorldTransform,
     object_scale: f32,
     animation: UnitModelAnimation,
@@ -3241,6 +3270,17 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
 }
 
 impl<'a> ResidentCreatureFrameInput<'a> {
+    pub(super) fn armor_display_id(&self, slot: PlayerEquipmentSlot) -> Option<u32> {
+        let index = NPC_EQUIPMENT_SLOTS
+            .iter()
+            .position(|candidate| *candidate == slot)?;
+        let display_id = self.armor_display_ids[index];
+        (display_id != 0).then_some(display_id)
+    }
+    pub(super) const fn attachments(&self) -> &[ResidentPlayerAttachment] {
+        self.attachments
+    }
+
     fn from_resident(resident: &'a ResidentCreatureModel) -> Self {
         Self {
             generation: &resident.generation,
@@ -3248,6 +3288,8 @@ impl<'a> ResidentCreatureFrameInput<'a> {
             model: &resident.model,
             textures: &resident.textures,
             geosets: resident.geosets.as_ref(),
+            attachments: &resident.attachments,
+            armor_display_ids: &resident.armor_display_ids,
             world_transform: resident.world_transform,
             object_scale: resident.key.object_scale,
             animation: resident.animation,

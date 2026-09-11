@@ -1,11 +1,11 @@
-//! Opt-in real-archive verification for the NPC model that failed world entry.
+//! Opt-in real-archive verification for NPC bodies and separate armor models.
 
 use super::*;
 use solarity_asset::CreatureCatalog;
 
 #[test]
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with the user's 3.3.5a archives"]
-fn stock_goblin_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> {
+fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(
@@ -13,7 +13,8 @@ fn stock_goblin_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error
         Locale::EnUs,
     )?)?;
     let catalog = CreatureCatalog::load(&mut store)?;
-    let displays: Vec<_> = catalog
+    let item_displays = solarity_asset::ItemDisplayCatalog::load(&mut store)?;
+    let mut displays: Vec<_> = catalog
         .displays()
         .iter()
         .filter(|display| {
@@ -31,6 +32,47 @@ fn stock_goblin_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error
         .map(|display| display.id())
         .collect();
     assert!(!displays.is_empty());
+    let mut orcs = catalog
+        .displays()
+        .iter()
+        .filter_map(|display| {
+            let appearance = catalog.resolve_model(display.id()).ok()?;
+            let extra = appearance.extra()?;
+            let gear = extra.npc_item_display_ids();
+            (extra.race_id() == 2 && extra.gender_id() == 0 && gear[0] != 0 && gear[1] != 0)
+                .then_some(display.id())
+        })
+        .take(4)
+        .collect::<Vec<_>>();
+    assert_eq!(orcs.len(), 4, "stock armored male Orc appearances");
+    // Orc armor includes deliberately one-sided shoulders. Also select two
+    // complete pairs so both authored channels reach the stock asset check.
+    let pairs = catalog
+        .displays()
+        .iter()
+        .filter_map(|display| {
+            let appearance = catalog.resolve_model(display.id()).ok()?;
+            let extra = appearance.extra()?;
+            let gear = extra.npc_item_display_ids();
+            let helmet = item_displays.display(gear[0])?;
+            let shoulder = item_displays.display(gear[1])?;
+            (extra.race_id() == 2
+                && extra.gender_id() == 0
+                && !helmet.model_names()[0].is_empty()
+                && shoulder.model_names().iter().all(|name| !name.is_empty()))
+            .then_some(display.id())
+        })
+        .take(2)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pairs.len(),
+        2,
+        "stock Orcs with a helmet and two shoulder models"
+    );
+    orcs.extend(pairs);
+    orcs.sort_unstable();
+    orcs.dedup();
+    displays.extend_from_slice(&orcs);
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
     let mut presentation = unit_presentation_from_store(store)?;
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
@@ -66,6 +108,41 @@ fn stock_goblin_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error
         presentation
             .synchronize_creatures(Some(&world), |_| None)
             .map_err(|error| format!("display {display} residency: {error}"))?;
+        if orcs.contains(display) {
+            let appearance = catalog.resolve_model(*display)?;
+            let gear = appearance
+                .extra()
+                .ok_or("stock NPC Extra row")?
+                .npc_item_display_ids();
+            let helmet = item_displays
+                .display(gear[0])
+                .ok_or("stock helmet display")?;
+            let shoulder = item_displays
+                .display(gear[1])
+                .ok_or("stock shoulder display")?;
+            let inputs = presentation.resident_creature_frame_inputs();
+            let input = inputs.first().ok_or("stock NPC frame input")?;
+            for (point, model) in [
+                (
+                    solarity_rendering::CharacterAttachmentPoint::Helmet,
+                    helmet.model_names()[0],
+                ),
+                (
+                    solarity_rendering::CharacterAttachmentPoint::ShoulderLeft,
+                    shoulder.model_names()[1],
+                ),
+                (
+                    solarity_rendering::CharacterAttachmentPoint::ShoulderRight,
+                    shoulder.model_names()[0],
+                ),
+            ] {
+                assert_eq!(
+                    input.attachments().iter().any(|item| item.point() == point),
+                    !model.is_empty(),
+                    "stock Orc display {display} {point:?}: authored model {model:?}"
+                );
+            }
+        }
         frame
             .replace_creatures(
                 &mut renderer,
@@ -92,8 +169,8 @@ fn stock_goblin_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error
         );
     }
     eprintln!(
-        "Verified {} stock Goblin male displays through visible GPU draw preparation",
-        displays.len()
+        "Verified {} stock NPC displays, including armored Orcs {orcs:?}, through visible GPU draw preparation",
+        displays.len(),
     );
     Ok(())
 }

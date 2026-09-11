@@ -37,8 +37,8 @@ mod visibility;
 use crate::application::entity_opacity::EntityOpacityOwner;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{
-    M2PlayerItemIdentity, M2PreparedCharacter, UnitMountGpuInput, prepare_character_gpu,
-    prepare_mount_gpu,
+    M2PreparedCharacter, M2UnitItemIdentity, UnitEquipmentGpuInput, UnitMountGpuInput,
+    prepare_character_gpu, prepare_mount_gpu, prepare_unit_equipment_gpu,
 };
 use playback::M2PlaybackStorage;
 use unit_registration::UnitSceneRegistration;
@@ -220,7 +220,7 @@ struct M2GpuPlacement {
     unit_presentation: Option<UnitPresentationGeneration>,
     /// An unchanged mount survives character atlas and equipment rebuilds.
     mount_key: Option<MountModelKey>,
-    item_identity: Option<M2PlayerItemIdentity>,
+    item_identity: Option<M2UnitItemIdentity>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
     /// `CM2Model +0x8c` belongs to this model lifetime, including unsampled intervals.
@@ -319,13 +319,13 @@ enum M2GpuPlacementOwner {
         display_id: u32,
         doodad_index: usize,
     },
-    /// One equipment M2 driven by an animated player attachment point.
-    PlayerItem {
+    /// One equipment M2 driven by an animated player or NPC attachment point.
+    UnitItem {
         guid: u64,
         point: CharacterAttachmentPoint,
     },
     /// One enchant/display effect driven by its equipped item M2.
-    PlayerItemVisual {
+    UnitItemVisual {
         guid: u64,
         item_point: CharacterAttachmentPoint,
         effect_point: u32,
@@ -1113,7 +1113,7 @@ impl M2Frame {
             let mut placement = default_gpu_placement(
                 self.animation_time_ms(),
                 transform,
-                M2GpuPlacementOwner::PlayerItem {
+                M2GpuPlacementOwner::UnitItem {
                     guid: 0,
                     point: attachment.point(),
                 },
@@ -1154,7 +1154,7 @@ impl M2Frame {
                 let placement = default_gpu_placement(
                     self.animation_time_ms(),
                     transform,
-                    M2GpuPlacementOwner::PlayerItemVisual {
+                    M2GpuPlacementOwner::UnitItemVisual {
                         guid: 0,
                         item_point: attachment.point(),
                         effect_point: effect.point(),
@@ -1268,8 +1268,8 @@ impl M2Frame {
                 M2GpuPlacementOwner::GlueModel { .. }
                     | M2GpuPlacementOwner::GluePet
                     | M2GpuPlacementOwner::PlayerBody { guid: 0 }
-                    | M2GpuPlacementOwner::PlayerItem { guid: 0, .. }
-                    | M2GpuPlacementOwner::PlayerItemVisual { guid: 0, .. }
+                    | M2GpuPlacementOwner::UnitItem { guid: 0, .. }
+                    | M2GpuPlacementOwner::UnitItemVisual { guid: 0, .. }
             ) {
                 placement.opacity = opacity;
             }
@@ -1430,6 +1430,27 @@ impl M2Frame {
                         owner: Rc::clone(animation),
                     });
             character.push(source, placement);
+            prepare_unit_equipment_gpu(
+                self,
+                renderer,
+                &mut character,
+                UnitEquipmentGpuInput {
+                    guid: input.guid(),
+                    model: input.model(),
+                    attachments: input.attachments(),
+                    animation: input.unit_animation(),
+                    body_owner: M2GpuPlacementOwner::CreatureBody { guid: input.guid() },
+                    world_transform: transform,
+                    atlas: None,
+                },
+                |slot| {
+                    input
+                        .armor_display_id(slot)
+                        .map(|display_id| M2UnitItemIdentity::NpcArmor { slot, display_id })
+                },
+                self.animation_time_ms(),
+                random,
+            )?;
             prepared.push(character);
         }
 
@@ -1824,8 +1845,8 @@ impl M2Frame {
                 M2GpuPlacementOwner::PlayerBody { .. }
                 | M2GpuPlacementOwner::PlayerMount { .. }
                 | M2GpuPlacementOwner::GluePet => true,
-                M2GpuPlacementOwner::PlayerItem { guid, .. }
-                | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => local_guid == Some(guid),
+                M2GpuPlacementOwner::UnitItem { guid, .. }
+                | M2GpuPlacementOwner::UnitItemVisual { guid, .. } => local_guid == Some(guid),
                 M2GpuPlacementOwner::UnitEffect { .. }
                 | M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
@@ -1851,17 +1872,29 @@ impl M2Frame {
     /// Drops local references to the previous visible-creature generation.
     fn remove_creatures(&mut self, retained: &[u64]) {
         self.placement_topology_dirty = true;
+        let removed_guids = self
+            .placements
+            .iter()
+            .filter_map(|placement| match placement.owner {
+                M2GpuPlacementOwner::CreatureBody { guid } if !retained.contains(&guid) => {
+                    Some(guid)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let mut creature_sources = Vec::new();
         self.placements.retain(|placement| {
-            if let M2GpuPlacementOwner::CreatureBody { guid }
-            | M2GpuPlacementOwner::CreatureMount { guid } = placement.owner
-                && !retained.contains(&guid)
-            {
+            let owned = match placement.owner {
+                M2GpuPlacementOwner::CreatureBody { guid }
+                | M2GpuPlacementOwner::CreatureMount { guid } => !retained.contains(&guid),
+                M2GpuPlacementOwner::UnitItem { guid, .. }
+                | M2GpuPlacementOwner::UnitItemVisual { guid, .. } => removed_guids.contains(&guid),
+                _ => false,
+            };
+            if owned {
                 creature_sources.push(placement.source_index);
-                false
-            } else {
-                true
             }
+            !owned
         });
         for source_index in creature_sources {
             if let Some(source) = self.sources.get_mut(source_index) {
@@ -1889,10 +1922,8 @@ impl M2Frame {
                 M2GpuPlacementOwner::Retired(_) => false,
                 M2GpuPlacementOwner::RemotePlayerBody { guid }
                 | M2GpuPlacementOwner::RemotePlayerMount { guid } => !retained.contains(&guid),
-                M2GpuPlacementOwner::PlayerItem { guid, .. }
-                | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => {
-                    remote_guids.contains(&guid)
-                }
+                M2GpuPlacementOwner::UnitItem { guid, .. }
+                | M2GpuPlacementOwner::UnitItemVisual { guid, .. } => remote_guids.contains(&guid),
                 M2GpuPlacementOwner::UnitEffect { .. }
                 | M2GpuPlacementOwner::Static(_)
                 | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
@@ -2217,7 +2248,7 @@ impl M2Frame {
                         .iter()
                         .filter_map(|placement| match placement.owner {
                             M2GpuPlacementOwner::Retired(_) => None,
-                            M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point)),
+                            M2GpuPlacementOwner::UnitItem { guid, point } => Some((guid, point)),
                             M2GpuPlacementOwner::UnitEffect { .. }
                             | M2GpuPlacementOwner::Static(_)
                             | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
@@ -2230,7 +2261,7 @@ impl M2Frame {
                             | M2GpuPlacementOwner::CreatureBody { .. }
                             | M2GpuPlacementOwner::CreatureMount { .. }
                             | M2GpuPlacementOwner::GameObject { .. }
-                            | M2GpuPlacementOwner::PlayerItemVisual { .. } => None,
+                            | M2GpuPlacementOwner::UnitItemVisual { .. } => None,
                         }),
                 );
             self.requested_visuals.clear();
@@ -2240,7 +2271,7 @@ impl M2Frame {
                         .iter()
                         .filter_map(|placement| match placement.owner {
                             M2GpuPlacementOwner::Retired(_) => None,
-                            M2GpuPlacementOwner::PlayerItemVisual {
+                            M2GpuPlacementOwner::UnitItemVisual {
                                 guid,
                                 item_point,
                                 effect_point,
@@ -2257,7 +2288,7 @@ impl M2Frame {
                             | M2GpuPlacementOwner::CreatureBody { .. }
                             | M2GpuPlacementOwner::CreatureMount { .. }
                             | M2GpuPlacementOwner::GameObject { .. }
-                            | M2GpuPlacementOwner::PlayerItem { .. } => None,
+                            | M2GpuPlacementOwner::UnitItem { .. } => None,
                         }),
                 );
             self.mounted_guids.clear();
@@ -2556,7 +2587,7 @@ impl M2Frame {
                 placement.transform =
                     transform * Mat4::from_scale(glam::Vec3::splat(placement.rider_scale));
             }
-            if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
+            if let M2GpuPlacementOwner::UnitItem { guid, point } = placement.owner {
                 if self
                     .rider_transforms
                     .iter()
@@ -2579,7 +2610,7 @@ impl M2Frame {
                 };
                 placement.transform = transform * placement.orientation.local_transform();
             }
-            if let M2GpuPlacementOwner::PlayerItemVisual {
+            if let M2GpuPlacementOwner::UnitItemVisual {
                 guid,
                 item_point,
                 effect_point,
@@ -2859,7 +2890,8 @@ impl M2Frame {
                 self.rider_transforms.push((guid, transform));
             }
             if let M2GpuPlacementOwner::PlayerBody { guid }
-            | M2GpuPlacementOwner::RemotePlayerBody { guid } = placement.owner
+            | M2GpuPlacementOwner::RemotePlayerBody { guid }
+            | M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
             {
                 for (_owner_guid, point) in self
                     .requested_items
@@ -2881,7 +2913,7 @@ impl M2Frame {
                     self.item_transforms.push((guid, *point, transform));
                 }
             }
-            if let M2GpuPlacementOwner::PlayerItem { guid, point } = placement.owner {
+            if let M2GpuPlacementOwner::UnitItem { guid, point } = placement.owner {
                 for (_owner_guid, _owner_item_point, effect_point) in self
                     .requested_visuals
                     .iter()
@@ -3572,15 +3604,16 @@ fn placement_parent_index(
         M2GpuPlacementOwner::CreatureBody { guid } => preceding
             .iter()
             .rposition(|candidate| candidate.owner == M2GpuPlacementOwner::CreatureMount { guid }),
-        M2GpuPlacementOwner::PlayerItem { guid, .. } => preceding.iter().rposition(|candidate| {
+        M2GpuPlacementOwner::UnitItem { guid, .. } => preceding.iter().rposition(|candidate| {
             candidate.owner == M2GpuPlacementOwner::PlayerBody { guid }
                 || candidate.owner == M2GpuPlacementOwner::RemotePlayerBody { guid }
+                || candidate.owner == M2GpuPlacementOwner::CreatureBody { guid }
         }),
-        M2GpuPlacementOwner::PlayerItemVisual {
+        M2GpuPlacementOwner::UnitItemVisual {
             guid, item_point, ..
         } => preceding.iter().rposition(|candidate| {
             candidate.owner
-                == M2GpuPlacementOwner::PlayerItem {
+                == M2GpuPlacementOwner::UnitItem {
                     guid,
                     point: item_point,
                 }
@@ -3719,8 +3752,8 @@ const fn placement_owner_guid(owner: M2GpuPlacementOwner) -> Option<u64> {
         | M2GpuPlacementOwner::CreatureBody { guid }
         | M2GpuPlacementOwner::CreatureMount { guid }
         | M2GpuPlacementOwner::GameObject { guid, .. }
-        | M2GpuPlacementOwner::PlayerItem { guid, .. }
-        | M2GpuPlacementOwner::PlayerItemVisual { guid, .. } => Some(guid),
+        | M2GpuPlacementOwner::UnitItem { guid, .. }
+        | M2GpuPlacementOwner::UnitItemVisual { guid, .. } => Some(guid),
     }
 }
 
@@ -3729,8 +3762,8 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
     match owner {
         M2GpuPlacementOwner::Retired(_) => M2SceneLightBank::Environment,
         M2GpuPlacementOwner::PlayerBody { guid: 0 }
-        | M2GpuPlacementOwner::PlayerItem { guid: 0, .. }
-        | M2GpuPlacementOwner::PlayerItemVisual { guid: 0, .. } => M2SceneLightBank::Character,
+        | M2GpuPlacementOwner::UnitItem { guid: 0, .. }
+        | M2GpuPlacementOwner::UnitItemVisual { guid: 0, .. } => M2SceneLightBank::Character,
         M2GpuPlacementOwner::GluePet => M2SceneLightBank::Pet,
         M2GpuPlacementOwner::UnitEffect { .. }
         | M2GpuPlacementOwner::Static(_)
@@ -3743,8 +3776,8 @@ const fn placement_light_bank(owner: M2GpuPlacementOwner) -> M2SceneLightBank {
         | M2GpuPlacementOwner::CreatureBody { .. }
         | M2GpuPlacementOwner::CreatureMount { .. }
         | M2GpuPlacementOwner::GameObject { .. }
-        | M2GpuPlacementOwner::PlayerItem { .. }
-        | M2GpuPlacementOwner::PlayerItemVisual { .. } => M2SceneLightBank::Environment,
+        | M2GpuPlacementOwner::UnitItem { .. }
+        | M2GpuPlacementOwner::UnitItemVisual { .. } => M2SceneLightBank::Environment,
     }
 }
 

@@ -15,6 +15,10 @@ pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
     build_fixture(false, true, None, None, None, None, None)
 }
 
+pub fn fixture_with_equipped_npc() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(false, true, Some(1), None, None, None, None)
+}
+
 pub fn fixture_with_hairless_npc() -> Result<ClientFixture, Box<dyn Error>> {
     build_fixture(false, false, Some(9), None, None, None, None)
 }
@@ -280,6 +284,11 @@ fn build_fixture_options(
         display[0] = 103;
         display[3] = 0;
         displays.extend_from_slice(&display);
+        if equipment {
+            display[0] = 104;
+            display[3] = 2;
+            displays.extend_from_slice(&display);
+        }
     }
     let mut model_data = [0; 28];
     model_data[0] = 7;
@@ -494,10 +503,20 @@ fn build_fixture_options(
         let mut extra = [0; 21];
         extra[0] = 1;
         extra[1] = race;
+        if equipment {
+            extra[8] = 500;
+            extra[9] = 600;
+        }
         extra[20] = 1;
+        let mut extras = extra.to_vec();
+        if equipment {
+            extra[0] = 2;
+            extra[9] = 603;
+            extras.extend_from_slice(&extra);
+        }
         files.push((
             "DBFilesClient\\CreatureDisplayInfoExtra.dbc".to_owned(),
-            dbc(21, &extra, b"\0HairlessNpc\0"),
+            dbc(21, &extras, b"\0HairlessNpc\0"),
         ));
         files.push((
             "Textures\\BakedNpcTextures\\HairlessNpc.blp".to_owned(),

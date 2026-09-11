@@ -7,6 +7,152 @@ use solarity_rendering::{
 };
 
 #[test]
+fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result<(), Box<dyn Error>>
+{
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_equipped_npc()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    add_unit(&mut world, 7, ObjectKind::Player, 0)?;
+    add_unit(&mut world, 20, ObjectKind::Player, 0)?;
+    fields(&mut world, 20, &[(283, 1000), (287, 2000)])?;
+    for guid in [30, 40] {
+        add_unit(&mut world, guid, ObjectKind::Unit, 0)?;
+        fields(
+            &mut world,
+            guid,
+            &[(67, if guid == 30 { 104 } else { 102 })],
+        )?;
+    }
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8., 0., 0.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-4., 4.],
+        [-2., 2.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    advance(&mut frame, &renderer, camera, 1200., &mut random)?;
+    let before = snapshots(&frame)?;
+    assert_eq!(
+        before.len(),
+        16,
+        "one-sided NPC armor plus two complete sets, including attached effects"
+    );
+    for (index, placement) in frame.placements.iter().enumerate() {
+        if let M2GpuPlacementOwner::UnitItem {
+            guid: guid @ (30 | 40),
+            ..
+        } = placement.owner
+        {
+            let parent =
+                super::super::super::placement_parent_index(&frame.placements, index, placement)
+                    .ok_or("NPC equipment parent")?;
+            assert_eq!(
+                frame.placements[parent].owner,
+                M2GpuPlacementOwner::CreatureBody { guid }
+            );
+            assert!(Rc::ptr_eq(
+                placement.entity_opacity.as_ref().ok_or("item opacity")?,
+                frame.placements[parent]
+                    .entity_opacity
+                    .as_ref()
+                    .ok_or("body opacity")?,
+            ));
+            assert_eq!(
+                super::super::super::placement_light_bank(placement.owner),
+                solarity_rendering::M2SceneLightBank::Environment
+            );
+        }
+    }
+    // Replacing the remote player must leave both NPC attachment hierarchies live.
+    fields(&mut world, 20, &[(4, 1.2_f32.to_bits())])?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_replaced(&frame, &before, |_| false)?;
+    // A body-scale update must retain unchanged one-sided armor too: it does
+    // not dispatch a new armor display to the native component setter.
+    fields(&mut world, 30, &[(4, 1.5_f32.to_bits())])?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    assert_replaced(&frame, &before, |_| false)?;
+    // A display with no Extra row drops only that NPC's armor and effects.
+    fields(&mut world, 30, &[(67, 103)])?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    let after = snapshots(&frame)?;
+    assert_eq!(after.len(), 12);
+    for previous in &before {
+        let guid = super::super::super::placement_owner_guid(previous.owner);
+        if guid == Some(30) {
+            assert!(!after.iter().any(|current| current.owner == previous.owner));
+        } else {
+            assert!(after.contains(previous));
+        }
+    }
+    advance(&mut frame, &renderer, camera, 1300., &mut random)?;
+    let before_reuse = snapshots(&frame)?;
+    world.remove_object(40)?;
+    add_unit(&mut world, 40, ObjectKind::Unit, 0)?;
+    fields(&mut world, 40, &[(67, 102)])?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    assert_replaced(&frame, &before_reuse, |owner| {
+        super::super::super::placement_owner_guid(owner) == Some(40)
+    })?;
+    advance(&mut frame, &renderer, camera, 1400., &mut random)?;
+    Ok(())
+}
+
+#[test]
 fn camera_opacity_reaches_player_equipment_without_fading_other_units() -> Result<(), Box<dyn Error>>
 {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
@@ -243,7 +389,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     for placement in &frame.placements {
         if matches!(
             placement.owner,
-            M2GpuPlacementOwner::PlayerItem { .. } | M2GpuPlacementOwner::PlayerItemVisual { .. }
+            M2GpuPlacementOwner::UnitItem { .. } | M2GpuPlacementOwner::UnitItemVisual { .. }
         ) {
             let playback = placement
                 .playback
@@ -290,8 +436,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     for placement in &frame.placements {
         let expected_animation = match placement.owner {
             M2GpuPlacementOwner::RemotePlayerBody { guid: 20 } => 96,
-            M2GpuPlacementOwner::PlayerItem { .. }
-            | M2GpuPlacementOwner::PlayerItemVisual { .. } => {
+            M2GpuPlacementOwner::UnitItem { .. } | M2GpuPlacementOwner::UnitItemVisual { .. } => {
                 assert_eq!(
                     placement.orientation,
                     solarity_rendering::M2ModelOrientation::Authored
@@ -427,7 +572,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     assert_replaced(&frame, &before, |owner| {
         matches!(
             owner,
-            M2GpuPlacementOwner::PlayerItemVisual {
+            M2GpuPlacementOwner::UnitItemVisual {
                 guid: 20,
                 item_point: CharacterAttachmentPoint::HandRight,
                 ..
@@ -515,8 +660,8 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     assert_replaced(&frame, &before, |owner| {
         matches!(
             owner,
-            M2GpuPlacementOwner::PlayerItem { guid: 20, .. }
-                | M2GpuPlacementOwner::PlayerItemVisual { guid: 20, .. }
+            M2GpuPlacementOwner::UnitItem { guid: 20, .. }
+                | M2GpuPlacementOwner::UnitItemVisual { guid: 20, .. }
         )
     })?;
 
@@ -531,7 +676,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
         &mut renderer,
         &mut random,
     )?;
-    let owner = M2GpuPlacementOwner::PlayerItem {
+    let owner = M2GpuPlacementOwner::UnitItem {
         guid: 20,
         point: CharacterAttachmentPoint::HandRight,
     };
@@ -652,7 +797,7 @@ fn assert_character_opacity(
         assert!(Rc::ptr_eq(opacity, owner), "{:?}", placement.owner);
         if matches!(
             placement.owner,
-            M2GpuPlacementOwner::PlayerItem { .. } | M2GpuPlacementOwner::PlayerItemVisual { .. }
+            M2GpuPlacementOwner::UnitItem { .. } | M2GpuPlacementOwner::UnitItemVisual { .. }
         ) {
             children += 1;
         }
@@ -709,8 +854,7 @@ fn snapshots(frame: &M2Frame) -> Result<Vec<ComponentSnapshot>, Box<dyn Error>> 
         .filter(|placement| {
             matches!(
                 placement.owner,
-                M2GpuPlacementOwner::PlayerItem { .. }
-                    | M2GpuPlacementOwner::PlayerItemVisual { .. }
+                M2GpuPlacementOwner::UnitItem { .. } | M2GpuPlacementOwner::UnitItemVisual { .. }
             )
         })
         .map(|placement| {
@@ -730,8 +874,8 @@ fn snapshots(frame: &M2Frame) -> Result<Vec<ComponentSnapshot>, Box<dyn Error>> 
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     snapshots.sort_by_key(|snapshot| match snapshot.owner {
-        M2GpuPlacementOwner::PlayerItem { guid, point } => Some((guid, point.id(), 0)),
-        M2GpuPlacementOwner::PlayerItemVisual {
+        M2GpuPlacementOwner::UnitItem { guid, point } => Some((guid, point.id(), 0)),
+        M2GpuPlacementOwner::UnitItemVisual {
             guid,
             item_point,
             effect_point,
@@ -743,11 +887,11 @@ fn snapshots(frame: &M2Frame) -> Result<Vec<ComponentSnapshot>, Box<dyn Error>> 
 
 fn belongs_to(owner: M2GpuPlacementOwner, guid: u64, point: CharacterAttachmentPoint) -> bool {
     match owner {
-        M2GpuPlacementOwner::PlayerItem {
+        M2GpuPlacementOwner::UnitItem {
             guid: candidate,
             point: candidate_point,
         } => candidate == guid && candidate_point == point,
-        M2GpuPlacementOwner::PlayerItemVisual {
+        M2GpuPlacementOwner::UnitItemVisual {
             guid: candidate,
             item_point,
             ..

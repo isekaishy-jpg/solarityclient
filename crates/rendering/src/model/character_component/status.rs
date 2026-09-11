@@ -19,6 +19,12 @@ pub enum CharacterGeosetPlanError {
 /// A failure while translating stock item display names into attachment paths.
 #[derive(Debug, Error)]
 pub enum CharacterAttachmentPlanError {
+    /// An NPC helmet needs an absent race-specific filename prefix.
+    #[error("helmet appearance references missing race {race_id}")]
+    MissingHelmetRace {
+        /// Race from the NPC's authored appearance.
+        race_id: u32,
+    },
     /// A caller supplied a record outside the four trailing enumeration bags.
     #[error("character-enumeration bag slot {bag_slot} is outside 19 through 22")]
     InvalidCharacterEnumerationBagSlot {

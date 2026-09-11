@@ -38,7 +38,7 @@ impl M2Frame {
                 M2GpuPlacementOwner::PlayerBody { guid: owner } if owner == guid => {
                     (Mat4::IDENTITY, true)
                 }
-                M2GpuPlacementOwner::PlayerItem { guid: owner, point } if owner == guid => {
+                M2GpuPlacementOwner::UnitItem { guid: owner, point } if owner == guid => {
                     // 0x004EAF70 removes transient unit attachments; every current
                     // equipment slot belongs to the retained stock set.
                     let Some((transform, distance_sort)) = attachment_transform(
@@ -54,14 +54,14 @@ impl M2Frame {
                         distance_sort,
                     )
                 }
-                M2GpuPlacementOwner::PlayerItemVisual {
+                M2GpuPlacementOwner::UnitItemVisual {
                     guid: owner,
                     item_point,
                     effect_point,
                 } if owner == guid => {
                     let Some((transform, distance_sort)) = attachment_transform(
                         &poses,
-                        M2GpuPlacementOwner::PlayerItem {
+                        M2GpuPlacementOwner::UnitItem {
                             guid,
                             point: item_point,
                         },

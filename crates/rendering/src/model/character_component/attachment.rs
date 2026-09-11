@@ -1,6 +1,8 @@
 //! Stock equipment child-model attachment planning for player characters.
 
-use solarity_asset::{AssetPath, CharacterRace, InventoryType, ItemDefinition};
+use solarity_asset::{
+    AssetPath, CharacterRace, CharacterRaceCatalog, InventoryType, ItemDefinition,
+};
 use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState};
 
 use super::{CharacterAttachmentPlanError, CharacterEquipmentItem};
@@ -176,6 +178,40 @@ pub struct CharacterAttachmentPlan {
 }
 
 impl CharacterAttachmentPlan {
+    /// Plans the separate armor models from `CreatureDisplayInfoExtra`.
+    ///
+    /// Only a nonempty helmet model needs the race's filename prefix. NPCs
+    /// without helmets, including non-playable races, do not perform that join.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing helmet race, unsupported helmet gender,
+    /// or invalid authored model/texture path.
+    pub fn npc_armor<'catalog, I>(
+        equipment: I,
+        races: &CharacterRaceCatalog,
+        race_id: u32,
+        gender_id: u32,
+    ) -> Result<Self, CharacterAttachmentPlanError>
+    where
+        I: IntoIterator<Item = CharacterEquipmentItem<'catalog>>,
+    {
+        let mut attachments = Vec::with_capacity(3);
+        for item in equipment {
+            match item.slot() {
+                PlayerEquipmentSlot::Head if !item.display().model_names()[0].is_empty() => {
+                    let race = races
+                        .race(race_id)
+                        .ok_or(CharacterAttachmentPlanError::MissingHelmetRace { race_id })?;
+                    push_helmet(&mut attachments, item, race, gender_id)?;
+                }
+                PlayerEquipmentSlot::Shoulders => push_shoulders(&mut attachments, item)?,
+                _ => {}
+            }
+        }
+        Ok(Self { attachments })
+    }
+
     /// Plans every stock equipment child model for one player character.
     ///
     /// Head and shoulder armor are the only armor slots with child M2s in the

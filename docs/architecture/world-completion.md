@@ -1,15 +1,45 @@
 # World rendering and core UI completion scope
 
 This is the active slice tracker, reconciled with the user's scope decisions on
-2026-09-10. It tracks user reports and gaps recovered from the pinned build-12340
+2026-09-11. It tracks user reports and gaps recovered from the pinned build-12340
 client together. The current product version is 0.0.3a; this document does not
 authorize a version change or declare the slice complete.
 
 ## Priorities and completion rules
 
-World rendering comes first. Terrain, world contents, and their appearance while
-moving through the world must be correct before moving on to the core UI stage.
-Implementation remains the priority throughout the slice.
+The user's explicit implementation order on 2026-09-11 is:
+
+1. Finish NPC equipment.
+2. Correct UI scale.
+3. Complete world shaders and lighting end to end, addressing the substantial
+   omissions visible in the screenshot comparison.
+4. Complete remaining world rendering items.
+5. Complete core UI.
+
+Implementation remains the priority throughout the slice. UI scale is the
+explicit early UI task; the full core UI stage follows world rendering.
+
+The user's 2026-09-11 Durotar screenshot comparison reasserts this gate. Visible
+terrain detail and lighting/contrast still differ substantially. The user confirms
+both captures use the same position and maximum zoom, and subsequently notes
+that the saved camera position may differ slightly. The current Soap character
+files both store camera distance 15, with stock pitch 9.849859 degrees and
+Solarity pitch 12.907174 degrees. Match these inputs before diagnosing a
+camera/projection/zoom-policy defect; world scaling is unproven from these images.
+The comparison also shows missing or different entity equipment/attachments and
+different world UI scale. Preserve each as a separate investigation and visual
+validation item. The immediate work includes the terrain material/sampling
+and world-lighting paths exercised by that scene. Further mount/vehicle animation
+expansion is deferred; its isolated correctness tests do not establish world
+rendering completion. Preserve the existing vehicle work while returning
+implementation priority to these visible world differences.
+
+The same report identifies loss of functionality under 100% CPU load and
+intermittent screenshot failure. Treat these as reliability defects alongside
+the visual work. Queue saturation must defer work without losing requests or
+ownership; validate recovery after capacity returns. The missing vehicle UI
+prevents user testing of that functionality, regardless of isolated native or
+scene-test results. No vehicle completion claim is justified by those tests.
 
 Discovering costs across the client is in scope, including CPU and GPU rendering,
 streaming, scene preparation, UI, and other substantial work encountered during
@@ -33,6 +63,7 @@ automatically reopen those fixes.
 
 | Area | Open work and current boundary |
 | --- | --- |
+| NPC equipment and attachments | The 2026-09-11 Durotar comparison shows missing or different equipment. `CreatureDisplayInfoExtra` helmets, shoulder pairs, and attached visuals now reach the shared unit renderer alongside body textures/geosets, with bone attachment, opacity, lighting and component lifetime coverage. The three virtual held-item consumers remain missing; their native unit-specific selection rules and the reported combined scene still need validation. See [NPC equipment](npc-equipment.md). Do not infer a different NPC identity from missing geometry. |
 | Item, NPC/creature, and other entity fading | Native entry interpolation (including vehicle seat eligibility), ordinary detached disappearance, camera-subject fading and ordinary Player_C visibility are connected, including attached equipment. Vehicle/special camera modes, exceptional owner/visibility policies, publication timing and combined travel validation remain open; see [entity opacity](entity-opacity.md). Static MDDF/MODD scenery fading has a separate policy. Keep this user-reported gap open. |
 | World and terrain lighting | Complete the remaining lighting consumers and shader/material variants, including terrain point-light/specular paths and specialized entity callbacks. The user reports continuing differences from stock; compare the combined presentation at matching camera, time, and settings. |
 | Environment shaders | Audit native material selection and the environment shader families exercised by actual world assets. The user suspects some are entirely missing; identify confirmed omissions and distinguish them from incorrect inputs or unconnected consumers. |
@@ -61,6 +92,8 @@ This scope does not declare every underlying gameplay system implemented.
 | Area | Required work |
 | --- | --- |
 | Persistent on-screen UI and its menus | Inventory the stock elements, implement their appearance and behavior, and follow their controls into the menus/panels they open. Verify state updates and interaction, not just initial drawing. |
+| Action bars, microbar, quest bar, bags, and chat | Implement each named area, its controls, state updates, and reachable panels. Identify dependencies on later gameplay slices per control. |
+| Unit frames, selection, and cast bar | Implement targeting/selection presentation, unit frame updates, and cast presentation. Record combat or spell dependencies without treating inactive controls as complete. |
 | Esc menu and every panel reachable from it | Inventory every stock entry and reachable panel. Make their presentation, navigation, controls, and implemented settings/actions behave correctly. Document each missing hookup and its owning dependency rather than silently treating the panel as complete. |
 | In-game mouse cursors | Implement the stock custom cursor assets and context-dependent selection, transitions, hotspots, and interaction behavior. Recover the contracts from stock; track contexts blocked by missing gameplay systems. |
 | Blocked validation | Keep a per-control or per-context record of the missing implementation, which behavior cannot yet be exercised, what can already be checked, and the condition for resuming the check. Spell-dependent behavior is one known category. |
