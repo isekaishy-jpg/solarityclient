@@ -1412,6 +1412,10 @@ impl RuntimePlayerPresentation {
         self.unit_animations.notify_movement(event);
     }
 
+    pub(super) fn movement_animations(&self) -> &UnitAnimationScene {
+        &self.unit_animations
+    }
+
     /// Takes the prior scene bit for the unit's complete movement service pass.
     pub(super) fn take_scene_collision(&self, identity: solarity_ecs::WorldObjectIdentity) -> bool {
         self.unit_animations.take_scene_collision(identity)

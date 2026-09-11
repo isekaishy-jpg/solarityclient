@@ -4,6 +4,8 @@ mod ground;
 mod interval;
 mod passenger;
 pub(super) mod remote;
+mod server_path;
+mod spline;
 mod swimming;
 
 use passenger::{PassengerClock, PassengerParent};
@@ -115,6 +117,10 @@ pub enum RuntimePlayerMovementError {
 #[derive(Clone, Copy)]
 pub(super) enum PlayerMovementOutput {
     Movement(WorldMovementMessage),
+    SplineDone {
+        movement: WorldMovementMessage,
+        path_id: u32,
+    },
     SkippedTime {
         guid: u64,
         milliseconds: u32,
@@ -180,13 +186,20 @@ pub(super) struct RuntimePlayerMovement {
     owner: Option<LocalMovement>,
     input: PlayerInputState,
     commands: VecDeque<MovementCommand>,
+    server_commands: VecDeque<remote::inbox::RemoteMovementInput>,
     output: VecDeque<PlayerMovementOutput>,
     geometry: RuntimeMovementQuery,
 }
 
 struct LocalMovement {
+    path: Option<solarity_systems::MovementSpline>,
+    scene_collision: bool,
+    input_refresh_pending: bool,
+    input_axis_reset_pending: bool,
     passenger: Option<PassengerParent>,
     passenger_seat: i8,
+    passenger_turning: bool,
+    passenger_input_blocked: bool,
     passenger_clock: PassengerClock,
     remote: bool,
     remote_profile: Option<MovementGroundProfile>,
@@ -231,6 +244,12 @@ enum MovementPhase {
 }
 
 trait LocalMovementGeometry: solarity_systems::MovementGeometry {
+    fn passenger_turning(&self, _parent: WorldObjectIdentity, _seat: i8) -> bool {
+        true
+    }
+    fn target_position(&self, _guid: u64) -> Option<Vec3> {
+        None
+    }
     /// Supplies a separate inverted water bank for the native swimming solver.
     fn water_triangles(&self) -> &[solarity_systems::MovementCollisionTriangle] {
         &[]
@@ -276,6 +295,12 @@ trait LocalMovementGeometry: solarity_systems::MovementGeometry {
 }
 
 impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
+    fn passenger_turning(&self, parent: WorldObjectIdentity, seat: i8) -> bool {
+        RuntimeMovementGeometry::passenger_turning(self, parent, seat)
+    }
+    fn target_position(&self, guid: u64) -> Option<Vec3> {
+        self.world_target_position(guid)
+    }
     fn water_triangles(&self) -> &[solarity_systems::MovementCollisionTriangle] {
         solarity_systems::MovementSwimGeometry::water_triangles(self)
     }
@@ -337,6 +362,15 @@ impl LocalMovementGeometry for RuntimeMovementGeometry<'_> {
 }
 
 impl RuntimePlayerMovement {
+    pub(super) fn set_scene_collision(&mut self, identity: WorldObjectIdentity, collision: bool) {
+        if let Some(owner) = self
+            .owner
+            .as_mut()
+            .filter(|owner| owner.identity == identity)
+        {
+            owner.scene_collision = collision;
+        }
+    }
     pub(super) fn camera_collision_settings(
         &self,
     ) -> solarity_systems::PlayerCameraObstructionSettings {
@@ -488,6 +522,7 @@ impl RuntimePlayerMovement {
         objects: &RuntimeGameObjectPresentation,
         liquids: &solarity_asset::LiquidTypeCatalog,
         frames: &super::unit_passenger::UnitPassengerFrames,
+        animations: &super::unit_animation::UnitAnimationScene,
         dimensions: Option<[f32; 3]>,
         now_ms: u32,
     ) -> Result<(), RuntimePlayerMovementError> {
@@ -515,6 +550,13 @@ impl RuntimePlayerMovement {
             return Ok(());
         };
         let transform = world.local_player_transform()?;
+        let entity = world.local_player();
+        if let Ok(mut inbox) = world
+            .storage()
+            .get::<&mut remote::inbox::RemoteMovementInbox>(entity)
+        {
+            self.server_commands.append(&mut inbox.events);
+        }
         let mut geometry = RuntimeMovementGeometry::new(
             terrain,
             world,
@@ -526,8 +568,22 @@ impl RuntimePlayerMovement {
         )
         .with_unit_parents(frames);
         if self.owner.is_none() {
-            let Some(mut owner) =
-                LocalMovement::new_in_geometry(identity, transform, movement, now_ms, &geometry)?
+            let initial = self
+                .server_commands
+                .front()
+                .and_then(|event| match event {
+                    remote::inbox::RemoteMovementInput::Baseline {
+                        transform,
+                        movement,
+                        receipt_ms,
+                        ..
+                    } => Some((*transform, *movement, *receipt_ms)),
+                    _ => None,
+                })
+                .unwrap_or((transform, movement, now_ms));
+            let Some(mut owner) = LocalMovement::new_in_geometry(
+                identity, initial.0, initial.1, initial.2, &geometry,
+            )?
             else {
                 return Ok(());
             };
@@ -542,62 +598,29 @@ impl RuntimePlayerMovement {
             owner.initial_contact_pending = movement.context().falling.is_none()
                 && matches!(owner.phase, MovementPhase::Fall(_));
             self.owner = Some(owner);
-        } else if self
-            .owner
-            .as_ref()
-            .is_some_and(|owner| owner.published != (transform, movement))
+        } else if self.server_commands.is_empty()
+            && self
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.published != (transform, movement))
         {
-            // A received transform/movement block supersedes the last local
-            // publication. Never integrate from a stale private position.
-            let retained_control = self.owner.as_ref().map(|owner| {
-                (
-                    owner.active,
-                    owner.client_control,
-                    owner.stand_state,
-                    owner.camera,
-                    owner.passenger_clock,
-                    owner.previous_water_depth,
-                    owner.is_swimming,
-                    owner.ground_normal,
-                )
-            });
-            let Some(owner) =
-                LocalMovement::new_in_geometry(identity, transform, movement, now_ms, &geometry)?
-            else {
-                return Ok(());
-            };
-            self.owner = Some(owner);
-            if let (
-                Some(owner),
-                Some((
-                    active,
-                    client_control,
-                    stand_state,
-                    camera,
-                    passenger_clock,
-                    depth,
-                    swimming,
-                    ground_normal,
-                )),
-            ) = (self.owner.as_mut(), retained_control)
+            let path = world
+                .storage()
+                .get::<&solarity_systems::MovementSpline>(entity)
+                .ok()
+                .map(|path| path.clone());
+            if let Some(owner) = self.owner.as_mut()
+                && !owner.replace_authoritative(transform, movement, path, now_ms, &geometry)?
             {
-                // Control and stance updates have their own ordered commands.
-                // Reading the final packet-pump state here would apply them
-                // before older input waiting in the same queue.
-                owner.active = active;
-                owner.client_control = client_control;
-                owner.stand_state = stand_state;
-                owner.camera = camera;
-                owner.passenger_clock = passenger_clock;
-                owner.previous_water_depth = depth;
-                owner.is_swimming = swimming;
-                owner.ground_normal = ground_normal;
+                return Ok(());
             }
         }
         let Some(owner) = self.owner.as_mut() else {
             return Ok(());
         };
         owner.refresh_passenger(&mut geometry)?;
+        owner.synchronize_passenger_input(world, frames, animations);
+        owner.refresh_path_input(&mut self.input, world, &mut self.output)?;
         let delta = now_ms.wrapping_sub(owner.time_ms);
         if delta > 250 {
             let skipped = delta - 250;
@@ -605,12 +628,20 @@ impl RuntimePlayerMovement {
             owner.time_ms = owner.time_ms.wrapping_add(skipped);
         }
         loop {
-            let next = self.commands.front().copied();
-            let command_time = next.map(|command| {
-                if (command.timestamp_ms().wrapping_sub(owner.time_ms) as i32) < 0 {
+            let local_ms = self.commands.front().map(|command| command.timestamp_ms());
+            let server_ms = self
+                .server_commands
+                .front()
+                .map(|command| command.receipt_ms());
+            let server_next = server_ms.is_some_and(|server| {
+                local_ms.is_none_or(|local| (server.wrapping_sub(local) as i32) < 0)
+            });
+            let next_ms = if server_next { server_ms } else { local_ms };
+            let command_time = next_ms.map(|time| {
+                if (time.wrapping_sub(owner.time_ms) as i32) < 0 {
                     owner.time_ms
                 } else {
-                    command.timestamp_ms()
+                    time
                 }
             });
             let end = command_time
@@ -618,9 +649,24 @@ impl RuntimePlayerMovement {
                     (*time).wrapping_sub(owner.time_ms) <= now_ms.wrapping_sub(owner.time_ms)
                 })
                 .unwrap_or(now_ms);
-            owner.advance_to(end, dimensions, &mut geometry, &mut self.output)?;
+            loop {
+                owner.advance_to(end, dimensions, &mut geometry, &mut self.output)?;
+                owner.synchronize_passenger_input(world, frames, animations);
+                owner.refresh_path_input(&mut self.input, world, &mut self.output)?;
+                if owner.time_ms == end {
+                    break;
+                }
+            }
             if command_time != Some(end) {
                 break;
+            }
+            if server_next {
+                if let Some(event) = self.server_commands.pop_front() {
+                    owner.receive_server_event(event, &mut geometry, &mut self.output)?;
+                    owner.synchronize_passenger_input(world, frames, animations);
+                    owner.refresh_path_input(&mut self.input, world, &mut self.output)?;
+                }
+                continue;
             }
             let Some(command) = self.commands.pop_front() else {
                 break;
@@ -636,6 +682,8 @@ impl RuntimePlayerMovement {
             } else {
                 let previous = self.input.held_bits();
                 owner.command(command, &mut self.input, world, &mut self.output)?;
+                owner.synchronize_passenger_input(world, frames, animations);
+                owner.refresh_path_input(&mut self.input, world, &mut self.output)?;
                 owner.camera.follow_input(
                     previous,
                     self.input.held_bits(),
@@ -676,6 +724,14 @@ impl RuntimePlayerMovement {
         });
         owner.published = (transform, movement);
         world.set_local_player_view(owner.camera.view(owner.world_orientation()))?;
+        {
+            use shipyard::Remove;
+            world.storage().run(
+                |mut paths: shipyard::ViewMut<solarity_systems::MovementSpline>| {
+                    paths.remove(entity);
+                },
+            );
+        }
         gameplay.apply_local_movement(owner.identity, transform, movement, owner.stand_state)?;
         self.flush_output(gameplay)
     }
@@ -701,6 +757,7 @@ impl RuntimePlayerMovement {
         self.owner = None;
         self.input = PlayerInputState::default();
         self.commands.clear();
+        self.server_commands.clear();
         self.output.clear();
         self.camera_cvar_revision = None;
     }
@@ -847,15 +904,15 @@ impl LocalMovement {
     ) -> Result<Self, RuntimePlayerMovementError> {
         let flags = movement.flags() as u32 & 0x77ff_fdff;
         if movement.transport_guid().is_some()
-            || flags & 0x4a00_0000 != 0
-            || (flags & 0x200000 == 0 && flags & 0xc000c0 != 0)
+            || (movement.spline().is_none()
+                && (flags & 0x4a00_0000 != 0 || (flags & 0x200000 == 0 && flags & 0xc000c0 != 0)))
         {
             return Err(RuntimePlayerMovementError::UnsupportedMode { flags });
         }
         let context = movement.context();
         let secondary = (movement.flags() >> 32) as u16;
         let ground = MovementGroundTrajectory::new(
-            flags & !0xe0_10c0,
+            flags & !0x02e0_10c0,
             secondary & 8 != 0,
             transform.orientation(),
             movement.speeds(),
@@ -893,8 +950,14 @@ impl LocalMovement {
             }
         };
         Ok(Self {
+            path: None,
+            scene_collision: false,
+            input_refresh_pending: false,
+            input_axis_reset_pending: false,
             passenger: None,
             passenger_seat: -1,
+            passenger_turning: true,
+            passenger_input_blocked: false,
             passenger_clock: PassengerClock::default(),
             remote: false,
             remote_profile: None,
@@ -947,11 +1010,22 @@ impl LocalMovement {
             .is_some_and(|vitals| vitals.health() > 0);
         let flags = world.unit_flags(self.identity.guid()).unwrap_or_default();
         PlayerInputAdmission {
+            path_active: self.path_active(),
             translation: self.active
+                && !(self.client_control && self.passenger_input_blocked)
+                && !self.path_active()
+                && !self
+                    .passenger
+                    .is_some_and(|parent| super::unit_passenger::is_unit(world, parent.identity))
                 && alive
                 && self.flags & 0x100a00 == 0
                 && self.stand_state != 7,
-            turning: self.active && alive && flags.primary() & 0x40000 == 0,
+            turning: self.active
+                && !(self.client_control && self.passenger_input_blocked)
+                && alive
+                && flags.primary() & 0x40000 == 0
+                && !self.path_active()
+                && self.passenger_turning,
             forced_forward: flags.secondary() & 0x40 != 0,
             yaw_during_mouselook: false,
             movement_flags: self.flags,
@@ -963,7 +1037,7 @@ impl LocalMovement {
         self.anchor = self.position;
         self.elapsed_ms = 0;
         self.ground = MovementGroundTrajectory::new(
-            self.flags & !0xe0_10c0,
+            self.flags & !0x02e0_10c0,
             self.secondary & 8 != 0,
             self.orientation,
             self.speeds,
@@ -983,6 +1057,10 @@ impl LocalMovement {
     fn release_mover(&mut self) -> Result<(), RuntimePlayerMovementError> {
         // 6EE920 -> 6ED7E0 -> 6E9980 stops the previous subject without
         // ordinary movement packets, preserving walking and effect state.
+        if let Some(path) = &mut self.path {
+            path.stop();
+            self.published.1 = self.published.1.with_spline(path.motion());
+        }
         if self.flags & 0x1000 != 0 {
             self.flags &= !0x3000;
         }
@@ -1085,14 +1163,11 @@ impl LocalMovement {
         });
     }
 
-    fn emit(
+    /// Freezes the native mover and MovementInfo envelope and consumes its clocks.
+    fn snapshot_message(
         &mut self,
         kind: WorldMovementKind,
-        output: &mut VecDeque<PlayerMovementOutput>,
-    ) -> Result<(), RuntimePlayerMovementError> {
-        if self.remote {
-            return Ok(());
-        }
+    ) -> Result<WorldMovementMessage, RuntimePlayerMovementError> {
         let (transform, movement) = self.snapshot();
         let mut context = movement.context();
         if kind == WorldMovementKind::ChangeTransport && context.transport.is_none() {
@@ -1137,6 +1212,18 @@ impl LocalMovement {
         if context.transport.is_some() {
             self.passenger_clock.serialized();
         }
+        Ok(packet)
+    }
+
+    fn emit(
+        &mut self,
+        kind: WorldMovementKind,
+        output: &mut VecDeque<PlayerMovementOutput>,
+    ) -> Result<(), RuntimePlayerMovementError> {
+        if self.remote {
+            return Ok(());
+        }
+        let packet = self.snapshot_message(kind)?;
         // Unit_C::73ED10 only resolves animation for these notifications.
         // Heartbeats and facing/pitch packets must not interrupt a landing.
         use WorldMovementKind as Kind;
@@ -1243,17 +1330,25 @@ impl LocalMovement {
     ) -> Result<(), RuntimePlayerMovementError> {
         while self.time_ms != end {
             let mut duration = end.wrapping_sub(self.time_ms);
-            if self.flags & 0xc0100f != 0 {
+            if self.active && self.flags & 0xc0100f != 0 {
                 duration = duration.min(self.heartbeat_ms.wrapping_sub(self.time_ms));
             }
             if duration != 0 {
-                self.interval(duration, dimensions, geometry, output)?;
+                if self.path_active() {
+                    self.advance_server_path(duration, dimensions, geometry, output)?;
+                } else {
+                    self.interval(duration, dimensions, geometry, output)?;
+                }
                 self.time_ms = self.time_ms.wrapping_add(duration);
             }
-            if self.flags & 0xc0100f != 0
+            if self.active
+                && self.flags & 0xc0100f != 0
                 && (self.time_ms.wrapping_sub(self.heartbeat_ms) as i32) >= 0
             {
                 self.emit(WorldMovementKind::Heartbeat, output)?;
+            }
+            if self.input_refresh_pending {
+                break;
             }
         }
         Ok(())

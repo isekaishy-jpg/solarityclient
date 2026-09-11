@@ -193,6 +193,12 @@ impl MovementSpline {
         self.definition.id
     }
 
+    /// Retires the path at its current placement without endpoint sampling.
+    /// Native 98BD10 uses this when control release stops all movement channels.
+    pub fn stop(&mut self) {
+        self.definition.flags |= 0x400;
+    }
+
     /// Retained native path direction consumed by movement-owner velocity queries.
     #[must_use]
     pub const fn direction(&self) -> Vec3 {

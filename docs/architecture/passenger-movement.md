@@ -230,5 +230,8 @@ view receives the same final parent-facing projection. Runtime tests cover a
 moving later parent, nested vehicles, packet-only remote passengers, a real
 GameObject deck, missing database rows and ancestor lifetime replacement.
 
-Animated seat attachment, vehicle passenger transfer/destruction callbacks,
-special vehicle camera policy and combined live travel remain open.
+Animated seats and remote/local server-path entry and exit are connected; see
+[vehicle presentation](vehicle-presentation.md) and
+[local server paths](local-player-movement.md#server-authored-local-paths).
+Vehicle passenger transfer/destruction callbacks, special vehicle camera policy
+and combined live travel remain open.

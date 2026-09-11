@@ -85,8 +85,11 @@ impl LocalMovement {
         geometry: &mut G,
         output: &mut VecDeque<PlayerMovementOutput>,
     ) -> Result<(), RuntimePlayerMovementError> {
-        if !self.active {
+        if !self.active && source.is_none() {
             return Ok(());
+        }
+        if source.is_none() && self.flags & 0x4200_0000 != 0 {
+            return Err(RuntimePlayerMovementError::UnsupportedMode { flags: self.flags });
         }
         if self.flags & 0x800 != 0 {
             self.heartbeat_ms = self.heartbeat_ms.wrapping_add(duration);

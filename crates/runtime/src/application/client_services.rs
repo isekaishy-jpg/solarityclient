@@ -2569,12 +2569,17 @@ impl ClientServices {
         self.player
             .passenger_frames
             .synchronize(self.gameplay.world(), &self.game_objects)?;
+        if let Some((identity, _)) = self.player_movement.ground_sample() {
+            self.player_movement
+                .set_scene_collision(identity, self.player.take_scene_collision(identity));
+        }
         self.player_movement.service(
             &mut self.gameplay,
             &mut self.terrain,
             &self.game_objects,
             &self.liquids,
             &self.player.passenger_frames,
+            self.player.movement_animations(),
             self.player.movement_dimensions(),
             crate::platform::client_milliseconds(),
         )?;

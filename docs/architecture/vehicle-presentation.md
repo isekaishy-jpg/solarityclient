@@ -201,7 +201,14 @@ exit after unlinking, CPU timers without loaded models, GUID reuse and render
 parent changes across the complete entry/exit sequence. The existing nested
 seat, mounted rider, light, shadow and effect tests continue to pass.
 
-Remaining gaps include local-player server-path admission, a resident parent's
+Local-player server-path admission now retains the local camera/input owner,
+acknowledges active path completion, and synchronously admits passenger phase
+changes before resolving held controls. Delay/travel phases block local input
+until the shared controller returns to detached or seated; a short server path
+cannot resume movement during a longer exit animation. See
+[local player movement](local-player-movement.md#server-authored-local-paths).
+
+Remaining gaps include a resident parent's
 bone target when the child model has never loaded, seated dual animation slots,
 launch flags, exceptional transfer/removal callbacks and vehicle camera work.
 The CPU-only controller currently initializes travel from the unit-position

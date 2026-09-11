@@ -1,6 +1,6 @@
 //! Remote command admission and simulation share the native contact integrator.
 
-mod inbox;
+pub(in crate::application) mod inbox;
 mod path;
 mod service;
 mod state;

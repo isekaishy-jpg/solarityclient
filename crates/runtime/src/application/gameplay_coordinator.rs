@@ -993,6 +993,9 @@ impl RuntimeGameplayCoordinator {
         use super::player_movement::PlayerMovementOutput as Output;
         let command = match output {
             Output::Movement(message) => return self.send_movement(message),
+            Output::SplineDone { movement, path_id } => {
+                WorldWriterCommand::SplineDone { movement, path_id }
+            }
             Output::SkippedTime { guid, milliseconds } => {
                 WorldWriterCommand::MovementTimeSkipped { guid, milliseconds }
             }
@@ -1232,6 +1235,9 @@ where
                     WorldWriterCommand::Movement(message) => {
                         writer.send_movement(&message).await?;
                     }
+                    WorldWriterCommand::SplineDone { movement, path_id } => {
+                        writer.send_spline_done(&movement, path_id).await?;
+                    }
                     WorldWriterCommand::MovementTimeSkipped { guid, milliseconds } => {
                         writer.send_movement_time_skipped(guid, milliseconds).await?;
                     }
@@ -1288,6 +1294,10 @@ enum WorldWriterCommand {
     TimeSync(u32),
     WorldportAcknowledgement,
     Movement(WorldMovementMessage),
+    SplineDone {
+        movement: WorldMovementMessage,
+        path_id: u32,
+    },
     MovementTimeSkipped {
         guid: u64,
         milliseconds: u32,

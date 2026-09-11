@@ -6,6 +6,8 @@ use solarity_ui::{UiMovementAction, UiMovementControl};
 /// Unit/vehicle admission resolved by the movement owner for this command.
 #[derive(Clone, Copy)]
 pub(crate) struct PlayerInputAdmission {
+    /// Movement_C owns an unfinished spline, independent of its wire flags.
+    pub path_active: bool,
     pub translation: bool,
     pub turning: bool,
     pub forced_forward: bool,
@@ -31,6 +33,11 @@ pub(crate) struct PlayerInputState {
 impl PlayerInputState {
     pub(crate) fn held_bits(&self) -> u32 {
         self.bits
+    }
+
+    /// 5F95E0 refreshes the four keyboard axes after active spline completion.
+    pub(crate) fn clear_active_axes(&mut self) {
+        self.bits &= !0x000f_0000;
     }
 
     pub(crate) fn mouse_free_look(&self) -> bool {
@@ -131,6 +138,12 @@ impl PlayerInputState {
         admission: PlayerInputAdmission,
         emit: &mut impl FnMut(PlayerInputEffect),
     ) {
+        if admission.path_active {
+            // 5FBBC0 retires all active axes and auto-run without dispatching
+            // stops into the path owner. Physical held edges survive completion.
+            self.bits &= !0x001f_1000;
+            return;
+        }
         let held = self.bits;
         let has = |mask| i32::from(held & mask != 0);
         let mouselook = held & 0x0200_0001 != 0;
@@ -332,6 +345,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_path_retires_axes_without_stop_packets_and_retains_held_keys() {
+        let held = 0x10 | 0x40 | 0x100 | 0x400 | 0x2000;
+        let mut state = PlayerInputState {
+            bits: held | 0x1f1000,
+        };
+        let mut events = Vec::new();
+        let mut admission = PlayerInputAdmission {
+            path_active: true,
+            translation: false,
+            turning: false,
+            forced_forward: false,
+            yaw_during_mouselook: false,
+            movement_flags: 1,
+            secondary_flags: 0,
+        };
+        state.resolve(admission, &mut |event| events.push(event));
+        assert!(events.is_empty());
+        assert_eq!(state.bits, held);
+        admission.path_active = false;
+        admission.translation = true;
+        admission.turning = true;
+        admission.movement_flags = 0;
+        state.resolve(admission, &mut |event| events.push(event));
+        assert_eq!(
+            events,
+            vec![
+                PlayerInputEffect::Movement(Movement::StartForward),
+                PlayerInputEffect::Movement(Movement::StartStrafeLeft),
+                PlayerInputEffect::Movement(Movement::StartTurnLeft),
+            ]
+        );
+    }
+
+    #[test]
     fn held_axes_match_original_native_resolvers() -> Result<(), Box<dyn std::error::Error>> {
         for (index, line) in include_str!("../../tests/fixtures/player-input-native.txt")
             .lines()
@@ -346,6 +393,7 @@ mod tests {
             let mut events = Vec::new();
             state.resolve(
                 PlayerInputAdmission {
+                    path_active: false,
                     translation: true,
                     turning: true,
                     forced_forward: tokens[2] != 0,

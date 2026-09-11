@@ -18,6 +18,109 @@ use crate::test_network::{TestError, WorldServer};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
+fn server_path_boards_and_exits_local_deck_with_frozen_parent_notifications() -> TestResult {
+    use crate::application::unit_animation::UnitMovementAnimationEventKind;
+    use solarity_network::{
+        MonsterMove, MonsterMovePath, MonsterMoveTransport, MovementSplineFacing,
+    };
+    let mut scene = Scene::passenger_deck()?;
+    let mut owner = mover(&scene)?;
+    let mut query = RuntimeMovementQuery::new();
+    let mut geometry = RuntimeMovementGeometry::new(
+        &mut scene.terrain,
+        &scene.world,
+        &scene.objects,
+        0x8010_8111,
+        MovementBspCacheMode::Enabled,
+        &mut query,
+    );
+    let parent = geometry.passenger(9)?.ok_or("deck")?;
+    let local = parent.frame.local_position(owner.world_position());
+    let destination = local + Vec3::X;
+    let camera = owner.camera.view(owner.world_orientation());
+    let mut output = VecDeque::new();
+    let mut message = MonsterMove {
+        guid: 7,
+        transport: Some(MonsterMoveTransport { guid: 9, seat: -1 }),
+        control_byte: 0,
+        start: local.to_array(),
+        id: 51,
+        facing_type: 0,
+        facing: MovementSplineFacing::Direction,
+        path: Some(MonsterMovePath {
+            flags: 0,
+            duration_ms: 500,
+            animation: None,
+            parabolic: None,
+            points: vec![destination.to_array()],
+        }),
+    };
+    owner.receive_server_path(&message, 0, 1., &mut geometry, &mut output)?;
+    assert_eq!(
+        owner.passenger.map(|parent| parent.identity),
+        Some(parent.identity)
+    );
+    assert_eq!(owner.camera.view(owner.world_orientation()), camera);
+    assert!(
+        matches!(output.front(), Some(PlayerMovementOutput::Movement(message)) if message.kind() == WorldMovementKind::ChangeTransport)
+    );
+    assert!(owner.animation_events.iter().any(|event| matches!(event.kind, UnitMovementAnimationEventKind::Passenger { previous: None, parent: Some(identity), animated: true, .. } if identity == parent.identity)));
+    owner.input_refresh_pending = false;
+    owner.advance_to(500, [0.1, 1.5, 0.5], &mut geometry, &mut output)?;
+    assert_eq!(owner.position, destination);
+    assert_eq!(
+        owner.world_position(),
+        parent.frame.world_position(destination)
+    );
+    assert!(matches!(
+        output.back(),
+        Some(PlayerMovementOutput::SplineDone { path_id: 51, .. })
+    ));
+    message.transport.as_mut().ok_or("parent")?.seat = 3;
+    message.path = None;
+    message.start = destination.to_array();
+    message.id = 52;
+    let before_seat_change = owner.world_position();
+    output.clear();
+    owner.receive_server_path(&message, 500, 1., &mut geometry, &mut output)?;
+    assert_eq!(owner.world_position(), before_seat_change);
+    assert_eq!(output.len(), 1);
+    let Some(PlayerMovementOutput::Movement(seat_packet)) = output.back() else {
+        return Err("seat change packet".into());
+    };
+    assert_eq!(seat_packet.kind(), WorldMovementKind::ChangeTransport);
+    let seat = decode(*seat_packet)?
+        .context
+        .transport
+        .ok_or("seat metadata")?;
+    assert_eq!(seat.guid, 9);
+    assert_eq!(seat.seat, 3);
+    assert!(seat.interpolated_time_ms.is_none());
+    message.transport = None;
+    message.path = None;
+    message.start = owner.world_position().to_array();
+    message.id = 53;
+    let exit_position = owner.world_position();
+    owner.receive_server_path(&message, 500, 1., &mut geometry, &mut output)?;
+    assert!(owner.passenger.is_none());
+    assert_eq!(owner.world_position(), exit_position);
+    assert!(!owner.path_active());
+    assert!(
+        matches!(output.back(), Some(PlayerMovementOutput::Movement(message)) if message.kind() == WorldMovementKind::ChangeTransport)
+    );
+    assert!(owner.animation_events.iter().any(|event| matches!(
+        event.kind,
+        UnitMovementAnimationEventKind::Passenger {
+            previous: Some((9, 3)),
+            parent: None,
+            animated: true,
+            ..
+        }
+    )));
+    Ok(())
+}
+
+#[test]
 fn world_replacement_and_authoritative_detach_suppress_old_parent_notifications() -> TestResult {
     let mut scene = Scene::passenger_deck()?;
     let mut owner = mover(&scene)?;

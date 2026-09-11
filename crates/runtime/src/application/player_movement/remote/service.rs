@@ -92,16 +92,16 @@ impl RuntimeRemoteMovement {
             let Some(entity) = world.entity_by_guid(guid) else {
                 continue;
             };
+            if active_mover == Some(guid) || entity == world.local_player() {
+                self.owners.remove(&identity);
+                continue;
+            }
             let events = world
                 .storage()
                 .get::<&mut RemoteMovementInbox>(entity)
                 .ok()
                 .map(|mut inbox| std::mem::take(&mut inbox.events))
                 .unwrap_or_default();
-            if active_mover == Some(guid) || entity == world.local_player() {
-                self.owners.remove(&identity);
-                continue;
-            }
             let (Some(transform), Some(movement)) =
                 (world.object_transform(guid), world.movement_state(guid))
             else {

@@ -494,6 +494,7 @@ pub(super) fn apply(
     owner.apply(
         effect,
         PlayerInputAdmission {
+            path_active: false,
             translation: true,
             turning: true,
             forced_forward: false,

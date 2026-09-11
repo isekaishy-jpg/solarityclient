@@ -55,6 +55,30 @@ pub(super) struct UnitPassengerModel {
 }
 
 impl UnitAnimationScene {
+    /// Receipt admission runs before local held controls can resume. It must not
+    /// read the still-unpublished ECS movement image or start a second timer.
+    pub fn admit_movement_passenger(
+        &self,
+        world: &ActiveWorld,
+        frames: &UnitPassengerFrames,
+        event: UnitMovementAnimationEvent,
+    ) {
+        self.passenger_state(event.identity)
+            .borrow_mut()
+            .admit_event(world, frames.vehicles(), frames, event, self.scene_time_ms);
+    }
+
+    /// 74BA40 rejects client-controlled input in all four delay/travel phases.
+    pub fn passenger_input_blocked(&self, identity: WorldObjectIdentity) -> bool {
+        self.passenger_states
+            .borrow()
+            .get(&identity.guid())
+            .is_some_and(|(generation, state)| {
+                *generation == identity
+                    && !matches!(state.borrow().phase, Phase::Detached | Phase::Seated)
+            })
+    }
+
     pub(super) fn passenger_state(&self, identity: WorldObjectIdentity) -> SharedPassengerState {
         let mut states = self.passenger_states.borrow_mut();
         let entry = states.entry(identity.guid()).or_insert_with(|| {
@@ -104,6 +128,49 @@ impl UnitPassengerModel {
         self.pending.push_back(event);
     }
 
+    fn admit_event(
+        &mut self,
+        world: &ActiveWorld,
+        vehicles: &VehicleCatalog,
+        frames: &UnitPassengerFrames,
+        event: UnitMovementAnimationEvent,
+        now_ms: u32,
+    ) {
+        let UnitMovementAnimationEventKind::Passenger {
+            previous_transform,
+            previous,
+            parent,
+            animated,
+        } = event.kind
+        else {
+            return;
+        };
+        let requested = event
+            .movement
+            .context()
+            .transport
+            .filter(|transport| transport.guid != 0)
+            .map(|transport| (transport.guid, transport.seat));
+        // Creation before model loading can still supply the old seat row.
+        if self.input.is_none() {
+            self.input = resolve_input(world, vehicles, frames, previous, None);
+            if self.input.is_some() {
+                self.phase = Phase::Seated;
+            }
+        }
+        self.special_exit = event.movement.flags() >> 32 & 0x40 != 0;
+        self.change(
+            world,
+            vehicles,
+            frames,
+            requested,
+            parent,
+            animated,
+            previous_transform,
+            now_ms,
+        );
+    }
+
     fn synchronize(
         &mut self,
         world: &ActiveWorld,
@@ -115,39 +182,7 @@ impl UnitPassengerModel {
     ) {
         self.unit_pose = world.object_transform(identity.guid());
         while let Some(event) = self.pending.pop_front() {
-            let UnitMovementAnimationEventKind::Passenger {
-                previous_transform,
-                previous,
-                parent,
-                animated,
-            } = event.kind
-            else {
-                continue;
-            };
-            let requested = event
-                .movement
-                .context()
-                .transport
-                .filter(|transport| transport.guid != 0)
-                .map(|transport| (transport.guid, transport.seat));
-            // Creation before model loading can still supply the old seat row.
-            if self.input.is_none() {
-                self.input = resolve_input(world, vehicles, frames, previous, None);
-                if self.input.is_some() {
-                    self.phase = Phase::Seated;
-                }
-            }
-            self.special_exit = event.movement.flags() >> 32 & 0x40 != 0;
-            self.change(
-                world,
-                vehicles,
-                frames,
-                requested,
-                parent,
-                animated,
-                previous_transform,
-                now_ms,
-            );
+            self.admit_event(world, vehicles, frames, event, now_ms);
         }
         let requested = world
             .movement_state(identity.guid())

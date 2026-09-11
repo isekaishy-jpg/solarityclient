@@ -383,6 +383,23 @@ where
             .await
     }
 
+    /// Sends 71F210's frozen MovementInfo followed by the completed path ID.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the encrypted packet cannot be completed.
+    pub async fn send_spline_done(
+        &mut self,
+        movement: &WorldMovementMessage,
+        path_id: u32,
+    ) -> Result<(), WorldSessionError> {
+        let image = movement.body();
+        let mut body = [0_u8; 101];
+        body[..image.len()].copy_from_slice(image);
+        body[image.len()..image.len() + 4].copy_from_slice(&path_id.to_le_bytes());
+        self.send_local_movement_auxiliary(0x2c9, &body[..image.len() + 4])
+            .await
+    }
+
     /// Sends the local player's requested stand state (`CMSG_STANDSTATECHANGE`).
     ///
     /// # Errors
@@ -500,7 +517,8 @@ where
         opcode: u32,
         body: &[u8],
     ) -> Result<(), WorldSessionError> {
-        let mut packet = [0_u8; 19];
+        // MovementInfo (97), spline ID (4), and encrypted client header (6).
+        let mut packet = [0_u8; 107];
         let header = self
             .encrypter
             .encrypt_client_header((body.len() + 4) as u16, opcode);

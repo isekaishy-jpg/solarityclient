@@ -13,6 +13,153 @@ use solarity_network::WorldMovementKind;
 use solarity_ui::{UiMovementAction, UiMovementCommand, UiMovementControl};
 use std::{error::Error, io::Cursor, sync::Arc};
 
+#[test]
+fn local_server_path_waits_for_model_then_owns_ecs_and_acknowledges_before_input()
+-> Result<(), Box<dyn Error>> {
+    use crate::application::player_movement::remote;
+    use solarity_network::{MonsterMove, MonsterMovePath, MovementSplineFacing};
+    let fixture = flat_world()?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let maps = MapCatalog::load(&mut store)?;
+    let displays = GameObjectDisplayCatalog::load(&mut store)?;
+    let liquids = LiquidTypeCatalog::load(&mut store)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let assets = AssetStoreHandle::new(store);
+    let mut terrain = RuntimeTerrainCoordinator::new(assets.clone(), maps);
+    let objects = RuntimeGameObjectPresentation::new(assets, displays, animations);
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(571),
+        1,
+        "Forced",
+        Vec3::new(1000., 5800., 11.),
+        0.,
+    ));
+    world.update_movement(
+        1,
+        WorldMovementState::new(
+            0,
+            WorldMovementSpeeds::new([
+                2.5,
+                7.,
+                4.5,
+                4.72,
+                2.5,
+                7.,
+                4.5,
+                std::f32::consts::PI,
+                std::f32::consts::PI,
+            ]),
+            WorldMovementContext::default(),
+        ),
+    )?;
+    let player = world.local_player();
+    world.storage_mut().add_component(
+        player,
+        (
+            solarity_ecs::UnitVitals::new(100, 100, [0; 7], [0; 7]),
+            solarity_ecs::ObjectKind::Player,
+        ),
+    );
+    assert!(remote::receive_path(
+        &mut world,
+        MonsterMove {
+            guid: 1,
+            transport: None,
+            control_byte: 0,
+            start: [1000., 5800., 11.],
+            id: 321,
+            facing_type: 0,
+            facing: MovementSplineFacing::Direction,
+            path: Some(MonsterMovePath {
+                flags: 0,
+                duration_ms: 1000,
+                animation: None,
+                parabolic: None,
+                points: vec![[1010., 5800., 11.]]
+            }),
+        },
+        100,
+        1.
+    ));
+    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+    let (_packets, receiver) = mpsc::channel(8);
+    let (commands, mut writer) = mpsc::channel(128);
+    let mut gameplay = RuntimeGameplayCoordinator::new();
+    gameplay.world = Some(world);
+    gameplay.active = Some(ActiveGameplayNetwork {
+        receiver,
+        commands,
+        task: runtime.spawn(std::future::pending()),
+    });
+    let mut movement = RuntimePlayerMovement::default();
+    movement.push(UiMovementCommand {
+        action: UiMovementAction::Hold {
+            control: UiMovementControl::Forward,
+            pressed: true,
+        },
+        timestamp_ms: 50,
+    });
+    movement.service(
+        &mut gameplay,
+        &mut terrain,
+        &objects,
+        &liquids,
+        &Default::default(),
+        &Default::default(),
+        None,
+        100,
+    )?;
+    assert!(writer.try_recv().is_err());
+    assert_eq!(
+        gameplay
+            .world()
+            .ok_or("world")?
+            .storage()
+            .get::<&remote::inbox::RemoteMovementInbox>(player)?
+            .events
+            .len(),
+        1
+    );
+    for now in [100, 350, 600, 850, 1100] {
+        movement.service(
+            &mut gameplay,
+            &mut terrain,
+            &objects,
+            &liquids,
+            &Default::default(),
+            &Default::default(),
+            Some([0.5, 2., 1.]),
+            now,
+        )?;
+        let pose = gameplay.world().ok_or("world")?.local_player_transform()?;
+        assert!((pose.position().x - (1000. + (now - 100) as f32 * 0.01)).abs() < 0.001);
+    }
+    let mut observed = Vec::new();
+    while let Ok(command) = writer.try_recv() {
+        match command {
+            WorldWriterCommand::SplineDone { path_id, .. } => {
+                assert_eq!(path_id, 321);
+                observed.push(0x2c9);
+            }
+            WorldWriterCommand::Movement(message) => observed.push(message.kind() as u32),
+            _ => {}
+        }
+    }
+    assert!(!observed.contains(&(WorldMovementKind::Stop as u32)));
+    assert!(
+        observed.ends_with(&[0x2c9, WorldMovementKind::StartForward as u32]),
+        "{observed:?}"
+    );
+    assert_eq!(
+        observed.iter().filter(|opcode| **opcode == 0x2c9).count(),
+        1
+    );
+    Ok(())
+}
+
 /// Exercises initial support on the shipped RFC global WMO without a client window.
 #[test]
 #[ignore = "requires locally owned build-12340 archives"]
@@ -87,6 +234,7 @@ fn rfc_archive_world_entry_resolves_initial_support() -> Result<(), Box<dyn Erro
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             &Default::default(),
             Some([0.5, 2., 1.]),
             now,
@@ -177,6 +325,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &objects,
         &liquids,
         &Default::default(),
+        &Default::default(),
         None,
         0,
     )?;
@@ -188,6 +337,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             &Default::default(),
             Some([0.5, 2., 1.]),
             time,
@@ -224,6 +374,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &objects,
             &liquids,
             &Default::default(),
+            &Default::default(),
             Some([0.5, 2., 1.]),
             time,
         )?;
@@ -248,6 +399,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &objects,
         &liquids,
         &Default::default(),
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1000,
     )?;
@@ -256,6 +408,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         &Default::default(),
         Some([0.5, 2., 1.]),
         1200,
@@ -302,6 +455,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &objects,
         &liquids,
         &Default::default(),
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -319,6 +473,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &objects,
         &liquids,
         &Default::default(),
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1200,
     )?;
@@ -334,6 +489,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         &Default::default(),
         Some([0.5, 2., 1.]),
         1400,
@@ -365,6 +521,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &objects,
         &liquids,
         &Default::default(),
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1400,
     )?;
@@ -383,6 +540,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             &Default::default(),
             Some([0.5, 2., 1.]),
             now,
@@ -407,6 +565,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &objects,
         &liquids,
         &Default::default(),
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1520,
     )?;
@@ -422,6 +581,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &objects,
         &liquids,
         &Default::default(),
+        &Default::default(),
         Some([0.5, 2., 1.]),
         1800,
     )?;
@@ -433,6 +593,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             &Default::default(),
             Some([0.5, 2., 1.]),
             now,
@@ -459,6 +620,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &objects,
             &liquids,
             &Default::default(),
+            &Default::default(),
             Some([0.5, 2., 1.]),
             now,
         )?;
@@ -478,6 +640,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
             &mut terrain,
             &objects,
             &liquids,
+            &Default::default(),
             &Default::default(),
             Some([0.5, 2., 1.]),
             now,
@@ -508,6 +671,7 @@ fn entry_resolves_support_and_moves_without_an_external_ground_ready_callback()
         &mut terrain,
         &objects,
         &liquids,
+        &Default::default(),
         &Default::default(),
         Some([0.5, 2., 1.]),
         2800,

@@ -14,6 +14,31 @@ use solarity_runtime::RuntimeGameplayCoordinator;
 use transfer_world_server::{TestError, WorldServer};
 
 #[test]
+fn spline_done_appends_path_id_and_preserves_the_next_encrypted_header() -> Result<(), TestError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let (server, session) = WorldServer::connect().await?;
+                let (_reader, mut writer) = session.split();
+                let responses = server.exchange_raw(Vec::new(), 2).await?;
+                let movement = full_message(WorldMovementKind::Heartbeat, 0xFFFF_FFF0)?;
+                writer.send_spline_done(&movement, 0xfedc_ba98).await?;
+                writer.send_movement(&movement).await?;
+                let mut completed = FULL_BODY.to_vec();
+                completed.extend_from_slice(&0xfedc_ba98_u32.to_le_bytes());
+                assert_eq!(
+                    responses.await??,
+                    vec![(0x2c9, completed), (0xee, FULL_BODY.to_vec())]
+                );
+                Ok::<(), TestError>(())
+            })
+            .await?
+        })
+}
+
+#[test]
 fn active_and_retired_movers_preserve_original_guid_envelopes() -> Result<(), TestError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

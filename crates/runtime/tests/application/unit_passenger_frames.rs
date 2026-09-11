@@ -345,6 +345,7 @@ fn local_and_remote_passengers_follow_a_later_parent_without_restarting_local_mo
             &objects,
             &liquids,
             &presentation.passenger_frames,
+            presentation.movement_animations(),
             Some([0.5, 2., 1.]),
             now,
         )?;

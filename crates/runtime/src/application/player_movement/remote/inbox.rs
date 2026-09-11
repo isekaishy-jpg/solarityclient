@@ -32,6 +32,16 @@ pub(crate) enum RemoteMovementInput {
     },
 }
 
+impl RemoteMovementInput {
+    pub fn receipt_ms(&self) -> u32 {
+        match self {
+            Self::Baseline { receipt_ms, .. }
+            | Self::Command { receipt_ms, .. }
+            | Self::Path { receipt_ms, .. } => *receipt_ms,
+        }
+    }
+}
+
 /// Retains paths in the same receipt order as ordinary movement snapshots.
 pub(crate) fn receive_path(
     world: &mut ActiveWorld,

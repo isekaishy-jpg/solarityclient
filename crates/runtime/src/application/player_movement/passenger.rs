@@ -63,7 +63,7 @@ impl PassengerClock {
     }
 
     /// 6EC400 marks interpolation only when replacing a nonzero old parent.
-    fn switched(&mut self) {
+    pub(super) fn switched(&mut self) {
         self.pending = self.current != self.previous;
     }
 
@@ -208,6 +208,10 @@ impl RuntimePlayerMovement {
 impl LocalMovement {
     /// 6FED70 multiplies the movement owner's retained direction by its speed.
     pub(super) fn passenger_velocity(&self) -> Vec3 {
+        if let Some(path) = &self.path {
+            return path.direction()
+                * solarity_systems::resolve_unit_movement_speed(self.snapshot().1);
+        }
         match self.phase {
             MovementPhase::Ground { .. } => self.ground.travel_direction() * self.ground.speed(),
             MovementPhase::Swimming(trajectory) => trajectory.direction() * trajectory.speed(),
@@ -248,11 +252,14 @@ impl LocalMovement {
     ) -> Result<Option<Self>, RuntimePlayerMovementError> {
         let mut context = movement.context();
         context.transport = None;
-        let unparented = WorldMovementState::new(
+        let mut unparented = WorldMovementState::new(
             movement.flags() & !(0x400_u64 << 32),
             movement.speeds(),
             context,
         );
+        if let Some(spline) = movement.spline() {
+            unparented = unparented.with_spline(spline);
+        }
         let Some(transport) = movement
             .context()
             .transport
@@ -280,11 +287,14 @@ impl LocalMovement {
         let mut context = movement.context();
         context.transport = None;
         let local = WorldTransform::new(transport.position, transport.orientation);
-        let unparented = WorldMovementState::new(
+        let mut unparented = WorldMovementState::new(
             movement.flags() & !(0x400_u64 << 32),
             movement.speeds(),
             context,
         );
+        if let Some(spline) = movement.spline() {
+            unparented = unparented.with_spline(spline);
+        }
         let mut owner = Self::new(identity, local, unparented, time_ms)?;
         owner.passenger = Some(parent);
         owner.passenger_seat = transport.seat;
@@ -314,6 +324,9 @@ impl LocalMovement {
             }
         }
         geometry.set_passenger_frame(self.passenger.map(|parent| parent.frame));
+        self.passenger_turning = self
+            .passenger
+            .is_none_or(|parent| geometry.passenger_turning(parent.identity, self.passenger_seat));
         Ok(())
     }
 
@@ -323,7 +336,7 @@ impl LocalMovement {
         guid: u64,
         geometry: &mut G,
     ) -> Result<bool, RuntimePlayerMovementError> {
-        if !self.active || self.remote {
+        if !self.active || self.remote || self.path_active() {
             return Ok(false);
         }
         let old = self.passenger;

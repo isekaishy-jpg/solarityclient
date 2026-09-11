@@ -34,6 +34,22 @@ struct FrameInput {
 }
 
 impl UnitPassengerFrames {
+    pub fn vehicles(&self) -> &VehicleCatalog {
+        &self.vehicles
+    }
+
+    /// 74B900 permits yaw for a missing seat or an authored CAN_TURN seat.
+    pub fn passenger_turning(
+        &self,
+        world: &ActiveWorld,
+        parent: WorldObjectIdentity,
+        seat: i8,
+    ) -> bool {
+        world
+            .unit_vehicle(parent.guid())
+            .and_then(|vehicle| self.vehicles.passenger_seat(vehicle.definition_id(), seat))
+            .is_none_or(|seat| seat.flags() & 0x400 != 0)
+    }
     pub fn new(vehicles: Arc<VehicleCatalog>) -> Self {
         Self {
             vehicles,

@@ -306,3 +306,44 @@ confirmed the alternate jump, with the female model's sequences 108 and 109
 both present in the session log. The CRT stream and authored frequencies remain
 unchanged, and each live jump records the model, selected sequence and
 variation, movement flags, and scene time for the next user test.
+
+## Server-authored local paths
+
+The local movement owner now drains its receipt-ordered baseline/path inbox once
+model dimensions are available. The remote service leaves that inbox intact for
+the local player, including while its model is loading. Server receipts and
+local input/control commands share the movement timeline. Physical replacement
+retains held controls, camera state, passenger clocks and pending notifications.
+The same parent preparation and ground-path collision step serve remote and
+local paths; airborne path placement still comes from the spline sampler.
+
+`5FBBC0` clears active axes and auto-run during an unfinished path without
+sending ordinary stop commands into it. Physical held keys remain recorded.
+Only the active mover acknowledges completion: `6EAE70 -> 71F210` sends opcode
+`0x2C9`, with the complete current movement envelope followed by the path ID.
+The runtime freezes that image before clearing the four keyboard axes through
+the `5F95E0` policy and resolving held keys again. Replacement, inactive-mover
+completion and control release do not acknowledge a retired path. `6EE920`
+stops its geometry when control is released.
+
+A forced parent change uses the existing local `ChangeTransport` clock and
+serialization owner before installing the new path. It also emits that
+envelope for a same-parent seat change, without switching the
+transport interpolation clock. Passenger phase admission
+reaches the retained CPU/model controller before input resolution and before
+the final ECS publication. `74BA40` blocks translation and turning during its
+entry/exit delay and travel phases; completion refreshes held controls even
+when the server path finished earlier. Seat `CAN_TURN` admission is also used.
+The animation controller continues to own its scene clock and model targets.
+
+Regressions cover pending-model receipts, runtime publication and writer order,
+replacement/control release, inactive completion, moving-deck boarding and
+exit, held controls across an unfinished passenger exit, and the encrypted
+completion packet followed by another movement packet. This does not complete
+vehicle active-mover selection, inactive local ordinary-command playback,
+ordinary flying/hover movement, vehicle launch/transfer flags, special cameras
+or combined live travel/performance validation.
+
+The final locked workspace run passes 1,251 tests with 23 archive-dependent
+tests ignored; runtime passes 290 with 18 ignored. Workspace/all-target Clippy
+passes with warnings denied, and formatting and whitespace checks pass.

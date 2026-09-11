@@ -45,6 +45,20 @@ pub enum RuntimeMovementGeometryFailure {
 }
 
 impl<'a> RuntimeMovementGeometry<'a> {
+    pub(in crate::application) fn passenger_turning(
+        &self,
+        parent: WorldObjectIdentity,
+        seat: i8,
+    ) -> bool {
+        self.units
+            .is_none_or(|units| units.passenger_turning(self.world, parent, seat))
+    }
+    /// Endpoint facing resolves the target in the current world generation.
+    pub(in crate::application) fn world_target_position(&self, guid: u64) -> Option<Vec3> {
+        self.world
+            .object_transform(guid)
+            .map(|transform| transform.position())
+    }
     /// Resolves the current world generation before a passenger link is admitted.
     pub(in crate::application) fn passenger_identity(
         &self,
