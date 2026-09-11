@@ -115,7 +115,42 @@ portal fog flag; see [the group callback and GPU evidence](world-model-batch-vis
 WMO liquids also consume each admitted group's bank through their separate
 [liquid provider connection](liquid-rendering.md#group-admission-and-fog).
 Attached WMO M2 models now use their [native visibility and fog routes](world-model-doodad-visibility.md).
-Other M2 owner types still require their separate routing integration.
+Ordinary unit and game-object models now use the registered-owner route below.
+
+## Registered model owners
+
+Ordinary models share their retained native spatial registration between liquid
+classification and fog selection. `793060` submits exterior owners before the
+group drain without writing a fog bank. Direct moving-root visits and `793270`
+then select the first accepted registered group; `7C1730` publishes that group's
+bank. A missed submission preserves the owner's previous choice. The choice is
+retained across movement and re-evaluated once per scene frame, while stationary
+owners reuse their spatial query. Registration order does not replace the ordered
+group callback sequence, and repeated portal clips retain their native union.
+
+The sphere supplied to those clips follows `4F5E80` and `780240`: the authored
+box midpoint, the authored radius, and the length of the placement's first axis.
+Tiny radii collapse to the placement origin. The float store boundaries also
+preserve the native large-coordinate results. This covers the ordinary authored
+bounds producer; animated bounds overrides remain a separate producer path.
+
+Riders, equipment and effect scenes consume their containing root owner's bank,
+including forward parent references supported by the vehicle ancestry pass.
+Both mesh material color and particle instance-scene color use that selection.
+This routing does not add ordinary-model visibility culling or establish that
+every effect shader implements its native fog equation.
+
+`model_scene_sphere_oracle.py` executes the original sphere producer and transform
+for 120 combinations of bounds, threshold radii and placement matrices, compared
+by float bits. `model_owner_fog_oracle.py` executes complete `793270` and `7C1730`
+submissions for 1,280 retained-bank cases: reference subsets and order, prior
+banks, direct snapshots, group eligibility, portal clips and rejected spheres.
+Its stubs provide the two palettes and replace the downstream draw insertion;
+the sphere clipping and bank publication instructions remain unchanged.
+The hidden Vulkan runtime fixture checks ten static/moving-building transitions,
+including an indoor mount with an exterior rider, retained fog after departure,
+independent outdoor owners and changing palette colors. It verifies each mesh
+and live particle scene's selected color and samples the rendered model pixels.
 
 `WorldModelVisibilityQuery` now reproduces `7AC060`'s ordered traversal from
 an initial camera group using supplied projected portal rectangles. It retains

@@ -6,7 +6,7 @@ use super::{
 use crate::application::terrain_coordinator::{
     RuntimeMovementRegistrationQuery, RuntimeTerrainCoordinator, RuntimeWorldModelMovementOwner,
 };
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use solarity_systems::{WorldEntityLightEnvironment, WorldEntityLightState, WorldModelFloorLight};
 
 /// Ordinary terrain doodads never need an individual floor-light callback. Keep
@@ -23,23 +23,27 @@ struct RetainedEntityLighting {
     state: Option<WorldEntityLightState>,
     last_time_ms: Option<f32>,
     scratch: RuntimeMovementRegistrationQuery,
-    liquid: Option<CachedModelLiquid>,
+    scene: Option<CachedModelScene>,
+    scene_scratch: RuntimeMovementRegistrationQuery,
+    indoor_fog: bool,
+    fog_revision: Option<u64>,
 }
 
-struct CachedModelLiquid {
+struct CachedModelScene {
     transform: Mat4,
-    model_bounds: [Vec3; 2],
+    model_bounds: solarity_asset::M2ModelBounds,
     registration: Option<UnitSceneRegistration>,
+    query: UnitSceneRegistration,
     revision: u64,
     surface: Option<(f32, f32)>,
 }
 
 impl EntityLighting {
-    /// 780CD0's liquid callback is separate from the floor-light transition.
-    /// Keep its world result while stationary; the light query transforms its
-    /// plane once for the current view before attachments classify their bounds.
+    /// Shares the owner's native registration between liquid and fog callbacks.
+    /// Spatial results remain valid while stationary; fog selection follows each
+    /// frame's ordered scene visits and keeps the bank across exterior draws.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn liquid_state(
+    pub(super) fn scene_state(
         &mut self,
         owner: M2GpuPlacementOwner,
         model: &std::sync::Arc<solarity_asset::DecodedM2Model>,
@@ -48,15 +52,15 @@ impl EntityLighting {
         terrain: &mut RuntimeTerrainCoordinator,
         liquids: &solarity_asset::LiquidTypeCatalog,
         view: Mat4,
-    ) -> Result<solarity_rendering::M2LiquidState, RuntimeTerrainFrameError> {
+    ) -> Result<(solarity_rendering::M2LiquidState, Option<bool>), RuntimeTerrainFrameError> {
         use solarity_rendering::M2LiquidState;
         if !ordinary_callback(owner) {
-            return Ok(M2LiquidState::Above);
+            return Ok((M2LiquidState::Above, None));
         }
         let retained = self.retained.get_or_insert_with(Box::default);
         let revision = terrain.model_light_revision();
-        let model_bounds = [model.bounds().minimum(), model.bounds().maximum()];
-        if retained.liquid.as_ref().is_none_or(|cached| {
+        let model_bounds = model.bounds();
+        if retained.scene.as_ref().is_none_or(|cached| {
             cached.transform != transform
                 || cached.model_bounds != model_bounds
                 || cached.registration != registration
@@ -74,35 +78,56 @@ impl EntityLighting {
                 (Some(collision), _) => UnitSceneRegistration {
                     position: transform.w_axis.truncate(),
                     bounds: collision.render_bounds(),
+                    sphere: UnitSceneRegistration::model_sphere(model, transform),
                 },
                 (None, Some(registration)) => registration,
                 (None, None) => UnitSceneRegistration::new(model, transform)?,
             };
             let bounds = query.bounds;
-            let height = terrain.model_liquid_height(
+            terrain.register_model_scene(
                 query.position,
                 bounds,
                 collision.as_ref(),
-                liquids,
-                &mut retained.scratch,
+                &mut retained.scene_scratch,
             )?;
-            retained.liquid = Some(CachedModelLiquid {
+            let height = terrain.model_liquid_height(
+                query.position,
+                bounds,
+                liquids,
+                &retained.scene_scratch,
+            )?;
+            retained.scene = Some(CachedModelScene {
                 transform,
                 model_bounds,
                 registration,
+                query,
                 revision,
                 surface: height.map(|height| (height, bounds.maximum().z)),
             });
+            retained.fog_revision = None;
         }
-        Ok(
-            match retained.liquid.as_ref().and_then(|cached| cached.surface) {
+        let scene_revision = terrain.model_scene_revision();
+        if retained.fog_revision != Some(scene_revision)
+            && let Some(cached) = &retained.scene
+        {
+            retained.indoor_fog = terrain.model_scene_fog(
+                &retained.scene_scratch,
+                cached.query.bounds,
+                cached.query.sphere,
+                retained.indoor_fog,
+            )?;
+            retained.fog_revision = Some(scene_revision);
+        }
+        Ok((
+            match retained.scene.as_ref().and_then(|cached| cached.surface) {
                 Some((height, maximum)) if height <= maximum => {
                     M2LiquidState::at_world_height(height, view)
                 }
                 Some(_) => M2LiquidState::Below,
                 None => M2LiquidState::Above,
             },
-        )
+            Some(retained.indoor_fog),
+        ))
     }
 
     /// Samples the existing owner-specific callback without starting a transition

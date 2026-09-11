@@ -1,13 +1,19 @@
 //! First-visited WMO groups and all local portal clips for scene drawing.
 
+#[cfg(test)]
+#[path = "../../../../../tests/application/model_owner_fog.rs"]
+mod tests;
+
 use std::collections::HashMap;
+
+use glam::Vec3;
 
 use solarity_systems::{
     PlacedWorldModelCollision, WorldModelSceneFog, WorldModelSceneGroupVisit,
     WorldModelVisibilityError, WorldSceneDepthFrame, WorldSceneFrustum,
 };
 
-use super::super::RuntimeWorldModelMovementOwner;
+use super::super::{RuntimeMovementReference, RuntimeWorldModelMovementOwner};
 
 /// One native 799310 group entry, retained in first-callback order.
 pub(in crate::application) struct WorldModelSceneGroup {
@@ -218,6 +224,47 @@ impl WorldModelSceneGraphics {
         }
     }
 
+    /// 793270 consumes registered owners after the direct moving-root visits.
+    /// Query only the owner's destinations, retaining first-group queue order.
+    pub(super) fn registered_model_fog(
+        &self,
+        references: &[RuntimeMovementReference],
+        interior: bool,
+        (center, radius): (Vec3, f32),
+    ) -> Option<bool> {
+        for direct in &self.direct_doodad_visits {
+            let group = &self.groups[direct.group];
+            if references
+                .iter()
+                .filter_map(|reference| registered_group(*reference))
+                .any(|key| key == (group.owner, group.group))
+                && group.doodads.world_frusta[..direct.clip_count]
+                    .iter()
+                    .any(|clip| clip.intersects_sphere(center, radius))
+            {
+                return Some(direct.indoor_fog);
+            }
+        }
+        if !interior {
+            return None;
+        }
+        references
+            .iter()
+            .filter_map(|reference| registered_group(*reference))
+            .filter_map(|key| self.indices.get(&key).copied())
+            .filter(|&index| {
+                let group = &self.groups[index];
+                group.doodads.allowed
+                    && group
+                        .doodads
+                        .world_frusta
+                        .iter()
+                        .any(|clip| clip.intersects_sphere(center, radius))
+            })
+            .min()
+            .map(|index| self.groups[index].indoor_fog)
+    }
+
     /// Exposes only this frame's entries while retaining unused high-water storage.
     pub(super) fn groups(&self) -> &[WorldModelSceneGroup] {
         &self.groups[..self.active]
@@ -229,5 +276,20 @@ impl WorldModelSceneGraphics {
         if let Some(index) = last {
             self.fog = self.groups[index].indoor_fog;
         }
+    }
+}
+
+fn registered_group(
+    reference: RuntimeMovementReference,
+) -> Option<(RuntimeWorldModelMovementOwner, usize)> {
+    match reference {
+        RuntimeMovementReference::WorldModel { unique_id, group } => {
+            Some((RuntimeWorldModelMovementOwner::Static { unique_id }, group))
+        }
+        RuntimeMovementReference::GameObjectWorldModel { identity, group } => Some((
+            RuntimeWorldModelMovementOwner::GameObject { identity },
+            group,
+        )),
+        RuntimeMovementReference::Terrain { .. } => None,
     }
 }

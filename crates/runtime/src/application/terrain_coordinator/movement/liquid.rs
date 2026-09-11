@@ -16,25 +16,14 @@ impl RuntimeTerrainCoordinator {
         &mut self,
         position: Vec3,
         bounds: solarity_systems::MovementCollisionBounds,
-        game_object: Option<&solarity_systems::PlacedM2Collision>,
         liquids: &LiquidTypeCatalog,
-        scratch: &mut super::RuntimeMovementRegistrationQuery,
+        registration: &super::RuntimeMovementRegistrationQuery,
     ) -> Result<Option<f32>, RuntimeMovementRegistrationError> {
-        scratch.clear();
         let Some(active) = self.active.as_mut() else {
             return Ok(None);
         };
-        if let Some(model) = game_object {
-            active.register_game_object_movement(
-                model,
-                solarity_systems::MovementBspCacheMode::Enabled,
-                scratch,
-            )?;
-        } else {
-            active.register_unit_liquid(position, bounds, scratch)?;
-        }
         let point = Vec3::new(position.x, position.y, bounds.minimum().z);
-        for reference in scratch.references() {
+        for reference in registration.references() {
             let (owner, group) = match *reference {
                 super::RuntimeMovementReference::WorldModel { unique_id, group } => (
                     super::RuntimeWorldModelMovementOwner::Static { unique_id },

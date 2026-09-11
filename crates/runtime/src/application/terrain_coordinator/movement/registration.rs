@@ -370,6 +370,27 @@ impl ResidentTerrainMap {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Rebuilds an ordinary model's shared world registration for its scene
+    /// callbacks. Unit and GameObject owners retain their distinct native lists.
+    pub(in crate::application) fn register_model_scene(
+        &mut self,
+        position: Vec3,
+        bounds: MovementCollisionBounds,
+        game_object: Option<&PlacedM2Collision>,
+        scratch: &mut RuntimeMovementRegistrationQuery,
+    ) -> Result<(), RuntimeMovementRegistrationError> {
+        scratch.clear();
+        let Some(active) = self.active.as_mut() else {
+            return Ok(());
+        };
+        if let Some(model) = game_object {
+            active.register_game_object_movement(model, MovementBspCacheMode::Enabled, scratch)?;
+        } else {
+            active.register_unit_liquid(position, bounds, scratch)?;
+        }
+        Ok(())
+    }
+
     pub(in crate::application) fn model_light_revision(&self) -> u64 {
         self.active
             .as_ref()

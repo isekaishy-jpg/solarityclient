@@ -2511,7 +2511,7 @@ impl M2Frame {
             if !doodad_visible && !publishes_lights && environment_maps == 0 {
                 continue;
             }
-            let placement_fog_color = if doodad_scene_active && doodad_fog == Some(false) {
+            let mut placement_fog_color = if doodad_scene_active && doodad_fog == Some(false) {
                 spatial_lighting
                     .as_ref()
                     .map_or(fog_color, |(_, _, ordinary, _)| *ordinary)
@@ -2579,37 +2579,42 @@ impl M2Frame {
                 .light_parent(placement_index)
                 .and_then(|_| self.placement_visibility.light_root(placement_index))
                 .map(|root| m2_model_distance_key(camera.view() * self.placements[root].transform));
-            let root_liquid = if let Some((terrain, _, _, liquid_types)) = spatial_lighting.as_mut()
-            {
-                let root = self
-                    .placement_visibility
-                    .light_root(placement_index)
-                    .unwrap_or(placement_index);
-                let root = &mut self.placements[root];
-                if root.placement_valid
-                    && !root
-                        .entity_opacity
-                        .as_ref()
-                        .is_some_and(|owner| owner.hidden())
-                    && let Some(source) = &self.sources[root.source_index]
-                {
-                    root.entity_lighting.liquid_state(
-                        root.retirement
+            let (root_liquid, owner_fog) =
+                if let Some((terrain, _, _, liquid_types)) = spatial_lighting.as_mut() {
+                    let root = self
+                        .placement_visibility
+                        .light_root(placement_index)
+                        .unwrap_or(placement_index);
+                    let root = &mut self.placements[root];
+                    if root.placement_valid
+                        && !root
+                            .entity_opacity
                             .as_ref()
-                            .map_or(root.owner, |retired| retired.original_owner),
-                        &source.model,
-                        root.local_transform,
-                        root.scene_registration,
-                        terrain,
-                        liquid_types,
-                        camera.view(),
-                    )?
+                            .is_some_and(|owner| owner.hidden())
+                        && let Some(source) = &self.sources[root.source_index]
+                    {
+                        root.entity_lighting.scene_state(
+                            root.retirement
+                                .as_ref()
+                                .map_or(root.owner, |retired| retired.original_owner),
+                            &source.model,
+                            root.local_transform,
+                            root.scene_registration,
+                            terrain,
+                            liquid_types,
+                            camera.view(),
+                        )?
+                    } else {
+                        (solarity_rendering::M2LiquidState::Above, None)
+                    }
                 } else {
-                    solarity_rendering::M2LiquidState::Above
-                }
-            } else {
-                solarity_rendering::M2LiquidState::Above
-            };
+                    (solarity_rendering::M2LiquidState::Above, None)
+                };
+            if owner_fog == Some(false) {
+                placement_fog_color = spatial_lighting
+                    .as_ref()
+                    .map_or(fog_color, |(_, _, ordinary, _)| *ordinary);
+            }
             let placement = &mut self.placements[placement_index];
             if self.vehicle_passengers.hidden(placement_index) {
                 if let M2GpuPlacementOwner::PlayerMount { guid }
@@ -3078,7 +3083,7 @@ impl M2Frame {
                     parent,
                     center,
                     callback,
-                    doodad_scene_active.then_some(placement_fog_color),
+                    (doodad_scene_active || owner_fog.is_some()).then_some(placement_fog_color),
                 )?)
             } else {
                 None

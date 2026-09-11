@@ -38,6 +38,8 @@ pub(in crate::application::terrain_coordinator::movement) struct WorldSceneAdmis
     /// 799F80's direct callbacks also accept exterior-registered units.
     overlap_groups: HashSet<(RuntimeWorldModelMovementOwner, usize)>,
     outdoor: Option<WorldSceneDepthFrame>,
+    outdoor_clip: Option<solarity_systems::WorldSceneFrustum>,
+    frame_revision: u64,
     sky: super::sky::WorldSceneSky,
 }
 
@@ -54,6 +56,8 @@ impl WorldSceneAdmission {
         self.visible_bounds.clear();
         self.overlap_groups.clear();
         self.outdoor = None;
+        self.outdoor_clip = None;
+        self.frame_revision = self.frame_revision.wrapping_add(1);
         self.sky.begin();
         let source = camera.camera();
         let eye = source.position();
@@ -109,6 +113,7 @@ impl WorldSceneAdmission {
         if let Some(window) = outdoor_window {
             let depth = WorldSceneDepthFrame::new(eye, target)?;
             self.outdoor = Some(depth);
+            self.outdoor_clip = Some(scene.frustum_for_window(window)?);
             for index in 0..active.movement.roots.len() {
                 let reference = active.movement.roots[index];
                 // 792AD0 sends roots marked 0x400 to a separate ordered list.
@@ -356,9 +361,61 @@ impl WorldSceneAdmission {
             .flatten()
             .is_some())
     }
+
+    /// Exterior submission precedes the group drain and performs no fog write.
+    /// Indoor or direct-overlap submission commits the first accepted group's bank.
+    fn registered_model_fog(
+        &self,
+        registration: &super::super::RuntimeMovementRegistrationQuery,
+        bounds: MovementCollisionBounds,
+        sphere: (Vec3, f32),
+        previous: bool,
+    ) -> Result<bool, RuntimeMovementRegistrationError> {
+        let interior = registration
+            .selection()
+            .and_then(|selection| selection.selected())
+            .is_some_and(|candidate| candidate.hit().is_interior());
+        if !interior
+            && let (Some(depth), Some(clip)) = (self.outdoor, self.outdoor_clip)
+            && depth
+                .depth_bin([bounds.minimum(), bounds.maximum()])?
+                .is_some()
+            && clip.intersects_sphere(sphere.0, sphere.1)
+        {
+            return Ok(previous);
+        }
+        Ok(self
+            .graphics
+            .registered_model_fog(registration.references(), interior, sphere)
+            .unwrap_or(previous))
+    }
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Identifies the complete scene visitation shared by attached owner queries.
+    pub(in crate::application) fn model_scene_revision(&self) -> u64 {
+        self.active
+            .as_ref()
+            .map_or(0, |active| active.movement.scene.frame_revision)
+    }
+
+    /// Reads the owner's first accepted native fog bank without repeating its
+    /// spatial registration or confusing draw visibility with collision admission.
+    pub(in crate::application) fn model_scene_fog(
+        &self,
+        registration: &super::super::RuntimeMovementRegistrationQuery,
+        bounds: MovementCollisionBounds,
+        sphere: (Vec3, f32),
+        previous: bool,
+    ) -> Result<bool, RuntimeMovementRegistrationError> {
+        self.active.as_ref().map_or(Ok(previous), |active| {
+            active
+                .movement
+                .scene
+                .registered_model_fog(registration, bounds, sphere, previous)
+        })
+    }
+
     /// Supplies sky visibility after both camera roots and before GPU preparation.
     pub(in crate::application) fn world_model_sky_window(
         &self,

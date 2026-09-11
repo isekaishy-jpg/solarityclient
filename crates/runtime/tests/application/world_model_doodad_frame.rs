@@ -1,5 +1,8 @@
 //! Admitted exterior/portal doodads reach real pixels for static and moving WMOs.
 
+#[path = "model_owner_fog_frame.rs"]
+mod owner_fog_frame;
+
 use super::*;
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 use solarity_asset::GameObjectDisplayCatalog;
