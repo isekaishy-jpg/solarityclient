@@ -9,6 +9,7 @@ mod gpu_state;
 mod low_detail;
 mod map_weather;
 mod mesh;
+mod point_light;
 mod shadow;
 mod texture_animation;
 mod tile_mesh;
@@ -22,6 +23,7 @@ pub use low_detail::{
     TerrainLowDetailMap, TerrainLowDetailMesh, WorldHorizonScale, WorldLowDetailFrame,
 };
 pub use mesh::{TerrainChunkMeshPlan, TerrainRenderVertex};
+pub use point_light::TerrainPointLight;
 pub use shadow::{WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality};
 pub use texture_animation::TerrainTextureAnimationState;
 pub use tile_mesh::{

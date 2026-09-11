@@ -37,6 +37,9 @@ mod texture_coordinates;
 #[path = "terrain_perspective_lighting.rs"]
 mod perspective_lighting;
 
+#[path = "terrain_point_lights.rs"]
+mod point_lights;
+
 #[path = "terrain_animation.rs"]
 mod animation;
 
@@ -330,7 +333,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     )?;
     assert_eq!(draw.first_index(), 0);
     assert_eq!(draw.index_count(), 768);
-    assert_eq!(draw.push_bytes(), [0; 20]);
+    assert_eq!(draw.push_bytes(), [0; 128]);
     let fog = Vec4::new(10.0, 100.0, 0.0, 1.0);
     let world_scene = WorldFrameScene::new(
         scene,

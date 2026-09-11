@@ -55,11 +55,18 @@ layout(location = 8) in vec2 in_layer2_coordinates;
 layout(location = 9) in vec2 in_layer3_coordinates;
 #endif
 
+struct TerrainPointLight {
+    float x; float y; float z;
+    float red; float green; float blue;
+    float constant_term; float linear_term; float quadratic_term;
+};
+
 layout(push_constant) uniform TerrainDraw {
     uvec2 atlas_chunk;
     uint weighted_blending;
     uint unlit_layers;
     uint texture_animation;
+    TerrainPointLight point_lights[3];
 } draw;
 
 layout(set = 0, binding = 0) uniform TerrainScene {

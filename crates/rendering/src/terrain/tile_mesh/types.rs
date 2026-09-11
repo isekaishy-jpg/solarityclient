@@ -98,6 +98,16 @@ impl TerrainChunkDrawPlan {
         self.bounds
     }
 
+    /// Returns 7B7AF0's bounding sphere for this chunk's scene-light query.
+    #[must_use]
+    pub fn point_light_bounds(&self) -> (Vec3, f32) {
+        let [minimum, maximum] = self.bounds.map(|value| Vec3::from_array(value).as_dvec3());
+        let extent = maximum - minimum;
+        let radius =
+            ((extent.z * extent.z + extent.y * extent.y + extent.x * extent.x).sqrt() * 0.5) as f32;
+        (((minimum + maximum) * 0.5).as_vec3(), radius)
+    }
+
     /// Tests this draw's world AABB against an explicit camera frustum.
     ///
     /// # Errors

@@ -7,7 +7,7 @@ use ash::{Device, vk};
 use crate::device::VulkanError;
 use crate::{TerrainRenderVertex, TerrainSpirvProgram};
 
-const DRAW_PUSH_CONSTANT_BYTES: u32 = 20;
+const DRAW_PUSH_CONSTANT_BYTES: u32 = crate::TerrainPreparedDraw::PUSH_BYTE_SIZE as u32;
 
 /// Common scene/material descriptor and push-constant ABI.
 #[derive(Default)]

@@ -46,6 +46,12 @@ not run M2's merged-sun finalizer. Interior WMO water supplies its private sun
 before scene-light collection. The runtime builds liquid packets after all M2
 sources have published.
 
+Terrain also consumes three selected point sources, but keeps their raw diffuse
+float colors. Each chunk's transient draw carries camera-relative positions and
+the original attenuation polynomial; publication precedes its query. The
+[terrain lighting boundary](terrain-lighting.md) records shader comparisons and
+the remaining native paired-chunk query bounds.
+
 ## Interior model lighting
 
 Units and ordinary M2 GameObjects use the existing native spatial-registration

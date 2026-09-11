@@ -31,11 +31,20 @@ layout(set = 0, binding = 0) uniform TerrainScene {
     vec4 texture_offsets[64];
 } scene;
 
+// Scalar members keep each native nine-float light group at 36 bytes in
+// std430, fitting all three beside the material data in Vulkan's 128-byte minimum.
+struct TerrainPointLight {
+    float x; float y; float z;
+    float red; float green; float blue;
+    float constant_term; float linear_term; float quadratic_term;
+};
+
 layout(push_constant) uniform TerrainDraw {
     uvec2 atlas_chunk;
     uint weighted_blending;
     uint unlit_layers;
     uint texture_animation;
+    TerrainPointLight point_lights[3];
 } draw;
 
 layout(location = 1) out vec2 out_texture_coordinates;
@@ -89,7 +98,23 @@ void main() {
     // Terrain.bls lights vertices before interpolation. The normal and light
     // direction are transformed by the same camera rotation in the original.
     float diffuse_amount = clamp(dot(in_normal, scene.sun_direction.xyz), 0.0, 1.0);
-    vec3 lighting = min(scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse_amount, vec3(1.0));
+    vec3 lighting = scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse_amount;
+    for (uint index = 0; index < 3; ++index) {
+        TerrainPointLight point = draw.point_lights[index];
+        vec3 color = vec3(point.red, point.green, point.blue);
+        if (any(notEqual(color, vec3(0.0)))) {
+            // Terrain.bls VS64..127 transforms camera-relative light positions,
+            // then adds diffuse-only attenuation before the final color clamp.
+            vec3 delta = mat3(scene.view) * vec3(point.x, point.y, point.z) - view_position.xyz;
+            float distance_to_light = length(delta);
+            vec3 normal = mat3(scene.view) * in_normal;
+            float amount = clamp(dot(normal, delta / distance_to_light), 0.0, 1.0);
+            float denominator = point.constant_term + point.linear_term * distance_to_light
+                + point.quadratic_term * distance_to_light * distance_to_light;
+            lighting += color * amount / denominator;
+        }
+    }
+    lighting = min(lighting, vec3(1.0));
     out_vertex_light = lighting * in_color_rgb;
     out_vertex_specular = vec3(0.0);
     if (scene.specular_color_and_power.w > 0.0) {

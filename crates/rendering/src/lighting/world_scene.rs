@@ -119,6 +119,31 @@ impl ScenePointLights {
         Ok(lighting.with_point_lights(&points[..count]))
     }
 
+    /// Selects 7D0050's first three point lights for one terrain bounding sphere.
+    /// Terrain retains raw float colors; water's separate byte conversion does
+    /// not apply. Positions are relative to the camera before shader rotation.
+    ///
+    /// # Errors
+    /// Returns the same spatial validation failures as [`Self::query`].
+    pub fn terrain_lighting(
+        &self,
+        center: Vec3,
+        radius: f32,
+        camera_position: Vec3,
+    ) -> Result<[crate::TerrainPointLight; 3], ScenePointLightError> {
+        let selected = self.query(center, radius)?;
+        let mut points = [crate::TerrainPointLight::disabled(); 3];
+        for (slot, index) in selected.indices().into_iter().flatten().take(3).enumerate() {
+            let point = self.points[index];
+            points[slot] = crate::TerrainPointLight::new(
+                point.position() - camera_position,
+                point.diffuse(),
+                Vec3::new(0.0, 0.7, 0.03),
+            );
+        }
+        Ok(points)
+    }
+
     /// Selects the native spatial candidates for one model's lighting center.
     ///
     /// CM2 queries have radius zero; procedural water can supply a batch radius.

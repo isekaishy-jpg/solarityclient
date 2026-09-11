@@ -414,6 +414,14 @@ It captures 384 offsets and 12 mixed animated/stationary four-layer frames.
 python tools/ghidra/terrain_animation_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_animation_native.txt
 ```
 
+`terrain_point_light_oracle.py` runs original single-chunk registration, light
+publication/query and constant production, then captures 32 unchanged shader
+frames. Native paired-chunk admission is a separate query-bounds owner.
+
+```text
+python tools/ghidra/terrain_point_light_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_point_lights_native.txt
+```
+
 `world_texture_filter_oracle.py` captures 960 native filtering/cache-prefix cases.
 It substitutes the device-capability query and stops before texture-cache lookup
 or allocation. See [world texture sampling](../../docs/architecture/world-texture-sampling.md)

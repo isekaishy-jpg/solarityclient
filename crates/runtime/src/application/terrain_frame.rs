@@ -798,15 +798,6 @@ impl TerrainFrame {
         self.world_models.update_game_object_states(game_objects)?;
         profile.mark("object states");
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
-        self.visible_draws.clear();
-        for tile in &self.tiles {
-            for (chunk, draw) in tile.plan.chunks().iter().zip(&tile.draws) {
-                if chunk.is_visible(frustum)? {
-                    self.visible_draws.push(*draw);
-                }
-            }
-        }
-        profile.mark("terrain culling");
         self.ground_detail
             .prepare(renderer, terrain.resident_tiles(), camera, frustum)?;
         profile.mark("ground detail");
@@ -914,6 +905,27 @@ impl TerrainFrame {
             shadow_projection,
         )?;
         profile.mark("M2 packets");
+        self.visible_draws.clear();
+        for tile in &self.tiles {
+            for (chunk, draw) in tile.plan.chunks().iter().zip(&tile.draws) {
+                if chunk.is_visible(frustum)? {
+                    // Animated M2 sources publish before terrain queries them.
+                    // Copy the resident packet so retired lights cannot persist.
+                    let draw = if m2.scene_points.points().is_empty() {
+                        *draw
+                    } else {
+                        let (center, radius) = chunk.point_light_bounds();
+                        draw.with_point_lights(m2.scene_points.terrain_lighting(
+                            center,
+                            radius,
+                            camera.camera().position(),
+                        )?)
+                    };
+                    self.visible_draws.push(draw);
+                }
+            }
+        }
+        profile.mark("terrain culling and point lights");
         let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera);
         self.liquid_draws.clear();
         for batch in self.tiles.iter().flat_map(|tile| &tile.liquids) {

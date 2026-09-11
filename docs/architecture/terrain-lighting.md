@@ -37,9 +37,21 @@ MCLY `0x80` selects unlit diffuse color independently for each layer. `7D2D70`
 writes the pixel constant mask; Terrain1 variants 16..31 apply diffuse lighting
 to ordinary layers before composition and retain the unlit layer's sampled RGB.
 Both kinds retain texture alpha for specular and still receive shadows and fog.
-The shared 20-byte draw push block carries atlas coordinates, blend mode,
-the unlit mask and four packed animation flags in both terrain-only and
-combined-world command recording.
+The shared draw push block carries atlas coordinates, blend mode, the unlit mask,
+four packed animation flags and three point lights in both terrain-only and
+combined-world command recording. Scalar packing keeps this within Vulkan's
+guaranteed 128-byte capacity.
+
+Terrain consumes the first three scene point lights selected for each chunk's
+bounding sphere. `7B7AF0` computes the midpoint and half-diagonal radius;
+`7D0050` runs the native scene query and copies `8349E0`'s raw diffuse and
+attenuation values. Positions are camera-relative before view rotation.
+Terrain.bls variants 64..127 add the three attenuated Lambert terms before the
+final diffuse clamp and MCCV multiplication. Point lights do not add specular.
+The runtime queries after animated M2 sources publish and builds transient draws
+from immutable resident packets, so removed sources cannot leave stale lighting.
+Native paired-chunk admission uses the union of both chunks' bounds; reproducing
+that pairing for light selection remains the next integration step.
 
 MCNR components retain their stored XYZ order. The dependency names its three
 stored fields `x, z, y` and exposes a Y-up conversion; using that conversion
@@ -94,6 +106,12 @@ permutation using `CE049D`, derived from the specular setting and shader support
   four patterned layers, different speeds and directions, and stationary layers.
   Authored ADT/BLP Vulkan draws compare nine RGB samples per frame within two
   byte values. The former renderer fails after the first nonzero update.
+- `terrain_point_light_oracle.py`: 32 native chunk registrations, scene queries,
+  point register sets and unchanged shader frames. Zero, one, three and six
+  sources exercise selection and the three-light limit, with raw color ranges,
+  MCCV, specular toggles and local/Durotar origins. Sphere and point register
+  components match bit for bit; nine RGB samples per frame use a two-byte
+  tolerance. The former shader fails the first stronger point contribution.
 - `terrain_lighting_shader_oracle.py`: 72 colored D3D9 outputs from the original
   Terrain.bls/Terrain1.bls bytecode. The Vulkan ADT/BLP integration checks the
   48 binary-shadow cases, including no MCCV, neutral MCCV, bright tints,

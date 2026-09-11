@@ -122,9 +122,9 @@ pub use terrain::{
     GroundDetailModel, GroundDetailPlacement, GroundDetailVertex,
     TERRAIN_MATERIAL_ATLAS_BYTE_COUNT, TERRAIN_MATERIAL_ATLAS_WIDTH, TerrainChunkDrawPlan,
     TerrainChunkMeshPlan, TerrainDetailChunk, TerrainLowDetailMap, TerrainLowDetailMesh,
-    TerrainRenderVertex, TerrainSceneUniform, TerrainTextureAnimationState, TerrainTileMeshPlan,
-    TerrainTileMeshPlanError, WorldHorizonScale, WorldLowDetailFrame, WorldShadowProjection,
-    WorldShadowProjectionError, WorldShadowQuality,
+    TerrainPointLight, TerrainRenderVertex, TerrainSceneUniform, TerrainTextureAnimationState,
+    TerrainTileMeshPlan, TerrainTileMeshPlanError, WorldHorizonScale, WorldLowDetailFrame,
+    WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality,
 };
 pub use ui::{
     UiMeshPlan, UiMeshPlanError, UiRenderBatch, UiRenderBlend, UiRenderMask, UiRenderQuad,

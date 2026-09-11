@@ -12,9 +12,13 @@ pub struct TerrainPreparedDraw {
     index_count: u32,
     atlas_chunk: [u8; 2],
     material_flags: [u32; 3],
+    point_light_words: [u32; 27],
 }
 
 impl TerrainPreparedDraw {
+    /// Complete draw block, within Vulkan's guaranteed 128-byte push capacity.
+    pub const PUSH_BYTE_SIZE: usize = 128;
+
     pub(super) const fn new(
         mesh: TerrainMeshHandle,
         pipeline: TerrainPipelineHandle,
@@ -32,7 +36,24 @@ impl TerrainPreparedDraw {
             index_count,
             atlas_chunk,
             material_flags,
+            point_light_words: [0; 27],
         }
+    }
+
+    /// Captures this frame's selected terrain point lights without changing mesh
+    /// or material ownership. An unmodified resident draw has no point lights.
+    #[must_use]
+    pub fn with_point_lights(mut self, lights: [crate::TerrainPointLight; 3]) -> Self {
+        for (words, light) in self
+            .point_light_words
+            .as_chunks_mut::<9>()
+            .0
+            .iter_mut()
+            .zip(lights)
+        {
+            words.copy_from_slice(&light.words());
+        }
+        self
     }
 
     /// Returns the shared resident ADT geometry identity.
@@ -67,13 +88,13 @@ impl TerrainPreparedDraw {
 
     /// Serializes atlas coordinates, lighting flags, and packed layer animation.
     #[must_use]
-    pub const fn push_bytes(self) -> [u8; 20] {
+    pub const fn push_bytes(self) -> [u8; Self::PUSH_BYTE_SIZE] {
         let x = (self.atlas_chunk[0] as u32).to_le_bytes();
         let y = (self.atlas_chunk[1] as u32).to_le_bytes();
         let blend = self.material_flags[0].to_le_bytes();
         let unlit = self.material_flags[1].to_le_bytes();
         let animation = self.material_flags[2].to_le_bytes();
-        [
+        let material = [
             x[0],
             x[1],
             x[2],
@@ -94,6 +115,23 @@ impl TerrainPreparedDraw {
             animation[1],
             animation[2],
             animation[3],
-        ]
+        ];
+        let mut bytes = [0; Self::PUSH_BYTE_SIZE];
+        let mut index = 0;
+        while index < material.len() {
+            bytes[index] = material[index];
+            index += 1;
+        }
+        let mut word = 0;
+        while word < self.point_light_words.len() {
+            let value = self.point_light_words[word].to_le_bytes();
+            let offset = material.len() + word * 4;
+            bytes[offset] = value[0];
+            bytes[offset + 1] = value[1];
+            bytes[offset + 2] = value[2];
+            bytes[offset + 3] = value[3];
+            word += 1;
+        }
+        bytes
     }
 }
