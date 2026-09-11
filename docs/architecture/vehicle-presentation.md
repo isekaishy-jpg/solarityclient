@@ -297,12 +297,12 @@ evidence above.
 
 ## Testing package
 
-Build **000101** (`0.0.3a`) installs source revision
-`62adf096585c15bb5918b6c808ca0f012d10fa93` through the persistent Testing launcher.
+Build **000102** (`0.0.3a`) installs source revision
+`21b2f4126cce434fb0620eb0aa2d3f6317d38990` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`27ac78db539003f3348ffb9986f77fe6d95876d8c1c4ade93177446e9a76b4ea`.
+`4a5de3623851ff70e6a6f6889dc28adc1e21aac3deccd3e73552715102a8b27a`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
 passenger frames, final local/remote world projection and settled animated
 seats with mounted riders and shared lighting/shadow/sorting ancestry. Remote
@@ -327,8 +327,15 @@ Mount creation and movement updates use their own authored stride speed and
 outgoing variation phase. Rate changes beyond the native 0.01 tolerance submit
 a new weighted primary; unchanged requests retain the timer and random stream.
 
-This package passes 1,265 locked workspace tests with 23 archive-dependent
-tests ignored; runtime passes 302 with 18 ignored. Three explicit stock archive
+Queued mount jump and landing requests now execute before rider slots. Ordinary
+mount completion runs before culling, with independent corpse/variation policy
+and the native body overrides. Body replacement preserves the mount timer and
+pending requests; dismount consumes earlier mounted requests in order.
+
+The locked workspace run passed 1,274 tests with 23 archive-dependent
+tests ignored; runtime passed 311 with 18 ignored. A final targeted run passed
+23 mount checks, including an additional expired-record boundary test.
+Three explicit stock archive
 tests also pass, covering character movement, jump variations and drowning/death
 playback, plus the stock water-effect prepare/simulate/retire test. Native scene
 traversal matches 480 captured cases; a GPU regression checks callback ordering
@@ -339,10 +346,16 @@ weighted selections and replace constructor fallback modes for forward movement.
 Another 240 native mount-commit cases establish the rate threshold and submitted
 arguments. Timer tests cover phase and random draws; GPU tests verify mount
 creation and speed changes for local players, remote players and creatures.
+Another 504 native dispatch records cover model completion flags, body/mount
+admission masks and live/dead routing. Runtime comparisons check all 56 ordinary
+active-record cases against independent body/upper/mount timers. An offscreen GPU
+test verifies jump/loop/landing/idle progression and exact shared random draws for
+local players, remote players and creatures.
 Workspace/all-target Clippy with warnings denied, formatting and
 whitespace checks pass. Vehicle active mover selection, active spell/control
 providers, transfer lifecycle, special cameras and combined live travel remain
-open. Higher-level mount completion and movement/action policy, generic model
+open. Vehicle-controlled mount completion, flight/action latches, weapon-ready
+conversion, remaining action-priority providers, generic model
 event consumers, native scene registration order and sound callback age remain
 separate integration work.
 This package does not establish a performance improvement or the 1,200 FPS target.
