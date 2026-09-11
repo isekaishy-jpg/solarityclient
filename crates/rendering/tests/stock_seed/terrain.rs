@@ -31,6 +31,9 @@ mod fog;
 #[path = "terrain_lighting.rs"]
 mod lighting;
 
+#[path = "terrain_texture_coordinates.rs"]
+mod texture_coordinates;
+
 #[path = "terrain_retirement.rs"]
 mod retirement;
 
@@ -110,8 +113,8 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
     assert_eq!(mesh.layers().len(), 1);
     assert!(mesh.indices().iter().all(|index| *index < 145));
     assert_eq!(mesh.vertices()[0].texture_coordinates(), [0.0, 0.0]);
-    assert_eq!(mesh.vertices()[9].texture_coordinates(), [0.25, 0.25]);
-    assert_eq!(mesh.vertices()[144].texture_coordinates(), [4.0, 4.0]);
+    assert_eq!(mesh.vertices()[9].texture_coordinates(), [0.5, 0.5]);
+    assert_eq!(mesh.vertices()[144].texture_coordinates(), [8.0, 8.0]);
     assert_eq!(
         mesh.vertices()[0].alpha_coordinates(),
         [0.5 / 64.0, 0.5 / 64.0]

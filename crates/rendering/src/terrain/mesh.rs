@@ -11,7 +11,9 @@ use crate::{WorldCameraError, WorldFrustum};
 const TERRAIN_SQUARES_PER_CHUNK: usize = 8;
 const TERRAIN_UNITS_PER_CHUNK: f32 = 33.333_332;
 const TERRAIN_UNIT_SIZE: f32 = TERRAIN_UNITS_PER_CHUNK / TERRAIN_SQUARES_PER_CHUNK as f32;
-const TERRAIN_TEXTURE_REPEATS_PER_CHUNK: f32 = 4.0;
+// 7C3D90 divides -1 by the negative native grid unit; 7D0050 publishes
+// its negative as c18.xy. This gives eight repeats over one 8-square chunk.
+const TERRAIN_TEXTURE_SCALE: f32 = -1.0 / TERRAIN_UNIT_SIZE;
 const TERRAIN_ALPHA_TEXEL_CENTER: f32 = 0.5 / 64.0;
 const TERRAIN_ALPHA_TEXEL_SPAN: f32 = 63.0 / 64.0;
 const VERTICES_PER_CHUNK: usize = 145;
@@ -247,21 +249,20 @@ fn prepare_vertices(chunk: &TerrainChunk) -> Vec<TerrainRenderVertex> {
             let row_units = logical_row as f32 * 0.5;
             let column_units = column as f32 + if inner { 0.5 } else { 0.0 };
             let color_bgra = chunk.vertex_colors_bgra().map(|colors| colors[index]);
+            let position = [
+                base[0] - row_units * TERRAIN_UNIT_SIZE,
+                base[1] - column_units * TERRAIN_UNIT_SIZE,
+                base[2] + chunk.heights()[index],
+            ];
             vertices.push(TerrainRenderVertex {
-                position: [
-                    base[0] - row_units * TERRAIN_UNIT_SIZE,
-                    base[1] - column_units * TERRAIN_UNIT_SIZE,
-                    base[2] + chunk.heights()[index],
-                ],
+                position,
                 normal: chunk.normals()[index],
-                // Stock ground color repeats four times over each MCNK. World
-                // coordinates keep shared edges bit-identical across chunks.
+                // Terrain.bls subtracts the retained chunk origin (c23),
+                // swaps world XY, and applies the native c18 scale. Keep the
+                // subtraction before multiplication at large world coordinates.
                 texture_coordinates: [
-                    -(base[1] - column_units * TERRAIN_UNIT_SIZE)
-                        * TERRAIN_TEXTURE_REPEATS_PER_CHUNK
-                        / TERRAIN_UNITS_PER_CHUNK,
-                    -(base[0] - row_units * TERRAIN_UNIT_SIZE) * TERRAIN_TEXTURE_REPEATS_PER_CHUNK
-                        / TERRAIN_UNITS_PER_CHUNK,
+                    (position[1] - base[1]) * TERRAIN_TEXTURE_SCALE,
+                    (position[0] - base[0]) * TERRAIN_TEXTURE_SCALE,
                 ],
                 // Alpha data has 64 authored samples, not wraparound texels.
                 // Insets sample their centers and prevent adjacent atlas bleed.

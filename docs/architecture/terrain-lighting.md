@@ -5,6 +5,18 @@ color values in the existing UNORM world framebuffer. Their former sRGB
 uploads introduced transfer decoding that the world composition did not undo.
 The draw validators and WMO fallback image use the same interpretation.
 
+Ordinary terrain diffuse coordinates now follow the native eight repeats per
+MCNK. `7C3C60` builds the negative grid unit `-4.1666665077`; `7C3D90` divides
+the original constant `-1` by that unit. `7D0050` publishes the negative result
+in c18 onward, and the unchanged Terrain vertex shader applies it to swapped
+XY after subtracting the retained chunk origin in c23. The previous four-repeat
+absolute-world mapping halved visible texture density. This correction changes
+texture coordinates, not world geometry, camera projection or alpha-map density.
+
+The [shared file texture policy](world-texture-sampling.md) independently controls
+filtering and authored mip selection. Animated layer offsets and other native
+material families retain their separate implementation work.
+
 MCNR components retain their stored XYZ order. The dependency names its three
 stored fields `x, z, y` and exposes a Y-up conversion; using that conversion
 swapped world Y and Z. Native `7C4620` instead multiplies each consecutive
@@ -40,6 +52,16 @@ permutation using `CE049D`, derived from the specular setting and shader support
 ## Evidence
 
 - `terrain_vertex_oracle.py`: 145 unchanged native vertex-builder outputs.
+- `terrain_texture_coordinates_oracle.py`: eight original constant sets covering
+  one through four diffuse layers at two chunk origins. Unchanged Terrain and
+  Terrain1 bytecode renders a patterned texture at local and Durotar coordinates;
+  the Vulkan ADT/BLP test compares all 8,192 pixels within two RGB byte values.
+  The former four-repeat mapping fails this comparison (first red sample 150
+  instead of the native 100); the native scale and chunk-relative origin pass.
+  The full rendering suite, strict Clippy checks and optimized capture build
+  pass. Stationary and orbit Durotar captures at 2560 by 1440 show the restored
+  texture density with the same 16x filtering, camera, UI and equipped NPCs.
+  The conspicuous bright highlights remain a separate lighting investigation.
 - `terrain_shadow_texture_oracle.py`: 12 complete native shadow textures,
   including absent input, both texture formats, and edge modes.
 - `terrain_lighting_shader_oracle.py`: 72 colored D3D9 outputs from the original

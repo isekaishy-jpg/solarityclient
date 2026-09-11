@@ -376,6 +376,17 @@ python tools/ghidra/ui_scale_oracle.py <path-to-Wow.exe> crates/ui/tests/fixture
 
 ## World file texture filtering
 
+`terrain_texture_coordinates_oracle.py` executes original grid/UV constant setup
+and then unchanged terrain shaders over a patterned texture. The two 64x64
+frames distinguish texture density and chunk-relative phase at local and large
+world coordinates. Graphics allocation, lighting queries and shader selection
+are intercepted during constant setup; the native D3D9 shader frames are rendered
+offscreen. Animated layer offsets are outside this capture.
+
+```text
+python tools/ghidra/terrain_texture_coordinates_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_texture_coordinates_native.txt
+```
+
 `world_texture_filter_oracle.py` captures 960 native filtering/cache-prefix cases.
 It substitutes the device-capability query and stops before texture-cache lookup
 or allocation. See [world texture sampling](../../docs/architecture/world-texture-sampling.md)
