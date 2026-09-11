@@ -14,6 +14,15 @@ belongs to the smaller class. The distance center comes from `004F5E80`'s
 render-box midpoint transformed by the placement matrix; collision bounds and
 the placement origin are not substitutes.
 
+An entirely reversed render box is the native empty-box sentinel. `007BDB10`
+replaces it with a point at the placement origin before classifying size.
+Partially reversed boxes still pass through the axis-product transform; each
+axis contribution is stored as float after x87 arithmetic. The runtime uses
+these same rules for scenery distance and shadow registration. Orgrimmar's
+`KL_AUCTIONHOUSECOLLIDE.M2` uses minimum `FLT_MAX`, maximum `-FLT_MAX`, and radius
+zero. Treating those bounds as an enormous box previously let its shadow query
+reach invalid unit-style registration during the elevated travel replay.
+
 | Maximum dimension | Far distance at detail 1 | Fade width |
 | --- | ---: | ---: |
 | <= 1 | 30 | 5 |
@@ -44,6 +53,10 @@ the final model-activation side effect is stubbed. Its 486 checked-in cases
 cover category boundaries, rotated/translated bounds, all three detail settings,
 fade endpoints and opacity snaps. The runtime regression compares resulting
 opacity, including exact visible/hidden snaps. No test requires a local client.
+Another 294 direct `007BDB10` executions cover every reversed-axis combination,
+the actual empty-box sentinel, signed/scaled transforms, and exact class results.
+The offscreen scenery regression also exercises the sentinel through real Vulkan
+packet preparation.
 
 The broader world renderer still needs independent work on far WMO placements,
 other entity fog consumers, shadows and streaming costs.

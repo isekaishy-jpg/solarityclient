@@ -87,6 +87,9 @@ uses the scenery fade-start square, so ordinary scenery stops casting before
 its visible fade band. Unit and standalone game-object registrations retain
 their independent radius limits. Attachments inherit root map membership and
 reuse the same sampled palette across visible and shadow packets.
+Scenery uses `007BDB10`'s empty-render-box fallback and affine bounds rather than
+the stricter unit registration constructor; collision-only M2 sentinels remain
+point bounds and use the smallest distance class.
 
 WMO collection visits resident exterior groups (`MOGP & 0x48`) independently of
 portal visibility. Their MODR membership admits attached doodads, and moving

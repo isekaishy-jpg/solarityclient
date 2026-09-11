@@ -4,6 +4,47 @@ use glam::{Mat4, Vec3};
 
 use super::distance::SceneryDistance;
 
+/// Collision-only scenery retains a point instead of expanding its empty box.
+#[test]
+fn scenery_bounds_and_size_class_match_original_inverted_box_rules()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut count = 0;
+    for line in include_str!("fixtures/scenery_bounds_native.txt")
+        .lines()
+        .skip(1)
+    {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        let bits = fields[..28]
+            .iter()
+            .map(|field| u32::from_str_radix(field, 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let values = bits.iter().copied().map(f32::from_bits).collect::<Vec<_>>();
+        let minimum = Vec3::from_slice(&values[..3]);
+        let maximum = Vec3::from_slice(&values[3..6]);
+        let transform = Mat4::from_cols_array(values[6..22].try_into()?);
+        let (low, high) = SceneryDistance::world_bounds(minimum, maximum, transform);
+        let actual = low
+            .to_array()
+            .into_iter()
+            .chain(high.to_array())
+            .map(f32::to_bits)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, bits[22..28], "{line}");
+        let category = fields[28].parse::<usize>()?;
+        let scenery = SceneryDistance::new(minimum, maximum, transform);
+        for (minimum_class, depth) in [0., 30., 100., 200., 750.].into_iter().enumerate() {
+            assert_eq!(
+                scenery.admits_group(depth, 1.),
+                category >= minimum_class,
+                "{line}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 294);
+    Ok(())
+}
+
 /// Shadow distance cuts off before the ordinary fade band, including equality.
 #[test]
 fn scenery_shadow_distance_matches_native_fade_start() -> Result<(), Box<dyn std::error::Error>> {

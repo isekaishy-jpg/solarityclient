@@ -230,26 +230,33 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
     let mut animated = model.clone();
     let bone = u32::from_le_bytes(animated[0x30..0x34].try_into()?) as usize;
     animated[bone + 4..bone + 8].copy_from_slice(&0x200u32.to_le_bytes());
+    let mut empty_bounds = model.clone();
+    empty_bounds[0xa0..0xac].copy_from_slice(&f32::MAX.to_le_bytes().repeat(3));
+    empty_bounds[0xac..0xb8].copy_from_slice(&(-f32::MAX).to_le_bytes().repeat(3));
+    empty_bounds[0xb8..0xbc].copy_from_slice(&0f32.to_le_bytes());
     let skin = game_object_models::skin()?;
     let fixture = ClientFixture::with_common_files(&[
         ("Static.m2", &model),
         ("Static00.skin", &skin),
         ("Animated.m2", &animated),
         ("Animated00.skin", &skin),
+        ("EmptyBounds.m2", &empty_bounds),
+        ("EmptyBounds00.skin", &skin),
     ])?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let models = ["Static.m2", "Animated.m2"].map(|path| -> Result<_, Box<dyn Error>> {
-        Ok(Arc::new(DecodedM2Model::load(
-            &mut store,
-            &AssetPath::new(path)?,
-        )?))
-    });
-    let [static_model, animated_model] = models;
-    let models = [static_model?, animated_model?];
+    let models =
+        ["Static.m2", "Animated.m2", "EmptyBounds.m2"].map(|path| -> Result<_, Box<dyn Error>> {
+            Ok(Arc::new(DecodedM2Model::load(
+                &mut store,
+                &AssetPath::new(path)?,
+            )?))
+        });
+    let [static_model, animated_model, empty_bounds_model] = models;
+    let models = [static_model?, animated_model?, empty_bounds_model?];
     let _lock = SDL_TEST_LOCK.lock().map_err(|_| "SDL lock poisoned")?;
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -312,10 +319,16 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
         100.,
     )
     .frame(1.)?;
-    let animated_mesh = frame.sources[1]
-        .as_ref()
-        .and_then(|source| source.mesh)
-        .ok_or("missing animated mesh")?;
+    let meshes = frame
+        .sources
+        .iter()
+        .map(|source| {
+            source
+                .as_ref()
+                .and_then(|source| source.mesh)
+                .ok_or("missing fixture mesh")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let elevated = |draw: solarity_rendering::M2PreparedDraw| {
         draw.material().to_bytes()[56..60] == 10f32.to_le_bytes()
     };
@@ -328,7 +341,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
             WorldShadowProjection::primary(quality, center, camera.camera().position(), -Vec3::Z)?
                 .with_camera_culling(camera);
         let doodads = Default::default();
-        let mut observed = [false; 4];
+        let mut observed = [false; 6];
         for step in 0..9 {
             let updates = state.advance(center)?;
             let environment = WorldEnvironmentShadowFrame::new(
@@ -357,7 +370,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
                     doodads: &doodads,
                 }),
             )?;
-            assert_eq!(visible.draws.len(), 2);
+            assert_eq!(visible.draws.len(), 3);
             assert!(
                 visible.shadow_draws.is_empty(),
                 "scenery uses its own primary membership"
@@ -369,12 +382,16 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
                 .count();
             assert_eq!(
                 visible.bone_transforms.len(),
-                2 + offscreen,
+                3 + offscreen,
                 "each visible or shadow-only model owns one shared bone palette"
             );
             for caster in visible.environment_shadow_draws {
-                let animated = caster.draw.mesh() == animated_mesh;
-                observed[usize::from(animated) * 2 + usize::from(elevated(caster.draw))] = true;
+                let source = meshes
+                    .iter()
+                    .position(|mesh| *mesh == caster.draw.mesh())
+                    .ok_or("unknown fixture caster mesh")?;
+                let animated = source == 1;
+                observed[source * 2 + usize::from(elevated(caster.draw))] = true;
                 if quality == WorldShadowQuality::EnvironmentLow {
                     assert_eq!(caster.maps & 8 != 0, animated);
                     assert_eq!(caster.maps & 7 != 0, !animated);
@@ -382,11 +399,12 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
             }
         }
         assert_eq!(
-            observed, [true; 4],
-            "both caster classes include the offscreen prop"
+            observed, [true; 6],
+            "both caster classes and the empty-box sentinel include the offscreen prop"
         );
         assert_eq!(frame.placements[1].last_effect_time_ms, 0);
         assert_eq!(frame.placements[3].last_effect_time_ms, 0);
+        assert_eq!(frame.placements[5].last_effect_time_ms, 0);
     }
     renderer.shutdown()?;
     Ok(())

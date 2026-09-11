@@ -31,20 +31,27 @@ impl SceneryDistance {
     pub(super) fn admits_group(self, depth: f32, detail: f32) -> bool {
         self.category >= minimum_category(depth, detail)
     }
-    /// Replays 7F9430's affine bounds and 7BDD31's inclusive class thresholds.
-    pub(super) fn new(minimum: Vec3, maximum: Vec3, transform: Mat4) -> Self {
+    /// 7BDB10 uses the placement origin when every render-box axis is reversed.
+    /// Otherwise 7F9430 orders each product, even for partially reversed boxes,
+    /// retaining x87 precision until each axis contribution is stored as float.
+    pub(super) fn world_bounds(minimum: Vec3, maximum: Vec3, transform: Mat4) -> (Vec3, Vec3) {
         let mut world_minimum = transform.w_axis.truncate();
         let mut world_maximum = world_minimum;
-        for (axis, low, high) in [
-            (transform.x_axis.truncate(), minimum.x, maximum.x),
-            (transform.y_axis.truncate(), minimum.y, maximum.y),
-            (transform.z_axis.truncate(), minimum.z, maximum.z),
-        ] {
-            let first = axis * low;
-            let second = axis * high;
-            world_minimum += first.min(second);
-            world_maximum += first.max(second);
+        if minimum.cmple(maximum).any() {
+            for axis in 0..3 {
+                let basis = transform.col(axis).truncate().as_dvec3();
+                let first = basis * f64::from(minimum[axis]);
+                let second = basis * f64::from(maximum[axis]);
+                world_minimum = (world_minimum.as_dvec3() + first.min(second)).as_vec3();
+                world_maximum = (world_maximum.as_dvec3() + first.max(second)).as_vec3();
+            }
         }
+        (world_minimum, world_maximum)
+    }
+
+    /// Replays 7BDB10's affine bounds and 7BDD31's inclusive class thresholds.
+    pub(super) fn new(minimum: Vec3, maximum: Vec3, transform: Mat4) -> Self {
+        let (world_minimum, world_maximum) = Self::world_bounds(minimum, maximum, transform);
         let size = (world_maximum - world_minimum).max_element();
         let category = [1.0, 4.0, 15.0, 100.0]
             .iter()

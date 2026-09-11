@@ -115,8 +115,24 @@ pub(super) fn environment_maps(
             return Ok(0);
         }
     }
-    let registration = UnitSceneRegistration::new(&source.model, placement.transform)?;
-    let mut maps = queries.admission.admitted_maps(registration.bounds) & possible_maps;
+    let bounds = if matches!(
+        kind,
+        ModelShadowKind::StaticScenery
+            | ModelShadowKind::AnimatedScenery
+            | ModelShadowKind::MovingWorldModelDoodad
+    ) {
+        let authored = source.model.bounds();
+        let (minimum, maximum) = SceneryDistance::world_bounds(
+            authored.minimum(),
+            authored.maximum(),
+            placement.transform,
+        );
+        solarity_systems::MovementCollisionBounds::new(minimum, maximum)
+            .map_err(crate::application::RuntimeMovementRegistrationError::from)?
+    } else {
+        UnitSceneRegistration::new(&source.model, placement.transform)?.bounds
+    };
+    let mut maps = queries.admission.admitted_maps(bounds) & possible_maps;
     if let Some(owner) = super::doodad_scene::owner_key(owner) {
         maps &= queries.doodads.get(&owner).copied().unwrap_or(0);
     }
