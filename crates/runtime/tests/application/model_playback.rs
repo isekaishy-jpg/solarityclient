@@ -273,20 +273,37 @@ fn unit_effect_load_callback_matches_original_timers_and_random_draws() -> Resul
 fn mount_requests_preserve_weighted_primaries_and_replace_default_fallback_modes()
 -> Result<(), Box<dyn Error>> {
     use solarity_asset::M2ModelAnimationMode::Forward;
+    use solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate;
     let (model, catalog) = default_sequence_model(&[0, 0, 7], 0, 0, 1)?;
     let mut random = CrtRand::new();
     let mut playback = M2Playback::default_sequence(&model, &catalog, 20_000, &mut random)?;
     assert_eq!(playback.sequence, 1, "variation zero has no weight");
     let initial = playback.script_timer.ok_or("mount timer")?;
     let unchanged_random = random;
-    for now in [20_000., 20_001., 20_101.] {
-        playback.select_mount_animation(&model, 0, (1., 0), now, &mut random)?;
+    for now in [20_001., 20_002., 20_101.] {
+        playback.select_mount_animation(
+            &model,
+            0,
+            None,
+            (1., 0),
+            now,
+            BeforeSceneUpdate,
+            &mut random,
+        )?;
         assert_eq!(playback.sequence, 1);
         assert_eq!(playback.script_timer, Some(initial));
         assert_eq!(playback.previous_event_scene_time_ms, 20_000);
         assert_eq!(random, unchanged_random);
     }
-    playback.select_mount_animation(&model, 7, (1., 0), 20_200., &mut random)?;
+    playback.select_mount_animation(
+        &model,
+        7,
+        None,
+        (1., 0),
+        20_200.,
+        BeforeSceneUpdate,
+        &mut random,
+    )?;
     assert_eq!(playback.sequence, 2);
     assert_eq!(
         playback.script_timer.ok_or("new timer")?.start_time_ms(),
@@ -305,7 +322,15 @@ fn mount_requests_preserve_weighted_primaries_and_replace_default_fallback_modes
         let (model, catalog) = default_sequence_model(&[7], 7, flags, 1)?;
         let mut playback = M2Playback::default_sequence(&model, &catalog, 30_000, &mut random)?;
         assert_ne!(playback.script_mode, Forward);
-        playback.select_mount_animation(&model, 7, (1., 0), 30_100., &mut random)?;
+        playback.select_mount_animation(
+            &model,
+            7,
+            None,
+            (1., 0),
+            30_100.,
+            BeforeSceneUpdate,
+            &mut random,
+        )?;
         assert_eq!(playback.script_mode, Forward);
         assert_eq!(
             playback
@@ -357,13 +382,19 @@ fn mount_rate_requests_match_native_submission_and_random_consumption() -> Resul
             true,
             &mut random,
         )?;
+        // This oracle starts after 7173F0 has supplied an active old record.
+        // In particular its synthetic zero-speed record is not marked finished;
+        // actual zero-span activation is covered by the timer tests.
+        playback.script_finished = false;
         let previous = playback.script_timer;
         let mut expected_random = random;
         playback.select_mount_animation(
             &model,
             new_id,
+            None,
             (new_speed, offset),
-            20_500.,
+            20_001.,
+            BeforeSceneUpdate,
             &mut random,
         )?;
         if submitted {
@@ -374,7 +405,7 @@ fn mount_rate_requests_match_native_submission_and_random_consumption() -> Resul
                 sequence,
                 Forward,
                 new_speed,
-                20_500,
+                20_001,
                 offset,
                 cycles,
                 BeforeSceneUpdate,
@@ -388,6 +419,38 @@ fn mount_rate_requests_match_native_submission_and_random_consumption() -> Resul
         checked += 1;
     }
     assert_eq!(checked, 40);
+    Ok(())
+}
+
+#[test]
+fn mount_current_record_expires_before_its_model_callback_runs() -> Result<(), Box<dyn Error>> {
+    use solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate;
+    let (model, catalog) = default_sequence_model(&[0, 0], 0, 0, 1)?;
+    for (now, submitted) in [(20_000, true), (21_000, false), (21_001, true)] {
+        let mut random = CrtRand::new();
+        let mut playback = M2Playback::default_sequence(&model, &catalog, 20_000, &mut random)?;
+        assert!(playback.has_pending_sequence_callback());
+        let before = random;
+        // 82666B0 uses the unsigned unwrapped phase, including the negative
+        // millisecond before a BeforeSceneUpdate request's start tick.
+        let selected = playback.select_mount_animation(
+            &model,
+            0,
+            None,
+            (1., 0),
+            now as f32,
+            BeforeSceneUpdate,
+            &mut random,
+        )?;
+        assert_eq!(selected, submitted, "scene tick {now}");
+        let mut expected = before;
+        if submitted {
+            for _ in 0..2 {
+                let _roll = expected.next_u15();
+            }
+        }
+        assert_eq!(random, expected);
+    }
     Ok(())
 }
 

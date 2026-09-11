@@ -233,15 +233,23 @@ pub(super) fn prepare_mount_gpu(
             mount.particle_colors().cloned(),
             random,
         )?;
-        if let Some(playback) = &mut placement.playback {
-            select_mount_animation(
-                input.animation.map(Rc::as_ref),
-                &mut playback.borrow_mut(),
-                mount.model(),
-                mount.animation().animation_id(),
-                scene_time_ms,
-                random,
-            )?;
+        if let Some(playback) = placement.playback.take() {
+            let playback = playback.into_shared();
+            if let Some(animation) = input.animation {
+                animation.bind_mount(mount.model(), Rc::clone(&playback));
+                animation.synchronize(scene_time_ms as u32, random)?;
+            } else {
+                playback.borrow_mut().select_mount_animation(
+                    mount.model(),
+                    mount.animation().animation_id(),
+                    None,
+                    (1., 0),
+                    scene_time_ms,
+                    solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate,
+                    random,
+                )?;
+            }
+            placement.playback = Some(M2PlaybackStorage::Shared(playback));
         }
         placement.ground_placement = ground;
         placement.mount_key = Some(mount.key().clone());

@@ -15,6 +15,24 @@ timers and random consumption, then exercise stride metadata through local,
 remote-player and creature residency/update paths. The independent stride math
 is captured by `unit_movement_speed_oracle.py`.
 
+Mounted Unit_C routing and current-record normalization can be reproduced with:
+
+```powershell
+python tools/ghidra/unit_mount_owner_oracle.py <path-to-Wow.exe> crates/runtime/tests/fixtures/unit_mount_owner_native.txt
+```
+
+The 504 cases execute `7385C0`, `7173F0`, `6E6F80` and the original behavior
+predicates for ordinary, mount-only and body-only masks, live/dead admission,
+and active/finished/exhausted mount records. The request flag preserves the
+supplied weapon-ready ID; weapon selection is outside this capture. Model
+readiness, current sequence records, identity tier resolution, metadata and
+inactive combat/passenger providers are supplied. `735820`/`737EF0` submissions
+are captured rather than executed; post-commit direction/effect hooks are no-ops.
+Runtime tests compare all 56 ordinary active-record cases, including separate
+upper/body timers and dead rejection without random draws. Separate runtime
+tests cover queued movement, body replacement and ordinary mount completion in
+the shared callback scan; the capture does not prove full vehicle-control policy.
+
 The mount/body effect-binding probe executes the original authored adapter,
 unit event switch and breath factory. All live cases query the body's attachment
 17/19, independently of the emitting model and the mount's attachments:

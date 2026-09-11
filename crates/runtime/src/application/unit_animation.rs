@@ -5,7 +5,6 @@ mod mount;
 pub(super) mod passenger;
 
 use ground::UnitGroundPose;
-pub(super) use mount::select_mount_animation;
 
 #[cfg(test)]
 #[path = "../../tests/application/unit_animation.rs"]
@@ -258,6 +257,29 @@ impl UnitAnimationScene {
                 && previous.identity == identity
             {
                 replacement.opacity = Rc::clone(&previous.opacity);
+                *replacement.mount_model.get_mut() = previous.mount_model.borrow().clone();
+                // Executed movement belongs to Unit_C, not the replaced body
+                // model. Preserve its order ahead of the latest field state.
+                let pending = previous
+                    .pending
+                    .borrow_mut()
+                    .drain(..)
+                    .collect::<VecDeque<_>>();
+                if !pending.is_empty() {
+                    let needs_latest = pending
+                        .back()
+                        .is_some_and(|pending| !pending.input.same_primary_request(input));
+                    *replacement.pending.get_mut() = pending;
+                    if needs_latest {
+                        replacement
+                            .pending
+                            .get_mut()
+                            .push_back(PendingUnitAnimation {
+                                input,
+                                event: UnitMovementAnimationEventKind::Changed,
+                            });
+                    }
+                }
             }
             self.owners.insert(identity.guid(), Rc::new(replacement));
         }
@@ -315,6 +337,7 @@ pub(super) struct UnitAnimationBehavior {
     pending: RefCell<VecDeque<PendingUnitAnimation>>,
     landing: Cell<bool>,
     playback: Rc<RefCell<M2Playback>>,
+    mount_model: RefCell<Option<mount::UnitMountModel>>,
     scene_sample: RefCell<Option<UnitAnimationSceneSample>>,
     body: RefCell<UnitBodyPose>,
     ground: Rc<UnitGroundPose>,
@@ -388,6 +411,7 @@ impl UnitAnimationBehavior {
             }])),
             landing: Cell::new(false),
             playback: Rc::new(RefCell::new(M2Playback::unstarted(0, scene_time_ms))),
+            mount_model: RefCell::new(None),
             scene_sample: RefCell::new(None),
             model_color: Cell::new(u32::MAX),
             opacity: Rc::new(EntityOpacityOwner::default()),
@@ -638,6 +662,15 @@ impl UnitAnimationBehavior {
     }
 
     fn request(&self, input: UnitAnimationInput, playback: &M2Playback) -> Option<u16> {
+        self.request_for_model(input, playback, &self.model)
+    }
+
+    fn request_for_model(
+        &self,
+        input: UnitAnimationInput,
+        playback: &M2Playback,
+        model: &DecodedM2Model,
+    ) -> Option<u16> {
         // A death posture consumes locomotion changes while the primary dies.
         if input.dead() {
             return None;
@@ -654,12 +687,7 @@ impl UnitAnimationBehavior {
             if self.behavior(playback) == 201 {
                 return None;
             }
-            if self
-                .model
-                .animations()
-                .available_variation_count(202)
-                .is_some()
-            {
+            if model.animations().available_variation_count(202).is_some() {
                 return Some(202);
             }
         }
@@ -700,6 +728,15 @@ impl UnitAnimationBehavior {
     }
 
     fn transition_request(&self, input: UnitAnimationInput, playback: &M2Playback) -> Option<u16> {
+        self.transition_request_for_model(input, playback, &self.model)
+    }
+
+    fn transition_request_for_model(
+        &self,
+        input: UnitAnimationInput,
+        playback: &M2Playback,
+        model: &DecodedM2Model,
+    ) -> Option<u16> {
         // 73F330 -> 729220 -> 73AF80 is independent of the stand field.
         // 71DDE0 protects an already playing death/corpse family from restart.
         if (!input.alive && self.processed_alive.get())
@@ -727,17 +764,14 @@ impl UnitAnimationBehavior {
                 self.processed_stand.get(),
                 self.behavior(playback),
                 input.movement_flags & 0x200000 != 0,
-                self.model
-                    .animations()
-                    .available_variation_count(127)
-                    .is_some(),
+                model.animations().available_variation_count(127).is_some(),
             ) {
                 UnitStandAnimationDecision::Continue => {}
                 UnitStandAnimationDecision::Retain => return None,
                 UnitStandAnimationDecision::Select(animation) => return Some(animation),
             }
         }
-        self.request(input, playback)
+        self.request_for_model(input, playback, model)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -957,50 +991,96 @@ impl UnitAnimationBehavior {
                 break;
             };
             let input = pending.input;
-            let request = match pending.event {
-                UnitMovementAnimationEventKind::VisualKit {
-                    animation,
-                    attack_target_guid,
-                    template_flags,
-                } if matches!(self.animation_behavior(animation), 8..=10) => {
-                    self.wound(
+            // Dismount follows any captured requests that still addressed the
+            // old mount. Clearing this in set_input loses that FIFO ordering.
+            if !input.mounted {
+                self.mount_model.borrow_mut().take();
+            }
+            // A single unit request resolves against the rider's current
+            // behavior before either model changes. Native 7385C0 commits the
+            // mount first, followed by the body/upper slots.
+            let mounted_dispatch = input.mounted
+                && !matches!(pending.event,
+                    UnitMovementAnimationEventKind::VisualKit { animation, .. }
+                    if matches!(self.animation_behavior(animation), 8..=10))
+                && self.mount_model.borrow().is_some();
+            if mounted_dispatch
+                && let Some(mount) = self.mount_model.borrow().as_ref()
+                && let Some(request) = self.mount_request(pending, &playback, &mount.model)
+            {
+                let request = self.mount_sequence_request(
+                    request,
+                    &playback,
+                    &mount.model,
+                    &mount.playback.borrow(),
+                );
+                if let Some(resolved) = self.commit_mount_sequence(
+                    &mount.model,
+                    &mut mount.playback.borrow_mut(),
+                    request,
+                    input,
+                    scene_time_ms,
+                    M2SequenceStartPhase::BeforeSceneUpdate,
+                    random,
+                )? {
+                    self.commit_mounted_body(
                         &mut playback,
-                        animation,
-                        UnitAnimationInput {
-                            attack_target_guid,
-                            ..input
-                        },
-                        template_flags,
+                        resolved,
+                        input,
                         scene_time_ms,
+                        M2SequenceStartPhase::BeforeSceneUpdate,
                         random,
-                    );
-                    None
+                    )?;
                 }
-                UnitMovementAnimationEventKind::VisualKit { animation, .. } => Some(animation),
-                UnitMovementAnimationEventKind::Jump if !input.dead() && !input.mounted => {
-                    self.landing.set(false);
-                    Some(37)
-                }
-                UnitMovementAnimationEventKind::Land {
-                    previous_flags,
-                    forced,
-                    slow,
-                } if !input.dead() && !input.mounted => {
-                    self.landing.set(false);
-                    match resolve_unit_landing_animation(
+            }
+            let request = if mounted_dispatch {
+                None
+            } else {
+                match pending.event {
+                    UnitMovementAnimationEventKind::VisualKit {
+                        animation,
+                        attack_target_guid,
+                        template_flags,
+                    } if matches!(self.animation_behavior(animation), 8..=10) => {
+                        self.wound(
+                            &mut playback,
+                            animation,
+                            UnitAnimationInput {
+                                attack_target_guid,
+                                ..input
+                            },
+                            template_flags,
+                            scene_time_ms,
+                            random,
+                        );
+                        None
+                    }
+                    UnitMovementAnimationEventKind::VisualKit { animation, .. } => Some(animation),
+                    UnitMovementAnimationEventKind::Jump if !input.dead() && !input.mounted => {
+                        self.landing.set(false);
+                        Some(37)
+                    }
+                    UnitMovementAnimationEventKind::Land {
                         previous_flags,
-                        input.movement_flags,
                         forced,
                         slow,
-                    ) {
-                        UnitMovementAnimationDecision::Select(animation) => Some(animation),
-                        UnitMovementAnimationDecision::Retain => None,
-                        UnitMovementAnimationDecision::Continue => {
-                            self.transition_request(input, &playback)
+                    } if !input.dead() && !input.mounted => {
+                        self.landing.set(false);
+                        match resolve_unit_landing_animation(
+                            previous_flags,
+                            input.movement_flags,
+                            forced,
+                            slow,
+                        ) {
+                            UnitMovementAnimationDecision::Select(animation) => Some(animation),
+                            UnitMovementAnimationDecision::Retain => None,
+                            UnitMovementAnimationDecision::Continue => {
+                                self.transition_request(input, &playback)
+                            }
                         }
                     }
+                    _ => self.transition_request(input, &playback),
                 }
-                _ => self.transition_request(input, &playback),
             };
             if let Some(request) = request {
                 self.select(

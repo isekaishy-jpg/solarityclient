@@ -12,6 +12,13 @@ pub(super) enum M2PlaybackStorage {
 }
 
 impl M2PlaybackStorage {
+    pub(super) fn into_shared(self) -> Rc<RefCell<M2Playback>> {
+        match self {
+            Self::Local(playback) => Rc::new(RefCell::new(playback)),
+            Self::Shared(playback) => playback,
+        }
+    }
+
     pub(super) fn borrow(&self) -> M2PlaybackRead<'_> {
         match self {
             Self::Local(playback) => M2PlaybackRead::Local(playback),

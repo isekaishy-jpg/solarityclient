@@ -12,6 +12,9 @@ const POSES: &[u16] = &[
     115, 116, 127, 131, 132, 187, 201, 202, 224, 300, 301, 302, 304, 466, 468, 472,
 ];
 
+#[path = "unit_mount_animation.rs"]
+mod unit_mount_animation;
+
 #[test]
 fn entry_opacity_survives_model_replacement_but_not_guid_reuse() -> Result<(), Box<dyn Error>> {
     let original = owner_with_input(&[0], input(0))?;
@@ -646,12 +649,13 @@ fn mount_stride_uses_its_own_metadata_and_preserves_phase_across_speed_requests(
     let mut random = CrtRand::new();
     let mut playback =
         M2Playback::default_sequence(&mount.model, &mount.animations, 1000, &mut random)?;
-    select_mount_animation(
-        Some(&body),
-        &mut playback,
+    body.commit_mount_sequence(
         &mount.model,
-        5,
-        1000.,
+        &mut playback,
+        5.into(),
+        body.input.get(),
+        1000,
+        M2SequenceStartPhase::BeforeSceneUpdate,
         &mut random,
     )?;
     assert_eq!(
@@ -665,12 +669,13 @@ fn mount_stride_uses_its_own_metadata_and_preserves_phase_across_speed_requests(
     let mut expected_random = random;
     let _variation = expected_random.next_u15();
     let _cycles = expected_random.next_u15();
-    select_mount_animation(
-        Some(&body),
-        &mut playback,
+    body.commit_mount_sequence(
         &mount.model,
-        5,
-        1501.,
+        &mut playback,
+        5.into(),
+        body.input.get(),
+        1501,
+        M2SequenceStartPhase::BeforeSceneUpdate,
         &mut random,
     )?;
     let timer = playback.script_timer.ok_or("accelerated mount timer")?;
@@ -679,12 +684,13 @@ fn mount_stride_uses_its_own_metadata_and_preserves_phase_across_speed_requests(
     // native phase offset = (500 * 1000 / 2000) % 1000 = 250.
     assert_eq!(timer.start_time_ms(), 1336);
     assert_eq!(random, expected_random);
-    select_mount_animation(
-        Some(&body),
-        &mut playback,
+    body.commit_mount_sequence(
         &mount.model,
-        5,
-        1600.,
+        &mut playback,
+        5.into(),
+        body.input.get(),
+        1600,
+        M2SequenceStartPhase::BeforeSceneUpdate,
         &mut random,
     )?;
     assert_eq!(playback.script_timer, Some(timer));
@@ -692,12 +698,13 @@ fn mount_stride_uses_its_own_metadata_and_preserves_phase_across_speed_requests(
     input.movement_speed = 2.5;
     body.set_input(input);
     let old_phase = timer.unwrapped_time(1800);
-    select_mount_animation(
-        Some(&body),
-        &mut playback,
+    body.commit_mount_sequence(
         &mount.model,
-        4,
-        1800.,
+        &mut playback,
+        4.into(),
+        body.input.get(),
+        1800,
+        M2SequenceStartPhase::BeforeSceneUpdate,
         &mut random,
     )?;
     let offset = (old_phase * 1500 / 2000) % 1500;
@@ -723,6 +730,15 @@ fn owner_with_sequence_metadata(
     ids: &[u16],
     initial: UnitAnimationInput,
     configure: impl Fn(usize, u16, &mut [u8]),
+) -> Result<UnitAnimationBehavior, Box<dyn Error>> {
+    owner_with_model_metadata(ids, initial, configure, |_| {})
+}
+
+fn owner_with_model_metadata(
+    ids: &[u16],
+    initial: UnitAnimationInput,
+    configure: impl Fn(usize, u16, &mut [u8]),
+    configure_model: impl Fn(&mut Vec<u8>),
 ) -> Result<UnitAnimationBehavior, Box<dyn Error>> {
     let mut bytes = models::model_with_animations(ids)?;
     let key_bones = bytes.len() as u32;
@@ -782,6 +798,7 @@ fn owner_with_sequence_metadata(
         }
         configure(index, *id, &mut bytes[sequence..sequence + 64]);
     }
+    configure_model(&mut bytes);
     let skin = models::skin()?;
     let mut dbc = b"WDBC".to_vec();
     let mut definitions = POSES.iter().chain(ids).copied().collect::<Vec<_>>();

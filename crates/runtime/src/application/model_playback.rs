@@ -461,39 +461,50 @@ impl M2Playback {
     /// Mount locomotion owns a CM2Model primary timer, just like its constructor.
     /// 739113 retains an unchanged ID/rate; a rate change beyond its strict
     /// tolerance submits a new primary, including weighted/cycle rolls.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn select_mount_animation(
         &mut self,
         model: &DecodedM2Model,
         animation_id: u16,
+        variation: Option<u16>,
         timing: (f32, i32),
         animation_time_ms: f32,
+        phase: M2SequenceStartPhase,
         random: &mut CrtRand,
-    ) -> Result<(), RuntimeTerrainFrameError> {
+    ) -> Result<bool, RuntimeTerrainFrameError> {
         if model.animations().bones().is_empty()
             || model.animations().sequences().is_empty()
             || (self.animation_id == animation_id
                 && self.script_mode == M2ModelAnimationMode::Forward
+                && !self.script_finished
                 && self.script_timer.is_some_and(|timer| {
+                    // 82666B0's eighth word marks an exhausted authored
+                    // sequence range, even before its callback is dispatched.
+                    // 7173F0 then reports the old mount ID as -1.
+                    if timer.unwrapped_time(animation_time_ms as u32)
+                        >= model.animations().sequences()[self.sequence].duration_ms()
+                    {
+                        return false;
+                    }
                     let changed = (f64::from(timer.speed()) - f64::from(timing.0)).abs()
                         > f64::from(f32::from_bits(0x3c23_d70a));
                     !changed
                 }))
         {
-            return Ok(());
+            return Ok(false);
         }
         self.apply_resolved_model_sequence_variation(
             model,
             animation_id,
-            None,
+            variation,
             M2ModelAnimationMode::Forward,
             timing.0,
             timing.1,
             animation_time_ms as u32,
-            M2SequenceStartPhase::BeforeSceneUpdate,
+            phase,
             true,
             random,
-        )?;
-        Ok(())
+        )
     }
 
     /// Restarts playback when authoritative gameplay selects another base ID.

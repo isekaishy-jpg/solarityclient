@@ -120,12 +120,22 @@ impl M2Frame {
             }
             Ok(())
         };
+        let mut completed = |playback: &mut M2Playback,
+                             key: i32,
+                             animation: u16,
+                             _: u32,
+                             random: &mut CrtRand| {
+            if let Some((owner, ..)) = &body {
+                owner.complete_mount_animation(&source.model, playback, key, animation, random)?;
+            }
+            Ok(())
+        };
         placement.passenger_playback_advance =
             Some(playback.borrow_mut().clock_with_bone_callbacks(
                 &source.model,
                 now as u32,
                 random,
-                None,
+                Some(&mut completed),
                 Some(&mut event),
             )?);
         Ok(())

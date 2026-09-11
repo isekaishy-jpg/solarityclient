@@ -35,7 +35,7 @@ mod unit_shadow_tests;
 mod vehicle_passengers;
 mod visibility;
 use crate::application::entity_opacity::EntityOpacityOwner;
-use crate::application::unit_animation::{UnitAnimationBehavior, select_mount_animation};
+use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{
     M2PlayerItemIdentity, M2PreparedCharacter, UnitMountGpuInput, prepare_character_gpu,
     prepare_mount_gpu,
@@ -1546,17 +1546,20 @@ impl M2Frame {
             let Some(source) = self.sources[placement.source_index].as_ref() else {
                 return Ok(());
             };
-            if let Some(mut playback) = placement
+            if let Some(animation) = input.unit_animation() {
+                animation.synchronize(animation_time_ms as u32, random)?;
+            } else if let Some(mut playback) = placement
                 .playback
                 .as_mut()
                 .map(M2PlaybackStorage::borrow_mut)
             {
-                select_mount_animation(
-                    input.unit_animation().map(Rc::as_ref),
-                    &mut playback,
+                playback.select_mount_animation(
                     &source.model,
                     mount.animation().animation_id(),
+                    None,
+                    (1., 0),
                     animation_time_ms,
+                    solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate,
                     random,
                 )?;
             }
@@ -1636,17 +1639,20 @@ impl M2Frame {
                 let Some(source) = self.sources[placement.source_index].as_ref() else {
                     continue;
                 };
-                if let Some(mut playback) = placement
+                if let Some(animation) = input.unit_animation() {
+                    animation.synchronize(animation_time_ms as u32, random)?;
+                } else if let Some(mut playback) = placement
                     .playback
                     .as_mut()
                     .map(M2PlaybackStorage::borrow_mut)
                 {
-                    select_mount_animation(
-                        input.unit_animation().map(Rc::as_ref),
-                        &mut playback,
+                    playback.select_mount_animation(
                         &source.model,
                         mount.animation().animation_id(),
+                        None,
+                        (1., 0),
                         animation_time_ms,
+                        solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate,
                         random,
                     )?;
                 }
@@ -1732,17 +1738,20 @@ impl M2Frame {
                 let Some(source) = self.sources[placement.source_index].as_ref() else {
                     continue;
                 };
-                if let Some(mut playback) = placement
+                if let Some(animation) = input.unit_animation() {
+                    animation.synchronize(animation_time_ms as u32, random)?;
+                } else if let Some(mut playback) = placement
                     .playback
                     .as_mut()
                     .map(M2PlaybackStorage::borrow_mut)
                 {
-                    select_mount_animation(
-                        input.unit_animation().map(Rc::as_ref),
-                        &mut playback,
+                    playback.select_mount_animation(
                         &source.model,
                         mount.animation().animation_id(),
+                        None,
+                        (1., 0),
                         animation_time_ms,
+                        solarity_rendering::M2SequenceStartPhase::BeforeSceneUpdate,
                         random,
                     )?;
                 }

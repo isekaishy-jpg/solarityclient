@@ -205,8 +205,37 @@ A GPU regression supplies opposite breath attachments on mount and body, verifie
 mount-before-rider delivery and distinct event positions, and checks same-frame
 replacement effects on the body's attachment while both meshes are offscreen.
 
-Mount owner completion (`73C140`/`73BFF0`) and its vehicle-control dispatch remain
-unfinished; automatic model variations use the shared scan. Other generic models
+The ordinary mount owner completion (`73BFF0` -> `73B510`) now runs in that shared
+scan. Mount timers are bound to the retained unit owner, so each captured movement
+request resolves against the current body behavior and commits the mount before
+the body/upper slots. Jump and landing requests survive body model replacement;
+dismount consumes earlier mounted requests before detaching the binding. Without
+a new request, takeoff retains its timer until completion selects the jump loop.
+A later airborne reevaluation reads the body's behavior (`724200`), so it can
+interrupt a mount takeoff while the body still plays rider pose 91.
+
+Mount completion resumes at the current scene tick without the body callback's
+overdue offset. Direct corpse transitions retain the emitting model/key's
+variation; Unit-level corpse requests test the body's death family before taking
+the mount root's variation ordinal. Mount requests do not set the body's landing
+bit. Normal behavior-39 completion clears it; interruption checks raw IDs 39/187.
+Resolved mounted requests use `71D6B0` for mount admission and `71D800` for upper
+admission; `71D550`/`71DDE0` can force the body even under a mount-only callback
+mask. Death resolution uses the mount before the body's own model fallback.
+Finished timers and expired authored ranges are normalized to a missing current
+mount ID by `7173F0`, allowing an identical animation to be submitted again.
+
+`unit_mount_owner_oracle.py` captures 504 original-instruction dispatches with
+resident sequence providers and inactive combat/passenger providers. Runtime
+tests compare 56 ordinary live/dead dispatches, including independent body and
+upper bones. Further tests cover packet order, model replacement, corpse ordinal
+selection, terminal reissue and jump/landing progression on all three offscreen
+renderer paths with the shared CRT stream. The probe does not execute model
+commit consumers or prove the supplied providers.
+
+The `73C140` vehicle-controlled completion branch, flight-takeoff/action latches,
+weapon readiness conversion and full action-priority providers remain open.
+Other generic models
 retain the earlier single-primary path. Sound callback age,
 the complete scene registration lifecycle, Unit_C spell/action providers, equipment
 synchronization and vehicle-control animation remain open.

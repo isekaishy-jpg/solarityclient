@@ -125,7 +125,7 @@ fn build_fixture_options(
     let vehicle_seats = vehicle_entry.is_some();
     let mut ids = vec![0, 91, 96, 97, 98, 99, 100, 101];
     if mount_scale.is_some() {
-        ids.extend([4, 5]);
+        ids.extend([4, 5, 37, 38, 39, 40, 187]);
     }
     if seated_animations {
         ids.extend([115, 116, 117, 118]);
@@ -141,7 +141,7 @@ fn build_fixture_options(
             let offset = sequences + index * 64 + 32 + axis * 4;
             model[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
-        if matches!(id, 96 | 98 | 99 | 101) {
+        if matches!(id, 37 | 39 | 96 | 98 | 99 | 101) {
             model[sequences + index * 64 + 12..sequences + index * 64 + 16]
                 .copy_from_slice(&0x21_u32.to_le_bytes());
         }
