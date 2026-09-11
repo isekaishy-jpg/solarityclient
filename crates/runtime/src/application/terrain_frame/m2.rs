@@ -35,7 +35,7 @@ mod unit_shadow_tests;
 mod vehicle_passengers;
 mod visibility;
 use crate::application::entity_opacity::EntityOpacityOwner;
-use crate::application::unit_animation::UnitAnimationBehavior;
+use crate::application::unit_animation::{UnitAnimationBehavior, select_mount_animation};
 use character_residency::{
     M2PlayerItemIdentity, M2PreparedCharacter, UnitMountGpuInput, prepare_character_gpu,
     prepare_mount_gpu,
@@ -1551,7 +1551,9 @@ impl M2Frame {
                 .as_mut()
                 .map(M2PlaybackStorage::borrow_mut)
             {
-                playback.select_mount_animation(
+                select_mount_animation(
+                    input.unit_animation().map(Rc::as_ref),
+                    &mut playback,
                     &source.model,
                     mount.animation().animation_id(),
                     animation_time_ms,
@@ -1639,7 +1641,9 @@ impl M2Frame {
                     .as_mut()
                     .map(M2PlaybackStorage::borrow_mut)
                 {
-                    playback.select_mount_animation(
+                    select_mount_animation(
+                        input.unit_animation().map(Rc::as_ref),
+                        &mut playback,
                         &source.model,
                         mount.animation().animation_id(),
                         animation_time_ms,
@@ -1733,7 +1737,9 @@ impl M2Frame {
                     .as_mut()
                     .map(M2PlaybackStorage::borrow_mut)
                 {
-                    playback.select_mount_animation(
+                    select_mount_animation(
+                        input.unit_animation().map(Rc::as_ref),
+                        &mut playback,
                         &source.model,
                         mount.animation().animation_id(),
                         animation_time_ms,

@@ -234,7 +234,9 @@ pub(super) fn prepare_mount_gpu(
             random,
         )?;
         if let Some(playback) = &mut placement.playback {
-            playback.borrow_mut().select_mount_animation(
+            select_mount_animation(
+                input.animation.map(Rc::as_ref),
+                &mut playback.borrow_mut(),
                 mount.model(),
                 mount.animation().animation_id(),
                 scene_time_ms,

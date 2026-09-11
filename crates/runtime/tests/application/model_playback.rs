@@ -280,13 +280,13 @@ fn mount_requests_preserve_weighted_primaries_and_replace_default_fallback_modes
     let initial = playback.script_timer.ok_or("mount timer")?;
     let unchanged_random = random;
     for now in [20_000., 20_001., 20_101.] {
-        playback.select_mount_animation(&model, 0, now, &mut random)?;
+        playback.select_mount_animation(&model, 0, (1., 0), now, &mut random)?;
         assert_eq!(playback.sequence, 1);
         assert_eq!(playback.script_timer, Some(initial));
         assert_eq!(playback.previous_event_scene_time_ms, 20_000);
         assert_eq!(random, unchanged_random);
     }
-    playback.select_mount_animation(&model, 7, 20_200., &mut random)?;
+    playback.select_mount_animation(&model, 7, (1., 0), 20_200., &mut random)?;
     assert_eq!(playback.sequence, 2);
     assert_eq!(
         playback.script_timer.ok_or("new timer")?.start_time_ms(),
@@ -305,7 +305,7 @@ fn mount_requests_preserve_weighted_primaries_and_replace_default_fallback_modes
         let (model, catalog) = default_sequence_model(&[7], 7, flags, 1)?;
         let mut playback = M2Playback::default_sequence(&model, &catalog, 30_000, &mut random)?;
         assert_ne!(playback.script_mode, Forward);
-        playback.select_mount_animation(&model, 7, 30_100., &mut random)?;
+        playback.select_mount_animation(&model, 7, (1., 0), 30_100., &mut random)?;
         assert_eq!(playback.script_mode, Forward);
         assert_eq!(
             playback
@@ -316,6 +316,78 @@ fn mount_requests_preserve_weighted_primaries_and_replace_default_fallback_modes
         );
         assert_eq!(playback.sample_clock(30_301).animation_time_ms(), 200.);
     }
+    Ok(())
+}
+
+#[test]
+fn mount_rate_requests_match_native_submission_and_random_consumption() -> Result<(), Box<dyn Error>>
+{
+    use solarity_asset::M2ModelAnimationMode::Forward;
+    use solarity_rendering::{M2ModelSequenceTimer, M2SequenceStartPhase::BeforeSceneUpdate};
+    let (model, _) = default_sequence_model(&[4, 5], 0, 0, 1)?;
+    let mut checked = 0;
+    for line in include_str!("../fixtures/unit_mount_request_native.txt").lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        // The renderer has already admitted a resident mount and resolved a
+        // valid animation. The fixture also records the native absent/disabled
+        // guards, which belong to upstream unit policy.
+        if words[0] != "1" || words[1] != "1" || words[3] == "4294967295" {
+            continue;
+        }
+        let old_id = words[2].parse()?;
+        let new_id = words[3].parse()?;
+        let old_speed = f32::from_bits(u32::from_str_radix(words[4], 16)?);
+        let new_speed = f32::from_bits(u32::from_str_radix(words[5], 16)?);
+        let offset = words[7].parse()?;
+        let submitted = words[8] == "1";
+        let mut random = CrtRand::new();
+        let mut playback = M2Playback::unstarted(0, 20_000);
+        playback.apply_resolved_model_sequence_variation(
+            &model,
+            old_id,
+            None,
+            Forward,
+            old_speed,
+            0,
+            20_000,
+            BeforeSceneUpdate,
+            true,
+            &mut random,
+        )?;
+        let previous = playback.script_timer;
+        let mut expected_random = random;
+        playback.select_mount_animation(
+            &model,
+            new_id,
+            (new_speed, offset),
+            20_500.,
+            &mut random,
+        )?;
+        if submitted {
+            let _variation = expected_random.next_u15();
+            let cycles = expected_random.next_u15();
+            let sequence = &model.animations().sequences()[playback.sequence];
+            let timer = M2ModelSequenceTimer::with_speed(
+                sequence,
+                Forward,
+                new_speed,
+                20_500,
+                offset,
+                cycles,
+                BeforeSceneUpdate,
+            );
+            assert_eq!(playback.script_timer, Some(timer), "{line}");
+            assert_eq!(playback.animation_id, new_id, "{line}");
+        } else {
+            assert_eq!(playback.script_timer, previous, "{line}");
+        }
+        assert_eq!(random, expected_random, "{line}");
+        checked += 1;
+    }
+    assert_eq!(checked, 40);
     Ok(())
 }
 

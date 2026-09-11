@@ -1,9 +1,11 @@
 //! Retained unit posture/movement requests and their primary sequence callback.
 
 mod ground;
+mod mount;
 pub(super) mod passenger;
 
 use ground::UnitGroundPose;
+pub(super) use mount::select_mount_animation;
 
 #[cfg(test)]
 #[path = "../../tests/application/unit_animation.rs"]
@@ -935,29 +937,7 @@ impl UnitAnimationBehavior {
         input: UnitAnimationInput,
         scene_time_ms: u32,
     ) -> (f32, i32) {
-        let animations = self.model.animations();
-        // 7385C0 queries ordinal zero before weighted selection. The whitelist
-        // in 714E80 tests the resolved ID, not its AnimationData behavior.
-        let Some(index) = animations.model_sequence_for_variation(animation_id, 0) else {
-            return (1.0, 0);
-        };
-        let sequence = animations.sequences()[index];
-        let previous = playback.script_timer.map(|timer| {
-            let sequence = animations.sequences()[playback.sequence];
-            (
-                sequence.movement_speed(),
-                sequence.duration_ms(),
-                timer.unwrapped_time(scene_time_ms),
-            )
-        });
-        unit_sequence_timing(
-            animation_id,
-            input.movement_flags,
-            input.movement_speed,
-            sequence.movement_speed(),
-            sequence.duration_ms(),
-            previous,
-        )
+        model_sequence_timing(&self.model, playback, animation_id, input, scene_time_ms)
     }
 
     pub fn synchronize(
@@ -1232,6 +1212,39 @@ impl UnitAnimationBehavior {
         });
         Ok(())
     }
+}
+
+/// 7385C0 queries the active model, which is the mount when one is present.
+fn model_sequence_timing(
+    model: &DecodedM2Model,
+    playback: &M2Playback,
+    animation_id: u16,
+    input: UnitAnimationInput,
+    scene_time_ms: u32,
+) -> (f32, i32) {
+    let animations = model.animations();
+    // Ordinal zero precedes weighted selection. 714E80 tests the resolved ID,
+    // not its AnimationData behavior.
+    let Some(index) = animations.model_sequence_for_variation(animation_id, 0) else {
+        return (1.0, 0);
+    };
+    let sequence = animations.sequences()[index];
+    let previous = playback.script_timer.map(|timer| {
+        let sequence = animations.sequences()[playback.sequence];
+        (
+            sequence.movement_speed(),
+            sequence.duration_ms(),
+            timer.unwrapped_time(scene_time_ms),
+        )
+    });
+    unit_sequence_timing(
+        animation_id,
+        input.movement_flags,
+        input.movement_speed,
+        sequence.movement_speed(),
+        sequence.duration_ms(),
+        previous,
+    )
 }
 
 /// Native `7388B4..73898F` speed and phase policy for a resolved unit sequence.

@@ -124,6 +124,9 @@ fn build_fixture_options(
 ) -> Result<ClientFixture, Box<dyn Error>> {
     let vehicle_seats = vehicle_entry.is_some();
     let mut ids = vec![0, 91, 96, 97, 98, 99, 100, 101];
+    if mount_scale.is_some() {
+        ids.extend([4, 5]);
+    }
     if seated_animations {
         ids.extend([115, 116, 117, 118]);
     }
@@ -500,6 +503,15 @@ fn build_fixture_options(
             alternate.1[event + 12..event + 16].copy_from_slice(&4.0_f32.to_le_bytes());
         }
         alternate.1[0xa0..0xa4].copy_from_slice(&(-2.0_f32).to_le_bytes());
+        // Distinct mount strides prevent renderer tests from accidentally
+        // using the rider's sequence metadata to scale locomotion.
+        for (index, id) in ids.iter().enumerate() {
+            if matches!(id, 4 | 5) {
+                let record = sequences + index * 64;
+                alternate.1[record + 4..record + 8].copy_from_slice(&2000_u32.to_le_bytes());
+                alternate.1[record + 8..record + 12].copy_from_slice(&3.5_f32.to_le_bytes());
+            }
+        }
         alternate.1[0xac..0xb0].copy_from_slice(&2.0_f32.to_le_bytes());
         // Full ground alignment and an offset saddle distinguish the mount's
         // basis from its upright rider model and exercise attached translation.

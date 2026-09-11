@@ -1,5 +1,20 @@
 # Stock client architecture analysis
 
+Mount request admission is captured from `739113..73917C`, with only the
+`735820` submission intercepted:
+
+```powershell
+python tools/ghidra/unit_mount_request_oracle.py <path-to-Wow.exe> crates/runtime/tests/fixtures/unit_mount_request_native.txt
+```
+
+The 240 cases cover missing/disabled mounts, missing/changed/unchanged IDs,
+both sides of the strict 0.01 rate tolerance, and submitted offset/blend values.
+This is the final mount commit gate; upstream behavior routing and completion
+are outside its scope. Runtime tests combine admitted requests with native M2
+timers and random consumption, then exercise stride metadata through local,
+remote-player and creature residency/update paths. The independent stride math
+is captured by `unit_movement_speed_oracle.py`.
+
 The mount/body effect-binding probe executes the original authored adapter,
 unit event switch and breath factory. All live cases query the body's attachment
 17/19, independently of the emitting model and the mount's attachments:

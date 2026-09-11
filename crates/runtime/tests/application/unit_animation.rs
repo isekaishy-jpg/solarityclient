@@ -622,6 +622,92 @@ fn mouse_twist_retains_random_state_then_release_selects_procedural_turn()
     Ok(())
 }
 
+#[test]
+fn mount_stride_uses_its_own_metadata_and_preserves_phase_across_speed_requests()
+-> Result<(), Box<dyn Error>> {
+    let mut input = input(0).with_movement(movement(1, None));
+    input.mounted = true;
+    let body = owner_with_sequence_metadata(&[0, 5, 91], input, |_, _, bytes| {
+        bytes[8..12].copy_from_slice(&99_f32.to_le_bytes());
+    })?;
+    let mount = owner_with_sequence_metadata(&[0, 4, 5, 5], input, |index, _, bytes| {
+        let (speed, duration) = if index == 0 {
+            (0_f32, 1000_u32)
+        } else if index == 1 {
+            (2.5_f32, 1500_u32)
+        } else if index == 3 {
+            (3.5, 2000)
+        } else {
+            (7., 1000)
+        };
+        bytes[8..12].copy_from_slice(&speed.to_le_bytes());
+        bytes[4..8].copy_from_slice(&duration.to_le_bytes());
+    })?;
+    let mut random = CrtRand::new();
+    let mut playback =
+        M2Playback::default_sequence(&mount.model, &mount.animations, 1000, &mut random)?;
+    select_mount_animation(
+        Some(&body),
+        &mut playback,
+        &mount.model,
+        5,
+        1000.,
+        &mut random,
+    )?;
+    assert_eq!(
+        playback.sequence, 3,
+        "weighted selection follows ordinal-zero timing"
+    );
+    assert_eq!(playback.script_timer.ok_or("mount timer")?.speed(), 1.);
+    let mut input = body.input.get();
+    input.movement_speed = 10.5;
+    body.set_input(input);
+    let mut expected_random = random;
+    let _variation = expected_random.next_u15();
+    let _cycles = expected_random.next_u15();
+    select_mount_animation(
+        Some(&body),
+        &mut playback,
+        &mount.model,
+        5,
+        1501.,
+        &mut random,
+    )?;
+    let timer = playback.script_timer.ok_or("accelerated mount timer")?;
+    assert_eq!(timer.speed(), 1.5);
+    // Old selected variation is 2000ms, new ordinal zero is 1000ms:
+    // native phase offset = (500 * 1000 / 2000) % 1000 = 250.
+    assert_eq!(timer.start_time_ms(), 1336);
+    assert_eq!(random, expected_random);
+    select_mount_animation(
+        Some(&body),
+        &mut playback,
+        &mount.model,
+        5,
+        1600.,
+        &mut random,
+    )?;
+    assert_eq!(playback.script_timer, Some(timer));
+    assert_eq!(random, expected_random);
+    input.movement_speed = 2.5;
+    body.set_input(input);
+    let old_phase = timer.unwrapped_time(1800);
+    select_mount_animation(
+        Some(&body),
+        &mut playback,
+        &mount.model,
+        4,
+        1800.,
+        &mut random,
+    )?;
+    let offset = (old_phase * 1500 / 2000) % 1500;
+    let timer = playback.script_timer.ok_or("walking timer")?;
+    assert_eq!(timer.speed(), 1.);
+    assert_eq!(timer.start_time_ms(), 1801 - offset);
+    assert_eq!(playback.sequence, 1);
+    Ok(())
+}
+
 fn owner(ids: &[u16], stand: u8) -> Result<UnitAnimationBehavior, Box<dyn Error>> {
     owner_with_input(ids, input(stand))
 }

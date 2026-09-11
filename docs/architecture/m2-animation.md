@@ -188,8 +188,8 @@ timers without advancing a second callback scan.
 
 Mount construction now uses the shared native default-sequence path rather than
 the legacy elapsed-time playback owner. Resolved movement changes create native
-primary timers and blends; unchanged forward requests preserve the selected
-variation, event cursor and CRT stream. Constructor fallback modes are replaced
+primary timers and blends; unchanged forward ID/rate requests preserve the
+selected variation, event cursor and CRT stream. Constructor fallback modes are replaced
 when movement explicitly selects the same clip in forward mode. Local players,
 remote players and creatures share that selection path. This does not complete
 the mount's higher-level Unit_C animation policy.
@@ -566,9 +566,22 @@ outside `714E80`'s whitelist retain rate one. When both old and new metadata
 have movement speed and nonzero durations, the new offset is
 `(old_phase.wrapping_mul(new_duration) / old_duration) % new_duration`.
 The old phase is queried at the current scene tick, before pose clamping or
-wrapping, and belongs to the actual outgoing variation. Identical primary
+wrapping, and belongs to the actual outgoing variation. Identical body primary
 requests update speed through `827000` with the native tolerance; they retain
 the variation and consume no random draws.
+
+Mounts query their own model's ordinal-zero stride and outgoing variation,
+using the unit's movement flags and speed. The final mount gate at
+`739113..73917C` differs from the body commit: an identical ID is retained only
+while the absolute rate difference is at most float `0x3C23D70A` (0.01).
+A larger difference submits a new `735820` request, including phase offset,
+blend, weighted variation and cycle draws. Creation and local-player,
+remote-player and creature updates use this policy. The 240-case
+`unit_mount_request_oracle.py` capture records the gate and submitted arguments;
+it does not execute upstream behavior resolution or vehicle propagation.
+Runtime checks cover the admitted native cases, the resulting timers and random
+draws, different ordinal-zero/weighted-variation durations, and all three live
+renderer update paths with distinct rider/mount stride metadata.
 
 Primary timers retain speed and the native stored reciprocal. Construction,
 rate changes, primary/secondary pose sampling, event keys, completion deadlines

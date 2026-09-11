@@ -459,11 +459,13 @@ impl M2Playback {
     }
 
     /// Mount locomotion owns a CM2Model primary timer, just like its constructor.
-    /// Retained, unchanged requests leave the timer and variation stream intact.
+    /// 739113 retains an unchanged ID/rate; a rate change beyond its strict
+    /// tolerance submits a new primary, including weighted/cycle rolls.
     pub(in crate::application) fn select_mount_animation(
         &mut self,
         model: &DecodedM2Model,
         animation_id: u16,
+        timing: (f32, i32),
         animation_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -471,15 +473,21 @@ impl M2Playback {
             || model.animations().sequences().is_empty()
             || (self.animation_id == animation_id
                 && self.script_mode == M2ModelAnimationMode::Forward
-                && self.script_timer.is_some())
+                && self.script_timer.is_some_and(|timer| {
+                    let changed = (f64::from(timer.speed()) - f64::from(timing.0)).abs()
+                        > f64::from(f32::from_bits(0x3c23_d70a));
+                    !changed
+                }))
         {
             return Ok(());
         }
-        self.apply_resolved_model_sequence(
+        self.apply_resolved_model_sequence_variation(
             model,
             animation_id,
+            None,
             M2ModelAnimationMode::Forward,
-            0,
+            timing.0,
+            timing.1,
             animation_time_ms as u32,
             M2SequenceStartPhase::BeforeSceneUpdate,
             true,
