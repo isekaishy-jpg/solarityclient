@@ -30,15 +30,19 @@ pub enum WorldShadowProjectionError {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldShadowProjection {
     texture_size: u32,
-    radius: f32,
     origin: Vec3,
     light_direction: Vec3,
     receiver_center: Vec3,
     caster_view: Mat4,
     caster_projection: Mat4,
+    // 7BAFD0 multiplies these four bounds independently when cropping admission.
+    caster_crop: [f32; 4],
     receiver_rows: [Vec4; 3],
     caster_bounds: [Vec3; 2],
     caster_planes: [Vec4; 6],
+    // Camera cropping replaces only scene+624; the full +6C planes above also
+    // supply the next map's containment exclusion.
+    admission_planes: [Vec4; 6],
 }
 
 impl WorldShadowProjection {
@@ -56,12 +60,14 @@ impl WorldShadowProjection {
         }
         self.caster_projection =
             Mat4::orthographic_lh(crop[0], crop[1], crop[2], crop[3], 1., 4000.);
+        self.caster_crop = crop;
         (self.caster_bounds, self.caster_planes) = caster_volume(
             self.caster_view,
             self.origin,
             [crop[0], crop[1]],
             [crop[2], crop[3]],
         );
+        self.admission_planes = self.caster_planes;
         Ok(self)
     }
 
@@ -69,6 +75,7 @@ impl WorldShadowProjection {
     ///
     /// The rendered map and receiver transform retain their full extent. A
     /// disjoint or empty footprint retains stock's original uncropped volume.
+    /// Full-map containment and the initial world-box test remain unchanged.
     #[must_use]
     pub fn with_camera_culling(mut self, camera: crate::WorldCameraFrame) -> Self {
         let inverse = camera.view().inverse() * camera.projection().inverse();
@@ -91,11 +98,19 @@ impl WorldShadowProjection {
         minimum = minimum.clamp(Vec3::new(-1., -1., 0.), Vec3::ONE);
         maximum = maximum.clamp(Vec3::new(-1., -1., 0.), Vec3::ONE);
         if minimum.cmplt(maximum).all() {
-            (self.caster_bounds, self.caster_planes) = caster_volume(
+            // 7BAFD0 writes this second volume at scene+624. The world box and
+            // the exclusion volume at +6C retain the complete region bounds.
+            (_, self.admission_planes) = caster_volume(
                 self.caster_view,
                 self.origin,
-                [minimum.x * self.radius, maximum.x * self.radius],
-                [minimum.y * self.radius, maximum.y * self.radius],
+                [
+                    -self.caster_crop[0] * minimum.x,
+                    self.caster_crop[1] * maximum.x,
+                ],
+                [
+                    -self.caster_crop[2] * minimum.y,
+                    self.caster_crop[3] * maximum.y,
+                ],
             );
         }
         self
@@ -234,15 +249,16 @@ impl WorldShadowProjection {
             caster_volume(caster_view, origin, [-radius, radius], [-radius, radius]);
         Ok(Self {
             texture_size,
-            radius,
             origin,
             light_direction,
             receiver_center,
             caster_view,
             caster_projection,
+            caster_crop: [-radius, radius, -radius, radius],
             receiver_rows: [x, y, depth],
             caster_bounds,
             caster_planes,
+            admission_planes: caster_planes,
         })
     }
 
@@ -269,9 +285,24 @@ impl WorldShadowProjection {
         }
         // 9839E0 selects each plane's positive AABB vertex, accepting the
         // original AA2E74 negative tolerance at the volume boundary.
-        self.caster_planes.iter().all(|plane| {
+        self.admission_planes.iter().all(|plane| {
             let normal = plane.truncate();
             let vertex = Vec3::select(normal.cmpge(Vec3::ZERO), maximum, minimum);
+            normal.dot(vertex) + plane.w >= -0.019_444_443
+        })
+    }
+
+    /// Tests whether a nearer map completely contains this world-space box.
+    /// Original 874890 reverses the exclusion volume's six planes before
+    /// 983A60 selects their positive AABB vertices. No world-box test is added.
+    #[must_use]
+    pub fn contains_bounds(self, minimum: Vec3, maximum: Vec3) -> bool {
+        if !minimum.is_finite() || !maximum.is_finite() || !minimum.cmple(maximum).all() {
+            return false;
+        }
+        self.caster_planes.iter().all(|plane| {
+            let normal = plane.truncate();
+            let vertex = Vec3::select(normal.cmpge(Vec3::ZERO), minimum, maximum);
             normal.dot(vertex) + plane.w >= -0.019_444_443
         })
     }

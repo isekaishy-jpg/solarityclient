@@ -86,6 +86,22 @@ updates all three maps every frame, snapping centers to 2/4/16-unit grids.
 `00681F60` and `006A99E0` define the normalized clamp and pixel viewport rounding;
 the implementation retains those results even at partial-map boundaries.
 
+`008753F0` zeroes every collector flag at frame setup. Consequently `007BAFD0`
+applies camera culling to each update region before `00874890` assigns its
+static or cascaded caster mask. The four region bounds multiply the camera
+footprint independently, including asymmetric partial regions. Camera culling
+changes only the admission planes at scene offset `+624`; the original world
+box and full-volume planes at `+6C` remain intact. `00983A60` tests complete
+containment against the reversed full-volume planes with tolerance
+0.019444443. Cached maps exclude the preceding full pending volume only when
+that preceding map updates in the same frame. Cascaded maps exclude the full
+primary volume first, then the preceding full environment volume.
+
+`00875C10` updates the light ray without invalidating cached maps. The native
+invalidation flag is set when `007831A0` detects disjoint old/new terrain
+coverage, or by `007BD9F0` after its world-residency refresh. These transitions
+must be handled by the runtime owner, alongside map and quality replacement.
+
 Environment color images belong to the world renderer across swapchain slots.
 An ordered graphics queue and explicit image barriers serialize partial writes
 against earlier receiver reads. New owners clear all textures to visibility one,
@@ -112,6 +128,8 @@ terrain and detail modes continue to combine with their authored shadows.
 
 Native fixtures cover 576 refresh/viewport cases, 72 environment projections,
 and 1728 unchanged Terrain3/MapObjDiffuse/DetailDoodad receiver executions.
+Another 18,816 native queries cover full and partial environment volumes,
+camera cropping, and full-box containment at small and large world coordinates.
 Vulkan regressions add 240 cached M2-caster frames and 216 WMO-caster frames,
 covering publication delay, same-quality owner replacement, quality transitions,
 empty caches, primary scenery, and the 223/224 WMO alpha boundary.

@@ -1,6 +1,64 @@
 use glam::Vec3;
 use solarity_rendering::{WorldShadowProjection, WorldShadowProjectionError, WorldShadowQuality};
 
+/// 7BAFD0 keeps its asymmetric crop multiplication; 983A60 excludes full boxes.
+#[test]
+fn environment_volume_admission_and_containment_match_original()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut cases = 0;
+    for line in include_str!("../fixtures/world-shadow-volume-native.txt")
+        .lines()
+        .filter(|line| line.starts_with("volume "))
+    {
+        let values = line
+            .split_whitespace()
+            .skip(1)
+            .map(str::parse::<f32>)
+            .collect::<Result<Vec<_>, _>>()?;
+        let vector = |index| Vec3::from_slice(&values[index..index + 3]);
+        let map = solarity_rendering::WorldEnvironmentShadowMap::ALL[values[0] as usize];
+        let camera_minimum = vector(8);
+        let camera_maximum = vector(11);
+        let eye = Vec3::new(0., 0., camera_maximum.z + 1.);
+        let camera = solarity_rendering::WorldCamera::orthographic(
+            eye,
+            eye - Vec3::Z,
+            Vec3::Y,
+            [camera_minimum.x, camera_maximum.x],
+            [camera_minimum.y, camera_maximum.y],
+            1.,
+            camera_maximum.z - camera_minimum.z + 1.,
+        )
+        .frame(1.)?;
+        for origin in [Vec3::ZERO, vector(2) + Vec3::new(7., -4., 3.)] {
+            let mut projection = WorldShadowProjection::environment(
+                WorldShadowQuality::EnvironmentHigh,
+                map,
+                vector(2),
+                origin,
+                vector(5),
+            )?
+            .with_caster_region(values[14..18].try_into()?)?;
+            if values[1] != 0. {
+                projection = projection.with_camera_culling(camera);
+            }
+            assert_eq!(
+                projection.admits_bounds(vector(18), vector(21)),
+                values[24] != 0.,
+                "admission: {line}, origin={origin}"
+            );
+            assert_eq!(
+                projection.contains_bounds(vector(18), vector(21)),
+                values[25] != 0.,
+                "containment: {line}, origin={origin}"
+            );
+        }
+        cases += 1;
+    }
+    assert_eq!(cases, 18_816);
+    Ok(())
+}
+
 #[test]
 fn environment_projections_match_original_receiver_rows() -> Result<(), Box<dyn std::error::Error>>
 {
