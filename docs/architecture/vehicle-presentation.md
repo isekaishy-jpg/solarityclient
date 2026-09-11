@@ -257,23 +257,26 @@ with warnings denied, formatting and whitespace checks pass.
 
 ## Testing package
 
-Build **000096** (`0.0.3a`) installs source revision
-`872badd5d6d5674b289d9d79b38b12bdef9b5a8c` through the persistent Testing launcher.
+Build **000097** (`0.0.3a`) installs source revision
+`08ccaa11e073f5ebb7022d14aae7f07bfefe8952` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`aa0f7ff1c47f476bbe696b328bf5689fa3915a5ea39dc05ba7aeaa6db2f98b57`.
+`908bac3a5279bfcf2bf3bf14713140a50c7246319625148d44b154b54bfacb15`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
 passenger frames, final local/remote world projection and settled animated
 seats with mounted riders and shared lighting/shadow/sorting ancestry. Remote
 boarding/exit delays, arcs, primary animation loops and retained transition
 state are included. Local server paths now retain camera and held input,
 acknowledge active completion, and send transport changes for parent and seat
-changes. Input observes the shared passenger delay/travel phases.
+changes. Input observes the shared passenger delay/travel phases. Unloaded
+passengers use current resident-parent bones to initialize travel and preserve
+that deadline when their model arrives. Initial seat queries retain animation
+event intervals, completion callbacks and the CRT random sequence.
 
-This package passes 1,251 locked workspace tests with 23 archive-dependent
-tests ignored; runtime passes 290 with 18 ignored. Workspace/all-target Clippy
+This package passes 1,253 locked workspace tests with 23 archive-dependent
+tests ignored; runtime passes 292 with 18 ignored. Workspace/all-target Clippy
 with warnings denied, formatting and whitespace checks pass. Vehicle active
-mover selection, unloaded-child seat targets, seated animation routing,
+mover selection, seated animation routing,
 transfer lifecycle, special cameras and combined live travel remain open.
 This package does not establish a performance improvement or the 1,200 FPS target.
