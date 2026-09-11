@@ -816,7 +816,7 @@ fn record_terrain(
         context.device.cmd_push_constants(
             context.command_buffer,
             layout,
-            vk::ShaderStageFlags::VERTEX,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
             &draw.push_bytes(),
         );

@@ -88,5 +88,15 @@ pub(in crate::device) fn prepare_draw(
         chunk.first_index(),
         chunk.index_count(),
         chunk.atlas_chunk(),
+        [
+            u32::from(chunk.uses_weighted_blending()),
+            chunk
+                .layers()
+                .iter()
+                .enumerate()
+                .fold(0, |mask, (index, layer)| {
+                    mask | (u32::from(layer.flags() & 0x80 != 0) << index)
+                }),
+        ],
     ))
 }

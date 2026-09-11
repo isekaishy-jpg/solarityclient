@@ -161,6 +161,7 @@ fn decode_adt(
         TerrainTextureTable {
             paths: textures,
             flags: texture_flags,
+            weighted_blending: big_alpha,
         },
         chunks,
         doodads,

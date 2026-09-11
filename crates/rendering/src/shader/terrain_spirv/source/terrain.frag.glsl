@@ -46,6 +46,12 @@ layout(location = 3) in vec3 in_vertex_light;
 layout(location = 4) in float in_fog_visibility;
 layout(location = 6) in vec3 in_vertex_specular;
 
+layout(push_constant) uniform TerrainDraw {
+    uvec2 atlas_chunk;
+    uint weighted_blending;
+    uint unlit_layers;
+} draw;
+
 layout(set = 0, binding = 0) uniform TerrainScene {
     mat4 projection;
     vec4 ambient_color;
@@ -72,17 +78,36 @@ layout(set = 1, binding = 4) uniform sampler2D diffuse_3;
 
 layout(location = 0) out vec4 out_color;
 
+vec4 light_layer(vec4 color, uint layer) {
+    // Terrain1 PS16..31 applies diffuse lighting before mixing an unlit layer.
+    // Alpha remains the independent specular mask for both kinds of layer.
+    if (draw.unlit_layers != 0 && (draw.unlit_layers & (1u << layer)) == 0) {
+        color.rgb *= in_vertex_light * 2.0;
+    }
+    return color;
+}
+
 void main() {
     vec4 material = texture(material_atlas, in_atlas_coordinates);
-    vec4 ground = texture(diffuse_0, in_texture_coordinates);
+    vec4 ground = light_layer(texture(diffuse_0, in_texture_coordinates), 0);
+    if (draw.weighted_blending != 0) {
+        // Terrain1 PS8..15/24..31 saturates the sum, never the other weights.
+        ground *= 1.0 - clamp(dot(material.rgb, vec3(1.0)), 0.0, 1.0);
+    }
 #if TERRAIN_LAYER_COUNT > 1
-    ground = mix(ground, texture(diffuse_1, in_texture_coordinates), material.r);
+    vec4 layer1 = light_layer(texture(diffuse_1, in_texture_coordinates), 1);
+    ground = draw.weighted_blending != 0 ? ground + layer1 * material.r
+        : mix(ground, layer1, material.r);
 #endif
 #if TERRAIN_LAYER_COUNT > 2
-    ground = mix(ground, texture(diffuse_2, in_texture_coordinates), material.g);
+    vec4 layer2 = light_layer(texture(diffuse_2, in_texture_coordinates), 2);
+    ground = draw.weighted_blending != 0 ? ground + layer2 * material.g
+        : mix(ground, layer2, material.g);
 #endif
 #if TERRAIN_LAYER_COUNT > 3
-    ground = mix(ground, texture(diffuse_3, in_texture_coordinates), material.b);
+    vec4 layer3 = light_layer(texture(diffuse_3, in_texture_coordinates), 3);
+    ground = draw.weighted_blending != 0 ? ground + layer3 * material.b
+        : mix(ground, layer3, material.b);
 #endif
 
     // Terrain1.bls multiplies shadow visibility by 0.3 and adds 0.7;
@@ -92,7 +117,10 @@ void main() {
     visibility = min(visibility, primary_shadow_visibility());
 #endif
     float baked_shadow = 0.7 + 0.3 * visibility;
-    vec3 lit = ground.rgb * baked_shadow * in_vertex_light * 2.0
-        + ground.a * in_vertex_specular * visibility;
+    vec3 lit = ground.rgb * baked_shadow;
+    if (draw.unlit_layers == 0) {
+        lit *= in_vertex_light * 2.0;
+    }
+    lit += ground.a * in_vertex_specular * visibility;
     out_color = vec4(mix(scene.fog_color.rgb, lit, in_fog_visibility), 1.0);
 }

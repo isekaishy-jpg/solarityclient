@@ -11,6 +11,7 @@ pub struct TerrainPreparedDraw {
     first_index: u32,
     index_count: u32,
     atlas_chunk: [u8; 2],
+    material_flags: [u32; 2],
 }
 
 impl TerrainPreparedDraw {
@@ -21,6 +22,7 @@ impl TerrainPreparedDraw {
         first_index: u32,
         index_count: u32,
         atlas_chunk: [u8; 2],
+        material_flags: [u32; 2],
     ) -> Self {
         Self {
             mesh,
@@ -29,6 +31,7 @@ impl TerrainPreparedDraw {
             first_index,
             index_count,
             atlas_chunk,
+            material_flags,
         }
     }
 
@@ -62,11 +65,16 @@ impl TerrainPreparedDraw {
         self.index_count
     }
 
-    /// Serializes the shader's eight-byte unsigned atlas push block.
+    /// Serializes atlas coordinates, weighted blending, and the unlit layer mask.
     #[must_use]
-    pub const fn push_bytes(self) -> [u8; 8] {
+    pub const fn push_bytes(self) -> [u8; 16] {
         let x = (self.atlas_chunk[0] as u32).to_le_bytes();
         let y = (self.atlas_chunk[1] as u32).to_le_bytes();
-        [x[0], x[1], x[2], x[3], y[0], y[1], y[2], y[3]]
+        let blend = self.material_flags[0].to_le_bytes();
+        let unlit = self.material_flags[1].to_le_bytes();
+        [
+            x[0], x[1], x[2], x[3], y[0], y[1], y[2], y[3], blend[0], blend[1], blend[2], blend[3],
+            unlit[0], unlit[1], unlit[2], unlit[3],
+        ]
     }
 }

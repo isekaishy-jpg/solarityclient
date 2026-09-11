@@ -36,10 +36,11 @@ pub struct DecodedTerrainTile {
     liquids: Option<TerrainLiquidTable>,
 }
 
-/// Parallel root-level MTEX and optional MTXF payloads.
+/// Parallel root-level MTEX/MTXF payloads and their WDT blend convention.
 pub(super) struct TerrainTextureTable {
     pub(super) paths: Vec<AssetPath>,
     pub(super) flags: Option<Vec<u32>>,
+    pub(super) weighted_blending: bool,
 }
 
 impl DecodedTerrainTile {
@@ -85,6 +86,15 @@ impl DecodedTerrainTile {
     #[must_use]
     pub fn texture_flags(&self) -> Option<&[u32]> {
         self.textures.flags.as_deref()
+    }
+
+    /// Returns whether WDT MPHD mask `0x0004` selects weighted terrain blending.
+    ///
+    /// Small alpha maps use successive overlays; large alpha maps hold direct
+    /// layer weights, with the base layer receiving the remaining weight.
+    #[must_use]
+    pub const fn uses_weighted_blending(&self) -> bool {
+        self.textures.weighted_blending
     }
 
     /// Returns the complete row-major 16-by-16 MCNK grid.

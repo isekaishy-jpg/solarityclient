@@ -48,6 +48,7 @@ impl TerrainTileMeshPlan {
                 first_index,
                 index_count,
                 mesh.layers().to_vec(),
+                tile.uses_weighted_blending(),
                 mesh.bounds(),
             ));
         }

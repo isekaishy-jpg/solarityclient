@@ -7,7 +7,7 @@ use ash::{Device, vk};
 use crate::device::VulkanError;
 use crate::{TerrainRenderVertex, TerrainSpirvProgram};
 
-const DRAW_PUSH_CONSTANT_BYTES: u32 = 8;
+const DRAW_PUSH_CONSTANT_BYTES: u32 = 16;
 
 /// Common scene/material descriptor and push-constant ABI.
 #[derive(Default)]
@@ -60,7 +60,7 @@ impl TerrainPipelineLayout {
                 })?;
         }
         let push_range = vk::PushConstantRange::default()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .size(DRAW_PUSH_CONSTANT_BYTES);
         let push_ranges = [push_range];
         let info = vk::PipelineLayoutCreateInfo::default()

@@ -31,6 +31,7 @@ pub struct TerrainChunkDrawPlan {
     first_index: u32,
     index_count: u32,
     layers: Vec<TerrainTextureLayer>,
+    weighted_blending: bool,
     atlas_chunk: [u8; 2],
     bounds: [[f32; 3]; 2],
 }
@@ -41,6 +42,7 @@ impl TerrainChunkDrawPlan {
         first_index: u32,
         index_count: u32,
         layers: Vec<TerrainTextureLayer>,
+        weighted_blending: bool,
         bounds: [[f32; 3]; 2],
     ) -> Self {
         Self {
@@ -48,6 +50,7 @@ impl TerrainChunkDrawPlan {
             first_index,
             index_count,
             layers,
+            weighted_blending,
             atlas_chunk: [chunk.x(), chunk.y()],
             bounds,
         }
@@ -75,6 +78,12 @@ impl TerrainChunkDrawPlan {
     #[must_use]
     pub fn layers(&self) -> &[TerrainTextureLayer] {
         &self.layers
+    }
+
+    /// Returns the parent WDT's direct-weight layer blending selection.
+    #[must_use]
+    pub const fn uses_weighted_blending(&self) -> bool {
+        self.weighted_blending
     }
 
     /// Returns this chunk's integer location in the shared material atlas.

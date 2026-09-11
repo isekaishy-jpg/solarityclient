@@ -17,6 +17,20 @@ The [shared file texture policy](world-texture-sampling.md) independently contro
 filtering and authored mip selection. Animated layer offsets and other native
 material families retain their separate implementation work.
 
+Terrain layers preserve the WDT MPHD `0x0004` blend selection through decoded
+tiles, mesh plans and Vulkan draws. Without that flag, layers use successive
+RGBA overlays. With it, the base layer receives `1 - clamp(R + G + B, 0, 1)`
+and the other layers contribute their direct MCAL weights. Those weights are
+not renormalized when their sum exceeds one. `7D3E10` and `79E5C0` select the
+corresponding original Terrain1 shader variants.
+
+MCLY `0x80` selects unlit diffuse color independently for each layer. `7D2D70`
+writes the pixel constant mask; Terrain1 variants 16..31 apply diffuse lighting
+to ordinary layers before composition and retain the unlit layer's sampled RGB.
+Both kinds retain texture alpha for specular and still receive shadows and fog.
+The shared 16-byte draw push block carries atlas coordinates, blend mode and
+the unlit mask in both terrain-only and combined-world command recording.
+
 MCNR components retain their stored XYZ order. The dependency names its three
 stored fields `x, z, y` and exposes a Y-up conversion; using that conversion
 swapped world Y and Z. Native `7C4620` instead multiplies each consecutive
@@ -74,8 +88,14 @@ permutation using `CE049D`, derived from the specular setting and shader support
   flat MCNK grid. The Vulkan ADT/BLP test compares nine spatially varying samples
   per frame across zero/partial/full BLP alpha, shadow endpoints, MCCV, two light
   directions, and the enabled/disabled specular permutations. This establishes
-  the single-layer shader path; multilayer and combined real-world appearance
-  still require validation.
+  the single-layer shader path; combined real-world appearance still requires
+  validation.
+- `terrain_material_shader_oracle.py`: 120 original D3D9 frames across one
+  through four layers, every per-layer unlit mask, both blend modes, unequal
+  BLP alpha, shadow endpoints, and absent/authored MCCV. Authored WDT/ADT/BLP
+  Vulkan draws match nine RGB samples per frame within two byte values. The
+  former renderer fails the unlit case (red 42 instead of native 67). Weighted
+  cases also cover sums below and above one.
 - `terrain_perspective_lighting_oracle.py`: 12 original D3D9 frames at two
   camera heights and local/Durotar origins, with three signed-byte normals.
   Original `7CFBE0`, matrix operations and exterior-light accumulation produce

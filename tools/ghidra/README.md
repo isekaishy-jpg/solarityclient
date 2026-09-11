@@ -398,6 +398,14 @@ world-palette selection and environment shadows are separate owners.
 python tools/ghidra/terrain_perspective_lighting_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_perspective_lighting_native.txt
 ```
 
+`terrain_material_shader_oracle.py` renders 120 offscreen frames with unchanged
+Terrain/Terrain1 bytecode. The WDT/ADT/BLP integration comparison covers both
+blend modes, all unlit layer masks, MCCV, shadows, and unequal texture alpha.
+
+```text
+python tools/ghidra/terrain_material_shader_oracle.py <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_material_shader_native.txt
+```
+
 `world_texture_filter_oracle.py` captures 960 native filtering/cache-prefix cases.
 It substitutes the device-capability query and stops before texture-cache lookup
 or allocation. See [world texture sampling](../../docs/architecture/world-texture-sampling.md)

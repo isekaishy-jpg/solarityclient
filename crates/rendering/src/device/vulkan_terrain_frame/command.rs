@@ -155,7 +155,7 @@ fn record_draw(context: &RecordContext<'_>, draw: TerrainPreparedDraw) -> Result
         context.device.cmd_push_constants(
             context.command_buffer,
             layout,
-            vk::ShaderStageFlags::VERTEX,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
             &draw.push_bytes(),
         );
