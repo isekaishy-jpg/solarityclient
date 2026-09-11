@@ -15,6 +15,9 @@ const POSES: &[u16] = &[
 #[path = "unit_mount_animation.rs"]
 mod unit_mount_animation;
 
+#[path = "unit_vehicle_animation.rs"]
+mod unit_vehicle_animation;
+
 #[test]
 fn entry_opacity_survives_model_replacement_but_not_guid_reuse() -> Result<(), Box<dyn Error>> {
     let original = owner_with_input(&[0], input(0))?;

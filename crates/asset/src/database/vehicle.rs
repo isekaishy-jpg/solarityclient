@@ -41,6 +41,8 @@ pub struct VehicleSeatDefinition {
     seated_animations: [u32; 2],
     secondary_animations: [u32; 2],
     exit_animations: [u32; 2],
+    vehicle_animations: [u32; 3],
+    vehicle_animation_keys: [u32; 3],
 }
 
 impl VehicleSeatDefinition {
@@ -122,6 +124,19 @@ impl VehicleSeatDefinition {
     pub fn exit_animations(self) -> [i32; 2] {
         self.exit_animations.map(|animation| animation as i32)
     }
+
+    /// Vehicle entry, exit and ride clips at row +84/+88/+8C.
+    #[must_use]
+    pub fn vehicle_animations(self) -> [i32; 3] {
+        self.vehicle_animations.map(|animation| animation as i32)
+    }
+
+    /// Corresponding vehicle key-bone selectors at row +90/+94/+98.
+    /// Native Vehicle_C normalizes unsigned values above 34 to root key 26.
+    #[must_use]
+    pub fn vehicle_animation_keys(self) -> [i32; 3] {
+        self.vehicle_animation_keys.map(|key| key as i32)
+    }
 }
 
 /// Immutable vehicle and passenger-seat tables under normal archive precedence.
@@ -166,6 +181,8 @@ impl VehicleCatalog {
                 seated_animations: fields(&table, row, 15)?,
                 secondary_animations: fields(&table, row, 17)?,
                 exit_animations: fields(&table, row, 26)?,
+                vehicle_animations: fields(&table, row, 33)?,
+                vehicle_animation_keys: fields(&table, row, 36)?,
                 rotation: fields(&table, row, 29)?,
                 passenger_attachment_id: field(&table, row, 32)? as i32,
                 flags_b: field(&table, row, 45)?,

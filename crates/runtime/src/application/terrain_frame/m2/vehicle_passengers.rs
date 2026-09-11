@@ -6,7 +6,7 @@ use super::{
 };
 use crate::application::unit_animation::{
     UnitAnimationScene,
-    passenger::{UnitPassengerController, UnitPassengerModelInput},
+    passenger::{PassengerVehicleAnimation, UnitPassengerController, UnitPassengerModelInput},
 };
 use crate::random::CrtRand;
 use glam::{Mat4, Vec3};
@@ -174,6 +174,9 @@ impl M2VehiclePassengers {
             }
             controller.advance(now as u32, target);
         }
+        for controller in &self.unbound {
+            apply_vehicle_animation_commands(controller, placements, now as u32, random)?;
+        }
         Ok(())
     }
 
@@ -229,6 +232,16 @@ impl M2VehiclePassengers {
                 fallback
             };
             owner.advance_passenger(now as u32, target, input.parent_velocity);
+        }
+        for &index in visibility.dynamic_indices() {
+            if let Some(owner) = unit_owner(&placements[index]) {
+                apply_vehicle_animation_commands(
+                    &owner.passenger_controller(),
+                    placements,
+                    now as u32,
+                    random,
+                )?;
+            }
         }
         Ok(())
     }
@@ -612,6 +625,54 @@ impl M2VehiclePassengers {
             callbacks_disabled,
         }))
     }
+}
+
+/// Phase changes keep their order even if the passenger model has not arrived.
+/// 757000 follows the animation-redirect controller (F60 +10 bit 800); ordinary
+/// nested seat attachment alone does not redirect a vehicle request to its parent.
+fn apply_vehicle_animation_commands(
+    controller: &UnitPassengerController,
+    placements: &[M2GpuPlacement],
+    now: u32,
+    random: &mut CrtRand,
+) -> Result<(), RuntimeTerrainFrameError> {
+    while let Some(command) = controller.take_vehicle_animation() {
+        match command {
+            PassengerVehicleAnimation::Leave => {
+                if let Some((parent, key)) = controller.take_vehicle_animation_binding()
+                    && let Some(index) = resident_model_index(placements, parent)
+                    && let Some(owner) = unit_owner(&placements[index])
+                {
+                    owner.release_vehicle_ride_animation(
+                        controller.identity().guid(),
+                        key,
+                        now,
+                        random,
+                    )?;
+                }
+            }
+            PassengerVehicleAnimation::Seated {
+                parent,
+                animation,
+                key,
+            } => {
+                if let Some(index) = resident_model_index(placements, parent)
+                    && let Some(owner) = unit_owner(&placements[index])
+                    && owner.start_vehicle_ride_animation(
+                        controller.identity().guid(),
+                        &controller.vehicle_animation_lifetime(),
+                        key,
+                        animation,
+                        now,
+                        random,
+                    )?
+                {
+                    controller.bind_vehicle_animation(parent, key);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn unit_owner(placement: &M2GpuPlacement) -> Option<&Rc<UnitAnimationBehavior>> {

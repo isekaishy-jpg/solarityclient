@@ -43,6 +43,40 @@ impl M2Playback {
             .map(|slot| &slot.playback)
     }
 
+    /// Key aliases address the same timer, whose callback uses its actual bone ID.
+    pub(in crate::application) fn model_key_playback(
+        &self,
+        model: &DecodedM2Model,
+        key: i32,
+    ) -> Option<(&Self, i32)> {
+        let bone = if matches!(key, -1 | 26) {
+            0
+        } else {
+            model
+                .animations()
+                .key_bone_lookup()
+                .get(usize::try_from(key).ok()?)
+                .copied()
+                .flatten()?
+        };
+        let definition = model.animations().bones().get(usize::from(bone))?;
+        let callback_key = if definition.parent().is_none() {
+            -1
+        } else {
+            definition.key_bone_id()
+        };
+        let playback = if bone == 0 {
+            self
+        } else {
+            &self
+                .bone_playback
+                .iter()
+                .find(|slot| slot.bone == bone)?
+                .playback
+        };
+        Some((playback, callback_key))
+    }
+
     fn bone_slot_mut(&mut self, bone: u16) -> Option<&mut Self> {
         if bone == 0 {
             Some(self)
@@ -171,7 +205,16 @@ impl M2Playback {
         blend: bool,
         now: u32,
     ) {
-        let Some(slot) = self.bone_playback.iter_mut().find(|slot| slot.key == key) else {
+        let Some(bone) = model
+            .animations()
+            .key_bone_lookup()
+            .get(usize::from(key))
+            .copied()
+            .flatten()
+        else {
+            return;
+        };
+        let Some(slot) = self.bone_playback.iter_mut().find(|slot| slot.bone == bone) else {
             return;
         };
         if model.animations().bones()[usize::from(slot.bone)]

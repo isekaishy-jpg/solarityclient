@@ -138,7 +138,7 @@ impl UnitAnimationBehavior {
         let interrupted = playback
             .has_pending_sequence_callback()
             .then_some(playback.animation_id);
-        if playback.select_mount_animation(
+        let selected = playback.select_mount_animation(
             model,
             animation,
             request.variation,
@@ -146,8 +146,11 @@ impl UnitAnimationBehavior {
             scene_time_ms as f32,
             phase,
             random,
-        )? && interrupted.is_some_and(|id| matches!(id, 39 | 187))
-        {
+        )?;
+        if selected && interrupted.is_some() {
+            self.interrupt_vehicle_animation(-1);
+        }
+        if selected && interrupted.is_some_and(|id| matches!(id, 39 | 187)) {
             // 73BFF0 tests the interrupted raw ID, before any DBC conversion.
             self.landing.set(false);
         }

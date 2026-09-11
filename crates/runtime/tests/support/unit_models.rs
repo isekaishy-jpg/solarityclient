@@ -87,6 +87,24 @@ pub fn fixture_with_vehicle_seated() -> Result<ClientFixture, Box<dyn Error>> {
         None,
         Some([0.25, 8., 20., 2., 2., 0., 20.]),
         true,
+        None,
+    )
+}
+
+pub fn fixture_with_vehicle_ride_animation(
+    animation: i32,
+    key: i32,
+) -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture_options(
+        true,
+        false,
+        None,
+        None,
+        None,
+        None,
+        Some([0.25, 8., 20., 2., 2., 0., 20.]),
+        true,
+        Some((animation, key)),
     )
 }
 
@@ -108,6 +126,7 @@ fn build_fixture(
         mount_scale,
         vehicle_entry,
         false,
+        None,
     )
 }
 
@@ -121,6 +140,7 @@ fn build_fixture_options(
     mount_scale: Option<(f32, f32)>,
     vehicle_entry: Option<[f32; 7]>,
     seated_animations: bool,
+    vehicle_animation: Option<(i32, i32)>,
 ) -> Result<ClientFixture, Box<dyn Error>> {
     let vehicle_seats = vehicle_entry.is_some();
     let mut ids = vec![0, 91, 96, 97, 98, 99, 100, 101];
@@ -365,6 +385,11 @@ fn build_fixture_options(
         if seated_animations {
             seats[59] |= 6;
             seats[73..77].copy_from_slice(&[115, 116, 117, 118]);
+        }
+        if let Some((animation, key)) = vehicle_animation {
+            seats[59] |= 0x20000;
+            seats[93] = animation as u32;
+            seats[96] = key as u32;
         }
         seats[77..84].copy_from_slice(&[0.125, 8., 20., 0.5, 0.5, 0., 20.].map(f32::to_bits));
         seats[84..86].copy_from_slice(&[99, 100]);

@@ -3,6 +3,7 @@
 mod ground;
 mod mount;
 pub(super) mod passenger;
+mod vehicle;
 
 use ground::UnitGroundPose;
 
@@ -201,6 +202,9 @@ pub(super) struct UnitAnimationScene {
 
 impl UnitAnimationScene {
     pub fn clear(&mut self) {
+        for (_, state) in self.passenger_states.get_mut().values() {
+            state.borrow().retire();
+        }
         self.owners.clear();
         self.ground_poses.get_mut().clear();
         self.passenger_states.get_mut().clear();
@@ -228,7 +232,13 @@ impl UnitAnimationScene {
             .retain(|guid, (identity, _)| world.object_identity(*guid) == Some(*identity));
         self.passenger_states
             .get_mut()
-            .retain(|guid, (identity, _)| world.object_identity(*guid) == Some(*identity));
+            .retain(|guid, (identity, state)| {
+                let keep = world.object_identity(*guid) == Some(*identity);
+                if !keep {
+                    state.borrow().retire();
+                }
+                keep
+            });
     }
 
     pub fn bind(
@@ -258,6 +268,8 @@ impl UnitAnimationScene {
             {
                 replacement.opacity = Rc::clone(&previous.opacity);
                 *replacement.mount_model.get_mut() = previous.mount_model.borrow().clone();
+                *replacement.vehicle_animations.get_mut() =
+                    previous.vehicle_animations.borrow().clone();
                 // Executed movement belongs to Unit_C, not the replaced body
                 // model. Preserve its order ahead of the latest field state.
                 let pending = previous
@@ -338,6 +350,7 @@ pub(super) struct UnitAnimationBehavior {
     landing: Cell<bool>,
     playback: Rc<RefCell<M2Playback>>,
     mount_model: RefCell<Option<mount::UnitMountModel>>,
+    vehicle_animations: RefCell<Option<Rc<RefCell<vehicle::UnitVehicleAnimations>>>>,
     scene_sample: RefCell<Option<UnitAnimationSceneSample>>,
     body: RefCell<UnitBodyPose>,
     ground: Rc<UnitGroundPose>,
@@ -412,6 +425,7 @@ impl UnitAnimationBehavior {
             landing: Cell::new(false),
             playback: Rc::new(RefCell::new(M2Playback::unstarted(0, scene_time_ms))),
             mount_model: RefCell::new(None),
+            vehicle_animations: RefCell::new(None),
             scene_sample: RefCell::new(None),
             model_color: Cell::new(u32::MAX),
             opacity: Rc::new(EntityOpacityOwner::default()),
@@ -790,6 +804,9 @@ impl UnitAnimationBehavior {
         );
         let key = self.upper_body_key();
         if death && let Some(key) = key {
+            if self.mount_model.borrow().is_none() {
+                self.interrupt_vehicle_animation(i32::from(key));
+            }
             if playback
                 .bone_playback(key)
                 .is_some_and(M2Playback::has_pending_sequence_callback)
@@ -867,6 +884,10 @@ impl UnitAnimationBehavior {
         forced_timing: Option<(f32, i32)>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        // 7385C0 protects the vehicle-owned upper key before 737EF0 submission.
+        if key.is_some_and(|key| self.vehicle_controls_body_key(i32::from(key))) {
+            return Ok(());
+        }
         let requested = request.animation;
         if self.model.animations().sequences().is_empty() {
             playback.animation_id = requested;
@@ -931,6 +952,9 @@ impl UnitAnimationBehavior {
         // 8269C0 also reports interruption, including to the passenger bits.
         // Both body/upper requests were resolved before this synchronous call.
         if previous.is_some_and(M2Playback::has_pending_sequence_callback) {
+            if self.mount_model.borrow().is_none() {
+                self.interrupt_vehicle_animation(key.map_or(-1, i32::from));
+            }
             self.complete_passenger_animation(key.map_or(-1, i32::from));
         }
         if let Some(key) = key {
@@ -1170,73 +1194,87 @@ impl UnitAnimationBehavior {
         event_callback: Option<&mut M2BoneEventCallback<'_>>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut playback = self.playback.borrow_mut();
-        let mut completed =
-            |playback: &mut M2Playback, key: i32, animation: u16, _: u32, random: &mut CrtRand| {
-                let input = self.input.get();
-                self.complete_passenger_animation(key);
-                if !matches!(key, -1 | 26) {
-                    let Ok(key) = u16::try_from(key) else {
-                        return Ok(());
-                    };
-                    // 737BD0 retains a distinct seated body while re-resolving the
-                    // ordinary/secondary request on the completed upper key.
-                    let seated = !input.dead()
-                        && self.passenger_animation_input().is_some_and(|passenger| {
-                            passenger.phase == solarity_systems::VehiclePassengerPhase::Seated
-                                && passenger.primary().is_some()
-                        });
-                    let request = self.request(input, playback);
-                    if seated && request.is_none() {
-                        return Ok(());
-                    }
-                    if seated
-                        && let Some(request) =
-                            request.filter(|request| *request != playback.animation_id)
-                    {
-                        return self.commit_sequence(
-                            playback,
-                            request.into(),
-                            input,
-                            playback.scene_time_ms,
-                            M2SequenceStartPhase::DuringSceneUpdate,
-                            Some(key),
-                            Some((1., 0)),
-                            random,
-                        );
-                    }
-                    playback.clear_bone_sequence(&self.model, key, true, playback.scene_time_ms);
+        let mut completed = |playback: &mut M2Playback,
+                             key: i32,
+                             animation: u16,
+                             boundary: u32,
+                             random: &mut CrtRand| {
+            if self.mount_model.borrow().is_none()
+                && self.complete_vehicle_animation(
+                    &self.model,
+                    playback,
+                    key,
+                    animation,
+                    playback.scene_time_ms.wrapping_sub(boundary),
+                    random,
+                )?
+            {
+                return Ok(());
+            }
+            let input = self.input.get();
+            self.complete_passenger_animation(key);
+            if !matches!(key, -1 | 26) {
+                let Ok(key) = u16::try_from(key) else {
                     return Ok(());
-                }
-                let behavior = self.animation_behavior(animation);
-                if matches!(behavior, 39 | 187) {
-                    self.landing.set(false);
-                }
-                let passenger = (!input.dead() && !input.mounted)
-                    .then(|| self.passenger_transition_animation())
-                    .flatten();
-                let seated_completed = !input.dead()
+                };
+                // 737BD0 retains a distinct seated body while re-resolving the
+                // ordinary/secondary request on the completed upper key.
+                let seated = !input.dead()
                     && self.passenger_animation_input().is_some_and(|passenger| {
                         passenger.phase == solarity_systems::VehiclePassengerPhase::Seated
-                            && if passenger.primary().is_some() {
-                                passenger.flags & 2 != 0
-                                    && passenger.seated.contains(&i32::from(animation))
-                            } else {
-                                passenger.flags & 4 != 0
-                                    && passenger.secondary.contains(&i32::from(animation))
-                            }
+                            && passenger.primary().is_some()
                     });
-                let request = if seated_completed {
-                    Some(self.request(input, playback).unwrap_or(0).into())
-                } else if let Some(animation) = passenger {
-                    // 7385C0 reapplies the passenger primary after completion's
-                    // ordinary request (for example jump-start -> jump-end).
-                    Some(animation.into())
-                } else if !input.mounted || input.dead() {
-                    let movement_completion =
-                        resolve_unit_movement_animation_completion(behavior, input.movement_flags);
-                    let completion = if let UnitMovementAnimationDecision::Select(animation) =
-                        movement_completion
-                    {
+                let request = self.request(input, playback);
+                if seated && request.is_none() {
+                    return Ok(());
+                }
+                if seated
+                    && let Some(request) =
+                        request.filter(|request| *request != playback.animation_id)
+                {
+                    return self.commit_sequence(
+                        playback,
+                        request.into(),
+                        input,
+                        playback.scene_time_ms,
+                        M2SequenceStartPhase::DuringSceneUpdate,
+                        Some(key),
+                        Some((1., 0)),
+                        random,
+                    );
+                }
+                playback.clear_bone_sequence(&self.model, key, true, playback.scene_time_ms);
+                return Ok(());
+            }
+            let behavior = self.animation_behavior(animation);
+            if matches!(behavior, 39 | 187) {
+                self.landing.set(false);
+            }
+            let passenger = (!input.dead() && !input.mounted)
+                .then(|| self.passenger_transition_animation())
+                .flatten();
+            let seated_completed = !input.dead()
+                && self.passenger_animation_input().is_some_and(|passenger| {
+                    passenger.phase == solarity_systems::VehiclePassengerPhase::Seated
+                        && if passenger.primary().is_some() {
+                            passenger.flags & 2 != 0
+                                && passenger.seated.contains(&i32::from(animation))
+                        } else {
+                            passenger.flags & 4 != 0
+                                && passenger.secondary.contains(&i32::from(animation))
+                        }
+                });
+            let request = if seated_completed {
+                Some(self.request(input, playback).unwrap_or(0).into())
+            } else if let Some(animation) = passenger {
+                // 7385C0 reapplies the passenger primary after completion's
+                // ordinary request (for example jump-start -> jump-end).
+                Some(animation.into())
+            } else if !input.mounted || input.dead() {
+                let movement_completion =
+                    resolve_unit_movement_animation_completion(behavior, input.movement_flags);
+                let completion =
+                    if let UnitMovementAnimationDecision::Select(animation) = movement_completion {
                         UnitPrimaryAnimationCompletion::Select(animation)
                     } else {
                         resolve_unit_primary_animation_completion(
@@ -1246,38 +1284,38 @@ impl UnitAnimationBehavior {
                             false,
                         )
                     };
-                    match completion {
-                        UnitPrimaryAnimationCompletion::Continue => {
-                            self.request(input, playback).map(Into::into)
-                        }
-                        UnitPrimaryAnimationCompletion::Retain => None,
-                        UnitPrimaryAnimationCompletion::Select(animation) => Some(animation.into()),
-                        UnitPrimaryAnimationCompletion::SelectWithCurrentVariation(animation) => {
-                            Some(UnitSequenceRequest {
-                                animation,
-                                variation: self
-                                    .model
-                                    .animations()
-                                    .model_variation_ordinal(playback.sequence),
-                                resolve_unit_tier: animation == 472,
-                            })
-                        }
+                match completion {
+                    UnitPrimaryAnimationCompletion::Continue => {
+                        self.request(input, playback).map(Into::into)
                     }
-                } else {
-                    self.request(input, playback).map(Into::into)
-                };
-                if let Some(request) = request {
-                    self.select(
-                        playback,
-                        request,
-                        input,
-                        playback.scene_time_ms,
-                        M2SequenceStartPhase::DuringSceneUpdate,
-                        random,
-                    )?;
+                    UnitPrimaryAnimationCompletion::Retain => None,
+                    UnitPrimaryAnimationCompletion::Select(animation) => Some(animation.into()),
+                    UnitPrimaryAnimationCompletion::SelectWithCurrentVariation(animation) => {
+                        Some(UnitSequenceRequest {
+                            animation,
+                            variation: self
+                                .model
+                                .animations()
+                                .model_variation_ordinal(playback.sequence),
+                            resolve_unit_tier: animation == 472,
+                        })
+                    }
                 }
-                Ok(())
+            } else {
+                self.request(input, playback).map(Into::into)
             };
+            if let Some(request) = request {
+                self.select(
+                    playback,
+                    request,
+                    input,
+                    playback.scene_time_ms,
+                    M2SequenceStartPhase::DuringSceneUpdate,
+                    random,
+                )?;
+            }
+            Ok(())
+        };
         let advance = playback.clock_with_bone_callbacks(
             &self.model,
             scene_time_ms as u32,

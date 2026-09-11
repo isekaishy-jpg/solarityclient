@@ -123,9 +123,19 @@ impl M2Frame {
         let mut completed = |playback: &mut M2Playback,
                              key: i32,
                              animation: u16,
-                             _: u32,
+                             boundary: u32,
                              random: &mut CrtRand| {
             if let Some((owner, ..)) = &body {
+                if owner.complete_vehicle_animation(
+                    &source.model,
+                    playback,
+                    key,
+                    animation,
+                    playback.scene_time_ms.wrapping_sub(boundary),
+                    random,
+                )? {
+                    return Ok(());
+                }
                 owner.complete_mount_animation(&source.model, playback, key, animation, random)?;
             }
             Ok(())

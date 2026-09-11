@@ -295,6 +295,47 @@ refreshes animated parents before their attached children. The remaining generic
 model consumers and scene registration order are described in the model scan
 evidence above.
 
+## Vehicle-owned ride clips
+
+VehicleSeat's own entry/exit/ride clips are separate from the passenger's body
+and secondary clips. The catalog preserves rows +84/+88/+8C and their key-bone
+selectors at +90/+94/+98. Entering seated phase with flag `0x20000` submits the
+ride clip to the vehicle's actual model (mount first), then records its passenger
+owner. Leaving seated phase releases that registration. These commands retain
+their order through passenger model loading and use the complete parent identity.
+
+Native `756F80` accepts raw animation IDs below 506 and normalizes unsigned keys
+above 34 to root key 26. `756D10` stores at most sixteen owners, including repeated
+GUIDs; a seventeenth model request still succeeds even though registration fails.
+`756CD0` excludes a literal selector 26 before normalization. `7577E0` removes all
+records for the departing GUID and releases the requested key only when no other
+record owns it. Clearing a non-root key retains its pose fade. A root resumes the
+current Unit_C request.
+
+Body and mount callbacks now route owned keys through `757280`'s seated-owner
+policy. Original consumer `747980` remains active while the passenger exists.
+Retired identities cannot remain active just because a detached model retains
+their CPU state. Active ownership replays the completed clip with variation -1,
+speed 1 and the exact completion overrun. The replay's own interruption cannot
+clear ownership. A normal external interruption clears the owned bit while
+retaining surviving passenger records. An owned upper key blocks ordinary upper
+selection; ownership is not a blanket lock on root animation requests. Bone-key
+aliases use the actual bone's callback key and timer.
+
+`vehicle_animation_owner_oracle.py` executes original `756D10`, `756CD0`, `757280`
+and `747980` for 150 table cases. GUID residency is supplied; model replay, key
+release and ordinary Unit_C resume are terminal capture boundaries. Runtime
+table comparisons therefore establish registration, masks, pruning and dispatch,
+not the skipped model consumers. Decoded model tests exercise those consumers,
+including replay phase, shared-key release, interruption, capacity and root
+resumption. Renderer coverage exercises an unloaded passenger, model arrival,
+two owners sharing a key, and departure on both vehicle body and mount models.
+
+Entry/exit action ownership (`74BE10` / `749D50`), its pending spell/timeout
+consumer, animation redirect bit `F60 +10:0x800`, and complete transfer/destruction
+hooks remain open. Ordinary nested seat attachment does not imply that redirect.
+Combined live travel and performance validation remain open.
+
 ## Testing package
 
 Build **000102** (`0.0.3a`) installs source revision

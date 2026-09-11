@@ -7,7 +7,11 @@ use solarity_systems::{
     VehiclePassengerAnimationInput, VehiclePassengerPhase as Phase, VehiclePassengerTransition,
     VehicleTransitionInput,
 };
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    rc::Rc,
+};
 
 use super::{
     UnitAnimationBehavior, UnitAnimationScene, UnitMovementAnimationEvent,
@@ -39,6 +43,16 @@ pub(in crate::application) struct UnitPassengerController {
 }
 
 #[derive(Clone, Copy)]
+pub(in crate::application) enum PassengerVehicleAnimation {
+    Seated {
+        parent: WorldObjectIdentity,
+        animation: i32,
+        key: i32,
+    },
+    Leave,
+}
+
+#[derive(Clone, Copy)]
 pub(in crate::application) struct UnitPassengerTarget {
     pub parent: UnitPassengerModelInput,
     pub yaw: f32,
@@ -47,6 +61,24 @@ pub(in crate::application) struct UnitPassengerTarget {
 }
 
 impl UnitPassengerController {
+    pub fn take_vehicle_animation(&self) -> Option<PassengerVehicleAnimation> {
+        self.state
+            .borrow_mut()
+            .vehicle_animation_commands
+            .pop_front()
+    }
+
+    pub fn vehicle_animation_lifetime(&self) -> Rc<Cell<bool>> {
+        Rc::clone(&self.state.borrow().retired)
+    }
+
+    pub fn take_vehicle_animation_binding(&self) -> Option<(WorldObjectIdentity, i32)> {
+        self.state.borrow_mut().vehicle_animation_binding.take()
+    }
+
+    pub fn bind_vehicle_animation(&self, parent: WorldObjectIdentity, key: i32) {
+        self.state.borrow_mut().vehicle_animation_binding = Some((parent, key));
+    }
     pub fn identity(&self) -> WorldObjectIdentity {
         self.identity
     }
@@ -111,6 +143,9 @@ pub(super) struct UnitPassengerModel {
     special_exit: bool,
     animation_completed: u32,
     animation_reset_pending: bool,
+    retired: Rc<Cell<bool>>,
+    vehicle_animation_commands: VecDeque<PassengerVehicleAnimation>,
+    vehicle_animation_binding: Option<(WorldObjectIdentity, i32)>,
 }
 
 impl UnitAnimationScene {
@@ -121,7 +156,9 @@ impl UnitAnimationScene {
                 .borrow()
                 .values()
                 .filter(|(_, state)| {
-                    !matches!(state.borrow().phase, Phase::Detached | Phase::Seated)
+                    let state = state.borrow();
+                    !matches!(state.phase, Phase::Detached | Phase::Seated)
+                        || !state.vehicle_animation_commands.is_empty()
                 })
                 .map(|(identity, state)| UnitPassengerController {
                     identity: *identity,
@@ -163,6 +200,7 @@ impl UnitAnimationScene {
             )
         });
         if entry.0 != identity {
+            entry.1.borrow().retire();
             *entry = (
                 identity,
                 Rc::new(RefCell::new(UnitPassengerModel::default())),
@@ -219,6 +257,9 @@ impl UnitAnimationScene {
 }
 
 impl UnitPassengerModel {
+    pub(super) fn retire(&self) {
+        self.retired.set(true);
+    }
     pub(super) fn queue(&mut self, event: UnitMovementAnimationEvent) {
         self.pending.push_back(event);
     }
@@ -417,6 +458,24 @@ impl UnitPassengerModel {
 
     fn enter_phase(&mut self, phase: Phase, fallback: WorldTransform, now_ms: u32) {
         let previous = self.phase;
+        if previous == Phase::Seated {
+            self.vehicle_animation_commands
+                .push_back(PassengerVehicleAnimation::Leave);
+        }
+        if phase == Phase::Seated
+            && let Some(input) = self.input
+            && input.parent_live
+            && let Some(seat) = input.seat
+            && seat.flags() & 0x20000 != 0
+            && (seat.vehicle_animations()[2] as u32) < 506
+        {
+            self.vehicle_animation_commands
+                .push_back(PassengerVehicleAnimation::Seated {
+                    parent: input.parent,
+                    animation: seat.vehicle_animations()[2],
+                    key: seat.vehicle_animation_keys()[2],
+                });
+        }
         if !(previous == Phase::EnterDelay && phase == Phase::Entering
             || previous == Phase::ExitDelay)
         {
@@ -587,6 +646,12 @@ fn refresh_input(
 }
 
 impl UnitAnimationBehavior {
+    pub(in crate::application) fn passenger_controller(&self) -> UnitPassengerController {
+        UnitPassengerController {
+            identity: self.identity,
+            state: Rc::clone(&self.passenger),
+        }
+    }
     pub fn synchronize_passenger(
         &self,
         world: &ActiveWorld,

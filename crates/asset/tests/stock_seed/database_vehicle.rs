@@ -22,6 +22,7 @@ fn vehicle_catalog_preserves_seat_slots_and_signed_attachment_ids() -> Result<()
     first[26..28].copy_from_slice(&[187, 39]);
     first[29..32].copy_from_slice(&[0.1, 0.2, -0.3].map(f32::to_bits));
     first[32] = u32::MAX;
+    first[33..39].copy_from_slice(&[37, 39, 91, u32::MAX, 4, 34]);
     first[45] = 0x1234_5678;
     let mut second = [0_u32; 58];
     second[..3].copy_from_slice(&[10, 0, u32::MAX]);
@@ -53,6 +54,8 @@ fn vehicle_catalog_preserves_seat_slots_and_signed_attachment_ids() -> Result<()
     assert_eq!(seat.enter_animations(), [-1, 37]);
     assert_eq!(seat.exit_animations(), [187, 39]);
     assert_eq!(seat.passenger_attachment_id(), -1);
+    assert_eq!(seat.vehicle_animations(), [37, 39, 91]);
+    assert_eq!(seat.vehicle_animation_keys(), [-1, 4, 34]);
     assert_eq!(seat.flags_b(), 0x1234_5678);
     Ok(())
 }

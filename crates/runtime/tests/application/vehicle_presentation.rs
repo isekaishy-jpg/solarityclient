@@ -8,6 +8,9 @@ use solarity_ecs::{
 };
 use solarity_rendering::m2_model_distance_key;
 
+#[path = "vehicle_owned_scene.rs"]
+mod vehicle_owned_scene;
+
 #[test]
 fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_arrives()
 -> Result<(), Box<dyn Error>> {

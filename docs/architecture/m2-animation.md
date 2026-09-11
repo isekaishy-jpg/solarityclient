@@ -233,12 +233,16 @@ selection, terminal reissue and jump/landing progression on all three offscreen
 renderer paths with the shared CRT stream. The probe does not execute model
 commit consumers or prove the supplied providers.
 
-The `73C140` vehicle-controlled completion branch, flight-takeoff/action latches,
+The `73C090`/`73C140` vehicle-controlled completion branches now consume seated
+passenger ownership, including shared keys, interruption and replay with the
+completion overrun. See [vehicle-owned ride clips](vehicle-presentation.md#vehicle-owned-ride-clips)
+for original-instruction comparisons and the separate model/renderer checks.
+Entry/exit action ownership, animation redirect, flight-takeoff/action latches,
 weapon readiness conversion and full action-priority providers remain open.
 Other generic models
 retain the earlier single-primary path. Sound callback age,
 the complete scene registration lifecycle, Unit_C spell/action providers, equipment
-synchronization and vehicle-control animation remain open.
+synchronization and remaining vehicle-control animation providers remain open.
 
 ## Per-model global tracks
 
