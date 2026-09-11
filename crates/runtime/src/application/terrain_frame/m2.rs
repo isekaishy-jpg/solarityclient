@@ -1939,6 +1939,22 @@ impl M2Frame {
     }
 
     /// Returns elapsed time on this resident generation's local animation clock.
+    pub(in crate::application) fn advance_unbound_passengers(
+        &mut self,
+        scene: &crate::application::unit_animation::UnitAnimationScene,
+        now: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.vehicle_passengers.advance_unbound(
+            scene,
+            &mut self.placements,
+            &self.sources,
+            &self.requested_items,
+            now,
+            random,
+        )
+    }
+
     pub(in crate::application) fn animation_time_ms(&self) -> f32 {
         self.animation_started_at.elapsed().as_secs_f32() * 1_000.0
     }

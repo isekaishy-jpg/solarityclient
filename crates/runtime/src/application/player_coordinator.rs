@@ -1046,8 +1046,11 @@ impl RuntimePlayerPresentation {
             self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::Idle);
         };
-        self.unit_animations
-            .synchronize_passengers(world, &self.vehicles, &self.passenger_frames);
+        self.unit_animations.synchronize_passenger_inputs(
+            world,
+            &self.vehicles,
+            &self.passenger_frames,
+        );
         let guid = world.local_player_guid()?;
         let Some(identity) = world.object_identity(guid) else {
             return Ok(RuntimePlayerPoll::Pending);

@@ -1,9 +1,10 @@
 # Vehicle presentation
 
 Vehicle creation state, passenger movement frames, entry-opacity seat lookup,
-and settled animated seat placement are connected. Remote boarding/exit motion
-now consumes the passenger controller. Local-player admission, remaining
-controller consumers and vehicle camera presentation remain open under
+and settled animated seat placement are connected. Local and remote boarding/exit
+motion consumes the passenger controller, including entry timing while the
+passenger model is absent. Remaining controller consumers and vehicle camera
+presentation remain open under
 [world completion](world-completion.md).
 
 ## Native evidence
@@ -208,17 +209,51 @@ until the shared controller returns to detached or seated; a short server path
 cannot resume movement during a longer exit animation. See
 [local player movement](local-player-movement.md#server-authored-local-paths).
 
-Remaining gaps include a resident parent's
-bone target when the child model has never loaded, seated dual animation slots,
-launch flags, exceptional transfer/removal callbacks and vehicle camera work.
-The CPU-only controller currently initializes travel from the unit-position
-fallback; this is exact when the parent model is absent. Combined live vehicle
-parity and performance gains are not established by these fixtures.
+Remaining gaps include seated dual animation slots, launch flags, exceptional
+transfer/removal callbacks and vehicle camera work. Combined live vehicle parity
+and performance gains are not established by these fixtures.
 
 The remote-transition slice passed all 1,242 locked workspace tests, with 23
 archive-dependent tests ignored. Its runtime portion passed 282 tests with 18 ignored. The new
 fixtures account for 3,072 exact arithmetic records, independently of the
 existing 512 settled-seat matrices and 3,072 seat-lookup/opacity records.
+
+## Entry timing before the passenger model arrives
+
+`749E40` requires a ready parent model and a seat row to call `7493B0`; it does
+not require the passenger model. `748400` leaves the passenger anchor lookup
+pending while that model is absent. Until an anchor is available, the entry
+target uses the raw seat offset. An absent parent model still selects ordinary
+unit position. `6E6F80` selects the parent's mount before its body.
+
+The attachment query `831410 -> 830DC0 -> 82F0F0` samples already selected bone
+timers at the current scene tick. It does not run the primary completion callback
+or select another variation. Initial travel duration combines these current
+bones with the preceding model placement and the current movement frame.
+
+The runtime now separates passenger input admission from timing. After local,
+creature and remote model residency updates, active controllers without a current
+GPU model can query the resident parent and initialize travel. This runs before
+drawing and checks complete object identities directly against current model
+placements, since the visibility index may still describe the preceding frame.
+Loaded passenger models retain their existing pre-animation timing pass. Both
+paths use a read-only selected clock for initial seat queries. Controller and
+bone-palette buffers are reused; queries do not dispatch model events or consume
+the CRT random stream.
+
+A Vulkan regression covers a body or mount parent, both already resident and
+arriving at the delay boundary. Distance-dependent durations verify the current
+animated seat target. The passenger's later model arrival preserves the existing
+deadline and travel position, and retries its authored static anchor lookup.
+A separate playback regression queries overdue variations repeatedly, then
+checks the later completion callbacks, event intervals and random sequence
+against an owner that received no attachment queries. Paused primary pose and
+continuing global time are also covered. These checks do not establish combined
+live vehicle parity or a performance improvement.
+
+The change passes 1,253 locked workspace tests with 23 archive-dependent tests
+ignored, including 292 runtime tests with 18 ignored. Workspace/all-target Clippy
+with warnings denied, formatting and whitespace checks pass.
 
 ## Testing package
 

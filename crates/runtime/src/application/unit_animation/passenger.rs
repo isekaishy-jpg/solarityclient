@@ -31,6 +31,64 @@ pub(in crate::application) struct UnitPassengerModelInput {
     pub parent_velocity: Vec3,
 }
 
+/// A CPU passenger can request a vehicle bone before its own model exists.
+#[derive(Clone)]
+pub(in crate::application) struct UnitPassengerController {
+    identity: WorldObjectIdentity,
+    state: SharedPassengerState,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::application) struct UnitPassengerTarget {
+    pub parent: UnitPassengerModelInput,
+    pub yaw: f32,
+    pub anchor: Option<Vec3>,
+    pub scale: f32,
+}
+
+impl UnitPassengerController {
+    pub fn identity(&self) -> WorldObjectIdentity {
+        self.identity
+    }
+
+    pub fn needs_advance(&self, now_ms: u32) -> bool {
+        let state = self.state.borrow();
+        !matches!(state.phase, Phase::Detached | Phase::Seated)
+            && state.timing.is_none_or(|timing| timing.finished(now_ms))
+    }
+
+    pub fn fallback_position(&self) -> Vec3 {
+        let state = self.state.borrow();
+        state.unit_pose.map_or(state.origin, |pose| pose.position())
+    }
+
+    pub fn target(&self) -> Option<UnitPassengerTarget> {
+        let state = self.state.borrow();
+        if !matches!(state.phase, Phase::EnterDelay | Phase::Entering) {
+            return None;
+        }
+        let parent = state.input?;
+        Some(UnitPassengerTarget {
+            parent,
+            yaw: state.local_yaw.unwrap_or(0.),
+            // An absent model does not mark the anchor lookup as complete.
+            // 748400 retries it after the child's actual model has loaded.
+            anchor: state.anchor.flatten(),
+            scale: state
+                .last_transform
+                .map_or(1., |pose| pose.x_axis.truncate().length()),
+        })
+    }
+
+    pub fn advance(&self, now_ms: u32, target: Vec3) {
+        let mut state = self.state.borrow_mut();
+        let velocity = state
+            .input
+            .map_or(Vec3::ZERO, |input| input.parent_velocity);
+        state.advance(now_ms, target, velocity);
+    }
+}
+
 #[derive(Default)]
 pub(super) struct UnitPassengerModel {
     requested: Option<(u64, i8)>,
@@ -55,6 +113,22 @@ pub(super) struct UnitPassengerModel {
 }
 
 impl UnitAnimationScene {
+    pub fn collect_passenger_transitions(&self, output: &mut Vec<UnitPassengerController>) {
+        output.clear();
+        output.extend(
+            self.passenger_states
+                .borrow()
+                .values()
+                .filter(|(_, state)| {
+                    !matches!(state.borrow().phase, Phase::Detached | Phase::Seated)
+                })
+                .map(|(identity, state)| UnitPassengerController {
+                    identity: *identity,
+                    state: Rc::clone(state),
+                }),
+        );
+    }
+
     /// Receipt admission runs before local held controls can resume. It must not
     /// read the still-unpublished ECS movement image or start a second timer.
     pub fn admit_movement_passenger(
@@ -97,7 +171,20 @@ impl UnitAnimationScene {
     }
 
     /// CPU passenger ownership precedes and survives the unit's model binding.
+    #[cfg(test)]
     pub fn synchronize_passengers(
+        &self,
+        world: &ActiveWorld,
+        vehicles: &VehicleCatalog,
+        frames: &UnitPassengerFrames,
+    ) {
+        self.synchronize_passenger_inputs(world, vehicles, frames);
+        self.advance_unbound_passengers_without_scene();
+    }
+
+    /// Admission is separate from timing so a newly resident vehicle can supply
+    /// its attachment before an unloaded passenger initializes its travel.
+    pub fn synchronize_passenger_inputs(
         &self,
         world: &ActiveWorld,
         vehicles: &VehicleCatalog,
@@ -105,20 +192,27 @@ impl UnitAnimationScene {
     ) {
         for (identity, state) in self.passenger_states.borrow().values() {
             if world.object_identity(identity.guid()) == Some(*identity) {
-                let mut state = state.borrow_mut();
-                state.synchronize(world, vehicles, frames, *identity, None, self.scene_time_ms);
-                if !self
-                    .owners
-                    .get(&identity.guid())
-                    .is_some_and(|owner| owner.identity == *identity)
-                {
-                    let target = state.unit_pose.map_or(state.origin, |pose| pose.position());
-                    let velocity = state
-                        .input
-                        .map_or(Vec3::ZERO, |input| input.parent_velocity);
-                    state.advance(self.scene_time_ms, target, velocity);
-                }
+                state.borrow_mut().synchronize(
+                    world,
+                    vehicles,
+                    frames,
+                    *identity,
+                    None,
+                    self.scene_time_ms,
+                );
             }
+        }
+    }
+
+    /// With no model scene, the existing no-parent-model target remains valid.
+    pub fn advance_unbound_passengers_without_scene(&self) {
+        for (_, state) in self.passenger_states.borrow().values() {
+            let mut state = state.borrow_mut();
+            let target = state.unit_pose.map_or(state.origin, |pose| pose.position());
+            let velocity = state
+                .input
+                .map_or(Vec3::ZERO, |input| input.parent_velocity);
+            state.advance(self.scene_time_ms, target, velocity);
         }
     }
 }

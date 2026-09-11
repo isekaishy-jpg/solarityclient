@@ -17,6 +17,72 @@ use crate::random::CrtRand;
 use crate::test_support::ClientFixture;
 
 #[test]
+fn attachment_clock_queries_preserve_overdue_callbacks_events_and_variation_randomness()
+-> Result<(), Box<dyn Error>> {
+    let (model, catalog) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut queried = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
+    queried.apply_model_sequence(&model, &catalog, 0, 0, 0, &mut random)?;
+    queried.clock(&model, 250., &mut random)?;
+    queried.event_window(250.);
+    let mut control = queried.clone();
+    let mut control_random = random;
+    let sequence = queried.sequence;
+    for now in [350, 1001, 2200, 2200] {
+        let clock = queried.sample_clock(now);
+        assert_eq!(clock.sequence(), sequence);
+        assert_eq!(clock.global_time_ms(), now as f32);
+        assert_eq!(
+            clock.animation_time_ms(),
+            control.script_timer.ok_or("timer")?.animation_time_ms(now) as f32
+        );
+    }
+    let mut calls = 0;
+    let mut control_calls = 0;
+    let actual = queried.clock_with_completion(
+        &model,
+        2200.,
+        &mut random,
+        Some(&mut |_, _| {
+            calls += 1;
+            Ok(())
+        }),
+    )?;
+    let expected = control.clock_with_completion(
+        &model,
+        2200.,
+        &mut control_random,
+        Some(&mut |_, _| {
+            control_calls += 1;
+            Ok(())
+        }),
+    )?;
+    assert!(calls > 0);
+    assert_eq!(calls, control_calls);
+    assert_eq!(actual.clock, expected.clock);
+    assert_eq!(actual.expired_variations.len(), 2);
+    for (actual, expected) in actual
+        .expired_variations
+        .iter()
+        .zip(&expected.expired_variations)
+    {
+        assert_eq!(actual.clock, expected.clock);
+        assert_eq!(
+            triggered_m2_event_indices(model.animations(), actual.event_window),
+            triggered_m2_event_indices(model.animations(), expected.event_window),
+        );
+    }
+    assert_eq!(queried.event_window(2200.), control.event_window(2200.));
+    assert_eq!(random, control_random);
+    queried.set_paused(true, 2300);
+    let frozen = queried.sample_clock(2300);
+    let later = queried.sample_clock(3500);
+    assert_eq!(frozen.animation_time_ms(), later.animation_time_ms());
+    assert_eq!(later.global_time_ms() - frozen.global_time_ms(), 1200.);
+    Ok(())
+}
+
+#[test]
 fn model_global_origin_survives_primary_seek_pause_and_scene_wrap() -> Result<(), Box<dyn Error>> {
     let (model, catalog) = default_sequence_model(&[0, 7], 0, 0, 1)?;
     for (created, now, expected) in [(5000_u32, 5101_u32, 101_u32), (0xfffffff0, 16, 32)] {

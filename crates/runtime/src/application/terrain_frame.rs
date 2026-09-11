@@ -1044,6 +1044,15 @@ impl TerrainFrame {
         Ok(report)
     }
 
+    pub(super) fn advance_unbound_passengers(
+        &mut self,
+        scene: &crate::application::unit_animation::UnitAnimationScene,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.m2
+            .advance_unbound_passengers(scene, scene.scene_time_ms() as f32, random)
+    }
+
     /// Rebuilds only the player-owned source after appearance customization.
     pub(super) fn replace_player(
         &mut self,

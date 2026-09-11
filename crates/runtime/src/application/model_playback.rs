@@ -477,7 +477,37 @@ impl M2Playback {
         self.clock_with_completion(model, animation_time_ms, random, None)
     }
 
+    /// 830DC0 -> 82F0F0 samples existing bone timers without advancing the
+    /// sequence owner, its event windows, or the CRT variation stream.
+    pub(in crate::application) fn sample_clock(&self, scene_time_ms: u32) -> M2AnimationClock {
+        let global_time_ms = self.global_tick(scene_time_ms);
+        if let Some(timer) = self.script_timer {
+            let pose_time = if self.paused_scene_time_ms != 0 {
+                self.paused_scene_time_ms
+            } else {
+                scene_time_ms
+            };
+            let clock = M2AnimationClock::new_with_global_tick(
+                self.sequence,
+                timer.animation_time_ms(pose_time) as f32,
+                global_time_ms,
+            );
+            self.script_blend
+                .map_or(clock, |blend| blend.apply_to_clock(clock, pose_time))
+        } else {
+            world_animation_clock(
+                self.sequence,
+                self.sequence_duration_ms,
+                scene_time_ms as f32 - self.cycle_started_ms,
+                global_time_ms,
+            )
+        }
+    }
+
     /// Advances a model whose gameplay owner registered a primary sequence callback.
+    ///
+    /// Attachment queries use `sample_clock` instead: reading a bone pose does
+    /// not dispatch this callback or choose a replacement variation.
     pub(in crate::application) fn clock_with_completion(
         &mut self,
         model: &DecodedM2Model,

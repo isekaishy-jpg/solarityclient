@@ -4,7 +4,10 @@ use super::{
     M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, RuntimeTerrainFrameError,
     UnitAnimationBehavior, held_item_finger_pose, visibility::M2PlacementVisibility,
 };
-use crate::application::unit_animation::passenger::UnitPassengerModelInput;
+use crate::application::unit_animation::{
+    UnitAnimationScene,
+    passenger::{UnitPassengerController, UnitPassengerModelInput},
+};
 use crate::random::CrtRand;
 use glam::{Mat4, Vec3};
 use solarity_ecs::WorldObjectIdentity;
@@ -24,12 +27,24 @@ pub(super) struct M2VehiclePassengers {
     parents: HashMap<usize, usize>,
     chain: Vec<(usize, bool)>,
     palettes: HashMap<usize, ParentPalette>,
+    unbound: Vec<UnitPassengerController>,
+    view: Mat4,
 }
 
 #[derive(Default)]
 struct ParentPalette {
     bones: M2BonePose,
     clock: Option<M2AnimationClock>,
+}
+
+struct ParentSeatPose {
+    attachment: Option<Mat4>,
+    model_frame: Mat4,
+    scale: f32,
+    position: Vec3,
+    yaw: f32,
+    transition: bool,
+    hidden: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -52,6 +67,73 @@ impl M2VehiclePassengers {
         &self.parents
     }
 
+    /// F60 belongs to the unit even while its body is waiting for model data.
+    /// Read the resident parent's bones before initializing that unit's travel.
+    pub fn advance_unbound(
+        &mut self,
+        scene: &UnitAnimationScene,
+        placements: &mut [M2GpuPlacement],
+        sources: &[Option<M2GpuSource>],
+        requested_items: &[(u64, CharacterAttachmentPoint)],
+        now: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        scene.collect_passenger_transitions(&mut self.unbound);
+        if self.unbound.is_empty() {
+            return Ok(());
+        }
+        for palette in self.palettes.values_mut() {
+            palette.clock = None;
+        }
+        for index in 0..self.unbound.len() {
+            let controller = self.unbound[index].clone();
+            if !controller.needs_advance(now as u32)
+                || resident_model_index(placements, controller.identity()).is_some()
+            {
+                continue;
+            }
+            let mut target = controller.fallback_position();
+            if let Some(request) = controller.target()
+                && request.parent.parent_live
+                && let Some(seat) = request.parent.seat
+                && let Some(parent) = resident_model_index(placements, request.parent.parent)
+                && let Some(pose) = self.parent_seat_pose(
+                    parent,
+                    request.parent,
+                    SeatPosePurpose::InitialTarget,
+                    placements,
+                    sources,
+                    requested_items,
+                    self.view,
+                    now,
+                    random,
+                )?
+            {
+                target = vehicle_entry_target(
+                    VehicleSeatPose {
+                        passenger_yaw: request.yaw,
+                        rotation: Vec3::from_array(seat.passenger_rotation()),
+                        offset: Vec3::from_array(seat.attachment_offset()),
+                        passenger_anchor: request.anchor,
+                        passenger_scale: request.scale,
+                        vehicle_scale: pose.scale,
+                        attachment: pose.attachment,
+                        vehicle_position: pose.position,
+                        vehicle_yaw: pose.yaw,
+                    },
+                    pose.model_frame,
+                    request.parent.parent_frame,
+                    pose.transition,
+                );
+            }
+            if !target.is_finite() {
+                return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
+            }
+            controller.advance(now as u32, target);
+        }
+        Ok(())
+    }
+
     /// Native F60 advances before the unit animation callback. Existing model
     /// clocks supply its initial seat target; the later pose pass uses new bones.
     #[allow(clippy::too_many_arguments)]
@@ -65,6 +147,7 @@ impl M2VehiclePassengers {
         now: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.view = view;
         self.hidden.resize(placements.len(), false);
         for &index in visibility.dynamic_indices() {
             placements[index].passenger_playback_advance = None;
@@ -290,6 +373,75 @@ impl M2VehiclePassengers {
         let Some((seat, parent)) = input.seat.zip(parent) else {
             return Ok(Some(placements[index].local_transform));
         };
+        let Some(parent_pose) = self.parent_seat_pose(
+            parent,
+            input,
+            purpose,
+            placements,
+            sources,
+            requested_items,
+            view,
+            now,
+            random,
+        )?
+        else {
+            return Ok(None);
+        };
+        if inherit && parent_pose.attachment.is_some() {
+            self.hidden[index] = parent_pose.hidden;
+            self.parents.insert(index, parent);
+        }
+        let passenger_scale = placements[index].ground_placement.as_ref().map_or_else(
+            || placements[index].local_transform.x_axis.truncate().length(),
+            |ground| ground.scale,
+        );
+        let pose = VehicleSeatPose {
+            passenger_yaw: owner.passenger_seat_yaw(
+                owner.body_pose().placement_yaw - input.parent_pose.orientation(),
+                inherit,
+            ),
+            rotation: Vec3::from_array(seat.passenger_rotation()),
+            offset: Vec3::from_array(seat.attachment_offset()),
+            passenger_anchor: sources[placements[index].source_index]
+                .as_ref()
+                .and_then(|source| owner.passenger_anchor(&source.model)),
+            passenger_scale,
+            vehicle_scale: parent_pose.scale,
+            attachment: parent_pose.attachment,
+            vehicle_position: parent_pose.position,
+            vehicle_yaw: parent_pose.yaw,
+        };
+        let transform = if inherit {
+            vehicle_seat_transform(pose)
+        } else {
+            Mat4::from_translation(vehicle_entry_target(
+                pose,
+                parent_pose.model_frame,
+                input.parent_frame,
+                parent_pose.transition,
+            ))
+        };
+        if !transform.is_finite() {
+            return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
+        }
+        Ok(Some(transform))
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn parent_seat_pose(
+        &mut self,
+        parent: usize,
+        input: UnitPassengerModelInput,
+        purpose: SeatPosePurpose,
+        placements: &mut [M2GpuPlacement],
+        sources: &[Option<M2GpuSource>],
+        requested_items: &[(u64, CharacterAttachmentPoint)],
+        view: Mat4,
+        now: f32,
+        random: &mut CrtRand,
+    ) -> Result<Option<ParentSeatPose>, RuntimeTerrainFrameError> {
+        let Some(seat) = input.seat else {
+            return Ok(None);
+        };
         let Some(source) = sources[placements[parent].source_index].as_ref() else {
             return Ok(None);
         };
@@ -304,11 +456,17 @@ impl M2VehiclePassengers {
         };
         let attachment_id = vehicle_seat_attachment(seat.attachment_id());
         let attachment = attachment_id.and_then(|id| source.model.attachment(id));
+        let mut hidden = false;
         let attached = if let Some(attachment) = attachment {
             let palette = self.palettes.entry(parent).or_default();
             if palette.clock.is_none() {
                 let placement = &mut placements[parent];
-                let clock = if let Some(clock) = placement
+                let clock = if purpose == SeatPosePurpose::InitialTarget {
+                    let Some(playback) = placement.playback.as_ref() else {
+                        return Ok(None);
+                    };
+                    playback.borrow().sample_clock(now as u32)
+                } else if let Some(clock) = placement
                     .unit_animation
                     .as_ref()
                     .and_then(|owner| owner.scene_clock())
@@ -369,15 +527,12 @@ impl M2VehiclePassengers {
                 clock,
                 parent_transform,
             )?;
-            if inherit {
-                self.hidden[index] = enabled.is_none()
-                    || self.hidden[parent]
-                    || placements[parent]
-                        .entity_opacity
-                        .as_ref()
-                        .is_some_and(|owner| owner.hidden());
-                self.parents.insert(index, parent);
-            }
+            hidden = enabled.is_none()
+                || self.hidden.get(parent).copied().unwrap_or(false)
+                || placements[parent]
+                    .entity_opacity
+                    .as_ref()
+                    .is_some_and(|owner| owner.hidden());
             // 831410 supplies the bone matrix independently of the attachment
             // enable channel; attached models inherit that channel's visibility.
             Some(
@@ -388,10 +543,6 @@ impl M2VehiclePassengers {
         } else {
             None
         };
-        let passenger_scale = placements[index].ground_placement.as_ref().map_or_else(
-            || placements[index].local_transform.x_axis.truncate().length(),
-            |ground| ground.scale,
-        );
         let vehicle_scale = placements[parent].ground_placement.as_ref().map_or_else(
             || {
                 placements[parent]
@@ -412,36 +563,15 @@ impl M2VehiclePassengers {
         let vehicle_yaw = parent_transition
             .and_then(|owner| owner.passenger_last_yaw())
             .unwrap_or(input.parent_pose.orientation());
-        let pose = VehicleSeatPose {
-            passenger_yaw: owner.passenger_seat_yaw(
-                owner.body_pose().placement_yaw - input.parent_pose.orientation(),
-                inherit,
-            ),
-            rotation: Vec3::from_array(seat.passenger_rotation()),
-            offset: Vec3::from_array(seat.attachment_offset()),
-            passenger_anchor: sources[placements[index].source_index]
-                .as_ref()
-                .and_then(|source| owner.passenger_anchor(&source.model)),
-            passenger_scale,
-            vehicle_scale,
+        Ok(Some(ParentSeatPose {
             attachment: attached,
-            vehicle_position,
-            vehicle_yaw,
-        };
-        let transform = if inherit {
-            vehicle_seat_transform(pose)
-        } else {
-            Mat4::from_translation(vehicle_entry_target(
-                pose,
-                parent_transform,
-                input.parent_frame,
-                parent_transition.is_some(),
-            ))
-        };
-        if !transform.is_finite() {
-            return Err(RuntimeTerrainFrameError::InvalidUnitM2Transform);
-        }
-        Ok(Some(transform))
+            model_frame: parent_transform,
+            scale: vehicle_scale,
+            position: vehicle_position,
+            yaw: vehicle_yaw,
+            transition: parent_transition.is_some(),
+            hidden,
+        }))
     }
 }
 
@@ -472,4 +602,28 @@ fn model_index(
     .into_iter()
     .filter_map(|owner| visibility.dynamic_owner_index(owner))
     .find(|index| unit_owner(&placements[*index]).is_some_and(|owner| owner.identity() == identity))
+}
+
+/// Residency changes precede the visibility index rebuild. Match the complete
+/// object identity here, including generation, and prefer its mount as 6E6F80 does.
+fn resident_model_index(
+    placements: &[M2GpuPlacement],
+    identity: WorldObjectIdentity,
+) -> Option<usize> {
+    let guid = identity.guid();
+    [
+        M2GpuPlacementOwner::PlayerMount { guid },
+        M2GpuPlacementOwner::RemotePlayerMount { guid },
+        M2GpuPlacementOwner::CreatureMount { guid },
+        M2GpuPlacementOwner::PlayerBody { guid },
+        M2GpuPlacementOwner::RemotePlayerBody { guid },
+        M2GpuPlacementOwner::CreatureBody { guid },
+    ]
+    .into_iter()
+    .find_map(|kind| {
+        placements.iter().position(|placement| {
+            placement.owner == kind
+                && unit_owner(placement).is_some_and(|owner| owner.identity() == identity)
+        })
+    })
 }

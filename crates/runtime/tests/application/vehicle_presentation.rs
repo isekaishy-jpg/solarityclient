@@ -9,6 +9,293 @@ use solarity_ecs::{
 use solarity_rendering::m2_model_distance_key;
 
 #[test]
+fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_arrives()
+-> Result<(), Box<dyn Error>> {
+    use crate::application::unit_animation::{
+        UnitMovementAnimationEvent, UnitMovementAnimationEventKind,
+    };
+    use solarity_systems::{
+        VehiclePassengerPhase as Phase, VehiclePassengerTransition, VehicleSeatPose,
+        VehicleTransitionInput, vehicle_entry_target,
+    };
+
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let parameters = [0.25, 4., 20., 0., 10., 0., 20.];
+    let fixture = crate::test_support::unit_models::fixture_with_vehicle_entry(parameters)?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let camera = WorldCamera::orthographic(
+        Vec3::new(30., 0., 10.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-30., 30.],
+        [-30., 30.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    for (mounted, parent_late) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut presentation = unit_presentation(&fixture)?;
+        let mut world = ActiveWorld::enter(WorldBootstrap::new(
+            WorldMapId::new(0),
+            7,
+            "Local",
+            Vec3::ZERO,
+            0.,
+        ));
+        for guid in [10, 30] {
+            world.create_object(
+                guid,
+                ObjectKind::Unit,
+                Some(WorldTransform::new(Vec3::ZERO, 0.)),
+                [(4, 1_f32.to_bits())],
+            )?;
+        }
+        world.set_unit_vehicle(30, 1, 0.);
+        world.update_transform(10, WorldTransform::new(Vec3::X * 2., 0.))?;
+        let ready = |world: &mut ActiveWorld, guid, mount| {
+            equipment_residency::fields(
+                world,
+                guid,
+                &[
+                    (4, 1_f32.to_bits()),
+                    (23, u32::from_le_bytes([1, 1, 0, 0])),
+                    (24, 100),
+                    (32, 100),
+                    (67, 100),
+                    (68, 100),
+                    (69, if mount { 102 } else { 0 }),
+                    (74, 0),
+                ],
+            )
+        };
+        if !parent_late {
+            ready(&mut world, 30, mounted)?;
+        }
+        let child = world.object_identity(10).ok_or("child")?;
+        let parent = world.object_identity(30).ok_or("parent")?;
+        let mut random = CrtRand::new();
+        let mut frame = M2Frame::prepare(
+            &mut renderer,
+            &ResidentM2Scene::default(),
+            fixture_animations(&fixture)?,
+            &mut random,
+            Arc::new(M2ParticleTwinkleTable::new(1)),
+        )?;
+        for now in [0_u32, 100, 350] {
+            presentation.set_animation_scene_time(now);
+            if now == 100 {
+                let movement = WorldMovementState::new(
+                    0x200,
+                    WorldMovementSpeeds::new([0.; 9]),
+                    WorldMovementContext {
+                        transport: Some(WorldMovementTransport {
+                            guid: 30,
+                            position: Vec3::X * 2.,
+                            orientation: 0.,
+                            time_ms: now,
+                            seat: 2,
+                            interpolated_time_ms: None,
+                        }),
+                        ..Default::default()
+                    },
+                );
+                world.update_movement(10, movement)?;
+                presentation.notify_movement_animation(UnitMovementAnimationEvent {
+                    identity: child,
+                    movement,
+                    stand: 0,
+                    kind: UnitMovementAnimationEventKind::Passenger {
+                        previous_transform: WorldTransform::new(Vec3::X * 10., 0.),
+                        previous: None,
+                        parent: Some(parent),
+                        animated: true,
+                    },
+                });
+            }
+            if now == 350 && parent_late {
+                ready(&mut world, 30, mounted)?;
+            }
+            presentation.synchronize(Some(&world))?;
+            presentation.synchronize_creatures(Some(&world), |_| None)?;
+            frame.replace_creatures(
+                &mut renderer,
+                &presentation.resident_creature_frame_inputs(),
+                &mut random,
+            )?;
+            let before = random;
+            frame.advance_unbound_passengers(
+                presentation.movement_animations(),
+                now as f32,
+                &mut random,
+            )?;
+            assert_eq!(
+                random, before,
+                "seat lookup must not advance the parent's animation"
+            );
+            assert!(presentation.movement_animations().get(10).is_none());
+            assert!(
+                !frame
+                    .placements
+                    .iter()
+                    .any(|p| p.owner == M2GpuPlacementOwner::CreatureBody { guid: 10 })
+            );
+            if now < 350 {
+                frame.update_creature_states(
+                    &presentation.resident_creature_frame_inputs(),
+                    now as f32,
+                    &mut random,
+                )?;
+                equipment_residency::advance(
+                    &mut frame,
+                    &renderer,
+                    camera,
+                    now as f32,
+                    &mut random,
+                )?;
+            }
+        }
+        let mut controllers = Vec::new();
+        presentation
+            .movement_animations()
+            .collect_passenger_transitions(&mut controllers);
+        let controller = controllers
+            .into_iter()
+            .find(|c| c.identity() == child)
+            .ok_or("unloaded child transition")?;
+        let request = controller.target().ok_or("entry request")?;
+        assert!(request.anchor.is_none());
+        let parent_kind = if mounted {
+            M2GpuPlacementOwner::CreatureMount { guid: 30 }
+        } else {
+            M2GpuPlacementOwner::CreatureBody { guid: 30 }
+        };
+        // The authored bone moves +2 Z and scales 1 -> 2 over a one-second clip.
+        // Compute it from the retained selected timer, independently of the seat sampler.
+        let target_at = |frame: &M2Frame, now, anchor| -> Result<Vec3, Box<dyn Error>> {
+            let placement = frame
+                .placements
+                .iter()
+                .find(|p| p.owner == parent_kind)
+                .ok_or("resident vehicle model")?;
+            let playback = placement.playback.as_ref().ok_or("playback")?.borrow();
+            let phase = playback.script_timer.map_or_else(
+                || {
+                    (now as f32 - playback.cycle_started_ms)
+                        .rem_euclid(playback.sequence_duration_ms)
+                },
+                |timer| timer.animation_time_ms(now) as f32,
+            ) / 1000.;
+            let bone = Mat4::from_translation(Vec3::Z * (2. * phase))
+                * Mat4::from_scale(Vec3::splat(1. + phase));
+            let seat = request.parent.seat.ok_or("seat")?;
+            Ok(vehicle_entry_target(
+                VehicleSeatPose {
+                    passenger_yaw: 0.,
+                    rotation: Vec3::from_array(seat.passenger_rotation()),
+                    offset: Vec3::from_array(seat.attachment_offset()),
+                    passenger_anchor: anchor,
+                    passenger_scale: 1.,
+                    vehicle_scale: 1.,
+                    attachment: Some(
+                        placement.transform * bone * Mat4::from_translation(Vec3::new(2., -1., 3.)),
+                    ),
+                    vehicle_position: request.parent.parent_pose.position(),
+                    vehicle_yaw: request.parent.parent_pose.orientation(),
+                },
+                placement.transform,
+                request.parent.parent_frame,
+                false,
+            ))
+        };
+        let target = target_at(&frame, 350, None)?;
+        let mut expected = VehiclePassengerTransition::new(VehicleTransitionInput {
+            phase: Phase::Entering,
+            has_parent: true,
+            parameters,
+            origin: Vec3::X * 2.,
+            target,
+            unit_position: Vec3::X * 2.,
+            parent_velocity: Vec3::ZERO,
+            yaw: 0.,
+            previous_yaw: 0.,
+            start_ms: 350,
+        });
+        let end = expected.end_ms();
+        assert!(end > 450);
+        assert!(
+            !controller.needs_advance(end - 1),
+            "duration must reach the animated seat ({mounted}, {parent_late}): {end}"
+        );
+        assert!(
+            controller.needs_advance(end),
+            "timer must use current bones at phase entry"
+        );
+        let arrival = 350 + (end - 350) / 2;
+        ready(&mut world, 10, false)?;
+        presentation.set_animation_scene_time(arrival);
+        presentation.synchronize(Some(&world))?;
+        presentation.synchronize_creatures(Some(&world), |_| None)?;
+        frame.replace_creatures(
+            &mut renderer,
+            &presentation.resident_creature_frame_inputs(),
+            &mut random,
+        )?;
+        frame.advance_unbound_passengers(
+            presentation.movement_animations(),
+            arrival as f32,
+            &mut random,
+        )?;
+        frame.update_creature_states(
+            &presentation.resident_creature_frame_inputs(),
+            arrival as f32,
+            &mut random,
+        )?;
+        equipment_residency::advance(&mut frame, &renderer, camera, arrival as f32, &mut random)?;
+        let placement = frame
+            .placements
+            .iter()
+            .find(|p| p.owner == M2GpuPlacementOwner::CreatureBody { guid: 10 })
+            .ok_or("arrived child")?;
+        let owner = placement.unit_animation.as_ref().ok_or("arrived owner")?;
+        assert_eq!(owner.passenger_phase(), Phase::Entering);
+        let anchor = owner.passenger_anchor(
+            &frame.sources[placement.source_index]
+                .as_ref()
+                .ok_or("source")?
+                .model,
+        );
+        assert_eq!(
+            anchor,
+            Some(Vec3::new(0.25, 0.5, 1.)),
+            "absent model must not cache an absent attachment"
+        );
+        let target = target_at(&frame, arrival, anchor)?;
+        let expected_position = expected
+            .sample(
+                arrival,
+                request.parent.seat.ok_or("seat")?.flags(),
+                Vec3::X * 2.,
+                target,
+                0.,
+            )
+            .position;
+        assert!(
+            placement
+                .transform
+                .w_axis
+                .truncate()
+                .abs_diff_eq(expected_position, 0.0001),
+            "arrival continues its existing travel: {:?} != {expected_position:?}",
+            placement.transform.w_axis.truncate()
+        );
+        assert!(!controller.needs_advance(end - 1));
+        assert!(controller.needs_advance(end));
+    }
+    Ok(())
+}
+
+#[test]
 fn vehicle_passenger_transition_changes_render_parent_only_when_the_model_attaches()
 -> Result<(), Box<dyn Error>> {
     use crate::application::unit_animation::{

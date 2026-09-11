@@ -2751,6 +2751,16 @@ impl ClientServices {
             RuntimeRemotePlayerPoll::Current => {}
         }
         profile.mark("creature and remote player residency");
+        if let Some(frame) = self.terrain_frame.as_mut() {
+            frame.advance_unbound_passengers(
+                self.player.movement_animations(),
+                &mut self.crt_rand,
+            )?;
+        } else {
+            self.player
+                .movement_animations()
+                .advance_unbound_passengers_without_scene();
+        }
         self.unit_effects.synchronize_models(
             self.gameplay.world(),
             &self.player,

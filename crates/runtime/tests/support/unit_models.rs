@@ -4,28 +4,28 @@ use super::{ClientFixture, game_object_models};
 use std::error::Error;
 
 pub fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, None, None, None, false)
+    build_fixture(false, false, None, None, None, None, None)
 }
 
 pub fn fixture_with_effects() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false, None, None, None, None, false)
+    build_fixture(true, false, None, None, None, None, None)
 }
 
 pub fn fixture_with_equipment() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, true, None, None, None, None, false)
+    build_fixture(false, true, None, None, None, None, None)
 }
 
 pub fn fixture_with_hairless_npc() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, Some(9), None, None, None, false)
+    build_fixture(false, false, Some(9), None, None, None, None)
 }
 
 pub fn fixture_with_water_effects(attachment: u32) -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, Some(attachment), None, None, false)
+    build_fixture(false, false, None, Some(attachment), None, None, None)
 }
 
 /// Distinct display/model scales and a family interval for live scale updates.
 pub fn fixture_with_body_scale() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(false, false, None, None, Some((0.4, 1.25)), None, false)
+    build_fixture(false, false, None, None, Some((0.4, 1.25)), None, None)
 }
 
 /// Display 102 is a mount with independently authored display/model scales.
@@ -37,7 +37,7 @@ pub fn fixture_with_mount_scale() -> Result<ClientFixture, Box<dyn Error>> {
         None,
         Some((0.4, 1.25)),
         Some((1.6, 3.5)),
-        false,
+        None,
     )
 }
 
@@ -50,13 +50,17 @@ pub fn fixture_with_mount_effects() -> Result<ClientFixture, Box<dyn Error>> {
         None,
         Some((0.4, 1.25)),
         Some((1.6, 3.5)),
-        false,
+        None,
     )
 }
 
 /// Animated vehicle bones, a passenger anchor, and authored seat offsets.
 pub fn fixture_with_vehicle_seats() -> Result<ClientFixture, Box<dyn Error>> {
-    build_fixture(true, false, None, None, None, None, true)
+    fixture_with_vehicle_entry([0.25, 8., 20., 2., 2., 0., 20.])
+}
+
+pub fn fixture_with_vehicle_entry(parameters: [f32; 7]) -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(true, false, None, None, None, None, Some(parameters))
 }
 
 fn build_fixture(
@@ -66,8 +70,9 @@ fn build_fixture(
     water_attachment: Option<u32>,
     body_scale: Option<(f32, f32)>,
     mount_scale: Option<(f32, f32)>,
-    vehicle_seats: bool,
+    vehicle_entry: Option<[f32; 7]>,
 ) -> Result<ClientFixture, Box<dyn Error>> {
+    let vehicle_seats = vehicle_entry.is_some();
     let ids = [0, 91, 96, 97, 98, 99, 100, 101];
     let mut model = game_object_models::model_with_animations(&ids)?;
     let sequences = u32::from_le_bytes(model[0x20..0x24].try_into()?) as usize;
@@ -255,9 +260,9 @@ fn build_fixture(
     let mut seats = [0_u32; 116];
     seats[..3].copy_from_slice(&[10, 0, u32::MAX]);
     seats[58..61].copy_from_slice(&[12, 0x8000_0000, 21]);
-    if vehicle_seats {
+    if let Some(parameters) = vehicle_entry {
         seats[59] |= 0x8001;
-        seats[64..71].copy_from_slice(&[0.25, 8., 20., 2., 2., 0., 20.].map(f32::to_bits));
+        seats[64..71].copy_from_slice(&parameters.map(f32::to_bits));
         seats[71..73].copy_from_slice(&[96, 91]);
         seats[77..84].copy_from_slice(&[0.125, 8., 20., 0.5, 0.5, 0., 20.].map(f32::to_bits));
         seats[84..86].copy_from_slice(&[99, 100]);
