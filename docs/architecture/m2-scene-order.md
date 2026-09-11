@@ -15,8 +15,10 @@ second compatible-mesh grouping array.
 
 Every layer in a material unit uses the pass selected by the unit's base
 material at `material_index - material_layer`. A base blend value greater than
-one enters pass one. Runtime element alpha below `0.99999` also promotes an
-otherwise opaque unit into pass one. Such an authored non-blended layer uses
+one enters the transparent queues. Runtime element alpha below `0.99999` also promotes an
+otherwise opaque unit into transparent handling. The inherited liquid state
+selects pass one, pass two, or two clipped mesh copies as described in
+[liquid presentation](liquid-rendering.md). Such an authored non-blended layer uses
 `SRC_ALPHA/ONE_MINUS_SRC_ALPHA` blending and stops writing depth; its shader
 and authored alpha-test behavior do not change.
 
@@ -49,10 +51,12 @@ does not add an insertion-order tie breaker.
 
 ## Current boundary
 
-The runtime now shares transparent mesh order across every resident world M2
-placement and performs runtime-alpha pipeline promotion. Pass-zero meshes
-retain collection order until their compatible grouping comparator is carried
-alongside ribbons, particles, and callbacks into one unified world scene queue.
+The runtime shares transparent mesh/effect order across resident world M2
+placements and performs mesh runtime-alpha pipeline promotion. Translucent
+meshes, ribbons and particles use their stock liquid-side rules; fully opaque
+effects stay before water. Pass-zero work retains collection order until its
+compatible grouping comparator is implemented. Opaque-effect alpha promotion
+still needs its separate shader/depth-state reconciliation.
 
 The local player's body is another placement in this same M2 frame. It shares
 the decoded M2/SKIN mesh and archive-backed hardcoded BLP identities while

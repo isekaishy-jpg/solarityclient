@@ -42,6 +42,16 @@ pub struct M2SpirvProgram {
 }
 
 impl M2SpirvProgram {
+    /// Optional Vulkan user-plane support uses the same stock specializations.
+    /// The renderer fixes this selection once for its adapter and pipeline bank.
+    pub(crate) fn device_vertex_words(&self, liquid_clipping: bool) -> Arc<[u32]> {
+        if liquid_clipping {
+            super::compiler::liquid_vertex_words()
+        } else {
+            Arc::clone(&self.vertex_words)
+        }
+    }
+
     /// Retains a compiled pair under its complete pipeline-cache identity.
     pub(super) fn new(
         key: M2SpirvKey,

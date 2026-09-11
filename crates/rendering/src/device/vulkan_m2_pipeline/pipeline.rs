@@ -159,8 +159,9 @@ pub(super) fn create_pipeline(
     material: M2MaterialState,
     program: &M2SpirvProgram,
     orientation: M2ModelOrientation,
+    liquid_clipping: bool,
 ) -> Result<vk::Pipeline, VulkanError> {
-    let modules = ShaderModules::create(device, program)?;
+    let modules = ShaderModules::create(device, program, liquid_clipping)?;
     let vertex_data = specialization_bytes(&program.vertex_specialization());
     let vertex_entries = specialization_entries(2);
     let vertex_specialization = vk::SpecializationInfo::default()
@@ -324,8 +325,13 @@ struct ShaderModules<'device> {
 
 impl<'device> ShaderModules<'device> {
     /// Creates both modules with cleanup if the fragment module fails.
-    fn create(device: &'device Device, program: &M2SpirvProgram) -> Result<Self, VulkanError> {
-        let vertex_info = vk::ShaderModuleCreateInfo::default().code(program.vertex_words());
+    fn create(
+        device: &'device Device,
+        program: &M2SpirvProgram,
+        liquid_clipping: bool,
+    ) -> Result<Self, VulkanError> {
+        let vertex_words = program.device_vertex_words(liquid_clipping);
+        let vertex_info = vk::ShaderModuleCreateInfo::default().code(&vertex_words);
         // SAFETY: shaderc produced aligned native SPIR-V words retained by the program.
         let vertex = unsafe { device.create_shader_module(&vertex_info, None) }
             .map_err(|source| VulkanError::operation("create M2 vertex shader module", source))?;

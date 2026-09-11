@@ -820,6 +820,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
         Locale::EnUs,
     )?)?;
     let maps = MapCatalog::load(&mut store)?;
+    let liquid_types = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
     let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps);
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(0),
@@ -920,7 +921,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
             None,
             None,
             None,
-            Some((&mut terrain, environment, Vec3::ZERO)),
+            Some((&mut terrain, environment, Vec3::ZERO, &liquid_types)),
             None,
             None,
         )?;

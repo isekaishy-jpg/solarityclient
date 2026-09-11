@@ -763,6 +763,7 @@ impl TerrainFrame {
         plan: Option<TerrainTileIndex>,
         environment: RuntimeWorldEnvironmentFrame,
         terrain: &mut super::terrain_coordinator::RuntimeTerrainCoordinator,
+        liquid_types: &solarity_asset::LiquidTypeCatalog,
         camera: WorldCameraFrame,
         liquid_time_ms: u32,
         texture_animation: &solarity_rendering::TerrainTextureAnimationState,
@@ -936,6 +937,7 @@ impl TerrainFrame {
                     solarity_asset::exterior_light_ray_at(environment.day_fraction()),
                 ),
                 environment.ordinary_model_fog().color(),
+                liquid_types,
             )),
             shadow_projection,
             shadow_admission

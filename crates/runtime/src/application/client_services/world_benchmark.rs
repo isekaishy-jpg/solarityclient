@@ -503,6 +503,7 @@ impl ClientServices {
                     .map(solarity_rendering::TerrainTileMeshPlan::tile),
                 environment,
                 &mut self.terrain,
+                &self.liquids,
                 camera,
                 presentation_time_ms,
                 &self.terrain_texture_animation,

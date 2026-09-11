@@ -7,6 +7,8 @@ use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
 
 #[path = "world_model_doodad_frame.rs"]
 mod doodad_frame;
+#[path = "model_liquid_frame.rs"]
+mod model_liquid_frame;
 
 #[test]
 fn authored_terrain_shadow_reaches_retained_entity_lighting() -> Result<(), Box<dyn Error>> {
@@ -159,6 +161,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
     )?)?;
     let maps = MapCatalog::load(&mut store)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let liquid_types = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
     let model = Arc::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Receiver.m2")?,
@@ -273,7 +276,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
             None,
             None,
             Some((base, exterior)),
-            Some((&mut terrain, environment, Vec3::ZERO)),
+            Some((&mut terrain, environment, Vec3::ZERO, &liquid_types)),
             None,
             None,
         )?;

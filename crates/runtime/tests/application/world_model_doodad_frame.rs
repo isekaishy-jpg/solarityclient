@@ -49,6 +49,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
         Locale::EnUs,
     )?)?;
     let maps = MapCatalog::load(&mut store)?;
+    let liquid_types = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
     let displays = GameObjectDisplayCatalog::load(&mut store)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
     let store = AssetStoreHandle::new(store);
@@ -198,7 +199,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
                 base,
                 solarity_rendering::M2DirectionalLight::new(-Vec3::Z, Vec3::ONE, Vec3::ZERO),
             )),
-            Some((&mut terrain, environment, colors[0])),
+            Some((&mut terrain, environment, colors[0], &liquid_types)),
             None,
             None,
         )?;

@@ -10,9 +10,9 @@ const STOCK_SORT_DIRECTION_EPSILON: f32 = 2.384_185_8e-7;
 /// The two translucent M2 queues submitted after stock's grouped opaque pass.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum M2TransparentPass {
-    /// Ordinary translucent meshes, ribbons, and particles.
+    /// Above-liquid translucent meshes, ribbons, and ordinary particles.
     One,
-    /// Late translucent work selected by stock's special routing rules.
+    /// Below-liquid translucent work and specially routed particles.
     Two,
 }
 
@@ -20,11 +20,18 @@ impl M2TransparentPass {
     /// Selects the queue used by one authored particle emitter.
     ///
     /// Build 12340 maps source bit `0x2000` to runtime bit `0x40000` in
-    /// `0x00832EA0`. Its sole reader at `0x00821A20` routes the particle item
+    /// `0x00832EA0`. The `0x00821A20 -> 0x00821930` queue builder routes the particle item
     /// to pass two; it does not project the particle onto world geometry.
     #[must_use]
     pub const fn for_particle_flags(flags: u32) -> Self {
-        if flags & 0x0000_2000 != 0 {
+        Self::for_particle_liquid(flags, true)
+    }
+
+    /// 821930 chooses pass two when the owner's sphere is wholly submerged or
+    /// source bit 0x2000 forces that queue. Crossing particles are not clipped.
+    #[must_use]
+    pub const fn for_particle_liquid(flags: u32, above_liquid: bool) -> Self {
+        if !above_liquid || flags & 0x0000_2000 != 0 {
             Self::Two
         } else {
             Self::One

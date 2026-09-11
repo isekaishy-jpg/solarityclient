@@ -42,6 +42,7 @@ layout(std140, set = 2, binding = 0) uniform M2MaterialState {
     vec4 mesh_color;
     vec4 fog_color;
     vec4 fragment_parameters;
+    vec4 liquid_clip_plane;
 } material;
 
 layout(set = 3, binding = 0) uniform sampler2D model_texture_0;

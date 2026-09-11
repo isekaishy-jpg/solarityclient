@@ -284,6 +284,19 @@ fn submerged_terrain_uses_bilinear_height_floor_rejection_and_native_epsilon()
     assert!(point.submerged_liquid(&tile, 2.005, Some(-5.))?.is_some());
     assert!(point.submerged_liquid(&tile, 2.02, Some(-5.))?.is_none());
     assert!(point.submerged_liquid(&tile, 1.5, Some(3.))?.is_none());
+    assert_eq!(
+        point
+            .model_liquid(&tile, 1.5)?
+            .map(|sample| sample.surface_height),
+        Some(2.)
+    );
+    assert_eq!(
+        point
+            .model_liquid(&tile, -20_000.)?
+            .map(|sample| sample.surface_height),
+        Some(2.)
+    );
+    assert!(point.model_liquid(&tile, 2.02)?.is_none());
     assert!(point.submerged_liquid(&tile, 1.5, None)?.is_some());
     let outside = TerrainRegistrationPoint::new(-6., -6.)?;
     assert!(outside.submerged_liquid(&tile, 0., None)?.is_none());

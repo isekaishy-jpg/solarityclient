@@ -9,6 +9,68 @@ use solarity_systems::{
 };
 
 impl RuntimeTerrainCoordinator {
+    /// Samples 7C23F0's registered owner at its raw render minimum, preserving
+    /// first-WMO precedence and the terminal terrain reference. No camera or
+    /// unit-swimming volume filter participates in this model callback.
+    pub(in crate::application) fn model_liquid_height(
+        &mut self,
+        position: Vec3,
+        bounds: solarity_systems::MovementCollisionBounds,
+        game_object: Option<&solarity_systems::PlacedM2Collision>,
+        liquids: &LiquidTypeCatalog,
+        scratch: &mut super::RuntimeMovementRegistrationQuery,
+    ) -> Result<Option<f32>, RuntimeMovementRegistrationError> {
+        scratch.clear();
+        let Some(active) = self.active.as_mut() else {
+            return Ok(None);
+        };
+        if let Some(model) = game_object {
+            active.register_game_object_movement(
+                model,
+                solarity_systems::MovementBspCacheMode::Enabled,
+                scratch,
+            )?;
+        } else {
+            active.register_unit_liquid(position, bounds, scratch)?;
+        }
+        let point = Vec3::new(position.x, position.y, bounds.minimum().z);
+        for reference in scratch.references() {
+            let (owner, group) = match *reference {
+                super::RuntimeMovementReference::WorldModel { unique_id, group } => (
+                    super::RuntimeWorldModelMovementOwner::Static { unique_id },
+                    group,
+                ),
+                super::RuntimeMovementReference::GameObjectWorldModel { identity, group } => (
+                    super::RuntimeWorldModelMovementOwner::GameObject { identity },
+                    group,
+                ),
+                super::RuntimeMovementReference::Terrain { .. } => {
+                    let address = TerrainRegistrationPoint::new(point.x, point.y)?;
+                    return Ok(active
+                        .tile_at(address.tile())
+                        .map(|tile| address.model_liquid(&tile.decoded, point.z))
+                        .transpose()?
+                        .flatten()
+                        .map(|liquid| liquid.surface_height));
+                }
+            };
+            let root = active
+                .movement
+                .roots
+                .iter()
+                .find(|root| root.owner() == owner)
+                .copied()
+                .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
+            if let Some(liquid) = active
+                .registration_root_mut(root)?
+                .registered_unit_liquid(group, point, liquids)?
+            {
+                return Ok(Some(liquid.surface_height));
+            }
+        }
+        Ok(None)
+    }
+
     /// Appends 75FF90's water-only bank after ordinary collection has proved
     /// residency and synchronized the retained root generations.
     pub(super) fn collect_swimming_surfaces(

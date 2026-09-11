@@ -2202,6 +2202,7 @@ impl M2Frame {
             &mut crate::application::terrain_coordinator::RuntimeTerrainCoordinator,
             solarity_systems::WorldEntityLightEnvironment,
             glam::Vec3,
+            &solarity_asset::LiquidTypeCatalog,
         )>,
         shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
         scenery_shadows: Option<super::shadow::SceneryShadowQueries<'_>>,
@@ -2506,7 +2507,7 @@ impl M2Frame {
             let placement_fog_color = if doodad_scene_active && doodad_fog == Some(false) {
                 spatial_lighting
                     .as_ref()
-                    .map_or(fog_color, |(_, _, ordinary)| *ordinary)
+                    .map_or(fog_color, |(_, _, ordinary, _)| *ordinary)
             } else {
                 fog_color
             };
@@ -2571,6 +2572,37 @@ impl M2Frame {
                 .light_parent(placement_index)
                 .and_then(|_| self.placement_visibility.light_root(placement_index))
                 .map(|root| m2_model_distance_key(camera.view() * self.placements[root].transform));
+            let root_liquid = if let Some((terrain, _, _, liquid_types)) = spatial_lighting.as_mut()
+            {
+                let root = self
+                    .placement_visibility
+                    .light_root(placement_index)
+                    .unwrap_or(placement_index);
+                let root = &mut self.placements[root];
+                if root.placement_valid
+                    && !root
+                        .entity_opacity
+                        .as_ref()
+                        .is_some_and(|owner| owner.hidden())
+                    && let Some(source) = &self.sources[root.source_index]
+                {
+                    root.entity_lighting.liquid_state(
+                        root.retirement
+                            .as_ref()
+                            .map_or(root.owner, |retired| retired.original_owner),
+                        &source.model,
+                        root.local_transform,
+                        root.scene_registration,
+                        terrain,
+                        liquid_types,
+                        camera.view(),
+                    )?
+                } else {
+                    solarity_rendering::M2LiquidState::Above
+                }
+            } else {
+                solarity_rendering::M2LiquidState::Above
+            };
             let placement = &mut self.placements[placement_index];
             if self.vehicle_passengers.hidden(placement_index) {
                 if let M2GpuPlacementOwner::PlayerMount { guid }
@@ -2837,6 +2869,18 @@ impl M2Frame {
                 prepared_event_window.unwrap_or_else(|| playback.event_window(animation_time_ms));
             drop(playback);
             let model_view = camera.view() * placement.transform;
+            let model_bounds = source.model.bounds();
+            let particle_liquid = root_liquid.classify_model(
+                (model_bounds.minimum() + model_bounds.maximum()) * 0.5,
+                model_bounds.sphere_radius(),
+                model_view,
+                true,
+                false,
+            );
+            let model_liquid = particle_liquid.with_clipping_support(
+                renderer.m2_liquid_clipping_enabled(),
+                first_transparent_pass == M2TransparentPass::One,
+            );
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             let instance_distance =
                 inherited_model_distance.unwrap_or_else(|| m2_model_distance_key(model_view));
@@ -3005,7 +3049,7 @@ impl M2Frame {
                 let center = placement.transform.w_axis.truncate();
                 let parent = self.placement_visibility.light_parent(placement_index);
                 let callback = if parent.is_none()
-                    && let Some((terrain, environment, _)) = spatial_lighting.as_mut()
+                    && let Some((terrain, environment, _, _)) = spatial_lighting.as_mut()
                 {
                     placement.entity_lighting.sample(
                         placement
@@ -3258,20 +3302,44 @@ impl M2Frame {
                     .with_light_bank(light_bank)
                     .with_scene_index(scene_index);
                 let prepared_index = self.particle_draws.len();
-                self.particle_draws.push(prepared);
-                self.transparent_elements.push(M2TransparentElement {
-                    pass: M2TransparentPass::for_particle_flags(emitter.flags()),
-                    key: M2TransparentSortKey::new(
-                        instance_distance,
-                        false,
-                        emitter.priority_plane(),
-                        instance_distance,
-                        instance_identity,
-                        0,
+                let opaque =
+                    !M2MaterialState::from_particle(emitter.blending_type(), emitter.flags())
+                        .blend_enabled()
+                        && M2ElementAlphaState::classify(
+                            placement_mesh_color(placement.owner, placement.color).w
+                                * placement_opacity,
+                        ) == M2ElementAlphaState::Authored;
+                let order = scene_element_count(
+                    self.visible_draws.len(),
+                    self.particle_draws.len(),
+                    self.ribbon_draws.len(),
+                )?;
+                self.particle_draws.push(if opaque {
+                    prepared.with_scene_order(
+                        u32::try_from(order)
+                            .map_err(|_| solarity_rendering::VulkanError::M2DrawIndexRange)?,
                     )
-                    .with_scene_element(4, effect_order),
-                    draw: M2TransparentDrawIndex::Particle(prepared_index),
+                } else {
+                    prepared
                 });
+                if !opaque {
+                    self.transparent_elements.push(M2TransparentElement {
+                        pass: M2TransparentPass::for_particle_liquid(
+                            emitter.flags(),
+                            particle_liquid.above(),
+                        ),
+                        key: M2TransparentSortKey::new(
+                            instance_distance,
+                            false,
+                            emitter.priority_plane(),
+                            instance_distance,
+                            instance_identity,
+                            0,
+                        )
+                        .with_scene_element(4, effect_order),
+                        draw: M2TransparentDrawIndex::Particle(prepared_index),
+                    });
+                }
                 tracing::trace!(
                     model = %source.model.path(),
                     particle_index,
@@ -3373,24 +3441,39 @@ impl M2Frame {
                         };
                         let producer_order = u32::try_from(self.transparent_elements.len())
                             .map_err(|_source| solarity_rendering::VulkanError::M2DrawIndexRange)?;
-                        let prepared_index = self.visible_draws.len();
-                        self.visible_draws.push(prepared);
-                        self.transparent_elements.push(M2TransparentElement {
-                            pass: M2TransparentPass::One,
-                            key: M2TransparentSortKey::new(
-                                primary_distance,
-                                false,
-                                i16::from(draw.batch().priority_plane),
-                                section_distance,
-                                instance_identity,
-                                draw.batch().material_layer,
-                            )
-                            .with_scene_element(0, producer_order),
-                            draw: M2TransparentDrawIndex::Mesh(prepared_index),
-                        });
+                        let key = M2TransparentSortKey::new(
+                            primary_distance,
+                            false,
+                            i16::from(draw.batch().priority_plane),
+                            section_distance,
+                            instance_identity,
+                            draw.batch().material_layer,
+                        )
+                        .with_scene_element(0, producer_order);
+                        for (pass, admitted) in [
+                            (M2TransparentPass::One, model_liquid.above()),
+                            (M2TransparentPass::Two, model_liquid.below()),
+                        ] {
+                            if !admitted {
+                                continue;
+                            }
+                            let prepared_index = self.visible_draws.len();
+                            self.visible_draws.push(
+                                prepared.with_liquid_clip_plane(model_liquid.clip_plane(pass)),
+                            );
+                            self.transparent_elements.push(M2TransparentElement {
+                                pass,
+                                key,
+                                draw: M2TransparentDrawIndex::Mesh(prepared_index),
+                            });
+                        }
                     } else {
-                        let scene_order = u32::try_from(self.visible_draws.len())
-                            .map_err(|_source| solarity_rendering::VulkanError::M2DrawIndexRange)?;
+                        let scene_order = u32::try_from(scene_element_count(
+                            self.visible_draws.len(),
+                            self.particle_draws.len(),
+                            self.ribbon_draws.len(),
+                        )?)
+                        .map_err(|_source| solarity_rendering::VulkanError::M2DrawIndexRange)?;
                         self.visible_draws
                             .push(prepared.with_scene_order(scene_order));
                     }
@@ -3419,6 +3502,10 @@ impl M2Frame {
                     .map_err(|_source| solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
                 let vertex_count =
                     M2RibbonMeshPlan::append(emitter, trail, &mut self.ribbon_vertices)?;
+                let ribbon_alpha = M2RibbonPose::sample(source.model.animations(), emitter, clock)?
+                    .color()
+                    .w
+                    * instance_color.w;
                 for pass in passes {
                     let effect_order =
                         u32::try_from(self.transparent_elements.len()).map_err(|_source| {
@@ -3436,20 +3523,37 @@ impl M2Frame {
                         .with_light_bank(light_bank)
                         .with_scene_index(scene_index);
                     let prepared_index = self.ribbon_draws.len();
-                    self.ribbon_draws.push(prepared);
-                    self.transparent_elements.push(M2TransparentElement {
-                        pass: M2TransparentPass::One,
-                        key: M2TransparentSortKey::new(
-                            instance_distance,
-                            false,
-                            emitter.priority_plane(),
-                            instance_distance,
-                            instance_identity,
-                            0,
+                    let opaque = !M2MaterialState::from_material(pass.material).blend_enabled()
+                        && M2ElementAlphaState::classify(ribbon_alpha)
+                            == M2ElementAlphaState::Authored;
+                    let order = scene_element_count(
+                        self.visible_draws.len(),
+                        self.particle_draws.len(),
+                        self.ribbon_draws.len(),
+                    )?;
+                    self.ribbon_draws.push(if opaque {
+                        prepared.with_scene_order(
+                            u32::try_from(order)
+                                .map_err(|_| solarity_rendering::VulkanError::M2DrawIndexRange)?,
                         )
-                        .with_scene_element(3, effect_order),
-                        draw: M2TransparentDrawIndex::Ribbon(prepared_index),
+                    } else {
+                        prepared
                     });
+                    if !opaque {
+                        self.transparent_elements.push(M2TransparentElement {
+                            pass: model_liquid.ribbon_pass(),
+                            key: M2TransparentSortKey::new(
+                                instance_distance,
+                                false,
+                                emitter.priority_plane(),
+                                instance_distance,
+                                instance_identity,
+                                0,
+                            )
+                            .with_scene_element(3, effect_order),
+                            draw: M2TransparentDrawIndex::Ribbon(prepared_index),
+                        });
+                    }
                 }
                 tracing::trace!(
                     model = %source.model.path(),
@@ -3466,7 +3570,11 @@ impl M2Frame {
                 .cmp(&(right.pass != first_transparent_pass))
                 .then_with(|| compare_m2_transparent(&left.key, &right.key))
         });
-        let first_transparent_order = self.visible_draws.len();
+        let first_transparent_order = scene_element_count(
+            self.visible_draws.len(),
+            self.particle_draws.len(),
+            self.ribbon_draws.len(),
+        )?;
         let water_scene_order = first_transparent_order
             .checked_add(
                 self.transparent_elements
@@ -3548,6 +3656,18 @@ impl M2Frame {
     pub(super) fn take_mount_camera_sample(&mut self) -> Option<RuntimeMountCameraSample> {
         self.mount_camera_sample.take()
     }
+}
+
+/// Reserves opaque scene positions before either liquid-dependent queue.
+fn scene_element_count(
+    meshes: usize,
+    particles: usize,
+    ribbons: usize,
+) -> Result<usize, solarity_rendering::VulkanError> {
+    meshes
+        .checked_add(particles)
+        .and_then(|count| count.checked_add(ribbons))
+        .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)
 }
 
 fn placement_bounding_sphere(model: &DecodedM2Model, transform: Mat4) -> (glam::Vec3, f32) {

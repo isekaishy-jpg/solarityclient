@@ -114,6 +114,13 @@ impl M2PreparedDraw {
         self.material
     }
 
+    /// Splits an otherwise identical transparent mesh at its owner's liquid.
+    #[must_use]
+    pub const fn with_liquid_clip_plane(mut self, plane: Option<glam::Vec4>) -> Self {
+        self.material = self.material.with_liquid_clip_plane(plane);
+        self
+    }
+
     /// Returns the original caster-material queue, before instance spatial admission.
     #[must_use]
     pub const fn shadow_material(self) -> Option<M2ShadowMaterial> {

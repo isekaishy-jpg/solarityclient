@@ -29,6 +29,29 @@ impl TerrainRegistrationPoint {
         world_height: f32,
         terrain_height: Option<f32>,
     ) -> Result<Option<SubmergedLiquid>, TerrainCollisionError> {
+        self.sample_liquid(tile, world_height, terrain_height, true)
+    }
+
+    /// Runs the model callback's `7A0820(..., 0)` query, which omits terrain-floor
+    /// occlusion while retaining layer order, masks, interpolation, and epsilon.
+    ///
+    /// # Errors
+    /// Rejects an incorrect resident tile or non-finite query height.
+    pub fn model_liquid(
+        self,
+        tile: &DecodedTerrainTile,
+        world_height: f32,
+    ) -> Result<Option<SubmergedLiquid>, TerrainCollisionError> {
+        self.sample_liquid(tile, world_height, None, false)
+    }
+
+    fn sample_liquid(
+        self,
+        tile: &DecodedTerrainTile,
+        world_height: f32,
+        terrain_height: Option<f32>,
+        occlude_by_terrain: bool,
+    ) -> Result<Option<SubmergedLiquid>, TerrainCollisionError> {
         if tile.index() != self.tile() {
             return Err(TerrainCollisionError::WrongRegistrationTile);
         }
@@ -39,8 +62,9 @@ impl TerrainRegistrationPoint {
             return Ok(None);
         };
         // 7A0967 keeps the initialized -10000 when 7AD3B0 finds a terrain hole.
-        if f64::from(terrain_height.unwrap_or(-10_000.0))
-            >= f64::from(world_height) + f64::from(0.01_f32)
+        if occlude_by_terrain
+            && f64::from(terrain_height.unwrap_or(-10_000.0))
+                >= f64::from(world_height) + f64::from(0.01_f32)
         {
             return Ok(None);
         }

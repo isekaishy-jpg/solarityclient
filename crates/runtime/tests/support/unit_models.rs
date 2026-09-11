@@ -812,7 +812,7 @@ fn append_attachments(bytes: &mut Vec<u8>, ids: &[u32], sequences: usize) {
 }
 
 /// One ordinary emitter and one ribbon with constant tracks in every pose.
-fn append_effects(bytes: &mut Vec<u8>, sequences: usize) {
+pub(crate) fn append_effects(bytes: &mut Vec<u8>, sequences: usize) {
     let particle = bytes.len();
     bytes.resize(particle + 476, 0);
     bytes[particle + 40] = 2; // Alpha blend.

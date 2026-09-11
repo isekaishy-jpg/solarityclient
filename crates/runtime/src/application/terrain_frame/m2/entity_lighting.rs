@@ -1,10 +1,12 @@
 //! Per-owner spatial samples and native light transitions, reused while stationary.
 
-use super::{M2GpuPlacementOwner, ResidentM2Owner, RuntimeTerrainFrameError};
+use super::{
+    M2GpuPlacementOwner, ResidentM2Owner, RuntimeTerrainFrameError, UnitSceneRegistration,
+};
 use crate::application::terrain_coordinator::{
     RuntimeMovementRegistrationQuery, RuntimeTerrainCoordinator, RuntimeWorldModelMovementOwner,
 };
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use solarity_systems::{WorldEntityLightEnvironment, WorldEntityLightState, WorldModelFloorLight};
 
 /// Ordinary terrain doodads never need an individual floor-light callback. Keep
@@ -21,9 +23,88 @@ struct RetainedEntityLighting {
     state: Option<WorldEntityLightState>,
     last_time_ms: Option<f32>,
     scratch: RuntimeMovementRegistrationQuery,
+    liquid: Option<CachedModelLiquid>,
+}
+
+struct CachedModelLiquid {
+    transform: Mat4,
+    model_bounds: [Vec3; 2],
+    registration: Option<UnitSceneRegistration>,
+    revision: u64,
+    surface: Option<(f32, f32)>,
 }
 
 impl EntityLighting {
+    /// 780CD0's liquid callback is separate from the floor-light transition.
+    /// Keep its world result while stationary; the light query transforms its
+    /// plane once for the current view before attachments classify their bounds.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn liquid_state(
+        &mut self,
+        owner: M2GpuPlacementOwner,
+        model: &std::sync::Arc<solarity_asset::DecodedM2Model>,
+        transform: Mat4,
+        registration: Option<UnitSceneRegistration>,
+        terrain: &mut RuntimeTerrainCoordinator,
+        liquids: &solarity_asset::LiquidTypeCatalog,
+        view: Mat4,
+    ) -> Result<solarity_rendering::M2LiquidState, RuntimeTerrainFrameError> {
+        use solarity_rendering::M2LiquidState;
+        if !ordinary_callback(owner) {
+            return Ok(M2LiquidState::Above);
+        }
+        let retained = self.retained.get_or_insert_with(Box::default);
+        let revision = terrain.model_light_revision();
+        let model_bounds = [model.bounds().minimum(), model.bounds().maximum()];
+        if retained.liquid.as_ref().is_none_or(|cached| {
+            cached.transform != transform
+                || cached.model_bounds != model_bounds
+                || cached.registration != registration
+                || cached.revision != revision
+        }) {
+            let collision = matches!(owner, M2GpuPlacementOwner::GameObject { .. })
+                .then(|| {
+                    solarity_systems::PlacedM2Collision::prepare_transform(
+                        std::sync::Arc::clone(model),
+                        transform,
+                    )
+                })
+                .transpose()?;
+            let query = match (collision.as_ref(), registration) {
+                (Some(collision), _) => UnitSceneRegistration {
+                    position: transform.w_axis.truncate(),
+                    bounds: collision.render_bounds(),
+                },
+                (None, Some(registration)) => registration,
+                (None, None) => UnitSceneRegistration::new(model, transform)?,
+            };
+            let bounds = query.bounds;
+            let height = terrain.model_liquid_height(
+                query.position,
+                bounds,
+                collision.as_ref(),
+                liquids,
+                &mut retained.scratch,
+            )?;
+            retained.liquid = Some(CachedModelLiquid {
+                transform,
+                model_bounds,
+                registration,
+                revision,
+                surface: height.map(|height| (height, bounds.maximum().z)),
+            });
+        }
+        Ok(
+            match retained.liquid.as_ref().and_then(|cached| cached.surface) {
+                Some((height, maximum)) if height <= maximum => {
+                    M2LiquidState::at_world_height(height, view)
+                }
+                Some(_) => M2LiquidState::Below,
+                None => M2LiquidState::Above,
+            },
+        )
+    }
+
     /// Samples the existing owner-specific callback without starting a transition
     /// clock before its first sample. Unsampled scenery allocates no retained state.
     #[allow(clippy::too_many_arguments)]
@@ -79,16 +160,7 @@ impl EntityLighting {
                     .is_some_and(|(_, _, interior, _, _)| interior),
                 environment,
             )
-        } else if matches!(
-            owner,
-            M2GpuPlacementOwner::PlayerBody { .. }
-                | M2GpuPlacementOwner::PlayerMount { .. }
-                | M2GpuPlacementOwner::RemotePlayerBody { .. }
-                | M2GpuPlacementOwner::RemotePlayerMount { .. }
-                | M2GpuPlacementOwner::CreatureBody { .. }
-                | M2GpuPlacementOwner::CreatureMount { .. }
-                | M2GpuPlacementOwner::GameObject { .. }
-        ) {
+        } else if ordinary_callback(owner) {
             let retained = self.retained.get_or_insert_with(Box::default);
             if retained
                 .cached
@@ -131,6 +203,19 @@ impl EntityLighting {
             sample.diffuse(),
         )))
     }
+}
+
+fn ordinary_callback(owner: M2GpuPlacementOwner) -> bool {
+    matches!(
+        owner,
+        M2GpuPlacementOwner::PlayerBody { .. }
+            | M2GpuPlacementOwner::PlayerMount { .. }
+            | M2GpuPlacementOwner::RemotePlayerBody { .. }
+            | M2GpuPlacementOwner::RemotePlayerMount { .. }
+            | M2GpuPlacementOwner::CreatureBody { .. }
+            | M2GpuPlacementOwner::CreatureMount { .. }
+            | M2GpuPlacementOwner::GameObject { .. }
+    )
 }
 
 pub(super) fn is_doodad(owner: M2GpuPlacementOwner) -> bool {

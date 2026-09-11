@@ -40,6 +40,12 @@ fn main() {
         &[],
     );
     compile(
+        "src/shader/m2_spirv/source/m2.vert.glsl",
+        ShaderKind::Vertex,
+        &output.join("m2-liquid.vert.spv"),
+        &[("M2_LIQUID_CLIPPING", "1")],
+    );
+    compile(
         "src/shader/m2_spirv/source/m2.frag.glsl",
         ShaderKind::Fragment,
         &output.join("m2-direct.frag.spv"),

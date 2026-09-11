@@ -34,13 +34,49 @@ The camera's existing liquid query chooses transparent M2 pass two before
 water above the surface and pass one before water below it, matching `4F8EA0`.
 Glue continues to use its explicit pass-one-first ordering.
 
-The per-model half-space routing remains incomplete. `7C23F0` queries the
-registered terrain/WMO liquid at the model's scene bounds; `7C10C0` publishes
-flags `0x20/0x40` and, when needed, the plane `(0, 0, 1, -height)` into its
-light-query state. `821A20` uses that state to place translucent meshes on one
-or both sides of the water pass, with clipping for intersecting meshes. Runtime
-mesh and ribbon submission still defaults to pass one; the global camera order
-alone does not implement this model-dependent behavior.
+The per-model routing uses `7C23F0`'s ordered terrain/WMO registrations and a
+probe at the raw render minimum Z. The terrain branch omits floor occlusion;
+the WMO branch retains registered-group selection, liquid masks, type-dependent
+epsilon, and the first successful surface. `7C10C0` distinguishes no surface,
+surface above the entire owner box, and possible intersection. Ordinary unit
+and GameObject roots retain this world sample while their placement and resident
+generation are unchanged. Attachments inherit the root state. Scenery's distinct
+callback retains its default state.
+
+`8350A0` transforms a crossing plane into view space. `821A20` compares each
+model's authored center and first-column-scaled radius against it, retaining
+equality at both sphere tangencies. The plane distance remains extended through
+the comparisons; rounding it to f32 changes immediately adjacent cases.
+Intersecting translucent meshes enter both queues with opposite clip planes.
+The Vulkan adapter enables `shaderClipDistance` only when supported, and selects
+a corresponding embedded vertex module. Other adapters use the stock camera-side
+fallback. The material ABI appends its clip plane at byte 304 (320 bytes total).
+
+Ribbons select one liquid side. Particle routing uses the original sphere
+classification without the mesh hardware fallback, with authored bit `0x2000`
+forcing pass two. Fully opaque effects remain before either transparent queue.
+Opaque compatible-material grouping and faded opaque-effect shader behavior
+remain separate scene-order/alpha work; this change does not establish those paths.
+
+`model_liquid_oracle.py` captures 972 original `821C8C..821DDA` classification
+cases and 16 complete `8350A0` plane preparations. These are classifier and
+query-plane evidence, not a full spatial-producer replay. A decoded WMO/M2
+runtime fixture verifies above/crossing/below publication, both camera orders,
+particle overrides and opaque-effect ordering. Its GPU readback checks that
+opposite mesh clips blend each tested pixel exactly once; effect queues are
+checked separately from those mesh pixels. The mounted-model regression verifies
+that a rider above water inherits its fully submerged mount's state, while a
+crossing mount supplies a surface against which the rider classifies its own
+sphere. Workspace validation passes 1,311 tests with 23 explicitly ignored,
+plus Clippy across all targets and features with warnings denied.
+
+The optimized installed-archive replay at map 1, `(1100, -5500, -20)`, travels
+60 units upward and returns. All seven 400-frame phases complete, including
+both camera liquid transitions between ocean type 2 and dry state. Captured
+underwater, transition and above-water frames were inspected. This is an offline
+integration replay with an ordinary player model; it does not replace the
+controlled translucent-mesh pixel proof or the combined populated-world stock
+comparison. Captured replay timings are not performance evidence.
 
 ## Shader selection audit
 
@@ -59,6 +95,9 @@ missing feature. ProcWater itself remains unimplemented: LiquidType 100 selects
 material three, which the runtime currently rejects explicitly. Its wave
 generation, cube-map inputs, full material constants, and native GPU comparison
 are separate work from ordinary water and the model/water clipping boundary.
+The installed archive lookup also fails for type 100's `basicReflectionMap.blp`
+and first `basicWaterHeightTex_1.blp` references. The entry and shader's existence
+do not establish that the reported Durotar scene exercises this family.
 
 Native `7EBFF0` reads LightParams glow from field four, ocean alphas from
 fields five/six, and river alphas from seven/eight. Liquid color bands 14/15

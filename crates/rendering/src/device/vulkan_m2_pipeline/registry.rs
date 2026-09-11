@@ -29,6 +29,7 @@ pub(in crate::device) struct M2PipelineRegistry {
     layout: M2PipelineLayout,
     handles: HashMap<(M2SpirvKey, M2ModelOrientation), M2PipelineHandle>,
     resources: Vec<GpuM2Pipeline>,
+    liquid_clipping: bool,
 }
 
 impl Default for M2PipelineRegistry {
@@ -42,11 +43,24 @@ impl Default for M2PipelineRegistry {
             layout: M2PipelineLayout::default(),
             handles: HashMap::new(),
             resources: Vec::new(),
+            liquid_clipping: false,
         }
     }
 }
 
 impl M2PipelineRegistry {
+    /// The adapter's clip-distance support is fixed before any pipeline exists.
+    pub(in crate::device) fn with_liquid_clipping(enabled: bool) -> Self {
+        Self {
+            liquid_clipping: enabled,
+            ..Self::default()
+        }
+    }
+
+    pub(in crate::device) const fn liquid_clipping_enabled(&self) -> bool {
+        self.liquid_clipping
+    }
+
     /// Borrows the existing four-sampler receiver ABI after layout creation.
     pub(in crate::device) fn shadow_set_layout(&self) -> Option<vk::DescriptorSetLayout> {
         self.layout.descriptor_set(4)
@@ -183,6 +197,7 @@ impl M2PipelineRegistry {
             plan.material(),
             program,
             orientation,
+            self.liquid_clipping,
         )?;
         let handle = M2PipelineHandle {
             registry_id: self.registry_id,
@@ -207,6 +222,7 @@ impl M2PipelineRegistry {
                     plan.material(),
                     &program,
                     orientation,
+                    self.liquid_clipping,
                 )
             })();
             match result {

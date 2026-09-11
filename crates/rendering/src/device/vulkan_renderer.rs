@@ -289,7 +289,7 @@ impl VulkanRenderer {
             pipeline_cache: vk::PipelineCache::null(),
             pipeline_cache_path: None,
             allocator: None,
-            m2_pipelines: M2PipelineRegistry::default(),
+            m2_pipelines: M2PipelineRegistry::with_liquid_clipping(selected.shader_clip_distance),
             m2_particle_pipelines: M2ParticlePipelineRegistry::default(),
             m2_ribbon_pipelines: M2RibbonPipelineRegistry::default(),
             m2_frames: M2FrameRenderer::default(),
@@ -1756,6 +1756,13 @@ impl VulkanRenderer {
         self.prepare_oriented_m2_pipeline(plan, permutation, M2ModelOrientation::Authored)
     }
 
+    /// Whether the selected adapter can clip an M2 to each side of liquid.
+    /// Unsupported adapters retain the stock camera-side queue fallback.
+    #[must_use]
+    pub const fn m2_liquid_clipping_enabled(&self) -> bool {
+        self.m2_pipelines.liquid_clipping_enabled()
+    }
+
     /// Creates or retrieves an M2 pipeline with one explicit model orientation.
     ///
     /// # Errors
@@ -3033,6 +3040,7 @@ fn create_device(
         .dynamic_rendering(true)
         .synchronization2(true);
     let enabled_features = vk::PhysicalDeviceFeatures::default()
+        .shader_clip_distance(selected.shader_clip_distance)
         .sampler_anisotropy(selected.sampler_anisotropy)
         .texture_compression_bc(true);
     let create_info = vk::DeviceCreateInfo::default()

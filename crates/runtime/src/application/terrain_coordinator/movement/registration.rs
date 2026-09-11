@@ -236,6 +236,57 @@ impl ResidentTerrainMap {
         Ok(())
     }
 
+    /// 7C2040 appends only resident terrain destinations in raw-box order.
+    pub(super) fn append_registration_terrain(
+        &self,
+        bounds: MovementCollisionBounds,
+        output: &mut RuntimeMovementRegistrationQuery,
+    ) -> Result<(), RuntimeMovementRegistrationError> {
+        if self.terrain.global_world_model().is_none() {
+            for (tile_index, chunk) in bounds.registration_terrain_chunks()? {
+                if let Some(tile) = self.tile_at(tile_index)
+                    && tile.collision.chunk_bounds(chunk).minimum().z <= bounds.maximum().z
+                {
+                    output.references.push(RuntimeMovementReference::Terrain {
+                        tile: tile_index,
+                        chunk,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 7C2A70 links the primary groups when any WMO registration wins; otherwise
+    /// it uses the terrain box. Unlike MapObject registration it scans no extra
+    /// outdoor WMO groups around an unregistered unit.
+    pub(super) fn register_unit_liquid(
+        &mut self,
+        position: Vec3,
+        bounds: MovementCollisionBounds,
+        output: &mut RuntimeMovementRegistrationQuery,
+    ) -> Result<(), RuntimeMovementRegistrationError> {
+        let selection = self.unit_registration(position)?;
+        if selection.selected().is_some() {
+            for candidate in selection.primary().into_iter().flatten() {
+                let root = self
+                    .movement
+                    .roots
+                    .iter()
+                    .find(|root| root.owner() == candidate.owner())
+                    .copied()
+                    .ok_or(RuntimeMovementRegistrationError::InvalidReference)?;
+                output
+                    .references
+                    .push(root.destination(candidate.hit().group_index()));
+            }
+        } else {
+            self.append_registration_terrain(bounds, output)?;
+        }
+        output.selection = Some(selection);
+        Ok(())
+    }
+
     pub(super) fn register_game_object_movement(
         &mut self,
         model: &PlacedM2Collision,
@@ -311,19 +362,7 @@ impl ResidentTerrainMap {
                 let reference = self.movement.roots[index];
                 self.append_registration_root(reference, render_bounds, None, output)?;
             }
-            if self.terrain.global_world_model().is_none() {
-                for (tile_index, chunk) in render_bounds.registration_terrain_chunks()? {
-                    if let Some(tile) = self.tile_at(tile_index)
-                        && tile.collision.chunk_bounds(chunk).minimum().z
-                            <= render_bounds.maximum().z
-                    {
-                        output.references.push(RuntimeMovementReference::Terrain {
-                            tile: tile_index,
-                            chunk,
-                        });
-                    }
-                }
-            }
+            self.append_registration_terrain(render_bounds, output)?;
         }
         output.selection = Some(selection);
         Ok(RuntimeStaticMovementResidency::Ready)

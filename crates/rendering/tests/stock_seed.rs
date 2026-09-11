@@ -30,6 +30,8 @@ mod math;
 mod minimap;
 #[path = "stock_seed/model.rs"]
 mod model;
+#[path = "stock_seed/model_liquid.rs"]
+mod model_liquid;
 #[path = "stock_seed/model_order.rs"]
 mod model_order;
 #[path = "stock_seed/nether_screen.rs"]

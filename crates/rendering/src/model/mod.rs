@@ -33,10 +33,11 @@ pub use m2_animation::{
 };
 pub use m2_ground::{M2GroundNormal, M2GroundPlacementError};
 pub use m2_scene::{
-    M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2ElementAlphaState, M2LocalLightState,
-    M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2RenderVertex, M2SceneUniform,
-    M2ShadowMaterial, M2ShadowMatrix, M2ShadowState, M2TextureBinding, M2TransparentPass,
-    M2TransparentSortKey, compare_m2_transparent, m2_model_distance_key, m2_section_distance_key,
+    M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2ElementAlphaState, M2LiquidPasses,
+    M2LiquidState, M2LocalLightState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,
+    M2RenderVertex, M2SceneUniform, M2ShadowMaterial, M2ShadowMatrix, M2ShadowState,
+    M2TextureBinding, M2TransparentPass, M2TransparentSortKey, compare_m2_transparent,
+    m2_model_distance_key, m2_section_distance_key,
 };
 pub use world_model_scene::{
     PlacedWorldModelDrawPlan, WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform,

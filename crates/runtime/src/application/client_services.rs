@@ -1414,6 +1414,7 @@ impl ClientServices {
             plan,
             environment,
             &mut self.terrain,
+            &self.liquids,
             camera,
             liquid_time_ms,
             &self.terrain_texture_animation,

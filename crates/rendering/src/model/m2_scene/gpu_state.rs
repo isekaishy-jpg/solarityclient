@@ -184,11 +184,12 @@ pub struct M2MaterialUniform {
     mesh_color: Vec4,
     fog_color: Vec4,
     fragment_parameters: Vec4,
+    liquid_clip_plane: Vec4,
 }
 
 impl M2MaterialUniform {
     /// Byte size of the exact std140 material descriptor block.
-    pub const BYTE_SIZE: usize = 304;
+    pub const BYTE_SIZE: usize = 320;
 
     /// Returns the complete sampled batch opacity used for shadow admission.
     #[must_use]
@@ -213,7 +214,19 @@ impl M2MaterialUniform {
             mesh_color,
             fog_color,
             fragment_parameters,
+            liquid_clip_plane: Vec4::W,
         }
+    }
+
+    /// Sets the view-space plane for one liquid pass. Nonnegative distances
+    /// survive; the default constant plane leaves every vertex unclipped.
+    #[must_use]
+    pub const fn with_liquid_clip_plane(mut self, plane: Option<Vec4>) -> Self {
+        self.liquid_clip_plane = match plane {
+            Some(plane) => plane,
+            None => Vec4::W,
+        };
+        self
     }
 
     /// Serializes without relying on host struct layout or alignment.
@@ -229,6 +242,7 @@ impl M2MaterialUniform {
         write_vec4(&mut bytes, &mut offset, self.mesh_color);
         write_vec4(&mut bytes, &mut offset, self.fog_color);
         write_vec4(&mut bytes, &mut offset, self.fragment_parameters);
+        write_vec4(&mut bytes, &mut offset, self.liquid_clip_plane);
         bytes
     }
 }

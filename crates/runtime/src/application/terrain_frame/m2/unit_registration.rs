@@ -7,7 +7,7 @@ use solarity_systems::MovementCollisionBounds;
 use super::RuntimeTerrainFrameError;
 
 /// 7370D0 asks GetModel for the mount when present, then uses movement yaw.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(super) struct UnitSceneRegistration {
     pub position: Vec3,
     pub bounds: MovementCollisionBounds,
