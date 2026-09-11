@@ -4323,7 +4323,7 @@ fn prepare_gpu_source_with_plan(
         for binding in draw.texture_bindings() {
             let texture_index = usize::from(binding.texture_index());
             let texture = require_texture_handle(model, textures, &texture_handles, texture_index)?;
-            let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_index])?;
+            let sampler = renderer.prepare_m2_file_sampler(&model.textures()[texture_index])?;
             stages.push(sampled_texture(texture, sampler));
         }
         texture_requests.push(texture_set(model, draw_index, &stages)?);
@@ -4348,7 +4348,7 @@ fn prepare_gpu_source_with_plan(
         let texture_index = ordinary_particle_texture_index(model, particle_index, emitter)?;
         let texture_slot = usize::from(texture_index);
         let texture = require_texture_handle(model, textures, &texture_handles, texture_slot)?;
-        let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;
+        let sampler = renderer.prepare_m2_file_sampler(&model.textures()[texture_slot])?;
         let material = M2MaterialState::from_particle(emitter.blending_type(), emitter.flags());
         particle_pipelines.push(match cpu_source {
             Some(cpu_source) => {
@@ -4401,7 +4401,7 @@ fn prepare_gpu_source_with_plan(
             };
             let texture_slot = usize::from(texture_index);
             let texture = require_texture_handle(model, textures, &texture_handles, texture_slot)?;
-            let sampler = renderer.prepare_m2_sampler(&model.textures()[texture_slot])?;
+            let sampler = renderer.prepare_m2_file_sampler(&model.textures()[texture_slot])?;
             pass_pipelines.push((pipeline, material));
             pass_textures.push(M2TextureSet::One(sampled_texture(texture, sampler)));
         }

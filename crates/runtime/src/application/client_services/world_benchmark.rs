@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use glam::Vec3;
 use solarity_ecs::{ActiveWorld, PlayerViewState, WorldStateError, WorldTransform};
-use solarity_rendering::{WorldModelBaseMip, WorldModelTextureFiltering};
 use solarity_ui::GlueError;
 use thiserror::Error;
 
@@ -160,6 +159,7 @@ impl ClientServices {
             .resident_tiles()
             .next()
             .ok_or(WorldBenchmarkError::State("requires an ADT map"))?;
+        let (texture_filtering, base_mip) = self.renderer.file_texture_sampling();
         let frame = TerrainFrame::prepare(
             &mut self.renderer,
             world.map_id().value(),
@@ -168,8 +168,8 @@ impl ClientServices {
             resident.liquid_batches(),
             resident.m2_scene(),
             resident.world_models(),
-            WorldModelTextureFiltering::Anisotropic4x,
-            WorldModelBaseMip::Zero,
+            texture_filtering,
+            base_mip,
             &mut self.crt_rand,
             Arc::clone(&self.particle_twinkle),
             self.player.resident_frame_input(),

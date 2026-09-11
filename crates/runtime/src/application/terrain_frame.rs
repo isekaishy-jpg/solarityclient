@@ -43,6 +43,9 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// The shared sampler setting is outside its native closed integer domain.
+    #[error("invalid file texture sampling cvar {0}")]
+    InvalidTextureSamplingCvar(&'static str),
     /// The registered horizon multiplier is absent or nonfinite.
     #[error("horizon distance requires a finite horizonfarclipscale cvar")]
     InvalidHorizonScaleCvar,

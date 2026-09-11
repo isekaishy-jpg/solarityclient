@@ -57,6 +57,7 @@ impl TerrainTextureSetRegistry {
         materials: &TerrainMaterialRegistry,
         textures: &BlpTextureRegistry,
         requested: &[TerrainTextureSet],
+        diffuse_sampler: &vk::SamplerCreateInfo<'_>,
     ) -> Result<Vec<TerrainTextureSetHandle>, VulkanError> {
         validate_resources(materials, textures, requested)?;
         let mut seen = HashSet::new();
@@ -66,7 +67,7 @@ impl TerrainTextureSetRegistry {
             .cloned()
             .collect::<Vec<_>>();
         if !pending.is_empty() {
-            self.ensure_samplers(device)?;
+            self.ensure_samplers(device, diffuse_sampler)?;
             self.allocate_batch(device, layout, materials, textures, &pending)?;
         }
         requested
@@ -167,7 +168,11 @@ impl TerrainTextureSetRegistry {
         }
     }
 
-    fn ensure_samplers(&mut self, device: &Device) -> Result<(), VulkanError> {
+    fn ensure_samplers(
+        &mut self,
+        device: &Device,
+        diffuse_info: &vk::SamplerCreateInfo<'_>,
+    ) -> Result<(), VulkanError> {
         if self.atlas_sampler != vk::Sampler::null() {
             return Ok(());
         }
@@ -175,9 +180,8 @@ impl TerrainTextureSetRegistry {
         // SAFETY: The self-contained create info requests core sampler state.
         self.atlas_sampler = unsafe { device.create_sampler(&atlas_info, None) }
             .map_err(|source| VulkanError::operation("create terrain atlas sampler", source))?;
-        let diffuse_info = sampler_info(vk::SamplerAddressMode::REPEAT, vk::LOD_CLAMP_NONE);
-        // SAFETY: Same invariant as the atlas sampler.
-        self.diffuse_sampler = match unsafe { device.create_sampler(&diffuse_info, None) } {
+        // SAFETY: Renderer policy caps anisotropy to the enabled device feature.
+        self.diffuse_sampler = match unsafe { device.create_sampler(diffuse_info, None) } {
             Ok(sampler) => sampler,
             Err(source) => {
                 // SAFETY: The atlas sampler was just created and has no users.

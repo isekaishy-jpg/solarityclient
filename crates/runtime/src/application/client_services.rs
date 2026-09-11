@@ -338,6 +338,24 @@ impl ClientServices {
             &addon_catalog,
             blizzard_rand.clone(),
         )?;
+        let texture_filtering = glue
+            .cvar_integer("textureFilteringMode")
+            .and_then(WorldModelTextureFiltering::from_cvar)
+            .ok_or(RuntimeTerrainFrameError::InvalidTextureSamplingCvar(
+                "textureFilteringMode",
+            ))?;
+        let base_mip = glue
+            .cvar_integer("BaseMip")
+            .and_then(WorldModelBaseMip::from_cvar)
+            .ok_or(RuntimeTerrainFrameError::InvalidTextureSamplingCvar(
+                "BaseMip",
+            ))?;
+        renderer.configure_file_texture_sampling(texture_filtering, base_mip)?;
+        tracing::info!(
+            ?texture_filtering,
+            ?base_mip,
+            "configured native file texture sampling"
+        );
         glue.set_realm_directory(realm_metadata.empty_directory());
         let mut sound = RuntimeSoundCoordinator::start(
             assets.clone(),
@@ -2354,9 +2372,7 @@ impl ClientServices {
                             tile_y: tile.y(),
                         },
                     )?;
-                    // Registered build-12340 defaults: textureFilteringMode 3 is
-                    // anisotropic 4x and BaseMip 0 begins at the authored top mip.
-                    // A settings owner will pass live typed values here directly.
+                    let (texture_filtering, base_mip) = self.renderer.file_texture_sampling();
                     let frame = TerrainFrame::prepare(
                         &mut self.renderer,
                         map_id,
@@ -2365,8 +2381,8 @@ impl ClientServices {
                         resident.liquid_batches(),
                         m2_scene,
                         world_models,
-                        WorldModelTextureFiltering::Anisotropic4x,
-                        WorldModelBaseMip::Zero,
+                        texture_filtering,
+                        base_mip,
                         &mut self.crt_rand,
                         Arc::clone(&self.particle_twinkle),
                         self.player.resident_frame_input(),
@@ -2400,12 +2416,13 @@ impl ClientServices {
                     .terrain
                     .resident_m2_scene()
                     .ok_or(RuntimeTerrainFrameError::SceneKindMismatch)?;
+                let (texture_filtering, base_mip) = self.renderer.file_texture_sampling();
                 let frame = TerrainFrame::prepare_global_world_model(
                     &mut self.renderer,
                     m2_scene,
                     world_models,
-                    WorldModelTextureFiltering::Anisotropic4x,
-                    WorldModelBaseMip::Zero,
+                    texture_filtering,
+                    base_mip,
                     &mut self.crt_rand,
                     Arc::clone(&self.particle_twinkle),
                     self.player.resident_frame_input(),

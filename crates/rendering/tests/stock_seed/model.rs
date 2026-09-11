@@ -2,6 +2,8 @@
 
 #[path = "model/body_pose.rs"]
 mod body_pose;
+#[path = "model/file_filtering.rs"]
+mod file_filtering;
 #[path = "model/mesh_transfer.rs"]
 mod mesh_transfer;
 #[path = "model/npc_equipment.rs"]

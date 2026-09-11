@@ -374,6 +374,17 @@ See [world UI scale](../../docs/architecture/world-ui-scale.md).
 python tools/ghidra/ui_scale_oracle.py <path-to-Wow.exe> crates/ui/tests/fixtures/ui_scale_native.txt
 ```
 
+## World file texture filtering
+
+`world_texture_filter_oracle.py` captures 960 native filtering/cache-prefix cases.
+It substitutes the device-capability query and stops before texture-cache lookup
+or allocation. See [world texture sampling](../../docs/architecture/world-texture-sampling.md)
+for the applicable Vulkan comparisons and the graphics-settings boundary.
+
+```text
+python tools/ghidra/world_texture_filter_oracle.py <path-to-Wow.exe> crates/rendering/tests/fixtures/world_texture_filter_native.txt
+```
+
 ## WMO local batch visibility
 
 The following capture executes the native corner transform and normal renderer

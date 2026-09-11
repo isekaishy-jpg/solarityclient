@@ -18,6 +18,19 @@ pub enum WorldModelTextureFiltering {
 }
 
 impl WorldModelTextureFiltering {
+    /// Resolves the closed native textureFilteringMode CVar domain.
+    #[must_use]
+    pub const fn from_cvar(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Bilinear),
+            1 => Some(Self::Trilinear),
+            2 => Some(Self::Anisotropic2x),
+            3 => Some(Self::Anisotropic4x),
+            4 => Some(Self::Anisotropic8x),
+            5 => Some(Self::Anisotropic16x),
+            _ => None,
+        }
+    }
     pub(in crate::device) const fn requested_anisotropy(self) -> f32 {
         match self {
             Self::Bilinear | Self::Trilinear => 1.0,
@@ -43,6 +56,15 @@ pub enum WorldModelBaseMip {
 }
 
 impl WorldModelBaseMip {
+    /// Resolves the closed native BaseMip CVar domain.
+    #[must_use]
+    pub const fn from_cvar(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Zero),
+            1 => Some(Self::One),
+            _ => None,
+        }
+    }
     pub(in crate::device) const fn level(self) -> f32 {
         match self {
             Self::Zero => 0.0,

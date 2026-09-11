@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ash::{Device, vk};
 use solarity_asset::M2Texture;
 
-use crate::device::VulkanError;
+use crate::device::{VulkanError, WorldModelBaseMip, WorldModelTextureFiltering};
 
 use super::types::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
 
@@ -49,6 +49,30 @@ impl M2SamplerRegistry {
         texture: &M2Texture,
     ) -> Result<M2SamplerHandle, VulkanError> {
         let info = sampler_info(texture.flags());
+        self.prepare_info(device, info)
+    }
+
+    pub(in crate::device) fn prepare_file(
+        &mut self,
+        device: &Device,
+        texture: &M2Texture,
+        filtering: WorldModelTextureFiltering,
+        base_mip: WorldModelBaseMip,
+        maximum_anisotropy: f32,
+    ) -> Result<M2SamplerHandle, VulkanError> {
+        let info = sampler_info(texture.flags()).with_file_filtering(
+            filtering,
+            base_mip,
+            maximum_anisotropy,
+        );
+        self.prepare_info(device, info)
+    }
+
+    fn prepare_info(
+        &mut self,
+        device: &Device,
+        info: M2SamplerInfo,
+    ) -> Result<M2SamplerHandle, VulkanError> {
         if let Some(handle) = self.handles.get(&info) {
             return Ok(*handle);
         }
@@ -57,23 +81,34 @@ impl M2SamplerRegistry {
         let create_info = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)
-            // Stock GxTex_Linear disables mip filtering. Constraining both LOD
-            // bounds to zero makes the Vulkan mipmap mode unobservable.
-            .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+            .mipmap_mode(
+                if info
+                    .file_filtering()
+                    .is_some_and(WorldModelTextureFiltering::uses_linear_mips)
+                {
+                    vk::SamplerMipmapMode::LINEAR
+                } else {
+                    vk::SamplerMipmapMode::NEAREST
+                },
+            )
             .address_mode_u(vulkan_address(info.address_u()))
             .address_mode_v(vulkan_address(info.address_v()))
             .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
             .mip_lod_bias(0.0)
-            .anisotropy_enable(false)
-            .max_anisotropy(1.0)
+            .anisotropy_enable(info.effective_anisotropy() > 1.0)
+            .max_anisotropy(info.effective_anisotropy())
             .compare_enable(false)
             .compare_op(vk::CompareOp::NEVER)
-            .min_lod(0.0)
-            .max_lod(0.0)
+            .min_lod(info.base_mip().level())
+            .max_lod(if info.file_filtering().is_some() {
+                vk::LOD_CLAMP_NONE
+            } else {
+                0.0
+            })
             .border_color(vk::BorderColor::FLOAT_TRANSPARENT_BLACK)
             .unnormalized_coordinates(false);
-        // SAFETY: The create info is self-contained and requests only core
-        // sampler state from this live device.
+        // SAFETY: The create info is self-contained. File anisotropy is capped
+        // to the enabled feature/limit; explicit linear samplers remain unmipped.
         let sampler = unsafe { device.create_sampler(&create_info, None) }
             .map_err(|source| VulkanError::operation("create M2 texture sampler", source))?;
         let handle = M2SamplerHandle {
@@ -142,5 +177,73 @@ const fn vulkan_address(mode: M2TextureAddressMode) -> vk::SamplerAddressMode {
     match mode {
         M2TextureAddressMode::Clamp => vk::SamplerAddressMode::CLAMP_TO_EDGE,
         M2TextureAddressMode::Repeat => vk::SamplerAddressMode::REPEAT,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_texture_filtering_matches_native_selection() -> Result<(), Box<dyn std::error::Error>> {
+        let native = include_str!("../../../tests/fixtures/world_texture_filter_native.txt");
+        let mut checked = 0;
+        for line in native.lines().filter_map(|line| line.strip_prefix("case ")) {
+            let (input, output) = line.split_once(';').ok_or("native delimiter")?;
+            let values = input
+                .split_whitespace()
+                .map(str::parse::<u32>)
+                .collect::<Result<Vec<_>, _>>()?;
+            // Vulkan's sampled UNORM textures support linear mip interpolation.
+            // Explicit M2 requests use GxTex_Linear; other explicit classes in
+            // the capture belong to independent texture providers.
+            if values[1] == 0 || (values[4] != 0 && values[5] & 7 != 1) {
+                continue;
+            }
+            let expected = output
+                .split_whitespace()
+                .map(str::parse::<u32>)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut info = sampler_info(values[5] >> 3);
+            if values[4] == 0 {
+                let filtering =
+                    WorldModelTextureFiltering::from_cvar(values[0] as i32).ok_or("native mode")?;
+                info = info.with_file_filtering(
+                    filtering,
+                    WorldModelBaseMip::Zero,
+                    if values[2] == 0 {
+                        1.0
+                    } else {
+                        values[3] as f32
+                    },
+                );
+            }
+            let flags = expected[2];
+            assert_eq!(info.file_filtering().is_some(), flags & 7 >= 3, "{input}");
+            assert_eq!(
+                info.file_filtering()
+                    .is_some_and(WorldModelTextureFiltering::uses_linear_mips),
+                flags & 7 >= 4,
+                "{input}"
+            );
+            assert_eq!(
+                info.effective_anisotropy(),
+                ((flags >> 9) & 31) as f32,
+                "{input}"
+            );
+            assert_eq!(
+                info.address_u() == M2TextureAddressMode::Repeat,
+                flags & 8 != 0,
+                "{input}"
+            );
+            assert_eq!(
+                info.address_v() == M2TextureAddressMode::Repeat,
+                flags & 16 != 0,
+                "{input}"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 384);
+        Ok(())
     }
 }

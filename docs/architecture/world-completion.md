@@ -77,6 +77,7 @@ automatically reopen those fixes.
 
 Existing evidence and implementation boundaries:
 [scenery fading](scenery-distance.md), [terrain lighting](terrain-lighting.md),
+[file texture sampling](world-texture-sampling.md),
 [scene lighting](world-scene-lights.md), [WMO visibility](world-model-batch-visibility.md),
 [attached WMO doodads](world-model-doodad-visibility.md),
 [fog](world-fog.md), [shadows](world-shadows.md), [sky](world-sky.md),

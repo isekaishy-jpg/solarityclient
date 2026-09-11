@@ -247,6 +247,8 @@ pub struct VulkanRenderer {
     storage_buffer_alignment: vk::DeviceSize,
     sampler_anisotropy: bool,
     maximum_sampler_anisotropy: f32,
+    file_texture_sampling: (WorldModelTextureFiltering, WorldModelBaseMip),
+    file_texture_sampling_locked: bool,
 }
 
 /// Stock `gxVSync` presentation policy requested at device startup.
@@ -351,6 +353,11 @@ impl VulkanRenderer {
             storage_buffer_alignment: selected.storage_buffer_alignment,
             sampler_anisotropy: selected.sampler_anisotropy,
             maximum_sampler_anisotropy: selected.maximum_sampler_anisotropy,
+            file_texture_sampling: (
+                WorldModelTextureFiltering::Anisotropic4x,
+                WorldModelBaseMip::Zero,
+            ),
+            file_texture_sampling_locked: false,
         };
         renderer.replace_pipeline_cache(&[])?;
         renderer.create_allocator(selected.physical_device)?;
@@ -362,6 +369,34 @@ impl VulkanRenderer {
     #[must_use]
     pub const fn report(&self) -> &VulkanReport {
         &self.report
+    }
+
+    /// Selects the native global file-texture policy before file samplers exist.
+    /// Existing descriptors retain immutable sampler identities; changing this
+    /// setting later requires the graphics owner's normal resource restart.
+    ///
+    /// # Errors
+    /// Returns an error if another policy already owns prepared file samplers.
+    pub fn configure_file_texture_sampling(
+        &mut self,
+        filtering: WorldModelTextureFiltering,
+        base_mip: WorldModelBaseMip,
+    ) -> Result<(), VulkanError> {
+        let requested = (filtering, base_mip);
+        if self.file_texture_sampling_locked && self.file_texture_sampling != requested {
+            return Err(VulkanError::operation(
+                "configure file texture sampling",
+                "file samplers already exist",
+            ));
+        }
+        self.file_texture_sampling = requested;
+        Ok(())
+    }
+
+    /// Returns the configured global filtering and first authored mip.
+    #[must_use]
+    pub const fn file_texture_sampling(&self) -> (WorldModelTextureFiltering, WorldModelBaseMip) {
+        self.file_texture_sampling
     }
 
     /// Waits until all submitted device work is complete before owner teardown.
@@ -1045,12 +1080,38 @@ impl VulkanRenderer {
         requested: &[TerrainTextureSet],
     ) -> Result<Vec<TerrainTextureSetHandle>, VulkanError> {
         let layout = self.terrain_pipelines.material_set_layout(&self.device)?;
+        let (filtering, base_mip) = self.file_texture_sampling;
+        let anisotropy = if self.sampler_anisotropy {
+            filtering
+                .requested_anisotropy()
+                .min(self.maximum_sampler_anisotropy)
+                .max(1.0)
+        } else {
+            1.0
+        };
+        let sampler = vk::SamplerCreateInfo::default()
+            .mag_filter(vk::Filter::LINEAR)
+            .min_filter(vk::Filter::LINEAR)
+            .mipmap_mode(if filtering.uses_linear_mips() {
+                vk::SamplerMipmapMode::LINEAR
+            } else {
+                vk::SamplerMipmapMode::NEAREST
+            })
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+            .anisotropy_enable(anisotropy > 1.0)
+            .max_anisotropy(anisotropy)
+            .min_lod(base_mip.level())
+            .max_lod(vk::LOD_CLAMP_NONE);
+        self.file_texture_sampling_locked |= !requested.is_empty();
         self.terrain_texture_sets.prepare(
             &self.device,
             layout,
             &self.terrain_materials,
             &self.blp_textures,
             requested,
+            &sampler,
         )
     }
 
@@ -2562,6 +2623,31 @@ impl VulkanRenderer {
         texture: &M2Texture,
     ) -> Result<M2SamplerHandle, VulkanError> {
         self.m2_samplers.prepare(&self.device, texture)
+    }
+
+    /// Applies the ordinary file loader's global filtering to an M2 texture.
+    /// The authored U/V wrapping remains independent of the shared policy.
+    /// Use `prepare_m2_sampler` for an explicitly unmipped texture instead.
+    ///
+    /// # Errors
+    /// Returns an error if sampler allocation or driver creation fails.
+    pub fn prepare_m2_file_sampler(
+        &mut self,
+        texture: &M2Texture,
+    ) -> Result<M2SamplerHandle, VulkanError> {
+        self.file_texture_sampling_locked = true;
+        let (filtering, base_mip) = self.file_texture_sampling;
+        self.m2_samplers.prepare_file(
+            &self.device,
+            texture,
+            filtering,
+            base_mip,
+            if self.sampler_anisotropy {
+                self.maximum_sampler_anisotropy
+            } else {
+                1.0
+            },
+        )
     }
 
     /// Returns immutable diagnostics for a live renderer-owned M2 sampler.
