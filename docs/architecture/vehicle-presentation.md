@@ -215,22 +215,30 @@ The CPU-only controller currently initializes travel from the unit-position
 fallback; this is exact when the parent model is absent. Combined live vehicle
 parity and performance gains are not established by these fixtures.
 
-This slice passes all 1,242 locked workspace tests, with 23 archive-dependent
-tests ignored. The runtime portion passes 282 tests with 18 ignored. The new
+The remote-transition slice passed all 1,242 locked workspace tests, with 23
+archive-dependent tests ignored. Its runtime portion passed 282 tests with 18 ignored. The new
 fixtures account for 3,072 exact arithmetic records, independently of the
 existing 512 settled-seat matrices and 3,072 seat-lookup/opacity records.
 
 ## Testing package
 
-Build **000095** (`0.0.3a`) installs source revision
-`34b9fd982647f186e7c4c03652bf3f8c9bbeafdd` through the persistent Testing launcher.
+Build **000096** (`0.0.3a`) installs source revision
+`872badd5d6d5674b289d9d79b38b12bdef9b5a8c` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`4f9cddf362d0099bf310d85c44e834bb8f4336ef5f636b9d8bcb593928f439f9`.
+`aa0f7ff1c47f476bbe696b328bf5689fa3915a5ea39dc05ba7aeaa6db2f98b57`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
 passenger frames, final local/remote world projection and settled animated
 seats with mounted riders and shared lighting/shadow/sorting ancestry. Remote
 boarding/exit delays, arcs, primary animation loops and retained transition
-state are included. Local-player admission, the remaining transition consumers,
-transfer lifecycle and special-camera work remain open.
+state are included. Local server paths now retain camera and held input,
+acknowledge active completion, and send transport changes for parent and seat
+changes. Input observes the shared passenger delay/travel phases.
+
+This package passes 1,251 locked workspace tests with 23 archive-dependent
+tests ignored; runtime passes 290 with 18 ignored. Workspace/all-target Clippy
+with warnings denied, formatting and whitespace checks pass. Vehicle active
+mover selection, unloaded-child seat targets, seated animation routing,
+transfer lifecycle, special cameras and combined live travel remain open.
+This package does not establish a performance improvement or the 1,200 FPS target.
