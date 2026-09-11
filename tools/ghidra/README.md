@@ -327,7 +327,7 @@ python tools/ghidra/environmental_sound_oracle.py <path-to-Wow.exe> target/envir
 
 ## Terrain specular lighting
 
-The terrain lighting companion `terrain_specular_shader_oracle.py` renders 48
+The terrain lighting companion `terrain_specular_shader_oracle.py` renders 96
 frames with the original Terrain/Terrain1 bytecode over a full flat MCNK grid.
 It captures colored specular lighting at power 20, three diffuse BLP alpha
 values, MCCV, shadow endpoints, two light directions, and the disabled branch.

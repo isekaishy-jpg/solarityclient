@@ -148,6 +148,6 @@ pub(super) fn compare_native_lighting(renderer: &mut VulkanRenderer) -> Result<(
         }
         frames += 1;
     }
-    assert_eq!(frames, 96);
+    assert_eq!(frames, 144);
     Ok(())
 }

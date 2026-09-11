@@ -85,6 +85,13 @@ independent highlight times blended texture alpha and shadow visibility before
 fog. MCCV only modulates the diffuse term. The runtime `specular` setting disables
 the highlight, including its vertex calculation.
 
+The VS2 `oD1` color output saturates to zero through one at each vertex, before
+interpolation and before texture alpha masks the highlight. The Vulkan varying
+preserves that clamp. Strong-light native captures with partial texture alpha
+expose the former unbounded output (red 255 instead of 122). This boundary
+correction does not explain the conspicuous highlights in the current Durotar
+capture: the inspected tile's decoded normal lengths range from 0.949 to 1.
+
 Native `7CFBE0` writes c24..c27 from `8355D0`'s light sample and sets c27.w from
 `A3FFF0` (20). `7D0050` uploads the terrain constants and selects the specular
 permutation using `CE049D`, derived from the specular setting and shader support.
@@ -128,10 +135,11 @@ permutation using `CE049D`, derived from the specular setting and shader support
   colored illumination, clamping, and reversed light direction. RGB tolerance
   is two byte values for the native D3D9 interpolator/target conversion.
 - The existing 44 terrain fog captures remain in the same GPU test.
-- `terrain_specular_shader_oracle.py`: 48 original D3D9 frames over a complete
+- `terrain_specular_shader_oracle.py`: 96 original D3D9 frames over a complete
   flat MCNK grid. The Vulkan ADT/BLP test compares nine spatially varying samples
   per frame across zero/partial/full BLP alpha, shadow endpoints, MCCV, two light
-  directions, and the enabled/disabled specular permutations. This establishes
+  directions, ordinary and saturated highlights, and the enabled/disabled
+  specular permutations. This establishes
   the single-layer shader path; combined real-world appearance still requires
   validation.
 - `terrain_material_shader_oracle.py`: 120 original D3D9 frames across one

@@ -127,7 +127,9 @@ void main() {
         vec3 view_normal = mat3(scene.view) * in_normal;
         float amount = pow(max(dot(half_direction, view_normal), 0.0),
             scene.specular_color_and_power.w);
-        out_vertex_specular = scene.specular_color_and_power.rgb * amount;
+        // VS2 oD1 clamps color before interpolation, independently of the
+        // later BLP alpha mask and shadow factor in Terrain1/2/3.
+        out_vertex_specular = clamp(scene.specular_color_and_power.rgb * amount, 0.0, 1.0);
     }
 #if TERRAIN_PRIMARY_SHADOW
     vec4 relative_position = vec4(in_position - shadow.origin_and_texel.xyz, 1.0);
