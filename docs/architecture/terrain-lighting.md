@@ -25,6 +25,18 @@ penultimate samples. Solarity stores its inverse, opacity, and the shader
 computes `0.7 + 0.3 * visibility`. Previously the decoder supplied 85 for set
 bits and the shader independently subtracted that opacity from all lighting.
 
+Terrain specular now retains diffuse BLP alpha through the ordered layer blend.
+The vertex stage computes the normalized view/light half vector, raises its
+nonnegative dot product with the transformed MCNR normal to power 20, and
+multiplies by the world-light specular color. The fragment stage adds this
+independent highlight times blended texture alpha and shadow visibility before
+fog. MCCV only modulates the diffuse term. The runtime `specular` setting disables
+the highlight, including its vertex calculation.
+
+Native `7CFBE0` writes c24..c27 from `8355D0`'s light sample and sets c27.w from
+`A3FFF0` (20). `7D0050` uploads the terrain constants and selects the specular
+permutation using `CE049D`, derived from the specular setting and shader support.
+
 ## Evidence
 
 - `terrain_vertex_oracle.py`: 145 unchanged native vertex-builder outputs.
@@ -36,12 +48,18 @@ bits and the shader independently subtracted that opacity from all lighting.
   colored illumination, clamping, and reversed light direction. RGB tolerance
   is two byte values for the native D3D9 interpolator/target conversion.
 - The existing 44 terrain fog captures remain in the same GPU test.
+- `terrain_specular_shader_oracle.py`: 48 original D3D9 frames over a complete
+  flat MCNK grid. The Vulkan ADT/BLP test compares nine spatially varying samples
+  per frame across zero/partial/full BLP alpha, shadow endpoints, MCCV, two light
+  directions, and the enabled/disabled specular permutations. This establishes
+  the single-layer shader path; multilayer and combined real-world appearance
+  still require validation.
 
 The original colored regression produced RGB `(6, 23, 54)` where the native
 shader produced `(46, 92, 138)` with the same explicit inputs. This exposed
 errors that a fully green texture and white ambient light could not reveal.
 
-This verifies the ambient/directional terrain path. It does not certify the
-entire outdoor lighting system. Terrain point-light and specular permutations,
+This verifies the ambient/directional and tested specular terrain paths. It does not certify the
+entire outdoor lighting system. Terrain point-light permutations,
 dynamic shadow maps, other material families, and visual comparisons at the
 same camera/time/settings still require their own integration and checks.

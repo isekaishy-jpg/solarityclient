@@ -44,6 +44,7 @@ layout(location = 1) in vec2 in_texture_coordinates;
 layout(location = 2) in vec2 in_atlas_coordinates;
 layout(location = 3) in vec3 in_vertex_light;
 layout(location = 4) in float in_fog_visibility;
+layout(location = 6) in vec3 in_vertex_specular;
 
 layout(set = 0, binding = 0) uniform TerrainScene {
     mat4 projection;
@@ -54,6 +55,7 @@ layout(set = 0, binding = 0) uniform TerrainScene {
     vec4 fog_parameters;
     vec4 fog_color;
     mat4 view;
+    vec4 specular_color_and_power;
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D material_atlas;
@@ -72,15 +74,15 @@ layout(location = 0) out vec4 out_color;
 
 void main() {
     vec4 material = texture(material_atlas, in_atlas_coordinates);
-    vec3 ground = texture(diffuse_0, in_texture_coordinates).rgb;
+    vec4 ground = texture(diffuse_0, in_texture_coordinates);
 #if TERRAIN_LAYER_COUNT > 1
-    ground = mix(ground, texture(diffuse_1, in_texture_coordinates).rgb, material.r);
+    ground = mix(ground, texture(diffuse_1, in_texture_coordinates), material.r);
 #endif
 #if TERRAIN_LAYER_COUNT > 2
-    ground = mix(ground, texture(diffuse_2, in_texture_coordinates).rgb, material.g);
+    ground = mix(ground, texture(diffuse_2, in_texture_coordinates), material.g);
 #endif
 #if TERRAIN_LAYER_COUNT > 3
-    ground = mix(ground, texture(diffuse_3, in_texture_coordinates).rgb, material.b);
+    ground = mix(ground, texture(diffuse_3, in_texture_coordinates), material.b);
 #endif
 
     // Terrain1.bls multiplies shadow visibility by 0.3 and adds 0.7;
@@ -90,6 +92,7 @@ void main() {
     visibility = min(visibility, primary_shadow_visibility());
 #endif
     float baked_shadow = 0.7 + 0.3 * visibility;
-    vec3 lit = ground * baked_shadow * in_vertex_light * 2.0;
+    vec3 lit = ground.rgb * baked_shadow * in_vertex_light * 2.0
+        + ground.a * in_vertex_specular * visibility;
     out_color = vec4(mix(scene.fog_color.rgb, lit, in_fog_visibility), 1.0);
 }

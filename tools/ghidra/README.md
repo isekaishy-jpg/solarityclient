@@ -33,6 +33,21 @@ upper/body timers and dead rejection without random draws. Separate runtime
 tests cover queued movement, body replacement and ordinary mount completion in
 the shared callback scan; the capture does not prove full vehicle-control policy.
 
+Seated vehicle ownership has a separate 150-case capture:
+
+```powershell
+python tools/ghidra/vehicle_animation_owner_oracle.py <path-to-Wow.exe> crates/runtime/tests/fixtures/vehicle_animation_owner_native.txt
+```
+
+It executes registration (`756D10`), the controlled-key predicate (`756CD0`),
+completion (`757280`) and the original seated consumer (`747980`). GUID lookup
+supplies resident or missing passengers. Model replay, key release and Unit_C
+resume are captured boundaries. Tests cover masks, first-free registration,
+capacity, missing owners, normal completion and interruption. This capture does
+not execute the model setter or the entry/exit action consumer and its spell
+release vector. Decoded model and renderer regressions exercise the implemented
+seated model consumers separately.
+
 The mount/body effect-binding probe executes the original authored adapter,
 unit event switch and breath factory. All live cases query the body's attachment
 17/19, independently of the emitting model and the mount's attachments:
@@ -308,6 +323,18 @@ python tools/ghidra/environmental_damage_oracle.py <path-to-Wow.exe> target/envi
 python tools/ghidra/combat_classification_oracle.py <path-to-Wow.exe> target/combat_classification_native.txt
 python tools/ghidra/environmental_tint_oracle.py <path-to-Wow.exe> target/environmental_tint_native.txt
 python tools/ghidra/environmental_sound_oracle.py <path-to-Wow.exe> target/environmental_sound_native.txt
+```
+
+## Terrain specular lighting
+
+The terrain lighting companion `terrain_specular_shader_oracle.py` renders 48
+frames with the original Terrain/Terrain1 bytecode over a full flat MCNK grid.
+It captures colored specular lighting at power 20, three diffuse BLP alpha
+values, MCCV, shadow endpoints, two light directions, and the disabled branch.
+The ADT/BLP Vulkan integration compares nine locations per captured frame.
+
+```text
+python tools/ghidra/terrain_specular_shader_oracle.py target/world-shadow-shaders crates/rendering/tests/fixtures/terrain_specular_shader_native.txt
 ```
 
 ## WMO local batch visibility

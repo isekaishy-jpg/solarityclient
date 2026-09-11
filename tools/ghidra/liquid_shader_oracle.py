@@ -130,7 +130,9 @@ class Renderer:
             call(self.device, 57, 'uu', 34, fog_color)
         call(self.device, 43, 'upuufu', 0, None, 1, 0, 1., 0)
         call(self.device, 41)
-        call(self.device, 83, 'uupu', 4, 1, buffer(vertices), 44)
+        if len(vertices) % (3 * 44):
+            raise ValueError('Triangle-list vertices must contain complete 44-byte triples')
+        call(self.device, 83, 'uupu', 4, len(vertices) // (3 * 44), buffer(vertices), 44)
         call(self.device, 42)
         call(self.device, 32, 'pp', self.target, self.readback)
         locked = LockedRect()

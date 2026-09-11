@@ -13,11 +13,12 @@ pub struct TerrainSceneUniform {
     view_depth: Vec4,
     fog_parameters: Vec4,
     fog_color: Vec4,
+    specular_color_and_power: Vec4,
 }
 
 impl TerrainSceneUniform {
     /// Byte size of the exact std140 scene block consumed by both stages.
-    pub const BYTE_SIZE: usize = 224;
+    pub const BYTE_SIZE: usize = 240;
 
     /// Captures one camera/light snapshot without introducing lighting defaults.
     ///
@@ -41,7 +42,21 @@ impl TerrainSceneUniform {
             view_depth: Vec4::ZERO,
             fog_parameters: Vec4::ZERO,
             fog_color: Vec4::ZERO,
+            specular_color_and_power: Vec4::ZERO,
         }
+    }
+
+    /// Enables Terrain.bls's vertex specular term with native power 20.
+    /// The diffuse BLP alpha masks this independent light contribution.
+    #[must_use]
+    pub fn with_specular(mut self, color: Vec3, enabled: bool) -> Self {
+        // 7CFBE0 supplies the directional light's specular RGB and A3FFF0.
+        self.specular_color_and_power = if enabled {
+            color.extend(20.0)
+        } else {
+            Vec4::ZERO
+        };
+        self
     }
 
     /// Enables the original Terrain.bls vertex fog using view-space depth.
@@ -67,6 +82,7 @@ impl TerrainSceneUniform {
         write_vec4(&mut bytes, &mut offset, self.fog_parameters);
         write_vec4(&mut bytes, &mut offset, self.fog_color);
         write_mat4(&mut bytes, &mut offset, self.view);
+        write_vec4(&mut bytes, &mut offset, self.specular_color_and_power);
         debug_assert_eq!(offset, Self::BYTE_SIZE);
         bytes
     }

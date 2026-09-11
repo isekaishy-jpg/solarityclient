@@ -27,6 +27,7 @@ layout(set = 0, binding = 0) uniform TerrainScene {
     vec4 fog_parameters;
     vec4 fog_color;
     mat4 view;
+    vec4 specular_color_and_power;
 } scene;
 
 layout(push_constant) uniform TerrainDraw {
@@ -37,6 +38,7 @@ layout(location = 1) out vec2 out_texture_coordinates;
 layout(location = 2) out vec2 out_atlas_coordinates;
 layout(location = 3) out vec3 out_vertex_light;
 layout(location = 4) out float out_fog_visibility;
+layout(location = 6) out vec3 out_vertex_specular;
 
 void main() {
     const float chunk_texels = 64.0;
@@ -61,6 +63,19 @@ void main() {
     float diffuse_amount = clamp(dot(in_normal, scene.sun_direction.xyz), 0.0, 1.0);
     vec3 lighting = min(scene.ambient_color.rgb + scene.diffuse_color.rgb * diffuse_amount, vec3(1.0));
     out_vertex_light = lighting * in_color_rgb;
+    out_vertex_specular = vec3(0.0);
+    if (scene.specular_color_and_power.w > 0.0) {
+        // Terrain.bls specular variants use a normalized view/light half
+        // vector and the unnormalized transformed MCNR normal. MCCV only
+        // modulates diffuse lighting, never the independent oD1 highlight.
+        vec3 view_direction = normalize(-view_position.xyz);
+        vec3 light_direction = mat3(scene.view) * scene.sun_direction.xyz;
+        vec3 half_direction = normalize(view_direction + light_direction);
+        vec3 view_normal = mat3(scene.view) * in_normal;
+        float amount = pow(max(dot(half_direction, view_normal), 0.0),
+            scene.specular_color_and_power.w);
+        out_vertex_specular = scene.specular_color_and_power.rgb * amount;
+    }
 #if TERRAIN_PRIMARY_SHADOW
     vec4 relative_position = vec4(in_position - shadow.origin_and_texel.xyz, 1.0);
     out_shadow_coordinates = vec3(

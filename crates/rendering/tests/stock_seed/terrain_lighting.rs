@@ -29,9 +29,11 @@ pub(super) fn compare_native_lighting(renderer: &mut VulkanRenderer) -> Result<(
     let mut frames = 0;
     for line in include_str!("../fixtures/terrain_lighting_shader_native.txt")
         .lines()
-        .filter(|row| row.starts_with("terrain "))
+        .chain(include_str!("../fixtures/terrain_specular_shader_native.txt").lines())
+        .filter(|row| row.starts_with("terrain ") || row.starts_with("specular "))
     {
         let row = line.split_ascii_whitespace().collect::<Vec<_>>();
+        let specular = row[0] == "specular";
         let rgb = [row[1].parse::<u8>()?, row[2].parse()?, row[3].parse()?];
         let color = (row[13] != "none")
             .then(|| u32::from_str_radix(row[13], 16))
@@ -42,7 +44,8 @@ pub(super) fn compare_native_lighting(renderer: &mut VulkanRenderer) -> Result<(
         if shadow == 170 {
             continue;
         }
-        let argb = u32::from_be_bytes([255, rgb[0], rgb[1], rgb[2]]);
+        let alpha = if specular { row[20].parse()? } else { 255 };
+        let argb = u32::from_be_bytes([alpha, rgb[0], rgb[1], rgb[2]]);
         let key = (argb, color, shadow);
         if let std::collections::btree_map::Entry::Vacant(entry) = draws.entry(key) {
             let texture_path = format!("tileset/fixture/color_{argb:08x}.blp");
@@ -118,17 +121,22 @@ pub(super) fn compare_native_lighting(renderer: &mut VulkanRenderer) -> Result<(
                 row[start + 2].parse()?,
             ))
         };
-        let scene = TerrainSceneUniform::new(projection, view, vector(4)?, vector(7)?, vector(10)?);
+        let mut scene =
+            TerrainSceneUniform::new(projection, view, vector(4)?, vector(7)?, vector(10)?);
+        if specular {
+            scene = scene.with_specular(vector(16)?, row[19] == "1");
+        }
         renderer.request_frame_capture()?;
         renderer.present_terrain(scene, &[draws[&key]])?;
         let frame = renderer
             .take_captured_frame()?
             .ok_or("terrain lighting capture")?;
-        let expected = (0..3)
-            .map(|i| u8::from_str_radix(&row[15][i * 2..i * 2 + 2], 16))
-            .collect::<Result<Vec<_>, _>>()?;
-        for y in [24, 32, 40] {
-            for x in [24, 32, 40] {
+        for (yi, y) in [24, 32, 40].into_iter().enumerate() {
+            for (xi, x) in [24, 32, 40].into_iter().enumerate() {
+                let offset = if specular { (yi * 3 + xi) * 8 } else { 0 };
+                let expected = (0..3)
+                    .map(|i| u8::from_str_radix(&row[15][offset + i * 2..offset + i * 2 + 2], 16))
+                    .collect::<Result<Vec<_>, _>>()?;
                 let pixel = &frame.rgba8()[(y * 64 + x) * 4..(y * 64 + x) * 4 + 3];
                 for (actual, expected) in pixel.iter().zip(&expected) {
                     assert!(
@@ -140,6 +148,6 @@ pub(super) fn compare_native_lighting(renderer: &mut VulkanRenderer) -> Result<(
         }
         frames += 1;
     }
-    assert_eq!(frames, 48);
+    assert_eq!(frames, 96);
     Ok(())
 }

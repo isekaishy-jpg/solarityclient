@@ -824,7 +824,8 @@ impl TerrainFrame {
             light.diffuse_color(),
             environment.light_direction(),
         )
-        .with_fog(camera.view(), fog_parameters, fog.color());
+        .with_fog(camera.view(), fog_parameters, fog.color())
+        .with_specular(light.specular_color(), specular_enabled);
         let world_model_scene = WorldModelSceneUniform::new(
             camera.projection(),
             camera.view(),
