@@ -1,6 +1,6 @@
 //! Public immutable terrain tile upload and draw contracts.
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use solarity_asset::{AssetPath, TerrainChunkIndex, TerrainTextureLayer, TerrainTileIndex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
@@ -34,10 +34,11 @@ pub struct TerrainChunkDrawPlan {
     weighted_blending: bool,
     atlas_chunk: [u8; 2],
     bounds: [[f32; 3]; 2],
+    point_light_sphere: Vec4,
 }
 
 impl TerrainChunkDrawPlan {
-    pub(super) const fn new(
+    pub(super) fn new(
         chunk: TerrainChunkIndex,
         first_index: u32,
         index_count: u32,
@@ -53,6 +54,7 @@ impl TerrainChunkDrawPlan {
             weighted_blending,
             atlas_chunk: [chunk.x(), chunk.y()],
             bounds,
+            point_light_sphere: super::light_batch::sphere(bounds),
         }
     }
 
@@ -98,14 +100,17 @@ impl TerrainChunkDrawPlan {
         self.bounds
     }
 
-    /// Returns 7B7AF0's bounding sphere for this chunk's scene-light query.
+    /// Returns 7B7AF0's sphere for this chunk's native paired scene-light query.
     #[must_use]
     pub fn point_light_bounds(&self) -> (Vec3, f32) {
-        let [minimum, maximum] = self.bounds.map(|value| Vec3::from_array(value).as_dvec3());
-        let extent = maximum - minimum;
-        let radius =
-            ((extent.z * extent.z + extent.y * extent.y + extent.x * extent.x).sqrt() * 0.5) as f32;
-        (((minimum + maximum) * 0.5).as_vec3(), radius)
+        (
+            self.point_light_sphere.truncate(),
+            self.point_light_sphere.w,
+        )
+    }
+
+    pub(super) fn set_point_light_bounds(&mut self, bounds: [[f32; 3]; 2]) {
+        self.point_light_sphere = super::light_batch::sphere(bounds);
     }
 
     /// Tests this draw's world AABB against an explicit camera frustum.

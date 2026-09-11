@@ -416,10 +416,20 @@ python tools/ghidra/terrain_animation_oracle.py <path-to-Wow.exe> <terrain-BLS-d
 
 `terrain_point_light_oracle.py` runs original single-chunk registration, light
 publication/query and constant production, then captures 32 unchanged shader
-frames. Native paired-chunk admission is a separate query-bounds owner.
+frames. `--paired` captures another 32 using the union with its X neighbor.
 
 ```text
 python tools/ghidra/terrain_point_light_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_point_lights_native.txt
+python tools/ghidra/terrain_point_light_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_paired_point_lights_native.txt --paired
+```
+
+`terrain_light_batch_oracle.py` runs the original material compatibility,
+two-by-two pairing and batch registration over 320 deterministic cases. Only
+the batch allocator is replaced by bounded storage; the original routines
+produce the shared query spheres.
+
+```text
+python tools/ghidra/terrain_light_batch_oracle.py <path-to-Wow.exe> crates/rendering/tests/fixtures/terrain_light_batches_native.txt
 ```
 
 `world_texture_filter_oracle.py` captures 960 native filtering/cache-prefix cases.

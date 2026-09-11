@@ -53,6 +53,7 @@ impl TerrainTileMeshPlan {
             ));
         }
 
+        super::light_batch::assign(&mut chunks);
         Ok(Self::new(
             tile.index(),
             vertices,

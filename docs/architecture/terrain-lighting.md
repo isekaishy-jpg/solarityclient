@@ -42,16 +42,20 @@ four packed animation flags and three point lights in both terrain-only and
 combined-world command recording. Scalar packing keeps this within Vulkan's
 guaranteed 128-byte capacity.
 
-Terrain consumes the first three scene point lights selected for each chunk's
-bounding sphere. `7B7AF0` computes the midpoint and half-diagonal radius;
+Terrain consumes the first three scene point lights selected for its native
+batch sphere. `7B7AF0` computes the midpoint and half-diagonal radius;
 `7D0050` runs the native scene query and copies `8349E0`'s raw diffuse and
 attenuation values. Positions are camera-relative before view rotation.
 Terrain.bls variants 64..127 add the three attenuated Lambert terms before the
 final diffuse clamp and MCCV multiplication. Point lights do not add specular.
 The runtime queries after animated M2 sources publish and builds transient draws
 from immutable resident packets, so removed sources cannot leave stale lighting.
-Native paired-chunk admission uses the union of both chunks' bounds; reproducing
-that pairing for light selection remains the next integration step.
+Tile preparation retains `7D6810`'s pairing in aligned two-by-two blocks. The
+orientation with more compatible pairs wins; ties select X neighbors. `7D66D0`
+checks ordered texture IDs and animation/unlit flags for small alpha maps, or
+the native four-layer admission walk for weighted blending. Accepted neighbors
+share the sphere of their union; rejected chunks keep their own sphere. These
+cached light bounds leave each draw's geometry and culling bounds independent.
 
 MCNR components retain their stored XYZ order. The dependency names its three
 stored fields `x, z, y` and exposes a Y-up conversion; using that conversion
@@ -106,12 +110,18 @@ permutation using `CE049D`, derived from the specular setting and shader support
   four patterned layers, different speeds and directions, and stationary layers.
   Authored ADT/BLP Vulkan draws compare nine RGB samples per frame within two
   byte values. The former renderer fails after the first nonzero update.
-- `terrain_point_light_oracle.py`: 32 native chunk registrations, scene queries,
+- `terrain_light_batch_oracle.py`: 320 original pairing and union-sphere captures
+  across both blend modes, texture order, layer counts and flag combinations.
+  Pair ownership and every sphere component match exactly, including native
+  short circuits while searching weighted texture lists.
+- `terrain_point_light_oracle.py`: 64 native chunk registrations, scene queries,
   point register sets and unchanged shader frames. Zero, one, three and six
   sources exercise selection and the three-light limit, with raw color ranges,
   MCCV, specular toggles and local/Durotar origins. Sphere and point register
   components match bit for bit; nine RGB samples per frame use a two-byte
-  tolerance. The former shader fails the first stronger point contribution.
+  tolerance. Single-chunk and paired registrations pass through authored ADT
+  decoding, tile preparation and both standalone/combined Vulkan recording.
+  The former shader fails the first stronger point contribution.
 - `terrain_lighting_shader_oracle.py`: 72 colored D3D9 outputs from the original
   Terrain.bls/Terrain1.bls bytecode. The Vulkan ADT/BLP integration checks the
   48 binary-shadow cases, including no MCCV, neutral MCCV, bright tints,
@@ -153,6 +163,6 @@ shader produced `(46, 92, 138)` with the same explicit inputs. This exposed
 errors that a fully green texture and white ambient light could not reveal.
 
 This verifies the ambient/directional and tested specular terrain paths. It does not certify the
-entire outdoor lighting system. Terrain point-light permutations,
-dynamic shadow maps, other material families, and visual comparisons at the
+entire outdoor lighting system. Dynamic shadow maps, other material families,
+and visual comparisons at the
 same camera/time/settings still require their own integration and checks.

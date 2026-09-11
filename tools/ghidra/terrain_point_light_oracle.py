@@ -19,7 +19,7 @@ f32 = lambda x: struct.unpack('<f', struct.pack('<f', x))[0]
 UNIT = f32(f32(1600. / 3.) / 128.)
 
 
-def constants(origin, count, palette):
+def constants(origin, count, palette, paired=False):
     u = n.emulator()
     scene, owner, device, vtable, lights, grid, chunk = [n.HEAP+x for x in
         (0,0x1000,0x2000,0x3000,0x4000,0x8000,0xd000)]
@@ -29,8 +29,14 @@ def constants(origin, count, palette):
     lower = [f32(origin[0] - f32(8*UNIT)), f32(origin[1] - f32(8*UNIT)), origin[2]]
     n.write_floats(u, chunk+0x4c, lower + list(origin))
     n.write_floats(u, chunk+0x7c, origin)
+    neighbor = 0
+    if paired:
+        neighbor = chunk + 0x400
+        neighbor_origin = [lower[0], origin[1], origin[2]]
+        neighbor_lower = [f32(neighbor_origin[0] - f32(8*UNIT)), lower[1], origin[2]]
+        n.write_floats(u, neighbor+0x4c, neighbor_lower + neighbor_origin)
     u.reg_write(UC_X86_REG_ECX, owner)
-    n.invoke(u, 0x7b7af0, [chunk, 0, chunk+0x7c, 0])
+    n.invoke(u, 0x7b7af0, [chunk, neighbor, chunk+0x7c, 2 if paired else 0])
     bounds = n.read_floats(u, owner+0x24, 4)
     eye = [f32(origin[0]-16), f32(origin[1]-16), f32(origin[2]+10)]
     n.write_floats(u, 0xcd8f5c, eye)
@@ -56,7 +62,7 @@ def constants(origin, count, palette):
     return bounds, n.read_floats(u, 0xd250a0, 148)
 
 
-def capture(directory):
+def capture(directory, paired=False):
     gpu.EXTENT = 64
     vertices = gpu.shader_variants(directory / 'SHADERS_VERTEX_VS_2_0_TERRAIN.BLS')
     pixel = gpu.shader_variants(directory / 'SHADERS_PIXEL_PS_2_0_TERRAIN1.BLS')[0]
@@ -76,7 +82,7 @@ def capture(directory):
             for count in [0,1,3,6]:
                 for palette in range(2):
                     for specular in range(2):
-                        bounds, block = constants(origin, count, palette)
+                        bounds, block = constants(origin, count, palette, paired)
                         point_constants = block[112:148]
                         block += [0.]*36
                         for index, values in [(0,[1.,0.,0.,0.]), (1,[0.,1.,0.,0.]),
@@ -106,7 +112,8 @@ if __name__ == '__main__':
     parser.add_argument('executable')
     parser.add_argument('directory', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--paired', action='store_true', help='Register the X-neighbor union sphere')
     args = parser.parse_args()
     n.initialize(args.executable)
-    args.output.write_text(capture(args.directory))
+    args.output.write_text(capture(args.directory, args.paired))
     print('Captured 32 native terrain point-light queries and shader frames')

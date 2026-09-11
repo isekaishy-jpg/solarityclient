@@ -28,10 +28,22 @@ fn terrain_point_lights_match_native_queries_and_shader_frames() -> Result<(), B
     let maps = map_table();
     let wdt = terrain_wdt()?;
     let mut frames = 0;
-    for line in include_str!("../fixtures/terrain_point_lights_native.txt")
-        .lines()
-        .filter_map(|line| line.strip_prefix("frame "))
-    {
+    for (paired, line) in [
+        (
+            false,
+            include_str!("../fixtures/terrain_point_lights_native.txt"),
+        ),
+        (
+            true,
+            include_str!("../fixtures/terrain_paired_point_lights_native.txt"),
+        ),
+    ]
+    .into_iter()
+    .flat_map(|(paired, fixture)| {
+        fixture
+            .lines()
+            .filter_map(move |line| line.strip_prefix("frame ").map(|line| (paired, line)))
+    }) {
         let words = line.split_whitespace().collect::<Vec<_>>();
         let origin = [
             words[0].parse::<f32>()?,
@@ -47,6 +59,29 @@ fn terrain_point_lights_match_native_queries_and_shader_frames() -> Result<(), B
             return Err("root ADT".into());
         };
         root.texture_flags = Some(wow_adt::chunks::MtxfChunk { flags: vec![0] });
+        // Admit only the intended X-neighbor pair; animated surrounding chunks
+        // cannot join either native batch orientation.
+        for chunk in &mut root.mcnk_chunks {
+            let x = chunk.header.index_x;
+            let y = chunk.header.index_y;
+            chunk.header.position = [
+                origin[0] - x as f32 * (8. * (1600. / 3. / 128.) as f32),
+                origin[1] - y as f32 * (8. * (1600. / 3. / 128.) as f32),
+                origin[2],
+            ];
+            let accepted = x == 0 && y == 0 || paired && x == 1 && y == 0;
+            chunk.layers = Some(wow_adt::MclyChunk {
+                layers: vec![wow_adt::MclyLayer {
+                    texture_id: 0,
+                    flags: wow_adt::MclyFlags {
+                        value: if accepted { 0 } else { 0x40 },
+                    },
+                    offset_in_mcal: 0,
+                    effect_id: 0,
+                }],
+            });
+            chunk.header.n_layers = 1;
+        }
         let chunk = root.mcnk_chunks.first_mut().ok_or("first chunk")?;
         chunk.header.position = origin;
         if words[4] == "1" {
@@ -200,6 +235,6 @@ fn terrain_point_lights_match_native_queries_and_shader_frames() -> Result<(), B
         }
         frames += 1;
     }
-    assert_eq!(frames, 32);
+    assert_eq!(frames, 64);
     Ok(())
 }

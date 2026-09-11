@@ -50,7 +50,7 @@ Terrain also consumes three selected point sources, but keeps their raw diffuse
 float colors. Each chunk's transient draw carries camera-relative positions and
 the original attenuation polynomial; publication precedes its query. The
 [terrain lighting boundary](terrain-lighting.md) records shader comparisons and
-the remaining native paired-chunk query bounds.
+the native neighboring-chunk compatibility and shared query bounds.
 
 ## Interior model lighting
 
