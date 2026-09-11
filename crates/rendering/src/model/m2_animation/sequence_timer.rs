@@ -297,6 +297,14 @@ impl M2ModelSequenceTimer {
         !self.loops
     }
 
+    /// 826C40 marks zero-span and already-ended terminal requests finished
+    /// immediately, before the model can enqueue their completion callback.
+    #[must_use]
+    pub fn finished_on_activation(self, scene_time_ms: u32) -> bool {
+        self.start_ms == self.end_ms
+            || (!self.loops && tick_at_or_after(scene_time_ms, self.end_ms))
+    }
+
     /// Finds a user sequence callback, including a terminal sequence's deadline.
     ///
     /// The owner must suppress repeated terminal callbacks after dispatch.

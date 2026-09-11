@@ -160,8 +160,8 @@ pub use object::{
     unpack_game_object_rotation,
 };
 pub use vehicle::{
-    VehiclePassengerPhase, VehiclePassengerTransition, VehicleTransitionInput,
-    VehicleTransitionPose,
+    VehiclePassengerAnimationInput, VehiclePassengerPhase, VehiclePassengerTransition,
+    VehicleTransitionInput, VehicleTransitionPose,
 };
 pub use vehicle::{
     VehicleSeatPose, vehicle_entry_target, vehicle_seat_attachment, vehicle_seat_transform,

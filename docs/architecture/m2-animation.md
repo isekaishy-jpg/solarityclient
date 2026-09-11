@@ -90,17 +90,74 @@ remains a separate research gap in the FIFO loading path.
 The automatic callback at `0x00831FC0` retains the portion of the frame after
 a crossed boundary. `0x00832260` places looping callbacks at the last tick of
 each authored cycle independently of the primary timer's total cycle count.
-Scene-timer event windows follow `0x00830FB0`, preserving every crossed
-occurrence, seek position, reverse mapping, and native timestamp order.
+Scene-timer event windows map crossed occurrences through `0x00830FB0`'s
+seek/reverse arithmetic. The complete model scan can replace those candidates
+before dispatch, as described under the shared active-bone scan below.
 Held timers dispatch no keys, and nonlooping timers stop keys at their deadline.
 
-Remaining gaps include event-position sampling at each individual callback tick,
-event sound age, exact hidden
+Remaining gaps in the earlier single-primary path include queued event-position
+sampling across timer changes, event sound age, exact hidden
 widget update/visibility clocks, and retaining hidden instances' GPU effects.
 The existing world playback path still uses elapsed-time windows that collapse
 multiple occurrences of one declaration and discards overdue variation time.
 These Model changes do not establish parity for those callers or FrameXML
 Model rendering.
+
+## Shared active-bone callback scan
+
+Units and models retaining explicit bone slots use `832260`'s shared scan cursor
+and newest-activation-first linked-list order. Reselecting an active slot keeps
+its position; clearing it removes it from the callback scan. All slots see the
+same previous tick on each scan. Independent per-slot catch-up loops can produce
+different callback counts, order and random draws on a long frame.
+
+Completion eligibility is computed before each slot's event scan. `82E790` can
+therefore replace an earlier event queued by that same slot. An overdue terminal
+deadline can move the shared cursor backwards, and later slots still compare
+their deadlines with that bound. `831FC0` checks the queued sequence and start
+against the current slot before calling its owner, then checks again before
+automatic variation selection. A callback can replace or clear another slot.
+
+`830FB0` admits every event for bone zero. For another active bone, ancestry
+starts at the event bone's parent, excluding the event's own bone. A parentless
+event bypasses that traversal and can occur once per eligible active slot.
+Global event tracks select channel zero but still use each slot's timer mapping.
+Queued event poses are sampled at the current scene time before tied completion
+callbacks execute. Reconstructing events from broad time intervals afterward
+would replay candidates that the native queue discarded.
+
+`826C40` marks a zero-span or already-ended terminal request finished on
+activation. Selecting the same finished sequence preserves its existing blend
+slot. A bone's first primary selection has no inherited outgoing primary.
+`832840` clears an upper primary immediately, preserving an existing blend above
+half weight or copying the outgoing primary into a 150 ms fade. Root clears
+remain excluded. Model pause shifts all explicit bone timers while global tracks
+keep their construction origin.
+
+Two pinned executable captures validate the production scanner and playback:
+
+- `model_bone_callbacks_oracle.py`: 576 complete callback scans with different
+  activation orders, terminal/looping sequences, speeds, seeks, event ancestors,
+  and scene intervals. Fixture SHA-256:
+  `f51b7db489cadcce9a944a6b2a8c8d1490e6d9d505521f72a52d27adfcc70efe`.
+- `model_bone_playback_oracle.py`: 288 model updates with automatic variations,
+  cross-slot replacement, clearing and RNG consumed by authored callbacks.
+  Callback order, final timers, retained blends and the shared random state match.
+  Fixture SHA-256:
+  `0f1115ec19a526685d2160e17c71ac4c314eeddff4f5c19f63f5669ca72eb04f`.
+
+Both captures execute original activation, scan, queue and completion code.
+They supply application callbacks, CRT rand and an already-sampled bone palette;
+they do not validate native bone-transform calculation or GPU submission.
+The default effect-load capture also records its previous-sequence index, including
+the held-sequence case that must not invent a blend.
+
+The shared engine supports synchronous authored callbacks. The renderer currently
+collects unit event poses here and invokes environmental effect consumers during
+visible event delivery. Their global RNG ordering, offscreen delivery and sound
+age remain open. Ordinary models without explicit bone slots retain the earlier
+single-primary path; this change does not establish a complete Unit_C spell,
+action, equipment synchronization or vehicle-control animation system.
 
 ## Per-model global tracks
 

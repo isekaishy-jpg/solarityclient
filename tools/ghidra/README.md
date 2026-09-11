@@ -194,6 +194,18 @@ python tools/ghidra/model_effect_clock_oracle.py <path-to-Wow.exe> target/model-
 
 ## Default model sequence oracle
 
+The following additional captures cover passenger animation policy and shared
+bone callback ownership. They execute the original selectors/model code; their
+scripts identify supplied application callbacks and palette providers. The
+[animation boundary](../../docs/architecture/m2-animation.md#shared-active-bone-callback-scan)
+records runtime consumers and remaining event-delivery work.
+
+```text
+python tools/ghidra/vehicle_animation_oracle.py <path-to-Wow.exe> --output crates/systems/tests/fixtures/vehicle-animation-native.txt
+python tools/ghidra/model_bone_callbacks_oracle.py <path-to-Wow.exe> --output crates/rendering/tests/fixtures/native_model_bone_callbacks.txt
+python tools/ghidra/model_bone_playback_oracle.py <path-to-Wow.exe> --output crates/runtime/tests/fixtures/native_model_bone_playback.txt
+```
+
 `model_default_sequence_oracle.py` executes `0x00834540` through its original
 fallback, weighted selection, and timer constructors. Only old-scene removal
 and CRT `rand` are replaced. Eight probes cover zero-weight variation zero,

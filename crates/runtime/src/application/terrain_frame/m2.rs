@@ -2691,6 +2691,7 @@ impl M2Frame {
                     M2BonePoseOverrides {
                         model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                         bone_transforms,
+                        bone_sequences: &expired.bone_sequences,
                         ..Default::default()
                     },
                 )?;
@@ -2725,17 +2726,8 @@ impl M2Frame {
                 }
             }
             let clock = advance.clock;
-            let bone_sequences = placement
-                .unit_animation
-                .as_ref()
-                .and_then(|animation| animation.bone_sequences(clock, animation_time_ms as u32))
-                .or_else(|| {
-                    placement
-                        .retirement
-                        .as_ref()?
-                        .unit_pose?
-                        .bone_sequences(clock, animation_time_ms as u32)
-                });
+            let bone_sequences =
+                playback.bone_sequence_clocks(&source.model, clock, animation_time_ms as u32);
             let finger_pose_hands = placement
                 .retirement
                 .as_ref()
@@ -2772,9 +2764,7 @@ impl M2Frame {
                     model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                     finger_pose,
                     bone_transforms,
-                    bone_sequences: bone_sequences
-                        .as_ref()
-                        .map_or(&[], |sequences| sequences.as_slice()),
+                    bone_sequences: &bone_sequences,
                 },
             )?;
             let bone_pose = &self.bone_pose_scratch;

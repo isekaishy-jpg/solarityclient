@@ -5,7 +5,8 @@ use solarity_asset::{DecodedM2Model, VehicleCatalog, VehicleSeatDefinition};
 use solarity_ecs::{ActiveWorld, ObjectKind, WorldObjectIdentity, WorldTransform};
 use solarity_rendering::M2AnimationClock;
 use solarity_systems::{
-    VehiclePassengerPhase as Phase, VehiclePassengerTransition, VehicleTransitionInput,
+    VehiclePassengerAnimationInput, VehiclePassengerPhase as Phase, VehiclePassengerTransition,
+    VehicleTransitionInput,
 };
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
@@ -109,7 +110,8 @@ pub(super) struct UnitPassengerModel {
     unit_pose: Option<WorldTransform>,
     animation_changed: bool,
     special_exit: bool,
-    animation_completed: bool,
+    animation_completed: u32,
+    animation_reset_pending: bool,
 }
 
 impl UnitAnimationScene {
@@ -419,7 +421,8 @@ impl UnitPassengerModel {
         if !(previous == Phase::EnterDelay && phase == Phase::Entering
             || previous == Phase::ExitDelay)
         {
-            self.animation_completed = false;
+            self.animation_completed = 0;
+            self.animation_reset_pending = true;
         }
         self.phase = phase;
         self.phase_start_ms = now_ms;
@@ -631,37 +634,40 @@ impl UnitAnimationBehavior {
         std::mem::take(&mut self.passenger.borrow_mut().animation_changed)
     }
 
-    /// 748560 calls 747B20 before ordinary locomotion in a delay/travel phase.
-    pub fn passenger_transition_animation(&self) -> Option<u16> {
+    pub fn passenger_animation_input(&self) -> Option<VehiclePassengerAnimationInput> {
         let state = self.passenger.borrow();
         let seat = state.input?.seat?;
-        let animations = match state.phase {
-            Phase::EnterDelay | Phase::Entering if seat.flags() & 1 != 0 => seat.enter_animations(),
-            Phase::ExitDelay | Phase::Exiting
-                if seat.flags() & if state.special_exit { 8 } else { 0x8000 } != 0 =>
-            {
-                seat.exit_animations()
-            }
-            _ => return None,
-        };
-        let selected = if !state.animation_completed && animations[0] != -1 {
-            animations[0]
-        } else {
-            animations[1]
-        };
-        u16::try_from(selected)
-            .ok()
-            .filter(|animation| *animation != 506)
+        Some(VehiclePassengerAnimationInput {
+            phase: state.phase,
+            flags: seat.flags(),
+            completed: state.animation_completed,
+            special_exit: state.special_exit,
+            enter: seat.enter_animations(),
+            seated: seat.seated_animations(),
+            secondary: seat.secondary_animations(),
+            exit: seat.exit_animations(),
+        })
     }
 
-    pub fn complete_passenger_transition_animation(&self) {
-        // 73BBD0 -> 7484E0 marks both completion bits outside the seated phase.
+    /// 748560 calls 747B20 before ordinary locomotion in a delay/travel phase.
+    pub fn passenger_transition_animation(&self) -> Option<u16> {
+        self.passenger_animation_input()?
+            .before_movement(self.input.get().alive)
+            .and_then(|animation| u16::try_from(animation).ok())
+    }
+
+    pub fn complete_passenger_animation(&self, key: i32) {
+        if let Some(input) = self.passenger_animation_input() {
+            self.passenger.borrow_mut().animation_completed = input.complete(key);
+        }
+    }
+
+    /// 748770 clears both bits again after the phase's initial animation call,
+    /// which can interrupt a timer and invoke 7484E0 synchronously.
+    pub fn finish_passenger_animation_change(&self) {
         let mut state = self.passenger.borrow_mut();
-        if matches!(
-            state.phase,
-            Phase::EnterDelay | Phase::Entering | Phase::ExitDelay | Phase::Exiting
-        ) {
-            state.animation_completed = true;
+        if std::mem::take(&mut state.animation_reset_pending) {
+            state.animation_completed = 0;
         }
     }
 

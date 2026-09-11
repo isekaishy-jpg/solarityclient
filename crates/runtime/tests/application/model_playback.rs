@@ -1,5 +1,8 @@
 //! Deterministic Model playback tests using archive-decoded sequence records.
 
+#[path = "model_bone_playback.rs"]
+mod bones;
+
 use std::error::Error;
 use std::io::Cursor;
 
@@ -251,7 +254,13 @@ fn unit_effect_load_callback_matches_original_timers_and_random_draws() -> Resul
                     [words[1], words[2], words[3], words[6]],
                     "{line}"
                 );
-                assert!(playback.script_blend.is_some(), "{line}");
+                assert_eq!(
+                    playback
+                        .script_blend
+                        .map_or(u32::from(u16::MAX), |blend| blend.sequence() as u32),
+                    words[8],
+                    "{line}"
+                );
             }
             count += 1;
         }
@@ -460,8 +469,26 @@ fn playback_model_with_blend(
         bone[offset..offset + 2].copy_from_slice(&u16::MAX.to_le_bytes());
     }
     bytes.extend_from_slice(&bone);
-    bytes[0x2c..0x30].copy_from_slice(&1_u32.to_le_bytes());
+    for (key, parent) in [(4_i32, 0_u16), (26, 1)] {
+        bone[0..4].copy_from_slice(&key.to_le_bytes());
+        bone[8..10].copy_from_slice(&parent.to_le_bytes());
+        bytes.extend_from_slice(&bone);
+    }
+    bytes[0x2c..0x30].copy_from_slice(&3_u32.to_le_bytes());
     bytes[0x30..0x34].copy_from_slice(&bones.to_le_bytes());
+    let lookup = bytes.len() as u32;
+    for key in 0..27 {
+        bytes.extend_from_slice(
+            &(match key {
+                4 => 1_u16,
+                26 => 2,
+                _ => u16::MAX,
+            })
+            .to_le_bytes(),
+        );
+    }
+    bytes[0x34..0x38].copy_from_slice(&27_u32.to_le_bytes());
+    bytes[0x38..0x3c].copy_from_slice(&lookup.to_le_bytes());
     append_playback_translation(&mut bytes, bones as usize + 16);
     append_playback_sound_event(&mut bytes);
     let skin = OldSkin {

@@ -18,6 +18,242 @@ use super::{
     render_skin_bytes,
 };
 
+#[test]
+fn active_bone_callback_queue_matches_original_model_update() -> Result<(), Box<dyn Error>> {
+    use solarity_rendering::{M2CallbackSlot, scan_m2_callbacks};
+    let model = callback_model()?;
+    let animations = model.animations();
+    let mut cases = 0;
+    for row in include_str!("../../fixtures/native_model_bone_callbacks.txt").lines() {
+        if row.is_empty() || row.starts_with('#') {
+            continue;
+        }
+        let (inputs, outputs) = row.split_once('|').ok_or("native row")?;
+        let values = inputs
+            .split_whitespace()
+            .map(|v| u32::from_str_radix(v, 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        let [
+            seq0,
+            seq1,
+            order,
+            events,
+            bone,
+            speed0,
+            speed1,
+            offset0,
+            offset1,
+            previous,
+            current,
+        ] = values.as_slice()
+        else {
+            return Err("native inputs".into());
+        };
+        let mut slots = [
+            M2CallbackSlot {
+                bone: 0,
+                sequence: *seq0 as usize,
+                timer: M2ModelSequenceTimer::with_speed(
+                    &animations.sequences()[*seq0 as usize],
+                    M2ModelAnimationMode::Forward,
+                    f32::from_bits(*speed0),
+                    0,
+                    *offset0 as i32,
+                    0,
+                    M2SequenceStartPhase::DuringSceneUpdate,
+                ),
+                finished: false,
+            },
+            M2CallbackSlot {
+                bone: *bone as u16,
+                sequence: *seq1 as usize,
+                timer: M2ModelSequenceTimer::with_speed(
+                    &animations.sequences()[*seq1 as usize],
+                    M2ModelAnimationMode::Forward,
+                    f32::from_bits(*speed1),
+                    0,
+                    *offset1 as i32,
+                    0,
+                    M2SequenceStartPhase::DuringSceneUpdate,
+                ),
+                finished: false,
+            },
+        ];
+        for slot in &mut slots {
+            slot.finished = slot.timer.finished_on_activation(0);
+        }
+        if *order == 0 {
+            slots.reverse();
+        }
+        let expected = outputs
+            .split_whitespace()
+            .map(|record| {
+                record
+                    .split(':')
+                    .map(|v| u32::from_str_radix(v, 16))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut actual = Vec::new();
+        let mut queue = Vec::new();
+        let mut cursor = *previous;
+        for iteration in 0..10_000 {
+            assert!(iteration < 9_999, "scan did not terminate: {row}");
+            let next = scan_m2_callbacks(
+                animations,
+                slots,
+                cursor,
+                *current,
+                *events != 0,
+                &mut queue,
+            );
+            if queue.is_empty() {
+                break;
+            }
+            for callback in &queue {
+                let (kind, key, index) = if let Some(index) = callback.event {
+                    (
+                        1,
+                        animations.bones()[animations.events()[index]
+                            .bone_index()
+                            .ok_or("event bone")?
+                            as usize]
+                            .key_bone_id() as u32,
+                        index as u32,
+                    )
+                } else {
+                    let slot = slots
+                        .iter_mut()
+                        .find(|slot| slot.bone == callback.slot.bone)
+                        .ok_or("callback slot")?;
+                    slot.finished = slot.timer.is_terminal();
+                    (
+                        0,
+                        animations.bones()[usize::from(slot.bone)].key_bone_id() as u32,
+                        slot.sequence as u32,
+                    )
+                };
+                actual.push(vec![
+                    kind,
+                    key,
+                    index,
+                    current.wrapping_sub(callback.scene_time_ms),
+                ]);
+            }
+            cursor = next;
+        }
+        assert_eq!(actual, expected, "{row}");
+        cases += 1;
+    }
+    assert_eq!(cases, 576);
+    Ok(())
+}
+
+fn callback_model() -> Result<DecodedM2Model, Box<dyn Error>> {
+    let mut bytes = render_m2_bytes("Callbacks", 1)?;
+    let name = bytes.len() as u32;
+    bytes.extend_from_slice(b"Callbacks\0");
+    bytes[8..12].copy_from_slice(&10_u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&name.to_le_bytes());
+    let mut array = |header: usize, count: u32, payload: &[u8]| {
+        let offset = bytes.len() as u32;
+        bytes.extend_from_slice(payload);
+        bytes[header..header + 4].copy_from_slice(&count.to_le_bytes());
+        bytes[header + 4..header + 8].copy_from_slice(&offset.to_le_bytes());
+    };
+    let mut sequences = Vec::new();
+    for i in 0..4_u32 {
+        let mut sequence = [0_u8; 64];
+        sequence[0..2].copy_from_slice(&(i as u16).to_le_bytes());
+        for (offset, value) in [
+            (4, 200 + (i % 2) * 100),
+            (12, 0x20 + i / 2),
+            (16, 32767),
+            (20, 1),
+            (24, 1),
+        ] {
+            sequence[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        sequence[60..62].copy_from_slice(&u16::MAX.to_le_bytes());
+        sequences.extend_from_slice(&sequence);
+    }
+    array(0x1c, 4, &sequences);
+    array(0x24, 0, &[]);
+    let mut bones = Vec::new();
+    for (key, parent) in [(-1_i32, -1_i16), (4, 0), (26, 1), (5, -1)] {
+        let mut bone = [0_u8; 88];
+        bone[0..4].copy_from_slice(&key.to_le_bytes());
+        bone[8..10].copy_from_slice(&parent.to_le_bytes());
+        for offset in [18, 38, 58] {
+            bone[offset..offset + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+        }
+        bones.extend_from_slice(&bone);
+    }
+    array(0x2c, 4, &bones);
+    let mut lookup = [u16::MAX; 27];
+    for (key, bone) in [(4, 1), (26, 2), (5, 3)] {
+        lookup[key] = bone;
+    }
+    array(
+        0x34,
+        27,
+        &lookup
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>(),
+    );
+    array(0x14, 1, &1000_u32.to_le_bytes());
+    let events = bytes.len();
+    bytes.resize(events + 4 * 36, 0);
+    bytes[0x100..0x104].copy_from_slice(&4_u32.to_le_bytes());
+    bytes[0x104..0x108].copy_from_slice(&(events as u32).to_le_bytes());
+    for (i, keys) in [
+        [100_u32; 4],
+        [199, 299, 200, 300],
+        [0; 4],
+        [201, 301, 201, 301],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let event = events + i * 36;
+        bytes[event..event + 4].copy_from_slice(&(i as u32 + 100).to_le_bytes());
+        bytes[event + 4..event + 8].copy_from_slice(&(i as u32 + 200).to_le_bytes());
+        bytes[event + 8..event + 12].copy_from_slice(&(i as u32).to_le_bytes());
+        bytes[event + 26..event + 28]
+            .copy_from_slice(&(if i == 3 { 0_u16 } else { u16::MAX }).to_le_bytes());
+        let timestamps = bytes.len() as u32;
+        for key in keys {
+            bytes.extend_from_slice(&key.to_le_bytes());
+        }
+        let channels = bytes.len() as u32;
+        for j in 0..4 {
+            bytes.extend_from_slice(&1_u32.to_le_bytes());
+            bytes.extend_from_slice(&(timestamps + j * 4).to_le_bytes());
+        }
+        bytes[event + 28..event + 32].copy_from_slice(&4_u32.to_le_bytes());
+        bytes[event + 32..event + 36].copy_from_slice(&channels.to_le_bytes());
+    }
+    let skin = render_skin_bytes()?;
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Creature\\Solarity\\Callbacks.m2",
+            bytes: &bytes,
+        },
+        FixtureFile {
+            path: "Creature\\Solarity\\Callbacks00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    Ok(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature\\Solarity\\Callbacks.m2")?,
+    )?)
+}
+
 /// Loads the same decoded sequence through both looping and terminal flag paths.
 fn model(non_looping: bool) -> Result<DecodedM2Model, Box<dyn Error>> {
     model_with_flags(0x20 | u32::from(non_looping))

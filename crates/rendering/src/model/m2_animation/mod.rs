@@ -1,5 +1,6 @@
 //! Runtime sampling and hierarchy composition for decoded M2 bone tracks.
 
+mod callback;
 mod camera;
 mod clock;
 mod event;
@@ -13,6 +14,7 @@ mod sequence_timer;
 mod status;
 mod ui_camera;
 
+pub use callback::{M2CallbackSlot, M2QueuedCallback, scan_m2_callbacks};
 pub use camera::{M2CameraEffectScale, M2CameraFrameError, sample_m2_camera_frame};
 pub use clock::M2AnimationClock;
 pub use event::{M2EventTimeWindow, triggered_m2_event_indices};

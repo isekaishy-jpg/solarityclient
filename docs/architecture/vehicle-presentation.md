@@ -106,7 +106,7 @@ and GUID reuse. These are fixture tests, not a combined live vehicle session.
 ## Remaining consumers
 
 Complete VehiclePassenger_C's remaining flags and transfer lifecycle,
-local-player boarding/exit admission, seated animation routing, vehicle pitch updates,
+active-mover boarding/exit admission, vehicle pitch updates,
 vehicle camera bounds/ancestor dispatch, and exceptional unit visibility.
 Do not infer the passenger controller's flags from similarly numbered DBC flags.
 Combined live entry, travel, seat switching and removal remain unverified.
@@ -182,7 +182,7 @@ the parent-transition branch. Initial duration uses the preceding rendered
 parent placement; travel samples the current animated attachment. Entry and exit
 initial/loop animations come from seat columns 13/14 and 26/27. Primary completion
 selects the authored passenger loop before ordinary locomotion completion can
-replace it. Seated primary/upper-body routing is not included in this slice.
+replace it. Seated primary/upper-body routing uses the shared model scan described below.
 
 The model timing pass precedes unit animation callbacks. The later ancestry
 pass publishes the interpolated world placement before visibility, lighting,
@@ -209,7 +209,7 @@ until the shared controller returns to detached or seated; a short server path
 cannot resume movement during a longer exit animation. See
 [local player movement](local-player-movement.md#server-authored-local-paths).
 
-Remaining gaps include seated dual animation slots, launch flags, exceptional
+Remaining gaps include launch flags, exceptional
 transfer/removal callbacks and vehicle camera work. Combined live vehicle parity
 and performance gains are not established by these fixtures.
 
@@ -254,6 +254,43 @@ live vehicle parity or a performance improvement.
 The change passes 1,253 locked workspace tests with 23 archive-dependent tests
 ignored, including 292 runtime tests with 18 ignored. Workspace/all-target Clippy
 with warnings denied, formatting and whitespace checks pass.
+
+## Seated body and upper animation ownership
+
+VehicleSeat columns 15/16 and 17/18 now supply the seated body and secondary
+initial/loop pairs. `747B20` selects the body under flag 2; `747BD0` selects
+the secondary under flag 4. `748560` places delay/travel primaries before the
+ordinary movement resolver, while `7485B0` supplies a seated secondary after
+movement and posture. `7385C0` forces an alive passenger's authored body pose
+and copies a non-Stand ordinary request into the upper slot. `737EF0` commits
+that upper request first, using model key 4, then 6, when available.
+
+The CPU controller retains completion bits 2 and 4 independently. `7484E0`
+uses the root and key 26 for body completion and other keys for upper completion
+when both seated lanes exist; otherwise it marks both bits. Phase initialization
+clears the bits before and after its animation request, except for the retained
+delay-to-travel cases. Model replacement starts fresh model timers while keeping
+the passenger's phase and completion bits.
+
+`M2Playback` now owns explicit bone slots and runs the shared native callback
+scan, rather than advancing each slot independently. Activation order, tied
+callbacks, event ancestry, terminal completion and variation RNG are covered by
+[the model scan evidence](m2-animation.md#shared-active-bone-callback-scan).
+Bone queries, visible poses, queued event positions and detached model playback
+consume these same timers. Wounds occupy the bone's previous-pose slot and blend
+over an active seated secondary. Clearing an upper primary removes its callbacks
+immediately and retains the native 150 ms pose fade when requested.
+
+`vehicle_animation_oracle.py` supplies 5,120 original-instruction selection and
+completion records, SHA-256
+`d1100ad2b7c7a26165166ec25558b5393fb5dadcc1214a24eac314732f143cc3`.
+A decoded runtime fixture verifies different body/upper durations, separate
+initial-to-loop callbacks, upper-before-body selection rolls, bone composition,
+and model replacement retaining both completed lanes. These checks do not prove
+the unfinished active-spell/vehicle-control providers, complete transfer lifecycle,
+combined live vehicle presentation, or a performance improvement. The renderer's
+authored effect callbacks still run during visible event delivery; moving those
+consumers into the shared scan remains separate work.
 
 ## Testing package
 

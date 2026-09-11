@@ -22,11 +22,12 @@ pub use character_component::{
     CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
 };
 pub use m2_animation::{
-    M2AnimationClock, M2BonePose, M2BonePoseError, M2BonePoseOverrides, M2CameraEffectScale,
-    M2CameraFrameError, M2EventTimeWindow, M2FingerPoseHands, M2MaterialPose, M2MaterialPoseError,
-    M2ModelSequenceBlend, M2ModelSequenceTimer, M2SampledLights, M2SequenceStartPhase,
-    M2UiCameraViewport, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
-    sample_m2_lights_into, sample_m2_scene_lights_into, sample_m2_ui_camera_frame,
+    M2AnimationClock, M2BonePose, M2BonePoseError, M2BonePoseOverrides, M2CallbackSlot,
+    M2CameraEffectScale, M2CameraFrameError, M2EventTimeWindow, M2FingerPoseHands, M2MaterialPose,
+    M2MaterialPoseError, M2ModelSequenceBlend, M2ModelSequenceTimer, M2QueuedCallback,
+    M2SampledLights, M2SequenceStartPhase, M2UiCameraViewport, sample_m2_camera_frame,
+    sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
+    sample_m2_scene_lights_into, sample_m2_ui_camera_frame, scan_m2_callbacks,
     triggered_m2_event_indices,
 };
 pub use m2_ground::{M2GroundNormal, M2GroundPlacementError};

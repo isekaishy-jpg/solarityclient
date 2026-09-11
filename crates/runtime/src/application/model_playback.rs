@@ -4,6 +4,9 @@
 #[path = "../../tests/application/model_playback.rs"]
 mod tests;
 
+mod bones;
+use bones::M2BonePlayback;
+
 use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 use solarity_asset::{AnimationDataCatalog, DecodedM2Model, M2ModelAnimationMode};
@@ -37,6 +40,11 @@ pub(in crate::application) struct M2Playback {
     paused_scene_time_ms: u32,
     /// `CM2Model +0x74`: global-sequence origin, independent of primary seeks.
     created_scene_time_ms: u32,
+    /// Bone slots share the model's callback cursor and activation order.
+    bone_playback: Vec<M2BonePlayback>,
+    activation_order: u64,
+    next_activation_order: u64,
+    callback_queue: Vec<solarity_rendering::M2QueuedCallback>,
 }
 
 /// The native user callback runs before automatic variation selection.
@@ -53,6 +61,7 @@ pub(in crate::application) struct M2PlaybackAdvance {
 pub(in crate::application) struct M2ExpiredVariation {
     pub(in crate::application) clock: M2AnimationClock,
     pub(in crate::application) event_window: M2EventTimeWindow,
+    pub(in crate::application) bone_sequences: Vec<(u16, M2AnimationClock)>,
 }
 
 impl M2Playback {
@@ -156,6 +165,10 @@ impl M2Playback {
             script_finished: false,
             paused_scene_time_ms: 0,
             created_scene_time_ms: scene_time_ms,
+            bone_playback: Vec::new(),
+            activation_order: 0,
+            next_activation_order: 0,
+            callback_queue: Vec::new(),
         }
     }
 
@@ -211,6 +224,10 @@ impl M2Playback {
             script_finished: false,
             paused_scene_time_ms: 0,
             created_scene_time_ms: scene_time_ms,
+            bone_playback: Vec::new(),
+            activation_order: 0,
+            next_activation_order: 0,
+            callback_queue: Vec::new(),
         }))
     }
 
@@ -342,6 +359,9 @@ impl M2Playback {
         random: &mut CrtRand,
     ) -> Result<bool, RuntimeTerrainFrameError> {
         let animations = model.animations();
+        if animations.bones().is_empty() {
+            return Ok(false);
+        }
         let explicit_sequence = variation
             .and_then(|variation| animations.model_sequence_for_variation(animation_id, variation));
         let automatic_variations = explicit_sequence.is_none();
@@ -368,17 +388,19 @@ impl M2Playback {
             phase,
         );
         if blend {
-            if let Some(previous) = self.script_timer
+            if (!self.script_finished || self.sequence != sequence)
                 && self
                     .script_blend
                     .is_none_or(|blend| blend.weight(scene_time_ms) <= 0.5)
             {
-                self.script_blend = Some(M2ModelSequenceBlend::new(
-                    self.sequence,
-                    previous,
-                    scene_time_ms,
-                    animations.sequences()[sequence].blend_time_ms(),
-                ));
+                self.script_blend = self.script_timer.map(|previous| {
+                    M2ModelSequenceBlend::new(
+                        self.sequence,
+                        previous,
+                        scene_time_ms,
+                        animations.sequences()[sequence].blend_time_ms(),
+                    )
+                });
             }
         } else {
             self.script_blend = None;
@@ -391,8 +413,12 @@ impl M2Playback {
         self.has_variations = automatic_variations
             && (animations.sequences()[sequence].variation_index() != 0
                 || animations.sequences()[sequence].variation_next().is_some());
+        if self.script_timer.is_none() {
+            self.next_activation_order += 1;
+            self.activation_order = self.next_activation_order;
+        }
         self.script_timer = Some(timer);
-        self.script_finished = false;
+        self.script_finished = timer.finished_on_activation(scene_time_ms);
         self.script_mode = mode;
         Ok(true)
     }
@@ -426,6 +452,9 @@ impl M2Playback {
     /// Applies the native model pause marker without resetting a sequence.
     pub(in crate::application) fn set_paused(&mut self, paused: bool, scene_time_ms: u32) {
         self.paused_scene_time_ms = if paused { scene_time_ms.max(1) } else { 0 };
+        for slot in &mut self.bone_playback {
+            slot.playback.set_paused(paused, scene_time_ms);
+        }
     }
 
     /// Restarts playback when authoritative gameplay selects another base ID.
@@ -513,8 +542,25 @@ impl M2Playback {
         model: &DecodedM2Model,
         animation_time_ms: f32,
         random: &mut CrtRand,
-        callback: Option<&mut M2CompletionCallback<'_>>,
+        mut callback: Option<&mut M2CompletionCallback<'_>>,
     ) -> Result<M2PlaybackAdvance, RuntimeTerrainFrameError> {
+        if !self.bone_playback.is_empty() {
+            let mut complete =
+                |playback: &mut Self, key: i32, _: u16, _: u32, random: &mut CrtRand| {
+                    if matches!(key, -1 | 26)
+                        && let Some(callback) = callback.as_mut()
+                    {
+                        callback(playback, random)?;
+                    }
+                    Ok(())
+                };
+            return self.clock_with_bone_completion(
+                model,
+                animation_time_ms as u32,
+                random,
+                Some(&mut complete),
+            );
+        }
         self.scene_time_ms = animation_time_ms as u32;
         let global_time_ms = self.global_tick(self.scene_time_ms);
         if let Some(timer) = self.script_timer {
@@ -529,6 +575,7 @@ impl M2Playback {
             // its timer. Bone-relative callbacks from that tail must also use
             // the old sequence's terminal pose, not the newly selected pose.
             expired_variations.push(M2ExpiredVariation {
+                bone_sequences: Vec::new(),
                 clock: M2AnimationClock::new_with_global_tick(
                     self.sequence,
                     self.sequence_duration_ms,
@@ -599,6 +646,7 @@ impl M2Playback {
                 break;
             };
             expired_variations.push(M2ExpiredVariation {
+                bone_sequences: Vec::new(),
                 clock: M2AnimationClock::new_with_global_tick(
                     self.sequence,
                     timer.animation_time_ms(boundary) as f32,
@@ -663,7 +711,7 @@ impl M2Playback {
             self.cycle_started_ms = timer.start_time_ms() as f32;
             self.has_variations = animations.sequences()[sequence].variation_index() != 0
                 || animations.sequences()[sequence].variation_next().is_some();
-            self.script_finished = false;
+            self.script_finished = timer.finished_on_activation(self.scene_time_ms);
         }
         self.script_timer = Some(timer);
         let mut clock = M2AnimationClock::new_with_global_tick(

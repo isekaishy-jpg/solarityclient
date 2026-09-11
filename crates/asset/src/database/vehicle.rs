@@ -38,6 +38,8 @@ pub struct VehicleSeatDefinition {
     enter: [u32; 7],
     exit: [u32; 7],
     enter_animations: [u32; 2],
+    seated_animations: [u32; 2],
+    secondary_animations: [u32; 2],
     exit_animations: [u32; 2],
 }
 
@@ -103,6 +105,18 @@ impl VehicleSeatDefinition {
         self.enter_animations.map(|animation| animation as i32)
     }
 
+    /// Initial and looping seated body animations at row +3C/+40.
+    #[must_use]
+    pub fn seated_animations(self) -> [i32; 2] {
+        self.seated_animations.map(|animation| animation as i32)
+    }
+
+    /// Initial and looping seated secondary animations at row +44/+48.
+    #[must_use]
+    pub fn secondary_animations(self) -> [i32; 2] {
+        self.secondary_animations.map(|animation| animation as i32)
+    }
+
     /// Initial and looping passenger exit animations at row +68/+6C.
     #[must_use]
     pub fn exit_animations(self) -> [i32; 2] {
@@ -149,6 +163,8 @@ impl VehicleCatalog {
                 enter: fields(&table, row, 6)?,
                 exit: fields(&table, row, 19)?,
                 enter_animations: fields(&table, row, 13)?,
+                seated_animations: fields(&table, row, 15)?,
+                secondary_animations: fields(&table, row, 17)?,
                 exit_animations: fields(&table, row, 26)?,
                 rotation: fields(&table, row, 29)?,
                 passenger_attachment_id: field(&table, row, 32)? as i32,

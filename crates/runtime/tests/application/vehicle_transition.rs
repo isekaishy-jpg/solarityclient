@@ -14,6 +14,150 @@ use std::{error::Error, sync::Arc};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+#[test]
+fn seated_body_and_upper_timers_complete_independently_and_survive_model_replacement() -> TestResult
+{
+    let fixture = crate::test_support::unit_models::fixture_with_vehicle_seated()?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let vehicles = Arc::new(VehicleCatalog::load(&mut store)?);
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let model = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Character/Human/Male/HumanMale.m2")?,
+    )?);
+    let replacement = Arc::new(DecodedM2Model::load(
+        &mut store,
+        &AssetPath::new("Creature/Alternate.m2")?,
+    )?);
+    let frames = UnitPassengerFrames::new(Arc::clone(&vehicles));
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Passenger",
+        Vec3::ZERO,
+        0.,
+    ));
+    world.create_object(
+        9,
+        ObjectKind::Unit,
+        Some(WorldTransform::new(Vec3::ZERO, 0.)),
+        [(4, 1_f32.to_bits())],
+    )?;
+    world.set_unit_vehicle(9, 1, 0.);
+    let child = world.object_identity(7).ok_or("child")?;
+    let parent = world.object_identity(9).ok_or("parent")?;
+    let mut scene = UnitAnimationScene::default();
+    scene.set_scene_time(100);
+    world.update_movement(7, movement(9, false))?;
+    scene.notify_movement(event(child, 0, Some(parent), false, false));
+    scene.synchronize_passengers(&world, &vehicles, &frames);
+    let input = UnitAnimationInput::new(
+        0,
+        UnitAnimationTier::Ground,
+        false,
+        Some(movement(9, false)),
+    );
+    scene.bind(child, &model, &animations, input);
+    let first = Rc::clone(scene.get(7).ok_or("owner")?);
+    let mut random = CrtRand::new();
+    first.advance_scene(100., &mut random)?;
+    assert_eq!(first.passenger_phase(), Phase::Seated);
+    assert_eq!(first.passenger.borrow().animation_completed, 0);
+    {
+        let playback = first.playback.borrow();
+        assert_eq!(playback.animation_id, 115);
+        let upper = playback.bone_playback(4).ok_or("upper")?;
+        assert_eq!(upper.animation_id, 117);
+        assert!(
+            upper.script_blend.is_none(),
+            "the first upper selection has no outgoing timer"
+        );
+        assert_eq!(
+            upper.script_timer.ok_or("upper timer")?.start_time_ms(),
+            101
+        );
+    }
+    let mut four_rolls = CrtRand::new();
+    for _ in 0..4 {
+        let _ = four_rolls.next_u15();
+    }
+    assert_eq!(
+        random, four_rolls,
+        "upper then body each select a variation and cycle count"
+    );
+    first.advance_scene(302., &mut random)?;
+    assert_eq!(first.passenger.borrow().animation_completed, 2);
+    {
+        let playback = first.playback.borrow();
+        assert_eq!(playback.animation_id, 116);
+        assert_eq!(
+            playback.script_timer.ok_or("body loop")?.start_time_ms(),
+            302
+        );
+        assert_eq!(playback.bone_playback(4).ok_or("upper")?.animation_id, 117);
+        assert_eq!(
+            playback
+                .bone_playback(4)
+                .ok_or("upper")?
+                .script_timer
+                .ok_or("upper timer")?
+                .start_time_ms(),
+            101
+        );
+    }
+    first.advance_scene(402., &mut random)?;
+    assert_eq!(first.passenger.borrow().animation_completed, 6);
+    {
+        let playback = first.playback.borrow();
+        assert_eq!(playback.animation_id, 116);
+        let upper = playback.bone_playback(4).ok_or("upper loop")?;
+        assert_eq!(upper.animation_id, 118);
+        assert_eq!(
+            upper
+                .script_timer
+                .ok_or("upper loop timer")?
+                .start_time_ms(),
+            402
+        );
+        let clock = playback.sample_clock(452);
+        let bones = playback.bone_sequence_clocks(&model, clock, 452);
+        assert_eq!(clock.animation_time_ms(), 150.);
+        assert_eq!(bones.len(), 1);
+        assert_eq!(bones[0].1.animation_time_ms(), 50.);
+        let mut pose = solarity_rendering::M2BonePose::default();
+        pose.recompose_with_overrides(
+            model.animations(),
+            clock,
+            glam::Mat4::IDENTITY,
+            solarity_rendering::M2BonePoseOverrides {
+                bone_sequences: &bones,
+                ..Default::default()
+            },
+        )?;
+        assert!((pose.transforms()[1].w_axis.x - 0.5).abs() < 0.00001);
+    }
+    scene.set_scene_time(500);
+    scene.bind(child, &replacement, &animations, input);
+    let second = scene.get(7).ok_or("replacement owner")?;
+    second.advance_scene(500., &mut random)?;
+    assert!(Rc::ptr_eq(&first.passenger, &second.passenger));
+    assert_eq!(second.passenger.borrow().animation_completed, 6);
+    assert_eq!(second.playback.borrow().animation_id, 116);
+    assert_eq!(
+        second
+            .playback
+            .borrow()
+            .bone_playback(4)
+            .ok_or("replacement upper")?
+            .animation_id,
+        118
+    );
+    Ok(())
+}
+
 fn movement(parent: u64, special_exit: bool) -> WorldMovementState {
     WorldMovementState::new(
         if special_exit { 0x40 << 32 } else { 0 },

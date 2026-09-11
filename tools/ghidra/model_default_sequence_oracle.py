@@ -42,7 +42,7 @@ def capture(executable, output, effect_output=None, scene_phase=0):
 
     uc.hook_add(UC_HOOK_CODE, dependencies)
     rows = ['# ids fallback flags bones metadataBase -> arguments; draws; primary timer words']
-    effect_rows = ['# model default then 8251B0 -> 825170 -> 6F7680: ids fallback flags bones metadataBase -> arguments; draws; primary timer words']
+    effect_rows = ['# model default then 8251B0 -> 825170 -> 6F7680: ids fallback flags bones metadataBase -> arguments; draws; primary timer words and previous sequence index']
     cases = [
         ([0, 0, 7], 0, 0, 1, 0),
         ([0, 0, 7], 0, 0, 1, 5),
@@ -92,6 +92,7 @@ def capture(executable, output, effect_output=None, scene_phase=0):
             uc.reg_write(UC_X86_REG_ECX, model)
             invoke(uc, 0x8251b0, [0x6f7680, effect])
             timer = native.read_words(uc, bones + 0x48, 8)
+            timer += (struct.unpack('<H', uc.mem_read(bones + 0x6c, 2))[0],)
             effect_rows.append(
                 f'{ids} {fallback} {flags} {bone_count} {metadata_base} -> '
                 f'{requests}; {rolls}; {timer}'

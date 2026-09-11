@@ -19,6 +19,7 @@ pub struct M2EventTimeWindow {
     loops: bool,
     global_time_ms: Option<(f32, f32)>,
     scene_timer: Option<(M2ModelSequenceTimer, u32, u32)>,
+    queued_event: Option<usize>,
 }
 
 impl M2EventTimeWindow {
@@ -39,7 +40,17 @@ impl M2EventTimeWindow {
             loops,
             global_time_ms: None,
             scene_timer: None,
+            queued_event: None,
         }
+    }
+
+    /// One occurrence already selected by the shared native bone callback
+    /// queue. Re-scanning its interval would duplicate coincident authored keys.
+    #[must_use]
+    pub const fn queued_event(sequence: usize, event_index: usize) -> Self {
+        let mut window = Self::new(sequence, 0.0, 0.0, false, false);
+        window.queued_event = Some(event_index);
+        window
     }
 
     /// Supplies the process-global interval used by global-sequence events.
@@ -82,6 +93,13 @@ pub fn triggered_m2_event_indices(
     animations: &M2AnimationSet,
     window: M2EventTimeWindow,
 ) -> Vec<usize> {
+    if let Some(index) = window.queued_event {
+        return if index < animations.events().len() {
+            vec![index]
+        } else {
+            Vec::new()
+        };
+    }
     if let Some((timer, previous, current)) = window.scene_timer {
         return triggered_scene_timer_events(animations, window.sequence, timer, previous, current);
     }

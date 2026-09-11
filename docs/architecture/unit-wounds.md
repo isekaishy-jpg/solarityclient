@@ -23,6 +23,10 @@ The `7385C0` death branch clears the upper-body secondary; its root secondary
 can continue through the primary death transition.
 
 The animation owner retains these timers across presentation rebuilds.
+The retained model now owns each explicit bone's primary and previous-pose
+timers together. A wound on a seated upper body blends over that upper primary,
+and the same slot reaches event-position and attachment sampling. Death removes
+the wound; an outgoing upper primary can separately retain its native clear fade.
 The systems resolver contains the native admission and group selection rules;
 the runtime resolves authored tiers and variations using the shared CRT stream.
 Environmental packet snapshots retain attack GUID and creature-template flags

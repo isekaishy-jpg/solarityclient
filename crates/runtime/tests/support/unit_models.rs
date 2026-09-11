@@ -63,6 +63,19 @@ pub fn fixture_with_vehicle_entry(parameters: [f32; 7]) -> Result<ClientFixture,
     build_fixture(true, false, None, None, None, None, Some(parameters))
 }
 
+pub fn fixture_with_vehicle_seated() -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture_options(
+        true,
+        false,
+        None,
+        None,
+        None,
+        None,
+        Some([0.25, 8., 20., 2., 2., 0., 20.]),
+        true,
+    )
+}
+
 fn build_fixture(
     effects: bool,
     equipment: bool,
@@ -72,8 +85,34 @@ fn build_fixture(
     mount_scale: Option<(f32, f32)>,
     vehicle_entry: Option<[f32; 7]>,
 ) -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture_options(
+        effects,
+        equipment,
+        npc_race,
+        water_attachment,
+        body_scale,
+        mount_scale,
+        vehicle_entry,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_fixture_options(
+    effects: bool,
+    equipment: bool,
+    npc_race: Option<u32>,
+    water_attachment: Option<u32>,
+    body_scale: Option<(f32, f32)>,
+    mount_scale: Option<(f32, f32)>,
+    vehicle_entry: Option<[f32; 7]>,
+    seated_animations: bool,
+) -> Result<ClientFixture, Box<dyn Error>> {
     let vehicle_seats = vehicle_entry.is_some();
-    let ids = [0, 91, 96, 97, 98, 99, 100, 101];
+    let mut ids = vec![0, 91, 96, 97, 98, 99, 100, 101];
+    if seated_animations {
+        ids.extend([115, 116, 117, 118]);
+    }
     let mut model = game_object_models::model_with_animations(&ids)?;
     let sequences = u32::from_le_bytes(model[0x20..0x24].try_into()?) as usize;
     for (index, id) in ids.iter().enumerate() {
@@ -88,6 +127,24 @@ fn build_fixture(
         if matches!(id, 96 | 98 | 99 | 101) {
             model[sequences + index * 64 + 12..sequences + index * 64 + 16]
                 .copy_from_slice(&0x21_u32.to_le_bytes());
+        }
+        if *id >= 115 {
+            let duration = match id {
+                115 => 200_u32,
+                116 => 800,
+                117 => 300,
+                _ => 900,
+            };
+            model[sequences + index * 64 + 4..sequences + index * 64 + 8]
+                .copy_from_slice(&duration.to_le_bytes());
+            model[sequences + index * 64 + 12..sequences + index * 64 + 16].copy_from_slice(
+                &(if matches!(id, 115 | 117) {
+                    0x21_u32
+                } else {
+                    0x20
+                })
+                .to_le_bytes(),
+            );
         }
     }
     if effects {
@@ -133,6 +190,30 @@ fn build_fixture(
         }
         let bone = u32::from_le_bytes(model[0x30..0x34].try_into()?) as usize;
         animated_vec3(&mut model, bone + 16, ids.len(), [0., 0., 0.], [0., 0., 2.]);
+        if seated_animations {
+            let root = model[bone..bone + 88].to_vec();
+            let bones = model.len();
+            model.extend_from_slice(&root);
+            let mut upper = [0_u8; 88];
+            upper[..4].copy_from_slice(&4_i32.to_le_bytes());
+            for offset in [18, 38, 58] {
+                upper[offset..offset + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+            }
+            model.extend_from_slice(&upper);
+            array(&mut model, 0x2c, 2, bones);
+            let lookup = model.len();
+            for bone in [u16::MAX, u16::MAX, u16::MAX, u16::MAX, 1] {
+                model.extend_from_slice(&bone.to_le_bytes());
+            }
+            array(&mut model, 0x34, 5, lookup);
+            animated_vec3(
+                &mut model,
+                bones + 88 + 16,
+                ids.len(),
+                [0., 0., 0.],
+                [10., 0., 0.],
+            );
+        }
         animated_vec3(&mut model, bone + 56, ids.len(), [1., 1., 1.], [2., 2., 2.]);
     }
     let animations: Vec<_> = ids
@@ -264,6 +345,10 @@ fn build_fixture(
         seats[59] |= 0x8001;
         seats[64..71].copy_from_slice(&parameters.map(f32::to_bits));
         seats[71..73].copy_from_slice(&[96, 91]);
+        if seated_animations {
+            seats[59] |= 6;
+            seats[73..77].copy_from_slice(&[115, 116, 117, 118]);
+        }
         seats[77..84].copy_from_slice(&[0.125, 8., 20., 0.5, 0.5, 0., 20.].map(f32::to_bits));
         seats[84..86].copy_from_slice(&[99, 100]);
         seats[60] = 0; // Vehicle seat enum zero maps to M2 attachment 20.

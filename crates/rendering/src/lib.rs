@@ -91,6 +91,7 @@ pub use model::{
     sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
     sample_m2_scene_lights_into, sample_m2_ui_camera_frame, triggered_m2_event_indices,
 };
+pub use model::{M2CallbackSlot, M2QueuedCallback, scan_m2_callbacks};
 pub use model::{M2GroundNormal, M2GroundPlacementError};
 pub use model::{compare_m2_transparent, m2_model_distance_key, m2_section_distance_key};
 pub use particle::{

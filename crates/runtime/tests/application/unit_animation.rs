@@ -352,17 +352,26 @@ fn stock_drowning_kit_and_health_death_complete_and_return_to_current_movement()
                     "{path}, flags={flags}"
                 );
                 let blend = if flags == 0 {
-                    assert!(owner.upper_body_wound.get().is_none());
+                    assert!(
+                        owner
+                            .playback
+                            .borrow()
+                            .bone_playback(4)
+                            .and_then(|slot| slot.script_blend)
+                            .is_none()
+                    );
                     owner
                         .playback
                         .borrow()
                         .script_blend
                         .ok_or("root wound blend")?
                 } else {
-                    let (key, blend) =
-                        owner.upper_body_wound.get().ok_or("swimming wound blend")?;
-                    assert_eq!(key, 4);
-                    blend
+                    owner
+                        .playback
+                        .borrow()
+                        .bone_playback(4)
+                        .and_then(|slot| slot.script_blend)
+                        .ok_or("swimming wound blend")?
                 };
                 let wound = model.animations().sequences()[blend.sequence()].animation_id();
                 assert_eq!(
@@ -390,7 +399,12 @@ fn stock_drowning_kit_and_health_death_complete_and_return_to_current_movement()
                 owner.advance_scene(now, &mut random)?;
                 let entry = owner.behavior(&owner.playback.borrow());
                 assert!(
-                    owner.upper_body_wound.get().is_none(),
+                    owner
+                        .playback
+                        .borrow()
+                        .bone_playback(4)
+                        .and_then(|slot| slot.script_blend)
+                        .is_none(),
                     "{path}: death must clear the upper-body wound"
                 );
                 assert!(matches!(entry, 1 | 131 | 466), "{path}: {entry}");
@@ -1257,7 +1271,10 @@ fn ordinary_transitions_complete_on_the_cpu_and_retain_the_shared_timer()
             "only incoming variation and cycle may roll"
         );
         let sample = owner.take_scene_sample().ok_or("scene sample")?;
-        assert_eq!(sample.advance.expired_variations.len(), 1);
+        assert!(
+            sample.advance.expired_variations.is_empty(),
+            "this model has no authored events to dispatch"
+        );
         assert_eq!(sample.advance.clock.animation_time_ms(), 0.0);
         assert_eq!(
             playback
