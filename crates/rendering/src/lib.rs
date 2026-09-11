@@ -52,10 +52,10 @@ pub use device::{
     WorldFrameScene, WorldFrameScreenEffect, WorldModelBaseMip, WorldModelMeshHandle,
     WorldModelMeshResourceInfo, WorldModelPipelineHandle, WorldModelPipelineInfo,
     WorldModelPreparedDraw, WorldModelSampledTexture, WorldModelSamplerHandle,
-    WorldModelSamplerInfo, WorldModelTextureAddressMode, WorldModelTextureFiltering,
-    WorldModelTextureSet, WorldModelTextureSetHandle, WorldModelTextureSetInfo, WorldNetherFrame,
-    WorldNetherState, WorldPrimaryShadowFrame, WorldSkyModelBatch, WorldSkyModelFrame,
-    WorldSpecialFrame, WorldSpecialState,
+    WorldModelSamplerInfo, WorldModelShadowDraw, WorldModelTextureAddressMode,
+    WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
+    WorldModelTextureSetInfo, WorldNetherFrame, WorldNetherState, WorldPrimaryShadowFrame,
+    WorldSkyModelBatch, WorldSkyModelFrame, WorldSpecialFrame, WorldSpecialState,
 };
 pub use lighting::{
     M2DirectionalLight, M2LightOverride, M2PointLight, M2Sunlight, ScenePointLightError,

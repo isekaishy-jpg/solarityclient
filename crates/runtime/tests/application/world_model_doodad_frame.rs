@@ -200,6 +200,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
             )),
             Some((&mut terrain, environment, colors[0])),
             None,
+            None,
         )?;
         assert_eq!(visible.draws.len(), 2, "moving {moving}, step {step}");
         assert_eq!(

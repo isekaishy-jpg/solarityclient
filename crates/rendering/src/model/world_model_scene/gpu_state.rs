@@ -93,6 +93,18 @@ pub struct WorldModelMaterialUniform {
 }
 
 impl WorldModelMaterialUniform {
+    /// ShadowMapSL reads only the model matrix from the shared material block.
+    pub(crate) const fn shadow(model: Mat4) -> Self {
+        Self {
+            model,
+            root_ambient: Vec3::ZERO,
+            additive_color: Vec3::ZERO,
+            fog_color: Vec3::ZERO,
+            alpha_reference: 0.,
+            behavior: [0; 4],
+        }
+    }
+
     /// Exact std140 descriptor size consumed by both MapObj stages.
     pub const BYTE_SIZE: usize = 208;
 

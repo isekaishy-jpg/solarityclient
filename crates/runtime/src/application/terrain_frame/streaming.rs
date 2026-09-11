@@ -56,6 +56,16 @@ impl TerrainFrame {
             return Ok(());
         }
         // Sample only residency changes, so steady frames cannot dilute upload stalls.
+        // 7831A0 invalidates cached maps when old and new terrain coverage is
+        // disjoint. A forced replacement of every generation also needs fresh
+        // maps, as in 7BD9F0's synchronous residency refresh.
+        if !self.tiles.iter().any(|gpu| {
+            tiles
+                .clone()
+                .any(|tile| Arc::ptr_eq(&gpu.plan, tile.mesh()))
+        }) {
+            self.environment_shadows = None;
+        }
         let mut profile = RuntimeFrameProfile::new("Terrain publication");
         let mut added = Vec::new();
         for tile in tiles.clone() {

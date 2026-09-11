@@ -414,15 +414,15 @@ impl WorldFrameSlot {
                     )?;
                 }
             }
-            for (index, draw) in world_model_draws
+            for (index, material) in world_model_draws
                 .iter()
-                .copied()
-                .chain(
-                    scene
-                        .environment_shadows()
-                        .into_iter()
-                        .flat_map(|frame| frame.wmo_casters().iter().map(|caster| caster.draw)),
-                )
+                .map(|draw| draw.material())
+                .chain(scene.environment_shadows().into_iter().flat_map(|frame| {
+                    frame
+                        .wmo_casters()
+                        .iter()
+                        .map(|caster| caster.draw.material())
+                }))
                 .enumerate()
             {
                 copy_bytes(
@@ -432,7 +432,7 @@ impl WorldFrameSlot {
                         self.layout.world_model_material_stride,
                         index,
                     )?,
-                    &draw.material().to_bytes(scene.world_model().view()),
+                    &material.to_bytes(scene.world_model().view()),
                     self.layout.total_bytes,
                 )?;
             }

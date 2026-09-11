@@ -234,23 +234,12 @@ pub(super) fn compare_environment_casters(
                 renderer.prepare_world_model_texture_sets(&[WorldModelTextureSet::One(
                     WorldModelSampledTexture::new(texture, sampler),
                 )])?[0];
-            let passes = WorldModelSurfacePassPlan::prepare(
-                plan.root_flags(),
-                plan.groups()[0].flags(),
-                plan.draws()[0].class(),
-                material,
-            );
-            let pipeline = renderer.prepare_world_model_pipeline(false, passes.passes()[0])?;
-            let draw = renderer.prepare_world_model_draw(
+            let draw = renderer.prepare_world_model_shadow_draw(
                 mesh,
-                pipeline,
                 textures,
                 &plan,
                 0,
-                0,
                 Mat4::from_translation(center),
-                1.,
-                Vec3::ZERO,
             )?;
             for quality in [
                 WorldShadowQuality::EnvironmentLow,

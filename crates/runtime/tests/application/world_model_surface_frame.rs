@@ -13,13 +13,16 @@ use solarity_ecs::{
 };
 use solarity_rendering::{
     M2LocalLightState, M2SceneUniform, TerrainSceneUniform, VulkanBootstrap, WorldCamera,
-    WorldFrameScene, WorldModelBaseMip, WorldModelSceneUniform, WorldModelTextureFiltering,
+    WorldEnvironmentShadowFrame, WorldEnvironmentShadowState, WorldFrameScene, WorldModelBaseMip,
+    WorldModelSceneUniform, WorldModelTextureFiltering, WorldShadowProjection, WorldShadowQuality,
 };
 use solarity_systems::WorldSceneCameraFrame;
 
 use super::{RuntimeWorldModelMovementOwner, WorldModelFrame, WorldModelSceneGroup};
 use crate::application::game_object_coordinator::RuntimeGameObjectPresentation;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
+use crate::application::terrain_frame::shadow::WorldShadowAdmission;
+use crate::application::terrain_frame::world_model::WorldModelVisibleFrame;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, liquid_models};
 
 /// Two disjoint portal windows select right then left, leave the center hidden,
@@ -133,8 +136,11 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
             doodads: Default::default(),
         },
     ];
-    let (draws, last) =
-        frame.prepare_visible_draws(&mut renderer, &groups, 1., Vec3::ZERO, Vec3::ZERO)?;
+    let WorldModelVisibleFrame {
+        draws,
+        last_group: last,
+        ..
+    } = frame.prepare_visible_draws(&mut renderer, &groups, 1., Vec3::ZERO, Vec3::ZERO)?;
     assert_eq!(last, Some(1));
     assert_eq!(
         draws
@@ -215,8 +221,11 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
         assert_eq!(image.rgba8()[offset..offset + 4], expected, "pixel {x}");
     }
     // The next frame must release prior acceptance markers and clip regions.
-    let (draws, last) =
-        frame.prepare_visible_draws(&mut renderer, &groups[1..2], 1., Vec3::ZERO, Vec3::ZERO)?;
+    let WorldModelVisibleFrame {
+        draws,
+        last_group: last,
+        ..
+    } = frame.prepare_visible_draws(&mut renderer, &groups[1..2], 1., Vec3::ZERO, Vec3::ZERO)?;
     assert_eq!(last, Some(0));
     assert_eq!(
         draws
@@ -225,8 +234,11 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
             .collect::<Vec<_>>(),
         [[6, 6]]
     );
-    let (draws, last) =
-        frame.prepare_visible_draws(&mut renderer, &[], 1., Vec3::ZERO, Vec3::ZERO)?;
+    let WorldModelVisibleFrame {
+        draws,
+        last_group: last,
+        ..
+    } = frame.prepare_visible_draws(&mut renderer, &[], 1., Vec3::ZERO, Vec3::ZERO)?;
     assert!(draws.is_empty());
     assert_eq!(last, None);
 
@@ -266,8 +278,11 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
         } else {
             (selected, opposite)
         };
-        let (draws, last) =
-            frame.prepare_visible_draws(&mut renderer, &groups, 1., ordinary, indoor)?;
+        let WorldModelVisibleFrame {
+            draws,
+            last_group: last,
+            ..
+        } = frame.prepare_visible_draws(&mut renderer, &groups, 1., ordinary, indoor)?;
         assert_eq!(last, Some(1));
         assert_eq!(draws.len(), 3);
         for (draw, expected) in draws.iter().zip([row, row, other]) {
@@ -316,6 +331,52 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
             }
         }
     }
+    let shadow_camera = WorldCamera::orthographic(
+        Vec3::Z * 20.,
+        Vec3::ZERO,
+        Vec3::Y,
+        [-30., 30.],
+        [-30., 30.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    for quality in [
+        WorldShadowQuality::EnvironmentLow,
+        WorldShadowQuality::Cascaded,
+    ] {
+        let mut state = WorldEnvironmentShadowState::new(quality);
+        let updates = state.advance(Vec3::ZERO)?;
+        let primary = WorldShadowProjection::primary(
+            quality,
+            Vec3::ZERO,
+            shadow_camera.camera().position(),
+            -Vec3::Z,
+        )?
+        .with_camera_culling(shadow_camera);
+        let environment = WorldEnvironmentShadowFrame::new(
+            &state,
+            updates,
+            shadow_camera.camera().position(),
+            -Vec3::Z,
+        )?;
+        let admission = WorldShadowAdmission::new(primary, environment, shadow_camera, -Vec3::Z)?;
+        frame.prepare_shadow_draws(&renderer, Some(&admission))?;
+        let visible =
+            frame.prepare_visible_draws(&mut renderer, &[], 1., Vec3::ZERO, Vec3::ZERO)?;
+        assert!(visible.draws.is_empty());
+        assert_eq!(
+            visible.shadow_draws.len(),
+            4,
+            "both groups of both moving owners cast their merged opaque ranges without portal visibility"
+        );
+        assert!(visible.shadow_draws.iter().all(|caster| caster.maps == 8));
+    }
+    frame.prepare_shadow_draws(&renderer, None)?;
+    assert!(
+        frame.shadow_draws.is_empty(),
+        "disabling clears prior shadow packets"
+    );
     renderer.shutdown()?;
     Ok(())
 }

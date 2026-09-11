@@ -155,6 +155,8 @@ pub struct WorldModelGroupRange {
     bounds: [[f32; 3]; 2],
     /// Half-open range of logical drawable batches in the combined mesh plan.
     draw_range: [usize; 2],
+    /// Complete shadow ranges, including the merged entirely opaque group span.
+    shadow_draw_range: [usize; 2],
 }
 
 impl WorldModelGroupRange {
@@ -168,6 +170,7 @@ impl WorldModelGroupRange {
         flags: u32,
         bounds: [[f32; 3]; 2],
         draw_range: [usize; 2],
+        shadow_draw_range: [usize; 2],
     ) -> Self {
         Self {
             group_index,
@@ -178,6 +181,7 @@ impl WorldModelGroupRange {
             flags,
             bounds,
             draw_range,
+            shadow_draw_range,
         }
     }
 
@@ -215,5 +219,11 @@ impl WorldModelGroupRange {
     #[must_use]
     pub fn draw_range(self) -> std::ops::Range<usize> {
         self.draw_range[0]..self.draw_range[1]
+    }
+
+    /// Returns this group's range in the plan's complete shadow-batch table.
+    #[must_use]
+    pub fn shadow_draw_range(self) -> std::ops::Range<usize> {
+        self.shadow_draw_range[0]..self.shadow_draw_range[1]
     }
 }

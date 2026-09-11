@@ -141,6 +141,7 @@ fn mount_authored_effects_run_before_rider_callbacks_and_bind_body_attachments()
                 None,
                 None,
                 None,
+                None,
             )?;
         }
         assert_eq!(

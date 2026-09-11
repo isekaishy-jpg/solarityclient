@@ -271,12 +271,69 @@ fn world_model_mesh_plan_uses_native_callback_batch_counts() -> Result<(), Box<d
             "flags {root_flags}/{group_flags}, {counts:?}"
         );
         assert_eq!(plan.groups()[0].draw_range(), 0..expected);
+        assert_eq!(
+            plan.shadow_draws().len(),
+            3,
+            "7AB760 retains all MOBA batches"
+        );
+        assert_eq!(plan.groups()[0].shadow_draw_range(), 0..3);
         // Filtering draw callbacks retains the complete resident geometry.
         assert_eq!(plan.vertices().len(), 3);
         assert_eq!(plan.indices(), &[0, 1, 2]);
         if counts[0] == 1 && expected != 0 {
             assert_eq!(plan.draws()[0].class(), WorldModelBatchClass::Transition);
         }
+    }
+    Ok(())
+}
+
+/// 7D82E0 merges only blend-zero groups, retaining indices between MOBA ranges.
+#[test]
+fn world_model_shadow_ranges_merge_only_entirely_opaque_groups() -> Result<(), Box<dyn Error>> {
+    for blend in [0, 1, 2] {
+        let mut root = root_fixture();
+        let material = root
+            .windows(4)
+            .position(|bytes| bytes == b"TMOM")
+            .ok_or("missing fixture MOMT")?
+            + 8;
+        set_u32(&mut root, material + 8, blend);
+        let group = group_surface_ranges(0, [0, 2, 0], &[(0, 3), (6, 3)]);
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "World\\Wmo\\Render.wmo",
+                bytes: &root,
+            },
+            FixtureFile {
+                path: "World\\Wmo\\Render_000.wmo",
+                bytes: &group,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let model =
+            DecodedWorldModel::load(&mut store, &AssetPath::new("World\\Wmo\\Render.wmo")?)?;
+        let plan = WorldModelMeshPlan::prepare(&model)?;
+        assert!(
+            plan.draws().is_empty(),
+            "ordinary exterior callback has no batches"
+        );
+        let ranges = plan
+            .shadow_draws()
+            .iter()
+            .map(|draw| [draw.first_index(), draw.index_count()])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ranges,
+            if blend == 0 {
+                vec![[0, 9]]
+            } else {
+                vec![[0, 3], [6, 3]]
+            }
+        );
+        assert_eq!(plan.groups()[0].shadow_draw_range(), 0..ranges.len());
     }
     Ok(())
 }
@@ -315,10 +372,23 @@ pub(crate) fn group_fixture() -> Vec<u8> {
 
 /// Authors independent MOGP counts and MOBA length for callback selection tests.
 fn group_surface_fixture(flags: u32, counts: [u16; 3], batches: usize) -> Vec<u8> {
+    group_surface_ranges(flags, counts, &vec![(0, 3); batches])
+}
+
+fn group_surface_ranges(flags: u32, counts: [u16; 3], ranges: &[(u32, u16)]) -> Vec<u8> {
     let mut nested = Vec::new();
-    push_chunk(&mut nested, *b"YPOM", &[0x20, 0]);
+    let index_count = ranges
+        .iter()
+        .map(|&(first, count)| first + u32::from(count))
+        .max()
+        .unwrap_or(3);
+    push_chunk(
+        &mut nested,
+        *b"YPOM",
+        &[0x20, 0].repeat(index_count as usize / 3),
+    );
     let mut indices = Vec::new();
-    for index in [0_u16, 1, 2] {
+    for index in (0..index_count).map(|index| (index % 3) as u16) {
         indices.extend_from_slice(&index.to_le_bytes());
     }
     push_chunk(&mut nested, *b"IVOM", &indices);
@@ -364,7 +434,13 @@ fn group_surface_fixture(flags: u32, counts: [u16; 3], batches: usize) -> Vec<u8
     // Stock's color fixer uses the transition range's final vertex, which is
     // independent of the batch's submitted index range.
     set_u16(&mut batch, 20, 0);
-    push_chunk(&mut nested, *b"ABOM", &batch.repeat(batches));
+    let mut batches = Vec::new();
+    for &(first, count) in ranges {
+        set_u32(&mut batch, 12, first);
+        set_u16(&mut batch, 16, count);
+        batches.extend_from_slice(&batch);
+    }
+    push_chunk(&mut nested, *b"ABOM", &batches);
 
     let mut group = vec![0_u8; 68];
     set_u32(&mut group, 8, flags);

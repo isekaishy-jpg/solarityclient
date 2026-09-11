@@ -112,6 +112,8 @@ struct M2GpuSource {
     plan: Arc<M2MeshPlan>,
     /// Character-eye billboard bones retained in model orientation.
     model_oriented_billboard_bones: Vec<bool>,
+    /// 83CC80 counts bones with flags 0x2F8 for the static/animated shadow bank.
+    animated_shadow_caster: bool,
     mesh: Option<M2MeshHandle>,
     draws: Vec<Option<M2GpuDraw>>,
     particles: Vec<M2GpuParticle>,
@@ -749,6 +751,8 @@ pub(in crate::application) struct M2Frame {
     visible_draws: Vec<M2PreparedDraw>,
     shadow_draws: Vec<M2PreparedDraw>,
     shadow_admission: Vec<bool>,
+    environment_shadow_draws: Vec<solarity_rendering::WorldEnvironmentM2Caster>,
+    environment_shadow_admission: Vec<u8>,
     transparent_elements: Vec<M2TransparentElement>,
     placement_topology_dirty: bool,
     placement_visibility: visibility::M2PlacementVisibility,
@@ -791,6 +795,8 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
     pub(in crate::application) bone_transforms: &'frame [Mat4],
     pub(in crate::application) draws: &'frame [M2PreparedDraw],
     pub(in crate::application) shadow_draws: &'frame [M2PreparedDraw],
+    pub(in crate::application) environment_shadow_draws:
+        &'frame [solarity_rendering::WorldEnvironmentM2Caster],
     pub(in crate::application) particle_vertices: &'frame [M2ParticleRenderVertex],
     pub(in crate::application) particle_indices: &'frame [u32],
     pub(in crate::application) particle_draws: &'frame [M2ParticlePreparedDraw],
@@ -848,6 +854,8 @@ impl M2Frame {
             visible_draws: Vec::new(),
             shadow_draws: Vec::new(),
             shadow_admission: Vec::new(),
+            environment_shadow_draws: Vec::new(),
+            environment_shadow_admission: Vec::new(),
             transparent_elements: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
@@ -989,6 +997,8 @@ impl M2Frame {
             visible_draws: Vec::new(),
             shadow_draws: Vec::new(),
             shadow_admission: Vec::new(),
+            environment_shadow_draws: Vec::new(),
+            environment_shadow_admission: Vec::new(),
             transparent_elements: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
@@ -2149,6 +2159,7 @@ impl M2Frame {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -2171,7 +2182,7 @@ impl M2Frame {
 
     /// Unit callbacks construct CEffect models before this frame's effect pass.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::application) fn prepare_visible_draws_with_unit_effects(
+    pub(super) fn prepare_visible_draws_with_unit_effects(
         &mut self,
         renderer: &VulkanRenderer,
         frustum: WorldFrustum,
@@ -2193,6 +2204,7 @@ impl M2Frame {
             glam::Vec3,
         )>,
         shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
+        scenery_shadows: Option<super::shadow::SceneryShadowQueries<'_>>,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         let mut frame_profile = RuntimeFrameProfile::new("M2 frame preparation");
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
@@ -2208,6 +2220,8 @@ impl M2Frame {
         self.visible_draws.clear();
         self.shadow_draws.clear();
         self.shadow_admission.clear();
+        self.environment_shadow_draws.clear();
+        self.environment_shadow_admission.clear();
         self.transparent_elements.clear();
         self.particle_vertices.clear();
         self.particle_indices.clear();
@@ -2451,6 +2465,32 @@ impl M2Frame {
             let placement_index = next_placement;
             next_placement += 1;
             self.shadow_admission.push(false);
+            self.environment_shadow_admission.push(0);
+            // Moving-parent transforms have already been resolved. Forward
+            // attachments query that same root; earlier roots reuse admission.
+            let environment_maps = if let Some(queries) = scenery_shadows {
+                let root = self
+                    .placement_visibility
+                    .light_root(placement_index)
+                    .unwrap_or(placement_index);
+                if root < placement_index {
+                    self.environment_shadow_admission[root]
+                } else if !self.vehicle_passengers.hidden(root)
+                    && let Some(source) = &self.sources[self.placements[root].source_index]
+                {
+                    shadow::environment_maps(
+                        queries,
+                        source,
+                        &self.placements[root],
+                        camera.camera().position(),
+                        self.environment_detail,
+                    )?
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
             let publishes_lights =
                 world_lighting.is_some() && self.placement_visibility.has_lights(placement_index);
             let bounds = self.placement_visibility.bounds()[placement_index];
@@ -2460,7 +2500,7 @@ impl M2Frame {
                     .is_world_model_doodad(placement_index);
             let doodad_fog = self.doodad_scene.fog_bank(placement_index);
             let doodad_visible = !doodad_scene_active || doodad_fog.is_some();
-            if !doodad_visible && !publishes_lights {
+            if !doodad_visible && !publishes_lights && environment_maps == 0 {
                 continue;
             }
             let placement_fog_color = if doodad_scene_active && doodad_fog == Some(false) {
@@ -2479,12 +2519,13 @@ impl M2Frame {
                     self.environment_detail,
                 )
             };
-            if scenery_opacity == 0.0 && !publishes_lights {
+            if scenery_opacity == 0.0 && !publishes_lights && environment_maps == 0 {
                 continue;
             }
             if let Some((center, radius)) = bounds
                 && !publishes_lights
                 && !doodad_scene_active
+                && environment_maps == 0
                 && !frustum.contains_sphere(center, radius)?
             {
                 continue;
@@ -2508,7 +2549,12 @@ impl M2Frame {
                             .is_some_and(|owner| owner.hidden())
                         && let Some(source) = &self.sources[placement.source_index]
                     {
-                        shadow::admits_root(projection, source, placement)?
+                        shadow::admits_root(
+                            projection,
+                            source,
+                            placement,
+                            scenery_shadows.map(|queries| queries.admission),
+                        )?
                     } else {
                         false
                     }
@@ -2538,8 +2584,7 @@ impl M2Frame {
                 }
                 continue;
             }
-            let placement_opacity = placement.opacity
-                * scenery_opacity
+            let shadow_opacity = placement.opacity
                 * placement
                     .retirement
                     .as_ref()
@@ -2548,6 +2593,7 @@ impl M2Frame {
                     .entity_opacity
                     .as_ref()
                     .map_or(1.0, |owner| owner.opacity());
+            let placement_opacity = shadow_opacity * scenery_opacity;
             self.unit_effects.prepare_attachment(placement);
             if !self.retirement.prepare_attachment(placement) {
                 continue;
@@ -2669,6 +2715,7 @@ impl M2Frame {
                 M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
             ) && !publishes_lights
                 && !doodad_scene_active
+                && environment_maps == 0
             {
                 let (center, radius) =
                     placement_bounding_sphere(&source.model, placement.transform);
@@ -2995,37 +3042,61 @@ impl M2Frame {
                         forward_shadow
                     }
                 } else {
-                    shadow::admits_root(projection, source, placement)?
+                    shadow::admits_root(
+                        projection,
+                        source,
+                        placement,
+                        scenery_shadows.map(|queries| queries.admission),
+                    )?
                 }
             } else {
                 false
             };
             self.shadow_admission[placement_index] = shadow_admitted;
+            self.environment_shadow_admission[placement_index] = environment_maps;
             let shadow_bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
             let first_shadow_draw = self.shadow_draws.len();
-            if shadow_admitted {
+            let first_environment_draw = self.environment_shadow_draws.len();
+            if shadow_admitted || environment_maps != 0 {
                 shadow::append_packets(
                     renderer,
                     source,
                     placement,
                     clock,
                     model_view,
-                    placement_opacity,
+                    shadow_opacity,
                     shadow_bone_offset,
-                    &mut self.shadow_draws,
+                    |draw| {
+                        if shadow_admitted {
+                            self.shadow_draws.push(draw);
+                        }
+                        if environment_maps != 0 {
+                            self.environment_shadow_draws.push(
+                                solarity_rendering::WorldEnvironmentM2Caster {
+                                    draw,
+                                    maps: environment_maps,
+                                },
+                            );
+                        }
+                    },
                 )?;
             }
-            let has_shadow_bones = self.shadow_draws.len() != first_shadow_draw;
+            let has_shadow_bones = self.shadow_draws.len() != first_shadow_draw
+                || self.environment_shadow_draws.len() != first_environment_draw;
             if has_shadow_bones {
                 self.bone_transforms
                     .extend_from_slice(bone_pose.transforms());
+            }
+            if environment_maps != 0 && scenery_opacity == 0. {
+                continue;
             }
             if doodad_scene_active {
                 if !doodad_visible || scenery_opacity == 0.0 {
                     continue;
                 }
             } else if !static_visibility_resolved
+                || environment_maps != 0
                 || (publishes_lights && placement.unit_effect.is_none())
             {
                 let (center, radius) =
@@ -3450,6 +3521,7 @@ impl M2Frame {
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,
             shadow_draws: &self.shadow_draws,
+            environment_shadow_draws: &self.environment_shadow_draws,
             particle_vertices: &self.particle_vertices,
             particle_indices: &self.particle_indices,
             particle_draws: &self.particle_draws,
@@ -4423,6 +4495,11 @@ fn prepare_gpu_source_with_plan(
         model: Arc::clone(model),
         plan,
         model_oriented_billboard_bones,
+        animated_shadow_caster: model
+            .animations()
+            .bones()
+            .iter()
+            .any(|bone| bone.flags() & 0x2f8 != 0),
         mesh,
         draws,
         particles,

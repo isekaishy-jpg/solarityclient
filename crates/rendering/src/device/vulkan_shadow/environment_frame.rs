@@ -4,7 +4,7 @@ use glam::Vec3;
 
 use crate::{
     M2PreparedDraw, WorldEnvironmentShadowMap, WorldEnvironmentShadowState,
-    WorldEnvironmentShadowUpdate, WorldModelPreparedDraw, WorldShadowProjection,
+    WorldEnvironmentShadowUpdate, WorldModelShadowDraw, WorldShadowProjection,
     WorldShadowProjectionError, WorldShadowQuality,
 };
 
@@ -22,7 +22,7 @@ pub struct WorldEnvironmentM2Caster {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldEnvironmentWmoCaster {
     /// Carries the model transform, geometry range, and original first texture.
-    pub draw: WorldModelPreparedDraw,
+    pub draw: WorldModelShadowDraw,
     /// Near, middle, and far membership in bits zero through two; bit three
     /// includes primary scenery at the appropriate quality.
     pub maps: u8,

@@ -275,6 +275,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
             Some((base, exterior)),
             Some((&mut terrain, environment, Vec3::ZERO)),
             None,
+            None,
         )?;
         assert_eq!(visible.draws.len(), 2);
         assert_ne!(visible.instance_scenes[0], visible.instance_scenes[1]);

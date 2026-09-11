@@ -129,6 +129,7 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
             None,
             None,
             None,
+            None,
         )?;
         assert_eq!(
             draws.draws.len(),
@@ -356,6 +357,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
                 &mut random,
                 None,
                 Some(&mut callback),
+                None,
                 None,
                 None,
                 None,

@@ -32,8 +32,11 @@ during each streaming transaction. Inspect those counts alongside frame-time
 outliers to distinguish steady rendering from resource publication and
 retirement. Returning along the same route exercises recently departed tiles.
 `ground_detail_draws` records the accepted grass/detail texture buckets.
-`primary_shadow_draws` records the unit material packets submitted to the
+`primary_shadow_draws` records unit and scenery packets submitted to the
 [primary shadow map](world-shadows.md), including admitted offscreen casters.
+`environment_shadow_near`, `environment_shadow_middle`, and `environment_shadow_far`
+record actual packets in each environment update; retained maps require no
+packets on frames when their cache is idle.
 The phase names describe input, not a promise that resource
 loading has finished. Samples separate service, streaming, UI, final camera
 resolution, and presentation. Streaming currently includes a camera resolution

@@ -67,16 +67,31 @@ origin on the CPU. The vertex shader adds the small local coordinates afterward,
 preserving receiver precision at large world coordinates. Both pipeline variants
 are prepared before publication; the disabled variant retains the baked shader.
 
-The offline world replay records `primary_shadow_draws` alongside terrain-detail
-counts and frame/streaming timings. Captures remain separate from performance
+The offline world replay records `primary_shadow_draws` and each environment
+map's submitted packet count alongside terrain-detail counts and frame/streaming timings. Captures remain separate from performance
 runs because readback waits change the measured workload.
 
 ## Environment rendering backend
 
-`WorldEnvironmentShadowState` and `WorldEnvironmentShadowFrame` now expose the
-three additional map passes to the renderer. The runtime scenery collector is
-still being connected; ordinary gameplay currently supplies only the primary
-unit frame described above.
+`WorldEnvironmentShadowState` and `WorldEnvironmentShadowFrame` expose the three
+additional map passes to the renderer. The runtime constructs their admission
+volumes before preparing WMO groups and M2 poses, then attaches the eligible
+unit, scenery, and WMO packets to the world submission. It publishes the CPU
+cache transition only after successful presentation.
+
+The collector distinguishes units, terrain/WMO doodads, standalone game objects,
+and moving WMO roots. M2 bone flags `0x2F8` select the animated scenery bank;
+moving WMO doodads inherit their owner's animated bank. Static cached scenery
+can skip bounds work on frames with no environment updates. Original `007BABC0`
+uses the scenery fade-start square, so ordinary scenery stops casting before
+its visible fade band. Unit and standalone game-object registrations retain
+their independent radius limits. Attachments inherit root map membership and
+reuse the same sampled palette across visible and shadow packets.
+
+WMO collection visits resident exterior groups (`MOGP & 0x48`) independently of
+portal visibility. Their MODR membership admits attached doodads, and moving
+roots select the animated geometry bank. Per-map WMO queues retain the native
+2048-group limit.
 
 Original `00874890` refreshes the 40/160/640-unit environment extents. Qualities
 three and four retain pairs of textures and publish only after nine, nine, or
@@ -99,8 +114,10 @@ primary volume first, then the preceding full environment volume.
 
 `00875C10` updates the light ray without invalidating cached maps. The native
 invalidation flag is set when `007831A0` detects disjoint old/new terrain
-coverage, or by `007BD9F0` after its world-residency refresh. These transitions
-must be handled by the runtime owner, alongside map and quality replacement.
+coverage, or by `007BD9F0` after its world-residency refresh. The runtime resets
+the cache when no retained ADT generation overlaps the new set, or when the
+map owner or quality changes. An explicit synchronous refresh without generation
+replacement has no corresponding runtime operation yet.
 
 Environment color images belong to the world renderer across swapchain slots.
 An ordered graphics queue and explicit image barriers serialize partial writes
@@ -109,8 +126,11 @@ matching `00875760`. A region clears only its render area. Its receiver image an
 center change together when the refresh completes. Callers must commit the CPU
 state only after successful frame submission.
 
-WMO caster packets identify a logical material batch, so specular secondary
-passes do not duplicate its silhouette. `007AB760` applies alpha reference
+WMO caster packets include the complete MOBA table, including batches omitted
+by the ordinary surface callback. Specular secondary passes do not duplicate
+silhouettes. `007D82E0` merges entirely blend-zero groups into the minimum-to-maximum
+index span, including gaps between batches; other groups retain separate batches.
+`007AB760` applies alpha reference
 224/255 only to AlphaKey materials; equality survives. Other WMO blends cast
 opaque silhouettes. M2 casters retain their existing material admission,
 128/255 coverage, and shared animation palette. Packet membership also admits
@@ -149,8 +169,10 @@ The weighted fixture uses opposed transforms that cancel only when the complete
 weighted palette is retained. Separate model receiver captures vary world
 height and eye depth independently. WMO captures cover every supported ordinary
 and unified material family and check unchanged empty-map color and opacity.
-Runtime coverage checks offscreen unit admission, palette sharing, and unchanged
-invisible-effect clocks.
+Runtime coverage checks offscreen unit and scenery admission, palette sharing,
+unchanged invisible-effect clocks, caster-class radius limits, full nearer-volume
+exclusions, and WMO collection without visible portal surfaces. A further 1050
+queries execute the original fade-start admission at each size-class boundary.
 
 The ground-detail oracle captures 540 unchanged shader cases covering depth
 equality, the five sample offsets, map borders, authored shadows, and normal
@@ -193,9 +215,8 @@ populated-world GPU benchmark or a worst-case latency guarantee. Whole-tile
 publication stalls remain, with changed-frame streaming means of 20.326 ms
 outbound and 15.886 ms returning in the enabled run.
 
-The runtime currently supplies the primary unit map. The environment rendering
-backend above still needs runtime scenery/unit collection and installed-world
-validation, including cascade admission and streaming ownership. Hardware
+The environment path still needs installed-world validation, including cascade
+admission and streaming ownership. Hardware
 comparison sampling, liquid receiver variants, and the
 quality-zero projected entity-shadow path remain
 separate work. Native exceptional registration flags outside the ordinary typed

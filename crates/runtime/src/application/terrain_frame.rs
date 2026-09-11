@@ -32,6 +32,7 @@ use crate::random::CrtRand;
 
 mod ground_detail;
 pub(in crate::application) mod m2;
+mod shadow;
 mod sky;
 mod streaming;
 mod world_model;
@@ -562,6 +563,7 @@ pub(super) struct TerrainFrame {
     visible_draws: Vec<TerrainPreparedDraw>,
     ground_detail: ground_detail::GroundDetailWorld,
     shadow_quality: solarity_rendering::WorldShadowQuality,
+    environment_shadows: Option<solarity_rendering::WorldEnvironmentShadowState>,
     horizon_scale: solarity_rendering::WorldHorizonScale,
     liquid_materials: LiquidGpuMaterialCache,
     liquid_filtering: WorldModelTextureFiltering,
@@ -636,6 +638,7 @@ impl TerrainFrame {
             }],
             visible_draws: Vec::with_capacity(plan.chunks().len()),
             shadow_quality: solarity_rendering::WorldShadowQuality::UnitsHigh,
+            environment_shadows: None,
             horizon_scale: solarity_rendering::WorldHorizonScale::default(),
             ground_detail: ground_detail::GroundDetailWorld::new(
                 world_model_filtering,
@@ -684,6 +687,7 @@ impl TerrainFrame {
             tiles: Vec::new(),
             visible_draws: Vec::new(),
             shadow_quality: solarity_rendering::WorldShadowQuality::UnitsHigh,
+            environment_shadows: None,
             horizon_scale: solarity_rendering::WorldHorizonScale::default(),
             ground_detail: ground_detail::GroundDetailWorld::new(
                 world_model_filtering,
@@ -738,8 +742,12 @@ impl TerrainFrame {
         let value = value
             .filter(|value| value.is_finite() && (0.0..=5.0).contains(value))
             .ok_or(RuntimeTerrainFrameError::InvalidShadowQualityCvar)?;
-        self.shadow_quality = solarity_rendering::WorldShadowQuality::from_cvar(value as u8)
+        let quality = solarity_rendering::WorldShadowQuality::from_cvar(value as u8)
             .ok_or(RuntimeTerrainFrameError::InvalidShadowQualityCvar)?;
+        if self.shadow_quality != quality {
+            self.shadow_quality = quality;
+            self.environment_shadows = None;
+        }
         Ok(())
     }
 
@@ -869,6 +877,33 @@ impl TerrainFrame {
                 .map(|projection| projection.with_camera_culling(camera))
             })
             .transpose()?;
+        // Retain the last submitted cache until this frame succeeds. The small
+        // CPU copy keeps skipped or failed submissions from publishing regions.
+        let mut pending_environment = if self.shadow_quality.shader_mode() >= 2 {
+            Some(self.environment_shadows.clone().unwrap_or_else(|| {
+                solarity_rendering::WorldEnvironmentShadowState::new(self.shadow_quality)
+            }))
+        } else {
+            None
+        };
+        let ray = solarity_asset::exterior_light_ray_at(environment.day_fraction());
+        let environment_frame = if let Some(state) = &mut pending_environment {
+            let updates = state.advance(environment.position())?;
+            Some(solarity_rendering::WorldEnvironmentShadowFrame::new(
+                state,
+                updates,
+                camera.camera().position(),
+                ray,
+            )?)
+        } else {
+            None
+        };
+        let shadow_admission = shadow_projection
+            .zip(environment_frame)
+            .map(|(primary, frame)| shadow::WorldShadowAdmission::new(primary, frame, camera, ray))
+            .transpose()?;
+        self.world_models
+            .prepare_shadow_draws(renderer, shadow_admission.as_ref())?;
         let m2 = self.m2.prepare_visible_draws_with_unit_effects(
             renderer,
             frustum,
@@ -903,6 +938,12 @@ impl TerrainFrame {
                 environment.ordinary_model_fog().color(),
             )),
             shadow_projection,
+            shadow_admission
+                .as_ref()
+                .map(|admission| shadow::SceneryShadowQueries {
+                    admission,
+                    doodads: self.world_models.shadow_doodads(),
+                }),
         )?;
         profile.mark("M2 packets");
         self.visible_draws.clear();
@@ -955,7 +996,11 @@ impl TerrainFrame {
             &mut self.liquid_draws,
         )?;
         profile.mark("liquid packets");
-        let (world_model_draws, last_world_model_group) = self.world_models.prepare_visible_draws(
+        let world_model::WorldModelVisibleFrame {
+            draws: world_model_draws,
+            last_group: last_world_model_group,
+            shadow_draws: world_model_shadow_draws,
+        } = self.world_models.prepare_visible_draws(
             renderer,
             terrain.world_model_scene_groups(),
             environment.world_model_emissive(),
@@ -1003,6 +1048,11 @@ impl TerrainFrame {
                 projection,
                 m2.shadow_draws,
             ));
+        }
+        if let Some(environment) = environment_frame {
+            scene = scene.with_environment_shadows(
+                environment.with_casters(m2.environment_shadow_draws, world_model_shadow_draws),
+            );
         }
         if let Some(map) = terrain.low_detail() {
             // 7D5E70 consumes DayNight+8C after 7816F0/7F16F0 resolution;
@@ -1058,6 +1108,7 @@ impl TerrainFrame {
             ui_draws,
             ui_overlay_draws,
         )?;
+        self.environment_shadows = pending_environment;
         profile.mark("Vulkan presentation");
         Ok(report)
     }

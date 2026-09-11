@@ -1,6 +1,6 @@
 //! Shared root/group WMO geometry combination and stock MOCV fixup.
 
-use solarity_asset::{AssetPath, DecodedWorldModel, WorldModelMaterial};
+use solarity_asset::{AssetPath, DecodedWorldModel, WorldModelBlendMode, WorldModelMaterial};
 
 use super::{
     WorldModelDrawCall, WorldModelGroupRange, WorldModelMeshPlanError, WorldModelRenderVertex,
@@ -15,6 +15,7 @@ pub struct WorldModelMeshPlan {
     indices: Vec<u32>,
     materials: Vec<WorldModelMaterial>,
     draws: Vec<WorldModelDrawCall>,
+    shadow_draws: Vec<WorldModelDrawCall>,
     groups: Vec<WorldModelGroupRange>,
 }
 
@@ -33,6 +34,7 @@ impl WorldModelMeshPlan {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
         let mut draws = Vec::new();
+        let mut shadow_draws = Vec::new();
         let mut groups = Vec::with_capacity(model.groups().len());
         for group in model.groups() {
             let first_vertex = u32::try_from(vertices.len()).map_err(|_| {
@@ -95,20 +97,23 @@ impl WorldModelMeshPlan {
             // (7D7CE1, group flag 4), 7ABF50 selects 7AC6A0 and that count.
             // MOCV and root flag 2's MapObjU dispatch use the complete MOBA
             // count at group+16C instead (7AC9F0/7A9380).
-            let batch_count = if model.flags() & 2 == 0 && group.flags() & 4 == 0 {
+            let visible_batch_count = if model.flags() & 2 == 0 && group.flags() & 4 == 0 {
                 usize::from(group.batch_counts()[2])
             } else {
                 group.batches().len()
             };
-            if batch_count > group.batches().len() {
+            if visible_batch_count > group.batches().len() {
                 return Err(WorldModelMeshPlanError::DrawRange {
                     path: model.path().clone(),
                     group_index: group.index(),
-                    batch_index: batch_count,
+                    batch_index: visible_batch_count,
                 });
             }
             let first_draw = draws.len();
-            for (batch_index, batch) in group.batches()[..batch_count].iter().copied().enumerate() {
+            let first_shadow_draw = shadow_draws.len();
+            // 7AB760 consumes group+16C regardless of the ordinary surface
+            // callback's exterior-only batch count. Both share these buffers.
+            for (batch_index, batch) in group.batches().iter().copied().enumerate() {
                 let batch_first =
                     first_index
                         .checked_add(batch.first_index())
@@ -132,13 +137,50 @@ impl WorldModelMeshPlan {
                         batch_index,
                     });
                 }
-                draws.push(WorldModelDrawCall::new(
+                let draw = WorldModelDrawCall::new(
                     group.index(),
                     batch_first,
                     batch_count,
                     batch.material_id(),
                     batch.class(),
                     batch.bounds(),
+                );
+                shadow_draws.push(draw);
+                if batch_index < visible_batch_count {
+                    draws.push(draw);
+                }
+            }
+            let group_shadows = &shadow_draws[first_shadow_draw..];
+            if let Some(first) = group_shadows.first().copied()
+                && group_shadows.iter().all(|draw| {
+                    model.materials()[usize::from(draw.material_id())].blend_mode()
+                        == WorldModelBlendMode::Opaque
+                })
+            {
+                // 7D82E0 sets group+198 bit 4 only when every MOBA material
+                // has blend zero. 7AB760 then draws the complete min/max
+                // index span, including gaps between authored batch ranges.
+                let mut low = first.first_index();
+                let mut high = low + first.index_count();
+                let mut bounds = first.bounds();
+                for draw in group_shadows {
+                    low = low.min(draw.first_index());
+                    high = high.max(draw.first_index() + draw.index_count());
+                    for (low, next) in bounds[0].iter_mut().zip(draw.bounds()[0]) {
+                        *low = (*low).min(next);
+                    }
+                    for (high, next) in bounds[1].iter_mut().zip(draw.bounds()[1]) {
+                        *high = (*high).max(next);
+                    }
+                }
+                shadow_draws.truncate(first_shadow_draw);
+                shadow_draws.push(WorldModelDrawCall::new(
+                    group.index(),
+                    low,
+                    high - low,
+                    first.material_id(),
+                    first.class(),
+                    bounds,
                 ));
             }
             groups.push(WorldModelGroupRange::new(
@@ -150,6 +192,7 @@ impl WorldModelMeshPlan {
                 group.flags(),
                 group.bounds(),
                 [first_draw, draws.len()],
+                [first_shadow_draw, shadow_draws.len()],
             ));
         }
         Ok(Self {
@@ -160,6 +203,7 @@ impl WorldModelMeshPlan {
             indices,
             materials: model.materials().to_vec(),
             draws,
+            shadow_draws,
             groups,
         })
     }
@@ -200,10 +244,17 @@ impl WorldModelMeshPlan {
         &self.materials
     }
 
-    /// Returns every rebased MOBA draw in group/file order.
+    /// Returns the ordinary callback's rebased MOBA draws in group/file order.
     #[must_use]
     pub fn draws(&self) -> &[WorldModelDrawCall] {
         &self.draws
+    }
+
+    /// Returns all MOBA shadow batches, merging each entirely opaque group
+    /// into the original callback's complete minimum-to-maximum index span.
+    #[must_use]
+    pub fn shadow_draws(&self) -> &[WorldModelDrawCall] {
+        &self.shadow_draws
     }
 
     /// Returns every group's immutable combined-buffer domain.

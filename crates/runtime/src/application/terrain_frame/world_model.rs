@@ -1,5 +1,6 @@
 //! Renderer-local WMO resources and allocation-reusing MODF visibility.
 
+mod shadow;
 mod streaming;
 
 #[cfg(test)]
@@ -56,6 +57,8 @@ struct WorldModelGpuSource {
     plan: Arc<WorldModelMeshPlan>,
     mesh: WorldModelMeshHandle,
     draws: Vec<LogicalDrawResource>,
+    /// Complete MOMT table, including batches omitted by visible callbacks.
+    shadow_textures: Vec<WorldModelTextureSetHandle>,
     draw_bounds: Vec<MovementCollisionBounds>,
     liquids: Vec<LiquidGpuBatch>,
     liquid_indices: Vec<Option<usize>>,
@@ -101,8 +104,17 @@ pub(super) struct WorldModelFrame {
     placement_indices: HashMap<RuntimeWorldModelMovementOwner, usize>,
     batch_visibility: WorldModelBatchVisibilityQuery,
     prepared_draws: Vec<WorldModelPreparedDraw>,
+    shadow_draws: Vec<solarity_rendering::WorldEnvironmentWmoCaster>,
+    shadow_doodads: super::shadow::WorldModelShadowDoodads,
     filtering: WorldModelTextureFiltering,
     base_mip: WorldModelBaseMip,
+}
+
+/// Borrowed visible and shadow queues whose disjoint buffers share one owner.
+pub(super) struct WorldModelVisibleFrame<'a> {
+    pub draws: &'a [WorldModelPreparedDraw],
+    pub last_group: Option<usize>,
+    pub shadow_draws: &'a [solarity_rendering::WorldEnvironmentWmoCaster],
 }
 
 impl WorldModelFrame {
@@ -258,6 +270,8 @@ impl WorldModelFrame {
             placement_indices,
             batch_visibility: WorldModelBatchVisibilityQuery::default(),
             prepared_draws: Vec::with_capacity(prepared_capacity),
+            shadow_draws: Vec::new(),
+            shadow_doodads: HashMap::new(),
             filtering,
             base_mip,
         })
@@ -388,7 +402,7 @@ impl WorldModelFrame {
         environment_emissive: f32,
         ordinary_fog_color: Vec3,
         indoor_fog_color: Vec3,
-    ) -> Result<(&[WorldModelPreparedDraw], Option<usize>), RuntimeTerrainFrameError> {
+    ) -> Result<WorldModelVisibleFrame<'_>, RuntimeTerrainFrameError> {
         self.prepared_draws.clear();
         let mut last_group = None;
         for (scene_index, scene) in scene_groups.iter().enumerate() {
@@ -455,7 +469,11 @@ impl WorldModelFrame {
                 }
             }
         }
-        Ok((&self.prepared_draws, last_group))
+        Ok(WorldModelVisibleFrame {
+            draws: &self.prepared_draws,
+            last_group,
+            shadow_draws: &self.shadow_draws,
+        })
     }
 
     /// Returns the number of independently transformed MODF owners.
@@ -553,6 +571,7 @@ fn prepare_gpu_source(
         plan,
         mesh,
         draws,
+        shadow_textures: texture_sets,
         draw_bounds,
         liquids,
         liquid_indices,

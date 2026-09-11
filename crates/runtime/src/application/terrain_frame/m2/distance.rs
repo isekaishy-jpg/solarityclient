@@ -11,6 +11,21 @@ pub(super) struct SceneryDistance {
 }
 
 impl SceneryDistance {
+    /// 7BABC0 and the terrain shadow collector use ADF3DC: the square of the
+    /// fade-start radius, not the farther ordinary visibility cutoff. 78F570
+    /// retains the scaled radius and subtraction in x87 until the square store.
+    pub(super) fn admits_shadow(self, camera: Vec3, detail: f32) -> bool {
+        let far = [30., 100., 200., 750., 1250.][self.category];
+        let far = if (1..=3).contains(&self.category) {
+            far * f64::from(detail)
+        } else {
+            far
+        };
+        let start = far - [5., 10., 15., 20., 50.][self.category];
+        let square = (start * start) as f32;
+        self.center.as_dvec3().distance_squared(camera.as_dvec3()) <= f64::from(square)
+    }
+
     /// 78FB60 compares the stored group depth against native far squares.
     /// 78F570 retains the scaled radius in x87 when forming each square.
     pub(super) fn admits_group(self, depth: f32, detail: f32) -> bool {

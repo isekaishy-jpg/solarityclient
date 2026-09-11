@@ -1,10 +1,13 @@
 //! Original root-unit admission and recursive attached-model shadow packets.
 
+use super::super::shadow::{ModelShadowKind, SceneryShadowQueries, WorldShadowAdmission};
+use super::distance::SceneryDistance;
 use super::{
     M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, RuntimeTerrainFrameError,
     UnitSceneRegistration, placement_bounding_sphere, placement_color, placement_mesh_color,
 };
-use glam::{Mat4, Vec4};
+use crate::application::terrain_coordinator::m2_residency::ResidentM2Owner;
+use glam::{Mat4, Vec3, Vec4};
 use solarity_rendering::{
     M2AnimationClock, M2MaterialPose, M2MaterialUniform, M2PreparedDraw, M2ShadowMaterial,
     VulkanRenderer, WorldShadowProjection,
@@ -15,6 +18,7 @@ pub(super) fn admits_root(
     projection: WorldShadowProjection,
     source: &M2GpuSource,
     placement: &M2GpuPlacement,
+    environment: Option<&WorldShadowAdmission>,
 ) -> Result<bool, RuntimeTerrainFrameError> {
     if !matches!(
         placement
@@ -32,11 +36,91 @@ pub(super) fn admits_root(
     }
     let registration = UnitSceneRegistration::new(&source.model, placement.transform)?;
     let (_, radius) = placement_bounding_sphere(&source.model, placement.transform);
+    if let Some(environment) = environment {
+        return Ok(environment.admits_primary_unit(registration.bounds, radius));
+    }
     Ok(projection.admits_unit(
         registration.bounds.minimum(),
         registration.bounds.maximum(),
         radius,
     ))
+}
+
+/// Classifies the original root registration, with attachment inheritance left
+/// to the caller. Ordinary scenery must pass the fade-start distance cutoff.
+pub(super) fn environment_maps(
+    queries: SceneryShadowQueries<'_>,
+    source: &M2GpuSource,
+    placement: &M2GpuPlacement,
+    camera: Vec3,
+    detail: f32,
+) -> Result<u8, RuntimeTerrainFrameError> {
+    if !placement.placement_valid
+        || placement
+            .entity_opacity
+            .as_ref()
+            .is_some_and(|owner| owner.hidden())
+    {
+        return Ok(0);
+    }
+    let owner = placement
+        .retirement
+        .as_ref()
+        .map_or(placement.owner, |retired| retired.original_owner);
+    let kind = match owner {
+        M2GpuPlacementOwner::PlayerBody { .. }
+        | M2GpuPlacementOwner::PlayerMount { .. }
+        | M2GpuPlacementOwner::RemotePlayerBody { .. }
+        | M2GpuPlacementOwner::RemotePlayerMount { .. }
+        | M2GpuPlacementOwner::CreatureBody { .. }
+        | M2GpuPlacementOwner::CreatureMount { .. } => ModelShadowKind::Unit,
+        M2GpuPlacementOwner::Static(
+            ResidentM2Owner::TerrainDoodad { .. } | ResidentM2Owner::WorldModelDoodad { .. },
+        ) => {
+            if source.animated_shadow_caster {
+                ModelShadowKind::AnimatedScenery
+            } else {
+                ModelShadowKind::StaticScenery
+            }
+        }
+        M2GpuPlacementOwner::GameObject { .. } => {
+            if source.animated_shadow_caster {
+                ModelShadowKind::AnimatedGameObject
+            } else {
+                ModelShadowKind::StaticGameObject
+            }
+        }
+        M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. } => {
+            ModelShadowKind::MovingWorldModelDoodad
+        }
+        _ => return Ok(0),
+    };
+    let (_, radius) = placement_bounding_sphere(&source.model, placement.transform);
+    let possible_maps = queries
+        .admission
+        .model_maps(kind, radius, queries.admission.active_maps());
+    if possible_maps == 0 {
+        return Ok(0);
+    }
+    if matches!(
+        kind,
+        ModelShadowKind::StaticScenery
+            | ModelShadowKind::AnimatedScenery
+            | ModelShadowKind::MovingWorldModelDoodad
+    ) {
+        let bounds = source.model.bounds();
+        if !SceneryDistance::new(bounds.minimum(), bounds.maximum(), placement.transform)
+            .admits_shadow(camera, detail)
+        {
+            return Ok(0);
+        }
+    }
+    let registration = UnitSceneRegistration::new(&source.model, placement.transform)?;
+    let mut maps = queries.admission.admitted_maps(registration.bounds) & possible_maps;
+    if let Some(owner) = super::doodad_scene::owner_key(owner) {
+        maps &= queries.doodads.get(&owner).copied().unwrap_or(0);
+    }
+    Ok(maps)
 }
 
 /// Samples the same material clock and pose used by the ordinary model queue.
@@ -50,7 +134,7 @@ pub(super) fn append_packets(
     model_view: Mat4,
     opacity: f32,
     bone_offset: u32,
-    destination: &mut Vec<M2PreparedDraw>,
+    mut destination: impl FnMut(M2PreparedDraw),
 ) -> Result<(), RuntimeTerrainFrameError> {
     let Some(mesh) = source.mesh else {
         return Ok(());
@@ -100,7 +184,7 @@ pub(super) fn append_packets(
             Vec4::ZERO,
             Vec4::ZERO,
         );
-        destination.push(renderer.prepare_m2_draw(
+        destination(renderer.prepare_m2_draw(
             mesh,
             resources.pipeline,
             resources.texture_set,

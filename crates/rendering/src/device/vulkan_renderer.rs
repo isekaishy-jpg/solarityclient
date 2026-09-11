@@ -84,7 +84,8 @@ use crate::device::vulkan_world_frame::{
     WorldUiOverlay,
 };
 use crate::device::vulkan_world_model_draw::{
-    WorldModelPreparedDraw, prepare_draw as prepare_world_model_draw,
+    WorldModelPreparedDraw, WorldModelShadowDraw, prepare_draw as prepare_world_model_draw,
+    prepare_shadow_draw as prepare_world_model_shadow_draw,
 };
 use crate::device::vulkan_world_model_mesh::{
     WorldModelMeshHandle, WorldModelMeshRegistry, WorldModelMeshResourceInfo,
@@ -2177,6 +2178,31 @@ impl VulkanRenderer {
             model,
             environment_emissive,
             fog_color,
+        )
+    }
+
+    /// Joins any authored MOBA batch to the already uploaded WMO geometry.
+    ///
+    /// # Errors
+    /// Rejects foreign resources, invalid complete-table ranges, or a first
+    /// texture that disagrees with the batch's original root material.
+    pub fn prepare_world_model_shadow_draw(
+        &self,
+        mesh: WorldModelMeshHandle,
+        texture_set: WorldModelTextureSetHandle,
+        plan: &WorldModelMeshPlan,
+        draw_index: usize,
+        model: Mat4,
+    ) -> Result<WorldModelShadowDraw, VulkanError> {
+        prepare_world_model_shadow_draw(
+            &self.world_model_meshes,
+            &self.world_model_texture_sets,
+            &self.blp_textures,
+            mesh,
+            texture_set,
+            plan,
+            draw_index,
+            model,
         )
     }
 

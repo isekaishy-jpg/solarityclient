@@ -249,6 +249,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
             Some((base, exterior)),
             None,
             None,
+            None,
         )?;
         assert_eq!(
             visible.draws.len(),

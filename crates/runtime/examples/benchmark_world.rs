@@ -206,7 +206,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut writer = BufWriter::new(File::create(output)?);
     writeln!(
         writer,
-        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z,ground_detail_draws,primary_shadow_draws,screen_effect,screen_glow,screen_blur,camera_liquid_type,screen_fade,special_desaturation"
+        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z,ground_detail_draws,primary_shadow_draws,screen_effect,screen_glow,screen_blur,camera_liquid_type,screen_fade,special_desaturation,environment_shadow_near,environment_shadow_middle,environment_shadow_far"
     )?;
     for sample in &samples {
         use solarity_rendering::WorldFrameScreenEffect;
@@ -232,7 +232,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         writeln!(
             writer,
-            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{},{},{},{},{},{},{:.6},{:.6}",
+            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{},{},{},{},{},{},{:.6},{:.6},{},{},{}",
             sample.phase,
             sample.frame,
             sample.resident_tiles,
@@ -261,6 +261,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Some(WorldFrameScreenEffect::Special(frame)) => frame.desaturation(),
                 _ => 0.,
             },
+            sample.environment_shadow_draws[0],
+            sample.environment_shadow_draws[1],
+            sample.environment_shadow_draws[2],
         )?;
     }
     writer.flush()?;

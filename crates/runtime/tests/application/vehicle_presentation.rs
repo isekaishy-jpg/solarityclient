@@ -601,6 +601,7 @@ fn nested_vehicle_scene(mounted: bool) -> Result<(), Box<dyn Error>> {
             Some((base, exterior)),
             None,
             Some(projection),
+            None,
         )?;
         assert_eq!(visible.instance_scenes.len(), if mounted { 6 } else { 3 });
         for scene in visible.instance_scenes {

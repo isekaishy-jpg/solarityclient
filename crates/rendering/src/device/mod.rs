@@ -120,7 +120,7 @@ pub use vulkan_underwater::{
 pub use vulkan_world_frame::{
     WorldFrameReport, WorldFrameScene, WorldSkyModelBatch, WorldSkyModelFrame,
 };
-pub use vulkan_world_model_draw::WorldModelPreparedDraw;
+pub use vulkan_world_model_draw::{WorldModelPreparedDraw, WorldModelShadowDraw};
 pub use vulkan_world_model_mesh::{WorldModelMeshHandle, WorldModelMeshResourceInfo};
 pub use vulkan_world_model_pipeline::{WorldModelPipelineHandle, WorldModelPipelineInfo};
 pub use vulkan_world_model_sampler::{

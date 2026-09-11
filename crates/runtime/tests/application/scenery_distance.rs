@@ -4,6 +4,36 @@ use glam::{Mat4, Vec3};
 
 use super::distance::SceneryDistance;
 
+/// Shadow distance cuts off before the ordinary fade band, including equality.
+#[test]
+fn scenery_shadow_distance_matches_native_fade_start() -> Result<(), Box<dyn std::error::Error>> {
+    let mut count = 0;
+    for line in include_str!("fixtures/scenery_shadow_distance_native.txt")
+        .lines()
+        .filter_map(|line| line.strip_prefix("shadow_distance "))
+    {
+        let values = line
+            .split_whitespace()
+            .map(str::parse::<f32>)
+            .collect::<Result<Vec<_>, _>>()?;
+        let extent = [1., 4., 15., 100., 101.][values[0] as usize];
+        let center = Vec3::from_slice(&values[2..5]);
+        let scenery = SceneryDistance::new(
+            Vec3::splat(-extent * 0.5),
+            Vec3::splat(extent * 0.5),
+            Mat4::from_translation(center),
+        );
+        assert_eq!(
+            scenery.admits_shadow(Vec3::from_slice(&values[5..8]), values[1]),
+            values[8] != 0.,
+            "{line}"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 1050);
+    Ok(())
+}
+
 /// Every size class consumes the original minimum-class result through admission.
 #[test]
 fn minimum_doodad_class_matches_original_boundaries() -> Result<(), Box<dyn std::error::Error>> {

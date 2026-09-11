@@ -45,8 +45,10 @@ pub struct WorldBenchmarkSample {
     pub evicted_tiles: usize,
     /// Visible native terrain-detail texture buckets submitted this frame.
     pub ground_detail_draws: usize,
-    /// Eligible unit material packets submitted to the primary shadow map.
+    /// Eligible unit and scenery packets submitted to the primary shadow map.
     pub primary_shadow_draws: usize,
+    /// Actual near, middle, and far environment packets in this frame's updates.
+    pub environment_shadow_draws: [usize; 3],
     /// Final effect inputs after the camera liquid and WMO fog queries.
     pub screen_effect: Option<solarity_rendering::WorldFrameScreenEffect>,
     /// Authored liquid type admitted at the collision-resolved camera.
@@ -544,6 +546,7 @@ impl ClientServices {
             evicted_tiles,
             ground_detail_draws: report.ground_detail_draw_count(),
             primary_shadow_draws: report.primary_shadow_draw_count(),
+            environment_shadow_draws: report.environment_shadow_draw_counts(),
             screen_effect,
             camera_liquid_type: underwater.map(|liquid| liquid.liquid_type),
             position: world.local_player_transform()?.position(),
