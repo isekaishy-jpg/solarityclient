@@ -1447,6 +1447,11 @@ impl M2Frame {
                     input
                         .armor_display_id(slot)
                         .map(|display_id| M2UnitItemIdentity::NpcArmor { slot, display_id })
+                        .or_else(|| {
+                            input
+                                .virtual_item_entry(slot)
+                                .map(|entry_id| M2UnitItemIdentity::NpcVirtual { slot, entry_id })
+                        })
                 },
                 self.animation_time_ms(),
                 random,
@@ -3493,7 +3498,8 @@ fn held_item_finger_pose(
 ) -> Option<M2FingerPoseHands> {
     let guid = match owner {
         M2GpuPlacementOwner::PlayerBody { guid }
-        | M2GpuPlacementOwner::RemotePlayerBody { guid } => guid,
+        | M2GpuPlacementOwner::RemotePlayerBody { guid }
+        | M2GpuPlacementOwner::CreatureBody { guid } => guid,
         _ => return None,
     };
     let mut right = false;

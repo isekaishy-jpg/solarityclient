@@ -7,6 +7,203 @@ use solarity_rendering::{
 };
 
 #[test]
+fn npc_virtual_items_update_models_effects_and_native_hand_placement() -> Result<(), Box<dyn Error>>
+{
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_equipped_npc()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    add_unit(&mut world, 7, ObjectKind::Player, 0)?;
+    for (guid, display) in [(30, 102), (40, 103)] {
+        add_unit(&mut world, guid, ObjectKind::Unit, 0)?;
+        fields(
+            &mut world,
+            guid,
+            &[(67, display), (56, 3100), (57, 3101), (58, 3102), (122, 1)],
+        )?;
+    }
+    // The missing link is checked before requesting this absent weapon asset.
+    add_unit(&mut world, 50, ObjectKind::Unit, 0)?;
+    fields(&mut world, 50, &[(67, 105), (56, 3107), (122, 1)])?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    publish(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_npc_held_points(&frame, 30, &[0, 1]);
+    assert_npc_held_points(&frame, 40, &[0, 1]);
+    assert_npc_held_points(&frame, 50, &[]);
+    let camera = WorldCamera::orthographic(
+        Vec3::new(8., 0., 0.),
+        Vec3::ZERO,
+        Vec3::Z,
+        [-4., 4.],
+        [-2., 2.],
+        0.1,
+        100.,
+    )
+    .frame(1.)?;
+    advance(&mut frame, &renderer, camera, 1200., &mut random)?;
+    let before = snapshots(&frame)?;
+    assert_eq!(
+        before.len(),
+        14,
+        "armor plus two virtual weapons and all attached visuals"
+    );
+    let body = frame
+        .placements
+        .iter()
+        .find(|placement| placement.owner == (M2GpuPlacementOwner::CreatureBody { guid: 30 }))
+        .ok_or("NPC body")?;
+    let opacity = body.entity_opacity.as_ref().ok_or("body opacity")?;
+    for placement in &frame.placements {
+        if belongs_to(placement.owner, 30, CharacterAttachmentPoint::HandRight)
+            || belongs_to(placement.owner, 30, CharacterAttachmentPoint::Shield)
+        {
+            assert!(Rc::ptr_eq(
+                opacity,
+                placement.entity_opacity.as_ref().ok_or("weapon opacity")?
+            ));
+        }
+    }
+    fields(&mut world, 30, &[(4, 1.2_f32.to_bits())])?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_replaced(&frame, &before, |_| false)?;
+    fields(&mut world, 30, &[(56, 3106)])?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_replaced(&frame, &before, |owner| {
+        belongs_to(owner, 30, CharacterAttachmentPoint::HandRight)
+    })?;
+    let before = snapshots(&frame)?;
+    let expected_random = random;
+    fields(&mut world, 30, &[(122, 0)])?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_npc_held_points(&frame, 30, &[26, 28]);
+    assert_eq!(
+        random, expected_random,
+        "relocation consumes no component initialization rolls"
+    );
+    for previous in &before {
+        let after = snapshots(&frame)?
+            .into_iter()
+            .find(|current| current.source == previous.source)
+            .ok_or("sheathing lost a retained GPU component")?;
+        assert_eq!(after.effects, previous.effects);
+        assert_eq!(after.timer, previous.timer);
+        assert_eq!(after.event_time, previous.event_time);
+    }
+    fields(&mut world, 30, &[(122, 1)])?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_replaced(&frame, &before, |_| false)?;
+    // Sparse flags and sheath updates must update the selected components.
+    for (updates, expected) in [
+        (vec![(59, 0x20_0000)], vec![0]),
+        (vec![(122, 2)], vec![2, 28]),
+        (vec![(59, 0), (58, 3104)], vec![1, 26, 28]),
+        (vec![(122, 1), (56, 3103)], vec![1]),
+        (vec![(122, 0), (56, 3105)], vec![28]),
+        (vec![(56, 99999), (57, 0)], vec![]),
+    ] {
+        fields(&mut world, 30, &updates)?;
+        publish_npcs(
+            &mut presentation,
+            &world,
+            &mut frame,
+            &mut renderer,
+            &mut random,
+        )?;
+        assert_npc_held_points(&frame, 30, &expected);
+        assert_npc_held_points(&frame, 40, &[0, 1]);
+        advance(&mut frame, &renderer, camera, 1300., &mut random)?;
+    }
+    Ok(())
+}
+
+fn assert_npc_held_points(frame: &M2Frame, guid: u64, expected: &[u32]) {
+    let mut points: Vec<_> = frame
+        .placements
+        .iter()
+        .filter_map(|placement| {
+            if let M2GpuPlacementOwner::UnitItem { guid: owner, point } = placement.owner
+                && owner == guid
+                && !matches!(point.id(), 5 | 6 | 11)
+            {
+                Some(point.id())
+            } else {
+                None
+            }
+        })
+        .collect();
+    points.sort_unstable();
+    assert_eq!(points, expected, "NPC {guid}");
+}
+
+fn publish_npcs(
+    presentation: &mut RuntimePlayerPresentation,
+    world: &ActiveWorld,
+    frame: &mut M2Frame,
+    renderer: &mut VulkanRenderer,
+    random: &mut CrtRand,
+) -> Result<(), Box<dyn Error>> {
+    presentation.synchronize_creatures(Some(world), |_| None)?;
+    frame.replace_creatures(
+        renderer,
+        &presentation.resident_creature_frame_inputs(),
+        random,
+    )?;
+    Ok(())
+}
+
+#[test]
 fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result<(), Box<dyn Error>>
 {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;

@@ -4,6 +4,8 @@
 mod body_pose;
 #[path = "model/mesh_transfer.rs"]
 mod mesh_transfer;
+#[path = "model/npc_equipment.rs"]
+mod npc_equipment;
 #[path = "model/particle_fog.rs"]
 mod particle_fog;
 #[path = "model/particle_frame.rs"]

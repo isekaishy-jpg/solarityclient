@@ -352,6 +352,16 @@ impl ActiveWorld {
             .ok()
     }
 
+    /// Returns the replicated main-hand, off-hand, and ranged item entries.
+    #[must_use]
+    pub fn unit_virtual_items(&self, guid: u64) -> Option<crate::unit::UnitVirtualItems> {
+        let entity = self.objects.find(guid)?;
+        self.storage
+            .get::<&crate::unit::UnitVirtualItems>(entity)
+            .map(|items| **items)
+            .ok()
+    }
+
     /// Returns the retained native unit flag words for input admission.
     #[must_use]
     pub fn unit_flags(&self, guid: u64) -> Option<crate::unit::UnitFlags> {

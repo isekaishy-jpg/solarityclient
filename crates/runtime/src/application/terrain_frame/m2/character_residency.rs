@@ -14,11 +14,22 @@ pub(super) enum M2UnitItemIdentity {
         slot: PlayerEquipmentSlot,
         display_id: u32,
     },
+    NpcVirtual {
+        slot: PlayerEquipmentSlot,
+        entry_id: u32,
+    },
 }
 
 impl M2UnitItemIdentity {
     fn same_component(self, other: Self) -> bool {
         match (self, other) {
+            (
+                Self::NpcVirtual { slot, entry_id },
+                Self::NpcVirtual {
+                    slot: other_slot,
+                    entry_id: other_entry,
+                },
+            ) => slot == other_slot && entry_id == other_entry,
             (
                 Self::Player { slot, visible },
                 Self::Player {
@@ -39,6 +50,7 @@ impl M2UnitItemIdentity {
 
     fn same_enchantment(self, other: Self) -> bool {
         match (self, other) {
+            (Self::NpcVirtual { .. }, Self::NpcVirtual { .. }) => self.same_component(other),
             (
                 Self::Player { visible, .. },
                 Self::Player {
@@ -53,7 +65,10 @@ impl M2UnitItemIdentity {
 
 /// Inputs committed only after every replacement GPU source has prepared.
 enum RetainedCharacterState {
-    Item(Option<M2UnitItemIdentity>),
+    Item {
+        identity: Option<M2UnitItemIdentity>,
+        owner: M2GpuPlacementOwner,
+    },
     Mount {
         key: MountModelKey,
         transform: Mat4,
@@ -104,10 +119,10 @@ impl M2Frame {
         for (index, mut placement) in std::mem::take(&mut self.placements).into_iter().enumerate() {
             if let Some((character, order, state)) = retained.remove(&index) {
                 match state {
-                    RetainedCharacterState::Item(Some(identity)) => {
-                        placement.item_identity = Some(identity);
+                    RetainedCharacterState::Item { identity, owner } => {
+                        placement.item_identity = identity;
+                        placement.owner = owner;
                     }
-                    RetainedCharacterState::Item(None) => {}
                     RetainedCharacterState::Mount {
                         key,
                         transform,
@@ -452,6 +467,20 @@ pub(super) fn prepare_unit_equipment_gpu(
         });
     for attachment in input.attachments {
         if input.model.attachment(attachment.point().id()).is_none() {
+            // 4EACD0 omits a virtual weapon when its parent's authored link
+            // is absent. Non-humanoid NPCs can legally carry virtual entries.
+            if matches!(input.body_owner, M2GpuPlacementOwner::CreatureBody { .. })
+                && matches!(
+                    attachment.slot(),
+                    Some(
+                        PlayerEquipmentSlot::MainHand
+                            | PlayerEquipmentSlot::OffHand
+                            | PlayerEquipmentSlot::Ranged
+                    )
+                )
+            {
+                continue;
+            }
             return Err(RuntimeTerrainFrameError::MissingPlayerM2Attachment {
                 model: input.model.path().clone(),
                 attachment_id: attachment.point().id(),
@@ -459,7 +488,20 @@ pub(super) fn prepare_unit_equipment_gpu(
         }
         let identity = attachment.slot().and_then(&item_identity);
         let candidate = same_unit
-            .then(|| frame.matching_item_model(input.guid, attachment))
+            .then(|| {
+                if matches!(identity, Some(M2UnitItemIdentity::NpcVirtual { .. })) {
+                    // 7310A0 moves an existing component from hand to sheath
+                    // (or back), preserving the model and its attached effects.
+                    frame.placements.iter().position(|placement| {
+                        matches!(placement.owner, M2GpuPlacementOwner::UnitItem { guid, .. } if guid == input.guid)
+                            && placement.item_identity.zip(identity).is_some_and(|(old, new)| old.same_component(new))
+                            && frame.sources.get(placement.source_index).and_then(Option::as_ref)
+                                .is_some_and(|source| source.model.path() == attachment.model().path())
+                    })
+                } else {
+                    frame.matching_item_model(input.guid, attachment)
+                }
+            })
             .flatten();
         let retained = candidate.filter(|index| {
             let unchanged_component = frame.placements[*index]
@@ -483,16 +525,41 @@ pub(super) fn prepare_unit_equipment_gpu(
                 .item_identity
                 .zip(identity)
                 .is_some_and(|(previous, current)| previous.same_enchantment(current));
-            prepared.retain(index, RetainedCharacterState::Item(identity));
+            let previous_point = match frame.placements[index].owner {
+                M2GpuPlacementOwner::UnitItem { point, .. } => point,
+                _ => unreachable!("retained item candidate"),
+            };
+            prepared.retain(
+                index,
+                RetainedCharacterState::Item {
+                    identity,
+                    owner: M2GpuPlacementOwner::UnitItem {
+                        guid: input.guid,
+                        point: attachment.point(),
+                    },
+                },
+            );
             if unchanged_visuals {
                 for (index, placement) in frame.placements.iter().enumerate() {
                     if let M2GpuPlacementOwner::UnitItemVisual {
-                        guid, item_point, ..
+                        guid,
+                        item_point,
+                        effect_point,
                     } = placement.owner
                         && guid == input.guid
-                        && item_point == attachment.point()
+                        && item_point == previous_point
                     {
-                        prepared.retain(index, RetainedCharacterState::Item(None));
+                        prepared.retain(
+                            index,
+                            RetainedCharacterState::Item {
+                                identity: None,
+                                owner: M2GpuPlacementOwner::UnitItemVisual {
+                                    guid,
+                                    item_point: attachment.point(),
+                                    effect_point,
+                                },
+                            },
+                        );
                     }
                 }
                 continue;

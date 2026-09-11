@@ -337,6 +337,20 @@ The ADT/BLP Vulkan integration compares nine locations per captured frame.
 python tools/ghidra/terrain_specular_shader_oracle.py target/world-shadow-shaders crates/rendering/tests/fixtures/terrain_specular_shader_native.txt
 ```
 
+## NPC virtual equipment
+
+`npc_virtual_items_oracle.py` captures 1,536 settled Unit_C equipment cases.
+Original code resolves Item.dbc entries, filters disarmed hands, classifies the
+current body through AnimationData, adjusts readiness, selects components, and
+chooses actual attachment links. The capture intercepts asset-cache and model
+engine services; it ends `4EACD0` at the authored-link query and does not execute
+full M2 creation or animated sheath callbacks. The renderer test also verifies
+weapon/shield paths, textures, item visuals, and particle-color metadata.
+
+```text
+python tools/ghidra/npc_virtual_items_oracle.py <path-to-Wow.exe> crates/rendering/tests/fixtures/npc_virtual_items_native.txt
+```
+
 ## WMO local batch visibility
 
 The following capture executes the native corner transform and normal renderer

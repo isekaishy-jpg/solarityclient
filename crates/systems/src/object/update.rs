@@ -3,7 +3,8 @@
 use solarity_ecs::{
     ActiveWorld, GameObjectPresentation, ObjectKind, ObjectPresentation, PlayerAppearance,
     PlayerEquipment, PlayerMoney, PlayerProgression, UnitAnimationTier, UnitFlags, UnitIdentity,
-    UnitPresentation, UnitSheathState, UnitStats, UnitVitals, VisibleEquipmentItem,
+    UnitPresentation, UnitSheathState, UnitStats, UnitVirtualItems, UnitVitals,
+    VisibleEquipmentItem,
 };
 use thiserror::Error;
 
@@ -28,6 +29,8 @@ const UNIT_FIELD_MAX_POWER_START: u16 = 33;
 const UNIT_FIELD_MAX_POWER_END: u16 = 39;
 const UNIT_FIELD_LEVEL: u16 = 54;
 const UNIT_FIELD_FACTION_TEMPLATE: u16 = 55;
+const UNIT_VIRTUAL_ITEM_START: u16 = 56;
+const UNIT_VIRTUAL_ITEM_END: u16 = 58;
 const UNIT_FIELD_FLAGS: u16 = 59;
 const UNIT_FIELD_FLAGS_2: u16 = 60;
 const UNIT_FIELD_DISPLAY_ID: u16 = 67;
@@ -224,6 +227,10 @@ where
     let mut animation_tier = unit_presentation_state.animation_tier();
     let mut sheath_state = unit_presentation_state.sheath_state();
 
+    let virtual_items = world.unit_virtual_items(guid);
+    let mut virtual_entries = virtual_items.unwrap_or_default().entries();
+    let mut virtual_items_changed = false;
+
     let unit_flags = world
         .storage()
         .get::<&UnitFlags>(entity)
@@ -345,6 +352,10 @@ where
                 secondary_flags = value;
                 flags_changed = true;
             }
+            UNIT_VIRTUAL_ITEM_START..=UNIT_VIRTUAL_ITEM_END if is_unit(kind) => {
+                virtual_entries[usize::from(index - UNIT_VIRTUAL_ITEM_START)] = value;
+                virtual_items_changed = true;
+            }
             UNIT_FIELD_DISPLAY_ID if is_unit(kind) => {
                 display_id = value;
                 presentation_changed = true;
@@ -443,6 +454,11 @@ where
         );
     }
     if is_unit(kind) {
+        if virtual_items.is_none() || virtual_items_changed {
+            world
+                .storage_mut()
+                .add_component(entity, (UnitVirtualItems::new(virtual_entries),));
+        }
         if unit_identity.is_none() || identity_changed {
             world.storage_mut().add_component(
                 entity,

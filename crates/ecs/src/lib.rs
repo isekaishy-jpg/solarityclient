@@ -33,7 +33,8 @@ pub use player::{
 };
 pub use unit::{
     UNIT_PRIMARY_STAT_COUNT, UnitAnimationTier, UnitAttackTarget, UnitAura, UnitAuras, UnitFlags,
-    UnitHealthPrediction, UnitIdentity, UnitPresentation, UnitSheathState, UnitStats, UnitVitals,
+    UnitHealthPrediction, UnitIdentity, UnitPresentation, UnitSheathState, UnitStats,
+    UnitVirtualItems, UnitVitals,
 };
 pub use vehicle::UnitVehicle;
 pub use view::PlayerViewState;

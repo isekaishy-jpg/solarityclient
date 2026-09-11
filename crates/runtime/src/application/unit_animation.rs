@@ -580,6 +580,11 @@ impl UnitAnimationBehavior {
         self.animation_behavior(playback.animation_id)
     }
 
+    /// AnimationData behavior of the current body, for Unit_C weapon readiness.
+    pub fn current_body_behavior(&self) -> u16 {
+        self.behavior(&self.playback.borrow())
+    }
+
     fn animation_behavior(&self, animation: u16) -> u16 {
         self.animations
             .definition(u32::from(animation))

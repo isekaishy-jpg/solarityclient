@@ -192,7 +192,15 @@ fn build_fixture_options(
         append_effects(&mut model, ids.len());
     }
     if equipment {
-        append_attachments(&mut model, &[1, 5, 6, 11, 26], ids.len());
+        append_attachments(
+            &mut model,
+            if npc_race.is_some() {
+                &[0, 1, 2, 5, 6, 11, 26, 27, 28, 30, 31, 32, 33]
+            } else {
+                &[1, 5, 6, 11, 26]
+            },
+            ids.len(),
+        );
     }
     if mount_scale.is_some() {
         append_attachments(&mut model, &[0], ids.len());
@@ -288,6 +296,12 @@ fn build_fixture_options(
             display[0] = 104;
             display[3] = 2;
             displays.extend_from_slice(&display);
+            display[0] = 105;
+            display[1] = 9;
+            display[3] = 0;
+            display[7] = 0;
+            display[8] = 0;
+            displays.extend_from_slice(&display);
         }
     }
     let mut model_data = [0; 28];
@@ -303,6 +317,12 @@ fn build_fixture_options(
     model_data[2] = model_paths.len() as u32;
     models.extend_from_slice(&model_data);
     model_paths.extend_from_slice(b"Creature\\Alternate.m2\0");
+    if equipment && npc_race.is_some() {
+        model_data[0] = 9;
+        model_data[2] = model_paths.len() as u32;
+        models.extend_from_slice(&model_data);
+        model_paths.extend_from_slice(b"Creature\\NoHands.m2\0");
+    }
     let mut sections: Vec<_> = (0..5)
         .flat_map(|section| {
             [
@@ -367,6 +387,17 @@ fn build_fixture_options(
     .into_iter()
     .map(|(path, bytes)| (path.to_owned(), bytes.to_vec()))
     .collect();
+    if equipment && npc_race.is_some() {
+        let mut no_hands = model.clone();
+        no_hands[0xf0..0x100].fill(0);
+        files.extend([
+            ("Creature\\NoHands.m2".to_owned(), no_hands),
+            (
+                "Creature\\NoHands00.skin".to_owned(),
+                game_object_models::skin()?,
+            ),
+        ]);
+    }
     if vehicle_seats {
         files.extend([
             (
@@ -647,6 +678,7 @@ fn append_equipment_files(
         "Item\\ObjectComponents\\Shoulder\\Right2",
         "Item\\ObjectComponents\\Shoulder\\Left",
         "Item\\ObjectComponents\\Weapon\\Weapon",
+        "Item\\ObjectComponents\\Shield\\Weapon",
         "Spells\\Effect1",
         "Spells\\Effect2",
     ] {
@@ -663,6 +695,8 @@ fn append_equipment_files(
         (602, "Right2.m2", "Left.m2", 700, 0),
         (603, "Right2.m2", "", 700, 0),
         (800, "Weapon.m2", "", 0, 0x1c0),
+        (801, "Weapon.m2", "", 700, 0x1c0),
+        (802, "MissingWeapon.m2", "", 0, 0),
     ] {
         let mut row = [0; 25];
         row[0] = id;
@@ -677,7 +711,7 @@ fn append_equipment_files(
         row[24] = u32::MAX;
         displays.extend_from_slice(&row);
     }
-    let items: Vec<_> = [
+    let mut items: Vec<_> = [
         (1000, 500, 1),
         (1001, 501, 1),
         (2000, 600, 3),
@@ -690,6 +724,18 @@ fn append_equipment_files(
     .into_iter()
     .flat_map(|(id, display, inventory)| [id, 2, 0, u32::MAX, 0, display, inventory, 1])
     .collect();
+    for (id, class, subclass, inventory, sheath) in [
+        (3100, 2, 7, 13, 1),
+        (3101, 4, 6, 14, 4),
+        (3102, 2, 2, 15, 2),
+        (3103, 2, 8, 17, 2),
+        (3104, 2, 3, 26, 1),
+        (3105, 15, 0, 23, 0),
+        (3106, 2, 7, 13, 1),
+    ] {
+        items.extend_from_slice(&[id, class, subclass, u32::MAX, 0, 801, inventory, sheath]);
+    }
+    items.extend_from_slice(&[3107, 2, 7, u32::MAX, 0, 802, 13, 1]);
     let enchants: Vec<_> = [(900, 700), (901, 701), (902, 700)]
         .into_iter()
         .flat_map(|(id, visual)| {

@@ -1670,6 +1670,28 @@ impl RuntimePlayerPresentation {
             ) else {
                 continue;
             };
+            let virtual_entries = world.unit_virtual_items(guid).unwrap_or_default().entries();
+            let weapon_state = virtual_entries.iter().any(|entry| *entry != 0).then(|| {
+                let body_behavior = self
+                    .unit_animations
+                    .get(guid)
+                    .filter(|animation| animation.identity() == identity)
+                    .map_or_else(
+                        || {
+                            self.animations
+                                .definition(u32::from(requested_animation.animation_id()))
+                                .and_then(|definition| u16::try_from(definition.behavior_id()).ok())
+                                .unwrap_or(506)
+                        },
+                        |animation| animation.current_body_behavior(),
+                    );
+                solarity_rendering::NpcWeaponState::new(
+                    presentation.sheath_state(),
+                    world.unit_flags(guid).unwrap_or_default(),
+                    appearance.body().model().flags(),
+                    body_behavior,
+                )
+            });
             desired.push(DesiredCreatureModel {
                 key: CreatureModelKey {
                     identity,
@@ -1678,6 +1700,8 @@ impl RuntimePlayerPresentation {
                     path: appearance.body().model_path().clone(),
                     object_scale: body_scale * appearance.object_scale(),
                     particle_color_id: appearance.body().display().particle_color_id(),
+                    virtual_entries,
+                    weapon_state,
                     mount_key: appearance
                         .mount()
                         .map(|mount| mount_model_key(mount, body_scale, appearance.object_scale())),
@@ -1756,7 +1780,7 @@ impl RuntimePlayerPresentation {
                 .resolve_model(desired.key.display_id)
                 .map_err(UnitModelAppearanceError::from)?;
             let model = self.models.load(&mut assets, appearance.model_path())?;
-            let (textures, geosets, attachment_plan) = if let Some(extra) = appearance.extra() {
+            let (textures, geosets, mut attachment_plan) = if let Some(extra) = appearance.extra() {
                 let character = self.characters.resolve_player(
                     extra.race_id(),
                     extra.gender_id(),
@@ -1815,6 +1839,37 @@ impl RuntimePlayerPresentation {
                     CharacterAttachmentPlan::default(),
                 )
             };
+            if let Some(state) = desired.key.weapon_state {
+                let entries = desired.key.virtual_entries;
+                let equipment = std::array::from_fn(|index| {
+                    if entries[index] == 0 {
+                        return None;
+                    }
+                    let definition = self.item_definitions.item(entries[index])?;
+                    let display = self.item_displays.display(definition.display_info_id())?;
+                    Some(CharacterEquipmentItem::new_visible(
+                        [
+                            PlayerEquipmentSlot::MainHand,
+                            PlayerEquipmentSlot::OffHand,
+                            PlayerEquipmentSlot::Ranged,
+                        ][index],
+                        VisibleEquipmentItem::new(entries[index], 0),
+                        definition,
+                        display,
+                    ))
+                });
+                attachment_plan.add_npc_held_items(equipment, state)?;
+            }
+            attachment_plan.retain_attachments(|attachment| {
+                !matches!(
+                    attachment.slot(),
+                    Some(
+                        PlayerEquipmentSlot::MainHand
+                            | PlayerEquipmentSlot::OffHand
+                            | PlayerEquipmentSlot::Ranged
+                    )
+                ) || model.attachment(attachment.point().id()).is_some()
+            });
             let attachments = load_player_attachments(
                 &attachment_plan,
                 &self.item_visuals,
@@ -2972,6 +3027,8 @@ struct CreatureModelKey {
     path: AssetPath,
     object_scale: f32,
     particle_color_id: u32,
+    virtual_entries: [u32; 3],
+    weapon_state: Option<solarity_rendering::NpcWeaponState>,
     mount_key: Option<MountModelKey>,
 }
 
@@ -3261,6 +3318,7 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
     geosets: Option<&'a ResidentCreatureGeosets>,
     attachments: &'a [ResidentPlayerAttachment],
     armor_display_ids: &'a [u32; 11],
+    virtual_entries: [u32; 3],
     world_transform: WorldTransform,
     object_scale: f32,
     animation: UnitModelAnimation,
@@ -3270,6 +3328,16 @@ pub(super) struct ResidentCreatureFrameInput<'a> {
 }
 
 impl<'a> ResidentCreatureFrameInput<'a> {
+    pub(super) fn virtual_item_entry(&self, slot: PlayerEquipmentSlot) -> Option<u32> {
+        let index = match slot {
+            PlayerEquipmentSlot::MainHand => 0,
+            PlayerEquipmentSlot::OffHand => 1,
+            PlayerEquipmentSlot::Ranged => 2,
+            _ => return None,
+        };
+        let entry = self.virtual_entries[index];
+        (entry != 0).then_some(entry)
+    }
     pub(super) fn armor_display_id(&self, slot: PlayerEquipmentSlot) -> Option<u32> {
         let index = NPC_EQUIPMENT_SLOTS
             .iter()
@@ -3290,6 +3358,7 @@ impl<'a> ResidentCreatureFrameInput<'a> {
             geosets: resident.geosets.as_ref(),
             attachments: &resident.attachments,
             armor_display_ids: &resident.armor_display_ids,
+            virtual_entries: resident.key.virtual_entries,
             world_transform: resident.world_transform,
             object_scale: resident.key.object_scale,
             animation: resident.animation,

@@ -11,6 +11,46 @@ use solarity_ecs::{
 };
 use solarity_systems::{ObjectProjectionError, project_object_fields};
 
+/// Virtual fields are item entries, and sparse updates retain the other hands.
+#[test]
+fn npc_virtual_item_entries_follow_sparse_updates_and_object_lifetimes()
+-> Result<(), Box<dyn Error>> {
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    let initial = [(56, 123), (57, 456), (58, 789)];
+    world.create_object(9, ObjectKind::Unit, None, initial)?;
+    project_object_fields(&mut world, 9, initial)?;
+    assert_eq!(
+        world.unit_virtual_items(9).ok_or("items")?.entries(),
+        [123, 456, 789]
+    );
+    for (fields, expected) in [
+        (vec![(57, 0)], [123, 0, 789]),
+        (vec![(59, 0x20_0000), (122, 2)], [123, 0, 789]),
+        (vec![(56, 999), (58, 0)], [999, 0, 0]),
+    ] {
+        world.update_fields(9, fields.iter().copied())?;
+        project_object_fields(&mut world, 9, fields)?;
+        assert_eq!(
+            world.unit_virtual_items(9).ok_or("sparse items")?.entries(),
+            expected
+        );
+    }
+    world.remove_object(9)?;
+    world.create_object(9, ObjectKind::Unit, None, [])?;
+    project_object_fields(&mut world, 9, [])?;
+    assert_eq!(
+        world.unit_virtual_items(9).ok_or("new items")?.entries(),
+        [0; 3]
+    );
+    Ok(())
+}
+
 /// 70DAA0/70DC10 read all four parent quaternion words; sparse changes must
 /// preserve their exact bits independently of packed movement rotation.
 #[test]

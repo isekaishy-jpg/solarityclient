@@ -1,4 +1,4 @@
-//! Opt-in real-archive verification for NPC bodies and separate armor models.
+//! Opt-in real-archive verification for NPC bodies, armor, and virtual weapons.
 
 use super::*;
 use solarity_asset::CreatureCatalog;
@@ -14,6 +14,24 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
     )?)?;
     let catalog = CreatureCatalog::load(&mut store)?;
     let item_displays = solarity_asset::ItemDisplayCatalog::load(&mut store)?;
+    let definitions = solarity_asset::ItemDefinitionCatalog::load(&mut store)?;
+    let select_item = |inventory, subclass: Option<u32>| {
+        (1..=10_000).find(|entry| {
+            definitions.item(*entry).is_some_and(|item| {
+                item.inventory_type() as u32 == inventory
+                    && subclass.is_none_or(|subclass| {
+                        item.class_id() == 2 && item.subclass_id() == subclass
+                    })
+                    && item_displays
+                        .display(item.display_info_id())
+                        .is_some_and(|display| !display.model_names()[0].is_empty())
+            })
+        })
+    };
+    let main = select_item(13, Some(7)).ok_or("stock one-handed sword")?;
+    let shield = select_item(14, None).ok_or("stock shield")?;
+    let bow = select_item(15, Some(2)).ok_or("stock bow")?;
+    let gun = select_item(26, Some(3)).ok_or("stock gun")?;
     let mut displays: Vec<_> = catalog
         .displays()
         .iter()
@@ -83,6 +101,11 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
         0.,
     ));
     add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
+    super::equipment_residency::fields(
+        &mut world,
+        30,
+        &[(56, main), (57, shield), (58, bow), (122, 1)],
+    )?;
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
@@ -171,6 +194,43 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
     eprintln!(
         "Verified {} stock NPC displays, including armored Orcs {orcs:?}, through visible GPU draw preparation",
         displays.len(),
+    );
+    for display in &orcs {
+        for ranged in [bow, gun] {
+            for sheath in 0..3 {
+                for flags in [0, 0x20_0000] {
+                    super::equipment_residency::fields(
+                        &mut world,
+                        30,
+                        &[
+                            (67, *display),
+                            (68, *display),
+                            (58, ranged),
+                            (122, sheath),
+                            (59, flags),
+                        ],
+                    )?;
+                    presentation.synchronize_creatures(Some(&world), |_| None)?;
+                    frame.replace_creatures(
+                        &mut renderer,
+                        &presentation.resident_creature_frame_inputs(),
+                        &mut random,
+                    )?;
+                    super::equipment_residency::advance(
+                        &mut frame,
+                        &renderer,
+                        camera,
+                        200.,
+                        &mut random,
+                    )?;
+                    assert!(!frame.visible_draws.is_empty());
+                }
+            }
+        }
+    }
+    eprintln!(
+        "Verified stock NPC virtual entries sword={main}, shield={shield}, bow={bow}, gun={gun}; {} additional sheath/disarm scenes",
+        orcs.len() * 12
     );
     Ok(())
 }

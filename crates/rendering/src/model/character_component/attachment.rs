@@ -3,7 +3,7 @@
 use solarity_asset::{
     AssetPath, CharacterRace, CharacterRaceCatalog, InventoryType, ItemDefinition,
 };
-use solarity_ecs::{PlayerEquipmentSlot, UnitSheathState};
+use solarity_ecs::{PlayerEquipmentSlot, UnitFlags, UnitSheathState};
 
 use super::{CharacterAttachmentPlanError, CharacterEquipmentItem};
 
@@ -51,6 +51,38 @@ impl CharacterAttachmentPoint {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CharacterWeaponState {
     sheath_state: UnitSheathState,
+}
+
+/// Unit_C inputs to virtual-item visibility and attachment selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NpcWeaponState {
+    sheath: UnitSheathState,
+    primary_flags: u32,
+    secondary_flags: u32,
+    model_flags: u32,
+    ready_behavior: bool,
+    ready_without_main_behavior: bool,
+}
+
+impl NpcWeaponState {
+    /// Retains only flags consumed by native virtual-item presentation.
+    #[must_use]
+    pub const fn new(
+        sheath: UnitSheathState,
+        flags: UnitFlags,
+        model_flags: u32,
+        body_behavior: u16,
+    ) -> Self {
+        Self {
+            sheath,
+            primary_flags: flags.primary() & 0x20_0000,
+            secondary_flags: flags.secondary() & 0x480,
+            model_flags: model_flags & 0x10,
+            ready_behavior: matches!(body_behavior, 16 | 20 | 25 | 117 | 118),
+            ready_without_main_behavior: matches!(body_behavior,
+                10 | 16..=24 | 30 | 36 | 57..=59 | 85..=88 | 95 | 117 | 118 | 170..=179 | 212),
+        }
+    }
 }
 
 impl CharacterWeaponState {
@@ -178,6 +210,119 @@ pub struct CharacterAttachmentPlan {
 }
 
 impl CharacterAttachmentPlan {
+    /// Retains components admitted by the parent's authored attachment lookup.
+    pub fn retain_attachments(&mut self, admit: impl FnMut(&CharacterItemAttachment) -> bool) {
+        self.attachments.retain(admit);
+    }
+    /// Adds Unit_C virtual weapons using native metadata and state filters.
+    ///
+    /// Inputs are Item.dbc joins in main-hand, off-hand, ranged order. Missing
+    /// entries or display rows are absent inputs, as in native `725010`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing item metadata or invalid authored paths.
+    pub fn add_npc_held_items(
+        &mut self,
+        equipment: [Option<CharacterEquipmentItem<'_>>; 3],
+        state: NpcWeaponState,
+    ) -> Result<(), CharacterAttachmentPlanError> {
+        if state.model_flags & 0x10 != 0 {
+            return Ok(());
+        }
+        let definitions = equipment.map(|item| item.and_then(CharacterEquipmentItem::definition));
+        let is_weapon = |index: usize| definitions[index].is_some_and(|item| item.class_id() == 2);
+        let main_disarmed = state.primary_flags != 0 && is_weapon(0);
+        // 71F440/718FC0: ordinary disarm affects the off-hand weapon only
+        // when it did not already select a weapon in the main hand.
+        let off_disarmed = (state.primary_flags != 0 && !main_disarmed && is_weapon(1))
+            || state.secondary_flags & 0x80 != 0;
+        let filtered = [
+            equipment[0].filter(|_| !main_disarmed),
+            equipment[1].filter(|_| !off_disarmed),
+            equipment[2].filter(|_| state.secondary_flags & 0x400 == 0),
+        ];
+        let main = filtered[0].and_then(CharacterEquipmentItem::definition);
+        let off = filtered[1].and_then(CharacterEquipmentItem::definition);
+        // 721ED0 classifies the current body through AnimationData.behavior.
+        let adjust_readiness =
+            state.ready_behavior || (main.is_none() && state.ready_without_main_behavior);
+        let mut sheath = state.sheath;
+        if adjust_readiness {
+            // 715D00, also used by the sheath-state producer 736D30.
+            match sheath {
+                UnitSheathState::Melee
+                    if main.is_none()
+                        && off.is_none_or(|item| {
+                            item.inventory_type() == InventoryType::Holdable
+                        }) =>
+                {
+                    sheath = UnitSheathState::Unarmed;
+                }
+                UnitSheathState::Unarmed
+                    if main.is_some_and(|item| item.class_id() == 2)
+                        || off.is_some_and(|item| {
+                            item.class_id() == 2 || item.inventory_type() == InventoryType::Shield
+                        }) =>
+                {
+                    sheath = UnitSheathState::Melee;
+                }
+                _ => {}
+            }
+        }
+        for (index, item) in filtered.into_iter().enumerate() {
+            let Some(item) = item else { continue };
+            let definition = required_definition(item)?;
+            if index == 1
+                && main.is_some_and(|main| {
+                    main.class_id() == 2
+                        && matches!(main.subclass_id(), 1 | 5 | 6 | 8 | 10 | 12 | 17 | 20)
+                })
+            {
+                continue;
+            }
+            let right_hand =
+                index == 0 || (index == 2 && matches!(definition.inventory_type() as u32, 25 | 26));
+            if index == 2 {
+                // 72DBC0 removes the ranged component unless it is readied.
+                // Its disarm query selects the corresponding hand category.
+                let ranged_disarmed = if right_hand {
+                    main_disarmed
+                } else {
+                    off_disarmed
+                };
+                if sheath != UnitSheathState::Ranged || ranged_disarmed {
+                    continue;
+                }
+            }
+            let ready = if index == 2 {
+                true
+            } else {
+                sheath == UnitSheathState::Melee
+            };
+            let point = if !ready {
+                sheath_point(definition.sheathe_type(), right_hand)
+            } else if index == 1 && definition.inventory_type() == InventoryType::Shield {
+                Some(CharacterAttachmentPoint::Shield)
+            } else {
+                Some(if right_hand {
+                    CharacterAttachmentPoint::HandRight
+                } else {
+                    CharacterAttachmentPoint::HandLeft
+                })
+            };
+            if let Some(point) = point {
+                push_display_held_item(
+                    &mut self.attachments,
+                    item,
+                    point,
+                    index == 1 && definition.inventory_type() == InventoryType::Shield,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Plans the separate armor models from `CreatureDisplayInfoExtra`.
     ///
     /// Only a nonempty helmet model needs the race's filename prefix. NPCs
@@ -476,13 +621,27 @@ fn push_selection_held_item(
     item: CharacterEquipmentItem<'_>,
     point: CharacterAttachmentPoint,
 ) -> Result<(), CharacterAttachmentPlanError> {
+    push_display_held_item(
+        attachments,
+        item,
+        point,
+        item.inventory_type() == Some(InventoryType::Shield),
+    )
+}
+
+fn push_display_held_item(
+    attachments: &mut Vec<CharacterItemAttachment>,
+    item: CharacterEquipmentItem<'_>,
+    point: CharacterAttachmentPoint,
+    shield: bool,
+) -> Result<(), CharacterAttachmentPlanError> {
     let display = item.display();
     let [model_name, _] = display.model_names();
     if model_name.is_empty() {
         return Ok(());
     }
     let [texture_name, _] = display.model_textures();
-    let folder = if item.inventory_type() == Some(InventoryType::Shield) {
+    let folder = if shield {
         "Item\\ObjectComponents\\Shield"
     } else {
         "Item\\ObjectComponents\\Weapon"
