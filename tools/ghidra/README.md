@@ -387,6 +387,17 @@ offscreen. Animated layer offsets are outside this capture.
 python tools/ghidra/terrain_texture_coordinates_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_texture_coordinates_native.txt
 ```
 
+`terrain_perspective_lighting_oracle.py` runs original terrain constant production,
+matrix operations and exterior-light accumulation before rendering unchanged
+Terrain/Terrain1 bytecode. Twelve frames cover two camera heights, two origins
+and three stored normals. Only the device projection-sign and fog-enabled
+queries are intercepted. The Vulkan ADT/BLP comparison covers interior pixels;
+world-palette selection and environment shadows are separate owners.
+
+```text
+python tools/ghidra/terrain_perspective_lighting_oracle.py <path-to-Wow.exe> <terrain-BLS-directory> crates/rendering/tests/fixtures/terrain_perspective_lighting_native.txt
+```
+
 `world_texture_filter_oracle.py` captures 960 native filtering/cache-prefix cases.
 It substitutes the device-capability query and stops before texture-cache lookup
 or allocation. See [world texture sampling](../../docs/architecture/world-texture-sampling.md)

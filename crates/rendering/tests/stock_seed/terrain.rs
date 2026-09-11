@@ -34,6 +34,9 @@ mod lighting;
 #[path = "terrain_texture_coordinates.rs"]
 mod texture_coordinates;
 
+#[path = "terrain_perspective_lighting.rs"]
+mod perspective_lighting;
+
 #[path = "terrain_retirement.rs"]
 mod retirement;
 

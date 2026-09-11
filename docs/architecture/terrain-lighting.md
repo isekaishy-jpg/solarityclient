@@ -76,6 +76,23 @@ permutation using `CE049D`, derived from the specular setting and shader support
   directions, and the enabled/disabled specular permutations. This establishes
   the single-layer shader path; multilayer and combined real-world appearance
   still require validation.
+- `terrain_perspective_lighting_oracle.py`: 12 original D3D9 frames at two
+  camera heights and local/Durotar origins, with three signed-byte normals.
+  Original `7CFBE0`, matrix operations and exterior-light accumulation produce
+  the constants; the Vulkan ADT/BLP test compares covered interior pixels within
+  two RGB byte values. This extends the flat orthographic test to perspective
+  interpolation and native constant production. It does not exercise native
+  world-palette selection or environment shadow casters.
+
+The controlled Valley of Trials scene isolates the conspicuous white patches
+to the specular contribution: disabling glow reduces their amplification;
+disabling specular removes them. These are diagnostic profile copies, not a
+change to the product defaults. A 02:00 replay retains strong highlights.
+The user's saved stock screenshot is a nighttime Orgrimmar-gate scene; the
+earlier combined captures used a different Valley of Trials position at noon.
+They establish coexistence of the implemented features, not a matched stock
+lighting comparison. Native material selection, complete scene inputs and
+environment shadow coverage remain investigation and implementation work.
 
 The original colored regression produced RGB `(6, 23, 54)` where the native
 shader produced `(46, 92, 138)` with the same explicit inputs. This exposed
