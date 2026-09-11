@@ -21,9 +21,16 @@ pub struct M2ParticlePreparedDraw {
     order: M2EffectOrder,
     blend_order: u8,
     scene_order: u32,
+    alpha_reference_bits: u32,
 }
 
 impl M2ParticlePreparedDraw {
+    /// Returns the per-element alpha-test threshold supplied by `81FE90`.
+    #[must_use]
+    pub const fn alpha_reference(self) -> f32 {
+        f32::from_bits(self.alpha_reference_bits)
+    }
+
     /// Selects the world instance scene supplied in `WorldFrameScene`.
     #[must_use]
     pub const fn with_scene_index(mut self, index: Option<u32>) -> Self {
@@ -116,6 +123,7 @@ pub(in crate::device) fn prepare_draw(
     texture_set: M2TextureSetHandle,
     blending_type: u8,
     particle_flags: u32,
+    element_alpha: f32,
     order: M2EffectOrder,
     first_vertex: u32,
     first_index: u32,
@@ -125,7 +133,11 @@ pub(in crate::device) fn prepare_draw(
     let pipeline_info = pipelines
         .info(pipeline)
         .ok_or(VulkanError::UnknownM2ParticlePipelineHandle)?;
-    if pipeline_info.material() != M2MaterialState::from_particle(blending_type, particle_flags) {
+    let mut material = M2MaterialState::from_particle(blending_type, particle_flags);
+    if !material.blend_enabled() && element_alpha < 0.999_99 {
+        material = material.with_runtime_alpha_fade();
+    }
+    if pipeline_info.material() != material {
         return Err(VulkanError::M2ParticleDrawPipelineMismatch);
     }
     let texture_info = texture_sets
@@ -157,5 +169,6 @@ pub(in crate::device) fn prepare_draw(
         order,
         blend_order: blending_type,
         scene_order: u32::MAX,
+        alpha_reference_bits: material.alpha_reference(element_alpha).to_bits(),
     })
 }

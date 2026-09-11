@@ -1,7 +1,10 @@
 #version 460
 
-layout(constant_id = 0) const float PARTICLE_ALPHA_REFERENCE = 0.0;
-layout(constant_id = 1) const int PARTICLE_FOG_MODE = 0;
+layout(constant_id = 0) const int PARTICLE_FOG_MODE = 0;
+
+layout(push_constant) uniform M2ParticleDraw {
+    float alpha_reference;
+} draw;
 
 struct M2LocalLight {
     vec4 position;
@@ -37,7 +40,7 @@ layout(location = 0) out vec4 out_color;
 
 void main() {
     vec4 color = texture(particle_texture, in_tex_coord) * in_color;
-    if (color.a < PARTICLE_ALPHA_REFERENCE) {
+    if (color.a < draw.alpha_reference) {
         discard;
     }
     vec3 result = color.rgb;

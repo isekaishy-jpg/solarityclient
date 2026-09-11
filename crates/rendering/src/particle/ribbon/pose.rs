@@ -20,6 +20,14 @@ pub struct M2RibbonPose {
 }
 
 impl M2RibbonPose {
+    /// Applies `828A00`'s owner alpha before newly emitted edges capture color.
+    /// Existing trail sections retain their previously captured opacity.
+    #[must_use]
+    pub fn with_instance_alpha(mut self, alpha: f32) -> Self {
+        self.color.w *= alpha;
+        self
+    }
+
     /// Samples the emitter through the same local/global sequence routing used
     /// by bones and M2 materials.
     ///

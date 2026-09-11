@@ -125,12 +125,14 @@ fn instance_lighting_grows_independently_of_mesh_draws_and_selects_each_gpu_queu
         camera,
         1.,
     )?;
-    let particle_pipeline = renderer.prepare_m2_particle_pipeline(0, flags)?;
+    let particle_pipeline =
+        renderer.prepare_m2_particle_pipeline(M2MaterialState::from_particle(0, flags))?;
     let particle_draw = renderer.prepare_m2_particle_draw(
         particle_pipeline,
         textures[1],
         0,
         flags,
+        1.0,
         M2EffectOrder::new(0, 0),
         0,
         0,

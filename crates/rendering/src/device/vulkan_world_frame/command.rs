@@ -715,6 +715,13 @@ fn record_particle(
             &sets,
             &[scene_offset],
         );
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &draw.alpha_reference().to_le_bytes(),
+        );
         context.device.cmd_draw_indexed(
             context.command_buffer,
             draw.index_count(),

@@ -33,10 +33,7 @@ impl M2ParticleSpirvCompiler {
             retained_spirv_words(PARTICLE_VERTEX_SPIRV, &PARTICLE_VERTEX_WORDS),
             retained_spirv_words(PARTICLE_FRAGMENT_SPIRV, &PARTICLE_FRAGMENT_WORDS),
             [u32::from(!material.is_unlit())],
-            [
-                material.alpha_reference(1.0).to_bits(),
-                material.fog_mode() as u32,
-            ],
+            [material.fog_mode() as u32],
         ))
     }
 }

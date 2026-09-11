@@ -113,13 +113,13 @@ impl M2MaterialState {
     }
 
     /// Returns stock's pipeline override for a normally opaque material whose
-    /// runtime element alpha has fallen below `0.99999`.
+    /// runtime element alpha has fallen below `0.99999`. Native `81FE90`
+    /// changes the blend table while retaining the material's depth-write bit.
     #[must_use]
     pub const fn with_runtime_alpha_fade(mut self) -> Self {
         self.blend_enabled = true;
         self.source_blend = M2BlendFactor::SourceAlpha;
         self.destination_blend = M2BlendFactor::OneMinusSourceAlpha;
-        self.depth_write_enabled = false;
         self
     }
 

@@ -55,8 +55,9 @@ fallback. The material ABI appends its clip plane at byte 304 (320 bytes total).
 Ribbons select one liquid side. Particle routing uses the original sphere
 classification without the mesh hardware fallback, with authored bit `0x2000`
 forcing pass two. Fully opaque effects remain before either transparent queue.
-Opaque compatible-material grouping and faded opaque-effect shader behavior
-remain separate scene-order/alpha work; this change does not establish those paths.
+Opaque compatible-material grouping remains separate scene-order work. Faded
+particle blend/alpha-test state and ribbon birth opacity are described in
+[M2 effects](m2-effects.md); they retain the liquid routing above.
 
 `model_liquid_oracle.py` captures 972 original `821C8C..821DDA` classification
 cases and 16 complete `8350A0` plane preparations. These are classifier and

@@ -150,6 +150,7 @@ struct M2GpuDraw {
 #[derive(Clone)]
 struct M2GpuParticle {
     pipeline: M2ParticlePipelineHandle,
+    runtime_fade_pipeline: M2ParticlePipelineHandle,
     texture_set: M2TextureSetHandle,
 }
 
@@ -539,32 +540,38 @@ pub(in crate::application) fn prepare_m2_cpu_source(
         let mut particle_compiler = None;
         for emitter in model.animations().particles() {
             let material = M2MaterialState::from_particle(emitter.blending_type(), emitter.flags());
-            if let std::collections::hash_map::Entry::Vacant(entry) =
-                particle_programs.entry(material)
+            for material in std::iter::once(material)
+                .chain((!material.blend_enabled()).then(|| material.with_runtime_alpha_fade()))
             {
-                let cached = match cache_lock.lock() {
-                    Ok(cache) => cache.particles.get(&material).cloned(),
-                    Err(poisoned) => poisoned.into_inner().particles.get(&material).cloned(),
-                };
-                let program = if let Some(program) = cached {
-                    program
-                } else {
-                    let compiler = match particle_compiler.as_ref() {
-                        Some(compiler) => compiler,
-                        None => particle_compiler.insert(M2ParticleSpirvCompiler::new()?),
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    particle_programs.entry(material)
+                {
+                    let cached = match cache_lock.lock() {
+                        Ok(cache) => cache.particles.get(&material).cloned(),
+                        Err(poisoned) => poisoned.into_inner().particles.get(&material).cloned(),
                     };
-                    let program = compiler.compile(material)?;
-                    match cache_lock.lock() {
-                        Ok(mut cache) => cache.particles.entry(material).or_insert(program).clone(),
-                        Err(poisoned) => poisoned
-                            .into_inner()
-                            .particles
-                            .entry(material)
-                            .or_insert(program)
-                            .clone(),
-                    }
-                };
-                entry.insert(program);
+                    let program = if let Some(program) = cached {
+                        program
+                    } else {
+                        let compiler = match particle_compiler.as_ref() {
+                            Some(compiler) => compiler,
+                            None => particle_compiler.insert(M2ParticleSpirvCompiler::new()?),
+                        };
+                        let program = compiler.compile(material)?;
+                        match cache_lock.lock() {
+                            Ok(mut cache) => {
+                                cache.particles.entry(material).or_insert(program).clone()
+                            }
+                            Err(poisoned) => poisoned
+                                .into_inner()
+                                .particles
+                                .entry(material)
+                                .or_insert(program)
+                                .clone(),
+                        }
+                    };
+                    entry.insert(program);
+                }
             }
         }
     }
@@ -3163,6 +3170,17 @@ impl M2Frame {
                 .unit_effect
                 .as_ref()
                 .is_some_and(|effect| effect.retiring());
+            let mut instance_color = placement_mesh_color(placement.owner, placement.color);
+            if let Some(animation) = &placement.unit_animation {
+                instance_color *= placement_color(animation.model_color().to_le_bytes());
+            } else if let Some(pose) = placement
+                .retirement
+                .as_ref()
+                .and_then(|retired| retired.unit_pose)
+            {
+                instance_color *= placement_color(pose.color.to_le_bytes());
+            }
+            instance_color.w *= placement_opacity;
             if placement.particles.len() != source.model.animations().particles().len() {
                 return Err(RuntimeTerrainFrameError::M2ParticleSimulationCount {
                     model: source.model.path().clone(),
@@ -3277,8 +3295,7 @@ impl M2Frame {
                         camera,
                         particle_to_world,
                         inherited_scale,
-                        placement_mesh_color(placement.owner, placement.color).w
-                            * placement_opacity,
+                        instance_color.w,
                         &self.particle_twinkle,
                         placement.particle_colors.as_ref(),
                         &mut self.particle_sort_indices,
@@ -3289,10 +3306,15 @@ impl M2Frame {
                     .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
                 let prepared = renderer
                     .prepare_m2_particle_draw_range(
-                        resources.pipeline,
+                        if instance_color.w < 0.999_99 {
+                            resources.runtime_fade_pipeline
+                        } else {
+                            resources.pipeline
+                        },
                         resources.texture_set,
                         emitter.blending_type(),
                         emitter.flags(),
+                        instance_color.w,
                         M2EffectOrder::new(emitter.priority_plane(), effect_order),
                         first_vertex,
                         first_index,
@@ -3305,10 +3327,8 @@ impl M2Frame {
                 let opaque =
                     !M2MaterialState::from_particle(emitter.blending_type(), emitter.flags())
                         .blend_enabled()
-                        && M2ElementAlphaState::classify(
-                            placement_mesh_color(placement.owner, placement.color).w
-                                * placement_opacity,
-                        ) == M2ElementAlphaState::Authored;
+                        && M2ElementAlphaState::classify(instance_color.w)
+                            == M2ElementAlphaState::Authored;
                 let order = scene_element_count(
                     self.visible_draws.len(),
                     self.particle_draws.len(),
@@ -3356,22 +3376,12 @@ impl M2Frame {
                 clock,
                 effect_delta_seconds,
                 effect_scale,
+                instance_color.w,
             )?;
             if !has_shadow_bones {
                 self.bone_transforms
                     .extend_from_slice(bone_pose.transforms());
             }
-            let mut instance_color = placement_mesh_color(placement.owner, placement.color);
-            if let Some(animation) = &placement.unit_animation {
-                instance_color *= placement_color(animation.model_color().to_le_bytes());
-            } else if let Some(pose) = placement
-                .retirement
-                .as_ref()
-                .and_then(|retired| retired.unit_pose)
-            {
-                instance_color *= placement_color(pose.color.to_le_bytes());
-            }
-            instance_color.w *= placement_opacity;
             if let Some(mesh) = source.mesh
                 && !effect_retiring
             {
@@ -4131,6 +4141,7 @@ fn advance_ribbons(
     clock: M2AnimationClock,
     delta_seconds: f32,
     effect_scale: M2CameraEffectScale,
+    instance_alpha: f32,
 ) -> Result<(), RuntimeTerrainFrameError> {
     let emitters = model.animations().ribbons();
     if placement.ribbons.len() != emitters.len() {
@@ -4163,7 +4174,8 @@ fn advance_ribbons(
             transform.y_axis.truncate() * effect_scale.factor(),
             transform.z_axis.truncate(),
         );
-        let pose = M2RibbonPose::sample(model.animations(), emitter, clock)?;
+        let pose = M2RibbonPose::sample(model.animations(), emitter, clock)?
+            .with_instance_alpha(instance_alpha);
         trail.advance(delta_seconds, control, pose)?;
     }
     Ok(())
@@ -4542,30 +4554,46 @@ fn prepare_gpu_source_with_plan(
         let texture = require_texture_handle(model, textures, &texture_handles, texture_slot)?;
         let sampler = renderer.prepare_m2_file_sampler(&model.textures()[texture_slot])?;
         let material = M2MaterialState::from_particle(emitter.blending_type(), emitter.flags());
-        particle_pipelines.push(match cpu_source {
-            Some(cpu_source) => {
-                let program = cpu_source.particle_programs.get(&material).ok_or_else(|| {
-                    RuntimeTerrainFrameError::M2CpuProgram {
-                        model: model.path().clone(),
-                        domain: "particle",
+        let mut prepare_pipeline =
+            |material| -> Result<M2ParticlePipelineHandle, RuntimeTerrainFrameError> {
+                match cpu_source {
+                    Some(cpu_source) => {
+                        let program =
+                            cpu_source.particle_programs.get(&material).ok_or_else(|| {
+                                RuntimeTerrainFrameError::M2CpuProgram {
+                                    model: model.path().clone(),
+                                    domain: "particle",
+                                }
+                            })?;
+                        renderer
+                            .prepare_precompiled_m2_particle_pipeline(program)
+                            .map_err(Into::into)
                     }
-                })?;
-                renderer.prepare_precompiled_m2_particle_pipeline(program)?
-            }
-            None => {
-                renderer.prepare_m2_particle_pipeline(emitter.blending_type(), emitter.flags())?
-            }
-        });
+                    None => renderer
+                        .prepare_m2_particle_pipeline(material)
+                        .map_err(Into::into),
+                }
+            };
+        let pipeline = prepare_pipeline(material)?;
+        let runtime_fade_pipeline = if material.blend_enabled() {
+            pipeline
+        } else {
+            prepare_pipeline(material.with_runtime_alpha_fade())?
+        };
+        particle_pipelines.push((pipeline, runtime_fade_pipeline));
         particle_texture_requests.push(M2TextureSet::One(sampled_texture(texture, sampler)));
     }
     let particle_texture_sets = renderer.prepare_m2_texture_sets(&particle_texture_requests)?;
     let particles = particle_pipelines
         .into_iter()
         .zip(particle_texture_sets)
-        .map(|(pipeline, texture_set)| M2GpuParticle {
-            pipeline,
-            texture_set,
-        })
+        .map(
+            |((pipeline, runtime_fade_pipeline), texture_set)| M2GpuParticle {
+                pipeline,
+                runtime_fade_pipeline,
+                texture_set,
+            },
+        )
         .collect();
     let mut ribbons = Vec::with_capacity(model.animations().ribbons().len());
     for emitter in model.animations().ribbons() {

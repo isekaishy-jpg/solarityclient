@@ -1834,8 +1834,7 @@ impl VulkanRenderer {
     /// compilation, handle exhaustion, or graphics-pipeline creation failure.
     pub fn prepare_m2_particle_pipeline(
         &mut self,
-        blending_type: u8,
-        particle_flags: u32,
+        material: crate::M2MaterialState,
     ) -> Result<M2ParticlePipelineHandle, VulkanError> {
         let scene_set = self.m2_pipelines.frame_set_layouts(&self.device)?[0];
         let texture_set = self.m2_pipelines.texture_set_layout(&self.device)?;
@@ -1846,7 +1845,7 @@ impl VulkanRenderer {
             self.depth_format,
             scene_set,
             texture_set,
-            crate::M2MaterialState::from_particle(blending_type, particle_flags),
+            material,
         )
     }
 
@@ -1895,6 +1894,7 @@ impl VulkanRenderer {
         texture_set: M2TextureSetHandle,
         blending_type: u8,
         particle_flags: u32,
+        element_alpha: f32,
         order: M2EffectOrder,
         first_vertex: u32,
         first_index: u32,
@@ -1905,6 +1905,7 @@ impl VulkanRenderer {
             texture_set,
             blending_type,
             particle_flags,
+            element_alpha,
             order,
             first_vertex,
             first_index,
@@ -1926,6 +1927,7 @@ impl VulkanRenderer {
         texture_set: M2TextureSetHandle,
         blending_type: u8,
         particle_flags: u32,
+        element_alpha: f32,
         order: M2EffectOrder,
         first_vertex: u32,
         first_index: u32,
@@ -1939,6 +1941,7 @@ impl VulkanRenderer {
             texture_set,
             blending_type,
             particle_flags,
+            element_alpha,
             order,
             first_vertex,
             first_index,

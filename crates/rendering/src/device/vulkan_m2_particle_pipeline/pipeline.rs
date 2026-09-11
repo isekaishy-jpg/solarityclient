@@ -29,7 +29,13 @@ impl M2ParticlePipelineLayout {
             return Ok(());
         }
         let sets = [scene_set, texture_set];
-        let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&sets);
+        let constants = [vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .offset(0)
+            .size(4)];
+        let info = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&sets)
+            .push_constant_ranges(&constants);
         // SAFETY: Both borrowed layouts remain owned by the M2 registry until
         // after this particle layout is destroyed.
         self.handle = unsafe { device.create_pipeline_layout(&info, None) }.map_err(|source| {
@@ -73,7 +79,7 @@ pub(super) fn create_pipeline(
         .map_entries(&vertex_entries)
         .data(&vertex_data);
     let fragment_data = specialization_bytes(&program.fragment_specialization());
-    let fragment_entries = specialization_entries(2);
+    let fragment_entries = specialization_entries(1);
     let fragment_specialization = vk::SpecializationInfo::default()
         .map_entries(&fragment_entries)
         .data(&fragment_data);

@@ -19,8 +19,11 @@ one enters the transparent queues. Runtime element alpha below `0.99999` also pr
 otherwise opaque unit into transparent handling. The inherited liquid state
 selects pass one, pass two, or two clipped mesh copies as described in
 [liquid presentation](liquid-rendering.md). Such an authored non-blended layer uses
-`SRC_ALPHA/ONE_MINUS_SRC_ALPHA` blending and stops writing depth; its shader
-and authored alpha-test behavior do not change.
+`SRC_ALPHA/ONE_MINUS_SRC_ALPHA` blending while retaining its authored depth-write
+bit. The common material setup at `81FE90` scales an alpha-key reference by
+element alpha. Particle submission shares that setup. Ribbon submission later
+restores its authored blend/depth state and static GX alpha reference; see
+[M2 effects](m2-effects.md).
 
 SKIN flags `0x1` and `0x2` replace the ordinary transformed section-center
 distance with the near or far edge of its animated sorting sphere. The key is
@@ -55,8 +58,11 @@ The runtime shares transparent mesh/effect order across resident world M2
 placements and performs mesh runtime-alpha pipeline promotion. Translucent
 meshes, ribbons and particles use their stock liquid-side rules; fully opaque
 effects stay before water. Pass-zero work retains collection order until its
-compatible grouping comparator is implemented. Opaque-effect alpha promotion
-still needs its separate shader/depth-state reconciliation.
+compatible grouping comparator is implemented. Faded opaque/alpha-key particles
+select a retained blend variant and supply their current alpha-test reference
+per draw. Ribbon edge colors include owner alpha when created and preserve it
+through their history; their draw material remains authored. Native submission
+state, particle GPU pixels, and runtime ribbon histories cover these distinctions.
 
 The local player's body is another placement in this same M2 frame. It shares
 the decoded M2/SKIN mesh and archive-backed hardcoded BLP identities while

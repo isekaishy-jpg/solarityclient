@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, OnceLock};
 
+use solarity_asset::M2BlendMode;
+
 use super::source::{RIBBON_FRAGMENT_SPIRV, RIBBON_VERTEX_SPIRV};
 use super::{M2RibbonSpirvError, M2RibbonSpirvProgram};
 use crate::M2MaterialState;
@@ -32,7 +34,15 @@ impl M2RibbonSpirvCompiler {
             material,
             retained_spirv_words(RIBBON_VERTEX_SPIRV, &RIBBON_VERTEX_WORDS),
             retained_spirv_words(RIBBON_FRAGMENT_SPIRV, &RIBBON_FRAGMENT_WORDS),
-            [material.alpha_reference(1.0).to_bits()],
+            // Ribbon submission restores GX's static alpha reference through
+            // 873EE0. GX blend 10 has no alpha test; alpha-key uses the byte
+            // reference multiplied by GX's reciprocal (without owner alpha).
+            [match material.blend_mode() {
+                M2BlendMode::Opaque | M2BlendMode::NoAlphaAdd => 0.0f32,
+                M2BlendMode::AlphaKey => 224.0 * (1.0f32 / 255.0),
+                _ => 1.0f32 / 255.0,
+            }
+            .to_bits()],
         ))
     }
 }

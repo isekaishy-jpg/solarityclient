@@ -198,6 +198,15 @@ same dynamic-rendering scope and depth attachment as terrain, WMO, and M2
 bodies. The scene descriptor is shared with M2 presentation; each parallel
 material/texture entry becomes one stock-ordered strip pass.
 
+Owner alpha is multiplied into the sampled ribbon alpha before new edges are
+created, matching `828A00` and `97FBA0`. `980090` retains the packed color of
+older edges, so changing owner opacity does not recolor the trail's history.
+The runtime includes both placement opacity and the animated model color alpha.
+Ribbon submission at `980B70` restores each retained material's authored blend,
+depth, and static alpha-test states after the common scene setup. Alpha-key
+uses GX's `224 * (1 / 255)` reference without owner scaling; no-alpha-add uses
+zero. Ribbons therefore do not select the mesh/particle fade pipeline.
+
 The executable indexes the material-state and texture-pointer arrays in
 lockstep while drawing. Admission therefore requires equal array lengths
 instead of dropping extra entries or substituting pass zero.
@@ -278,7 +287,26 @@ table rather than treating the authored byte as a root-material blend id.
 Selectors `0`, `1`, `2`, `3`, `4`, `5`, and `10` map to opaque, alpha-key,
 alpha, no-alpha-add, alpha-add, modulate, and no-alpha-add respectively; the
 stock default branch is opaque. Every particle is two-sided and depth-tested.
-Low emitter flags independently enable lighting, fog, and depth writes.
+Low emitter flags independently enable lighting and fog. The synthesized blend
+mode enables depth writes only for opaque and alpha-key particles. Their faded
+draws use the common `81FE90` source-alpha blend override while retaining that
+depth-write bit. Alpha-key reference scales with the complete owner alpha,
+including placement opacity and animated model color. The renderer retains
+both pipeline variants and pushes the reference separately for each draw.
+
+`tools/ghidra/effect_material_oracle.py` runs unmodified common and ribbon
+submission blocks and their GX helpers for 315 material/pass/alpha inputs.
+Decoded-material tests compare the resulting blend, depth, cull and alpha-test
+states, including the ribbon shader specialization. The capture supplies the
+ribbon's decoded runtime material record; it does not execute model construction,
+texture binding or GPU submission. A separate Vulkan test checks faded opaque
+and alpha-key particle blending, alpha discard and retained depth writes using
+overlapping cards. The runtime liquid fixture checks old and newly created
+ribbon edge alpha across owner-opacity changes.
+
+The 2026-09-11 opacity change passes workspace Clippy with warnings denied and
+all 1,313 workspace tests (23 explicit environment-dependent tests ignored).
+These controlled checks do not establish complete populated-world effect parity.
 
 ### Attached particle card size
 

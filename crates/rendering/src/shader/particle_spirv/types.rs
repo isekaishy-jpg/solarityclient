@@ -11,7 +11,7 @@ pub struct M2ParticleSpirvProgram {
     vertex_words: Arc<[u32]>,
     fragment_words: Arc<[u32]>,
     vertex_specialization: [u32; 1],
-    fragment_specialization: [u32; 2],
+    fragment_specialization: [u32; 1],
 }
 
 impl M2ParticleSpirvProgram {
@@ -20,7 +20,7 @@ impl M2ParticleSpirvProgram {
         vertex_words: Arc<[u32]>,
         fragment_words: Arc<[u32]>,
         vertex_specialization: [u32; 1],
-        fragment_specialization: [u32; 2],
+        fragment_specialization: [u32; 1],
     ) -> Self {
         Self {
             material,
@@ -55,9 +55,9 @@ impl M2ParticleSpirvProgram {
         self.vertex_specialization
     }
 
-    /// Returns the stock alpha-reference and fog specializations.
+    /// Returns the stock fog specialization; alpha reference varies per draw.
     #[must_use]
-    pub const fn fragment_specialization(&self) -> [u32; 2] {
+    pub const fn fragment_specialization(&self) -> [u32; 1] {
         self.fragment_specialization
     }
 }

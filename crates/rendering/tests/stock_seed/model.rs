@@ -2,6 +2,8 @@
 
 #[path = "model/body_pose.rs"]
 mod body_pose;
+#[path = "model/effect_opacity.rs"]
+mod effect_opacity;
 #[path = "model/file_filtering.rs"]
 mod file_filtering;
 #[path = "model/mesh_transfer.rs"]
@@ -3381,10 +3383,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
     let particle_program = M2ParticleSpirvCompiler::new()?.compile(particle_material)?;
     let particle_pipeline = renderer.prepare_precompiled_m2_particle_pipeline(&particle_program)?;
     assert_eq!(
-        renderer.prepare_m2_particle_pipeline(
-            particle_emitter.blending_type(),
-            particle_emitter.flags(),
-        )?,
+        renderer.prepare_m2_particle_pipeline(particle_material)?,
         particle_pipeline
     );
     assert_eq!(
@@ -3418,6 +3417,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         texture_sets[1],
         particle_emitter.blending_type(),
         particle_emitter.flags(),
+        1.0,
         M2EffectOrder::new(particle_emitter.priority_plane(), 0),
         0,
         0,
@@ -3445,6 +3445,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
             texture_sets[0],
             particle_emitter.blending_type(),
             particle_emitter.flags(),
+            1.0,
             M2EffectOrder::new(particle_emitter.priority_plane(), 0),
             0,
             0,

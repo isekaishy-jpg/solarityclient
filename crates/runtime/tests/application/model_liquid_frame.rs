@@ -231,6 +231,18 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
             ribbons.sort_by_key(|draw| draw.first_vertex());
             assert_eq!(ribbons.len(), 2);
             for (index, ribbon) in ribbons.iter().enumerate() {
+                let vertices = &visible.ribbon_vertices[ribbon.first_vertex() as usize..]
+                    [..ribbon.vertex_count() as usize];
+                assert_eq!(
+                    vertices.first().ok_or("old ribbon edge")?.color_bgra()[3],
+                    128,
+                    "retained edges keep their original owner opacity"
+                );
+                assert_eq!(
+                    vertices.last().ok_or("live ribbon edge")?.color_bgra()[3],
+                    alpha,
+                    "new edges receive the current owner opacity"
+                );
                 let before = if index == 1 && alpha == 255 {
                     true
                 } else {

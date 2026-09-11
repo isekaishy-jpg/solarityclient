@@ -7,9 +7,10 @@ use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureSource, ClientDataRoot, DecodedM2Model, Locale,
 };
 use solarity_rendering::{
-    BlpColorSpace, M2AnimationClock, M2EffectOrder, M2LocalLightState, M2ParticleMeshPlan,
-    M2ParticlePose, M2ParticleState, M2SampledTexture, M2SceneUniform, M2TextureSet,
-    TerrainSceneUniform, VulkanBootstrap, WorldCamera, WorldFrameScene, WorldModelSceneUniform,
+    BlpColorSpace, M2AnimationClock, M2EffectOrder, M2LocalLightState, M2MaterialState,
+    M2ParticleMeshPlan, M2ParticlePose, M2ParticleState, M2SampledTexture, M2SceneUniform,
+    M2TextureSet, TerrainSceneUniform, VulkanBootstrap, WorldCamera, WorldFrameScene,
+    WorldModelSceneUniform,
 };
 
 use super::{m2_array_offset, render_m2_bytes, render_skin_bytes, solid_raw3_blp};
@@ -108,7 +109,8 @@ fn particle_framebuffer_uses_stock_depth_and_fog_exponent() -> Result<(), Box<dy
         let camera = camera.frame(1.0)?;
         for shaded in [false, true] {
             let material_flags = flags | if shaded { 0 } else { 1 };
-            let pipeline = renderer.prepare_m2_particle_pipeline(0, material_flags)?;
+            let pipeline = renderer
+                .prepare_m2_particle_pipeline(M2MaterialState::from_particle(0, material_flags))?;
             for (exponent, visibility) in [(1.0, 0.5), (2.0, 0.25)] {
                 for lateral in [0.0, 3.0] {
                     let center = eye + Vec3::new(10.0, lateral, 0.0);
@@ -120,6 +122,7 @@ fn particle_framebuffer_uses_stock_depth_and_fog_exponent() -> Result<(), Box<dy
                         texture_set,
                         0,
                         material_flags,
+                        1.0,
                         M2EffectOrder::new(0, 0),
                         0,
                         0,
