@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use solarity_cpu::{CpuExecutor, CpuTask};
+use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{CapturedFrame, VulkanRenderer};
 
 /// Settings and originating UI domain retained until completion.
@@ -91,12 +91,25 @@ impl RuntimeScreenshots {
             });
         }
         if let Some(request) = self.capturing {
+            // Keep the completed GPU capture owned by the renderer until an
+            // encoder slot is actually reserved. Full queues are temporary;
+            // consuming the frame into a rejected closure would lose it.
+            let permit = match cpu.try_reserve() {
+                Ok(permit) => permit,
+                Err(CpuError::AtCapacity { .. }) => return None,
+                Err(error) => {
+                    self.capturing = None;
+                    return Some(ScreenshotCompletion {
+                        world: request.world,
+                        result: Err(error.to_string()),
+                    });
+                }
+            };
             let result = match renderer.take_captured_frame() {
                 Ok(None) => return None,
                 Ok(Some(frame)) => {
                     let directory = self.directory.clone();
-                    cpu.try_submit(move || write_screenshot(&directory, &frame, request))
-                        .map_err(|e| e.to_string())
+                    Ok(permit.submit(move || write_screenshot(&directory, &frame, request)))
                 }
                 Err(error) => Err(error.to_string()),
             };

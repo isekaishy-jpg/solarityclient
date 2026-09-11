@@ -346,9 +346,13 @@ impl RuntimeTerrainCoordinator {
             .map(map_id)
             .cloned()
             .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
+        let permit = match cpu.try_reserve() {
+            Ok(permit) => permit,
+            Err(CpuError::AtCapacity { .. }) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
         let source = self.take_worker_source()?;
-        let task =
-            cpu.try_submit(move || prepare_terrain_on_worker(source, definition, request))?;
+        let task = permit.submit(move || prepare_terrain_on_worker(source, definition, request));
         self.pending = Some(PendingTerrainGeneration {
             request,
             submitted_at: std::time::Instant::now(),
@@ -524,9 +528,13 @@ impl RuntimeTerrainCoordinator {
             .map(map_id)
             .cloned()
             .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
+        let permit = match cpu.try_reserve() {
+            Ok(permit) => permit,
+            Err(CpuError::AtCapacity { .. }) => return Ok(RuntimeTerrainPoll::Pending { map_id }),
+            Err(error) => return Err(error.into()),
+        };
         let source = self.take_worker_source()?;
-        let task =
-            cpu.try_submit(move || prepare_terrain_on_worker(source, definition, request))?;
+        let task = permit.submit(move || prepare_terrain_on_worker(source, definition, request));
         self.pending = Some(PendingTerrainGeneration {
             request,
             submitted_at: std::time::Instant::now(),

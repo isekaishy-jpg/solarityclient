@@ -79,10 +79,21 @@ impl RuntimeUnitEffects {
                 .ok_or(ApplicationError::UnitEffectPreparationFailed)?
             {
                 Sources::Deferred(catalog) if cpu.can_admit_speculative()? => {
-                    let environmental = Arc::clone(&self.environmental);
-                    Sources::Running(cpu.try_submit(move || {
-                        ResidentUnitEffect::load(&mut AssetStore::mount(catalog)?, &environmental)
-                    })?)
+                    match cpu.try_reserve() {
+                        Ok(permit) => {
+                            let environmental = Arc::clone(&self.environmental);
+                            Sources::Running(permit.submit(move || {
+                                ResidentUnitEffect::load(
+                                    &mut AssetStore::mount(catalog)?,
+                                    &environmental,
+                                )
+                            }))
+                        }
+                        Err(solarity_cpu::CpuError::AtCapacity { .. }) => {
+                            Sources::Deferred(catalog)
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 Sources::Running(task) if task.is_finished() => {
                     Sources::Warming(Box::new(M2UnitEffectWarmup::new(task.join()??)))

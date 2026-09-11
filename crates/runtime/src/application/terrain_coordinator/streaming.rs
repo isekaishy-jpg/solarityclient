@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use glam::Vec3;
 use solarity_asset::{DecodedTerrainTile, TerrainTileIndex};
-use solarity_cpu::CpuExecutor;
+use solarity_cpu::{CpuError, CpuExecutor};
 use solarity_systems::{TerrainStreamingWindow, prioritize_terrain_tiles};
 
 use super::{
@@ -150,10 +150,17 @@ impl RuntimeTerrainCoordinator {
                 .map(map_id)
                 .cloned()
                 .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
+            let permit = match cpu.try_reserve() {
+                Ok(permit) => permit,
+                Err(CpuError::AtCapacity { .. }) => {
+                    return Ok(RuntimeTerrainStreamPoll::Pending { remaining_tiles });
+                }
+                Err(error) => return Err(error.into()),
+            };
             let source = self.take_worker_source()?;
             let request = TerrainRequest { map_id, tile };
             let task =
-                cpu.try_submit(move || prepare_terrain_on_worker(source, definition, request))?;
+                permit.submit(move || prepare_terrain_on_worker(source, definition, request));
             self.pending_stream = Some(PendingTerrainGeneration {
                 request,
                 submitted_at: Instant::now(),

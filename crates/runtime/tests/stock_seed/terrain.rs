@@ -259,6 +259,14 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
     ))?;
     let (release, wait) = std::sync::mpsc::channel();
     let blocker = cpu.try_submit(move || wait.recv())?;
+    let full_a = cpu.try_reserve()?;
+    let full_b = cpu.try_reserve()?;
+    assert_eq!(
+        terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
+        RuntimeTerrainStreamPoll::Pending { remaining_tiles: 1 }
+    );
+    assert!(terrain.resident_tile_at(second).is_none());
+    drop((full_a, full_b));
     assert_eq!(
         terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
         RuntimeTerrainStreamPoll::Pending { remaining_tiles: 1 }
@@ -1070,6 +1078,14 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
         NonZeroUsize::MIN,
         NonZeroUsize::new(2).ok_or("invalid admission bound")?,
     ))?;
+    let full_a = cpu.try_reserve()?;
+    let full_b = cpu.try_reserve()?;
+    assert!(!terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
+    assert_eq!(
+        terrain.synchronize_async(Some(&world), &cpu)?,
+        RuntimeTerrainPoll::Pending { map_id: 571 }
+    );
+    drop((full_a, full_b));
     assert!(terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert!(!terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert_eq!(

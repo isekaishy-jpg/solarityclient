@@ -8,7 +8,7 @@ use std::sync::mpsc::sync_channel;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::pool::task::TaskOutcome;
-use crate::pool::worker::SharedExecutorState;
+use crate::pool::worker::{SharedExecutorState, WorkerLease};
 use crate::pool::{CpuError, CpuPoolConfig, CpuPoolSnapshot, CpuTask};
 
 /// The application-owned pool for finite CPU-intensive work.
@@ -62,26 +62,22 @@ impl CpuExecutor {
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        let lease = self.state.reserve()?;
+        Ok(self.try_reserve()?.submit(operation))
+    }
+
+    /// Reserves admission before the caller transfers ownership of task inputs.
+    /// Dropping an unused permit immediately returns its capacity. This lets
+    /// interactive producers retry saturation without losing captured frames or
+    /// already prepared asset state inside a rejected closure.
+    ///
+    /// # Errors
+    /// Returns the same admission errors as [`Self::try_submit`].
+    pub fn try_reserve(&self) -> Result<CpuTaskPermit<'_>, CpuError> {
         let pool = self.pool.as_ref().ok_or(CpuError::ShuttingDown)?;
-        let (sender, receiver) = sync_channel(1);
-        let finished = Arc::new(AtomicBool::new(false));
-        let finished_by_worker = Arc::clone(&finished);
-
-        pool.spawn_fifo(move || {
-            let outcome = match catch_unwind(AssertUnwindSafe(operation)) {
-                Ok(value) => TaskOutcome::Completed(value),
-                Err(_panic_payload) => TaskOutcome::Panicked,
-            };
-            // Completion releases admission before publishing the result. A
-            // joining observer must never receive the value while a lifecycle
-            // snapshot can still count its work as running or queued.
-            drop(lease);
-            finished_by_worker.store(true, Ordering::Release);
-            let _completion_observed = sender.send(outcome);
-        });
-
-        Ok(CpuTask::new(receiver, finished))
+        Ok(CpuTaskPermit {
+            pool,
+            lease: self.state.reserve()?,
+        })
     }
 
     /// Returns the fixed number of private worker threads.
@@ -133,6 +129,39 @@ impl CpuExecutor {
         self.state.stop_and_wait()?;
         drop(self.pool.take());
         Ok(())
+    }
+}
+
+/// One reserved CPU task slot, borrowing the executor until submission.
+/// Its lease also counts toward the running-plus-queued capacity bound.
+pub struct CpuTaskPermit<'executor> {
+    pool: &'executor ThreadPool,
+    lease: WorkerLease,
+}
+
+impl CpuTaskPermit<'_> {
+    /// Transfers the admitted operation to the executor's FIFO queue.
+    /// Admission cannot fail after the caller relinquishes its inputs.
+    pub fn submit<F, T>(self, operation: F) -> CpuTask<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let Self { pool, lease } = self;
+        let (sender, receiver) = sync_channel(1);
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_by_worker = Arc::clone(&finished);
+        pool.spawn_fifo(move || {
+            let outcome = match catch_unwind(AssertUnwindSafe(operation)) {
+                Ok(value) => TaskOutcome::Completed(value),
+                Err(_panic_payload) => TaskOutcome::Panicked,
+            };
+            // Publish completion only after returning admission capacity.
+            drop(lease);
+            finished_by_worker.store(true, Ordering::Release);
+            let _completion_observed = sender.send(outcome);
+        });
+        CpuTask::new(receiver, finished)
     }
 }
 

@@ -35,6 +35,31 @@ fn submitted_task_returns_its_owned_result() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+fn reserved_admission_keeps_inputs_with_the_producer_until_submission() -> Result<(), Box<dyn Error>>
+{
+    let mut executor = CpuExecutor::new(config(1, 1))?;
+    let permit = executor.try_reserve()?;
+    assert_eq!(executor.snapshot()?.in_flight(), 1);
+    let input = String::from("retained input");
+    assert!(matches!(
+        executor.try_reserve(),
+        Err(CpuError::AtCapacity { .. })
+    ));
+    assert_eq!(input, "retained input");
+    drop(permit);
+    assert_eq!(executor.snapshot()?.in_flight(), 0);
+    let task = executor.try_reserve()?.submit(move || input);
+    assert_eq!(task.join()?, "retained input");
+    assert_eq!(executor.snapshot()?.in_flight(), 0);
+    executor.shutdown()?;
+    assert!(matches!(
+        executor.try_reserve(),
+        Err(CpuError::ShuttingDown)
+    ));
+    Ok(())
+}
+
 /// Capacity rejection is immediate and does not enqueue hidden work.
 #[test]
 fn in_flight_bound_applies_to_running_and_queued_work() -> Result<(), Box<dyn Error>> {

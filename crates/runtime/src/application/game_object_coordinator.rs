@@ -408,6 +408,11 @@ impl RuntimeGameObjectPresentation {
             if transport_request != Some(&request) && !cpu.can_admit_speculative()? {
                 return Ok(self.poll_transport());
             }
+            let permit = match cpu.try_reserve() {
+                Ok(permit) => permit,
+                Err(solarity_cpu::CpuError::AtCapacity { .. }) => return Ok(self.poll_transport()),
+                Err(error) => return Err(error.into()),
+            };
             let source = if let Some(worker) = self.worker.take() {
                 GameObjectWorkerSource::Ready(worker)
             } else {
@@ -419,7 +424,7 @@ impl RuntimeGameObjectPresentation {
                 )
             };
             let task_request = request.clone();
-            let task = cpu.try_submit(move || prepare_on_worker(source, &task_request))?;
+            let task = permit.submit(move || prepare_on_worker(source, &task_request));
             self.pending = Some(PendingGeneration {
                 request,
                 eligible: true,

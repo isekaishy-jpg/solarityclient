@@ -109,6 +109,29 @@ fn screenshot_saves_the_completed_gpu_frame_and_reports_io_failure() -> Result<(
         2
     );
 
+    // Occupy the only worker/admission slot until after GPU capture. Saturation
+    // must retain the captured image and request, without emitting a failure or
+    // replacing it with a later frame when the encoder can finally run.
+    let (release, blocked_worker) = std::sync::mpsc::sync_channel::<()>(1);
+    let busy = cpu.try_submit(move || blocked_worker.recv())?;
+    screenshots.request(ScreenshotRequest::new(true, "tga", "10"));
+    assert!(screenshots.poll(&mut renderer, &cpu).is_none());
+    renderer.present_rgba8(extent, &pixels)?;
+    for _ in 0..3 {
+        assert!(screenshots.poll(&mut renderer, &cpu).is_none());
+        assert!(screenshots.capturing.is_some());
+        assert!(screenshots.writing.is_none());
+        renderer.present_clear([extent.0 as f32, extent.1 as f32])?;
+    }
+    release.send(())?;
+    busy.join()??;
+    let completion = wait_for_save(&mut screenshots, &mut renderer, &cpu)?;
+    assert!(completion.world);
+    assert_eq!(
+        image::open(completion.result?)?.to_rgba8().as_raw(),
+        &pixels
+    );
+
     // Existing files are preserved even when captures use the same local second.
     renderer.request_frame_capture()?;
     renderer.present_rgba8(extent, &pixels)?;

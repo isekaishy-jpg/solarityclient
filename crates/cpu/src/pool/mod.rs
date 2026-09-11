@@ -9,6 +9,6 @@ mod task;
 mod types;
 mod worker;
 
-pub use executor::CpuExecutor;
+pub use executor::{CpuExecutor, CpuTaskPermit};
 pub use task::CpuTask;
 pub use types::{CpuError, CpuPoolConfig, CpuPoolSnapshot};
