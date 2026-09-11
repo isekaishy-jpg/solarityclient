@@ -297,12 +297,12 @@ evidence above.
 
 ## Testing package
 
-Build **000099** (`0.0.3a`) installs source revision
-`bebfaa6576034a8b5ef83e5240ae98ddfb817901` through the persistent Testing launcher.
+Build **000100** (`0.0.3a`) installs source revision
+`a1ff09e4bf11e44095ec57ff4e4a9d242699d808` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`769227fda408d759f8ba881d0cf86df1a8fd7ac3d099caf588a99adb3a2a3be6`.
+`d56e0e1b3c5382d550af392eeca48e3dde50ce30a779183b849d9cd3d8d6e7a7`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
 passenger frames, final local/remote world projection and settled animated
 seats with mounted riders and shared lighting/shadow/sorting ancestry. Remote
@@ -320,16 +320,23 @@ Unit authored effect construction now occurs inside the shared callback scan,
 before the next callback or unit model. Attachment subtrees retain native
 traversal order; seat queries sample timers without consuming callbacks and
 attached callback poses refresh after parent updates.
+Mounts now construct native default primaries and retain native timers through
+movement updates. Their authored events dispatch before the rider, preserving
+mount event positions while resolving breath attachments through the unit body.
 
-This package passes 1,260 locked workspace tests with 23 archive-dependent
-tests ignored; runtime passes 297 with 18 ignored. Three explicit stock archive
+This package passes 1,262 locked workspace tests with 23 archive-dependent
+tests ignored; runtime passes 299 with 18 ignored. Three explicit stock archive
 tests also pass, covering character movement, jump variations and drowning/death
 playback, plus the stock water-effect prepare/simulate/retire test. Native scene
 traversal matches 480 captured cases; a GPU regression checks callback ordering
-and current moved positions for offscreen units.
+and current moved positions for offscreen units. Another 48 original-instruction
+cases verify body/mount effect-factory binding; renderer checks use distinct
+mount/body event points and opposite breath attachments. Mount timer tests retain
+weighted selections and replace constructor fallback modes for forward movement.
 Workspace/all-target Clippy with warnings denied, formatting and
 whitespace checks pass. Vehicle active mover selection, active spell/control
 providers, transfer lifecycle, special cameras and combined live travel remain
-open. Generic model event consumers, native scene registration order and sound
-callback age remain separate integration work.
+open. Higher-level mount completion and movement/action policy, generic model
+event consumers, native scene registration order and sound callback age remain
+separate integration work.
 This package does not establish a performance improvement or the 1,200 FPS target.
