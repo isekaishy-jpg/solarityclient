@@ -222,15 +222,25 @@ pub(super) fn prepare_mount_gpu(
             M2LocalLightCount::Four,
             M2ModelOrientation::Authored,
         )?;
-        let mut placement = unit_gpu_placement(
+        // 73D5D0 first constructs the mount through 81F8F0. Its default
+        // sequence owns native timers and weighted/cycle rolls before movement.
+        let mut placement = default_gpu_placement(
             scene_time_ms,
             world_transform,
             owner,
             mount.model(),
-            mount.animation().animation_id(),
+            &frame.animations,
             mount.particle_colors().cloned(),
             random,
         )?;
+        if let Some(playback) = &mut placement.playback {
+            playback.borrow_mut().select_mount_animation(
+                mount.model(),
+                mount.animation().animation_id(),
+                scene_time_ms,
+                random,
+            )?;
+        }
         placement.ground_placement = ground;
         placement.mount_key = Some(mount.key().clone());
         // Parent-first insertion lets the current mount bone pose determine

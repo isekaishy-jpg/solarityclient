@@ -269,6 +269,56 @@ fn unit_effect_load_callback_matches_original_timers_and_random_draws() -> Resul
     Ok(())
 }
 
+#[test]
+fn mount_requests_preserve_weighted_primaries_and_replace_default_fallback_modes()
+-> Result<(), Box<dyn Error>> {
+    use solarity_asset::M2ModelAnimationMode::Forward;
+    let (model, catalog) = default_sequence_model(&[0, 0, 7], 0, 0, 1)?;
+    let mut random = CrtRand::new();
+    let mut playback = M2Playback::default_sequence(&model, &catalog, 20_000, &mut random)?;
+    assert_eq!(playback.sequence, 1, "variation zero has no weight");
+    let initial = playback.script_timer.ok_or("mount timer")?;
+    let unchanged_random = random;
+    for now in [20_000., 20_001., 20_101.] {
+        playback.select_mount_animation(&model, 0, now, &mut random)?;
+        assert_eq!(playback.sequence, 1);
+        assert_eq!(playback.script_timer, Some(initial));
+        assert_eq!(playback.previous_event_scene_time_ms, 20_000);
+        assert_eq!(random, unchanged_random);
+    }
+    playback.select_mount_animation(&model, 7, 20_200., &mut random)?;
+    assert_eq!(playback.sequence, 2);
+    assert_eq!(
+        playback.script_timer.ok_or("new timer")?.start_time_ms(),
+        20_201
+    );
+    assert_eq!(playback.sample_clock(20_301).animation_time_ms(), 100.);
+    let mut expected_random = unchanged_random;
+    let _variation = expected_random.next_u15();
+    let _cycles = expected_random.next_u15();
+    assert_eq!(random, expected_random);
+
+    // Constructor fallback operations belong to Stand's DBC traversal. A
+    // resolved Unit_C locomotion clip is an explicit forward request, even
+    // when it happens to have the same identifier as that constructor fallback.
+    for flags in [0x10, 0x20, 0x30] {
+        let (model, catalog) = default_sequence_model(&[7], 7, flags, 1)?;
+        let mut playback = M2Playback::default_sequence(&model, &catalog, 30_000, &mut random)?;
+        assert_ne!(playback.script_mode, Forward);
+        playback.select_mount_animation(&model, 7, 30_100., &mut random)?;
+        assert_eq!(playback.script_mode, Forward);
+        assert_eq!(
+            playback
+                .script_timer
+                .ok_or("forward mount timer")?
+                .start_time_ms(),
+            30_101
+        );
+        assert_eq!(playback.sample_clock(30_301).animation_time_ms(), 200.);
+    }
+    Ok(())
+}
+
 fn default_sequence_model(
     ids: &[u16],
     fallback: u32,

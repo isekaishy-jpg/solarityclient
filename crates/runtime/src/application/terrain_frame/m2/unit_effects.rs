@@ -116,6 +116,8 @@ pub(in crate::application) struct UnitEffectRequest {
     pub binding: UnitEffectBinding,
 }
 
+/// Events retain their emitting model's position; the model and transform
+/// arguments identify the unit body used by the environmental effect factory.
 pub(in crate::application) type UnitEffectEventCallback<'a> = dyn FnMut(
         &super::RuntimeM2Event,
         &Rc<UnitAnimationBehavior>,

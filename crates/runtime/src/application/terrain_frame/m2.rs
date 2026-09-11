@@ -1551,7 +1551,7 @@ impl M2Frame {
                 .as_mut()
                 .map(M2PlaybackStorage::borrow_mut)
             {
-                playback.select_animation(
+                playback.select_mount_animation(
                     &source.model,
                     mount.animation().animation_id(),
                     animation_time_ms,
@@ -1639,7 +1639,7 @@ impl M2Frame {
                     .as_mut()
                     .map(M2PlaybackStorage::borrow_mut)
                 {
-                    playback.select_animation(
+                    playback.select_mount_animation(
                         &source.model,
                         mount.animation().animation_id(),
                         animation_time_ms,
@@ -1733,7 +1733,7 @@ impl M2Frame {
                     .as_mut()
                     .map(M2PlaybackStorage::borrow_mut)
                 {
-                    playback.select_animation(
+                    playback.select_mount_animation(
                         &source.model,
                         mount.animation().animation_id(),
                         animation_time_ms,

@@ -15,6 +15,9 @@ mod unit_body_scale_scene;
 #[path = "unit_mount_scale_scene.rs"]
 mod unit_mount_scale_scene;
 
+#[path = "unit_mount_effect_scene.rs"]
+mod unit_mount_effect_scene;
+
 #[path = "unit_water_effect_scene.rs"]
 mod unit_water_effect_scene;
 

@@ -1,5 +1,19 @@
 # Stock client architecture analysis
 
+The mount/body effect-binding probe executes the original authored adapter,
+unit event switch and breath factory. All live cases query the body's attachment
+17/19, independently of the emitting model and the mount's attachments:
+
+```powershell
+python tools/ghidra/unit_model_effect_binding_oracle.py <path-to-Wow.exe> --output target/unit-model-effect-binding.json
+```
+
+The 48 cases include missing unit lifetimes. Model readiness, attachment lookup,
+allocation, finite-coordinate validation and constructor calls are controlled
+providers; this does not validate bone posing, constructor RNG, mount completion
+or effect rendering. A separate renderer regression checks the callback bridge
+and attached effect placement with distinct body and mount assets.
+
 The settled vehicle-seat fixture executes original `7490F0` arithmetic and
 matrix routines. Model attachment lookup and unit virtual getters supply its
 inputs:

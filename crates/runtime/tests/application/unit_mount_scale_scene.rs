@@ -508,8 +508,9 @@ struct MountSnapshot {
     sequence: usize,
     cycle: u32,
     cycle_start: f32,
+    timer: solarity_rendering::M2ModelSequenceTimer,
     event_time: f32,
-    global_event_time: f32,
+    event_scene_time: u32,
     effects: UnitEffectsSnapshot,
 }
 
@@ -528,8 +529,9 @@ fn mount_snapshot(
         sequence: playback.sequence,
         cycle: playback.cycle_count,
         cycle_start: playback.cycle_started_ms,
-        event_time: playback.previous_event_elapsed_ms,
-        global_event_time: playback.previous_global_event_elapsed_ms,
+        timer: playback.script_timer.ok_or("mount native timer")?,
+        event_time: playback.global_tick(playback.previous_event_scene_time_ms) as f32,
+        event_scene_time: playback.previous_event_scene_time_ms,
         effects: effects(frame, owner)?,
     })
 }

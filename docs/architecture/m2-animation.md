@@ -177,9 +177,37 @@ unproven.
 
 A renderer regression observes the next unit's unconsumed event interval during an authored
 effect callback, verifies current moved world positions and same-frame CEffect
-construction, and retains delivery for offscreen units. Mount models advance before
-their riders, but their generic event consumers still use the later delivery path.
-Other generic models retain the earlier single-primary path. Sound callback age,
+construction, and retains delivery for offscreen units. Mount models now use the
+shared authored scan before their riders, including camera-culled mounts. Native
+`73D5D0` registers the same `734A40` unit adapter on the mount. Its event position
+comes from the emitting model, while the `6F9260` breath factory resolves attachment
+17 (fallback 19) through the unit body at `+B4`. The renderer keeps those owners
+separate: the mount supplies the captured event point, and the consumer receives
+the current body model and its saddle transform. Bone queries sample current
+timers without advancing a second callback scan.
+
+Mount construction now uses the shared native default-sequence path rather than
+the legacy elapsed-time playback owner. Resolved movement changes create native
+primary timers and blends; unchanged forward requests preserve the selected
+variation, event cursor and CRT stream. Constructor fallback modes are replaced
+when movement explicitly selects the same clip in forward mode. Local players,
+remote players and creatures share that selection path. This does not complete
+the mount's higher-level Unit_C animation policy.
+
+`unit_model_effect_binding_oracle.py` executes `734A40`, `732650` and `6F9260`
+for 48 body/mount emitter, attachment, breath-state and unit-lifetime inputs.
+All 24 live cases query the body regardless of the mount's attachment availability;
+missing units construct no effect. GUID lookup, finite-coordinate validation,
+model readiness and attachment queries, allocation and model construction are
+provider boundaries. The probe establishes factory model selection, not the
+providers' bone calculation, constructor random draws or CEffect rendering.
+A GPU regression supplies opposite breath attachments on mount and body, verifies
+mount-before-rider delivery and distinct event positions, and checks same-frame
+replacement effects on the body's attachment while both meshes are offscreen.
+
+Mount owner completion (`73C140`/`73BFF0`) and its vehicle-control dispatch remain
+unfinished; automatic model variations use the shared scan. Other generic models
+retain the earlier single-primary path. Sound callback age,
 the complete scene registration lifecycle, Unit_C spell/action providers, equipment
 synchronization and vehicle-control animation remain open.
 

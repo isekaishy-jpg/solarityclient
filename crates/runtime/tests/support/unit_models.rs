@@ -23,6 +23,20 @@ pub fn fixture_with_water_effects(attachment: u32) -> Result<ClientFixture, Box<
     build_fixture(false, false, None, Some(attachment), None, None, None)
 }
 
+/// Mount events have a distinct point and the opposite breath attachment, so
+/// consumers must resolve their target model through the unit's body.
+pub fn fixture_with_mount_water_effects(attachment: u32) -> Result<ClientFixture, Box<dyn Error>> {
+    build_fixture(
+        false,
+        false,
+        None,
+        Some(attachment),
+        Some((0.4, 1.25)),
+        Some((1.6, 3.5)),
+        None,
+    )
+}
+
 /// Distinct display/model scales and a family interval for live scale updates.
 pub fn fixture_with_body_scale() -> Result<ClientFixture, Box<dyn Error>> {
     build_fixture(false, false, None, None, Some((0.4, 1.25)), None, None)
@@ -476,6 +490,15 @@ fn build_fixture_options(
             .iter_mut()
             .find(|(path, _)| path == "Creature\\Alternate.m2")
             .ok_or("mount model")?;
+        if let Some(attachment) = water_attachment {
+            append_attachments(
+                &mut alternate.1,
+                &[0, if attachment == 17 { 19 } else { 17 }],
+                ids.len(),
+            );
+            let event = u32::from_le_bytes(alternate.1[0x104..0x108].try_into()?) as usize;
+            alternate.1[event + 12..event + 16].copy_from_slice(&4.0_f32.to_le_bytes());
+        }
         alternate.1[0xa0..0xa4].copy_from_slice(&(-2.0_f32).to_le_bytes());
         alternate.1[0xac..0xb0].copy_from_slice(&2.0_f32.to_le_bytes());
         // Full ground alignment and an offset saddle distinguish the mount's

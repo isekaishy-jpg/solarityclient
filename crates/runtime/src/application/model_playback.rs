@@ -458,6 +458,36 @@ impl M2Playback {
         }
     }
 
+    /// Mount locomotion owns a CM2Model primary timer, just like its constructor.
+    /// Retained, unchanged requests leave the timer and variation stream intact.
+    pub(in crate::application) fn select_mount_animation(
+        &mut self,
+        model: &DecodedM2Model,
+        animation_id: u16,
+        animation_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        if model.animations().bones().is_empty()
+            || model.animations().sequences().is_empty()
+            || (self.animation_id == animation_id
+                && self.script_mode == M2ModelAnimationMode::Forward
+                && self.script_timer.is_some())
+        {
+            return Ok(());
+        }
+        self.apply_resolved_model_sequence(
+            model,
+            animation_id,
+            M2ModelAnimationMode::Forward,
+            0,
+            animation_time_ms as u32,
+            M2SequenceStartPhase::BeforeSceneUpdate,
+            true,
+            random,
+        )?;
+        Ok(())
+    }
+
     /// Restarts playback when authoritative gameplay selects another base ID.
     pub(in crate::application) fn select_animation(
         &mut self,

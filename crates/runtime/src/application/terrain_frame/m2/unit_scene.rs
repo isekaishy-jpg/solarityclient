@@ -3,6 +3,8 @@
 use super::*;
 use crate::application::model_playback::M2ExpiredVariation;
 
+mod mount;
+
 impl M2Frame {
     pub(super) fn advance_unit_callbacks(
         &mut self,
@@ -40,13 +42,13 @@ impl M2Frame {
                 continue;
             }
             if mount {
-                let placement = &mut self.placements[index];
-                if let Some(source) = &self.sources[placement.source_index]
-                    && let Some(playback) = &mut placement.playback
-                {
-                    placement.passenger_playback_advance =
-                        Some(playback.borrow_mut().clock(&source.model, now, random)?);
-                }
+                self.advance_mount_callbacks(
+                    index,
+                    camera,
+                    now,
+                    random,
+                    effect_callback.as_deref_mut(),
+                )?;
                 continue;
             }
             if !self.prepare_rider_callback_transform(index, camera, now)? {
