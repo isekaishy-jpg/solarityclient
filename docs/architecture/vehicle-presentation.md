@@ -294,12 +294,12 @@ consumers into the shared scan remains separate work.
 
 ## Testing package
 
-Build **000097** (`0.0.3a`) installs source revision
-`08ccaa11e073f5ebb7022d14aae7f07bfefe8952` through the persistent Testing launcher.
+Build **000098** (`0.0.3a`) installs source revision
+`229f6f5d0dc29126deb04899b421581029cf3aaf` through the persistent Testing launcher.
 The executable reports that revision and build number; its dirty marker records
 the packaging reservation in `BUILD_NUMBER`. Installed and compiled executable
 SHA-256 hashes match:
-`908bac3a5279bfcf2bf3bf14713140a50c7246319625148d44b154b54bfacb15`.
+`c311362dbbee038085c4e651d59751fdcdc591bb081de2334d3af498e7d66d14`.
 It includes vehicle creation state, resolved seat entry opacity, native unit
 passenger frames, final local/remote world projection and settled animated
 seats with mounted riders and shared lighting/shadow/sorting ancestry. Remote
@@ -310,10 +310,16 @@ changes. Input observes the shared passenger delay/travel phases. Unloaded
 passengers use current resident-parent bones to initialize travel and preserve
 that deadline when their model arrives. Initial seat queries retain animation
 event intervals, completion callbacks and the CRT random sequence.
+Seated body and upper animations now have independent initial/loop completion
+state and a shared model callback scan. Upper primaries, wound blends and clear
+fades use the same retained bone slots through model replacement.
 
-This package passes 1,253 locked workspace tests with 23 archive-dependent
-tests ignored; runtime passes 292 with 18 ignored. Workspace/all-target Clippy
-with warnings denied, formatting and whitespace checks pass. Vehicle active
-mover selection, seated animation routing,
-transfer lifecycle, special cameras and combined live travel remain open.
+This package passes 1,258 locked workspace tests with 23 archive-dependent
+tests ignored; runtime passes 295 with 18 ignored. Three explicit stock archive
+tests also pass, covering character movement, jump variations and drowning/death
+playback. Workspace/all-target Clippy with warnings denied, formatting and
+whitespace checks pass. Vehicle active mover selection, active spell/control
+providers, transfer lifecycle, special cameras and combined live travel remain
+open. Authored effect callback ordering and offscreen delivery remain separate
+integration work.
 This package does not establish a performance improvement or the 1,200 FPS target.
