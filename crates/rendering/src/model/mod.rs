@@ -20,7 +20,7 @@ pub use character_component::{
     CharacterItemAttachment, CharacterItemVisualEffect, CharacterItemVisualPlan,
     CharacterSelectionQuiver, CharacterTabardMode, CharacterTextureComposeError,
     CharacterTexturePlan, CharacterTexturePlanError, CharacterWeaponState, CreatureGeosetPlan,
-    NpcWeaponState,
+    NpcWeaponAnimationInput, NpcWeaponState,
 };
 pub use m2_animation::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2BonePoseOverrides, M2CallbackSlot,

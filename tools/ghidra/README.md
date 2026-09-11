@@ -341,7 +341,7 @@ python tools/ghidra/terrain_specular_shader_oracle.py target/world-shadow-shader
 
 `npc_virtual_items_oracle.py` captures 1,536 settled Unit_C equipment cases.
 Original code resolves Item.dbc entries, filters disarmed hands, classifies the
-current body through AnimationData, adjusts readiness, selects components, and
+current body through AnimationData, adjusts off-hand readiness, selects components, and
 chooses actual attachment links. The capture intercepts asset-cache and model
 engine services; it ends `4EACD0` at the authored-link query and does not execute
 full M2 creation or animated sheath callbacks. The renderer test also verifies
@@ -349,6 +349,17 @@ weapon/shield paths, textures, item visuals, and particle-color metadata.
 
 ```text
 python tools/ghidra/npc_virtual_items_oracle.py <path-to-Wow.exe> crates/rendering/tests/fixtures/npc_virtual_items_native.txt
+```
+
+The input sheath value is the model's effective state. The separate
+`npc_weapon_state_oracle.py` runs original `738180` and `736D30` for 10,368
+ordinary non-local state transitions, including ranged latching, animation flags,
+missing animation rows, attack targets, hand disarms, and template restrictions.
+Body-engine queries and completed component relocation calls are intercepted;
+spell providers, forced poses, and local-player behavior are excluded.
+
+```text
+python tools/ghidra/npc_weapon_state_oracle.py <path-to-Wow.exe> crates/rendering/tests/fixtures/npc_weapon_state_native.txt
 ```
 
 ## WMO local batch visibility

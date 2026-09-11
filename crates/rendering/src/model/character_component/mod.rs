@@ -15,7 +15,7 @@ mod types;
 pub use atlas::CharacterTexturePlan;
 pub use attachment::{
     CharacterAttachmentPlan, CharacterAttachmentPoint, CharacterItemAttachment,
-    CharacterSelectionQuiver, CharacterWeaponState, NpcWeaponState,
+    CharacterSelectionQuiver, CharacterWeaponState, NpcWeaponAnimationInput, NpcWeaponState,
 };
 pub use equipment::CharacterEquipmentItem;
 pub use geoset::{

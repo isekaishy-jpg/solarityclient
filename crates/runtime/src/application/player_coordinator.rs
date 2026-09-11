@@ -1618,12 +1618,12 @@ impl RuntimePlayerPresentation {
     /// Player objects require character atlas and equipment composition and
     /// remain on the dedicated player path. This pass admits creature objects
     /// only after their complete display, transform, and tier state exists.
-    /// `family_for` supplies the server template bound to each exact lifetime;
+    /// `template_for` supplies family and flags bound to each exact lifetime;
     /// its arrival and later level/pet changes update the authored body scale.
     pub fn synchronize_creatures(
         &mut self,
         world: Option<&ActiveWorld>,
-        family_for: impl Fn(WorldObjectIdentity) -> Option<u32>,
+        template_for: impl Fn(WorldObjectIdentity) -> Option<(u32, u32)>,
     ) -> Result<RuntimeCreaturePoll, RuntimePlayerError> {
         let Some(world) = world else {
             self.creatures_resident.clear();
@@ -1660,7 +1660,8 @@ impl RuntimePlayerPresentation {
                 UnitLocomotionAnimation::STAND,
                 resolve_unit_locomotion_animation,
             );
-            let family = family_for(identity).and_then(|id| self.creature_families.family(id));
+            let template = template_for(identity);
+            let family = template.and_then(|(id, _flags)| self.creature_families.family(id));
             let Some(body_scale) = solarity_systems::resolve_unit_body_scale(
                 world,
                 guid,
@@ -1671,27 +1672,64 @@ impl RuntimePlayerPresentation {
                 continue;
             };
             let virtual_entries = world.unit_virtual_items(guid).unwrap_or_default().entries();
-            let weapon_state = virtual_entries.iter().any(|entry| *entry != 0).then(|| {
-                let body_behavior = self
-                    .unit_animations
-                    .get(guid)
-                    .filter(|animation| animation.identity() == identity)
-                    .map_or_else(
-                        || {
-                            self.animations
-                                .definition(u32::from(requested_animation.animation_id()))
-                                .and_then(|definition| u16::try_from(definition.behavior_id()).ok())
-                                .unwrap_or(506)
-                        },
-                        |animation| animation.current_body_behavior(),
-                    );
-                solarity_rendering::NpcWeaponState::new(
-                    presentation.sheath_state(),
-                    world.unit_flags(guid).unwrap_or_default(),
-                    appearance.body().model().flags(),
-                    body_behavior,
-                )
-            });
+            let previous = self
+                .creatures_resident
+                .binary_search_by_key(&guid, |resident| resident.key.guid)
+                .ok()
+                .map(|index| &self.creatures_resident[index])
+                .filter(|resident| resident.key.identity == identity);
+            let virtual_definitions = previous
+                .filter(|resident| resident.key.virtual_entries == virtual_entries)
+                .map_or_else(
+                    || {
+                        virtual_entries.map(|entry| {
+                            (entry != 0)
+                                .then(|| self.item_definitions.item(entry))
+                                .flatten()
+                                .filter(|definition| definition.display_info_id() != 0)
+                                .copied()
+                        })
+                    },
+                    |resident| resident.virtual_definitions,
+                );
+            let body_definition = self
+                .unit_animations
+                .get(guid)
+                .filter(|animation| animation.identity() == identity)
+                .map_or_else(
+                    || {
+                        self.animations
+                            .definition(u32::from(requested_animation.animation_id()))
+                    },
+                    |animation| animation.current_body_definition(),
+                );
+            let weapon_state = solarity_rendering::NpcWeaponState::new(
+                presentation.sheath_state(),
+                world.unit_flags(guid).unwrap_or_default(),
+                appearance.body().model().flags(),
+                body_definition
+                    .and_then(|definition| u16::try_from(definition.behavior_id()).ok())
+                    .unwrap_or(506),
+            )
+            .reconcile(
+                previous.map_or(presentation.sheath_state(), |resident| {
+                    resident.weapon_state.sheath_state()
+                }),
+                solarity_rendering::NpcWeaponAnimationInput {
+                    animation_id: body_definition.map(solarity_asset::AnimationDataDefinition::id),
+                    weapon_flags: body_definition
+                        .map_or(0, solarity_asset::AnimationDataDefinition::weapon_flags),
+                    has_attack_target: world.unit_attack_target(guid) != 0,
+                    template_flags: template.map_or(0, |(_family, flags)| flags),
+                    changed_stand_state: previous
+                        .filter(|resident| resident.stand_state != presentation.stand_state())
+                        .map(|_| presentation.stand_state()),
+                },
+                [
+                    virtual_definitions[0].as_ref(),
+                    virtual_definitions[1].as_ref(),
+                ],
+            );
             desired.push(DesiredCreatureModel {
                 key: CreatureModelKey {
                     identity,
@@ -1701,7 +1739,10 @@ impl RuntimePlayerPresentation {
                     object_scale: body_scale * appearance.object_scale(),
                     particle_color_id: appearance.body().display().particle_color_id(),
                     virtual_entries,
-                    weapon_state,
+                    weapon_state: virtual_entries
+                        .iter()
+                        .any(|entry| *entry != 0)
+                        .then_some(weapon_state),
                     mount_key: appearance
                         .mount()
                         .map(|mount| mount_model_key(mount, body_scale, appearance.object_scale())),
@@ -1709,6 +1750,9 @@ impl RuntimePlayerPresentation {
                 transform,
                 requested_animation,
                 animation_tier: presentation.animation_tier(),
+                weapon_state,
+                stand_state: presentation.stand_state(),
+                virtual_definitions,
             });
         }
 
@@ -1720,6 +1764,8 @@ impl RuntimePlayerPresentation {
         if unchanged {
             for (desired, resident) in desired.iter().zip(&mut self.creatures_resident) {
                 resident.world_transform = desired.transform;
+                resident.weapon_state = desired.weapon_state;
+                resident.stand_state = desired.stand_state;
                 if let Some(mount) = resident.mount.as_mut() {
                     mount.animation = resolve_resident_animation(
                         &self.animations,
@@ -1754,6 +1800,8 @@ impl RuntimePlayerPresentation {
             {
                 let resident = &mut self.creatures_resident[index];
                 resident.world_transform = desired.transform;
+                resident.weapon_state = desired.weapon_state;
+                resident.stand_state = desired.stand_state;
                 if let Some(mount) = resident.mount.as_mut() {
                     mount.animation = resolve_resident_animation(
                         &self.animations,
@@ -1845,7 +1893,7 @@ impl RuntimePlayerPresentation {
                     if entries[index] == 0 {
                         return None;
                     }
-                    let definition = self.item_definitions.item(entries[index])?;
+                    let definition = desired.virtual_definitions[index].as_ref()?;
                     let display = self.item_displays.display(definition.display_info_id())?;
                     Some(CharacterEquipmentItem::new_visible(
                         [
@@ -1858,7 +1906,14 @@ impl RuntimePlayerPresentation {
                         display,
                     ))
                 });
-                attachment_plan.add_npc_held_items(equipment, state)?;
+                attachment_plan.add_npc_held_items(
+                    equipment,
+                    state,
+                    [
+                        desired.virtual_definitions[0].as_ref(),
+                        desired.virtual_definitions[1].as_ref(),
+                    ],
+                )?;
             }
             attachment_plan.retain_attachments(|attachment| {
                 !matches!(
@@ -1921,6 +1976,9 @@ impl RuntimePlayerPresentation {
                 armor_display_ids: appearance
                     .extra()
                     .map_or([0; 11], |extra| extra.npc_item_display_ids()),
+                weapon_state: desired.weapon_state,
+                stand_state: desired.stand_state,
+                virtual_definitions: desired.virtual_definitions,
                 particle_colors: M2ParticleColorReplacement::resolve(
                     &self.particle_colors,
                     appearance.display().particle_color_id(),
@@ -3037,6 +3095,9 @@ struct DesiredCreatureModel {
     transform: WorldTransform,
     requested_animation: UnitLocomotionAnimation,
     animation_tier: solarity_ecs::UnitAnimationTier,
+    weapon_state: solarity_rendering::NpcWeaponState,
+    stand_state: u8,
+    virtual_definitions: [Option<solarity_asset::ItemDefinition>; 3],
 }
 
 struct ResidentCreatureModel {
@@ -3047,6 +3108,9 @@ struct ResidentCreatureModel {
     geosets: Option<ResidentCreatureGeosets>,
     attachments: Vec<ResidentPlayerAttachment>,
     armor_display_ids: [u32; 11],
+    weapon_state: solarity_rendering::NpcWeaponState,
+    stand_state: u8,
+    virtual_definitions: [Option<solarity_asset::ItemDefinition>; 3],
     particle_colors: Option<M2ParticleColorReplacement>,
     world_transform: WorldTransform,
     animation: UnitModelAnimation,

@@ -149,9 +149,10 @@ fn npc_virtual_items_update_models_effects_and_native_hand_placement() -> Result
         (vec![(59, 0x20_0000)], vec![0]),
         (vec![(122, 2)], vec![2, 28]),
         (vec![(59, 0), (58, 3104)], vec![1, 26, 28]),
-        (vec![(122, 1), (56, 3103)], vec![1]),
-        (vec![(122, 0), (56, 3105)], vec![28]),
-        (vec![(56, 99999), (57, 0)], vec![]),
+        // Native ranged posture latches across replicated sheath changes.
+        (vec![(122, 1), (56, 3103)], vec![1, 30]),
+        (vec![(122, 0), (56, 3105)], vec![1, 28]),
+        (vec![(56, 99999), (57, 0)], vec![1]),
     ] {
         fields(&mut world, 30, &updates)?;
         publish_npcs(
@@ -165,6 +166,60 @@ fn npc_virtual_items_update_models_effects_and_native_hand_placement() -> Result
         assert_npc_held_points(&frame, 40, &[0, 1]);
         advance(&mut frame, &renderer, camera, 1300., &mut random)?;
     }
+    // A posture event releases ranged state before the seated animation plays.
+    fields(&mut world, 30, &[(56, 3100), (57, 3101), (122, 1), (74, 1)])?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_npc_held_points(&frame, 30, &[26, 28]);
+    advance(&mut frame, &renderer, camera, 1400., &mut random)?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_npc_held_points(&frame, 30, &[26, 28]);
+    // The actual body row keeps the weapons sheathed until Stand is selected.
+    fields(&mut world, 30, &[(74, 0)])?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    advance(&mut frame, &renderer, camera, 1500., &mut random)?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_npc_held_points(&frame, 30, &[0, 1]);
+    // A late server template freezes effective state without changing entries.
+    fields(&mut world, 30, &[(122, 0)])?;
+    presentation.synchronize_creatures(Some(&world), |_| Some((0, 0x1000_0000)))?;
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    assert_npc_held_points(&frame, 30, &[0, 1]);
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    assert_npc_held_points(&frame, 30, &[26, 28]);
     Ok(())
 }
 

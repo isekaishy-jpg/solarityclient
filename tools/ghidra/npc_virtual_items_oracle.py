@@ -96,7 +96,7 @@ def capture(executable, output):
         '# Unit_C settled equipment selection; original native code, intercepted asset/model engine.',
         '# item rows: id class subclass sound material display inventory sheath',
         *('item ' + ' '.join(map(str, item)) for item in ITEMS),
-        '# case primary secondary rawSheath bodyBehavior modelFlags main off ranged; slot:link ...',
+        '# case primary secondary effectiveSheath bodyBehavior modelFlags main off ranged; slot:link ...',
     ]
     entry_sets = [[100, 101, 102], [103, 107, 105], [0, 107, 106],
                   [104, 101, 102], [100, 0, 0], [999, 101, 102],
@@ -114,16 +114,6 @@ def capture(executable, output):
         for slot in range(3):
             u.reg_write(UC_X86_REG_ECX, unit)
             invoke(u, 0x725010, [slot, 0])
-        metadata = []
-        for slot in range(2):
-            u.reg_write(UC_X86_REG_ECX, unit)
-            invoke(u, 0x71f440, [slot, 0])
-            metadata.append(u.reg_read(UC_X86_REG_EAX))
-        u.reg_write(UC_X86_REG_ECX, unit)
-        invoke(u, 0x721ed0, [])
-        if u.reg_read(UC_X86_REG_EAX) & 255:
-            invoke(u, 0x715d00, [sheath, *metadata])
-            n.write_words(u, unit + 0xb5c, u.reg_read(UC_X86_REG_EAX))
         calls.clear()
         for slot in range(3):
             u.reg_write(UC_X86_REG_ECX, unit)

@@ -267,7 +267,22 @@ fn build_fixture_options(
     }
     let animations: Vec<_> = ids
         .iter()
-        .flat_map(|id| [u32::from(*id), 0, 0, 0, 0, 0, u32::from(*id), 0])
+        .flat_map(|id| {
+            [
+                u32::from(*id),
+                0,
+                if equipment && npc_race.is_some() && *id == 97 {
+                    4
+                } else {
+                    0
+                },
+                0,
+                0,
+                0,
+                u32::from(*id),
+                0,
+            ]
+        })
         .collect();
     let mut display = [0; 16];
     display[0] = 100;

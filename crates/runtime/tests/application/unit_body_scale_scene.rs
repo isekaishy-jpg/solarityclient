@@ -41,7 +41,7 @@ fn creature_body_scale_updates_reach_gpu_placement() -> Result<(), Box<dyn Error
         world.update_fields(30, fields)?;
         solarity_systems::project_object_fields(&mut world, 30, fields)?;
         assert_eq!(
-            presentation.synchronize_creatures(Some(&world), |_| family)?,
+            presentation.synchronize_creatures(Some(&world), |_| family.map(|id| (id, 0)))?,
             RuntimeCreaturePoll::ModelsChanged,
         );
         let inputs = presentation.resident_creature_frame_inputs();
@@ -66,7 +66,7 @@ fn creature_body_scale_updates_reach_gpu_placement() -> Result<(), Box<dyn Error
             );
         }
         assert_eq!(
-            presentation.synchronize_creatures(Some(&world), |_| family)?,
+            presentation.synchronize_creatures(Some(&world), |_| family.map(|id| (id, 0)))?,
             RuntimeCreaturePoll::Current,
         );
     }

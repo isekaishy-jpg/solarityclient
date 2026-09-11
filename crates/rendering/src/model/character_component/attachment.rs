@@ -62,6 +62,22 @@ pub struct NpcWeaponState {
     model_flags: u32,
     ready_behavior: bool,
     ready_without_main_behavior: bool,
+    ranged_behavior: bool,
+}
+
+/// Body and template inputs to ordinary non-casting Unit_C sheath reconciliation.
+#[derive(Clone, Copy, Debug)]
+pub struct NpcWeaponAnimationInput {
+    /// Current AnimationData identifier, absent when the body has no valid row.
+    pub animation_id: Option<u32>,
+    /// Current AnimationData weapon-presentation flags.
+    pub weapon_flags: u32,
+    /// Whether Unit_C owns a nonzero attack GUID, independent of target residency.
+    pub has_attack_target: bool,
+    /// Server creature-template flags; bit 28 prevents ordinary sheath changes.
+    pub template_flags: u32,
+    /// A replicated posture change delivered before the next body selection.
+    pub changed_stand_state: Option<u8>,
 }
 
 impl NpcWeaponState {
@@ -81,6 +97,113 @@ impl NpcWeaponState {
             ready_behavior: matches!(body_behavior, 16 | 20 | 25 | 117 | 118),
             ready_without_main_behavior: matches!(body_behavior,
                 10 | 16..=24 | 30 | 36 | 57..=59 | 85..=88 | 95 | 117 | 118 | 170..=179 | 212),
+            ranged_behavior: matches!(body_behavior, 46 | 49 | 105..=112),
+        }
+    }
+
+    /// Returns the model's effective sheath state rather than the replicated byte.
+    #[must_use]
+    pub const fn sheath_state(self) -> UnitSheathState {
+        self.sheath
+    }
+
+    /// Reconciles ordinary non-local Unit_C state through `738180`/`736D30`.
+    ///
+    /// The receiver contains the replicated request and current body behavior.
+    /// `current` belongs to this exact unit lifetime; construction initializes it
+    /// from the replicated byte (`73F660`). Spell-driven overrides have their own
+    /// producer and must be applied by the spell owner when that slice is active.
+    #[must_use]
+    pub fn reconcile(
+        mut self,
+        current: UnitSheathState,
+        input: NpcWeaponAnimationInput,
+        definitions: [Option<&ItemDefinition>; 2],
+    ) -> Self {
+        let flags = if input.animation_id.is_some() {
+            input.weapon_flags
+        } else {
+            0
+        };
+        let posture_sheath = current != UnitSheathState::Unarmed
+            && input
+                .changed_stand_state
+                .is_some_and(|stand| !matches!(stand, 0 | 2));
+        let request = if posture_sheath || flags & 4 != 0 {
+            Some(UnitSheathState::Unarmed)
+        } else if current == UnitSheathState::Ranged {
+            // The ranged family owns its state until an eligible body request
+            // changes it; the replicated byte is not read in this branch.
+            if !matches!(input.animation_id, Some(105 | 106 | 112)) && !self.ranged_behavior {
+                if flags & 0x10 != 0 {
+                    Some(UnitSheathState::Unarmed)
+                } else if flags & 0x20 != 0 {
+                    Some(UnitSheathState::Melee)
+                } else {
+                    Some(UnitSheathState::Ranged)
+                }
+            } else {
+                Some(UnitSheathState::Ranged)
+            }
+        } else if input.has_attack_target && self.ready_without_main_behavior {
+            Some(UnitSheathState::Melee)
+        } else if flags & 0x10 != 0 {
+            Some(UnitSheathState::Unarmed)
+        } else if flags & 0x20 != 0 || input.has_attack_target {
+            Some(UnitSheathState::Melee)
+        } else if self.sheath != current {
+            Some(self.sheath)
+        } else {
+            None
+        };
+        self.sheath = current;
+        if let Some(request) = request
+            && input.template_flags & 0x1000_0000 == 0
+        {
+            let disarmed = self.disarmed_hands(definitions);
+            self.sheath = self.adjust_readiness(
+                request,
+                definitions[0].filter(|_| !disarmed[0]),
+                definitions[1].filter(|_| !disarmed[1]),
+            );
+        }
+        self
+    }
+
+    fn disarmed_hands(&self, definitions: [Option<&ItemDefinition>; 2]) -> [bool; 2] {
+        let is_weapon = |index: usize| definitions[index].is_some_and(|item| item.class_id() == 2);
+        let main = self.primary_flags != 0 && is_weapon(0);
+        [
+            main,
+            (self.primary_flags != 0 && !main && is_weapon(1)) || self.secondary_flags & 0x80 != 0,
+        ]
+    }
+
+    fn adjust_readiness(
+        &self,
+        sheath: UnitSheathState,
+        main: Option<&ItemDefinition>,
+        off: Option<&ItemDefinition>,
+    ) -> UnitSheathState {
+        if !(self.ready_behavior || (main.is_none() && self.ready_without_main_behavior)) {
+            return sheath;
+        }
+        match sheath {
+            UnitSheathState::Melee
+                if main.is_none()
+                    && off.is_none_or(|item| item.inventory_type() == InventoryType::Holdable) =>
+            {
+                UnitSheathState::Unarmed
+            }
+            UnitSheathState::Unarmed
+                if main.is_some_and(|item| item.class_id() == 2)
+                    || off.is_some_and(|item| {
+                        item.class_id() == 2 || item.inventory_type() == InventoryType::Shield
+                    }) =>
+            {
+                UnitSheathState::Melee
+            }
+            _ => sheath,
         }
     }
 }
@@ -216,8 +339,8 @@ impl CharacterAttachmentPlan {
     }
     /// Adds Unit_C virtual weapons using native metadata and state filters.
     ///
-    /// Inputs are Item.dbc joins in main-hand, off-hand, ranged order. Missing
-    /// entries or display rows are absent inputs, as in native `725010`.
+    /// Equipment is in main-hand, off-hand, ranged order. Hand metadata remains
+    /// available when an ItemDisplayInfo row is absent, matching native `725010`.
     ///
     /// # Errors
     ///
@@ -226,50 +349,24 @@ impl CharacterAttachmentPlan {
         &mut self,
         equipment: [Option<CharacterEquipmentItem<'_>>; 3],
         state: NpcWeaponState,
+        definitions: [Option<&ItemDefinition>; 2],
     ) -> Result<(), CharacterAttachmentPlanError> {
         if state.model_flags & 0x10 != 0 {
             return Ok(());
         }
-        let definitions = equipment.map(|item| item.and_then(CharacterEquipmentItem::definition));
-        let is_weapon = |index: usize| definitions[index].is_some_and(|item| item.class_id() == 2);
-        let main_disarmed = state.primary_flags != 0 && is_weapon(0);
         // 71F440/718FC0: ordinary disarm affects the off-hand weapon only
         // when it did not already select a weapon in the main hand.
-        let off_disarmed = (state.primary_flags != 0 && !main_disarmed && is_weapon(1))
-            || state.secondary_flags & 0x80 != 0;
+        let [main_disarmed, off_disarmed] = state.disarmed_hands([definitions[0], definitions[1]]);
         let filtered = [
             equipment[0].filter(|_| !main_disarmed),
             equipment[1].filter(|_| !off_disarmed),
             equipment[2].filter(|_| state.secondary_flags & 0x400 == 0),
         ];
-        let main = filtered[0].and_then(CharacterEquipmentItem::definition);
-        let off = filtered[1].and_then(CharacterEquipmentItem::definition);
-        // 721ED0 classifies the current body through AnimationData.behavior.
-        let adjust_readiness =
-            state.ready_behavior || (main.is_none() && state.ready_without_main_behavior);
-        let mut sheath = state.sheath;
-        if adjust_readiness {
-            // 715D00, also used by the sheath-state producer 736D30.
-            match sheath {
-                UnitSheathState::Melee
-                    if main.is_none()
-                        && off.is_none_or(|item| {
-                            item.inventory_type() == InventoryType::Holdable
-                        }) =>
-                {
-                    sheath = UnitSheathState::Unarmed;
-                }
-                UnitSheathState::Unarmed
-                    if main.is_some_and(|item| item.class_id() == 2)
-                        || off.is_some_and(|item| {
-                            item.class_id() == 2 || item.inventory_type() == InventoryType::Shield
-                        }) =>
-                {
-                    sheath = UnitSheathState::Melee;
-                }
-                _ => {}
-            }
-        }
+        let main = definitions[0].filter(|_| !main_disarmed);
+        let off = definitions[1].filter(|_| !off_disarmed);
+        // 72DBC0 only applies the body-readiness adjustment to the off hand.
+        // General effective state has already been produced by 736D30.
+        let off_sheath = state.adjust_readiness(state.sheath, main, off);
         for (index, item) in filtered.into_iter().enumerate() {
             let Some(item) = item else { continue };
             let definition = required_definition(item)?;
@@ -291,14 +388,14 @@ impl CharacterAttachmentPlan {
                 } else {
                     off_disarmed
                 };
-                if sheath != UnitSheathState::Ranged || ranged_disarmed {
+                if state.sheath != UnitSheathState::Ranged || ranged_disarmed {
                     continue;
                 }
             }
             let ready = if index == 2 {
                 true
             } else {
-                sheath == UnitSheathState::Melee
+                (if index == 1 { off_sheath } else { state.sheath }) == UnitSheathState::Melee
             };
             let point = if !ready {
                 sheath_point(definition.sheathe_type(), right_hand)

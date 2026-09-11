@@ -125,6 +125,9 @@ impl ClientServices {
         self.player
             .synchronize(Some(world))
             .map_err(ApplicationError::from)?;
+        self.player
+            .synchronize_creatures(Some(world), |_| None)
+            .map_err(ApplicationError::from)?;
         let effect_policy = |name| {
             self.world_ui
                 .as_ref()
@@ -170,7 +173,7 @@ impl ClientServices {
             &mut self.crt_rand,
             Arc::clone(&self.particle_twinkle),
             self.player.resident_frame_input(),
-            &[],
+            &self.player.resident_creature_frame_inputs(),
             &[],
             self.game_objects.frame_input(Some(world)),
         )
@@ -352,6 +355,21 @@ impl ClientServices {
         self.player
             .synchronize(Some(world))
             .map_err(ApplicationError::from)?;
+        if self
+            .player
+            .synchronize_creatures(Some(world), |_| None)
+            .map_err(ApplicationError::from)?
+            == crate::application::RuntimeCreaturePoll::ModelsChanged
+            && let Some(frame) = self.terrain_frame.as_mut()
+        {
+            frame
+                .replace_creatures(
+                    &mut self.renderer,
+                    &self.player.resident_creature_frame_inputs(),
+                    &mut self.crt_rand,
+                )
+                .map_err(ApplicationError::from)?;
+        }
         let service = start.elapsed();
         let start = Instant::now();
         let previous_tiles = self

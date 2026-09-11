@@ -580,9 +580,10 @@ impl UnitAnimationBehavior {
         self.animation_behavior(playback.animation_id)
     }
 
-    /// AnimationData behavior of the current body, for Unit_C weapon readiness.
-    pub fn current_body_behavior(&self) -> u16 {
-        self.behavior(&self.playback.borrow())
+    /// Actual body row, including weapon flags used by Unit_C equipment state.
+    pub fn current_body_definition(&self) -> Option<&solarity_asset::AnimationDataDefinition> {
+        self.animations
+            .definition(u32::from(self.playback.borrow().animation_id))
     }
 
     fn animation_behavior(&self, animation: u16) -> u16 {

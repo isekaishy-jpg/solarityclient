@@ -199,12 +199,18 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
         for ranged in [bow, gun] {
             for sheath in 0..3 {
                 for flags in [0, 0x20_0000] {
+                    // Each settled case starts from constructor state. Reusing
+                    // a ranged unit here would deliberately latch its posture.
+                    world.remove_object(30)?;
+                    add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
                     super::equipment_residency::fields(
                         &mut world,
                         30,
                         &[
                             (67, *display),
                             (68, *display),
+                            (56, main),
+                            (57, shield),
                             (58, ranged),
                             (122, sheath),
                             (59, flags),

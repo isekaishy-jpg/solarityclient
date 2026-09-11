@@ -2,7 +2,60 @@
 
 use super::*;
 use solarity_ecs::UnitFlags;
-use solarity_rendering::NpcWeaponState;
+use solarity_rendering::{NpcWeaponAnimationInput, NpcWeaponState};
+
+#[test]
+fn npc_weapon_state_matches_native_reconciliation() -> Result<(), Box<dyn Error>> {
+    let native = include_str!("../../fixtures/npc_weapon_state_native.txt");
+    let rows = native
+        .lines()
+        .filter_map(|line| line.strip_prefix("item "))
+        .flat_map(str::split_whitespace)
+        .map(str::parse::<u32>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let bytes = create_wdbc((rows.len() / 8) as u32, 8, &rows, b"\0");
+    let fixture = Fixture::new(&[FixtureFile {
+        path: "DBFilesClient\\Item.dbc",
+        bytes: &bytes,
+    }])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let definitions = ItemDefinitionCatalog::load(&mut AssetStore::mount(catalog)?)?;
+    let mut count = 0;
+    for line in native.lines().filter_map(|line| line.strip_prefix("case ")) {
+        let (inputs, expected) = line.split_once(';').ok_or("native delimiter")?;
+        let values = inputs
+            .split_whitespace()
+            .map(str::parse::<u32>)
+            .collect::<Result<Vec<_>, _>>()?;
+        let sheath = |value| UnitSheathState::try_from(value as u8).map_err(|_| "sheath");
+        let actual = NpcWeaponState::new(
+            sheath(values[1])?,
+            UnitFlags::new(values[7], values[8], 0),
+            0,
+            values[3] as u16,
+        )
+        .reconcile(
+            sheath(values[0])?,
+            NpcWeaponAnimationInput {
+                animation_id: (values[2] != u32::MAX).then_some(values[2]),
+                weapon_flags: values[4],
+                has_attack_target: values[5] != 0,
+                template_flags: values[6],
+                changed_stand_state: None,
+            },
+            [definitions.item(values[9]), definitions.item(values[10])],
+        );
+        assert_eq!(
+            actual.sheath_state(),
+            sheath(expected.parse::<u32>()?)?,
+            "native inputs {inputs}"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 10368);
+    Ok(())
+}
 
 #[test]
 fn npc_virtual_items_match_native_selection() -> Result<(), Box<dyn Error>> {
@@ -74,6 +127,7 @@ fn npc_virtual_items_match_native_selection() -> Result<(), Box<dyn Error>> {
                 values[4],
                 values[3] as u16,
             ),
+            [definitions.item(values[5]), definitions.item(values[6])],
         )?;
         let actual = plan
             .attachments()
@@ -111,5 +165,28 @@ fn npc_virtual_items_match_native_selection() -> Result<(), Box<dyn Error>> {
         count += 1;
     }
     assert_eq!(count, 1536);
+    // A missing main-hand display still suppresses the off-hand component when
+    // the retained Item.dbc metadata describes a two-handed weapon.
+    let main = definitions.item(104).ok_or("two-handed definition")?;
+    let off = definitions.item(101).ok_or("shield definition")?;
+    let off_display = displays
+        .display(off.display_info_id())
+        .ok_or("shield display")?;
+    let mut missing_main_display = CharacterAttachmentPlan::default();
+    missing_main_display.add_npc_held_items(
+        [
+            None,
+            Some(CharacterEquipmentItem::new_visible(
+                slots[1],
+                VisibleEquipmentItem::new(101, 0),
+                off,
+                off_display,
+            )),
+            None,
+        ],
+        NpcWeaponState::new(UnitSheathState::Melee, UnitFlags::default(), 0, 0),
+        [Some(main), Some(off)],
+    )?;
+    assert!(missing_main_display.attachments().is_empty());
     Ok(())
 }

@@ -85,11 +85,12 @@ pub use model::{
     M2MaterialUniform, M2MeshPlan, M2MeshPlanError, M2ModelSequenceBlend, M2ModelSequenceTimer,
     M2RenderVertex, M2SampledLights, M2SceneUniform, M2SequenceStartPhase, M2ShadowMaterial,
     M2ShadowMatrix, M2ShadowState, M2TextureBinding, M2TransparentPass, M2TransparentSortKey,
-    M2UiCameraViewport, NpcWeaponState, PlacedWorldModelDrawPlan, WorldModelDrawCall,
-    WorldModelGroupRange, WorldModelMaterialUniform, WorldModelMeshPlan, WorldModelMeshPlanError,
-    WorldModelPlacementError, WorldModelRenderVertex, WorldModelSceneUniform,
-    sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights, sample_m2_lights_into,
-    sample_m2_scene_lights_into, sample_m2_ui_camera_frame, triggered_m2_event_indices,
+    M2UiCameraViewport, NpcWeaponAnimationInput, NpcWeaponState, PlacedWorldModelDrawPlan,
+    WorldModelDrawCall, WorldModelGroupRange, WorldModelMaterialUniform, WorldModelMeshPlan,
+    WorldModelMeshPlanError, WorldModelPlacementError, WorldModelRenderVertex,
+    WorldModelSceneUniform, sample_m2_camera_frame, sample_m2_directional_lights, sample_m2_lights,
+    sample_m2_lights_into, sample_m2_scene_lights_into, sample_m2_ui_camera_frame,
+    triggered_m2_event_indices,
 };
 pub use model::{M2CallbackSlot, M2QueuedCallback, scan_m2_callbacks};
 pub use model::{M2GroundNormal, M2GroundPlacementError};

@@ -13,6 +13,7 @@ use solarity_ecs::{
     ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, PlayerMoney,
     PlayerProgression, PlayerViewState, UnitAnimationTier, UnitFlags, UnitIdentity,
     UnitPresentation, UnitSheathState, UnitStats, UnitVitals, WorldBootstrap, WorldMapId,
+    WorldTransform,
 };
 use solarity_network::WorldTimeSpeed;
 use solarity_runtime::{ClientApplication, RealmClock, RuntimeConfiguration};
@@ -31,7 +32,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "usage: benchmark_world <frames per phase> <output.csv> <map> <x> <y> <z> \
                  [--travel-offset <dx> <dy> <dz>] [--camera-distance <yards>] \
                  [--camera-pitch <radians>] [--camera-yaw <radians>] [--realm-hour <0..23>] \
-                 [--screen-effect <ScreenEffect.dbc ID>] {}",
+                 [--screen-effect <ScreenEffect.dbc ID>] \
+                 [--npc <display> <main> <off> <ranged> <dx> <dy> <dz>] {}",
                 RuntimeConfiguration::usage()
             ),
         )
@@ -61,6 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut yaw = 0.0;
     let mut hour = 12_u32;
     let mut screen_effect = None;
+    let mut npcs = Vec::new();
     let mut runtime_args = Vec::new();
     while let Some(argument) = args.next() {
         match argument.to_str() {
@@ -89,6 +92,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .parse()?,
                 );
             }
+            Some("--npc") => {
+                let mut entries = [0_u32; 4];
+                for entry in &mut entries {
+                    *entry = args
+                        .next()
+                        .and_then(|value| value.into_string().ok())
+                        .ok_or_else(usage)?
+                        .parse()?;
+                }
+                let offset = Vec3::new(
+                    finite_argument(&mut args)?,
+                    finite_argument(&mut args)?,
+                    finite_argument(&mut args)?,
+                );
+                npcs.push((entries, offset));
+            }
             _ => runtime_args.push(argument),
         }
     }
@@ -97,7 +116,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let configuration = RuntimeConfiguration::from_arguments(runtime_args)?;
     // A level-one human warrior with empty equipment and an explicit realm hour.
-    // No server identity, authentication, movement input, or remote population is supplied.
+    // Any NPC population is explicitly authored below; no server session is used.
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(map),
         1,
@@ -135,12 +154,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             UnitStats::new([20; 5], [0; 5], [0; 5]),
         ),
     );
+    for (index, ([display, main, off, ranged], offset)) in npcs.iter().copied().enumerate() {
+        let guid = u64::try_from(index)? + 2;
+        let fields = [
+            (4, 1_f32.to_bits()),
+            (23, u32::from_le_bytes([2, 1, 0, 0])),
+            (24, 100),
+            (32, 100),
+            (54, 1),
+            (56, main),
+            (57, off),
+            (58, ranged),
+            (67, display),
+            (68, display),
+            (74, 0),
+            (122, 1),
+        ];
+        world.create_object(
+            guid,
+            ObjectKind::Unit,
+            Some(WorldTransform::new(Vec3::from_array(position) + offset, 0.)),
+            fields,
+        )?;
+        solarity_systems::project_object_fields(&mut world, guid, fields)?;
+    }
     let clock = RealmClock::new(WorldTimeSpeed::new(hour << 6, 0., 0)?);
     let mut application = ClientApplication::start(configuration)?;
     println!(
-        "adapter={} extent={:?}; offline fixture, real installed terrain/FrameXML/Vulkan; no network, movement solver, remote units, audio or overlays",
+        "adapter={} extent={:?}; offline fixture with {} authored NPCs, real installed terrain/FrameXML/Vulkan; no network, movement solver, audio or overlays",
         application.vulkan_report().device_name(),
-        application.vulkan_report().extent()
+        application.vulkan_report().extent(),
+        npcs.len(),
     );
     let capture_directory = std::env::var_os("SOLARITY_WORLD_CAPTURE_DIR").map(PathBuf::from);
     if capture_directory.is_some() {

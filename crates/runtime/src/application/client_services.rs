@@ -2714,7 +2714,9 @@ impl ClientServices {
         match self
             .player
             .synchronize_creatures(self.gameplay.world(), |identity| {
-                self.gameplay.unit_template_family(identity)
+                self.gameplay
+                    .unit_template_family(identity)
+                    .map(|family| (family, self.gameplay.unit_template_flags(identity)))
             })? {
             RuntimeCreaturePoll::ModelsChanged => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
