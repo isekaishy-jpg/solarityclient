@@ -7,6 +7,159 @@ use super::*;
 use solarity_systems::UnitWaterEffect;
 
 #[test]
+fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Result<(), Box<dyn Error>>
+{
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let fixture = crate::test_support::unit_models::fixture_with_water_effects(17)?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let mut warmup = M2UnitEffectWarmup::new(ResidentUnitEffect::load(
+        &mut store,
+        &solarity_asset::EnvironmentalDamageCatalog::default(),
+    )?);
+    while !warmup.service_one(&mut renderer)? {}
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    for guid in [30, 31] {
+        add_unit(&mut world, guid, ObjectKind::Unit, 0)?;
+    }
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    frame.set_unit_effect_sources(Arc::new(warmup.into_sources()));
+    frame.replace_creatures(
+        &mut renderer,
+        &presentation.resident_creature_frame_inputs(),
+        &mut random,
+    )?;
+    let owners = frame
+        .placements
+        .iter()
+        .filter_map(|placement| {
+            placement
+                .unit_animation
+                .as_ref()
+                .map(|owner| (owner.identity().guid(), Rc::clone(owner)))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let camera = WorldCamera::stock(Vec3::new(8., 0., 0.), Vec3::new(16., 0., 0.), Vec3::Z, 100.)
+        .frame(1.)?;
+    let lifetime = Rc::new(());
+    let mut order = Vec::new();
+    for now in [1., 121.] {
+        if now == 121. {
+            for guid in [30, 31] {
+                world.update_transform(guid, WorldTransform::new(Vec3::new(3., 4., 1.), 0.8))?;
+            }
+            presentation.synchronize_creatures(Some(&world), |_| None)?;
+            frame.replace_creatures(
+                &mut renderer,
+                &presentation.resident_creature_frame_inputs(),
+                &mut random,
+            )?;
+        }
+        frame.update_creature_states(
+            &presentation.resident_creature_frame_inputs(),
+            now,
+            &mut random,
+        )?;
+        let mut callback = |event: &super::super::super::RuntimeM2Event,
+                            _: &Rc<UnitAnimationBehavior>,
+                            _: &DecodedM2Model,
+                            _: Mat4| {
+            let guid = event.owner_guid()?;
+            assert_eq!(event.identifier(), *b"$BTH");
+            assert!(
+                event.position().abs_diff_eq(Vec3::new(3., 4., 1.), 0.00001),
+                "current callback position: {:?}",
+                event.position()
+            );
+            let other = if guid == 30 { 31 } else { 30 };
+            // 81C9C0 finishes one 832450 tree before visiting the next root.
+            // The former renderer advanced every unit before dispatching any
+            // of their effect callbacks, so this assertion observed 121 twice.
+            assert_eq!(
+                owners[&other]
+                    .playback()
+                    .borrow()
+                    .previous_event_scene_time_ms,
+                if guid == 30 { 1 } else { 121 },
+            );
+            order.push(guid);
+            Some(UnitEffectRequest {
+                identity: world.object_identity(guid)?,
+                lifetime: Rc::downgrade(&lifetime),
+                kind: UnitWaterEffect::RunSpray.into(),
+                kit: None,
+                sound_entry: 0,
+                binding: UnitEffectBinding::Positioned {
+                    position: event.position(),
+                    world_factor: 1.,
+                    unit_scale: 1.,
+                },
+            })
+        };
+        let draws = frame.prepare_visible_draws_with_unit_effects(
+            &renderer,
+            WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+            camera,
+            solarity_rendering::M2TransparentPass::One,
+            Vec3::ZERO,
+            now,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &mut random,
+            None,
+            Some(&mut callback),
+            None,
+            None,
+            None,
+        )?;
+        assert_eq!(
+            draws.draws.len(),
+            if now == 1. { 0 } else { 2 },
+            "the offscreen units contribute no mesh; both CEffects retain their scene pass"
+        );
+    }
+    assert_eq!(order, [30, 31]);
+    let effects = frame
+        .placements
+        .iter()
+        .filter(|placement| placement.unit_effect.is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(effects.len(), 2);
+    for effect in effects {
+        assert_eq!(
+            effect
+                .playback
+                .as_ref()
+                .ok_or("effect playback")?
+                .borrow()
+                .script_timer
+                .ok_or("effect timer")?
+                .start_time_ms(),
+            121
+        );
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
 fn environmental_packets_select_live_unit_kits_and_reject_replaced_units()
 -> Result<(), Box<dyn Error>> {

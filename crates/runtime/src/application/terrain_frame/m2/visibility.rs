@@ -30,6 +30,8 @@ pub(super) struct M2PlacementVisibility {
     bounds: Vec<Option<(glam::Vec3, f32)>>,
     scenery: Vec<Option<super::distance::SceneryDistance>>,
     dynamic_indices: Vec<usize>,
+    /// Callback traversal must visit a resident attachment parent first.
+    dynamic_scene_indices: Vec<usize>,
     retired_indices: Vec<usize>,
     /// First occurrence preserves the ordered lookup used by unit state updates.
     dynamic_owners: HashMap<M2GpuPlacementOwner, usize>,
@@ -132,6 +134,7 @@ impl M2PlacementVisibility {
                 None
             });
         }
+        self.rebuild_scene_order();
     }
 
     /// Marks all placement-owned slots, including dynamic and empty geometry.
@@ -172,6 +175,10 @@ impl M2PlacementVisibility {
         &self.dynamic_indices
     }
 
+    pub(super) fn dynamic_scene_indices(&self) -> &[usize] {
+        &self.dynamic_scene_indices
+    }
+
     pub(super) fn retired_indices(&self) -> PlacementStateIndices<'_> {
         PlacementStateIndices::Cached(self.retired_indices.iter().copied())
     }
@@ -194,7 +201,36 @@ impl M2PlacementVisibility {
     }
 
     pub(super) fn set_vehicle_parents(&mut self, parents: &HashMap<usize, usize>) {
-        self.vehicle_parents.clone_from(parents);
+        if self.vehicle_parents != *parents {
+            self.vehicle_parents.clone_from(parents);
+            self.rebuild_scene_order();
+        }
+    }
+
+    fn rebuild_scene_order(&mut self) {
+        self.dynamic_scene_indices.clear();
+        let mut first_child = vec![None; self.light_parents.len()];
+        let mut next_sibling = vec![None; self.light_parents.len()];
+        let mut pending = Vec::new();
+        for &index in self.dynamic_indices.iter().rev() {
+            if let Some(parent) = self.light_parent(index) {
+                next_sibling[index] = first_child[parent];
+                first_child[parent] = Some(index);
+            } else {
+                pending.push(index);
+            }
+        }
+        // 832450 recursively completes each child subtree before the scene
+        // visits another root. A cycle has no root and is not admitted here.
+        while let Some(index) = pending.pop() {
+            self.dynamic_scene_indices.push(index);
+            if let Some(sibling) = next_sibling[index] {
+                pending.push(sibling);
+            }
+            if let Some(child) = first_child[index] {
+                pending.push(child);
+            }
+        }
     }
 
     /// Vehicle ancestry is independent of scene insertion order. Invalid cycles
@@ -241,5 +277,53 @@ impl M2PlacementVisibility {
 
     pub(super) fn effect_start(&self) -> usize {
         self.effect_start
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callback_subtrees_match_original_scene_traversal() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut cases = 0;
+        for row in include_str!("../../../../tests/fixtures/native_model_scene_order.txt").lines() {
+            if row.starts_with('#') || row.is_empty() {
+                continue;
+            }
+            let (input, output) = row.split_once('|').ok_or("scene row")?;
+            let input = input
+                .split_whitespace()
+                .map(str::parse::<i32>)
+                .collect::<Result<Vec<_>, _>>()?;
+            let expected = output
+                .split_whitespace()
+                .map(str::parse::<usize>)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut visibility = M2PlacementVisibility {
+                dynamic_indices: input[5..].iter().map(|index| *index as usize).collect(),
+                light_parents: input[..5]
+                    .iter()
+                    .map(|parent| usize::try_from(*parent).ok())
+                    .collect(),
+                ..Default::default()
+            };
+            visibility.rebuild_scene_order();
+            assert_eq!(visibility.dynamic_scene_indices(), expected, "{row}");
+            // The same graph can be supplied by vehicle attachment publication.
+            let parents = visibility
+                .light_parents
+                .iter()
+                .enumerate()
+                .filter_map(|(index, parent)| parent.map(|parent| (index, parent)))
+                .collect();
+            visibility.light_parents.fill(None);
+            visibility.set_vehicle_parents(&parents);
+            assert_eq!(visibility.dynamic_scene_indices(), expected, "{row}");
+            cases += 1;
+        }
+        assert_eq!(cases, 480);
+        Ok(())
     }
 }

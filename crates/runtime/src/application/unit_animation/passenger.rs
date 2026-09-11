@@ -3,7 +3,6 @@
 use glam::{Mat4, Vec3};
 use solarity_asset::{DecodedM2Model, VehicleCatalog, VehicleSeatDefinition};
 use solarity_ecs::{ActiveWorld, ObjectKind, WorldObjectIdentity, WorldTransform};
-use solarity_rendering::M2AnimationClock;
 use solarity_systems::{
     VehiclePassengerAnimationInput, VehiclePassengerPhase as Phase, VehiclePassengerTransition,
     VehicleTransitionInput,
@@ -758,13 +757,5 @@ impl UnitAnimationBehavior {
         if matches!(state.phase, Phase::Detached | Phase::Seated) {
             state.last_yaw = Some(self.body_pose().placement_yaw);
         }
-    }
-
-    /// Read the already advanced clock without taking its completion/event window.
-    pub fn scene_clock(&self) -> Option<M2AnimationClock> {
-        self.scene_sample
-            .borrow()
-            .as_ref()
-            .map(|sample| sample.advance.clock)
     }
 }

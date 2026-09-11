@@ -383,6 +383,11 @@ impl M2UnitEffectScene {
         Ok(())
     }
 
+    /// Owners with attached effects need a final palette before draw admission.
+    pub(super) fn has_anchors(&self, owner: &Rc<UnitAnimationBehavior>) -> bool {
+        self.anchors.contains_key(&Rc::as_ptr(owner).addr())
+    }
+
     /// Each requested attachment inherits its current parent bone and placement.
     pub(super) fn update_anchor(
         &mut self,

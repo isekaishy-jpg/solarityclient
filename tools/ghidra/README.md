@@ -203,6 +203,7 @@ records runtime consumers and remaining event-delivery work.
 ```text
 python tools/ghidra/vehicle_animation_oracle.py <path-to-Wow.exe> --output crates/systems/tests/fixtures/vehicle-animation-native.txt
 python tools/ghidra/model_bone_callbacks_oracle.py <path-to-Wow.exe> --output crates/rendering/tests/fixtures/native_model_bone_callbacks.txt
+python tools/ghidra/model_scene_order_oracle.py <path-to-Wow.exe> --output crates/runtime/tests/fixtures/native_model_scene_order.txt
 python tools/ghidra/model_bone_playback_oracle.py <path-to-Wow.exe> --output crates/runtime/tests/fixtures/native_model_bone_playback.txt
 ```
 

@@ -35,7 +35,7 @@ use solarity_systems::{
 };
 
 use super::entity_opacity::EntityOpacityOwner;
-use super::model_playback::{M2Playback, M2PlaybackAdvance};
+use super::model_playback::{M2BoneEventCallback, M2Playback, M2PlaybackAdvance};
 use super::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 
@@ -1052,11 +1052,24 @@ impl UnitAnimationBehavior {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn advance_scene(
         &self,
         scene_time_ms: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.prepare_scene(scene_time_ms, random)?;
+        self.advance_prepared_scene(scene_time_ms, random, None)
+    }
+
+    /// Unit movement, yaw and pending selections precede CM2Scene's callbacks.
+    /// World placement can be published between this step and sequence advance.
+    pub fn prepare_scene(
+        &self,
+        scene_time_ms: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.scene_sample.borrow_mut().take();
         self.synchronize(scene_time_ms as u32, random)?;
         self.opacity
             .resolve_initial_animation(self.behavior(&self.playback.borrow()) == 127);
@@ -1087,6 +1100,16 @@ impl UnitAnimationBehavior {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    pub fn advance_prepared_scene(
+        &self,
+        scene_time_ms: f32,
+        random: &mut CrtRand,
+        event_callback: Option<&mut M2BoneEventCallback<'_>>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let mut playback = self.playback.borrow_mut();
         let mut completed =
             |playback: &mut M2Playback, key: i32, animation: u16, _: u32, random: &mut CrtRand| {
                 let input = self.input.get();
@@ -1195,11 +1218,12 @@ impl UnitAnimationBehavior {
                 }
                 Ok(())
             };
-        let advance = playback.clock_with_bone_completion(
+        let advance = playback.clock_with_bone_callbacks(
             &self.model,
             scene_time_ms as u32,
             random,
             Some(&mut completed),
+            event_callback,
         )?;
         let event_window = playback.event_window(scene_time_ms);
         *self.scene_sample.borrow_mut() = Some(UnitAnimationSceneSample {

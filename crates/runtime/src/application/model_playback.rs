@@ -5,6 +5,7 @@
 mod tests;
 
 mod bones;
+pub(in crate::application) use bones::M2BoneEventCallback;
 use bones::M2BonePlayback;
 
 use crate::application::terrain_frame::RuntimeTerrainFrameError;

@@ -24,6 +24,7 @@ use std::{collections::HashMap, rc::Rc};
 pub(super) struct M2VehiclePassengers {
     state: Vec<u8>,
     hidden: Vec<bool>,
+    callbacks_disabled: Vec<bool>,
     parents: HashMap<usize, usize>,
     chain: Vec<(usize, bool)>,
     palettes: HashMap<usize, ParentPalette>,
@@ -45,6 +46,7 @@ struct ParentSeatPose {
     yaw: f32,
     transition: bool,
     hidden: bool,
+    callbacks_disabled: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -63,8 +65,49 @@ impl M2VehiclePassengers {
         self.hidden.get(index).copied().unwrap_or(false)
     }
 
+    pub fn callbacks_disabled(&self, index: usize) -> bool {
+        self.callbacks_disabled.get(index).copied().unwrap_or(false)
+    }
+
     pub fn parents(&self) -> &HashMap<usize, usize> {
         &self.parents
+    }
+
+    /// A parent callback may have selected another sequence since the placement
+    /// pass. Sample its new timer before scanning the attached child's events.
+    #[allow(clippy::too_many_arguments)]
+    pub fn refresh_callback_pose(
+        &mut self,
+        index: usize,
+        placements: &mut [M2GpuPlacement],
+        sources: &[Option<M2GpuSource>],
+        visibility: &M2PlacementVisibility,
+        requested_items: &[(u64, CharacterAttachmentPoint)],
+        view: Mat4,
+        now: f32,
+        random: &mut CrtRand,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let Some(owner) = unit_owner(&placements[index]) else {
+            return Ok(());
+        };
+        if owner.passenger_input().is_none()
+            || model_index(visibility, placements, owner.identity()) != Some(index)
+        {
+            return Ok(());
+        }
+        for palette in self.palettes.values_mut() {
+            palette.clock = None;
+        }
+        self.resolve(
+            index,
+            placements,
+            sources,
+            visibility,
+            requested_items,
+            view,
+            now,
+            random,
+        )
     }
 
     /// F60 belongs to the unit even while its body is waiting for model data.
@@ -205,6 +248,8 @@ impl M2VehiclePassengers {
         self.state.fill(0);
         self.hidden.resize(placements.len(), false);
         self.hidden.fill(false);
+        self.callbacks_disabled.resize(placements.len(), false);
+        self.callbacks_disabled.fill(false);
         self.parents.clear();
         for palette in self.palettes.values_mut() {
             palette.clock = None;
@@ -389,6 +434,7 @@ impl M2VehiclePassengers {
         };
         if inherit && parent_pose.attachment.is_some() {
             self.hidden[index] = parent_pose.hidden;
+            self.callbacks_disabled[index] = parent_pose.callbacks_disabled;
             self.parents.insert(index, parent);
         }
         let passenger_scale = placements[index].ground_placement.as_ref().map_or_else(
@@ -437,7 +483,7 @@ impl M2VehiclePassengers {
         requested_items: &[(u64, CharacterAttachmentPoint)],
         view: Mat4,
         now: f32,
-        random: &mut CrtRand,
+        _random: &mut CrtRand,
     ) -> Result<Option<ParentSeatPose>, RuntimeTerrainFrameError> {
         let Some(seat) = input.seat else {
             return Ok(None);
@@ -457,31 +503,17 @@ impl M2VehiclePassengers {
         let attachment_id = vehicle_seat_attachment(seat.attachment_id());
         let attachment = attachment_id.and_then(|id| source.model.attachment(id));
         let mut hidden = false;
+        let mut callbacks_disabled = false;
         let attached = if let Some(attachment) = attachment {
             let palette = self.palettes.entry(parent).or_default();
             if palette.clock.is_none() {
                 let placement = &mut placements[parent];
-                let clock = if purpose == SeatPosePurpose::InitialTarget {
-                    let Some(playback) = placement.playback.as_ref() else {
-                        return Ok(None);
-                    };
-                    playback.borrow().sample_clock(now as u32)
-                } else if let Some(clock) = placement
-                    .unit_animation
-                    .as_ref()
-                    .and_then(|owner| owner.scene_clock())
-                {
-                    clock
-                } else if let Some(advance) = placement.passenger_playback_advance.as_ref() {
-                    advance.clock
-                } else if let Some(playback) = placement.playback.as_mut() {
-                    let advance = playback.borrow_mut().clock(&source.model, now, random)?;
-                    let clock = advance.clock;
-                    placement.passenger_playback_advance = Some(advance);
-                    clock
-                } else {
+                let Some(playback) = placement.playback.as_ref() else {
                     return Ok(None);
                 };
+                // 830DC0 samples the current timer. A bone query cannot run
+                // sequence completion or consume the model's authored events.
+                let clock = playback.borrow().sample_clock(now as u32);
                 let body = placement
                     .unit_animation
                     .as_ref()
@@ -533,6 +565,12 @@ impl M2VehiclePassengers {
                     .entity_opacity
                     .as_ref()
                     .is_some_and(|owner| owner.hidden());
+            callbacks_disabled = enabled.is_none()
+                || self
+                    .callbacks_disabled
+                    .get(parent)
+                    .copied()
+                    .unwrap_or(false);
             // 831410 supplies the bone matrix independently of the attachment
             // enable channel; attached models inherit that channel's visibility.
             Some(
@@ -571,6 +609,7 @@ impl M2VehiclePassengers {
             yaw: vehicle_yaw,
             transition: parent_transition.is_some(),
             hidden,
+            callbacks_disabled,
         }))
     }
 }

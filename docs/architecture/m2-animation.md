@@ -152,12 +152,36 @@ they do not validate native bone-transform calculation or GPU submission.
 The default effect-load capture also records its previous-sequence index, including
 the held-sequence case that must not invent a blend.
 
-The shared engine supports synchronous authored callbacks. The renderer currently
-collects unit event poses here and invokes environmental effect consumers during
-visible event delivery. Their global RNG ordering, offscreen delivery and sound
-age remain open. Ordinary models without explicit bone slots retain the earlier
-single-primary path; this change does not establish a complete Unit_C spell,
-action, equipment synchronization or vehicle-control animation system.
+Unit body models now invoke their environmental effect consumers synchronously
+inside this scan. CEffect default-sequence construction therefore consumes its CRT
+draws before the next callback or unit model update. Event poses retain the scan's
+snapshot, and the later geometry pass does not replay those events.
+
+Unit pending selections, body yaw and opacity advance first. Ground placement and
+vehicle targets then sample current timers without executing callbacks. The scene
+pass follows attached model subtrees, refreshing passenger and rider transforms
+after a parent timer changes. Requested CEffect anchors update independently of
+camera visibility. Disabled attachment channels suppress child callbacks while
+their timers age; camera culling does not substitute for that channel.
+
+`model_scene_order_oracle.py` executes `81C9C0` and `832450` for 480 supplied
+root/child lists. The runtime's cached traversal matches their complete subtree
+order, including siblings whose placement records are separated by other roots.
+Fixture SHA-256:
+`db90f78f8aae648d71d390a50d8efa6b55a48d03f691f4bd7a711fe82cd4eefd`.
+The capture supplies context housekeeping and records entry to the inner model
+scan; the preceding captures validate that scanner. It does not recover the
+producer of root registration or sibling attachment order. The runtime preserves
+its existing order within those lists, so whole-world RNG equivalence remains
+unproven.
+
+A renderer regression observes the next unit's unconsumed event interval during an authored
+effect callback, verifies current moved world positions and same-frame CEffect
+construction, and retains delivery for offscreen units. Mount models advance before
+their riders, but their generic event consumers still use the later delivery path.
+Other generic models retain the earlier single-primary path. Sound callback age,
+the complete scene registration lifecycle, Unit_C spell/action providers, equipment
+synchronization and vehicle-control animation remain open.
 
 ## Per-model global tracks
 

@@ -288,9 +288,12 @@ A decoded runtime fixture verifies different body/upper durations, separate
 initial-to-loop callbacks, upper-before-body selection rolls, bone composition,
 and model replacement retaining both completed lanes. These checks do not prove
 the unfinished active-spell/vehicle-control providers, complete transfer lifecycle,
-combined live vehicle presentation, or a performance improvement. The renderer's
-authored effect callbacks still run during visible event delivery; moving those
-consumers into the shared scan remains separate work.
+combined live vehicle presentation, or a performance improvement. Unit body
+effect callbacks now run synchronously in the shared scan. Seat queries sample
+timers without consuming events or variation rolls, and callback placement
+refreshes animated parents before their attached children. The remaining generic
+model consumers and scene registration order are described in the model scan
+evidence above.
 
 ## Testing package
 

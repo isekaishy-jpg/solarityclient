@@ -28,6 +28,7 @@ mod static_streaming_tests;
 mod streaming;
 pub(in crate::application) mod unit_effects;
 mod unit_registration;
+mod unit_scene;
 #[cfg(test)]
 #[path = "../../../tests/application/unit_shadow_scene.rs"]
 mod unit_shadow_tests;
@@ -213,7 +214,7 @@ struct M2GpuPlacement {
     retirement: Option<Box<retirement::RetiredM2Placement>>,
     particle_colors: Option<M2ParticleColorReplacement>,
     playback: Option<M2PlaybackStorage>,
-    /// Attachment evaluation may require a mount clock before its draw visit.
+    /// The scene callback pass can advance a mount before its draw visit.
     passenger_playback_advance: Option<M2PlaybackAdvance>,
     unit_animation: Option<Rc<UnitAnimationBehavior>>,
     unit_presentation: Option<UnitPresentationGeneration>,
@@ -2130,7 +2131,7 @@ impl M2Frame {
         effect_scale: M2CameraEffectScale,
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
-        mut unit_effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
+        unit_effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
         world_lighting: Option<(
             solarity_rendering::M2SceneUniform,
             solarity_rendering::M2DirectionalLight,
@@ -2281,8 +2282,8 @@ impl M2Frame {
             animation_time_ms,
             random,
         )?;
-        // Primary unit completion belongs to the scene update, including
-        // bodies subsequently rejected by the camera's visibility test.
+        // Prepare unit selection and yaw before placement. Authored events and
+        // completion follow below in scene traversal order, before camera culling.
         for &index in self.placement_visibility.dynamic_indices() {
             let placement = &mut self.placements[index];
             if let Some(animation) = &placement.unit_animation {
@@ -2292,7 +2293,7 @@ impl M2Frame {
                 {
                     animation.admit_scene_collision();
                 }
-                animation.advance_scene(animation_time_ms, random)?;
+                animation.prepare_scene(animation_time_ms, random)?;
                 placement.transform =
                     placement.local_transform * animation.body_pose().placement_rotation;
             }
@@ -2342,6 +2343,7 @@ impl M2Frame {
         )?;
         self.placement_visibility
             .set_vehicle_parents(self.vehicle_passengers.parents());
+        self.advance_unit_callbacks(camera, animation_time_ms, random, unit_effect_callback)?;
         self.rider_transforms.clear();
         self.rider_transforms.reserve(
             self.mounted_guids
@@ -2708,22 +2710,6 @@ impl M2Frame {
                 if let Some(effect) = &placement.unit_effect {
                     effect.bind_sound_events(&mut self.triggered_events[first_event..]);
                 }
-                if let Some(callback) = unit_effect_callback.as_mut()
-                    && let Some(animation) = &placement.unit_animation
-                {
-                    for event in &self.triggered_events[first_event..] {
-                        if let Some(request) =
-                            callback(event, animation, &source.model, placement.transform)
-                        {
-                            self.unit_effects.emit(
-                                request,
-                                &self.animations,
-                                animation_time_ms,
-                                random,
-                            )?;
-                        }
-                    }
-                }
             }
             let clock = advance.clock;
             let bone_sequences =
@@ -2782,22 +2768,6 @@ impl M2Frame {
             )?;
             if let Some(effect) = &placement.unit_effect {
                 effect.bind_sound_events(&mut self.triggered_events[first_event..]);
-            }
-            if let Some(callback) = unit_effect_callback.as_mut()
-                && let Some(animation) = &placement.unit_animation
-            {
-                for event in &self.triggered_events[first_event..] {
-                    if let Some(request) =
-                        callback(event, animation, &source.model, placement.transform)
-                    {
-                        self.unit_effects.emit(
-                            request,
-                            &self.animations,
-                            animation_time_ms,
-                            random,
-                        )?;
-                    }
-                }
             }
             if let Some(animation) = &placement.unit_animation {
                 self.unit_effects.update_anchor(
