@@ -13,11 +13,15 @@ use crate::{UiObjectRole, script::UiRuntimeObjectPlan};
 
 use super::ordered_quads::{UiOrderedQuadSlot, UiOrderedQuadSlots};
 
+// Stable packet/owner order, with textures preceding glyphs at equal keys.
+type RetainedQuadOrder = (bool, Option<crate::UiPresentationPacketKey>, usize, bool);
+
 /// Renderer-owned mesh data derived from one complete live presentation pass.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiRenderPlan {
     mesh: UiMeshPlan,
     texture_assets: UiTextureAssetPlan,
+    quad_orders: Vec<RetainedQuadOrder>,
 }
 
 impl UiRenderPlan {
@@ -36,12 +40,17 @@ impl UiRenderPlan {
         presentation: &UiPresentationPlan,
         logical_extent: (f64, f64),
     ) -> Result<Self, UiRenderError> {
-        let quads = presentation.members_in_draw_order().iter().map(render_quad);
+        let mut quad_orders = Vec::new();
+        let quads = presentation.members_in_draw_order().iter().map(|texture| {
+            quad_orders.push((false, Some(texture.key()), texture.object_index(), false));
+            render_quad(texture)
+        });
         let mesh = UiMeshPlan::prepare([logical_extent.0 as f32, logical_extent.1 as f32], quads)?;
         let texture_assets = UiTextureAssetPlan::prepare(&mesh)?;
         Ok(Self {
             mesh,
             texture_assets,
+            quad_orders,
         })
     }
 
@@ -73,14 +82,29 @@ impl UiRenderPlan {
         let retained_glyphs = glyphs.retained_scroll_quads(geometry, scroll_frames);
         let glyph_count = retained_glyphs.len();
         let glyphs_elapsed = started.elapsed();
+        let texture_keys = texture_orders
+            .iter()
+            .map(|order| (order.0, order.1, order.2, false))
+            .collect::<Vec<_>>();
         let ordered = UiOrderedQuadSlots::new(texture_orders, &retained_glyphs);
         let sort_elapsed = started.elapsed();
+        let mut quad_orders = Vec::with_capacity(texture_count + glyph_count);
         let mesh = UiMeshPlan::prepare(
             [logical_extent.0 as f32, logical_extent.1 as f32],
             ordered.map(|slot| match slot {
-                UiOrderedQuadSlot::Texture(index) => textures[index].clone(),
+                UiOrderedQuadSlot::Texture(index) => {
+                    quad_orders.push(texture_keys[index]);
+                    textures[index].clone()
+                }
                 UiOrderedQuadSlot::Glyph(index) => {
-                    render_glyph_quad(glyphs.identity(), &retained_glyphs[index])
+                    let glyph = &retained_glyphs[index];
+                    quad_orders.push((
+                        glyph.packet_key().is_none(),
+                        glyph.packet_key(),
+                        glyph.object_index(),
+                        true,
+                    ));
+                    render_glyph_quad(glyphs.identity(), glyph)
                 }
             }),
         )?;
@@ -103,6 +127,7 @@ impl UiRenderPlan {
         Ok(Self {
             mesh,
             texture_assets,
+            quad_orders,
         })
     }
 
@@ -116,6 +141,32 @@ impl UiRenderPlan {
     #[must_use]
     pub const fn texture_assets(&self) -> &UiTextureAssetPlan {
         &self.texture_assets
+    }
+
+    fn object_order_range(
+        &self,
+        object_index: usize,
+        glyph: bool,
+    ) -> Option<std::ops::Range<usize>> {
+        let matches = |order: &RetainedQuadOrder| order.2 == object_index && order.3 == glyph;
+        let start = self.quad_orders.iter().position(matches)?;
+        let end = self.quad_orders.iter().rposition(matches)? + 1;
+        self.quad_orders[start..end]
+            .iter()
+            .all(matches)
+            .then_some(start..end)
+    }
+
+    fn orders_fit(&self, range: &std::ops::Range<usize>, orders: &[RetainedQuadOrder]) -> bool {
+        orders.windows(2).all(|pair| pair[0] <= pair[1])
+            && orders
+                .first()
+                .is_none_or(|first| range.start == 0 || self.quad_orders[range.start - 1] <= *first)
+            && orders.last().is_none_or(|last| {
+                self.quad_orders
+                    .get(range.end)
+                    .is_none_or(|next| last <= next)
+            })
     }
 
     /// Refreshes animation-only draw state without touching vertex/index bytes.
@@ -297,32 +348,57 @@ impl UiRenderPlan {
                 .iter()
                 .map(|quad| render_glyph_quad(glyphs.identity(), quad))
                 .collect::<Vec<_>>();
+            let orders = quads[first..end]
+                .iter()
+                .map(|glyph| {
+                    (
+                        glyph.packet_key().is_none(),
+                        glyph.packet_key(),
+                        object_index,
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let existing = self.object_order_range(object_index, true);
+            if rendered.is_empty() && existing.is_none() {
+                continue;
+            }
+            let range = if let Some(range) = existing {
+                range
+            } else {
+                if self
+                    .mesh
+                    .sources_for_object(object_index)
+                    .any(|candidate| candidate == &source)
+                {
+                    return Ok(false);
+                }
+                let Some(first) = orders.first() else {
+                    return Ok(false);
+                };
+                let index = self.quad_orders.partition_point(|order| order <= first);
+                index..index
+            };
+            if !self.orders_fit(&range, &orders) {
+                return Ok(false);
+            }
             if !self
                 .mesh
                 .replace_object_source_quads(object_index, &source, &rendered)?
             {
-                if self
-                    .mesh
-                    .replace_object_source_run(object_index, &source, &rendered)?
-                {
-                    batches_changed = true;
+                let updated = if range.is_empty() {
+                    self.mesh
+                        .insert_object_source_run(object_index, range.start, &rendered)?
                 } else {
-                    if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-                        eprintln!(
-                            "UI glyph slot rebuild: object={} name={:?} retained={} requested={}",
-                            object_index,
-                            live.objects()[object_index].name,
-                            self.mesh
-                                .object_indices()
-                                .iter()
-                                .filter(|&&index| index == object_index)
-                                .count(),
-                            rendered.len()
-                        );
-                    }
+                    self.mesh
+                        .replace_object_source_run(object_index, &source, &rendered)?
+                };
+                if !updated {
                     return Ok(false);
                 }
+                batches_changed = true;
             }
+            self.quad_orders.splice(range, orders);
             if let Some(text) = live
                 .objects()
                 .get(object_index)
@@ -403,6 +479,53 @@ impl UiRenderPlan {
                 }
                 continue;
             }
+            if !self
+                .quad_orders
+                .iter()
+                .any(|order| order.2 == object_index && !order.3)
+            {
+                let incoming = presentation
+                    .members_for_object(object_index)
+                    .filter_map(|member| {
+                        render_quad_with_scroll(member, geometry, scroll_frames)
+                            .map(|quad| ((false, Some(member.key()), object_index, false), quad))
+                    })
+                    .collect::<Vec<_>>();
+                let mut start = 0;
+                while start < incoming.len() {
+                    let order = incoming[start].0;
+                    let source = incoming[start].1.source();
+                    let mut end = start + 1;
+                    while end < incoming.len()
+                        && incoming[end].0 == order
+                        && incoming[end].1.source() == source
+                    {
+                        end += 1;
+                    }
+                    let index = self
+                        .quad_orders
+                        .partition_point(|candidate| *candidate <= order);
+                    let quads = incoming[start..end]
+                        .iter()
+                        .map(|(_, quad)| quad.clone())
+                        .collect::<Vec<_>>();
+                    if !self
+                        .mesh
+                        .insert_object_source_run(object_index, index, &quads)?
+                    {
+                        return Ok(false);
+                    }
+                    self.quad_orders
+                        .splice(index..index, std::iter::repeat_n(order, quads.len()));
+                    start = end;
+                }
+                self.mesh.set_object_opacity(
+                    object_index,
+                    presentation.object_opacity(object_index).unwrap_or(0.0),
+                )?;
+                material_changed = true;
+                continue;
+            }
             let single_source = sources.len() == 1;
             for source in sources {
                 let quads = rendered
@@ -414,6 +537,18 @@ impl UiRenderPlan {
                     .mesh
                     .replace_object_source_quads(object_index, &source, &quads)?
                 {
+                    let Some(range) = self.object_order_range(object_index, false) else {
+                        return Ok(false);
+                    };
+                    let Some(&order) = self.quad_orders.get(range.start) else {
+                        return Ok(false);
+                    };
+                    if self.quad_orders[range.clone()]
+                        .iter()
+                        .any(|candidate| *candidate != order)
+                    {
+                        return Ok(false);
+                    }
                     let previous_sources = self
                         .mesh
                         .sources_for_object(object_index)
@@ -436,6 +571,8 @@ impl UiRenderPlan {
                         }
                         return Ok(false);
                     }
+                    self.quad_orders
+                        .splice(range, std::iter::repeat_n(order, quads.len()));
                     material_changed = true;
                 }
             }

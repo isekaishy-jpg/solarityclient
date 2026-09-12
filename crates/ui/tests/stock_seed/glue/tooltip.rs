@@ -3,17 +3,24 @@
 use std::error::Error;
 
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
-use solarity_ui::GlueManager;
+use solarity_ui::{GlueManager, UiRenderPlan};
 
 use crate::support::{Fixture, FixtureFile};
 
 #[test]
 fn first_tooltip_reveal_publishes_covered_glyphs_and_falls_back_for_new_coverage()
 -> Result<(), Box<dyn Error>> {
-    let fixture = Fixture::new(&[
-        FixtureFile { path: "Interface\\GlueXML\\GlueXML.toc", bytes: b"TooltipPublication.xml\n" },
-        FixtureFile { path: "Fonts\\TooltipFixture.ttf", bytes: include_bytes!("../../fixtures/tooltip_fixture.ttf") },
-        FixtureFile { path: "Interface\\GlueXML\\TooltipPublication.xml", bytes: br#"<Ui>
+    check_tooltip_reveal(false)
+}
+
+#[test]
+fn tooltip_inserts_new_backdrop_and_glyph_runs_in_complete_packet_order()
+-> Result<(), Box<dyn Error>> {
+    check_tooltip_reveal(true)
+}
+
+fn check_tooltip_reveal(with_backdrop: bool) -> Result<(), Box<dyn Error>> {
+    let xml = br#"<Ui>
 <Font name="TooltipFixtureFont" font="Fonts\TooltipFixture.ttf"><FontHeight><AbsValue val="16"/></FontHeight></Font>
 <Frame name="Seed" hidden="true"><Layers><Layer>
   <FontString inherits="TooltipFixtureFont" text="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"/>
@@ -28,6 +35,7 @@ fn first_tooltip_reveal_publishes_covered_glyphs_and_falls_back_for_new_coverage
 <GameTooltip name="Tip" hidden="true" frameStrata="TOOLTIP"><Size x="120" y="30"/>
 <Layers><Layer level="BACKGROUND"><Texture name="TipBackground" setAllPoints="true"><Color r="0.1" g="0.2" b="0.3"/></Texture></Layer>
 <Layer level="ARTWORK">
+  <Texture name="TipUnusedTexture" hidden="true"/>
   <FontString name="$parentTextLeft1" inherits="TooltipFixtureFont" hidden="true"/>
   <FontString name="$parentTextRight1" inherits="TooltipFixtureFont" hidden="true"/>
   <FontString name="$parentTextLeft2" inherits="TooltipFixtureFont" hidden="true"/>
@@ -35,7 +43,27 @@ fn first_tooltip_reveal_publishes_covered_glyphs_and_falls_back_for_new_coverage
   <FontString name="$parentTextLeft3" inherits="TooltipFixtureFont" hidden="true"/>
   <FontString name="$parentTextRight3" inherits="TooltipFixtureFont" hidden="true"/>
 </Layer></Layers></GameTooltip>
-</Ui>"# },
+</Ui>"#;
+    let xml = String::from_utf8(xml.to_vec())?;
+    let xml = if with_backdrop {
+        xml.replace("<Size x=\"120\" y=\"30\"/>", r#"<Size x="0" y="0"/>
+<Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background" edgeFile="Interface\Tooltips\UI-Tooltip-Border"><EdgeSize><AbsValue val="4"/></EdgeSize></Backdrop>"#)
+    } else {
+        xml
+    };
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            path: "Interface\\GlueXML\\GlueXML.toc",
+            bytes: b"TooltipPublication.xml\n",
+        },
+        FixtureFile {
+            path: "Fonts\\TooltipFixture.ttf",
+            bytes: include_bytes!("../../fixtures/tooltip_fixture.ttf"),
+        },
+        FixtureFile {
+            path: "Interface\\GlueXML\\TooltipPublication.xml",
+            bytes: xml.as_bytes(),
+        },
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
@@ -71,7 +99,8 @@ fn first_tooltip_reveal_publishes_covered_glyphs_and_falls_back_for_new_coverage
     ] {
         manager.bundle().lua().globals().set("LABEL", label)?;
         manager.pointer_motion(pointer)?;
-        assert!(manager.take_callback_failure().is_none());
+        let failure = manager.take_callback_failure();
+        assert!(failure.is_none(), "{failure:?}");
         let quads = manager.glyphs().quads(manager.geometry());
         assert_eq!(
             quads
@@ -89,6 +118,37 @@ fn first_tooltip_reveal_publishes_covered_glyphs_and_falls_back_for_new_coverage
         );
         assert_eq!(manager.glyphs().identity() == atlas, retained_coverage);
         let mesh = manager.render_plan().mesh();
+        if with_backdrop {
+            let complete = UiRenderPlan::prepare_with_glyphs(
+                manager.presentation(),
+                manager.glyphs(),
+                manager.geometry(),
+                manager.scroll_frames(),
+                manager.geometry().ui_extent(),
+            )?;
+            assert_eq!(mesh.object_indices(), complete.mesh().object_indices());
+            assert_eq!(mesh.vertices().len(), complete.mesh().vertices().len());
+            for (index, (actual, expected)) in mesh
+                .vertices()
+                .iter()
+                .zip(complete.mesh().vertices())
+                .enumerate()
+            {
+                // Invisible retained capacity keeps its old payload until used.
+                if actual.color()[3] != 0.0 || expected.color()[3] != 0.0 {
+                    assert_eq!(actual, expected, "{label}: vertex {index}");
+                }
+            }
+            assert_eq!(mesh.batches().len(), complete.mesh().batches().len());
+            for (index, (actual, expected)) in mesh
+                .batches()
+                .iter()
+                .zip(complete.mesh().batches())
+                .enumerate()
+            {
+                assert_eq!(actual, expected, "{label}: batch {index}");
+            }
+        }
         for (object, expected) in [(first, glyph_count), (second, 6), (background, 1)] {
             let visible = mesh
                 .object_indices()

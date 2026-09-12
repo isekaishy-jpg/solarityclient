@@ -1449,25 +1449,6 @@ impl GlueManager {
             &text_objects,
         )?;
         let laid_out = started.elapsed();
-        if missing_topology {
-            // Existing glyph coverage and the affected anchor graph are now
-            // current. Materialize the missing slots once, without resolving
-            // every unrelated screen's geometry again.
-            self.rebuild_visual_topology_from_live()?;
-            if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-                eprintln!(
-                    "UI tooltip materialization: owner={tooltip_owner} text_objects={} copy={:.3}ms geometry={:.3}ms publish={:.3}ms glyphs={:.3}ms topology={:.3}ms total={:.3}ms",
-                    text_objects.len(),
-                    copied.as_secs_f64() * 1_000.0,
-                    (resolved - copied).as_secs_f64() * 1_000.0,
-                    (published - resolved).as_secs_f64() * 1_000.0,
-                    (laid_out - published).as_secs_f64() * 1_000.0,
-                    (started.elapsed() - laid_out).as_secs_f64() * 1_000.0,
-                    started.elapsed().as_secs_f64() * 1_000.0
-                );
-            }
-            return Ok(true);
-        }
         if !self.presentation.refresh_backdrop_object(
             &self.live,
             &self.geometry,
@@ -1476,6 +1457,39 @@ impl GlueManager {
         ) {
             return Ok(false);
         }
+        let mut texture_objects = vec![tooltip_owner];
+        for &object_index in &changed_regions {
+            let object = &self.live.objects()[object_index];
+            if object.texture.as_ref().is_some_and(|texture| {
+                texture.file.is_some()
+                    || texture.solid_color.is_some()
+                    || texture.portrait_unit.is_some()
+            }) {
+                if self.presentation.refresh_texture_geometry_object(
+                    &self.live,
+                    &self.geometry,
+                    object_index,
+                ) {
+                    texture_objects.push(object_index);
+                } else if self.geometry.region(object_index).is_some_and(|region| {
+                    region.effectively_shown()
+                        && (region.effective_alpha() > 0.0 || region.animation_active())
+                }) {
+                    return Ok(false);
+                }
+                // Hidden textures without slots stay deferred until their reveal.
+            }
+            if (object.model.is_some() || object.minimap.is_some())
+                && self
+                    .geometry
+                    .region(object_index)
+                    .is_some_and(|region| region.effectively_shown())
+            {
+                return Ok(false);
+            }
+        }
+        texture_objects.sort_unstable();
+        texture_objects.dedup();
         let presented = started.elapsed();
         let glyphs_retained = self.render_plan.refresh_glyph_objects(
             &self.glyphs,
@@ -1488,7 +1502,7 @@ impl GlueManager {
             &self.presentation,
             &self.geometry,
             &self.scroll_frames,
-            &[tooltip_owner],
+            &texture_objects,
         )?;
         let rendered = started.elapsed();
         if !glyphs_retained || !backdrop_retained {

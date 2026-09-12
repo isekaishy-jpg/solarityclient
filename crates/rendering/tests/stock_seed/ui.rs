@@ -40,6 +40,50 @@ fn ui_mesh_translates_only_requested_owner_source() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+/// New runs preserve neighboring draw state and remain addressable after insertion.
+#[test]
+fn ui_mesh_inserts_source_runs_at_packet_boundaries() -> Result<(), Box<dyn Error>> {
+    let prefix = quad(2, UiRenderSource::VertexColor, [0., 0., 10., 10.]);
+    let tail = quad(8, UiRenderSource::VertexColor, [40., 0., 50., 10.]);
+    let text = quad(4, UiRenderSource::GlyphAtlas(17), [20., 0., 30., 10.]);
+    let mut mesh = UiMeshPlan::prepare([800., 600.], [prefix.clone(), tail.clone()].into_iter())?;
+    mesh.translate_object(8, [3., 5.])?;
+    assert!(mesh.insert_object_source_run(4, 1, &[text.clone(), text.clone()])?);
+    let mut complete = UiMeshPlan::prepare(
+        [800., 600.],
+        [prefix, text.clone(), text.clone(), tail].into_iter(),
+    )?;
+    complete.translate_object(8, [3., 5.])?;
+    assert_eq!(mesh.vertices(), complete.vertices());
+    assert_eq!(mesh.indices(), complete.indices());
+    assert_eq!(mesh.batches(), complete.batches());
+    assert_eq!(mesh.object_indices(), complete.object_indices());
+    let before = mesh.clone();
+    assert!(!mesh.insert_object_source_run(4, 2, std::slice::from_ref(&text))?);
+    assert_eq!(mesh, before);
+    let invalid = quad(4, UiRenderSource::GlyphAtlas(17), [f32::NAN, 0., 1., 1.]);
+    assert!(
+        mesh.insert_object_source_run(4, 1, &[text.clone(), invalid])
+            .is_err()
+    );
+    assert_eq!(mesh, before);
+    assert!(mesh.replace_object_source_run(
+        4,
+        &UiRenderSource::GlyphAtlas(17),
+        std::slice::from_ref(&text)
+    )?);
+    assert!(mesh.replace_object_quad_colors(8, &[[[0.25; 4]; 4]])?);
+    assert_eq!(mesh.vertices()[8].color(), [0.25; 4]);
+    assert_eq!(mesh.batches().last().ok_or("tail")?.translation(), [3., 5.]);
+    // Beginning and end boundaries also preserve established middle runs.
+    let front = quad(1, UiRenderSource::VertexColor, [-10., 0., 0., 10.]);
+    assert!(mesh.insert_object_source_run(1, 0, &[front])?);
+    let end = mesh.object_indices().len();
+    assert!(mesh.insert_object_source_run(4, end, &[text])?);
+    assert_eq!(mesh.object_indices(), [1, 2, 4, 8, 4]);
+    Ok(())
+}
+
 /// Growing and shrinking one run keeps neighboring data and updates later lookups.
 #[test]
 fn ui_mesh_resizes_source_run_without_rebuilding_neighbor_payloads() -> Result<(), Box<dyn Error>> {

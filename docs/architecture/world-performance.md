@@ -2019,3 +2019,107 @@ Packaged and installed as Solarity 0.0.3a Build 120, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `050a3d132895ea936832d81f9271386c938cff82a1803d48000fdd92e484a56e`.
+
+
+### September 12: insert first tooltip runs into retained UI order
+
+The Build 120 profile isolates 12.7971 ms in pointer dispatch on first tooltip
+entry. A separate replay with existing UI diagnostics finds missing visual slots
+for GameTooltip itself, followed by a complete presentation and mesh rebuild.
+That instrumented sample spends 7.443 ms rebuilding topology and 3.138 ms refreshing
+the tooltip's anchor-dependent geometry. Diagnostic stderr logging adds overhead;
+these stage samples are not uncaptured frame-time measurements.
+
+The retained mesh now supports inserting source runs at batch boundaries, keeping
+neighboring vertex payloads, transforms and opacity while shifting later offsets.
+Insertion validates complete inputs before mutation and rejects indexed developer
+meshes that lack stock quad ownership. The UI plan retains packet/owner/kind order
+beside its quads, updating it on run resizing and inserting missing text and
+texture runs at their original stable-sort positions. Unrepresentable changes
+still fall back to complete publication.
+
+First tooltip publication can insert its newly sized backdrop and covered glyphs
+without resolving every unrelated UI presentation member or glyph. Backdrop
+members are inserted into existing packet order, and affected ordinary texture
+bounds are refreshed with the tooltip geometry. Existing opacity, hide/show,
+text-growth and font-coverage fallback behavior is retained. Geometry dependency
+refresh still scans the live arena and remains a separate cost to investigate.
+
+A new mesh regression compares inserted geometry/batches with full preparation,
+checks preserved neighbor translations and later owner lookups, and verifies
+invalid input leaves the mesh unchanged. A tooltip fixture with an initially
+zero-sized authored backdrop compares complete packet order, batches and visible
+vertices across first reveal, changed text, hiding and new font coverage.
+Transparent unused glyph capacity may retain old coordinates until needed.
+
+The fixture also exposed the currently absent Lua SetBackdrop method. Authored
+XML backdrops match the installed tooltip and are used for this regression;
+implementing the missing setter remains separate parity work.
+
+
+The initial insertion candidate regressed first pointer entry to 28.3468/27.8840 ms.
+A temporary fallback trace identified unconfigured, hidden GameTooltipTexture1:
+the candidate incorrectly required it to own a presentation slot, then paid for
+both partial work and a full targeted publication. Hidden absent textures now
+remain deferred, while present slots are refreshed and visible missing geometry
+still falls back. The fixture includes an unused hidden texture to cover this
+case. All temporary fallback probes were removed after diagnosis.
+
+A subsequent trace exposed 2.786 ms inserting tiled backdrop members one at a
+time. Members sharing one packet/owner key are now inserted as a group, shifting
+neighbors once. The final instrumented first-hover sample completes through the
+retained path: 0.567 ms copy, 2.921 ms geometry, 0.243 ms publication, 1.077 ms
+glyph layout, 0.336 ms presentation, 0.633 ms mesh updates, and 5.780 ms total
+tooltip publication; full hover refresh takes 6.330 ms. Logging overhead varies,
+so these samples identify work stages rather than proving uncaptured frame time.
+
+Validation passes: 25 UI unit tests, 157 UI integration tests, 32 rendering unit
+tests and 185 rendering integration tests. After the hidden-slot and batched
+presentation fixes, all UI tests and rendering/UI/runtime Clippy with all targets
+and warnings denied pass again. The rendering mesh code is unchanged since its
+full passing suite. Formatting and whitespace checks pass.
+
+Four uncaptured 2,400-frame-per-phase replays ran in after/before/after/before
+order on the same GTX 1070, 1280x720, shadow-quality-2 offline installed-data
+fixture. First pointer entry is 15.7949/15.4590 ms before versus
+14.9589/10.7276 ms after; its UI time is 13.7575/13.4924 ms versus
+12.5800/8.4490 ms. This is a variable first-hover improvement, not a broad FPS
+gain. Across all six non-loading phases, mean frame time is 2.145116 ms before
+and 2.174509 ms after (+1.37%). Presentation accounts for +29.981 us of the
++29.393 us total; mean UI time differs by +0.350 us.
+
+| Phase | Before mean ms | After mean ms | After FPS | After maximum ms |
+| --- | ---: | ---: | ---: | ---: |
+| Stationary | 1.893097 | 1.929137 | 518.4 | 16.8423 |
+| Orbit | 2.190221 | 2.209367 | 452.6 | 3.2863 |
+| Pointer | 2.257860 | 2.292523 | 436.2 | 21.1491 |
+| Travel out | 2.309507 | 2.333019 | 428.6 | 18.2895 |
+| Travel back | 2.293920 | 2.307755 | 433.3 | 18.2450 |
+| Settled | 1.926094 | 1.975253 | 506.3 | 12.1018 |
+
+The 21.1491 ms pointer outlier occurs at frame 2244, with 19.7153 ms in
+presentation and 0.7572 ms in UI; it is not tooltip entry. Travel admission still
+reaches 12.5382 ms of streaming work. Noticeable stalls and the 1,200 FPS target
+remain open. All non-loading camera positions, detail/shadow counts, screen
+effects and environment-shadow states match. Each travel leg admits and evicts
+21 tiles over 24 changed frames, ending with 49 resident tiles. The 96 combined
+changed frames average 11.513239 ms before and 11.466283 ms after.
+
+A separate capture replay produced 23 frames. Four comparison sheets cover two
+pointer frames and twelve world frames; review shows the first tooltip's text,
+backdrop and placement preserved, its later disappearance preserved, and no new
+world rendering regression. Wall-time animation differences remain expected.
+The existing strong terrain highlights still need whole-world stock comparison.
+
+Evidence: `target/tooltip-materialization-{before,after}-{one,two}.{log,csv}`,
+`target/tooltip-materialization-diagnostic.{log,csv}`,
+`target/tooltip-materialization-ui-diagnostic.{log,csv}`,
+`target/tooltip-materialization-after-captures`, and
+`target/tooltip-materialization-{pointer,orbit,outbound,return}-comparison.png`.
+The retained Build 120 benchmark SHA-256 is
+`0f22f502219860fc94218c7d0a45e8f7d160be2d87e5145e387f83ebf882931c`;
+the final candidate `target/benchmark-tooltip-materialization.exe` SHA-256 is
+`c36026d93614436c45255b54b95671ec53e3060d8ba9343b3f65f42111f074ea`.
+Rejected-candidate evidence remains separately under `target/tooltip-insertion-*`.
+Next, isolate the retained tooltip geometry dependency scan and remaining hover
+callback cost before changing either path.

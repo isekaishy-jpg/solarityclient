@@ -594,6 +594,48 @@ impl UiPresentationPlan {
         let Some(member_indices) = self.member_indices_by_object.get(object_index) else {
             return replacements.is_empty();
         };
+        if member_indices.is_empty() && !replacements.is_empty() {
+            let mut incoming = replacements.into_iter().peekable();
+            while let Some(first) = incoming.next() {
+                let key = (first.key, first.object_index);
+                let mut group = vec![first];
+                while incoming
+                    .peek()
+                    .is_some_and(|member| (member.key, member.object_index) == key)
+                {
+                    if let Some(member) = incoming.next() {
+                        group.push(member);
+                    }
+                }
+                let position = self
+                    .members
+                    .partition_point(|existing| (existing.key, existing.object_index) <= key);
+                // A tiled border is one ordered run; shift neighbors once per key.
+                self.members.splice(position..position, group);
+            }
+            self.packets.clear();
+            for indices in &mut self.member_indices_by_object {
+                indices.clear();
+            }
+            for (index, member) in self.members.iter().enumerate() {
+                self.member_indices_by_object[member.object_index].push(index);
+                if self
+                    .packets
+                    .last()
+                    .is_none_or(|packet| packet.key != member.key)
+                {
+                    self.packets.push(UiPresentationPacket {
+                        key: member.key,
+                        first_member: index,
+                        member_count: 0,
+                    });
+                }
+                if let Some(packet) = self.packets.last_mut() {
+                    packet.member_count += 1;
+                }
+            }
+            return true;
+        }
         if member_indices.len() != replacements.len()
             || member_indices.iter().copied().zip(&replacements).any(
                 |(member_index, replacement)| {
@@ -610,6 +652,28 @@ impl UiPresentationPlan {
         for (member_index, replacement) in member_indices.iter().copied().zip(replacements) {
             self.members[member_index] = replacement;
         }
+        true
+    }
+
+    /// Refreshes one retained ordinary texture after its anchor bounds change.
+    pub(crate) fn refresh_texture_geometry_object(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        geometry: &UiRegionGeometryPlan,
+        object_index: usize,
+    ) -> bool {
+        let Some(indices) = self.member_indices_by_object.get(object_index) else {
+            return false;
+        };
+        if indices.len() != 1 {
+            return false;
+        }
+        let member = indices[0];
+        let Some(region) = geometry.region(object_index) else {
+            return false;
+        };
+        self.members[member].bounds = region.presentation_bounds();
+        self.refresh_visual_object(live, geometry, object_index, [0.0; 2]);
         true
     }
 

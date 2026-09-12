@@ -487,12 +487,74 @@ impl UiMeshPlan {
             }
             old_batch_end += 1;
         }
-        let old = &self.batches[batch_index];
-        let start = old.first_quad() as usize;
-        let last = &self.batches[old_batch_end - 1];
-        let old_end = last.first_quad() as usize + last.quad_count() as usize;
+        self.splice_object_source_run(object_index, batch_index..old_batch_end, quads)
+    }
+
+    /// Inserts a new object/source at an existing batch boundary in caller draw order.
+    /// Existing vertices and draw states are retained; following offsets are shifted.
+    /// Returns `false` for empty input or a non-boundary position.
+    ///
+    /// # Errors
+    /// Returns [`UiMeshPlanError`] for invalid quads or overflowing mesh counts,
+    /// without changing the mesh.
+    pub fn insert_object_source_run(
+        &mut self,
+        object_index: usize,
+        before_quad: usize,
+        quads: &[UiRenderQuad],
+    ) -> Result<bool, UiMeshPlanError> {
+        // Developer indexed meshes do not carry the stock quad ownership table.
+        if self.object_indices.len().checked_mul(4) != Some(self.vertices.len())
+            || self.batches.iter().any(|batch| batch.quad_count() == 0)
+        {
+            return Ok(false);
+        }
+        let Some(first) = quads.first() else {
+            return Ok(false);
+        };
+        if first.object_index() != object_index {
+            return Ok(false);
+        }
+        let batch_index = self
+            .batches
+            .partition_point(|batch| (batch.first_quad() as usize) < before_quad);
+        let boundary = self
+            .batches
+            .get(batch_index)
+            .map_or(self.object_indices.len(), |batch| {
+                batch.first_quad() as usize
+            });
+        if boundary != before_quad {
+            return Ok(false);
+        }
+        self.splice_object_source_run(object_index, batch_index..batch_index, quads)
+    }
+
+    fn splice_object_source_run(
+        &mut self,
+        object_index: usize,
+        old_batches: std::ops::Range<usize>,
+        quads: &[UiRenderQuad],
+    ) -> Result<bool, UiMeshPlanError> {
+        let Some(first) = quads.first() else {
+            return Ok(false);
+        };
+        let batch_index = old_batches.start;
+        let old_batch_end = old_batches.end;
+        let start = self
+            .batches
+            .get(batch_index)
+            .map_or(self.object_indices.len(), |batch| {
+                batch.first_quad() as usize
+            });
+        let old_end = if old_batches.is_empty() {
+            start
+        } else {
+            let last = &self.batches[old_batch_end - 1];
+            last.first_quad() as usize + last.quad_count() as usize
+        };
         let old_count = old_end - start;
-        if old_count == 0 {
+        if !old_batches.is_empty() && old_count == 0 {
             return Ok(false);
         }
         let new_count = quads.len();
@@ -547,6 +609,8 @@ impl UiMeshPlan {
             .max()
             .unwrap_or(0);
         self.ensure_canonical_quad_indices(maximum_new_run)?;
+        self.object_quads.entry(object_index).or_default();
+        self.object_batches.entry(object_index).or_default();
         self.vertices.splice(start * 4..old_end * 4, vertices);
         self.object_indices
             .splice(start..old_end, std::iter::repeat_n(object_index, new_count));
