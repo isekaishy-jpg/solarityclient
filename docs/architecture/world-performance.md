@@ -1464,3 +1464,9 @@ Baseline benchmark SHA-256 is
 `b396cf3c43e52f4381ea4b639ce228f4db048a0ed59cea34854cab26b2ca9802`;
 the new benchmark, preserved as `target/benchmark-wmo-streaming.exe`, is
 `e8412e88fa44c77a3302235c39d9ad7780ded0a015caf08658aa88ab16efb0fa`.
+
+Packaged and installed as Solarity 0.0.3a Build 114, source revision
+`4e2b42f18d9fea165dc3d0b56de8bcac6fbb09c8`. The installed `--build-info` confirms
+that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
+compilation. Packaged and installed executable SHA-256 values both equal
+`01db6edb9b153587e3b47a011c583b8eeaae8f2eecab6c9c9065a7500f98c480`.
