@@ -228,8 +228,7 @@ impl super::ResidentTerrainMap {
         liquids: &LiquidTypeCatalog,
     ) -> Result<Option<SubmergedLiquid>, RuntimeMovementRegistrationError> {
         let active = self;
-        for index in 0..active.movement.roots.len() {
-            let root = active.movement.roots[index];
+        for root in active.root_candidates(position, position)? {
             if let Some(liquid) = active
                 .registration_root_mut(root)?
                 .submerged_liquid(position, liquids)?

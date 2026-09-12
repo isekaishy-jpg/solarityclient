@@ -275,6 +275,13 @@ impl PlacedWorldModelCollision {
             .ok_or(WorldModelCollisionError::InvalidGroup { group_index: group })
     }
 
+    /// Returns the exact transformed root box used by registration and liquid gates.
+    /// Scene broad phases may reject disjoint boxes but must preserve root order.
+    #[must_use]
+    pub const fn root_bounds(&self) -> [Vec3; 2] {
+        self.root_bounds
+    }
+
     /// Tests the placed root box used before ordinary movement collection.
     #[must_use]
     pub fn movement_intersects(&self, bounds: super::MovementCollisionBounds) -> bool {

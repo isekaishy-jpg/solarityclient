@@ -199,8 +199,7 @@ impl ResidentTerrainMap {
         RuntimeMovementRegistrationError,
     > {
         let mut query = WorldModelRegistrationQuery::new(start, end, point)?;
-        for index in 0..self.movement.roots.len() {
-            let reference = self.movement.roots[index];
+        for reference in self.root_candidates(start, end)? {
             query.probe_root(
                 reference.owner(),
                 match reference {

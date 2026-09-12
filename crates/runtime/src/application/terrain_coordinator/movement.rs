@@ -6,6 +6,7 @@ mod dynamic;
 mod liquid;
 mod map_models;
 mod registration;
+mod root_index;
 mod scene;
 mod world_model;
 
@@ -215,6 +216,7 @@ pub(super) struct ResidentMovementScene {
     world_models: Vec<WorldModelReference>,
     dynamic: ResidentDynamicMovement,
     roots: Vec<MovementRootReference>,
+    root_index: root_index::RootIndex,
     game_object_world_models: ResidentGameObjectWorldModels,
     scene: scene::WorldSceneAdmission,
 }
