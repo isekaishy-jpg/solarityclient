@@ -1378,3 +1378,9 @@ Baseline benchmark SHA-256 is
 `43b269edd4e36991d728c90f2f948303348b208a9b21fb1f3e0f359985ede4cd`;
 the new benchmark, preserved as `target/benchmark-lazy-portal.exe`, is
 `b396cf3c43e52f4381ea4b639ce228f4db048a0ed59cea34854cab26b2ca9802`.
+
+Packaged and installed as Solarity 0.0.3a Build 113, source revision
+`3572a985bed35c176691367431e4558f00b54cff`. The installed `--build-info` confirms
+that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
+compilation. Packaged and installed executable SHA-256 values both equal
+`c454d2aa6e52452b36737301a1f478ce2ad3bd70c40632b18fef6d4727f01472`.
