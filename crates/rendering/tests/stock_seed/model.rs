@@ -32,6 +32,8 @@ mod sequence_blend;
 mod sequence_timer;
 #[path = "model/sky_frame.rs"]
 mod sky_frame;
+#[path = "model/surface_fog.rs"]
+mod surface_fog;
 #[path = "model/track_sampling.rs"]
 mod track_sampling;
 #[path = "model/wound.rs"]

@@ -191,10 +191,12 @@ void main() {
     float fog_start = scene.fog_parameters.x;
     float fog_end = scene.fog_parameters.y;
     float fog_range = max(fog_end - fog_start, 0.001);
-    float eye_distance = max(gl_Position.w, 0.0);
-    float linear_visibility = clamp((fog_end - eye_distance) / fog_range, 0.0, 1.0);
-    fragment_fog_visibility = pow(
-        linear_visibility, max(scene.fog_parameters.w, 0.0));
+    // Diffuse_T1 evaluates c30 against model-view depth before projection.
+    float linear_visibility = max((fog_end + view_position.z) / fog_range, 0.0);
+    float fog_exponent = max(scene.fog_parameters.w, 0.0);
+    // Native pow(0, 0) is one; GLSL leaves that input undefined.
+    fragment_fog_visibility = fog_exponent == 0.0 ? 1.0
+        : min(pow(linear_visibility, fog_exponent), 1.0);
 
     // Selector one carries one transform; selectors two and three share the
     // four-transform vertex layout recovered from BLS permutations 60..89.

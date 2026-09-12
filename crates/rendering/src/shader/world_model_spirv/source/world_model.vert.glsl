@@ -120,6 +120,10 @@ void main() {
     float fog_start = scene.fog_parameters.x;
     float fog_end = scene.fog_parameters.y;
     float fog_range = max(fog_end - fog_start, 0.001);
-    float visibility = clamp((fog_end - length(camera_relative)) / fog_range, 0.0, 1.0);
-    fragment_fog_visibility = pow(visibility, max(scene.fog_parameters.w, 0.0));
+    // MapObj and MapObjU use model-view depth, independent of lateral offset.
+    float visibility = max((fog_end + view_position.z) / fog_range, 0.0);
+    float fog_exponent = max(scene.fog_parameters.w, 0.0);
+    // Native pow(0, 0) is one; GLSL leaves that input undefined.
+    fragment_fog_visibility = fog_exponent == 0.0 ? 1.0
+        : min(pow(visibility, fog_exponent), 1.0);
 }

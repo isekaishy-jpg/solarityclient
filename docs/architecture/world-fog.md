@@ -189,16 +189,28 @@ consume their separate exterior/group routes. Indoor/exterior sky consumers
 still need integration.
 The bounded captures above do not establish combined live visual/FPS parity.
 
-## Remaining surface fog equations
+## Surface depth fog
 
-The 2026-09-12 ribbon audit confirms that original `MapObjDiffuse_T1` and
-`MapObjUDiffuse_T1` vertex programs evaluate fog from camera-space Z through
-the shared c30 coefficients before interpolation. The current WMO surface
-vertex shader still uses radial camera distance. The M2 surface shader uses
-clip W, which agrees with eye depth for its perspective projection but does
-not reproduce the native equation for an orthographic scene. These are
-confirmed follow-up gaps; the completed particle/ribbon depth-fog checks do
-not establish surface parity.
+The M2 and WMO surface vertex shaders now evaluate fog from model-view depth,
+as original `Diffuse_T1`, `MapObjDiffuse_T1` and `MapObjUDiffuse_T1` do through
+their shared c30 coefficients. WMO no longer substitutes radial distance,
+which fogged even a constant-depth triangle differently across its vertices.
+M2 no longer substitutes clip W, which lost depth in orthographic scenes.
+Visibility is bounded above after exponentiation, and exponent zero explicitly
+returns one, including beyond the fog end where GLSL's `pow(0, 0)` is undefined.
+
+`tools/ghidra/surface_fog_shader_oracle.py` captures 120 pixels from the original
+fingerprinted BLS programs through Direct3D9. Cases span all three families,
+five depths at/between/beyond the endpoints, two lateral offsets and four
+exponents. The Vulkan `surface_fog_matches_original_depth_programs` regression
+compares over 400 frames against those pixels within one RGBA8 unit, using both
+orthographic and perspective cameras at the origin and a distant, rotated
+placement. Offscreen perspective cases are omitted; every orthographic case
+is exercised. Before the fix, M2 depth 7 returned `[64,128,192]` instead of
+native `[99,109,169]`; WMO depth 2 returned `[72,124,187]` instead of native
+`[64,128,192]`. The corrected shaders pass the complete comparison.
+
+## Remaining surface fog policy
 
 WMO pass fog-color/enable policy also needs a surface-level comparison against
 `7AC6A0`, `7AC9F0` and `7A9380`. The retained register metadata added for ribbon
