@@ -1044,3 +1044,9 @@ Local evidence: `target/ui-dispatch-{before,after}-{one,two}.csv`,
 Benchmark SHA-256:
 previous `53ee2b64bd940a476e1a2d2673d20f2508d1d26276da301867453248421f4226`,
 cached `615d2c509adcf7cbd852beff2b09652d9c95aff3dc64c3fffe110aa7fe28af40`.
+
+Testing Build 107 packages source revision `d518772d`. The installed runtime
+matches the package SHA-256
+`81b723138a3c6d2d1b77bc7f86953dc2725d09a65d951e746180017be7396930`,
+with the reserved package number recorded as dirty source state. The measured
+cached benchmark is preserved as `target/benchmark-build107-before-tooltip.exe`.
