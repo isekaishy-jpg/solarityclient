@@ -174,7 +174,7 @@ struct M2TransparentElement {
 enum M2TransparentDrawIndex {
     Mesh(usize),
     Particle(usize),
-    Ribbon(usize),
+    Ribbon { first: usize, count: usize },
 }
 
 /// Authoritative unit inputs retained before terrain tilt changes the model basis.
@@ -3507,9 +3507,12 @@ impl M2Frame {
             {
                 // 6F87C0 removes normal model submission; 828A00 retains only
                 // the particle pass while model bit 0x400 remains live.
-                if effect_retiring || passes.is_empty() {
+                if effect_retiring {
                     continue;
                 }
+                let Some(root_pass) = passes.first() else {
+                    continue;
+                };
                 if trail.sections().len() < 2 {
                     continue;
                 }
@@ -3521,11 +3524,20 @@ impl M2Frame {
                     .color()
                     .w
                     * instance_color.w;
+                // 821A20 registers one type-3 scene element for the emitter.
+                // Its first material and owner/track alpha classify the whole
+                // ribbon; 820F40/980B70 then submit every pass consecutively.
+                let effect_order = u32::try_from(self.transparent_elements.len())
+                    .map_err(|_source| solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
+                let first_draw = self.ribbon_draws.len();
+                let opaque = !M2MaterialState::from_material(root_pass.material).blend_enabled()
+                    && M2ElementAlphaState::classify(ribbon_alpha) == M2ElementAlphaState::Authored;
+                let order = scene_element_count(
+                    self.visible_draws.len(),
+                    self.particle_draws.len(),
+                    first_draw,
+                )?;
                 for pass in passes {
-                    let effect_order =
-                        u32::try_from(self.transparent_elements.len()).map_err(|_source| {
-                            solarity_rendering::VulkanError::M2RibbonDrawVertexRange
-                        })?;
                     let prepared = renderer
                         .prepare_m2_ribbon_draw_range(
                             pass.pipeline,
@@ -3537,15 +3549,6 @@ impl M2Frame {
                         )?
                         .with_light_bank(light_bank)
                         .with_scene_index(scene_index);
-                    let prepared_index = self.ribbon_draws.len();
-                    let opaque = !M2MaterialState::from_material(pass.material).blend_enabled()
-                        && M2ElementAlphaState::classify(ribbon_alpha)
-                            == M2ElementAlphaState::Authored;
-                    let order = scene_element_count(
-                        self.visible_draws.len(),
-                        self.particle_draws.len(),
-                        self.ribbon_draws.len(),
-                    )?;
                     self.ribbon_draws.push(if opaque {
                         prepared.with_scene_order(
                             u32::try_from(order)
@@ -3554,21 +3557,24 @@ impl M2Frame {
                     } else {
                         prepared
                     });
-                    if !opaque {
-                        self.transparent_elements.push(M2TransparentElement {
-                            pass: model_liquid.ribbon_pass(),
-                            key: M2TransparentSortKey::new(
-                                instance_distance,
-                                false,
-                                emitter.priority_plane(),
-                                instance_distance,
-                                instance_identity,
-                                0,
-                            )
-                            .with_scene_element(3, effect_order),
-                            draw: M2TransparentDrawIndex::Ribbon(prepared_index),
-                        });
-                    }
+                }
+                if !opaque {
+                    self.transparent_elements.push(M2TransparentElement {
+                        pass: model_liquid.ribbon_pass(),
+                        key: M2TransparentSortKey::new(
+                            instance_distance,
+                            false,
+                            emitter.priority_plane(),
+                            instance_distance,
+                            instance_identity,
+                            0,
+                        )
+                        .with_scene_element(3, effect_order),
+                        draw: M2TransparentDrawIndex::Ribbon {
+                            first: first_draw,
+                            count: passes.len(),
+                        },
+                    });
                 }
                 tracing::trace!(
                     model = %source.model.path(),
@@ -3619,12 +3625,14 @@ impl M2Frame {
                         .ok_or(solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
                     *draw = draw.with_scene_order(scene_order);
                 }
-                M2TransparentDrawIndex::Ribbon(draw_index) => {
-                    let draw = self
+                M2TransparentDrawIndex::Ribbon { first, count } => {
+                    let draws = self
                         .ribbon_draws
-                        .get_mut(draw_index)
+                        .get_mut(first..first + count)
                         .ok_or(solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
-                    *draw = draw.with_scene_order(scene_order);
+                    for draw in draws {
+                        *draw = draw.with_scene_order(scene_order);
+                    }
                 }
             }
         }

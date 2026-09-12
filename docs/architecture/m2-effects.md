@@ -198,6 +198,24 @@ same dynamic-rendering scope and depth attachment as terrain, WMO, and M2
 bodies. The scene descriptor is shared with M2 presentation; each parallel
 material/texture entry becomes one stock-ordered strip pass.
 
+The emitter remains one scene element. `821A20` reads the first material and
+the owner/track alpha to choose the opaque or liquid-dependent transparent
+queue. `820F40` selects that element's first material for common setup, then
+`980B70` draws all parallel material/texture entries consecutively. Runtime
+packets now share one scene-order value across the emitter and retain authored
+pass order through stable sorting. Later material blends cannot move part of a
+ribbon into another queue or across the water boundary.
+
+The registered model/liquid regression covers alpha-then-opaque and
+opaque-then-alpha ribbons, both full and faded owner opacity, and movement
+above, through and below a registered WMO liquid. It checks shared packet
+order, authored pass order, queue placement and retained/new edge opacity.
+Its framebuffer assertions remain scoped to mesh liquid clipping; they do not
+claim ribbon fog or composite ribbon/water pixel parity.
+
+The 2026-09-12 grouping change passes all 424 runtime tests (19 explicit
+environment-dependent tests ignored) and workspace Clippy with warnings denied.
+
 Owner alpha is multiplied into the sampled ribbon alpha before new edges are
 created, matching `828A00` and `97FBA0`. `980090` retains the packed color of
 older edges, so changing owner opacity does not recolor the trail's history.
@@ -331,6 +349,18 @@ zero and overbright. It also reverses strip winding: a culled material must draw
 one side and a two-sided material must draw both. This checks cull enablement;
 it does not independently establish the stock front-face convention. Ribbon
 fog, multipass fog-color retention and shadow receiving require separate checks.
+
+The pending fog implementation must preserve the shared submission state.
+`81FB10` publishes fog color/range/exponent through `873210` using the ribbon's
+first material. `980B70` toggles fog through `873390` for each pass without
+reselecting its color. Disabling fog uploads neutral vertex coefficients but
+retains the previous color and active coefficients; a later enabled pass can
+restore them even if the first material was unfogged. `7A8440` also publishes
+these constants during WMO rendering, selecting the local or outdoor fog bank
+and an optional black color through its cached mode. Consequently, an emitter
+alone is insufficient to reproduce inherited fog: the replay must follow the
+actual WMO/M2/effect submission order. The ribbon fragment shader still lacks
+that fog path.
 
 The 2026-09-12 color/culling change passes workspace Clippy with warnings denied
 and all 1,317 workspace tests (23 explicit environment-dependent tests ignored).

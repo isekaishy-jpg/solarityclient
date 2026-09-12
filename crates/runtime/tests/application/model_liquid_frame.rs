@@ -229,8 +229,18 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
             }
             let mut ribbons: Vec<_> = visible.ribbon_draws.iter().collect();
             ribbons.sort_by_key(|draw| draw.first_vertex());
-            assert_eq!(ribbons.len(), 2);
-            for (index, ribbon) in ribbons.iter().enumerate() {
+            assert_eq!(ribbons.len(), 4);
+            for (index, passes) in ribbons.as_chunks::<2>().0.iter().enumerate() {
+                let ribbon = passes[0];
+                assert_eq!(passes[1].scene_order(), ribbon.scene_order());
+                assert_eq!(passes[1].effect_order(), ribbon.effect_order());
+                assert_eq!(passes[1].first_vertex(), ribbon.first_vertex());
+                assert_eq!(passes[1].vertex_count(), ribbon.vertex_count());
+                assert_eq!(
+                    passes.map(|pass| pass.blend_order()),
+                    if index == 0 { [2, 0] } else { [0, 2] },
+                    "all material passes retain authored order"
+                );
                 let vertices = &visible.ribbon_vertices[ribbon.first_vertex() as usize..]
                     [..ribbon.vertex_count() as usize];
                 assert_eq!(
@@ -411,7 +421,8 @@ fn add_rider_attachment(bytes: &mut Vec<u8>) {
 }
 
 /// Three emitters exercise ordinary, forced-below, and opaque particle queues;
-/// two ribbon declarations share the same tracks but differ in material blend.
+/// Two ribbons each have opposite opaque/alpha pass orders. The first material
+/// classifies the whole emitter, even when later passes use a different blend.
 fn add_effect_routes(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     crate::test_support::unit_models::append_effects(bytes, 1);
     let original = u32::from_le_bytes(bytes[0x12c..0x130].try_into()?) as usize;
@@ -434,9 +445,19 @@ fn add_effect_routes(bytes: &mut Vec<u8>) -> Result<(), Box<dyn Error>> {
     for _ in 0..2 {
         bytes.extend_from_slice(&ribbon);
     }
-    let index = bytes.len();
-    bytes.extend(1u16.to_le_bytes());
-    put(bytes, ribbons + 176 + 32, index as u32);
+    for (index, materials) in [[0u16, 1], [1u16, 0]].into_iter().enumerate() {
+        let material_indices = bytes.len();
+        for material in materials {
+            bytes.extend(material.to_le_bytes());
+        }
+        let texture_indices = bytes.len();
+        bytes.extend([0u8; 4]);
+        let emitter = ribbons + index * 176;
+        put(bytes, emitter + 20, 2);
+        put(bytes, emitter + 24, texture_indices as u32);
+        put(bytes, emitter + 28, 2);
+        put(bytes, emitter + 32, material_indices as u32);
+    }
     put(bytes, 0x120, 2);
     put(bytes, 0x124, ribbons as u32);
     Ok(())
