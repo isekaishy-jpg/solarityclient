@@ -3,7 +3,7 @@
 use solarity_cpu::{CpuError, CpuExecutor};
 
 #[cfg(test)]
-#[path = "../../../../tests/application/ground_detail_retirement.rs"]
+#[path = "../../tests/application/ground_detail_retirement.rs"]
 mod tests;
 
 pub(super) struct CpuRetirementQueue<T> {

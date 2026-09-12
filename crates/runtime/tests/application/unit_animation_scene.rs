@@ -6,6 +6,9 @@ mod equipment_residency;
 #[path = "entity_retirement_scene.rs"]
 mod entity_retirement;
 
+#[path = "population_admission.rs"]
+mod population_admission;
+
 #[path = "stock_npc_residency.rs"]
 mod stock_npc_residency;
 

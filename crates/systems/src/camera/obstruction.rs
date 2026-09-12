@@ -15,7 +15,7 @@ const RETREAT: f32 = 0.111_111_11;
 const EPSILON: f32 = 0.000_000_953_674_3;
 
 /// Registered subject state supplied to the native camera constraints.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerCameraObstructionSettings {
     /// Live `cameraWaterCollision`, controlling primary water geometry.
     pub water_collision: bool,

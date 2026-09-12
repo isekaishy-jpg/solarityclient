@@ -22,6 +22,8 @@ pub struct ActiveWorld {
     storage: World,
     objects: ObjectRegistry,
     local_player: EntityId,
+    /// Sorted replicated unit membership changes only at create/remove boundaries.
+    unit_guids: Vec<u64>,
     world_state_values: super::WorldStateValues,
     local_corpse_guid: u64,
 }
@@ -59,6 +61,7 @@ impl ActiveWorld {
             storage,
             objects,
             local_player,
+            unit_guids: Vec::new(),
             world_state_values: super::WorldStateValues::default(),
             local_corpse_guid: 0,
         }
@@ -316,20 +319,21 @@ impl ActiveWorld {
 
     /// Returns every visible unit/player GUID in deterministic identifier order.
     #[must_use]
-    pub fn visible_unit_guids(&self) -> Vec<u64> {
-        let mut guids = self
-            .objects
-            .entries()
-            .filter_map(|(guid, entity)| {
-                self.storage
-                    .get::<&ObjectKind>(entity)
-                    .ok()
-                    .filter(|kind| matches!(**kind, ObjectKind::Unit | ObjectKind::Player))
-                    .map(|_kind| guid)
-            })
-            .collect::<Vec<_>>();
-        guids.sort_unstable();
-        guids
+    pub fn visible_unit_guids(&self) -> &[u64] {
+        &self.unit_guids
+    }
+
+    /// Updates sorted membership only when a replicated object's kind is admitted.
+    fn register_unit_kind(&mut self, guid: u64, kind: ObjectKind) {
+        match (self.unit_guids.binary_search(&guid), kind) {
+            (Err(index), ObjectKind::Unit | ObjectKind::Player) => {
+                self.unit_guids.insert(index, guid)
+            }
+            (Ok(_), ObjectKind::Unit | ObjectKind::Player) | (Err(_), _) => {}
+            (Ok(index), _) => {
+                self.unit_guids.remove(index);
+            }
+        }
     }
 
     /// Returns the authoritative transform for any visible object.
@@ -512,6 +516,7 @@ impl ActiveWorld {
 
             if entity == self.local_player {
                 self.storage.add_component(entity, (kind,));
+                self.register_unit_kind(guid, kind);
                 if let Some(transform) = transform {
                     self.storage.add_component(entity, (transform,));
                 }
@@ -527,6 +532,7 @@ impl ActiveWorld {
             self.storage.add_component(entity, (transform,));
         }
         self.objects.insert(guid, entity);
+        self.register_unit_kind(guid, kind);
         if self.is_owned_recoverable_corpse(guid) {
             self.local_corpse_guid = guid;
         }
@@ -711,6 +717,9 @@ impl ActiveWorld {
             self.local_corpse_guid = 0;
         }
         self.objects.remove(guid);
+        if let Ok(index) = self.unit_guids.binary_search(&guid) {
+            self.unit_guids.remove(index);
+        }
         if !self.storage.delete_entity(entity) {
             return Err(WorldStateError::UnknownObject { guid });
         }

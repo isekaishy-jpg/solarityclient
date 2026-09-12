@@ -85,7 +85,7 @@ impl RuntimeRemoteMovement {
         self.owners
             .retain(|identity, _| world.object_identity(identity.guid()) == Some(*identity));
         let active_mover = gameplay.active_mover_guid();
-        for guid in world.visible_unit_guids() {
+        for &guid in world.visible_unit_guids() {
             let Some(identity) = world.object_identity(guid) else {
                 continue;
             };

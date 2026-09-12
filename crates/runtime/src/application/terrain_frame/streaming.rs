@@ -23,9 +23,10 @@ impl TerrainFrame {
 
     /// Consumes this world frame and queues its ADTs for fence-covered destruction.
     pub(in crate::application) fn retire(
-        self,
+        mut self,
         renderer: &mut VulkanRenderer,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.clear_tile_admission(renderer)?;
         let handles = self
             .tiles
             .iter()
@@ -83,13 +84,23 @@ impl TerrainFrame {
                 .iter()
                 .any(|gpu| Arc::ptr_eq(&gpu.plan, tile.mesh()))
             {
-                added.push(TerrainGpuTile {
-                    draws: prepare_tile_draws(renderer, tile.mesh(), tile.textures())?,
-                    plan: Arc::clone(tile.mesh()),
-                    liquids: self
-                        .liquid_materials
-                        .prepare_terrain(renderer, tile.liquid_batches())?,
-                });
+                let staged = self
+                    .tile_admission
+                    .as_mut()
+                    .filter(|admission| Arc::ptr_eq(&admission.plan, tile.mesh()))
+                    .and_then(|admission| admission.tile.take());
+                let gpu = if let Some(gpu) = staged {
+                    gpu
+                } else {
+                    TerrainGpuTile {
+                        draws: prepare_tile_draws(renderer, tile.mesh(), tile.textures())?,
+                        plan: Arc::clone(tile.mesh()),
+                        liquids: self
+                            .liquid_materials
+                            .prepare_terrain(renderer, tile.liquid_batches())?,
+                    }
+                };
+                added.push(gpu);
             }
         }
         profile.mark("terrain and liquids");
@@ -132,6 +143,13 @@ impl TerrainFrame {
                 .any(|tile| Arc::ptr_eq(&gpu.plan, tile.mesh()))
         });
         self.tiles.extend(added);
+        if self.tile_admission.as_ref().is_some_and(|admission| {
+            self.tiles
+                .iter()
+                .any(|tile| Arc::ptr_eq(&tile.plan, &admission.plan))
+        }) {
+            self.tile_admission = None;
+        }
         profile.mark("retirement");
         Ok(())
     }

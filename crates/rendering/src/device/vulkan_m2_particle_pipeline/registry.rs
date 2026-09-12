@@ -79,6 +79,11 @@ impl M2ParticlePipelineRegistry {
         )
     }
 
+    /// Queries the complete retained pipeline identity without driver work.
+    pub(in crate::device) fn contains_precompiled(&self, program: &M2ParticleSpirvProgram) -> bool {
+        self.handles.contains_key(&program.material())
+    }
+
     /// Creates one driver pipeline from worker-compiled particle bytecode.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::device) fn prepare_precompiled(

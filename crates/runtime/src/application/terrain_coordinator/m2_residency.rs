@@ -44,7 +44,7 @@ pub(in crate::application) enum ResidentM2Texture {
 pub(in crate::application) struct ResidentM2Source {
     model: Arc<DecodedM2Model>,
     textures: Vec<ResidentM2Texture>,
-    cpu_source: M2CpuSource,
+    cpu_source: Arc<M2CpuSource>,
 }
 
 impl ResidentM2Source {
@@ -87,7 +87,7 @@ impl ResidentM2Source {
     }
 
     /// Returns the worker-prepared mesh plan and complete shader programs.
-    pub(in crate::application) const fn cpu_source(&self) -> &M2CpuSource {
+    pub(in crate::application) fn cpu_source(&self) -> &M2CpuSource {
         &self.cpu_source
     }
 }

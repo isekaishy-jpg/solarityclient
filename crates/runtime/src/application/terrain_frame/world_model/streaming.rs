@@ -50,13 +50,21 @@ impl WorldModelFrame {
                 let source_index = if let Some(&index) = sources.get(&identity) {
                     index
                 } else {
-                    let gpu = prepare_gpu_source(
-                        renderer,
-                        source,
-                        self.filtering,
-                        self.base_mip,
-                        &mut self.liquid_materials,
-                    )?;
+                    let gpu = if let Some(index) = self
+                        .prepared_static
+                        .iter()
+                        .position(|prepared| Arc::ptr_eq(&prepared.model, source.model()))
+                    {
+                        self.prepared_static.swap_remove(index)
+                    } else {
+                        prepare_gpu_source(
+                            renderer,
+                            source,
+                            self.filtering,
+                            self.base_mip,
+                            &mut self.liquid_materials,
+                        )?
+                    };
                     let index = self.sources.len();
                     self.sources.push(Some(gpu));
                     sources.insert(identity, index);

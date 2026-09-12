@@ -169,7 +169,7 @@ struct LoadedGlueBackdrop {
 
 /// One completed worker result and its execution time, excluding queue delay.
 struct PreparedGlueCpuSource {
-    source: M2CpuSource,
+    source: Arc<M2CpuSource>,
     elapsed: std::time::Duration,
 }
 
@@ -1153,7 +1153,7 @@ impl RuntimeGlueModelScene {
             let pending = self.pending_character_sources.swap_remove(index);
             let prepared = pending.task.join()??;
             self.character_sources
-                .insert(pending.key.clone(), Arc::new(prepared.source));
+                .insert(pending.key.clone(), prepared.source);
             tracing::info!(
                 model = %pending.key.path(),
                 worker_prepare_ms = prepared.elapsed.as_secs_f64() * 1_000.0,

@@ -1,6 +1,13 @@
 //! Local-player model residency and authored presentation measurements.
 
+mod appearance_inputs;
+mod creatures;
+mod population_worker;
 mod registration;
+mod remote;
+mod replicated_animation;
+
+use appearance_inputs::{CreatureAppearanceInputs, RemoteAppearanceInputs};
 
 use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput, UnitAnimationScene};
 use std::rc::Rc;
@@ -56,6 +63,12 @@ const NPC_EQUIPMENT_SLOTS: [PlayerEquipmentSlot; 11] = [
 /// Failure while resolving the local player's authored presentation model.
 #[derive(Debug, Error)]
 pub enum RuntimePlayerError {
+    /// The live population path requires its explicitly configured private archive mount.
+    #[error("population asset preparation has no worker archive catalog")]
+    MissingPopulationWorkerCatalog,
+    /// Immutable mesh preparation or incremental driver admission failed.
+    #[error(transparent)]
+    RenderPreparation(Box<super::terrain_frame::RuntimeTerrainFrameError>),
     /// Bounded character-preparation work could not be admitted or completed.
     #[error(transparent)]
     Cpu(#[from] CpuError),
@@ -399,6 +412,8 @@ pub struct RuntimePlayerPresentation {
     animation_mouse_turning: bool,
     creatures_resident: Vec<ResidentCreatureModel>,
     remote_players: Vec<ResidentPlayerModel>,
+    creature_worker: population_worker::PopulationWorker<CreatureModelKey, ResidentCreatureModel>,
+    remote_worker: population_worker::PopulationWorker<RemoteAppearanceInputs, ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
     requested_glue_character: Option<ResidentGlueCharacterKey>,
     glue_worker_catalog: Option<ArchiveCatalog>,
@@ -444,6 +459,8 @@ impl RuntimePlayerPresentation {
             animation_mouse_turning: false,
             creatures_resident: Vec::new(),
             remote_players: Vec::new(),
+            creature_worker: population_worker::PopulationWorker::new(),
+            remote_worker: population_worker::PopulationWorker::new(),
             glue_character: None,
             requested_glue_character: None,
             glue_worker_catalog: None,
@@ -1260,6 +1277,7 @@ impl RuntimePlayerPresentation {
                 unit_presentation.animation_tier(),
             )?;
             self.resident = Some(ResidentPlayerModel {
+                remote_inputs: None,
                 generation: UnitPresentationGeneration::new(),
                 identity,
                 guid,
@@ -1373,6 +1391,7 @@ impl RuntimePlayerPresentation {
             unit_presentation.animation_tier(),
         )?;
         self.resident = Some(ResidentPlayerModel {
+            remote_inputs: None,
             generation: UnitPresentationGeneration::new(),
             identity,
             guid,
@@ -1485,821 +1504,6 @@ impl RuntimePlayerPresentation {
             .bind(identity, &resident.model, &self.animations, input);
         self.synchronize_unit_opacity(world, identity.guid());
         Ok(())
-    }
-
-    fn synchronize_replicated_animations(&mut self, world: &ActiveWorld) {
-        self.unit_animations.retain_world(world);
-        let bodies = self
-            .creatures_resident
-            .iter()
-            .map(|resident| (resident.key.guid, &resident.model, resident.mount.is_some()))
-            .chain(
-                self.remote_players
-                    .iter()
-                    .map(|resident| (resident.guid, &resident.model, resident.mount.is_some())),
-            );
-        for (guid, model, mounted) in bodies {
-            let Some(identity) = world.object_identity(guid) else {
-                continue;
-            };
-            let Some(presentation) = world.unit_presentation(guid) else {
-                continue;
-            };
-            let movement = world.movement_state(guid);
-            self.unit_animations.bind(
-                identity,
-                model,
-                &self.animations,
-                UnitAnimationInput::new(
-                    presentation.stand_state(),
-                    presentation.animation_tier(),
-                    mounted,
-                    movement,
-                )
-                .with_orientation(world, guid, false, false),
-            );
-            self.synchronize_unit_opacity(world, guid);
-        }
-    }
-
-    fn synchronize_unit_opacity(&self, world: &ActiveWorld, guid: u64) {
-        let (Some(owner), Some(presentation)) = (
-            self.unit_animations.get(guid),
-            world.unit_presentation(guid),
-        ) else {
-            return;
-        };
-        owner.synchronize_passenger(
-            world,
-            &self.vehicles,
-            &self.passenger_frames,
-            self.passenger_frames.admitted_parent(owner.identity()),
-            self.unit_animations.scene_time_ms(),
-        );
-        let passenger = world
-            .movement_state(guid)
-            .and_then(|movement| movement.context().transport);
-        let transport = passenger.map_or(0, |transport| transport.guid);
-        owner.opacity_owner().set_transport_guid(transport);
-        let player_hidden = world.object_kind(guid) == Some(solarity_ecs::ObjectKind::Player)
-            && world
-                .entity_by_guid(guid)
-                .and_then(|entity| {
-                    world
-                        .storage()
-                        .get::<&solarity_ecs::ObjectFields>(entity)
-                        .ok()
-                        .map(|fields| {
-                            solarity_systems::player_flags_hide_model(
-                                fields.get(150),
-                                self.arena_map,
-                            )
-                        })
-                })
-                .unwrap_or(false);
-        owner.opacity_owner().set_player_hidden(player_hidden);
-        if owner.opacity_owner().has_model(presentation.display_id()) {
-            return;
-        }
-        let flags = world.unit_flags(guid).unwrap_or_default();
-        let bytes = world
-            .entity_by_guid(guid)
-            .and_then(|entity| {
-                world
-                    .storage()
-                    .get::<&solarity_ecs::ObjectFields>(entity)
-                    .ok()
-                    .map(|fields| fields.get(74))
-            })
-            .unwrap_or(0);
-        let parent_transitioning = world
-            .object_kind(transport)
-            .filter(|kind| {
-                matches!(
-                    kind,
-                    solarity_ecs::ObjectKind::Unit | solarity_ecs::ObjectKind::Player
-                )
-            })
-            .map(|_| {
-                self.unit_animations
-                    .get(transport)
-                    .is_some_and(|parent| parent.opacity_owner().transitioning())
-            });
-        let duration = solarity_systems::EntityOpacity::unit_entry_duration(
-            flags.primary(),
-            flags.secondary(),
-            bytes,
-            transport,
-            parent_transitioning,
-            passenger.and_then(|passenger| {
-                self.vehicles
-                    .passenger_seat(
-                        world.unit_vehicle(passenger.guid)?.definition_id(),
-                        passenger.seat,
-                    )
-                    .map(|seat| seat.attachment_id())
-            }),
-        );
-        let alpha = self
-            .creatures
-            .display(presentation.display_id())
-            .map_or(255, |display| display.model_alpha());
-        let target = (f64::from(alpha as i32) * f64::from(f32::from_bits(0x3b80_8081))) as f32;
-        owner.opacity_owner().select_model(
-            presentation.display_id(),
-            target,
-            duration,
-            self.unit_animations.scene_time_ms(),
-        );
-    }
-
-    /// Synchronizes every visible non-player unit into shared M2 residency.
-    ///
-    /// Player objects require character atlas and equipment composition and
-    /// remain on the dedicated player path. This pass admits creature objects
-    /// only after their complete display, transform, and tier state exists.
-    /// `template_for` supplies family and flags bound to each exact lifetime;
-    /// its arrival and later level/pet changes update the authored body scale.
-    pub fn synchronize_creatures(
-        &mut self,
-        world: Option<&ActiveWorld>,
-        template_for: impl Fn(WorldObjectIdentity) -> Option<(u32, u32)>,
-    ) -> Result<RuntimeCreaturePoll, RuntimePlayerError> {
-        let Some(world) = world else {
-            self.creatures_resident.clear();
-            self.unit_animations.clear();
-            self.models.collect_unused();
-            self.textures.collect_unused();
-            return Ok(RuntimeCreaturePoll::Idle);
-        };
-
-        let mut desired = Vec::new();
-        for guid in world.visible_unit_guids() {
-            if world.object_kind(guid) != Some(solarity_ecs::ObjectKind::Unit) {
-                continue;
-            }
-            let Some(identity) = world.object_identity(guid) else {
-                continue;
-            };
-            let Some(transform) = world.object_transform(guid) else {
-                continue;
-            };
-            let Some(presentation) = world.unit_presentation(guid) else {
-                continue;
-            };
-            let appearance =
-                match resolve_unit_model(world, guid, &self.creatures, &self.characters) {
-                    Ok(appearance) => appearance,
-                    Err(
-                        UnitModelAppearanceError::MissingObjectPresentation { .. }
-                        | UnitModelAppearanceError::MissingUnitPresentation { .. },
-                    ) => continue,
-                    Err(error) => return Err(error.into()),
-                };
-            let requested_animation = world.movement_state(guid).map_or(
-                UnitLocomotionAnimation::STAND,
-                resolve_unit_locomotion_animation,
-            );
-            let template = template_for(identity);
-            let family = template.and_then(|(id, _flags)| self.creature_families.family(id));
-            let Some(body_scale) = solarity_systems::resolve_unit_body_scale(
-                world,
-                guid,
-                &self.creatures,
-                &self.races,
-                family,
-            ) else {
-                continue;
-            };
-            let virtual_entries = world.unit_virtual_items(guid).unwrap_or_default().entries();
-            let previous = self
-                .creatures_resident
-                .binary_search_by_key(&guid, |resident| resident.key.guid)
-                .ok()
-                .map(|index| &self.creatures_resident[index])
-                .filter(|resident| resident.key.identity == identity);
-            let virtual_definitions = previous
-                .filter(|resident| resident.key.virtual_entries == virtual_entries)
-                .map_or_else(
-                    || {
-                        virtual_entries.map(|entry| {
-                            (entry != 0)
-                                .then(|| self.item_definitions.item(entry))
-                                .flatten()
-                                .filter(|definition| definition.display_info_id() != 0)
-                                .copied()
-                        })
-                    },
-                    |resident| resident.virtual_definitions,
-                );
-            let body_definition = self
-                .unit_animations
-                .get(guid)
-                .filter(|animation| animation.identity() == identity)
-                .map_or_else(
-                    || {
-                        self.animations
-                            .definition(u32::from(requested_animation.animation_id()))
-                    },
-                    |animation| animation.current_body_definition(),
-                );
-            let weapon_state = solarity_rendering::NpcWeaponState::new(
-                presentation.sheath_state(),
-                world.unit_flags(guid).unwrap_or_default(),
-                appearance.body().model().flags(),
-                body_definition
-                    .and_then(|definition| u16::try_from(definition.behavior_id()).ok())
-                    .unwrap_or(506),
-            )
-            .reconcile(
-                previous.map_or(presentation.sheath_state(), |resident| {
-                    resident.weapon_state.sheath_state()
-                }),
-                solarity_rendering::NpcWeaponAnimationInput {
-                    animation_id: body_definition.map(solarity_asset::AnimationDataDefinition::id),
-                    weapon_flags: body_definition
-                        .map_or(0, solarity_asset::AnimationDataDefinition::weapon_flags),
-                    has_attack_target: world.unit_attack_target(guid) != 0,
-                    template_flags: template.map_or(0, |(_family, flags)| flags),
-                    changed_stand_state: previous
-                        .filter(|resident| resident.stand_state != presentation.stand_state())
-                        .map(|_| presentation.stand_state()),
-                },
-                [
-                    virtual_definitions[0].as_ref(),
-                    virtual_definitions[1].as_ref(),
-                ],
-            );
-            desired.push(DesiredCreatureModel {
-                key: CreatureModelKey {
-                    identity,
-                    guid,
-                    display_id: appearance.body().display().id(),
-                    path: appearance.body().model_path().clone(),
-                    object_scale: body_scale * appearance.object_scale(),
-                    particle_color_id: appearance.body().display().particle_color_id(),
-                    virtual_entries,
-                    weapon_state: virtual_entries
-                        .iter()
-                        .any(|entry| *entry != 0)
-                        .then_some(weapon_state),
-                    mount_key: appearance
-                        .mount()
-                        .map(|mount| mount_model_key(mount, body_scale, appearance.object_scale())),
-                },
-                transform,
-                requested_animation,
-                animation_tier: presentation.animation_tier(),
-                weapon_state,
-                stand_state: presentation.stand_state(),
-                virtual_definitions,
-            });
-        }
-
-        let unchanged = desired.len() == self.creatures_resident.len()
-            && desired
-                .iter()
-                .zip(&self.creatures_resident)
-                .all(|(desired, resident)| desired.key == resident.key);
-        if unchanged {
-            for (desired, resident) in desired.iter().zip(&mut self.creatures_resident) {
-                resident.world_transform = desired.transform;
-                resident.weapon_state = desired.weapon_state;
-                resident.stand_state = desired.stand_state;
-                if let Some(mount) = resident.mount.as_mut() {
-                    mount.animation = resolve_resident_animation(
-                        &self.animations,
-                        &mount.model,
-                        desired.requested_animation,
-                        desired.animation_tier,
-                    )?;
-                }
-                resident.animation = resolve_resident_animation(
-                    &self.animations,
-                    &resident.model,
-                    if resident.mount.is_some() {
-                        UnitLocomotionAnimation::MOUNT
-                    } else {
-                        desired.requested_animation
-                    },
-                    desired.animation_tier,
-                )?;
-            }
-            self.synchronize_replicated_animations(world);
-            return Ok(RuntimeCreaturePoll::Current);
-        }
-
-        let mut assets = self.assets.borrow_mut();
-        let mut residents = Vec::with_capacity(desired.len());
-        let mut retained = Vec::with_capacity(desired.len());
-        for desired in desired {
-            if let Ok(index) = self
-                .creatures_resident
-                .binary_search_by_key(&desired.key.guid, |resident| resident.key.guid)
-                && self.creatures_resident[index].key == desired.key
-            {
-                let resident = &mut self.creatures_resident[index];
-                resident.world_transform = desired.transform;
-                resident.weapon_state = desired.weapon_state;
-                resident.stand_state = desired.stand_state;
-                if let Some(mount) = resident.mount.as_mut() {
-                    mount.animation = resolve_resident_animation(
-                        &self.animations,
-                        &mount.model,
-                        desired.requested_animation,
-                        desired.animation_tier,
-                    )?;
-                }
-                resident.animation = resolve_resident_animation(
-                    &self.animations,
-                    &resident.model,
-                    if resident.mount.is_some() {
-                        UnitLocomotionAnimation::MOUNT
-                    } else {
-                        desired.requested_animation
-                    },
-                    desired.animation_tier,
-                )?;
-                retained.push(desired.key.guid);
-                continue;
-            }
-            let appearance = self
-                .creatures
-                .resolve_model(desired.key.display_id)
-                .map_err(UnitModelAppearanceError::from)?;
-            let model = self.models.load(&mut assets, appearance.model_path())?;
-            let (textures, geosets, mut attachment_plan) = if let Some(extra) = appearance.extra() {
-                let character = self.characters.resolve_player(
-                    extra.race_id(),
-                    extra.gender_id(),
-                    CharacterCustomization::from_ids(
-                        extra.skin_id(),
-                        extra.face_id(),
-                        extra.hair_style_id(),
-                        extra.hair_color_id(),
-                        extra.facial_hair_style_id(),
-                    ),
-                )?;
-                let equipment = resolve_npc_equipment(
-                    appearance.display().id(),
-                    extra.npc_item_display_ids(),
-                    &self.item_displays,
-                )?;
-                let texture_plan =
-                    CharacterTexturePlan::equipped(&character, &assets, equipment.iter().copied())?;
-                let textures = prepare_npc_character_textures(
-                    &model,
-                    &appearance,
-                    &texture_plan,
-                    &mut assets,
-                    &mut self.textures,
-                )?;
-                let geosets = CharacterGeosetPlan::equipped(
-                    &character,
-                    CharacterGeosetContext::new(0, CharacterTabardMode::Equipment),
-                    &self.helmet_visibility,
-                    equipment.iter().copied(),
-                )?;
-                // 730100 walks all eleven CreatureDisplayInfoExtra components
-                // through 4F2830/4F2640, including separate head/shoulder M2s.
-                let attachment_plan = CharacterAttachmentPlan::npc_armor(
-                    equipment.iter().copied(),
-                    &self.races,
-                    character.race_id(),
-                    character.gender_id(),
-                )?;
-                (
-                    textures,
-                    Some(ResidentCreatureGeosets::Character(geosets)),
-                    attachment_plan,
-                )
-            } else {
-                (
-                    prepare_creature_textures(
-                        &model,
-                        &appearance,
-                        &mut assets,
-                        &mut self.textures,
-                    )?,
-                    ResidentCreatureGeosets::from_packed_selector(
-                        appearance.display().geoset_data(),
-                    ),
-                    CharacterAttachmentPlan::default(),
-                )
-            };
-            if let Some(state) = desired.key.weapon_state {
-                let entries = desired.key.virtual_entries;
-                let equipment = std::array::from_fn(|index| {
-                    if entries[index] == 0 {
-                        return None;
-                    }
-                    let definition = desired.virtual_definitions[index].as_ref()?;
-                    let display = self.item_displays.display(definition.display_info_id())?;
-                    Some(CharacterEquipmentItem::new_visible(
-                        [
-                            PlayerEquipmentSlot::MainHand,
-                            PlayerEquipmentSlot::OffHand,
-                            PlayerEquipmentSlot::Ranged,
-                        ][index],
-                        VisibleEquipmentItem::new(entries[index], 0),
-                        definition,
-                        display,
-                    ))
-                });
-                attachment_plan.add_npc_held_items(
-                    equipment,
-                    state,
-                    [
-                        desired.virtual_definitions[0].as_ref(),
-                        desired.virtual_definitions[1].as_ref(),
-                    ],
-                )?;
-            }
-            attachment_plan.retain_attachments(|attachment| {
-                !matches!(
-                    attachment.slot(),
-                    Some(
-                        PlayerEquipmentSlot::MainHand
-                            | PlayerEquipmentSlot::OffHand
-                            | PlayerEquipmentSlot::Ranged
-                    )
-                ) || model.attachment(attachment.point().id()).is_some()
-            });
-            let attachments = load_player_attachments(
-                &attachment_plan,
-                &self.item_visuals,
-                &self.particle_colors,
-                &mut self.models,
-                &mut self.textures,
-                &mut assets,
-            )?;
-            // 73D5D0 and 717910 give every Unit_C its own mount model;
-            // NPC residency preserves the same independent child as players.
-            let mount_appearance = desired
-                .key
-                .mount_key
-                .as_ref()
-                .map(|key| {
-                    self.creatures
-                        .resolve_model(key.display_id)
-                        .map_err(UnitModelAppearanceError::from)
-                })
-                .transpose()?;
-            let mount = load_mount_model(
-                mount_appearance.as_ref(),
-                desired.key.mount_key.as_ref(),
-                desired.requested_animation,
-                desired.animation_tier,
-                &self.animations,
-                &self.particle_colors,
-                &mut self.models,
-                &mut self.textures,
-                &mut assets,
-            )?;
-            let animation = resolve_resident_animation(
-                &self.animations,
-                &model,
-                if mount.is_some() {
-                    UnitLocomotionAnimation::MOUNT
-                } else {
-                    desired.requested_animation
-                },
-                desired.animation_tier,
-            )?;
-            residents.push(ResidentCreatureModel {
-                generation: UnitPresentationGeneration::new(),
-                key: desired.key,
-                model,
-                textures,
-                geosets,
-                attachments,
-                armor_display_ids: appearance
-                    .extra()
-                    .map_or([0; 11], |extra| extra.npc_item_display_ids()),
-                weapon_state: desired.weapon_state,
-                stand_state: desired.stand_state,
-                virtual_definitions: desired.virtual_definitions,
-                particle_colors: M2ParticleColorReplacement::resolve(
-                    &self.particle_colors,
-                    appearance.display().particle_color_id(),
-                ),
-                world_transform: desired.transform,
-                animation,
-                mount,
-            });
-        }
-        drop(assets);
-        self.creatures_resident
-            .retain(|resident| retained.binary_search(&resident.key.guid).is_ok());
-        self.creatures_resident.extend(residents);
-        self.creatures_resident
-            .sort_unstable_by_key(|resident| resident.key.guid);
-        self.synchronize_replicated_animations(world);
-        self.models.collect_unused();
-        self.textures.collect_unused();
-        Ok(RuntimeCreaturePoll::ModelsChanged)
-    }
-
-    /// Synchronizes every visible non-local player through character composition.
-    pub fn synchronize_remote_players(
-        &mut self,
-        world: Option<&ActiveWorld>,
-    ) -> Result<RuntimeRemotePlayerPoll, RuntimePlayerError> {
-        let Some(world) = world else {
-            self.remote_players.clear();
-            self.unit_animations.clear();
-            self.models.collect_unused();
-            self.textures.collect_unused();
-            return Ok(RuntimeRemotePlayerPoll::Idle);
-        };
-        let local_guid = world.local_player_guid()?;
-        let mut desired = Vec::new();
-        for guid in world.visible_unit_guids() {
-            if guid == local_guid
-                || world.object_kind(guid) != Some(solarity_ecs::ObjectKind::Player)
-            {
-                continue;
-            }
-            if let Some(player) = self.resolve_desired_remote_player(world, guid)? {
-                desired.push(player);
-            }
-        }
-
-        let unchanged = desired.len() == self.remote_players.len()
-            && desired
-                .iter()
-                .zip(&self.remote_players)
-                .all(|(desired, resident)| resident.matches_remote(desired));
-        if unchanged {
-            for (desired, resident) in desired.iter().zip(&mut self.remote_players) {
-                resident.update_remote_motion(desired, &self.animations)?;
-            }
-            self.synchronize_replicated_animations(world);
-            return Ok(RuntimeRemotePlayerPoll::Current);
-        }
-
-        let mut residents = Vec::with_capacity(desired.len());
-        let mut retained = Vec::with_capacity(desired.len());
-        for desired in desired {
-            if let Ok(index) = self
-                .remote_players
-                .binary_search_by_key(&desired.guid, |resident| resident.guid)
-                && self.remote_players[index].matches_remote(&desired)
-            {
-                self.remote_players[index].update_remote_motion(&desired, &self.animations)?;
-                retained.push(desired.guid);
-                continue;
-            }
-            residents.push(self.load_remote_player(world, desired)?);
-        }
-        self.remote_players
-            .retain(|resident| retained.binary_search(&resident.guid).is_ok());
-        self.remote_players.extend(residents);
-        self.remote_players
-            .sort_unstable_by_key(|resident| resident.guid);
-        self.synchronize_replicated_animations(world);
-        self.models.collect_unused();
-        self.textures.collect_unused();
-        Ok(RuntimeRemotePlayerPoll::ModelsChanged)
-    }
-
-    fn resolve_desired_remote_player(
-        &self,
-        world: &ActiveWorld,
-        guid: u64,
-    ) -> Result<Option<DesiredRemotePlayerModel>, RuntimePlayerError> {
-        let Some(identity) = world.object_identity(guid) else {
-            return Ok(None);
-        };
-        let appearance = match resolve_unit_model(world, guid, &self.creatures, &self.characters) {
-            Ok(appearance) => appearance,
-            Err(
-                UnitModelAppearanceError::MissingObjectPresentation { .. }
-                | UnitModelAppearanceError::MissingUnitPresentation { .. }
-                | UnitModelAppearanceError::MissingUnitIdentity { .. }
-                | UnitModelAppearanceError::MissingPlayerAppearance { .. },
-            ) => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        let Some(world_transform) = world.object_transform(guid) else {
-            return Ok(None);
-        };
-        let Some(unit_presentation) = world.unit_presentation(guid) else {
-            return Ok(None);
-        };
-        let character = appearance
-            .character()
-            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
-        let class_id = appearance
-            .player_class_id()
-            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid })?;
-        let equipment = match resolve_player_equipment(
-            world,
-            guid,
-            &self.item_definitions,
-            &self.item_displays,
-        ) {
-            Ok(equipment) => equipment,
-            Err(PlayerEquipmentAppearanceError::MissingEquipment { .. }) => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        let equipment_items = equipment
-            .items()
-            .iter()
-            .map(|item| {
-                CharacterEquipmentItem::new_visible(
-                    item.slot(),
-                    item.visible(),
-                    item.definition(),
-                    item.display(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let equipment_key = equipment
-            .items()
-            .iter()
-            .map(|item| (item.slot(), item.visible()))
-            .collect();
-        let race = self.races.race(character.race_id()).ok_or(
-            RuntimePlayerError::MissingCharacterRace {
-                race_id: character.race_id(),
-            },
-        )?;
-        let attachment_plan = CharacterAttachmentPlan::equipped_items(
-            equipment_items.iter().copied(),
-            race,
-            character.gender_id(),
-            CharacterWeaponState::new(unit_presentation.sheath_state()),
-        )?;
-        let base_texture_plan = CharacterTexturePlan::base(character)?;
-        let base_geosets = CharacterGeosetPlan::equipped(
-            character,
-            CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
-            &self.helmet_visibility,
-            std::iter::empty(),
-        )?;
-        let requested_animation = world.movement_state(guid).map_or(
-            UnitLocomotionAnimation::STAND,
-            resolve_unit_locomotion_animation,
-        );
-        let authored_scale =
-            appearance.body().display().model_scale() * appearance.body().model().model_scale();
-        let collision_scale = authored_scale * appearance.object_scale().max(0.001);
-        let collision_extent = appearance
-            .body()
-            .model()
-            .collision_extent()
-            .map(|extent| extent * collision_scale);
-        let Some(body_scale) = solarity_systems::resolve_unit_body_scale(
-            world,
-            guid,
-            &self.creatures,
-            &self.races,
-            None,
-        ) else {
-            return Ok(None);
-        };
-        Ok(Some(DesiredRemotePlayerModel {
-            identity,
-            guid,
-            object_scale: body_scale * appearance.object_scale(),
-            collision_extent,
-            particle_color_id: appearance.body().display().particle_color_id(),
-            path: M2ModelCache::canonical_path(appearance.body().model_path())?,
-            base_texture_plan,
-            base_geosets,
-            equipment_key,
-            attachment_plan,
-            world_transform,
-            requested_animation,
-            animation_tier: unit_presentation.animation_tier(),
-            mount_key: appearance
-                .mount()
-                .map(|mount| mount_model_key(mount, body_scale, appearance.object_scale())),
-        }))
-    }
-
-    fn load_remote_player(
-        &mut self,
-        world: &ActiveWorld,
-        desired: DesiredRemotePlayerModel,
-    ) -> Result<ResidentPlayerModel, RuntimePlayerError> {
-        let appearance =
-            resolve_unit_model(world, desired.guid, &self.creatures, &self.characters)?;
-        let character = appearance
-            .character()
-            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid: desired.guid })?;
-        let class_id = appearance
-            .player_class_id()
-            .ok_or(RuntimePlayerError::MissingCharacterAppearance { guid: desired.guid })?;
-        let equipment = resolve_player_equipment(
-            world,
-            desired.guid,
-            &self.item_definitions,
-            &self.item_displays,
-        )?;
-        let equipment_items = equipment
-            .items()
-            .iter()
-            .map(|item| {
-                CharacterEquipmentItem::new_visible(
-                    item.slot(),
-                    item.visible(),
-                    item.definition(),
-                    item.display(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut assets = self.assets.borrow_mut();
-        let model = self.models.load(&mut assets, &desired.path)?;
-        let texture_plan =
-            CharacterTexturePlan::equipped(character, &assets, equipment_items.iter().copied())?;
-        let geosets = CharacterGeosetPlan::equipped(
-            character,
-            CharacterGeosetContext::new(class_id, CharacterTabardMode::Equipment),
-            &self.helmet_visibility,
-            equipment_items.iter().copied(),
-        )?;
-        let atlas = texture_plan.compose_at_level(
-            &mut assets,
-            &mut self.textures,
-            self.component_texture_level,
-        )?;
-        let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
-        let extra_skin =
-            load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
-        let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
-        let textures = prepare_model_textures(
-            &model,
-            OptionalTextureBinding::new(texture_plan.hair(), hair.as_ref()),
-            OptionalTextureBinding::new(texture_plan.extra_skin(), extra_skin.as_ref()),
-            OptionalTextureBinding::new(texture_plan.cape(), cape.as_ref()),
-            &mut assets,
-            &mut self.textures,
-        )?;
-        let attachments = load_player_attachments(
-            &desired.attachment_plan,
-            &self.item_visuals,
-            &self.particle_colors,
-            &mut self.models,
-            &mut self.textures,
-            &mut assets,
-        )?;
-        let mount = load_mount_model(
-            appearance.mount(),
-            desired.mount_key.as_ref(),
-            desired.requested_animation,
-            desired.animation_tier,
-            &self.animations,
-            &self.particle_colors,
-            &mut self.models,
-            &mut self.textures,
-            &mut assets,
-        )?;
-        drop(assets);
-        let camera_height = resolve_model_camera_subject_height(&model, desired.object_scale)?;
-        let particle_colors =
-            M2ParticleColorReplacement::resolve(&self.particle_colors, desired.particle_color_id);
-        let animation = resolve_resident_animation(
-            &self.animations,
-            &model,
-            if mount.is_some() {
-                UnitLocomotionAnimation::MOUNT
-            } else {
-                desired.requested_animation
-            },
-            desired.animation_tier,
-        )?;
-        Ok(ResidentPlayerModel {
-            generation: UnitPresentationGeneration::new(),
-            identity: desired.identity,
-            guid: desired.guid,
-            object_scale: desired.object_scale,
-            collision_extent: desired.collision_extent,
-            particle_color_id: desired.particle_color_id,
-            particle_colors,
-            base_texture_plan: desired.base_texture_plan,
-            base_geosets: desired.base_geosets,
-            equipment_key: desired.equipment_key,
-            attachment_plan: desired.attachment_plan,
-            texture_plan,
-            geosets,
-            atlas,
-            hair,
-            extra_skin,
-            textures,
-            attachments,
-            world_transform: desired.world_transform,
-            view: PlayerViewState::STOCK_VIEW_2,
-            animation,
-            camera_height,
-            camera_height_state: PlayerCameraHeightState::new(camera_height),
-            camera_time_ms: 0.0,
-            camera_pose: None,
-            model,
-            mount_key: desired.mount_key,
-            mount,
-        })
     }
 
     /// Returns the controlled player's exact server GUID when resident.
@@ -2614,6 +1818,7 @@ impl RuntimePlayerPresentation {
     }
 }
 
+/// Completes a Glue character on the same private asset owner used by population jobs.
 fn prepare_glue_character_on_worker(
     catalog: ArchiveCatalog,
     catalogs: RuntimePlayerSharedCatalogs,
@@ -2621,6 +1826,37 @@ fn prepare_glue_character_on_worker(
     key: ResidentGlueCharacterKey,
     worker_cache: &Mutex<GlueCharacterWorkerCache>,
 ) -> Result<ResidentGlueCharacterModel, RuntimePlayerError> {
+    with_worker_presentation(
+        catalog,
+        catalogs,
+        component_texture_level,
+        worker_cache,
+        |presentation| {
+            presentation.requested_glue_character = Some(key.clone());
+            match &key {
+                ResidentGlueCharacterKey::Creation(preview) => {
+                    presentation.synchronize_character_creation(Some(preview))?;
+                }
+                ResidentGlueCharacterKey::Selection(preview) => {
+                    presentation.synchronize_character_selection(Some(preview))?;
+                }
+            }
+            presentation
+                .glue_character
+                .take()
+                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
+        },
+    )
+}
+
+/// Worker-local caches retain expensive decode results across finite jobs.
+fn with_worker_presentation<T>(
+    catalog: ArchiveCatalog,
+    catalogs: RuntimePlayerSharedCatalogs,
+    component_texture_level: CharacterComponentTextureLevel,
+    worker_cache: &Mutex<GlueCharacterWorkerCache>,
+    prepare: impl FnOnce(&mut RuntimePlayerPresentation) -> Result<T, RuntimePlayerError>,
+) -> Result<T, RuntimePlayerError> {
     let (store, models, textures) = {
         let mut cache = worker_cache
             .lock()
@@ -2659,23 +1895,19 @@ fn prepare_glue_character_on_worker(
         resident: None,
         creatures_resident: Vec::new(),
         remote_players: Vec::new(),
+        creature_worker: population_worker::PopulationWorker::new(),
+        remote_worker: population_worker::PopulationWorker::new(),
         glue_character: None,
-        requested_glue_character: Some(key.clone()),
+        requested_glue_character: None,
         glue_worker_catalog: None,
         glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
         glue_worker_request: Arc::new(Mutex::new(None)),
         pending_glue_character: None,
         failed_glue_character: None,
     };
-    let result = match &key {
-        ResidentGlueCharacterKey::Creation(preview) => {
-            presentation.synchronize_character_creation(Some(preview))
-        }
-        ResidentGlueCharacterKey::Selection(preview) => {
-            presentation.synchronize_character_selection(Some(preview))
-        }
-    };
-    let character = presentation.glue_character.take();
+    let result = prepare(&mut presentation);
+    presentation.models.collect_unused();
+    presentation.textures.collect_unused();
     let assets = presentation.assets;
     let models = std::mem::take(&mut presentation.models);
     let textures = std::mem::take(&mut presentation.textures);
@@ -2693,8 +1925,7 @@ fn prepare_glue_character_on_worker(
         }
     }
     drop(cache);
-    result?;
-    character.ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
+    result
 }
 
 fn prepare_latest_glue_character_on_worker(
@@ -2983,19 +2214,45 @@ impl<'a> ResidentGluePetFrameInput<'a> {
 
 /// Identity of one completed material/equipment generation, retained by its GPU consumer.
 #[derive(Clone)]
-pub(super) struct UnitPresentationGeneration(Rc<()>);
+pub(super) struct UnitPresentationGeneration(Arc<Vec<Arc<super::terrain_frame::m2::M2CpuSource>>>);
 
 impl UnitPresentationGeneration {
     fn new() -> Self {
-        Self(Rc::new(()))
+        Self(Arc::new(Vec::new()))
     }
 
     pub(super) fn matches(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Pins exact immutable CPU sources until all placements release this generation.
+    fn prepare(
+        body: &Arc<DecodedM2Model>,
+        attachments: &[ResidentPlayerAttachment],
+        mount: Option<&ResidentMountModel>,
+    ) -> Result<Self, RuntimePlayerError> {
+        let models = std::iter::once(body)
+            .chain(mount.map(|mount| &mount.model))
+            .chain(attachments.iter().flat_map(|attachment| {
+                std::iter::once(&attachment.model)
+                    .chain(attachment.visual_effects.iter().map(|effect| &effect.model))
+            }));
+        let sources = models
+            .map(|model| {
+                super::terrain_frame::m2::prepare_m2_cpu_source(
+                    model,
+                    solarity_rendering::M2LocalLightCount::Four,
+                )
+                .map_err(|error| RuntimePlayerError::RenderPreparation(Box::new(error)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self(Arc::new(sources)))
     }
 }
 
 struct ResidentPlayerModel {
+    /// Exact appearance inputs consumed by the remote character resolver.
+    remote_inputs: Option<RemoteAppearanceInputs>,
     generation: UnitPresentationGeneration,
     identity: WorldObjectIdentity,
     guid: u64,
@@ -3077,7 +2334,7 @@ struct ResidentMountModel {
     animation: UnitModelAnimation,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 struct CreatureModelKey {
     identity: WorldObjectIdentity,
     guid: u64,
@@ -3091,6 +2348,7 @@ struct CreatureModelKey {
 }
 
 struct DesiredCreatureModel {
+    inputs: Option<CreatureAppearanceInputs>,
     key: CreatureModelKey,
     transform: WorldTransform,
     requested_animation: UnitLocomotionAnimation,
@@ -3101,6 +2359,7 @@ struct DesiredCreatureModel {
 }
 
 struct ResidentCreatureModel {
+    inputs: Option<CreatureAppearanceInputs>,
     generation: UnitPresentationGeneration,
     key: CreatureModelKey,
     model: Arc<DecodedM2Model>,
@@ -4091,49 +3350,4 @@ fn prepare_attachment_textures(
             kind => Ok(ResidentPlayerTexture::Unresolved(kind)),
         })
         .collect()
-}
-
-impl ResidentPlayerModel {
-    fn update_remote_motion(
-        &mut self,
-        desired: &DesiredRemotePlayerModel,
-        animations: &AnimationDataCatalog,
-    ) -> Result<(), RuntimePlayerError> {
-        self.world_transform = desired.world_transform;
-        self.animation = resolve_resident_animation(
-            animations,
-            &self.model,
-            if self.mount.is_some() {
-                UnitLocomotionAnimation::MOUNT
-            } else {
-                desired.requested_animation
-            },
-            desired.animation_tier,
-        )?;
-        if let Some(mount) = self.mount.as_mut() {
-            mount.animation = resolve_resident_animation(
-                animations,
-                &mount.model,
-                desired.requested_animation,
-                desired.animation_tier,
-            )?;
-        }
-        Ok(())
-    }
-    fn path(&self) -> &AssetPath {
-        self.model.path()
-    }
-
-    fn matches_remote(&self, desired: &DesiredRemotePlayerModel) -> bool {
-        self.guid == desired.guid
-            && self.identity == desired.identity
-            && self.path() == &desired.path
-            && self.object_scale == desired.object_scale
-            && self.particle_color_id == desired.particle_color_id
-            && self.base_texture_plan == desired.base_texture_plan
-            && self.base_geosets == desired.base_geosets
-            && self.equipment_key == desired.equipment_key
-            && self.attachment_plan == desired.attachment_plan
-            && self.mount_key == desired.mount_key
-    }
 }

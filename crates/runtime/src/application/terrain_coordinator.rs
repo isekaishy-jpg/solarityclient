@@ -35,7 +35,8 @@ mod movement;
 mod streaming;
 pub(in crate::application) mod world_model_residency;
 
-use ground_detail::{GroundDetailAssetCache, ResidentGroundDetailTile};
+use ground_detail::GroundDetailAssetCache;
+pub(in crate::application) use ground_detail::ResidentGroundDetailTile;
 use m2_residency::{ResidentM2Scene, ResidentM2SceneBuilder};
 pub(in crate::application) use movement::UnitWorldModelLocation;
 pub(in crate::application) use movement::WorldModelSceneGroup;
@@ -247,6 +248,7 @@ pub struct RuntimeTerrainCoordinator {
     failed_request: Option<TerrainRequest>,
     streaming: Option<TerrainStreamingDemand>,
     pending_stream: Option<PendingTerrainGeneration>,
+    ready_stream: Option<streaming::ReadyTerrainStream>,
     failed_stream: std::collections::HashSet<TerrainTileIndex>,
     specular_textures: bool,
     camera_profile: Option<camera_profile::CameraProfile>,
@@ -289,6 +291,7 @@ impl RuntimeTerrainCoordinator {
             failed_request: None,
             streaming: None,
             pending_stream: None,
+            ready_stream: None,
             failed_stream: std::collections::HashSet::new(),
             specular_textures: false,
             camera_profile: camera_profile::CameraProfile::from_environment(),
@@ -800,7 +803,7 @@ impl RuntimeTerrainCoordinator {
         self.active
             .as_ref()
             .and_then(|active| active.tile.as_ref())
-            .map(|tile| &tile.decoded)
+            .map(|tile| tile.decoded.as_ref())
     }
 
     /// Resolves the active player's terrain-authored `AreaTable` identifier.
@@ -1449,9 +1452,9 @@ impl ResidentGlobalWorldModel {
 }
 
 pub(super) struct ResidentTerrainTile {
-    ground_detail: ResidentGroundDetailTile,
+    ground_detail: Arc<ResidentGroundDetailTile>,
     movement_references: ResidentMovementReferences,
-    decoded: DecodedTerrainTile,
+    decoded: Arc<DecodedTerrainTile>,
     textures: Vec<Arc<BlpTextureSource>>,
     mesh: Arc<TerrainTileMeshPlan>,
     collision: TerrainCollisionMesh,
@@ -1511,8 +1514,8 @@ impl ResidentTerrainTile {
             ResidentMovementReferences::prepare(Some(&decoded), &m2_scene, &world_models);
         Ok(Self {
             movement_references,
-            ground_detail,
-            decoded,
+            ground_detail: Arc::new(ground_detail),
+            decoded: Arc::new(decoded),
             textures,
             mesh,
             collision,
@@ -1526,7 +1529,7 @@ impl ResidentTerrainTile {
         })
     }
 
-    const fn index(&self) -> TerrainTileIndex {
+    fn index(&self) -> TerrainTileIndex {
         self.decoded.index()
     }
 }

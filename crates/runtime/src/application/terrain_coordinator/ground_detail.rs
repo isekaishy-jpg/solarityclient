@@ -91,12 +91,12 @@ impl GroundDetailAssetCache {
 
 impl ResidentTerrainTile {
     /// Borrows immutable asset providers prepared with this ADT generation.
-    pub(in crate::application) const fn ground_detail(&self) -> &ResidentGroundDetailTile {
+    pub(in crate::application) const fn ground_detail(&self) -> &Arc<ResidentGroundDetailTile> {
         &self.ground_detail
     }
 
     /// Borrows authored terrain inputs for lazily generated nearby detail chunks.
-    pub(in crate::application) const fn decoded(&self) -> &DecodedTerrainTile {
+    pub(in crate::application) const fn decoded(&self) -> &Arc<DecodedTerrainTile> {
         &self.decoded
     }
 }

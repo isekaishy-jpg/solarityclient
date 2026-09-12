@@ -30,6 +30,7 @@ use crate::application::terrain_coordinator::m2_residency::ResidentM2Scene;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelScene;
 use crate::random::CrtRand;
 
+mod admission;
 mod ground_detail;
 pub(in crate::application) mod m2;
 mod shadow;
@@ -44,6 +45,9 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// A bounded detail preparation task failed at its executor boundary.
+    #[error(transparent)]
+    Cpu(#[from] solarity_cpu::CpuError),
     /// The shared sampler setting is outside its native closed integer domain.
     #[error("invalid file texture sampling cvar {0}")]
     InvalidTextureSamplingCvar(&'static str),
@@ -560,6 +564,7 @@ pub(super) struct TerrainFrame {
     tile: Option<TerrainTileIndex>,
     map_id: Option<u32>,
     tiles: Vec<TerrainGpuTile>,
+    tile_admission: Option<admission::TerrainTileAdmission>,
     visible_draws: Vec<TerrainPreparedDraw>,
     ground_detail: ground_detail::GroundDetailWorld,
     shadow_quality: solarity_rendering::WorldShadowQuality,
@@ -631,6 +636,7 @@ impl TerrainFrame {
         Ok(Self {
             tile: Some(plan.tile()),
             map_id: Some(map_id),
+            tile_admission: None,
             tiles: vec![TerrainGpuTile {
                 plan: Arc::clone(plan),
                 draws,
@@ -685,6 +691,7 @@ impl TerrainFrame {
             tile: None,
             map_id: None,
             tiles: Vec::new(),
+            tile_admission: None,
             visible_draws: Vec::new(),
             shadow_quality: solarity_rendering::WorldShadowQuality::UnitsHigh,
             environment_shadows: None,

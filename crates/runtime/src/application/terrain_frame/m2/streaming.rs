@@ -38,6 +38,19 @@ struct StaticM2SceneUpdate {
 }
 
 impl StaticM2Residency {
+    /// Dynamic character replacements cannot satisfy a static source's material identity.
+    pub(super) fn contains_source(
+        &self,
+        sources: &[Option<M2GpuSource>],
+        model: &Arc<solarity_asset::DecodedM2Model>,
+    ) -> bool {
+        self.source_indices.iter().any(|&index| {
+            sources[index]
+                .as_ref()
+                .is_some_and(|source| Arc::ptr_eq(&source.model, model))
+        })
+    }
+
     /// Seeds the index from the same scene used to create the initial static owners.
     pub(super) fn new(scene: &ResidentM2Scene) -> Self {
         let owners = scene
@@ -189,7 +202,15 @@ impl M2Frame {
                 let source_index = if let Some(&index) = sources.get(&identity) {
                     index
                 } else {
-                    let gpu = prepare_source(renderer, source)?;
+                    let gpu = if let Some(index) = self
+                        .prepared_static
+                        .iter()
+                        .position(|prepared| Arc::ptr_eq(&prepared.model, source.model()))
+                    {
+                        self.prepared_static.swap_remove(index).source
+                    } else {
+                        prepare_source(renderer, source)?
+                    };
                     let index = self.sources.len();
                     self.sources.push(gpu);
                     self.static_residency.source_indices.push(index);

@@ -9,6 +9,7 @@ mod character_directory;
 mod cinematic_coordinator;
 mod client;
 mod client_services;
+mod cpu_retirement;
 mod developer_console;
 mod entity_opacity;
 mod environment_coordinator;

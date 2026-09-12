@@ -112,14 +112,14 @@ impl UnitPassengerFrames {
         {
             let mut units = self.units.borrow_mut();
             units.retain(|identity, _| world.object_identity(identity.guid()) == Some(*identity));
-            for &guid in &guids {
+            for &guid in guids {
                 if let Some(identity) = world.object_identity(guid) {
                     register(&mut units, world, identity)?;
                 }
             }
         }
         // 73AB20/758130 updates vehicle matrices even without a visible rider.
-        for guid in guids {
+        for &guid in guids {
             if world.unit_vehicle(guid).is_some()
                 && let Some(identity) = world.object_identity(guid)
             {

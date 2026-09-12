@@ -1,13 +1,15 @@
 //! Renderer-local resources for the shared resident placed-M2 scene.
 
 #[cfg(test)]
-#[path = "../../../tests/application/game_object_scene.rs"]
+#[path = "../../../../tests/application/game_object_scene.rs"]
 mod game_object_scene_tests;
 
 #[cfg(test)]
-#[path = "../../../tests/application/unit_effect_models.rs"]
+#[path = "../../../../tests/application/unit_effect_models.rs"]
 mod unit_effect_model_tests;
 
+mod admission;
+pub(super) use admission::M2SourceAdmission;
 mod character_residency;
 mod distance;
 mod doodad_scene;
@@ -17,20 +19,24 @@ mod playback;
 mod portrait;
 mod retirement;
 #[cfg(test)]
-#[path = "../../../tests/application/scenery_distance.rs"]
+#[path = "../../../../tests/application/scenery_distance.rs"]
 mod scenery_distance_tests;
 mod shadow;
 pub(in crate::application) mod sky;
 pub(in crate::application) mod sound;
+mod source;
 #[cfg(test)]
-#[path = "../../../tests/application/static_m2_streaming.rs"]
+#[path = "../../../../tests/application/static_m2_streaming.rs"]
 mod static_streaming_tests;
 mod streaming;
+pub(in crate::application) use source::{
+    M2CpuSource, M2GlueCpuSourceKey, M2GluePipelineWarmup, prepare_m2_cpu_source,
+};
 pub(in crate::application) mod unit_effects;
 mod unit_registration;
 mod unit_scene;
 #[cfg(test)]
-#[path = "../../../tests/application/unit_shadow_scene.rs"]
+#[path = "../../../../tests/application/unit_shadow_scene.rs"]
 mod unit_shadow_tests;
 mod vehicle_passengers;
 mod visibility;
@@ -43,9 +49,9 @@ use character_residency::{
 use playback::M2PlaybackStorage;
 use unit_registration::UnitSceneRegistration;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::model_playback::{M2Playback, M2PlaybackAdvance};
@@ -61,15 +67,14 @@ use solarity_rendering::{
     M2FingerPoseHands, M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform,
     M2MeshHandle, M2MeshPlan, M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan,
     M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw,
-    M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleSpirvCompiler, M2ParticleSpirvProgram,
-    M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw, M2RibbonControlPoint,
-    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
-    M2RibbonRenderVertex, M2RibbonSpirvCompiler, M2RibbonSpirvProgram, M2RibbonTrail,
-    M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
-    M2ShadowPermutation, M2SpirvCompiler, M2SpirvKey, M2SpirvProgram, M2TextureImageHandle,
-    M2TextureSet, M2TextureSetHandle, M2TransparentPass, M2TransparentSortKey, VulkanRenderer,
-    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
-    m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
+    M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle,
+    M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
+    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
+    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvKey,
+    M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentPass,
+    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
+    m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
+    triggered_m2_event_indices,
 };
 
 use crate::application::game_object_coordinator::{
@@ -88,7 +93,7 @@ use crate::random::CrtRand;
 use super::RuntimeTerrainFrameError;
 mod scene_lighting;
 #[cfg(test)]
-#[path = "../../../tests/application/scene_lighting.rs"]
+#[path = "../../../../tests/application/scene_lighting.rs"]
 mod scene_lighting_tests;
 
 /// Build 12340's highest-capability external SKIN selection.
@@ -362,269 +367,6 @@ pub(in crate::application) enum GlueM2Texture {
     StockFailure,
 }
 
-/// CPU-only M2 generation prepared away from the presentation thread.
-pub(in crate::application) struct M2CpuSource {
-    plan: Arc<M2MeshPlan>,
-    mesh_programs: HashMap<M2SpirvKey, M2SpirvProgram>,
-    particle_programs: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
-    ribbon_programs: HashMap<M2MaterialState, M2RibbonSpirvProgram>,
-}
-
-/// Driver pipeline work for one worker-prepared Glue M2 source.
-///
-/// SPIR-V compilation is already complete. Keeping a cursor over the remaining
-/// Vulkan pipelines lets the presentation owner admit one potentially costly
-/// driver creation per frame instead of one 20-30 ms burst when a character
-/// with several equipped models first becomes visible.
-pub(in crate::application) struct M2GluePipelineWarmup {
-    programs: VecDeque<M2GluePipelineProgram>,
-}
-
-enum M2GluePipelineProgram {
-    Mesh(M2SpirvProgram, M2ModelOrientation),
-    Particle(M2ParticleSpirvProgram),
-    Ribbon(M2RibbonSpirvProgram),
-}
-
-impl M2GluePipelineWarmup {
-    /// Captures immutable programs for one exact model orientation.
-    pub(in crate::application) fn new(
-        source: &M2CpuSource,
-        orientation: M2ModelOrientation,
-    ) -> Self {
-        let mut programs = VecDeque::with_capacity(
-            source.mesh_programs.len()
-                + source.particle_programs.len()
-                + source.ribbon_programs.len(),
-        );
-        programs.extend(
-            source
-                .mesh_programs
-                .values()
-                .cloned()
-                .map(|program| M2GluePipelineProgram::Mesh(program, orientation)),
-        );
-        programs.extend(
-            source
-                .particle_programs
-                .values()
-                .cloned()
-                .map(M2GluePipelineProgram::Particle),
-        );
-        programs.extend(
-            source
-                .ribbon_programs
-                .values()
-                .cloned()
-                .map(M2GluePipelineProgram::Ribbon),
-        );
-        Self { programs }
-    }
-
-    /// Creates at most one driver pipeline and reports full residency.
-    pub(in crate::application) fn service_one(
-        &mut self,
-        renderer: &mut VulkanRenderer,
-    ) -> Result<bool, RuntimeTerrainFrameError> {
-        let Some(program) = self.programs.pop_front() else {
-            return Ok(true);
-        };
-        match program {
-            M2GluePipelineProgram::Mesh(program, orientation) => {
-                renderer.prepare_precompiled_oriented_m2_pipeline(&program, orientation)?;
-            }
-            M2GluePipelineProgram::Particle(program) => {
-                renderer.prepare_precompiled_m2_particle_pipeline(&program)?;
-            }
-            M2GluePipelineProgram::Ribbon(program) => {
-                renderer.prepare_precompiled_m2_ribbon_pipeline(&program)?;
-            }
-        }
-        Ok(self.programs.is_empty())
-    }
-}
-
-/// Exact immutable CPU generation shared by Glue character placements.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(in crate::application) struct M2GlueCpuSourceKey {
-    path: AssetPath,
-    local_light_count: M2LocalLightCount,
-}
-
-impl M2GlueCpuSourceKey {
-    /// Identifies one model and stock local-light shader permutation.
-    pub(in crate::application) fn new(
-        path: AssetPath,
-        local_light_count: M2LocalLightCount,
-    ) -> Self {
-        Self {
-            path,
-            local_light_count,
-        }
-    }
-
-    /// Returns the exact shader light count represented by this key.
-    pub(in crate::application) const fn local_light_count(&self) -> M2LocalLightCount {
-        self.local_light_count
-    }
-
-    /// Returns the canonical archive model path represented by this key.
-    pub(in crate::application) const fn path(&self) -> &AssetPath {
-        &self.path
-    }
-}
-
-/// Process-wide worker bytecode indexed by complete stock shader identity.
-#[derive(Default)]
-struct M2GlueProgramCache {
-    mesh: HashMap<M2SpirvKey, M2SpirvProgram>,
-    particles: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
-    ribbons: HashMap<M2MaterialState, M2RibbonSpirvProgram>,
-}
-
-/// Shares immutable worker results across every finite Glue backdrop.
-static M2_PROGRAMS: OnceLock<Mutex<M2GlueProgramCache>> = OnceLock::new();
-
-/// Builds the immutable mesh plan and every required shader permutation.
-pub(in crate::application) fn prepare_m2_cpu_source(
-    model: &Arc<DecodedM2Model>,
-    local_light_count: M2LocalLightCount,
-) -> Result<M2CpuSource, RuntimeTerrainFrameError> {
-    let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
-    let cache_lock = M2_PROGRAMS.get_or_init(|| Mutex::new(M2GlueProgramCache::default()));
-    let mut mesh_compiler = None;
-    let mut mesh_programs = HashMap::new();
-    for draw in plan.draws() {
-        let shader = M2ShaderPlan::resolve(model, draw)?;
-        let permutation = M2ShaderPermutation::resolve(
-            draw,
-            local_light_count,
-            M2ShadowPermutation::Disabled,
-            M2ShadowFiltering::Direct,
-        );
-        let material = M2MaterialState::from_material(draw.material());
-        let shaders = [
-            Some(shader),
-            (!material.blend_enabled()).then(|| shader.with_runtime_alpha_fade()),
-        ];
-        for shader in shaders.into_iter().flatten() {
-            let key = M2SpirvKey::new(shader, permutation);
-            if let std::collections::hash_map::Entry::Vacant(entry) = mesh_programs.entry(key) {
-                let cached = match cache_lock.lock() {
-                    Ok(cache) => cache.mesh.get(&key).cloned(),
-                    Err(poisoned) => poisoned.into_inner().mesh.get(&key).cloned(),
-                };
-                let program = if let Some(program) = cached {
-                    program
-                } else {
-                    let compiler = match mesh_compiler.as_ref() {
-                        Some(compiler) => compiler,
-                        None => mesh_compiler.insert(M2SpirvCompiler::new()?),
-                    };
-                    let program = compiler.compile(shader, permutation)?;
-                    match cache_lock.lock() {
-                        Ok(mut cache) => cache.mesh.entry(key).or_insert(program).clone(),
-                        Err(poisoned) => poisoned
-                            .into_inner()
-                            .mesh
-                            .entry(key)
-                            .or_insert(program)
-                            .clone(),
-                    }
-                };
-                entry.insert(program);
-            }
-        }
-    }
-
-    let mut particle_programs = HashMap::new();
-    if !model.animations().particles().is_empty() {
-        let mut particle_compiler = None;
-        for emitter in model.animations().particles() {
-            let material = M2MaterialState::from_particle(emitter.blending_type(), emitter.flags());
-            for material in std::iter::once(material)
-                .chain((!material.blend_enabled()).then(|| material.with_runtime_alpha_fade()))
-            {
-                if let std::collections::hash_map::Entry::Vacant(entry) =
-                    particle_programs.entry(material)
-                {
-                    let cached = match cache_lock.lock() {
-                        Ok(cache) => cache.particles.get(&material).cloned(),
-                        Err(poisoned) => poisoned.into_inner().particles.get(&material).cloned(),
-                    };
-                    let program = if let Some(program) = cached {
-                        program
-                    } else {
-                        let compiler = match particle_compiler.as_ref() {
-                            Some(compiler) => compiler,
-                            None => particle_compiler.insert(M2ParticleSpirvCompiler::new()?),
-                        };
-                        let program = compiler.compile(material)?;
-                        match cache_lock.lock() {
-                            Ok(mut cache) => {
-                                cache.particles.entry(material).or_insert(program).clone()
-                            }
-                            Err(poisoned) => poisoned
-                                .into_inner()
-                                .particles
-                                .entry(material)
-                                .or_insert(program)
-                                .clone(),
-                        }
-                    };
-                    entry.insert(program);
-                }
-            }
-        }
-    }
-
-    let mut ribbon_programs = HashMap::new();
-    if !model.animations().ribbons().is_empty() {
-        let mut ribbon_compiler = None;
-        for emitter in model.animations().ribbons() {
-            for material_index in emitter.material_indices() {
-                let material =
-                    M2MaterialState::from_material(model.materials()[usize::from(*material_index)]);
-                if let std::collections::hash_map::Entry::Vacant(entry) =
-                    ribbon_programs.entry(material)
-                {
-                    let cached = match cache_lock.lock() {
-                        Ok(cache) => cache.ribbons.get(&material).cloned(),
-                        Err(poisoned) => poisoned.into_inner().ribbons.get(&material).cloned(),
-                    };
-                    let program = if let Some(program) = cached {
-                        program
-                    } else {
-                        let compiler = match ribbon_compiler.as_ref() {
-                            Some(compiler) => compiler,
-                            None => ribbon_compiler.insert(M2RibbonSpirvCompiler::new()?),
-                        };
-                        let program = compiler.compile(material)?;
-                        match cache_lock.lock() {
-                            Ok(mut cache) => {
-                                cache.ribbons.entry(material).or_insert(program).clone()
-                            }
-                            Err(poisoned) => poisoned
-                                .into_inner()
-                                .ribbons
-                                .entry(material)
-                                .or_insert(program)
-                                .clone(),
-                        }
-                    };
-                    entry.insert(program);
-                }
-            }
-        }
-    }
-    Ok(M2CpuSource {
-        plan,
-        mesh_programs,
-        particle_programs,
-        ribbon_programs,
-    })
-}
-
 /// One resident submesh-selection scheme consumed during GPU preparation.
 #[derive(Clone, Copy)]
 enum M2GeosetSelection<'source> {
@@ -750,6 +492,7 @@ pub(in crate::application) struct M2Frame {
     sources: Vec<Option<M2GpuSource>>,
     placements: Vec<M2GpuPlacement>,
     static_residency: streaming::StaticM2Residency,
+    prepared_static: Vec<admission::PreparedStaticM2>,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
     animation_started_at: std::time::Instant,
     /// Previous scene pass, independent of unit residency and draw admission.
@@ -854,6 +597,7 @@ impl M2Frame {
             sources,
             placements,
             static_residency: streaming::StaticM2Residency::new(scene),
+            prepared_static: Vec::new(),
             particle_twinkle,
             animation_started_at: std::time::Instant::now(),
             unit_scene_time_ms: 0.0,
@@ -963,6 +707,7 @@ impl M2Frame {
             animations,
             sources: vec![Some(source)],
             static_residency: streaming::StaticM2Residency::default(),
+            prepared_static: Vec::new(),
             placements: vec![M2GpuPlacement {
                 static_spatial: None,
                 sound_lifetime: Default::default(),
@@ -4367,15 +4112,14 @@ fn prepare_gpu_source(
     local_light_count: M2LocalLightCount,
     orientation: M2ModelOrientation,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
-    let plan = Arc::new(M2MeshPlan::prepare(model, STOCK_HIGH_CAPABILITY_PROFILE)?);
-    prepare_gpu_source_with_plan(
+    let cpu_source = prepare_m2_cpu_source(model, local_light_count)?;
+    prepare_gpu_source_from_cpu(
         renderer,
         model,
         textures,
         geosets,
         local_light_count,
-        plan,
-        None,
+        &cpu_source,
         orientation,
     )
 }
@@ -4833,57 +4577,5 @@ fn ordinary_particle_texture_index(
 }
 
 #[cfg(test)]
-mod tests {
-    use glam::{Mat4, Vec3};
-
-    use super::{
-        M2UnsupportedParticle, PARTICLE_IGNORE_DISTANCE_LOD, classify_particle_support,
-        particle_emission_density, particle_lod_origin, stock_glue_character_local_transform,
-    };
-
-    #[test]
-    fn unsupported_particle_paths_are_isolated_before_frame_advance() {
-        assert_eq!(classify_particle_support(1, 0), None);
-        assert_eq!(classify_particle_support(2, 0), None);
-        assert_eq!(
-            classify_particle_support(1, 0x0000_0800),
-            Some(M2UnsupportedParticle::BehaviorFlags(0x0000_0800))
-        );
-        assert_eq!(
-            classify_particle_support(3, 0),
-            Some(M2UnsupportedParticle::EmitterType(3))
-        );
-    }
-
-    #[test]
-    fn glue_character_local_transform_keeps_stock_unit_scale() {
-        let transform = stock_glue_character_local_transform(0.75);
-        assert_eq!(transform.transform_vector3(Vec3::X).length(), 1.0);
-        assert_eq!(transform.transform_point3(Vec3::ZERO), Vec3::ZERO);
-        assert_ne!(transform, Mat4::IDENTITY);
-    }
-
-    #[test]
-    fn particle_distance_lod_matches_stock_threshold_and_floor() {
-        let camera = Vec3::ZERO;
-        assert_eq!(particle_emission_density(0, Vec3::X * 50.0, camera), 1.0);
-        assert_eq!(particle_emission_density(0, Vec3::X * 75.0, camera), 0.5);
-        assert_eq!(particle_emission_density(0, Vec3::X * 100.0, camera), 0.25);
-        assert_eq!(
-            particle_emission_density(PARTICLE_IGNORE_DISTANCE_LOD, Vec3::X * 100.0, camera),
-            1.0
-        );
-    }
-
-    #[test]
-    fn particle_lod_uses_model_origin_before_emitter_offsets() {
-        let model = Mat4::from_translation(Vec3::new(12.0, 34.0, 56.0));
-        let emitter = model * Mat4::from_translation(Vec3::new(1_000.0, 2_000.0, 3_000.0));
-
-        assert_eq!(particle_lod_origin(model), Vec3::new(12.0, 34.0, 56.0));
-        assert_ne!(
-            particle_lod_origin(model),
-            emitter.transform_point3(Vec3::ZERO)
-        );
-    }
-}
+#[path = "../../../../tests/application/m2_scene.rs"]
+mod tests;

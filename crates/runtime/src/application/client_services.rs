@@ -160,6 +160,7 @@ pub(crate) struct ClientServices {
     underwater_particles: super::underwater_particles::RuntimeUnderwaterParticles,
     sky_resources: super::sky_resources::RuntimeSkyResources,
     terrain_frame: Option<TerrainFrame>,
+    world_camera_frame: Option<world_camera::ResolvedCameraFrame>,
     fps: Option<RuntimeFpsOverlay>,
     developer_console: RuntimeDeveloperConsole,
     runtime_overlay_draws: Vec<UiPreparedDraw>,
@@ -571,6 +572,7 @@ impl ClientServices {
                     .with_specular_textures(terrain_specular)
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
+                world_camera_frame: None,
                 liquids,
                 water_ripples,
                 terrain_texture_animation:
@@ -1732,6 +1734,7 @@ impl ClientServices {
 
     /// Applies ordered Glue actions and polls one asynchronous login result.
     pub(crate) fn service_login(&mut self) -> Result<(), ApplicationError> {
+        self.world_camera_frame = None;
         self.unit_effects
             .service_sources(&self.cpu, &mut self.renderer)?;
         let mut profile = RuntimeFrameProfile::new("session and world service");
@@ -2737,13 +2740,16 @@ impl ClientServices {
             RuntimePlayerPoll::Current => {}
         }
         profile.mark("local player residency");
-        match self
-            .player
-            .synchronize_creatures(self.gameplay.world(), |identity| {
+        match self.player.synchronize_creatures_async(
+            self.gameplay.world(),
+            |identity| {
                 self.gameplay
                     .unit_template_family(identity)
                     .map(|family| (family, self.gameplay.unit_template_flags(identity)))
-            })? {
+            },
+            &self.cpu,
+            &mut self.renderer,
+        )? {
             RuntimeCreaturePoll::ModelsChanged => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     let creatures = self.player.resident_creature_frame_inputs();
@@ -2757,10 +2763,11 @@ impl ClientServices {
             }
             RuntimeCreaturePoll::Current => {}
         }
-        match self
-            .player
-            .synchronize_remote_players(self.gameplay.world())?
-        {
+        match self.player.synchronize_remote_players_async(
+            self.gameplay.world(),
+            &self.cpu,
+            &mut self.renderer,
+        )? {
             RuntimeRemotePlayerPoll::ModelsChanged => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     let players = self.player.resident_remote_player_frame_inputs();

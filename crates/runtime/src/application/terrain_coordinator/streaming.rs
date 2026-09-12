@@ -17,6 +17,12 @@ use super::{
 #[path = "../../../tests/application/resident_tile_lookup.rs"]
 mod lookup_tests;
 
+/// A complete CPU generation waits outside both collision and visible GPU membership.
+pub(super) struct ReadyTerrainStream {
+    request: TerrainRequest,
+    tile: ResidentTerrainTile,
+}
+
 /// Direct addresses into the ordered neighbor bank. Map coordinates have only
 /// 64 * 64 possible owners; zero denotes absence and positive words are slot+1.
 /// The primary tile is resolved separately and never changes neighbor order.
@@ -108,7 +114,20 @@ impl RuntimeTerrainCoordinator {
         window: TerrainStreamingWindow,
         cpu: &CpuExecutor,
     ) -> Result<RuntimeTerrainStreamPoll, RuntimeTerrainError> {
+        self.synchronize_streaming_with_admission(map_id, origin, window, cpu, |_| Ok(true))
+    }
+
+    /// The renderer stages immutable resources before collision and draw membership commit together.
+    pub(in crate::application) fn synchronize_streaming_with_admission(
+        &mut self,
+        map_id: u32,
+        origin: Vec3,
+        window: TerrainStreamingWindow,
+        cpu: &CpuExecutor,
+        mut admit: impl FnMut(&ResidentTerrainTile) -> Result<bool, RuntimeTerrainError>,
+    ) -> Result<RuntimeTerrainStreamPoll, RuntimeTerrainError> {
         self.poll_stream_completion()?;
+        self.publish_ready_stream(&mut admit)?;
         let Some(active) = self
             .active
             .as_mut()
@@ -182,6 +201,7 @@ impl RuntimeTerrainCoordinator {
         };
         if self.pending.is_none()
             && self.pending_stream.is_none()
+            && self.ready_stream.is_none()
             && !self.failed_stream.contains(&tile)
         {
             let definition = self
@@ -219,7 +239,7 @@ impl RuntimeTerrainCoordinator {
         self.active
             .as_ref()?
             .tile_at(index)
-            .map(|tile| &tile.decoded)
+            .map(|tile| tile.decoded.as_ref())
     }
 
     /// Returns the number of complete resident ADT generations in this world.
@@ -267,8 +287,10 @@ impl RuntimeTerrainCoordinator {
                         self.failed_stream.insert(pending.request.tile);
                         return Err(error);
                     }
-                    active.push_neighbor(tile);
-                    active.synchronize_movement_owners();
+                    self.ready_stream = Some(ReadyTerrainStream {
+                        request: pending.request,
+                        tile,
+                    });
                 }
             }
             Err(error) => {
@@ -279,8 +301,43 @@ impl RuntimeTerrainCoordinator {
         Ok(())
     }
 
+    /// Keeps the tile unavailable until its exact GPU generation has finished staging.
+    fn publish_ready_stream(
+        &mut self,
+        admit: &mut impl FnMut(&ResidentTerrainTile) -> Result<bool, RuntimeTerrainError>,
+    ) -> Result<(), RuntimeTerrainError> {
+        let Some(ready) = self.ready_stream.as_ref() else {
+            return Ok(());
+        };
+        let eligible = self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.map_id() == ready.request.map_id)
+            && self
+                .streaming
+                .as_ref()
+                .is_some_and(|demand| demand.window.contains(ready.request.tile));
+        if !eligible {
+            self.ready_stream = None;
+            return Ok(());
+        }
+        if !admit(&ready.tile)? {
+            return Ok(());
+        }
+        if let Some(ready) = self.ready_stream.take()
+            && let Some(active) = self.active.as_mut()
+            && active.tile_at(ready.tile.index()).is_none()
+        {
+            active.validate_tile_placements(&ready.tile)?;
+            active.push_neighbor(ready.tile);
+            active.synchronize_movement_owners();
+        }
+        Ok(())
+    }
+
     /// Retires demand immediately while retaining the live task for later join.
     pub(super) fn retire_streaming(&mut self) {
+        self.ready_stream = None;
         self.streaming = None;
         self.failed_stream.clear();
         if let Some(pending) = self.pending_stream.as_mut() {

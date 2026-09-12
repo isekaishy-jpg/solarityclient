@@ -1,5 +1,6 @@
 //! Renderer-local WMO resources and allocation-reusing MODF visibility.
 
+mod admission;
 mod shadow;
 mod streaming;
 
@@ -99,6 +100,7 @@ impl WorldModelGpuPlacementOwner {
 /// Complete resident WMO generation for one terrain tile.
 pub(super) struct WorldModelFrame {
     sources: Vec<Option<WorldModelGpuSource>>,
+    prepared_static: Vec<WorldModelGpuSource>,
     liquid_materials: LiquidGpuMaterialCache,
     placements: Vec<WorldModelGpuPlacement>,
     placement_indices: HashMap<RuntimeWorldModelMovementOwner, usize>,
@@ -265,6 +267,7 @@ impl WorldModelFrame {
             .collect();
         Ok(Self {
             sources,
+            prepared_static: Vec::new(),
             liquid_materials,
             placements,
             placement_indices,

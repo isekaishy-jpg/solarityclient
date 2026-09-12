@@ -169,6 +169,15 @@ impl M2PipelineRegistry {
         )
     }
 
+    /// Queries the complete retained pipeline identity without driver work.
+    pub(in crate::device) fn contains_precompiled(
+        &self,
+        program: &M2SpirvProgram,
+        orientation: M2ModelOrientation,
+    ) -> bool {
+        self.handles.contains_key(&(program.key(), orientation))
+    }
+
     /// Creates a pipeline from worker-compiled bytecode after identity validation.
     pub(in crate::device) fn prepare_precompiled(
         &mut self,

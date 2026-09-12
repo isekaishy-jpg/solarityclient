@@ -1839,6 +1839,28 @@ impl VulkanRenderer {
         )
     }
 
+    /// Reports whether this exact oriented mesh program and its shadow partner are resident.
+    #[must_use]
+    pub fn has_precompiled_m2_pipeline(
+        &self,
+        program: &M2SpirvProgram,
+        orientation: M2ModelOrientation,
+    ) -> bool {
+        self.m2_pipelines.contains_precompiled(program, orientation)
+    }
+
+    /// Reports whether this particle material already has its driver pipeline.
+    #[must_use]
+    pub fn has_precompiled_m2_particle_pipeline(&self, program: &M2ParticleSpirvProgram) -> bool {
+        self.m2_particle_pipelines.contains_precompiled(program)
+    }
+
+    /// Reports whether this ribbon material already has its driver pipeline.
+    #[must_use]
+    pub fn has_precompiled_m2_ribbon_pipeline(&self, program: &M2RibbonSpirvProgram) -> bool {
+        self.m2_ribbon_pipelines.contains_precompiled(program)
+    }
+
     /// Returns immutable diagnostics for a live renderer-owned M2 pipeline.
     #[must_use]
     pub fn m2_pipeline_info(&self, handle: M2PipelineHandle) -> Option<&M2PipelineInfo> {
