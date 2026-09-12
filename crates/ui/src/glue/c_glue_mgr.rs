@@ -1017,9 +1017,9 @@ impl GlueManager {
 
     /// Publishes a topology-stable event from its typed mutation journal.
     ///
-    /// Anchor dependencies still make geometry and draw ordering global, but
-    /// this avoids copying thousands of unchanged Lua tables and confines font
-    /// work to labels whose source state actually changed.
+    /// Geometry follows the indexed dependency island. Draw ordering retains
+    /// its complete publisher when packet membership changes, and font work
+    /// stays confined to labels whose source state actually changed.
     fn refresh_targeted_objects(
         &mut self,
         dirty_objects: &[(usize, u32)],
@@ -1126,11 +1126,18 @@ impl GlueManager {
             self.runtime
                 .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
         let copied_elapsed = started.elapsed();
-        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
+        let refreshed = self.geometry.refresh_dependency_regions(
+            &self.live,
+            dirty_objects.iter().map(|&(index, _)| index),
+        )?;
+        let geometry = &self.geometry;
         let geometry_elapsed = started.elapsed();
-        self.runtime
-            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
-        synchronize_resolved_dimensions(&mut self.live, &geometry);
+        self.runtime.publish_resolved_geometry_objects(
+            &self.bundle,
+            geometry,
+            refreshed.changed_objects,
+        )?;
+        synchronize_resolved_dimensions_for(&mut self.live, geometry, refreshed.affected_objects);
         let published_elapsed = started.elapsed();
         let scroll_frames = UiScrollFramePlan::from_live(&self.live);
         let scroll_elapsed = started.elapsed();
@@ -1142,7 +1149,7 @@ impl GlueManager {
             ) {
                 self.glyphs.refresh_live_text_objects(
                     &self.live,
-                    &geometry,
+                    geometry,
                     self.glyph_logical_height,
                     &text_objects,
                 )?;
@@ -1151,12 +1158,12 @@ impl GlueManager {
                 .supports_live_text(&self.live, self.glyph_logical_height)
             {
                 self.glyphs
-                    .refresh_live_text(&self.live, &geometry, self.glyph_logical_height)?;
+                    .refresh_live_text(&self.live, geometry, self.glyph_logical_height)?;
             } else {
                 self.glyphs = UiGlyphAtlasPlan::from_live_ui(
                     self.runtime.simple_html(),
                     &self.live,
-                    &geometry,
+                    geometry,
                     &self.fonts,
                     &mut self.assets.borrow_mut(),
                     self.glyph_logical_height,
@@ -1164,19 +1171,18 @@ impl GlueManager {
             }
         }
         let glyph_elapsed = started.elapsed();
-        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        let presentation = UiPresentationPlan::resolve(&self.live, geometry, &self.backdrops);
         let presentation_elapsed = started.elapsed();
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,
             &self.glyphs,
-            &geometry,
+            geometry,
             &scroll_frames,
             geometry.ui_extent(),
         )?;
         let render_elapsed = started.elapsed();
         let pointer = UiPointerPlan::from_live(&self.live);
         let plans_elapsed = started.elapsed();
-        self.geometry = geometry;
         self.scroll_frames = scroll_frames;
         self.presentation = presentation;
         self.render_plan = render_plan;
@@ -1255,24 +1261,27 @@ impl GlueManager {
         // A content callback can also replace icon UVs, corner colors, and
         // frame backdrops. The renderer verifies their complete source slots
         // before retaining them; a changed material or membership rebuilds.
-        // Preserve the old geometry until the retained update succeeds, and
-        // re-solve every transitive parent/anchor dependent of these roots.
-        let mut geometry = self.geometry.clone();
-        let changed_regions = geometry
-            .refresh_dependency_regions(
-                &self.live,
-                dirty_objects.iter().map(|&(object_index, _)| object_index),
-            )?
-            .affected_objects;
+        // Geometry resolves transactionally and publishes only the dependency
+        // island. Keep its old region values for eligibility comparisons, not
+        // another copy of the complete arena and reverse dependency graph.
+        let refreshed = self.geometry.refresh_dependency_regions(
+            &self.live,
+            dirty_objects.iter().map(|&(object_index, _)| object_index),
+        )?;
+        self.runtime.publish_resolved_geometry_objects(
+            &self.bundle,
+            &self.geometry,
+            refreshed.changed_objects,
+        )?;
+        let changed_regions = refreshed.affected_objects;
+        let geometry = &self.geometry;
         let mut texture_objects = dirty_objects
             .iter()
             .map(|&(object_index, _)| object_index)
             .collect::<Vec<_>>();
-        for &index in &changed_regions {
+        for (&index, previous) in changed_regions.iter().zip(refreshed.previous_regions) {
             let object = &self.live.objects()[index];
-            let (Some(previous), Some(current)) =
-                (self.geometry.region(index), geometry.region(index))
-            else {
+            let Some(current) = geometry.region(index) else {
                 return Ok(false);
             };
             let old = previous.presentation_bounds();
@@ -1306,11 +1315,9 @@ impl GlueManager {
                 return Ok(false);
             }
         }
-        self.runtime
-            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
         synchronize_resolved_dimensions_for(
             &mut self.live,
-            &geometry,
+            geometry,
             changed_regions.iter().copied(),
         );
         let scroll_frames = UiScrollFramePlan::from_live(&self.live);
@@ -1318,14 +1325,14 @@ impl GlueManager {
         if !text_objects.is_empty() {
             self.glyphs.refresh_live_text_objects(
                 &self.live,
-                &geometry,
+                geometry,
                 self.glyph_logical_height,
                 &text_objects,
             )?;
             if !self.render_plan.refresh_glyph_objects(
                 &self.glyphs,
                 &self.live,
-                &geometry,
+                geometry,
                 &scroll_frames,
                 &text_objects,
             )? {
@@ -1333,12 +1340,12 @@ impl GlueManager {
             }
         }
         let glyphs = started.elapsed();
-        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
+        let presentation = UiPresentationPlan::resolve(&self.live, geometry, &self.backdrops);
         texture_objects.sort_unstable();
         texture_objects.dedup();
         if !self.render_plan.refresh_texture_objects(
             &presentation,
-            &geometry,
+            geometry,
             &scroll_frames,
             &texture_objects,
         )? {
@@ -1349,13 +1356,10 @@ impl GlueManager {
             .map(|&(object_index, _)| object_index)
             .collect::<Vec<_>>();
         self.collect_visual_subtrees(&roots);
-        self.render_plan.refresh_region_opacities(
-            &presentation,
-            &geometry,
-            &self.visual_indices,
-        )?;
+        let geometry = &self.geometry;
+        self.render_plan
+            .refresh_region_opacities(&presentation, geometry, &self.visual_indices)?;
         let rendered = started.elapsed();
-        self.geometry = geometry;
         self.scroll_frames = scroll_frames;
         self.presentation = presentation;
         self.pointer = UiPointerPlan::from_live(&self.live);
