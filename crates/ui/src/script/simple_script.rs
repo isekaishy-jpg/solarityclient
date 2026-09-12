@@ -2176,19 +2176,19 @@ impl UiScriptRuntime {
         synchronize().map_err(|error| execution_error("automatic FontString extent", error))
     }
 
-    /// Recognizes layout writes whose final inputs match the published state.
-    pub(crate) fn layout_journal_is_unchanged(
+    /// Removes only layout invalidations whose final inputs match publication.
+    /// Other mutations on the same object or in the transaction remain intact.
+    pub(crate) fn effective_layout_journal<'a>(
         &self,
         bundle: &UiBundle,
         live: &super::runtime_state::UiRuntimeObjectPlan,
-        dirty_objects: &[(usize, u32)],
-    ) -> Result<bool, UiScriptError> {
-        if dirty_objects.is_empty()
-            || dirty_objects
-                .iter()
-                .any(|&(_, flags)| flags != DIRTY_LAYOUT)
+        dirty_objects: &'a [(usize, u32)],
+    ) -> Result<std::borrow::Cow<'a, [(usize, u32)]>, UiScriptError> {
+        if !dirty_objects
+            .iter()
+            .any(|&(_, flags)| flags & DIRTY_LAYOUT != 0)
         {
-            return Ok(false);
+            return Ok(std::borrow::Cow::Borrowed(dirty_objects));
         }
         // Automatic text measurement may still change layout inputs when the
         // journal is copied. Let that transaction complete before comparing.
@@ -2197,9 +2197,32 @@ impl UiScriptRuntime {
             .named_registry_value(AUTO_TEXT_MEASUREMENT_DIRTY_REGISTRY)
             .map_err(|error| execution_error("automatic FontString extent", error))?;
         if auto_text_dirty {
-            return Ok(false);
+            return Ok(std::borrow::Cow::Borrowed(dirty_objects));
         }
-        super::runtime_state::runtime_layout_journal_is_unchanged(bundle.lua(), live, dirty_objects)
+        let mut effective = std::borrow::Cow::Borrowed(dirty_objects);
+        for (index, &entry) in dirty_objects.iter().enumerate() {
+            if entry.1 & DIRTY_LAYOUT != 0
+                && super::runtime_state::runtime_layout_journal_is_unchanged(
+                    bundle.lua(),
+                    live,
+                    std::slice::from_ref(&entry),
+                )?
+            {
+                effective.to_mut()[index].1 &= !DIRTY_LAYOUT;
+            }
+        }
+        if let std::borrow::Cow::Owned(entries) = &mut effective {
+            entries.retain(|&(_, flags)| flags != 0);
+        }
+        Ok(effective)
+    }
+
+    /// Recognizes the object-local color path after layout no-ops are removed.
+    pub(crate) fn is_texture_vertex_color_journal(&self, dirty_objects: &[(usize, u32)]) -> bool {
+        !dirty_objects.is_empty()
+            && dirty_objects
+                .iter()
+                .all(|&(_, flags)| flags == DIRTY_TEXTURE_VERTEX_COLOR)
     }
 
     /// Reports whether a journal can use the fixed-slot EditBox glyph path.

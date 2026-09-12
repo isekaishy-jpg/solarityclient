@@ -1028,10 +1028,12 @@ impl GlueManager {
         let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
         let started = std::time::Instant::now();
         self.deferred_slider_refresh = None;
-        if self
-            .runtime
-            .layout_journal_is_unchanged(&self.bundle, &self.live, dirty_objects)?
-        {
+        let had_dirty_objects = !dirty_objects.is_empty();
+        let effective =
+            self.runtime
+                .effective_layout_journal(&self.bundle, &self.live, dirty_objects)?;
+        let dirty_objects = effective.as_ref();
+        if had_dirty_objects && dirty_objects.is_empty() {
             if !visual_objects.is_empty() {
                 self.refresh_targeted_visual_objects(visual_objects)?;
             }
@@ -1053,6 +1055,15 @@ impl GlueManager {
                 );
             }
             return Ok(!visual_objects.is_empty());
+        }
+        // Reclassify mixed transactions after removing restored layout writes.
+        // Only a pruned journal enters here: the color publisher's unchanged
+        // fallback journal must still be able to use the general path below.
+        if matches!(effective, std::borrow::Cow::Owned(_))
+            && self.runtime.is_texture_vertex_color_journal(dirty_objects)
+        {
+            self.refresh_texture_vertex_colors(dirty_objects, visual_objects)?;
+            return Ok(true);
         }
         if timings {
             let journal = dirty_objects
@@ -1390,8 +1401,13 @@ impl GlueManager {
         visual_objects: &[usize],
         started: std::time::Instant,
     ) -> Result<bool, UiEventError> {
-        if !visual_objects.is_empty() {
-            self.refresh_targeted_visual_objects(visual_objects)?;
+        if !visual_objects.is_empty()
+            && !self.try_refresh_targeted_visual_objects(visual_objects)?
+        {
+            // A first reveal can lack backdrop and glyph slots. Let the
+            // content publisher materialize them after copying this journal's
+            // text and layout, instead of building the old topology first.
+            return Ok(false);
         }
         let text_objects =
             self.runtime

@@ -1276,14 +1276,14 @@ fn glue_manager_retains_authored_hover_visibility() -> Result<(), Box<dyn Error>
 <Button name="HoverVisibilityButton" enableMouse="true" frameStrata="DIALOG" frameLevel="2">
   <Size x="160" y="60"/><Anchors><Anchor point="CENTER"/></Anchors>
   <Scripts>
-    <OnEnter>HoverVisibilityTip:Show()</OnEnter>
+    <OnEnter>HoverVisibilityTip:Show(); HoverVisibilityTip:SetWidth(140)</OnEnter>
     <OnLeave>HoverVisibilityTip:Hide()</OnLeave>
   </Scripts>
 </Button>
 <Frame name="HoverVisibilityTip" hidden="true" frameStrata="TOOLTIP" frameLevel="4">
   <Size x="120" y="40"/><Anchors><Anchor point="TOP" relativeTo="HoverVisibilityButton" relativePoint="BOTTOM"/></Anchors>
   <Layers><Layer level="ARTWORK">
-    <Texture name="$parentTexture" file="Interface\Glues\Hover"><Size x="120" y="40"/><Color r="0.8" g="0.2" b="0.1" a="1"/></Texture>
+    <Texture name="$parentTexture" file="Interface\Glues\Hover" setAllPoints="true"><Color r="0.8" g="0.2" b="0.1" a="1"/></Texture>
   </Layer></Layers>
 </Frame>
 </Ui>"#,
@@ -1323,6 +1323,15 @@ fn glue_manager_retains_authored_hover_visibility() -> Result<(), Box<dyn Error>
     assert!(!shown(&manager));
     assert_eq!(manager.pointer_motion(center)?, Some(button));
     assert!(shown(&manager));
+    assert_eq!(
+        manager
+            .geometry()
+            .region(texture)
+            .ok_or("missing revealed texture geometry")?
+            .logical_bounds()
+            .width(),
+        140.0
+    );
     assert_eq!(manager.pointer_motion((-1.0, -1.0))?, Some(button));
     assert!(!shown(&manager));
     let retained_identity = manager.render_plan().mesh().geometry_identity();
@@ -2604,6 +2613,8 @@ fn glue_manager_retains_unchanged_layout_transactions() -> Result<(), Box<dyn Er
     self:SetSize(ROOT_WIDTH, ROOT_HEIGHT)
     self:SetScale(ROOT_SCALE)
     self:SetAlpha(ROOT_ALPHA)
+    if TEX_UV then LayoutTexture:SetTexCoord(0, TEX_UV, 0, 1) end
+    if TEX_COLOR then LayoutTexture:SetVertexColor(TEX_COLOR, 0.5, 1, 1) end
   </OnUpdate><OnEvent>
     self:ClearAllPoints()
     self:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", OFFSET_X, 30)
@@ -2651,6 +2662,30 @@ fn glue_manager_retains_unchanged_layout_transactions() -> Result<(), Box<dyn Er
         assert_eq!(manager.render_plan().mesh().vertex_bytes(), vertex_bytes);
     }
     assert_eq!(globals.get::<u32>("CALLS")?, 3);
+    // Mixed native-style transactions must retain a real texture mutation
+    // without rebuilding geometry for the restored Frame anchors alongside it.
+    let index_storage = manager.render_plan().mesh().index_bytes().as_ptr();
+    globals.set("TEX_UV", 0.75)?;
+    assert!(manager.update(0.016)?);
+    assert_eq!(
+        manager.render_plan().mesh().index_bytes().as_ptr(),
+        index_storage,
+        "texture mutation rebuilt unchanged index storage"
+    );
+    assert_ne!(manager.render_plan().mesh().vertex_bytes(), vertex_bytes);
+    globals.set("TEX_UV", mlua::Value::Nil)?;
+    let previous_geometry = manager.geometry().region(root).ok_or("root geometry")?;
+    let previous_colors = manager.render_plan().mesh().vertex_bytes().to_vec();
+    globals.set("TEX_COLOR", 0.25)?;
+    assert!(manager.update(0.016)?);
+    assert_eq!(
+        manager.geometry().region(root).ok_or("root geometry")?,
+        previous_geometry,
+        "color plus restored anchors changed unrelated geometry"
+    );
+    assert_ne!(manager.render_plan().mesh().vertex_bytes(), previous_colors);
+    globals.set("TEX_COLOR", mlua::Value::Nil)?;
+    let mesh_identity = manager.render_plan().mesh().geometry_identity();
     assert!(manager.take_callback_failure().is_none());
     manager.dispatch_event("SET_GLUE_SCREEN", &UiEventPayload::empty())?;
     assert_eq!(

@@ -824,3 +824,66 @@ Build 104 `328a5bfe6644c40b2831c04a1f5205fa94b3a8b891be44ce893b0a05382fb244`.
 The installed Build 104 runtime matches its package SHA-256
 `63b548b02491c0942f7367773324e65f9338df7b132cc1498083e6812fc14a1e` and
 records source revision `7970ac01` with the reserved package number.
+
+## Mixed layout transactions and first tooltip publication
+
+The 2026-09-12 follow-up profiles World UI clock, pointer dispatch, Lua/retained
+publication, portrait, resource preparation and minimap separately under the
+existing opt-in frame profiler. The periodic roughly 16 ms UI samples came from
+one transaction containing a performance-bar vertex color and BuffFrame anchors
+that were cleared and restored. The old unchanged-layout check accepted only
+pure layout journals, so this combination rebuilt all geometry and presentation.
+
+Publication now removes only layout bits whose final inputs match retained
+state, keeping other fields on the same object and other objects' mutations.
+Automatic text measurement still prevents this pruning until its pending layout
+work is applied. The resulting color-only transaction uses the existing vertex
+patch. Authored callbacks still observe their intermediate anchor changes.
+The first tooltip reveal also defers missing visual topology to the content
+publisher, avoiding a build with old text/geometry before the actual publication.
+Regression coverage checks mixed texture/color writes, real layout changes,
+pointer behavior and a hidden tooltip resized during its first reveal.
+All 1,322 workspace tests pass, with 23 environment-dependent cases ignored;
+workspace Clippy passes with warnings denied, as does the formatting check.
+
+Two unprofiled, uncaptured runs per executable used the same 1280 x 720 GTX 1070,
+shadow-quality-2 uncapped noon route and 2,400 frames per phase as Build 104.
+Run order was current, preserved 104, current, preserved 104; no compiler or
+tests ran during measurement. Means combine both runs:
+
+| Phase | Build 104 mean frame | Current mean frame |
+| --- | ---: | ---: |
+| Stationary | 2.714 ms | 2.682 ms |
+| Orbit | 2.971 ms | 2.930 ms |
+| Pointer | 3.077 ms | 3.040 ms |
+| Travel outbound | 3.118 ms | 3.062 ms |
+| Travel return | 3.049 ms | 2.997 ms |
+| Settled after travel | 2.743 ms | 2.705 ms |
+
+Mean improvements range from 1.18% to 1.78%, or about 327-373 FPS current.
+UI means fall by 37-45 microseconds. Baseline stationary/orbit UI maxima are
+15.82-16.09 ms, versus 0.86-1.53 ms current, with no current UI samples over
+10 ms in those phases. First pointer-entry UI time falls from 28.746/28.187 ms
+to 19.802/18.793 ms. A separate profiled run confirms that initial tooltip
+publication copies in 0.487 ms and builds once; global geometry still costs
+6.852 ms and the full targeted publication totals 17.104 ms. The initial
+streaming transaction still publishes a real BuffFrame layout change; pruning
+does not suppress that work.
+
+Non-loading positions, terrain-detail draws and primary-shadow draws match
+frame by frame across all four runs. Each direction admits and evicts 21 tiles,
+and all runs end at 49 residents. Changed residency occupies 24 frames per
+direction except the first baseline and second current returns, which take 23.
+Current non-loading frame maxima still reach 22.482 ms. Outbound admission
+samples retain roughly 14-15 ms streaming work, and presentation waits can
+approach 20 ms. This is a specific UI stall reduction, not stall elimination or
+the requested 1,200 FPS. The fixture still has no authored NPCs, network,
+movement solver, audio or overlays.
+
+Local evidence: `target/world-stall-{before,after}-{one,two}.csv`,
+`target/compare-world-stall.py`, `target/analyze-world-stall-ui.py`, and the
+separate `world-stall-diagnostic.log` / `world-stall-fixed-profile.log`.
+Preserved 104 benchmark SHA-256 is
+`328a5bfe6644c40b2831c04a1f5205fa94b3a8b891be44ce893b0a05382fb244`;
+current benchmark is
+`13271ad5a941df32e3496c256fb70c4d9ce939155ee77dcea8336a5482b335e7`.

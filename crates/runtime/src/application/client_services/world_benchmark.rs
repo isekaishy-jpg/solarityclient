@@ -401,12 +401,14 @@ impl ClientServices {
             .count();
         let streaming = start.elapsed();
         let start = Instant::now();
+        let mut ui_profile = super::RuntimeFrameProfile::new("Benchmark world UI");
         let ui = self
             .world_ui
             .as_mut()
             .ok_or(WorldBenchmarkError::State("missing FrameXML"))?;
         ui.synchronize_realm_clock(clock)
             .map_err(ApplicationError::from)?;
+        ui_profile.mark("realm clock");
         if phase == "pointer" {
             let [width, height] = ui.logical_extent();
             ui.pointer_motion((
@@ -414,7 +416,9 @@ impl ClientServices {
                 f64::from(height) - 24.,
             ))?;
         }
+        ui_profile.mark("pointer dispatch");
         ui.update(elapsed.as_secs_f64())?;
+        ui_profile.mark("Lua update and retained plans");
         if let Some(error) = ui.take_callback_failure() {
             return Err(WorldBenchmarkError::Ui(error));
         }
@@ -424,7 +428,9 @@ impl ClientServices {
         ) {
             ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
         }
+        ui_profile.mark("portrait");
         ui.refresh(&mut self.renderer)?;
+        ui_profile.mark("render resources");
         ui.synchronize_minimap(
             &mut self.renderer,
             &self.cpu,
@@ -433,6 +439,8 @@ impl ClientServices {
                 .resident_frame_input()
                 .map(|player| player.world_transform()),
         )?;
+        ui_profile.mark("minimap");
+        drop(ui_profile);
         let ui_duration = start.elapsed();
         let start = Instant::now();
         let camera = self
