@@ -1305,3 +1305,10 @@ Baseline benchmark SHA-256 is
 `f0e9e979432e8893adf5a14633bef8671878a27b3c021c22748906de5f6622a1`;
 the new executable, preserved as `target/benchmark-resident-tile-lookup.exe`, is
 `43b269edd4e36991d728c90f2f948303348b208a9b21fb1f3e0f359985ede4cd`.
+
+Packaged and installed as Solarity 0.0.3a Build 112, source revision
+`85d2b7af7b5b9eeba0bfcce34789175ea60c355c`. The executable reports `dirty=true`
+because packaging reserves `BUILD_NUMBER` before compilation. The packaged and
+installed executables both have SHA-256
+`bbc82641ff86b4a876d7e3ff991a4e7be4aac4b2d1275d8596ff32ddf6215885`.
+The installed executable's `--build-info` confirms build 112 and that revision.
