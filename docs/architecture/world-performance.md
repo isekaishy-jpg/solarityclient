@@ -2008,3 +2008,14 @@ Baseline benchmark SHA-256 is
 `6cbb14f6dd8cd604d19adba0cb7d4707ad4efcd5a914958f9cb034293d7ce458`;
 the new benchmark, preserved as `target/benchmark-frame-slot-growth.exe`, is
 `0f22f502219860fc94218c7d0a45e8f7d160be2d87e5145e387f83ebf882931c`.
+
+
+The new profile's slow pointer UI frame spends 12.7971 ms in pointer dispatch,
+0.5610 ms in Lua update/retained plans and 0.3317 ms in render-resource refresh.
+The next trace should separate hover callbacks from retained-state refresh.
+
+Packaged and installed as Solarity 0.0.3a Build 120, source revision
+`d0f65fd4d27c7bba577d9a687688479b72cbde54`. Installed `--build-info` confirms
+that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
+compilation. Packaged and installed executable SHA-256 values both equal
+`050a3d132895ea936832d81f9271386c938cff82a1803d48000fdd92e484a56e`.
