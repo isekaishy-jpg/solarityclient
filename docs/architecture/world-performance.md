@@ -887,3 +887,12 @@ Preserved 104 benchmark SHA-256 is
 `328a5bfe6644c40b2831c04a1f5205fa94b3a8b891be44ce893b0a05382fb244`;
 current benchmark is
 `13271ad5a941df32e3496c256fb70c4d9ce939155ee77dcea8336a5482b335e7`.
+
+Testing Build 105 packages this change from source revision `cc674a35`.
+Its installed executable matches the package SHA-256
+`749f18aacb06f2f3e679ad1f67b7fe271741e7c2caf39c4490c106ba3a664434`;
+the recorded dirty state is the reserved package number. The measured benchmark
+is also preserved as `target/benchmark-before-terrain-admission.exe` for the
+next comparison. Follow-up profiling should separate terrain serialization,
+allocation, staging and submission: one current terrain geometry upload sample
+alone reaches 11.039 ms inside a 12.479 ms tile upload.
