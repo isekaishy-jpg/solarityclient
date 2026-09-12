@@ -396,8 +396,9 @@ impl WorldFrameRenderer {
         let slot_index = self.resources.next_slot_index()?;
         let wait_write_started = std::time::Instant::now();
         let (acquired, wait_write_elapsed, acquire_elapsed) = {
-            let slot = self.resources.slot_mut(slot_index)?;
-            slot.wait_and_reset(context.device)?;
+            let slot =
+                self.resources
+                    .prepare_slot(slot_index, context.device, context.allocator)?;
             if let Some(frame) = shadow_frame {
                 slot.shadows.ensure(
                     context.device,

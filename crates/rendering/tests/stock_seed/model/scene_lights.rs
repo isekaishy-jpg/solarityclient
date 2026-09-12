@@ -179,8 +179,9 @@ fn instance_lighting_grows_independently_of_mesh_draws_and_selects_each_gpu_queu
         )
     };
     let hidden = base(Mat4::from_translation(Vec3::splat(1000.)), Vec3::ZERO);
-    // Each frame has at most one draw but up to 96 independent scenes. Particle
-    // and ribbon-only frames must grow scene storage and validate their index.
+    // First grow scenes independently of draw count. Later frames also expand
+    // mesh, bone, particle and ribbon regions across reused slots; the final
+    // visible draw must still select the current scene and buffer offsets.
     for (frame_index, count) in [1, 3, 20, 2, 64, 1, 96, 4, 1, 48, 2, 3]
         .into_iter()
         .enumerate()
@@ -221,20 +222,30 @@ fn instance_lighting_grows_independently_of_mesh_draws_and_selects_each_gpu_queu
             )
             .with_m2_instance_scenes(&scenes);
             let index = Some((count - 1) as u32);
-            let meshes = [mesh_draw.with_scene_index(index)];
+            let extra = if frame_index < 6 {
+                0
+            } else {
+                1 << (frame_index - 6)
+            };
+            let mut meshes = vec![mesh_draw.with_scene_index(Some(0)); extra];
+            meshes.push(mesh_draw.with_scene_index(index));
+            let frame_bones = bones.repeat(extra + 1);
+            let particle_vertices = particles.vertices().repeat(extra + 1);
+            let particle_indices = particles.indices().repeat(extra + 1);
+            let ribbon_vertices = ribbon_mesh.vertices().repeat(extra + 1);
             let particle_draws = [particle_draw.with_scene_index(index)];
             let ribbon_draws = [ribbon_draw.with_scene_index(index)];
             renderer.request_frame_capture()?;
             renderer.present_world_frame(
                 scene,
-                &bones,
+                &frame_bones,
                 &[],
                 &[],
                 if queue == 0 { &meshes } else { &[] },
-                particles.vertices(),
-                particles.indices(),
+                &particle_vertices,
+                &particle_indices,
                 if queue == 1 { &particle_draws } else { &[] },
-                ribbon_mesh.vertices(),
+                &ribbon_vertices,
                 if queue == 2 { &ribbon_draws } else { &[] },
             )?;
             let captured = renderer

@@ -148,9 +148,13 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
                 WorldModelTextureFiltering::Anisotropic16x,
             ][frame_index % 4]
         };
-        let scene = scene().with_liquids(
-            LiquidFrame::new(&draws, &river, &ocean, &wmo, 0).with_texture_filtering(filtering),
-        );
+        // Grow the enclosing world buffer while retained liquid banks continue
+        // to update their images, samplers and independent draw transforms.
+        let scene = scene()
+            .with_particle_capacity(count * 4, count * 6)
+            .with_liquids(
+                LiquidFrame::new(&draws, &river, &ocean, &wmo, 0).with_texture_filtering(filtering),
+            );
         renderer.request_frame_capture()?;
         let report =
             renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;

@@ -1917,3 +1917,94 @@ Packaged and installed as Solarity 0.0.3a Build 119, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `b9458f1be876cd6d01b6d2a02bfa47cc597e2adcecc5c73286e77e08e4b2d452`.
+
+
+### September 12: grow world-frame data after each slot fence
+
+World-frame capacity growth previously waited for device idle, destroyed every
+slot and its presentation semaphores, then recreated combined data buffers,
+descriptor sets, depth images, command pools, synchronization and effect resources.
+The Build 119 profile records nine capacity increases after initial allocation on
+the installed-world replay, including independent bone, instance-scene, mesh and
+particle growth.
+
+Capacity changes now publish a checked combined-buffer layout. Each selected
+slot waits for its own existing fence, resets its command pool, and replaces only
+its data buffer if its layout is outdated. The fixed descriptor sets are rebound
+to the replacement buffer; depth, commands, synchronization, liquid, cloud, sky,
+shadow and other child resources remain owned by that slot. Slot rotation and
+per-swapchain-image presentation semaphores continue without being reset by
+capacity growth. Surface extent/count changes still use full retirement and
+rebuilding, and renderer swapchain recreation retains its existing teardown.
+
+Replacement allocation completes before changing the live slot's buffer or
+layout. Failure leaves that slot's previous storage intact for retry. All data
+is written through the current layout before submission. Dynamic-offset and size
+validation still precede publication; draw ordering, shader math, animation and
+random-state evolution are unchanged.
+
+The actual Vulkan instance-lighting test now expands mesh, bone, particle and
+ribbon regions after independently growing scene storage. It checks the final
+visible draw's scene and the existing particle/ribbon pixels across reused slots.
+The liquid pixel test also grows enclosing world storage while retained liquid
+banks update depth images, filtering and independent transforms. Existing sky
+coverage changes bone prefixes and native compositor queues.
+
+
+Validation passes: 32 rendering unit tests, 184 rendering integration tests,
+and rendering/runtime Clippy with all targets and warnings denied. Formatting
+and whitespace checks pass.
+
+The separate profile replay records the same nine post-initial capacity increases,
+now served by 27 individual slot-buffer replacements. In the two intervals
+containing those increases, resource-preparation maxima fall from 2.748/2.918 ms
+to 0.027/0.029 ms; wait/write maxima, which now include buffer replacement, are
+0.122/0.206 ms versus 1.083/1.346 ms. Interval boundaries differ, so these are
+phase maxima rather than paired per-allocation timings. Across all intervals
+after the initial frame, resource preparation peaks at 0.053 ms. Initial setup
+still takes 6.424 ms in that phase, and a later non-growth interval retains an
+unattributed 7.183 ms wait/write maximum. Full-route stalls remain.
+
+Two interleaved uncaptured runs per executable use the installed-world route,
+GTX 1070, 1280x720, environment shadow quality 2 and 2,400 frames per phase. This
+offline fixture has no authored NPCs, network, movement solver, audio or overlays.
+
+| Phase | Build 119 mean ms | Per-slot buffer growth mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.922395 | 1.906002 | -0.85% |
+| Orbit | 2.211440 | 2.197059 | -0.65% |
+| Pointer | 2.272198 | 2.246689 | -1.12% |
+| Travel out | 2.288921 | 2.289912 | +0.04% |
+| Travel back | 2.296791 | 2.251632 | -1.97% |
+| Settled | 1.940577 | 1.916272 | -1.25% |
+
+Combined non-loading mean is 2.155387 versus 2.134594 ms (-0.96%); phase means
+remain about 437-525 FPS. UI accounts for 10.126 microseconds of the aggregate
+20.793 microsecond difference, while presentation accounts for 5.947 microseconds.
+These runs do not establish a broad FPS gain attributable to buffer growth.
+Orbit maxima are 5.7336/6.6662 ms before and 3.8798/9.8836 ms after. Pointer
+entry remains 15.8013/15.8039 ms, mostly UI. The second new run includes a
+21.0294 ms travel frame with 18.2860 ms streaming and a separate 19.7056 ms frame
+with 19.0892 ms presentation; neither changes tile residency. Across 96
+changed-residency frames per variant, total mean is 11.730818 versus 11.340525 ms,
+including 6.987859 versus 6.633305 ms streaming. The no-stall and 1,200 FPS goals
+remain open. The repeatable pointer-entry UI pause is the next focused target.
+
+All non-loading recorded camera, detail, primary/environment shadow and screen
+effect states match. Each travel leg admits and evicts 21 tiles over 24 changed
+frames, and every run finishes with 49 resident tiles. The separate 23-image
+capture replay is excluded from timings. Twelve reviewed view pairs retain
+consistent scenery, world and liquid coverage across orbit and both travel
+directions. Wall-time animation differs; strong terrain highlights and complete
+world-lighting parity remain unresolved.
+
+Local evidence: `target/frame-slot-growth-{before,after}-{one,two}.csv`,
+`target/detail-material-diagnostic.log`, `target/frame-slot-growth-diagnostic.log`,
+`target/compare-frame-slot-growth.py`, `target/check-frame-slot-growth-states.py`,
+`target/compare-frame-slot-growth-spikes.py`,
+`target/frame-slot-growth-after-captures/`, and
+`target/frame-slot-growth-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`6cbb14f6dd8cd604d19adba0cb7d4707ad4efcd5a914958f9cb034293d7ce458`;
+the new benchmark, preserved as `target/benchmark-frame-slot-growth.exe`, is
+`0f22f502219860fc94218c7d0a45e8f7d160be2d87e5145e387f83ebf882931c`.

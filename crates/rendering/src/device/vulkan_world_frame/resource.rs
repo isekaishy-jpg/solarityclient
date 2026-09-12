@@ -44,7 +44,7 @@ pub(super) struct FrameCreateContext<'a> {
     pub(super) depth_format: vk::Format,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 struct FrameBufferLayout {
     terrain_scene_offset: vk::DeviceSize,
     world_model_scene_offset: vk::DeviceSize,
@@ -197,7 +197,9 @@ impl WorldFrameSlot {
     ) -> Result<Self, VulkanError> {
         let mut slot = Self::empty(layout);
         let result = (|| {
-            slot.create_buffer(context)?;
+            let (buffer, allocation) = Self::allocate_buffer(context.allocator, layout)?;
+            slot.buffer = buffer;
+            slot.buffer_allocation = Some(allocation);
             slot.create_descriptors(context)?;
             slot.create_depth(context)?;
             slot.create_commands(context)?;
@@ -507,9 +509,41 @@ impl WorldFrameSlot {
         })()
     }
 
-    fn create_buffer(&mut self, context: &FrameCreateContext<'_>) -> Result<(), VulkanError> {
+    /// Replaces only this retired slot's data; descriptors and fixed resources survive.
+    fn grow_buffer(
+        &mut self,
+        device: &Device,
+        allocator: &vk_mem::Allocator,
+        layout: FrameBufferLayout,
+    ) -> Result<(), VulkanError> {
+        if self.layout == layout {
+            return Ok(());
+        }
+        // Allocate before changing ownership, so failure preserves the old bank.
+        let (buffer, allocation) = Self::allocate_buffer(allocator, layout)?;
+        let old_buffer = std::mem::replace(&mut self.buffer, buffer);
+        let old_allocation = self.buffer_allocation.replace(allocation);
+        let old_bytes = self.layout.total_bytes;
+        self.layout = layout;
+        self.write_descriptors(device);
+        if let Some(mut allocation) = old_allocation {
+            // SAFETY: This slot's fence retired and its command pool was reset.
+            unsafe { allocator.destroy_buffer(old_buffer, &mut allocation) };
+        }
+        tracing::info!(
+            old_bytes,
+            new_bytes = layout.total_bytes,
+            "growing unified Vulkan frame slot buffer"
+        );
+        Ok(())
+    }
+
+    fn allocate_buffer(
+        allocator: &vk_mem::Allocator,
+        layout: FrameBufferLayout,
+    ) -> Result<(vk::Buffer, vk_mem::Allocation), VulkanError> {
         let info = vk::BufferCreateInfo::default()
-            .size(self.layout.total_bytes)
+            .size(layout.total_bytes)
             .usage(
                 vk::BufferUsageFlags::UNIFORM_BUFFER
                     | vk::BufferUsageFlags::STORAGE_BUFFER
@@ -525,12 +559,8 @@ impl WorldFrameSlot {
             ..Default::default()
         };
         // SAFETY: VMA binds the returned allocation to the new buffer.
-        let (buffer, allocation) =
-            unsafe { context.allocator.create_buffer(&info, &allocation_info) }
-                .map_err(|source| VulkanError::operation("create world frame buffer", source))?;
-        self.buffer = buffer;
-        self.buffer_allocation = Some(allocation);
-        Ok(())
+        unsafe { allocator.create_buffer(&info, &allocation_info) }
+            .map_err(|source| VulkanError::operation("create world frame buffer", source))
     }
 
     fn create_descriptors(&mut self, context: &FrameCreateContext<'_>) -> Result<(), VulkanError> {
@@ -563,6 +593,12 @@ impl WorldFrameSlot {
             return Err(VulkanError::WorldFrameCapacity);
         }
         self.descriptor_sets.copy_from_slice(&sets);
+        self.write_descriptors(context.device);
+        Ok(())
+    }
+
+    /// Updates fixed sets only during creation or after this slot's fence retires.
+    fn write_descriptors(&self, device: &Device) {
         let infos = [
             buffer_info(
                 self.buffer,
@@ -652,9 +688,8 @@ impl WorldFrameSlot {
                 .descriptor_type(descriptor_types[index])
                 .buffer_info(&buffer_infos);
             // SAFETY: Each range lies within the live combined buffer.
-            unsafe { context.device.update_descriptor_sets(&[write], &[]) };
+            unsafe { device.update_descriptor_sets(&[write], &[]) };
         }
-        Ok(())
     }
 
     fn create_depth(&mut self, context: &FrameCreateContext<'_>) -> Result<(), VulkanError> {
@@ -814,6 +849,7 @@ pub(super) struct WorldFrameResources {
     slots: Vec<WorldFrameSlot>,
     present_semaphores: Vec<vk::Semaphore>,
     next_slot: usize,
+    desired_layout: Option<FrameBufferLayout>,
     world_model_draw_capacity: usize,
     m2_draw_capacity: usize,
     m2_scene_capacity: usize,
@@ -842,9 +878,6 @@ impl WorldFrameResources {
         if context.slot_count == 0 {
             return Err(VulkanError::WorldFrameCapacity);
         }
-        // SAFETY: Growth invalidates descriptors and depth images; idle retires all use.
-        unsafe { context.device.device_wait_idle() }
-            .map_err(|source| VulkanError::operation("idle before world frame growth", source))?;
         let world_model_draw_capacity = geometric_capacity(
             self.world_model_draw_capacity,
             context.world_model_draw_capacity,
@@ -879,7 +912,6 @@ impl WorldFrameResources {
             ribbon_vertex_capacity,
             "growing unified Vulkan frame resources"
         );
-        self.destroy(context.device, context.allocator);
         let expanded = FrameCreateContext {
             world_model_draw_capacity,
             m2_draw_capacity,
@@ -891,46 +923,55 @@ impl WorldFrameResources {
             ..context
         };
         let layout = FrameBufferLayout::new(&expanded)?;
-        let mut slots = Vec::with_capacity(expanded.slot_count);
-        for _ in 0..expanded.slot_count {
-            match WorldFrameSlot::create(&expanded, layout) {
-                Ok(slot) => slots.push(slot),
-                Err(error) => {
-                    for slot in &mut slots {
-                        slot.destroy(expanded.device, expanded.allocator);
-                    }
-                    return Err(error);
-                }
-            }
-        }
-        let mut present_semaphores = Vec::with_capacity(expanded.slot_count);
-        for _ in 0..expanded.slot_count {
-            // SAFETY: Default binary semaphore has no borrowed state.
-            match unsafe {
-                expanded
-                    .device
-                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-            } {
-                Ok(semaphore) => present_semaphores.push(semaphore),
-                Err(source) => {
-                    // SAFETY: No created semaphore has been submitted.
-                    unsafe {
-                        for semaphore in present_semaphores.drain(..).rev() {
-                            expanded.device.destroy_semaphore(semaphore, None);
+        if self.slots.len() != expanded.slot_count || self.extent != expanded.extent {
+            // SAFETY: Surface changes invalidate depth and presentation resources.
+            unsafe { expanded.device.device_wait_idle() }.map_err(|source| {
+                VulkanError::operation("idle before world frame rebuild", source)
+            })?;
+            self.destroy(expanded.device, expanded.allocator);
+            let mut slots = Vec::with_capacity(expanded.slot_count);
+            for _ in 0..expanded.slot_count {
+                match WorldFrameSlot::create(&expanded, layout) {
+                    Ok(slot) => slots.push(slot),
+                    Err(error) => {
+                        for slot in &mut slots {
+                            slot.destroy(expanded.device, expanded.allocator);
                         }
+                        return Err(error);
                     }
-                    for slot in &mut slots {
-                        slot.destroy(expanded.device, expanded.allocator);
-                    }
-                    return Err(VulkanError::operation(
-                        "create world presentation semaphore",
-                        source,
-                    ));
                 }
             }
+            let mut present_semaphores = Vec::with_capacity(expanded.slot_count);
+            for _ in 0..expanded.slot_count {
+                // SAFETY: Default binary semaphore has no borrowed state.
+                match unsafe {
+                    expanded
+                        .device
+                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                } {
+                    Ok(semaphore) => present_semaphores.push(semaphore),
+                    Err(source) => {
+                        // SAFETY: No created semaphore has been submitted.
+                        unsafe {
+                            for semaphore in present_semaphores.drain(..).rev() {
+                                expanded.device.destroy_semaphore(semaphore, None);
+                            }
+                        }
+                        for slot in &mut slots {
+                            slot.destroy(expanded.device, expanded.allocator);
+                        }
+                        return Err(VulkanError::operation(
+                            "create world presentation semaphore",
+                            source,
+                        ));
+                    }
+                }
+            }
+            self.slots = slots;
+            self.present_semaphores = present_semaphores;
+            self.next_slot = 0;
         }
-        self.slots = slots;
-        self.present_semaphores = present_semaphores;
+        self.desired_layout = Some(layout);
         self.world_model_draw_capacity = world_model_draw_capacity;
         self.m2_draw_capacity = m2_draw_capacity;
         self.m2_scene_capacity = m2_scene_capacity;
@@ -939,7 +980,6 @@ impl WorldFrameResources {
         self.particle_index_capacity = particle_index_capacity;
         self.ribbon_vertex_capacity = ribbon_vertex_capacity;
         self.extent = expanded.extent;
-        self.next_slot = 0;
         Ok(())
     }
 
@@ -950,6 +990,20 @@ impl WorldFrameResources {
         let index = self.next_slot;
         self.next_slot = (self.next_slot + 1) % self.slots.len();
         Ok(index)
+    }
+
+    /// Waits only for the selected slot, then applies the latest validated layout.
+    pub(super) fn prepare_slot(
+        &mut self,
+        index: usize,
+        device: &Device,
+        allocator: &vk_mem::Allocator,
+    ) -> Result<&mut WorldFrameSlot, VulkanError> {
+        let layout = self.desired_layout.ok_or(VulkanError::WorldFrameCapacity)?;
+        let slot = self.slot_mut(index)?;
+        slot.wait_and_reset(device)?;
+        slot.grow_buffer(device, allocator, layout)?;
+        Ok(slot)
     }
 
     pub(super) fn slot_mut(&mut self, index: usize) -> Result<&mut WorldFrameSlot, VulkanError> {
@@ -976,6 +1030,7 @@ impl WorldFrameResources {
             slot.destroy(device, allocator);
         }
         self.next_slot = 0;
+        self.desired_layout = None;
         self.world_model_draw_capacity = 0;
         self.m2_draw_capacity = 0;
         self.m2_scene_capacity = 0;
