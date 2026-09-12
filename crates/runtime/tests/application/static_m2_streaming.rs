@@ -101,10 +101,24 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         [0, 0, 1]
     );
     assert_eq!(frame.placements[0].last_effect_time_ms, 777);
+    frame
+        .placement_visibility
+        .rebuild(&frame.placements, &frame.sources);
+    frame.placement_topology_dirty = false;
     frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
+    assert!(
+        !frame.placement_topology_dirty,
+        "unchanged publication keeps valid placement metadata"
+    );
     assert_eq!(
         random, expected,
         "retained publication consumes no randomness"
+    );
+    frame.placement_topology_dirty = true;
+    frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
+    assert!(
+        frame.placement_topology_dirty,
+        "publication must preserve pending invalidation from another owner"
     );
 
     // A dynamic source may share the decoded model while owning different texture
@@ -234,6 +248,10 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     let mut expected = random;
     frame.synchronize_static_scenes(&mut renderer, [&first, &first].into_iter(), &mut random)?;
     assert_eq!(random, expected, "initial publication adds no extra owner");
+    assert!(
+        frame.placement_topology_dirty,
+        "initial topology still needs preparation"
+    );
 
     terrain.synchronize(Some(&world(500.)))?;
     let second = Arc::clone(terrain.resident_m2_scene().ok_or("second scene")?);
@@ -262,7 +280,27 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     terrain.synchronize(Some(&world(500.)))?;
     let reloaded = Arc::clone(terrain.resident_m2_scene().ok_or("reloaded scene")?);
     assert!(!Arc::ptr_eq(&second, &reloaded));
+    frame
+        .placement_visibility
+        .rebuild(&frame.placements, &frame.sources);
+    frame.placement_topology_dirty = false;
+    let previous_bounds = frame.placement_visibility.bounds().to_vec();
     frame.synchronize_static_scenes(&mut renderer, [&reloaded].into_iter(), &mut random)?;
+    assert!(
+        !frame.placement_topology_dirty,
+        "a scene generation exchange retains unchanged owner topology"
+    );
+    assert_eq!(frame.placement_visibility.bounds(), previous_bounds);
+    let mut referenced_sources = vec![usize::MAX; frame.sources.len()];
+    frame
+        .placement_visibility
+        .mark_source_references(&mut referenced_sources);
+    assert!(
+        frame
+            .placements
+            .iter()
+            .all(|placement| referenced_sources[placement.source_index] == 0)
+    );
     assert_eq!(owners(&frame), [20, 30]);
     assert_worker_spatial(&frame)?;
     assert_eq!(frame.placements[0].last_effect_time_ms, 777);
@@ -275,6 +313,10 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
     assert!(frame.placements.is_empty());
     assert!(frame.sources.is_empty());
+    assert!(
+        frame.placement_topology_dirty,
+        "last-reference retirement invalidates topology"
+    );
     roll_owners(&mut expected, 3);
     frame.synchronize_static_scenes(&mut renderer, [&second, &first].into_iter(), &mut random)?;
     assert_eq!(

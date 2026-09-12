@@ -1642,3 +1642,72 @@ Packaged and installed as Solarity 0.0.3a Build 116, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `5eabd8aefc910e722e49efe90979a3c11d26b09b56ee929958403741f766ca8e`.
+
+## September 12: retain topology when M2 scene references alone change
+
+Static M2 publication previously invalidated all placement topology on every
+scene synchronization, even when overlapping ADTs or exchanged scene generations
+retained exactly the same owners. Publication now invalidates topology only when
+it adds or retires owners. Existing invalidation remains set, and source
+compaction still independently invalidates remapped indices. Source liveness is
+marked before this update so valid compact metadata remains usable for retained
+placements during an admission.
+
+The existing static residency tests now check unchanged republication and an
+actual coordinator scene-generation exchange after metadata preparation. They
+also check pending invalidation, initial preparation, last-reference retirement,
+source holes, empty geometry and dynamic material ownership. Retained bounds,
+source references, owner order, playback clocks and random-state checks remain
+consistent. Final runtime library validation passes (334 passed, 18 ignored),
+runtime Clippy with all targets and warnings denied passes, and formatting and
+whitespace checks pass.
+
+Separate diagnostic replays report the same 83 residency publications, while M2
+topology rebuilds fall from 84 to 75. Summed reported topology cost falls from
+105.7715 to 97.0916 ms; per-rebuild mean is 1.259185 versus 1.294555 ms and
+maximum is 2.6320 versus 3.6402 ms. These windows include loading and are excluded
+from the uncaptured comparison. The change removes nine rebuilds rather than
+making the remaining rebuild operation cheaper.
+
+Two interleaved runs per executable use the same installed-world route, GTX 1070,
+1280x720, environment shadow quality 2 and 2,400 frames per phase. The offline
+fixture has no authored NPCs, network, movement solver, audio or overlays.
+
+| Phase | Build 116 mean ms | Conditional invalidation mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.914110 | 1.899790 | -0.75% |
+| Orbit | 2.234550 | 2.199659 | -1.56% |
+| Pointer | 2.256698 | 2.237448 | -0.85% |
+| Travel out | 2.277619 | 2.274015 | -0.16% |
+| Travel back | 2.288170 | 2.260567 | -1.21% |
+| Settled | 1.921284 | 1.919806 | -0.08% |
+
+Combined non-loading mean is 2.148738 versus 2.131881 ms (-0.78%), with new
+phase means around 440-526 FPS. The changed-residency total mean across 96
+frames per variant is slightly worse, 11.375333 versus 11.454246 ms, including
+6.514858 versus 6.773526 ms streaming. Return frame 799 takes 9.5776/9.4819 ms
+before and 9.8197/16.2274 ms after, always evicting seven tiles. The slower new
+sample spends 11.2652 ms streaming. The new non-loading maximum is 19.5055 ms
+at orbit frame 289, including 19.0661 ms presentation. These runs do not establish
+a stall improvement or attribute the small overall difference to this change.
+The no-stall and 1,200 FPS goals remain open.
+
+All non-loading recorded camera, detail, primary/environment shadow and screen
+effect states match. Every travel leg admits and evicts 21 tiles over 24 changed
+frames, ending with 49 resident tiles. The separate capture replay emits 23
+images and is excluded from timings. Twelve reviewed pairs preserve world
+coverage across orbit and both travel directions. Wall-time animation differs;
+strong terrain highlights and combined-world lighting parity remain unresolved.
+
+Local evidence: `target/topology-membership-{before,after}-{one,two}.csv`,
+`target/topology-membership-{before,after}-diagnostic.log`,
+`target/analyze-topology-membership-profile.py`,
+`target/compare-topology-membership.py`,
+`target/check-topology-membership-states.py`,
+`target/compare-topology-membership-spikes.py`,
+`target/topology-membership-after-captures/`, and
+`target/topology-membership-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`0f949543a46855efbb91609e371cead9b21a3b2d595ffd12c0f15159a4a27b98`;
+the new benchmark, preserved as `target/benchmark-topology-membership.exe`, is
+`4eabf989c218dc4e89d25af0bcf8ddb10f6435e6863014b7a42f5740f9bb807d`.
