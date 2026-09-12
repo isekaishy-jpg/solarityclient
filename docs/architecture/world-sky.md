@@ -848,3 +848,8 @@ Final validation passed formatting, warning-free workspace Clippy, and all
 1,345 workspace tests (24 environment-dependent tests ignored). The installed
 sunburst regression was also run explicitly and passed clear, partially
 covered and fully covered transitions with the real archive textures.
+
+Testing Build 123 packages source `da295696e98b5dd59ee8cc9ccb9afd32609c7362`.
+The installed executable reports that revision and build number, and its SHA-256
+matches the optimized Cargo artifact:
+`65b60b549c99da75ade9279a7e36ef3ba9471763a4a20075557718fb1114533d`.
