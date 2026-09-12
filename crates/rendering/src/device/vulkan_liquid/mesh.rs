@@ -10,7 +10,8 @@ use ash::{Device, vk};
 use crate::LiquidRenderVertex;
 use crate::device::VulkanError;
 use crate::device::vulkan_mesh::{
-    DeferredMeshTransfer, GpuMeshBuffers, MeshUploadContext, upload_mesh_buffers_deferred,
+    DeferredMeshTransfer, GpuMeshBuffers, MeshUploadContext, upload_mesh_batch_deferred,
+    upload_mesh_buffers_deferred,
 };
 
 /// Renderer-local geometry identity, invalidated immediately when retired.
@@ -56,6 +57,71 @@ impl Default for LiquidMeshRegistry {
 }
 
 impl LiquidMeshRegistry {
+    /// Keeps each strip independent while sharing transfer setup and retirement.
+    pub(in crate::device) fn upload_many(
+        &mut self,
+        context: MeshUploadContext<'_>,
+        meshes: &[(&[LiquidRenderVertex], &[u16])],
+    ) -> Result<Vec<LiquidMeshHandle>, VulkanError> {
+        if meshes.len() == 1 {
+            return self
+                .upload(context, meshes[0].0, meshes[0].1)
+                .map(|handle| vec![handle]);
+        }
+        self.collect(context.device, context.allocator)?;
+        if meshes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let count = u32::try_from(meshes.len())
+            .map_err(|error| VulkanError::operation("size liquid mesh batch", error))?;
+        let next_slot = self.next_slot.checked_add(count).ok_or_else(|| {
+            VulkanError::operation("upload liquid mesh", "mesh identity capacity exhausted")
+        })?;
+        let index_counts = meshes
+            .iter()
+            .map(|&(vertices, indices)| validate_mesh(vertices, indices))
+            .collect::<Result<Vec<_>, _>>()?;
+        let payloads = meshes
+            .iter()
+            .map(|&(vertices, indices)| {
+                let vertices = vertices
+                    .iter()
+                    .map(|vertex| vertex.to_bytes())
+                    .collect::<Vec<_>>()
+                    .into_flattened();
+                let indices = indices
+                    .iter()
+                    .map(|index| index.to_le_bytes())
+                    .collect::<Vec<_>>()
+                    .into_flattened();
+                (vertices, indices)
+            })
+            .collect::<Vec<_>>();
+        let payloads = payloads
+            .iter()
+            .map(|(vertices, indices)| (vertices.as_slice(), indices.as_slice()))
+            .collect::<Vec<_>>();
+        let (buffers, transfer) = upload_mesh_batch_deferred(context, &payloads)?;
+        let mut handles = Vec::with_capacity(meshes.len());
+        for (offset, (buffers, index_count)) in buffers.into_iter().zip(index_counts).enumerate() {
+            let handle = LiquidMeshHandle {
+                registry: self.identity,
+                slot: self.next_slot + offset as u32,
+            };
+            self.meshes.insert(
+                handle.slot,
+                LiquidMesh {
+                    buffers,
+                    index_count,
+                },
+            );
+            handles.push(handle);
+        }
+        self.transfers.push(transfer);
+        self.next_slot = next_slot;
+        Ok(handles)
+    }
+
     /// Validates the complete strip before submitting an asynchronous upload.
     pub(in crate::device) fn upload(
         &mut self,
@@ -64,26 +130,10 @@ impl LiquidMeshRegistry {
         indices: &[u16],
     ) -> Result<LiquidMeshHandle, VulkanError> {
         self.collect(context.device, context.allocator)?;
-        if vertices.is_empty() || indices.is_empty() {
-            return Err(VulkanError::operation(
-                "upload liquid mesh",
-                "empty geometry",
-            ));
-        }
-        if indices
-            .iter()
-            .any(|&index| usize::from(index) >= vertices.len())
-        {
-            return Err(VulkanError::operation(
-                "upload liquid mesh",
-                "index exceeds vertex storage",
-            ));
-        }
+        let index_count = validate_mesh(vertices, indices)?;
         let next_slot = self.next_slot.checked_add(1).ok_or_else(|| {
             VulkanError::operation("upload liquid mesh", "mesh identity capacity exhausted")
         })?;
-        let index_count = u32::try_from(indices.len())
-            .map_err(|source| VulkanError::operation("upload liquid mesh index extent", source))?;
         let vertex_bytes = vertices
             .iter()
             .flat_map(|vertex| vertex.to_bytes())
@@ -206,6 +256,26 @@ impl LiquidMeshRegistry {
             mesh.buffers.destroy(allocator);
         }
     }
+}
+
+fn validate_mesh(vertices: &[LiquidRenderVertex], indices: &[u16]) -> Result<u32, VulkanError> {
+    if vertices.is_empty() || indices.is_empty() {
+        return Err(VulkanError::operation(
+            "upload liquid mesh",
+            "empty geometry",
+        ));
+    }
+    if indices
+        .iter()
+        .any(|&index| usize::from(index) >= vertices.len())
+    {
+        return Err(VulkanError::operation(
+            "upload liquid mesh",
+            "index exceeds vertex storage",
+        ));
+    }
+    u32::try_from(indices.len())
+        .map_err(|source| VulkanError::operation("upload liquid mesh index extent", source))
 }
 
 impl RetiredMeshes {

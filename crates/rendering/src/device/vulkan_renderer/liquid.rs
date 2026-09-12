@@ -6,6 +6,34 @@ use crate::device::{BlpTextureHandle, VulkanError, VulkanRenderer};
 use crate::{LiquidRenderVertex, LiquidShaderUniform};
 
 impl VulkanRenderer {
+    /// Uploads independent liquid strips in one queue-ordered transfer.
+    ///
+    /// Every strip is validated before submission. Returned handles follow the
+    /// input order and can be drawn or retired independently.
+    ///
+    /// # Errors
+    /// Returns [`VulkanError`] for invalid geometry, exhausted identities, or
+    /// allocation and submission failures; a failed batch publishes no handles.
+    pub fn upload_liquid_meshes(
+        &mut self,
+        meshes: &[(&[LiquidRenderVertex], &[u16])],
+    ) -> Result<Vec<LiquidMeshHandle>, VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        let handles = self.liquid_meshes.upload_many(
+            MeshUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            meshes,
+        )?;
+        self.is_idle &= handles.is_empty();
+        Ok(handles)
+    }
+
     /// Validates resident liquid resources before publishing one frame's draw packet.
     ///
     /// # Errors

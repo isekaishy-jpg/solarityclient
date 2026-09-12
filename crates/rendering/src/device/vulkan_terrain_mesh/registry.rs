@@ -47,7 +47,9 @@ impl TerrainMeshRegistry {
         context: MeshUploadContext<'_>,
         plan: &TerrainTileMeshPlan,
     ) -> Result<TerrainMeshHandle, VulkanError> {
+        let profile = std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_| std::time::Instant::now());
         self.retire_completed_transfers(context.device, context.allocator)?;
+        let retired = profile.map(|start| start.elapsed());
         if let Some(handle) = self.handles.get(&plan.identity()) {
             return Ok(*handle);
         }
@@ -67,6 +69,7 @@ impl TerrainMeshRegistry {
             .ok_or(VulkanError::TerrainMeshCapacity)?;
         let vertex_bytes = plan.vertex_bytes();
         let index_bytes = plan.index_bytes();
+        let serialized = profile.map(|start| start.elapsed());
         let info = TerrainMeshResourceInfo::new(
             plan.tile(),
             plan.vertices().len(),
@@ -92,6 +95,17 @@ impl TerrainMeshRegistry {
         self.next_slot = next_slot;
         self.handles.insert(plan.identity(), handle);
         self.pending_transfers.push(transfer);
+        if let (Some(start), Some(retired), Some(serialized)) = (profile, retired, serialized) {
+            tracing::info!(
+                target: "solarity_rendering::device::mesh_upload",
+                vertex_bytes = vertex_bytes.len(),
+                index_bytes = index_bytes.len(),
+                retirement_us = retired.as_secs_f64() * 1_000_000.0,
+                serialization_us = (serialized - retired).as_secs_f64() * 1_000_000.0,
+                upload_us = (start.elapsed() - serialized).as_secs_f64() * 1_000_000.0,
+                "profiled terrain geometry admission"
+            );
+        }
         Ok(handle)
     }
 

@@ -896,3 +896,78 @@ is also preserved as `target/benchmark-before-terrain-admission.exe` for the
 next comparison. Follow-up profiling should separate terrain serialization,
 allocation, staging and submission: one current terrain geometry upload sample
 alone reaches 11.039 ms inside a 12.479 ms tile upload.
+
+## Shared liquid transfer admission
+
+The next 2026-09-12 investigation splits terrain geometry admission into
+retirement, serialization and upload, and mesh upload into allocation, staging,
+recording and submission under `SOLARITY_FRAME_TIMINGS`. The earlier 11 ms
+geometry outlier did not recur in the diagnostic replay. Across 91 terrain
+uploads, serialization averages 763.9 microseconds and upload 317.9 microseconds;
+retirement averages 0.09 microseconds. Serialization remains unchanged here.
+
+Liquid strips previously created separate staging allocations, command pools,
+command buffers, fences and queue submissions. Terrain and WMO admission now
+prepare materials first and submit each group of strips through one shared
+transfer. Every strip retains its own vertex/index buffers, handle, index count,
+draw order, transforms, lighting and retirement lifetime. Each source payload
+is padded independently to the four-byte transfer unit, with explicit barriers
+covering subsequent input reads on the graphics queue. Validation happens before
+allocation; pre-submission failures release partial allocations and publish no
+mesh handles. The source data, shaders, animation and randomization are unchanged.
+
+The two diagnostic replays contain exactly 3,707 logical mesh uploads each.
+Previously all 3,707 were separate transfers. Current has 1,447 individual
+transfers plus 74 batches covering 2,260 meshes, reducing transfer submissions
+to 1,521. The batch transfer mean is 257.5 microseconds and maximum 1,235.8
+microseconds; one 40-strip batch takes 192.4 microseconds. These diagnostic
+figures include profiling and are distinct from the unprofiled comparison below.
+
+GPU regression coverage uploads different vertex extents and odd/even index
+counts together, checks rendered liquid blending/depth pixels across frame-slot
+reuse, rejects a batch containing an invalid strip, and renders the surviving
+member after independently retiring its sibling. Empty and single-mesh calls
+retain their supported behavior.
+All 1,322 workspace tests pass with 23 environment-dependent cases ignored;
+workspace Clippy passes with warnings denied, and formatting checks pass.
+
+Two unprofiled, uncaptured replays per executable again use the GTX 1070,
+1280 x 720, shadow quality 2, uncapped noon map-1 route and 2,400 frames per
+phase. Order is current, preserved 105, current, preserved 105, with no compiler
+or tests running during measurement. Each row combines both runs:
+
+| Phase | Build 105 mean frame | Batched mean frame |
+| --- | ---: | ---: |
+| Stationary | 2.735 ms | 2.724 ms |
+| Orbit | 2.951 ms | 2.968 ms |
+| Pointer | 3.078 ms | 3.061 ms |
+| Travel outbound | 3.024 ms | 3.052 ms |
+| Travel return | 2.989 ms | 3.036 ms |
+| Settled after travel | 2.713 ms | 2.742 ms |
+
+There is no clear overall FPS gain: changes range from 0.57% faster to 1.58%
+slower, with current phase means about 327-367 FPS. UI means are 36-49
+microseconds higher despite no UI source change; that regression remains an
+unresolved investigation. Current non-loading samples still reach 34.460 ms,
+including a 24.512 ms presentation cost combined with 9.354 ms UI work.
+
+The 48 residency-changing frames per direction across both runs isolate the
+admission gain. Outbound streaming mean falls from 9.508 to 7.759 ms and total
+frame mean from 16.621 to 14.696 ms. Return streaming mean falls from 6.355 to
+5.949 ms and total frame mean from 13.097 to 12.563 ms. Maxima remain variable:
+outbound streaming maximum falls from 29.721 to 14.952 ms, while return maximum
+rises from 8.185 to 14.349 ms. The baseline outbound outlier contributes to its
+mean; these results do not establish elimination of admission stalls.
+
+All four runs match non-loading positions, detail draws and primary-shadow
+draws frame by frame. Each direction has 24 residency-changing frames per run,
+21 admissions and 21 evictions, ending with 49 resident tiles. The offline
+fixture's limitations remain: no authored NPC population, network, movement
+solver, audio or overlays. The 1,200 FPS target is still open.
+
+Local evidence: `target/terrain-admission-{before,after}-{one,two}.csv`,
+`target/compare-terrain-admission.py`, `target/compare-admission-cost.py`,
+`target/terrain-admission-diagnostic.log`, `target/terrain-admission-batch-profile.log`,
+and `target/summarize-admission-profiles.py`. Benchmark SHA-256:
+previous `13271ad5a941df32e3496c256fb70c4d9ce939155ee77dcea8336a5482b335e7`,
+batched `53ee2b64bd940a476e1a2d2673d20f2508d1d26276da301867453248421f4226`.

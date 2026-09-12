@@ -82,39 +82,38 @@ impl LiquidGpuMaterialCache {
         Ok(material)
     }
 
-    /// Uploads each admitted strip once; partial uploads retire if a later batch fails.
+    /// Prepares materials before atomically admitting the tile's independent strips.
     pub(in crate::application) fn prepare_terrain(
         &mut self,
         renderer: &mut VulkanRenderer,
         batches: &[ResidentTerrainLiquidBatch],
     ) -> Result<Vec<LiquidGpuBatch>, RuntimeTerrainFrameError> {
-        let mut prepared = Vec::with_capacity(batches.len());
-        for batch in batches {
-            let next = (|| {
-                let material = self.prepare(renderer, &batch.material)?;
-                let mesh = renderer.upload_liquid_mesh(&batch.vertices, &batch.indices)?;
-                Ok(LiquidGpuBatch {
-                    material,
-                    mesh,
-                    origin: batch.origin,
-                    minimum: batch.minimum,
-                    maximum: batch.maximum,
-                    lighting: WorldModelLiquidLighting::Exterior,
-                })
-            })();
-            match next {
-                Ok(batch) => prepared.push(batch),
-                Err(error) => {
-                    let handles = prepared
-                        .iter()
-                        .map(LiquidGpuBatch::mesh)
-                        .collect::<Vec<_>>();
-                    renderer.retire_liquid_meshes(&handles)?;
-                    return Err(error);
-                }
-            }
-        }
-        Ok(prepared)
+        let mut profile =
+            crate::application::frame_profile::RuntimeFrameProfile::new("Terrain liquid admission");
+        let materials = batches
+            .iter()
+            .map(|batch| self.prepare(renderer, &batch.material))
+            .collect::<Result<Vec<_>, _>>()?;
+        profile.mark("materials");
+        let requests = batches
+            .iter()
+            .map(|batch| (batch.vertices.as_slice(), batch.indices.as_slice()))
+            .collect::<Vec<_>>();
+        let meshes = renderer.upload_liquid_meshes(&requests)?;
+        profile.mark("geometry batch");
+        Ok(batches
+            .iter()
+            .zip(materials)
+            .zip(meshes)
+            .map(|((batch, material), mesh)| LiquidGpuBatch {
+                material,
+                mesh,
+                origin: batch.origin,
+                minimum: batch.minimum,
+                maximum: batch.maximum,
+                lighting: WorldModelLiquidLighting::Exterior,
+            })
+            .collect())
     }
 }
 
@@ -125,34 +124,28 @@ impl LiquidGpuMaterialCache {
         renderer: &mut VulkanRenderer,
         batches: &[ResidentWorldModelLiquidBatch],
     ) -> Result<Vec<LiquidGpuBatch>, RuntimeTerrainFrameError> {
-        let mut prepared = Vec::with_capacity(batches.len());
-        for batch in batches {
-            let next = (|| {
-                let material = self.prepare(renderer, &batch.material)?;
-                let mesh =
-                    renderer.upload_liquid_mesh(batch.mesh.vertices(), batch.mesh.indices())?;
-                Ok(LiquidGpuBatch {
-                    material,
-                    mesh,
-                    origin: Vec3::ZERO,
-                    minimum: batch.minimum,
-                    maximum: batch.maximum,
-                    lighting: batch.lighting,
-                })
-            })();
-            match next {
-                Ok(batch) => prepared.push(batch),
-                Err(error) => {
-                    let handles = prepared
-                        .iter()
-                        .map(LiquidGpuBatch::mesh)
-                        .collect::<Vec<_>>();
-                    renderer.retire_liquid_meshes(&handles)?;
-                    return Err(error);
-                }
-            }
-        }
-        Ok(prepared)
+        let materials = batches
+            .iter()
+            .map(|batch| self.prepare(renderer, &batch.material))
+            .collect::<Result<Vec<_>, _>>()?;
+        let requests = batches
+            .iter()
+            .map(|batch| (batch.mesh.vertices(), batch.mesh.indices()))
+            .collect::<Vec<_>>();
+        let meshes = renderer.upload_liquid_meshes(&requests)?;
+        Ok(batches
+            .iter()
+            .zip(materials)
+            .zip(meshes)
+            .map(|((batch, material), mesh)| LiquidGpuBatch {
+                material,
+                mesh,
+                origin: Vec3::ZERO,
+                minimum: batch.minimum,
+                maximum: batch.maximum,
+                lighting: batch.lighting,
+            })
+            .collect())
     }
 }
 

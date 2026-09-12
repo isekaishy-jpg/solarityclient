@@ -52,8 +52,26 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (32, 32), 0) }?;
     let black = renderer.upload_blp_texture(&black, BlpColorSpace::Linear)?;
     let white = renderer.upload_stock_m2_white()?;
-    let background = renderer.upload_liquid_mesh(&triangle(0.8, [255, 0, 0, 255]), &[0, 1, 2])?;
-    let water = renderer.upload_liquid_mesh(&triangle(0.5, [255; 4]), &[0, 1, 2])?;
+    let background_vertices = triangle(0.8, [255, 0, 0, 255]);
+    let mut water_vertices = triangle(0.5, [255; 4]).to_vec();
+    water_vertices.push(water_vertices[0]);
+    assert!(renderer.upload_liquid_meshes(&[])?.is_empty());
+    assert!(
+        renderer
+            .upload_liquid_meshes(&[
+                (&background_vertices, &[0, 1, 2]),
+                (&water_vertices, &[0, 1, 4]),
+            ])
+            .is_err()
+    );
+    // Unequal vertex extents and an odd first index count expose incorrect
+    // shared staging offsets or missing per-payload four-byte padding.
+    let handles = renderer.upload_liquid_meshes(&[
+        (&background_vertices, &[0, 1, 2]),
+        (&water_vertices, &[0, 1, 2, 2]),
+    ])?;
+    let [background, water] = <[_; 2]>::try_from(handles).map_err(|_| "batch handle count")?;
+    assert_ne!(background, water);
     let uniform = LiquidShaderUniform::new(
         Mat4::IDENTITY,
         Mat4::IDENTITY,
@@ -133,7 +151,7 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
             assert_eq!(pixel[3], 255);
         }
     }
-    renderer.retire_liquid_meshes(&[water, background])?;
+    renderer.retire_liquid_meshes(&[water])?;
     assert!(
         renderer
             .prepare_liquid_draw(
@@ -144,6 +162,36 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
             )
             .is_err()
     );
+    // Retiring one member must not release its sibling's independent buffers.
+    let base =
+        renderer.prepare_liquid_draw(background, LiquidDrawMaterial::Magma, white, uniform)?;
+    let depth = LiquidDepthTexture::prepare(LiquidDepthTextureKind::River, [0; 2], [0; 2]);
+    let draws = [base];
+    renderer.request_frame_capture()?;
+    renderer.present_world_frame(
+        scene().with_liquids(LiquidFrame::new(&draws, &depth, &depth, &depth, 0)),
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    )?;
+    let capture = renderer
+        .take_captured_frame()?
+        .ok_or("missing surviving batch member capture")?;
+    assert!(
+        capture
+            .rgba8()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [255, 0, 0, 255])
+    );
+    renderer.retire_liquid_meshes(&[background])?;
     let replacement = renderer.upload_liquid_mesh(&triangle(0.5, [255; 4]), &[0, 1, 2])?;
     assert_ne!(water, replacement);
     renderer.retire_liquid_meshes(&[replacement])?;
