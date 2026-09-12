@@ -171,6 +171,8 @@ fn fixture() -> Result<ClientFixture, Box<dyn Error>> {
         ("World\\Maps\\Northrend\\Northrend_21_30.adt", &adt),
         ("World\\Maps\\Northrend\\Northrend_21_31.adt", &adt),
         ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
+        // MTXF zero selects the masked variant with the default specular CVar.
+        ("tileset\\fixture\\grass_s.blp", &bootstrap_texture_blp()),
     ])
 }
 
