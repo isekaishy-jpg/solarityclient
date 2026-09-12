@@ -729,7 +729,7 @@ doodads still have separate integration gaps described in the evidence.
 On 2026-09-12, Build 103 includes the recent model/effect opacity, registered
 owner fog, ribbon color/culling, grouped material order and retained-fog changes.
 The ordinary ribbon shadow audit confirms that its native element selects no
-shadow receiver. The Testing shortcut now launches this build.
+shadow receiver. This build preceded the surface-fog follow-up below.
 
 Two uncaptured replays of each optimized executable used the same 1280 x 720
 GTX 1070, uncapped presentation, shadow quality 2, noon clock and 2,400 frames
@@ -768,3 +768,59 @@ Local evidence is `target/ribbon-world-{before,after}-{one,two}.csv` and the
 separate `before-profile`/`after-profile` logs. Benchmark executable SHA-256:
 previous `f10decaf9598d99fca5e8d6b2ceafa8b95f4d489aa4424604739698cc9f3327a`,
 current `61058fb453b93930ac60fc70ac9d3f7bebf3e54049530f19bb43de51c8bc1c9c`.
+
+## Surface fog and deferred register conversion
+
+Build 104, installed on 2026-09-12, adds native camera-depth fog for M2/WMO,
+physical WMO pass bank/enable policy, and deferred conversion of the shared
+fog registers consumed by ribbons. Publishing model/particle/WMO draws now
+retains value snapshots instead of calculating intermediate coefficients and
+packed colors that may be replaced before any ribbon consumes them. Native
+register and pixel checks cover preservation of startup, disabled and retained
+state. All 1,322 workspace tests pass, with 23 environment-dependent cases
+ignored, and workspace Clippy passes with warnings denied.
+
+The same 1280 x 720 GTX 1070, shadow-quality-2, uncapped noon route was replayed
+twice per executable, with 2,400 frames per phase and no compiler, profiling
+or capture active. Run order was 104, 103, 104, 103. Means combine both runs:
+
+| Phase | Build 103 mean frame | Build 104 mean frame |
+| --- | ---: | ---: |
+| Stationary | 2.716 ms | 2.729 ms |
+| Orbit | 2.975 ms | 2.977 ms |
+| Pointer | 3.081 ms | 3.091 ms |
+| Travel outbound | 3.141 ms | 3.123 ms |
+| Travel return | 3.087 ms | 3.051 ms |
+| Settled after travel | 2.752 ms | 2.748 ms |
+
+Changes range from 1.14% faster to 0.49% slower; these runs establish no clear
+overall FPS gain. Current means correspond to about 320-366 FPS. Non-loading
+positions, terrain-detail counts and primary-shadow counts match frame by
+frame in all four runs. Each travel direction admits and evicts 21 tiles and
+each run ends with 49 residents. Changes occupy 24 frames per direction except
+one baseline return, where asynchronous completions occupy 23 frames.
+
+The largest current non-loading sample is still 37.530 ms. In the second
+current run, pointer entry spends 28.151 ms in UI work, and two outbound
+admissions spend about 15 ms in streaming. Other spikes include roughly 16 ms
+of UI work during stationary/orbit phases and a 19 ms presentation sample.
+Those costs remain explicit stall investigations; this replay has no authored
+NPC population, network, movement solver, audio or overlays, and does not
+establish live-world parity or the requested 1,200 FPS.
+
+Separate profiling runs put the final two settled command-recording intervals
+at 379.4/375.7 microseconds current versus 380.9/379.5 previous. The small
+difference does not establish a material end-to-end gain or isolate the whole
+comparison to deferred fog conversion. M2 preparation remains about 0.66-0.67 ms.
+Terrain-publication profiles also retain multi-millisecond M2/WMO membership
+and terrain/liquid work. Next optimization work should target the measured
+UI-entry and admission stalls rather than treating fog conversion as sufficient.
+
+Local evidence is `target/surface-world-{before,after}-{one,two}.csv`, the
+separate `before-profile`/`after-profile` logs, and
+`target/compare-surface-world.py`. Benchmark SHA-256:
+Build 103 `61058fb453b93930ac60fc70ac9d3f7bebf3e54049530f19bb43de51c8bc1c9c`,
+Build 104 `328a5bfe6644c40b2831c04a1f5205fa94b3a8b891be44ce893b0a05382fb244`.
+The installed Build 104 runtime matches its package SHA-256
+`63b548b02491c0942f7367773324e65f9338df7b132cc1498083e6812fc14a1e` and
+records source revision `7970ac01` with the reserved package number.
