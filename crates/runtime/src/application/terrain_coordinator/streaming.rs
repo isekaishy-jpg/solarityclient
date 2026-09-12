@@ -13,6 +13,44 @@ use super::{
     RuntimeTerrainError, TerrainRequest, prepare_terrain_on_worker,
 };
 
+#[cfg(test)]
+#[path = "../../../tests/application/resident_tile_lookup.rs"]
+mod lookup_tests;
+
+/// Direct addresses into the ordered neighbor bank. Map coordinates have only
+/// 64 * 64 possible owners; zero denotes absence and positive words are slot+1.
+/// The primary tile is resolved separately and never changes neighbor order.
+#[derive(Default)]
+pub(super) struct ResidentTileLookup {
+    slots: Vec<u16>,
+}
+
+impl ResidentTileLookup {
+    fn key(tile: TerrainTileIndex) -> usize {
+        usize::from(tile.y()) * 64 + usize::from(tile.x())
+    }
+
+    fn insert(&mut self, tile: TerrainTileIndex, slot: usize) {
+        self.slots.resize(64 * 64, 0);
+        // At most 4096 distinct ADTs can reside in one map.
+        debug_assert!(slot < 64 * 64);
+        self.slots[Self::key(tile)] = (slot + 1) as u16;
+    }
+
+    fn get(&self, tile: TerrainTileIndex) -> Option<usize> {
+        self.slots
+            .get(Self::key(tile))
+            .and_then(|&slot| usize::from(slot).checked_sub(1))
+    }
+
+    fn rebuild(&mut self, tiles: impl Iterator<Item = TerrainTileIndex>) {
+        self.slots.fill(0);
+        for (slot, tile) in tiles.enumerate() {
+            self.insert(tile, slot);
+        }
+    }
+}
+
 /// Whether every declared ADT in the current outer loading window is resident.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeTerrainStreamPoll {
@@ -89,6 +127,7 @@ impl RuntimeTerrainCoordinator {
             let previous_count = active.nearby.len();
             active.nearby.retain(|tile| window.contains(tile.index()));
             if active.nearby.len() != previous_count {
+                active.rebuild_nearby_lookup();
                 active.synchronize_movement_owners();
             }
             // 0x007B5950 registers every missing WDT owner before sorting its
@@ -226,7 +265,7 @@ impl RuntimeTerrainCoordinator {
                         self.failed_stream.insert(pending.request.tile);
                         return Err(error);
                     }
-                    active.nearby.push(tile);
+                    active.push_neighbor(tile);
                     active.synchronize_movement_owners();
                 }
             }
@@ -256,17 +295,14 @@ impl RuntimeTerrainCoordinator {
         else {
             return false;
         };
-        let Some(index) = active
-            .nearby
-            .iter()
-            .position(|tile| tile.index() == request.tile)
-        else {
+        let Some(index) = active.nearby_lookup.get(request.tile) else {
             return false;
         };
         let tile = active.nearby.remove(index);
         if let Some(previous) = active.tile.replace(tile) {
             active.nearby.push(previous);
         }
+        active.rebuild_nearby_lookup();
         self.failed_request = None;
         true
     }
@@ -293,7 +329,7 @@ impl RuntimeTerrainCoordinator {
             for tile in previous.tile.into_iter().chain(previous.nearby) {
                 if demand.window.contains(tile.index()) && resident.tile_at(tile.index()).is_none()
                 {
-                    resident.nearby.push(tile);
+                    resident.push_neighbor(tile);
                 }
             }
         }
@@ -304,6 +340,16 @@ impl RuntimeTerrainCoordinator {
 }
 
 impl ResidentTerrainMap {
+    pub(super) fn push_neighbor(&mut self, tile: ResidentTerrainTile) {
+        self.nearby_lookup.insert(tile.index(), self.nearby.len());
+        self.nearby.push(tile);
+    }
+
+    fn rebuild_nearby_lookup(&mut self) {
+        self.nearby_lookup
+            .rebuild(self.nearby.iter().map(ResidentTerrainTile::index));
+    }
+
     /// Extends per-ADT placement validation across the shared world identity domain.
     pub(super) fn validate_tile_placements(
         &self,
@@ -359,10 +405,20 @@ impl ResidentTerrainMap {
 
     /// Resolves a complete CPU generation without conflating absence with WDT holes.
     pub(super) fn tile_at(&self, index: TerrainTileIndex) -> Option<&ResidentTerrainTile> {
-        self.tile
-            .iter()
-            .chain(&self.nearby)
-            .find(|tile| tile.index() == index)
+        if let Some(tile) = self.tile.as_ref().filter(|tile| tile.index() == index) {
+            return Some(tile);
+        }
+        self.nearby.get(self.nearby_lookup.get(index)?)
+    }
+
+    pub(super) fn tile_at_mut(
+        &mut self,
+        index: TerrainTileIndex,
+    ) -> Option<&mut ResidentTerrainTile> {
+        if self.tile.as_ref().is_some_and(|tile| tile.index() == index) {
+            return self.tile.as_mut();
+        }
+        self.nearby.get_mut(self.nearby_lookup.get(index)?)
     }
 }
 

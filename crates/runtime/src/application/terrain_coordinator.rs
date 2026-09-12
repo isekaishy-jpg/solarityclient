@@ -671,6 +671,7 @@ impl RuntimeTerrainCoordinator {
                 tile: None,
                 global_world_model: None,
                 nearby: Vec::new(),
+                nearby_lookup: streaming::ResidentTileLookup::default(),
                 movement: ResidentMovementScene::default(),
             });
             // A map replacement releases its tile before collecting cache-only
@@ -745,7 +746,7 @@ impl RuntimeTerrainCoordinator {
                 .as_ref()
                 .is_some_and(|demand| demand.contains(previous.index()))
         {
-            active.nearby.push(previous);
+            active.push_neighbor(previous);
         }
         active.synchronize_movement_owners();
         self.textures.collect_unused();
@@ -1292,6 +1293,7 @@ impl TerrainWorkerState {
                 tile: None,
                 global_world_model,
                 nearby: Vec::new(),
+                nearby_lookup: streaming::ResidentTileLookup::default(),
                 movement: ResidentMovementScene::default(),
             });
         }
@@ -1318,6 +1320,7 @@ impl TerrainWorkerState {
             tile,
             global_world_model: None,
             nearby: Vec::new(),
+            nearby_lookup: streaming::ResidentTileLookup::default(),
             movement: ResidentMovementScene::default(),
         })
     }
@@ -1365,6 +1368,7 @@ struct ResidentTerrainMap {
     tile: Option<ResidentTerrainTile>,
     global_world_model: Option<ResidentGlobalWorldModel>,
     nearby: Vec<ResidentTerrainTile>,
+    nearby_lookup: streaming::ResidentTileLookup,
     movement: ResidentMovementScene,
 }
 

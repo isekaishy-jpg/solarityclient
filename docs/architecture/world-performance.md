@@ -1247,3 +1247,61 @@ matches the package SHA-256
 `c8753310593d5b5d4535e9b1658e181b5d1b9b4a566cae33c3dc286eb2f0d4c8`,
 with the reserved package number recorded as dirty source state. The measured
 benchmark is preserved as `target/benchmark-build111-before-world-followup.exe`.
+
+## September 12: direct resident-tile lookup
+
+Repeated camera registration and streaming checks searched the large resident
+tile records by coordinate. The map now keeps an 8 KiB table of neighbor slots,
+allocated on first neighbor admission. Lookup checks the primary tile first,
+then resolves the neighbor directly. Append updates one slot; eviction and
+promotion rebuild the table. Synchronous publication and retained-neighbor
+transfer use the same insertion helper. The ordered tile and WMO root lists
+are unchanged. Scene-registration lookups share this path; the movement
+collector retains its existing search where disjoint mutable borrows are needed.
+
+The lookup regression compares every possible map coordinate with the former
+ordered search across full occupancy, filtered eviction, reordered slots,
+emptying and reuse. All 331 runtime library tests pass (18 archive-dependent
+tests ignored), as do 18 terrain/streaming integration tests covering promotion,
+owner order, eviction, old-job retirement and map replacement. Runtime Clippy
+with all targets and warnings denied, formatting and diff checks pass.
+
+Four separate uncaptured, unprofiled runs used 2,400 frames per phase, alternating
+new/baseline/new/baseline. Baseline is Build 111's preserved benchmark. The
+1280x720 GTX 1070 replay uses shadow quality 2, uncapped presentation, the same
+noon profile, map 1 at `(1100, -4500, 150)` and travel offset `(-1600, 0, 0)`.
+This offline workload has installed terrain/FrameXML/Vulkan but no NPC fixture,
+network, movement solver, audio or overlays. Initial loading is excluded below.
+
+| Phase | Build 111 mean ms | Direct lookup mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 2.034532 | 1.987934 | -2.29% |
+| Orbit | 2.284318 | 2.234579 | -2.18% |
+| Pointer/tooltip | 2.380948 | 2.335089 | -1.93% |
+| Travel out | 2.419401 | 2.352099 | -2.78% |
+| Travel back | 2.359838 | 2.304407 | -2.35% |
+| Settled | 2.071605 | 2.015046 | -2.73% |
+
+Across those equal-sized phases, camera work falls from 127.022 to 102.231 us
+and streaming checks from 168.544 to 147.818 us. Presentation/preparation falls
+only 5.982 us, so this does not resolve the large M2 packet cost. Mean throughput
+is approximately 425–503 FPS, and the new runs still have a 20.999 ms non-loading
+maximum. The 1,200 FPS and no-stall goals remain open.
+
+Every non-loading camera position and ground-detail/primary-shadow draw count
+matches. Each travel leg admits and evicts 21 tiles and all runs end with 49
+resident tiles. One baseline return leg combines these changes into 23 frames;
+the other legs use 24, reflecting asynchronous completion timing. A separate
+profile and capture replay were excluded from these timing results. Twelve
+view pairs against Build 111 show consistent world coverage through orbit and
+both travel directions. Wall-time animation differs, and the existing strong
+terrain specular highlights remain unresolved.
+
+Local evidence: `target/resident-lookup-{before,after}-{one,two}.csv`,
+`target/compare-resident-lookup.py`, `target/resident-lookup-after-diagnostic.log`,
+`target/resident-lookup-after-captures/`, and
+`target/resident-lookup-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`f0e9e979432e8893adf5a14633bef8671878a27b3c021c22748906de5f6622a1`;
+the new executable, preserved as `target/benchmark-resident-tile-lookup.exe`, is
+`43b269edd4e36991d728c90f2f948303348b208a9b21fb1f3e0f359985ede4cd`.

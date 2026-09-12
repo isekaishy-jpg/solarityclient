@@ -178,10 +178,7 @@ impl ResidentTerrainMap {
             }
             SceneAddress::Tile(index) => {
                 &mut self
-                    .tile
-                    .iter_mut()
-                    .chain(&mut self.nearby)
-                    .find(|tile| tile.index() == index)
+                    .tile_at_mut(index)
                     .ok_or(RuntimeMovementRegistrationError::InvalidReference)?
                     .world_model_collision
             }
