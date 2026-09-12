@@ -370,6 +370,12 @@ packed-byte boundary, and doubled modulation selects `128/255` half-white.
 The native zero-initialized bank produces visibility one; this is explicit in
 GLSL because `pow(0, 0)` is otherwise undefined.
 
+Publication retains value snapshots and defers coefficient calculation and
+packed-color conversion until a ribbon consumes the bank. Mesh, particle and
+WMO draws therefore avoid converting an intermediate bank that a later draw
+may replace. Startup state, disabled-pass restoration and cross-frame retention
+still follow the same native register captures.
+
 WMO publication follows the final physical surface pass. Ordinary missing-MOCV
 groups select outdoor fog; ordinary MOCV groups select their group bank.
 Unified nontransition callbacks force fog even for an unfogged MOMT material

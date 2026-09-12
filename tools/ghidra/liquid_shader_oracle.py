@@ -113,7 +113,7 @@ class Renderer:
         call(texture, 20, 'u', 0)
         return texture
 
-    def render(self, vertex_shader, pixel_shader, constants, vertices, textures, kind, fog_color):
+    def render(self, vertex_shader, pixel_shader, constants, vertices, textures, kind, fog_color, clear_color=0):
         vertex = self.create(self.device, 91, 'p', buffer(vertex_shader))
         pixel = self.create(self.device, 106, 'p', buffer(pixel_shader))
         elements = [(0, 0, 2, 0, 0, 0), (0, 12, 2, 0, 3, 0), (0, 24, 4, 0, 10, 0),
@@ -128,7 +128,7 @@ class Renderer:
         call(self.device, 57, 'uu', 28, int(fog_color is not None))
         if fog_color is not None:
             call(self.device, 57, 'uu', 34, fog_color)
-        call(self.device, 43, 'upuufu', 0, None, 1, 0, 1., 0)
+        call(self.device, 43, 'upuufu', 0, None, 1, clear_color, 1., 0)
         call(self.device, 41)
         if len(vertices) % (3 * 44):
             raise ValueError('Triangle-list vertices must contain complete 44-byte triples')

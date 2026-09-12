@@ -2,7 +2,7 @@
 
 use solarity_asset::{WorldModelBatchClass, WorldModelBlendMode, WorldModelMaterial};
 
-use super::WorldModelMaterialState;
+use super::{WorldModelFogMode, WorldModelMaterialState};
 
 /// Lighting constants selected by the stock MapObj submitters.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -22,11 +22,20 @@ pub enum WorldModelLightingMode {
 pub struct WorldModelSurfacePass {
     material: WorldModelMaterialState,
     lighting: WorldModelLightingMode,
+    fog: WorldModelFogMode,
 }
 
 impl WorldModelSurfacePass {
-    const fn new(material: WorldModelMaterialState, lighting: WorldModelLightingMode) -> Self {
-        Self { material, lighting }
+    const fn new(
+        material: WorldModelMaterialState,
+        lighting: WorldModelLightingMode,
+        fog: WorldModelFogMode,
+    ) -> Self {
+        Self {
+            material,
+            lighting,
+            fog,
+        }
     }
 
     /// Returns fixed-function and shader state for this physical pass.
@@ -39,6 +48,12 @@ impl WorldModelSurfacePass {
     #[must_use]
     pub const fn lighting(self) -> WorldModelLightingMode {
         self.lighting
+    }
+
+    /// Returns the callback's fog enable and bank choice, independent of blend.
+    #[must_use]
+    pub const fn fog_mode(self) -> WorldModelFogMode {
+        self.fog
     }
 }
 
@@ -62,12 +77,30 @@ impl WorldModelSurfacePassPlan {
         const UNIFIED_RENDERING: u16 = 0x02;
 
         let unified = root_flags & UNIFIED_RENDERING != 0;
+        let transition =
+            matches!(class, WorldModelBatchClass::Transition) && (unified || group_flags & 4 != 0);
+        let enabled = (unified && !transition) || material.flags() & 2 == 0;
+        let selected_fog = if enabled {
+            WorldModelFogMode::SceneColor
+        } else {
+            WorldModelFogMode::Disabled
+        };
+        let outdoor_fog = if enabled {
+            WorldModelFogMode::OutdoorColor
+        } else {
+            WorldModelFogMode::Disabled
+        };
         let ordinary_lighting = lighting_mode(unified, group_flags, class, material.flags());
         let ordinary = WorldModelSurfacePass::new(
             WorldModelMaterialState::from_material(material),
             ordinary_lighting,
+            if (unified && group_flags & 0x48 != 0) || (!unified && group_flags & 4 == 0) {
+                outdoor_fog
+            } else {
+                selected_fog
+            },
         );
-        if !matches!(class, WorldModelBatchClass::Transition) {
+        if !transition {
             return Self {
                 unified,
                 passes: [ordinary; 2],
@@ -84,6 +117,7 @@ impl WorldModelSurfacePassPlan {
                 WorldModelBlendMode::SourceAlphaOpaque,
             ),
             ordinary_lighting,
+            outdoor_fog,
         );
         let complement_lighting = if unified {
             WorldModelLightingMode::RootAmbient
@@ -96,6 +130,7 @@ impl WorldModelSurfacePassPlan {
                 WorldModelBlendMode::InverseSourceAlphaAdd,
             ),
             complement_lighting,
+            selected_fog,
         );
         Self {
             unified,

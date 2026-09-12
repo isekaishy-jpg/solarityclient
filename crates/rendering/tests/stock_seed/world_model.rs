@@ -59,7 +59,6 @@ fn world_model_mesh_plan_combines_stock_surface_ranges() -> Result<(), Box<dyn E
     assert!(!material.is_unfogged());
     assert_eq!(material.texture_clamps(), [true, true]);
     assert_eq!(material.alpha_reference(), 1.0 / 255.0);
-    assert_eq!(material.fog_mode(), WorldModelFogMode::HalfWhite);
 
     let transition = WorldModelSurfacePassPlan::prepare(
         0x02,
@@ -69,6 +68,14 @@ fn world_model_mesh_plan_combines_stock_surface_ranges() -> Result<(), Box<dyn E
     );
     assert!(transition.is_unified());
     assert_eq!(transition.passes().len(), 2);
+    assert_eq!(
+        transition.passes()[0].fog_mode(),
+        WorldModelFogMode::OutdoorColor
+    );
+    assert_eq!(
+        transition.passes()[1].fog_mode(),
+        WorldModelFogMode::SceneColor
+    );
     assert_eq!(
         transition.passes()[0].material().blend().mode(),
         WorldModelBlendMode::SourceAlphaOpaque

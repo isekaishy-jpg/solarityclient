@@ -210,11 +210,32 @@ is exercised. Before the fix, M2 depth 7 returned `[64,128,192]` instead of
 native `[99,109,169]`; WMO depth 2 returned `[72,124,187]` instead of native
 `[64,128,192]`. The corrected shaders pass the complete comparison.
 
-## Remaining surface fog policy
+## WMO physical-pass fog policy
 
-WMO pass fog-color/enable policy also needs a surface-level comparison against
-`7AC6A0`, `7AC9F0` and `7A9380`. The retained register metadata added for ribbon
-inheritance follows those callbacks, including forced fog on unified
-nontransition passes, while the current WMO surface uniform still derives its
-fog mode from the material blend. Verify each physical pass with the original
-programs before extending that metadata to visible surface shading.
+`WorldModelSurfacePass` now owns fog enable and bank selection. Programmable
+MapObj callbacks do not substitute black, white or half-white according to GX
+blend mode. Ordinary groups without MOCV use exterior fog; colored ordinary
+groups use the selected bank, with transition passes using exterior first and
+selected second. Unified nontransition passes force fog even with MOMT `0x02`,
+and MOGP `0x48` selects exterior fog. Unified transition passes respect MOMT
+`0x02` and use exterior then selected fog. `with_outdoor_fog_color` updates the
+surface material as well as the retained register publication for following
+effects, including the first transition pass which does not publish a final bank.
+
+`world_model_surface_fog_oracle.py` executes complete original `7AC6A0` and
+`7AC9F0` callbacks, their unified `7A9380` dispatch, and `7A8440`/`873210`/
+`873390` fog setup. Its providers supply resident textures, accepted visibility,
+lighting/shader preparation, GX invalidation and draw capture. The original
+instructions choose each pass's bank, enable and blend. Captures cover 1,980
+physical programmable passes across ordinary/unified families, MOCV presence,
+interior/exterior/exterior-lit groups, all three batch classes, MOMT fog flags,
+eleven blends and both selected-bank states. Those registers also feed the
+fingerprinted original MapObj/MapObjU programs in Direct3D9, with controlled
+vertex colors, coverage and background.
+
+The pass regression checks all 1,980 native state snapshots. The hidden Vulkan
+regression compares 264 individual physical-pass frames against the original
+shader pixels within one RGBA8 unit, including both transition contributions,
+all eleven blends and forced-fog surfaces. This evidence covers programmable
+surface submission; the legacy fixed-function three-pass fallback is excluded.
+It does not establish combined live visual or performance parity.

@@ -122,8 +122,11 @@ gives the two model banks identical range and exponent with separate colors.
 Runtime now passes both retained colors into WMO surface preparation and
 selects the material's fog color from the group's accumulated flag. Previously
 every visible group received the camera bank, even when traversal selected
-ordinary exterior fog. Scene parameters, material-specific disabled/black/white
-fog behavior, and the native final-group carry remain unchanged.
+ordinary exterior fog. The subsequent [physical-pass fog policy](world-fog.md#wmo-physical-pass-fog-policy)
+now applies callback-specific exterior overrides and fog enable, including
+different banks for transition contributions. Programmable WMO surfaces do not
+use blend-specific black/white substitutions. Scene range/exponent and the
+native final-group carry remain independent of that pass policy.
 
 `world_model_group_fog_oracle.py` executes the constructor and its actual virtual
 callback with only the current DayNight provider substituted. Its 64 captures

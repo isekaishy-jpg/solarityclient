@@ -107,19 +107,15 @@ impl WorldModelBlendState {
     }
 }
 
-/// Fog color specialization selected by the direct GX blend mode.
+/// Fog bank selected by a physical MapObj callback pass.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum WorldModelFogMode {
-    /// MOMT `0x02` disables fog.
+    /// This callback respects MOMT `0x02` and disables fog.
     Disabled,
-    /// Use the active world fog color.
+    /// Use the selected group/camera fog color.
     SceneColor,
-    /// Additive paths fade toward black.
-    Black,
-    /// Modulation fades toward white.
-    White,
-    /// Doubled modulation fades toward half-white.
-    HalfWhite,
+    /// Use the ordinary exterior fog color regardless of group selection.
+    OutdoorColor,
 }
 
 /// Immutable WMO material state compiled into a Vulkan pipeline key.
@@ -234,20 +230,6 @@ impl WorldModelMaterialState {
             | WorldModelBlendMode::InverseSourceAlphaOpaque
             | WorldModelBlendMode::SourceAlphaOpaque
             | WorldModelBlendMode::NoAlphaAdd => 0.0,
-        }
-    }
-
-    /// Returns the fog specialization used by the stock pixel path.
-    #[must_use]
-    pub const fn fog_mode(self) -> WorldModelFogMode {
-        if self.is_unfogged {
-            return WorldModelFogMode::Disabled;
-        }
-        match self.blend.mode() {
-            WorldModelBlendMode::NoAlphaAdd | WorldModelBlendMode::Add => WorldModelFogMode::Black,
-            WorldModelBlendMode::Mod => WorldModelFogMode::White,
-            WorldModelBlendMode::Mod2x => WorldModelFogMode::HalfWhite,
-            _ => WorldModelFogMode::SceneColor,
         }
     }
 }

@@ -141,13 +141,6 @@ void main() {
     uint fog_mode = material.behavior.z;
     if (fog_mode != 0u) {
         vec3 fog = material.fog_color.rgb;
-        if (fog_mode == 2u) {
-            fog = vec3(0.0);
-        } else if (fog_mode == 3u) {
-            fog = vec3(1.0);
-        } else if (fog_mode == 4u) {
-            fog = vec3(0.5);
-        }
         result = mix(fog, result, clamp(fragment_fog_visibility, 0.0, 1.0));
     }
     output_color = vec4(result, surface_alpha);

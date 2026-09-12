@@ -284,7 +284,10 @@ fn surface_fog_matches_original_depth_programs() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn chunk_mut<'a>(bytes: &'a mut [u8], magic: &[u8; 4]) -> Result<&'a mut [u8], Box<dyn Error>> {
+pub(super) fn chunk_mut<'a>(
+    bytes: &'a mut [u8],
+    magic: &[u8; 4],
+) -> Result<&'a mut [u8], Box<dyn Error>> {
     let mut offset = 0;
     while offset + 8 <= bytes.len() {
         let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into()?) as usize;

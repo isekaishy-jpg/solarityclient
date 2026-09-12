@@ -138,11 +138,14 @@ pub(in crate::device) fn prepare_shadow_draw(
 
 impl WorldModelPreparedDraw {
     /// Supplies the ordinary bank for native WMO paths which force exterior fog.
-    /// The surface's existing selected material color remains independent.
+    /// Updates both surface shading and the bank retained for following effects.
     #[must_use]
     pub fn with_outdoor_fog_color(mut self, color: Vec3) -> Self {
-        if self.submission_fog_outdoor && self.submission_fog_color.is_some() {
-            self.submission_fog_color = Some(color);
+        if self.submission_fog_outdoor {
+            self.material = self.material.with_fog_color(color);
+            if self.submission_fog_color.is_some() {
+                self.submission_fog_color = Some(color);
+            }
         }
         self
     }
@@ -278,19 +281,10 @@ pub(in crate::device) fn prepare_draw(
     // 7AC6A0 uses the ordinary bank. 7AC9F0's final pass uses the selected
     // group bank. 7A9380 also forces fog for nontransition batches, selecting
     // the ordinary bank for exterior-lit groups regardless of MOMT unfogged.
-    let transition = matches!(
-        draw.class(),
-        solarity_asset::WorldModelBatchClass::Transition
-    );
-    let forced = passes.is_unified() && !transition;
     let submission_fog_color = (pass_index + 1 == passes.passes().len()
-        && (forced || !pass.material().is_unfogged()))
-    .then_some(fog_color);
-    let submission_fog_outdoor = if passes.is_unified() {
-        forced && group_flags & 0x48 != 0
-    } else {
-        group_flags & 4 == 0
-    };
+        && pass.fog_mode() != crate::WorldModelFogMode::Disabled)
+        .then_some(fog_color);
+    let submission_fog_outdoor = pass.fog_mode() == crate::WorldModelFogMode::OutdoorColor;
     let material = WorldModelMaterialUniform::new(
         model,
         plan.ambient_color(),

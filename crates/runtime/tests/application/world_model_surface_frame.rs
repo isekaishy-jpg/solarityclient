@@ -35,6 +35,18 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
     let mut files = liquid_models::files(0, 0, 0, 1, 0);
     files[0].1 = root;
     files[1].1 = group.clone();
+    // Keep one missing-MOCV group and one authored-color group so their native
+    // callbacks exercise exterior override and selected-bank routing together.
+    let mut colored_group = group.clone();
+    word(&mut colored_group, 28, 12);
+    chunk(
+        &mut colored_group,
+        b"VCOM",
+        &[127, 127, 127, 255].repeat(12),
+    );
+    let group_size = (colored_group.len() - 20) as u32;
+    word(&mut colored_group, 16, group_size);
+    files[1].1 = colored_group;
     files.push(("World\\Liquid_001.wmo".to_owned(), group));
     let fixture = ClientFixture::with_common_files(
         &files
@@ -243,8 +255,8 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
     assert_eq!(last, None);
 
     // Native 7B3F30 chooses the accumulated group flag, independently of the
-    // camera's bank. Put both groups on the visible owner: side and center
-    // surfaces must receive different colors, and switch correctly next frame.
+    // camera's bank. The missing-MOCV side group must still use exterior fog;
+    // the authored-color center group follows its selected bank next frame.
     groups[1].owner = second;
     let native = include_str!("../fixtures/world_model_group_fog_native.txt")
         .lines()
@@ -285,7 +297,7 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
         } = frame.prepare_visible_draws(&mut renderer, &groups, 1., ordinary, indoor)?;
         assert_eq!(last, Some(1));
         assert_eq!(draws.len(), 3);
-        for (draw, expected) in draws.iter().zip([row, row, other]) {
+        for (draw, expected) in draws.iter().zip([ordinary, ordinary, opposite]) {
             let bytes = draw.material().to_bytes(camera.view());
             let actual = bytes[96..108]
                 .as_chunks::<4>()
@@ -293,7 +305,12 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
                 .iter()
                 .map(|word| u32::from_le_bytes(*word))
                 .collect::<Vec<_>>();
-            assert_eq!(actual, expected[10..13], "group flag {:08x}", row[0]);
+            assert_eq!(
+                actual,
+                expected.to_array().map(f32::to_bits),
+                "group flag {:08x}",
+                row[0]
+            );
         }
         let fog_parameters = Vec4::new(
             f32::from_bits(row[6]),
@@ -317,7 +334,7 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
         let image = renderer
             .take_captured_frame()?
             .ok_or("missing fog capture")?;
-        for (x, expected) in [(12, selected), (32, opposite), (52, selected)] {
+        for (x, expected) in [(12, ordinary), (32, opposite), (52, ordinary)] {
             let offset = (32 * 64 + x) * 4;
             for (actual, expected) in image.rgba8()[offset..offset + 3]
                 .iter()
@@ -388,6 +405,7 @@ fn surface_files() -> (Vec<u8>, Vec<u8>) {
     let mut header = [0; 64];
     word(&mut header, 0, 1);
     word(&mut header, 4, 2);
+    word(&mut header, 60, 8); // Preserve authored colors in the colored group.
     let bounds = [-4f32, -1., 0., 4., 1., 0.]
         .into_iter()
         .flat_map(f32::to_le_bytes)

@@ -136,7 +136,7 @@ impl WorldModelMaterialUniform {
             behavior: [
                 lighting_code(pass.lighting()),
                 u32::from(state.is_unlit()),
-                fog_code(state.fog_mode()),
+                fog_code(pass.fog_mode()),
                 u32::from(matches!(
                     blend_mode,
                     WorldModelBlendMode::Opaque | WorldModelBlendMode::AlphaKey
@@ -155,6 +155,12 @@ impl WorldModelMaterialUniform {
     #[must_use]
     pub const fn behavior(self) -> [u32; 4] {
         self.behavior
+    }
+
+    /// Replaces the selected bank with the callback's ordinary exterior bank.
+    pub(crate) fn with_fog_color(mut self, color: Vec3) -> Self {
+        self.fog_color = color;
+        self
     }
 
     /// Serializes the world transform for lighting and the CPU-composed
@@ -261,10 +267,7 @@ const fn lighting_code(mode: WorldModelLightingMode) -> u32 {
 const fn fog_code(mode: WorldModelFogMode) -> u32 {
     match mode {
         WorldModelFogMode::Disabled => 0,
-        WorldModelFogMode::SceneColor => 1,
-        WorldModelFogMode::Black => 2,
-        WorldModelFogMode::White => 3,
-        WorldModelFogMode::HalfWhite => 4,
+        WorldModelFogMode::SceneColor | WorldModelFogMode::OutdoorColor => 1,
     }
 }
 

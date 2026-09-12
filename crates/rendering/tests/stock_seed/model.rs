@@ -36,6 +36,8 @@ mod sky_frame;
 mod surface_fog;
 #[path = "model/track_sampling.rs"]
 mod track_sampling;
+#[path = "model/world_model_fog.rs"]
+mod world_model_fog;
 #[path = "model/wound.rs"]
 mod wound;
 
