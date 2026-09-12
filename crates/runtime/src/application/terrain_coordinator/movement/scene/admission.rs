@@ -50,6 +50,8 @@ impl WorldSceneAdmission {
         active: &mut ResidentTerrainMap,
         camera: WorldCameraFrame,
     ) -> Result<(), RuntimeMovementRegistrationError> {
+        let mut profile =
+            crate::application::frame_profile::RuntimeFrameProfile::new("World scene admission");
         self.groups.clear();
         self.graphics.begin();
         self.outdoor_groups.clear();
@@ -75,7 +77,10 @@ impl WorldSceneAdmission {
         )?;
         let mut primary_owner = None;
         let mut outdoor_window = None;
-        if let Some(registration) = active.camera_registration(eye)? {
+        profile.mark("reset and camera frame");
+        let registration = active.camera_registration(eye)?;
+        profile.mark("camera registration");
+        if let Some(registration) = registration {
             let primary = active.movement.roots[registration.primary.owner].owner();
             primary_owner = Some(primary);
             for selected in registration
@@ -110,6 +115,7 @@ impl WorldSceneAdmission {
             outdoor_window = Some([0., 0., 1., 1.]);
             self.sky.outdoors();
         }
+        profile.mark("camera root traversal");
         if let Some(window) = outdoor_window {
             let depth = WorldSceneDepthFrame::new(eye, target)?;
             self.outdoor = Some(depth);
@@ -142,6 +148,7 @@ impl WorldSceneAdmission {
             }
             // The native moving conversion joins existing static depth bins.
             // Visit complete bins only after both insertion passes finish.
+            profile.mark("outdoor group queue");
             while let Some(entry) = self.outdoor_groups.next_group() {
                 let reference = active.movement.roots[entry.root];
                 let root = active.registration_root_mut(reference)?;
@@ -155,6 +162,7 @@ impl WorldSceneAdmission {
                 )?;
             }
         }
+        profile.mark("outdoor group traversal");
         if let Some(primary) = primary_owner {
             // 799F80 follows both camera-root and ordinary outdoor passes,
             // even when the primary camera has no true-exterior portal.
@@ -167,6 +175,7 @@ impl WorldSceneAdmission {
                 self.record_overlap_root(root, scene, reference.owner(), primary)?;
             }
         }
+        profile.mark("moving root overlap");
         Ok(())
     }
 

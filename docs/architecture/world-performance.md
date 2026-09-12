@@ -1312,3 +1312,69 @@ because packaging reserves `BUILD_NUMBER` before compilation. The packaged and
 installed executables both have SHA-256
 `bbc82641ff86b4a876d7e3ff991a4e7be4aac4b2d1275d8596ff32ddf6215885`.
 The installed executable's `--build-info` confirms build 112 and that revision.
+
+## September 12: project WMO portals only when traversal reaches them
+
+Splitting M2 scene setup identified outdoor WMO group traversal as its dominant
+cost. The camera-root and outdoor queries projected every authored portal before
+visiting the entry group. They now request each portal's unchanged polygon
+projection when the existing traversal reaches that reference. A separate visited
+bit retains both accepted and rejected results within one query; it resets for
+every camera-root or outdoor entry. All authored projection inputs are checked
+for finite values before traversal. The eager projector remains available for
+callers and reference tests.
+
+The shared recursion still determines group order, parent exclusion, depth,
+windows, exterior encounters and fog writes. Polygon clipping retains its native
+float stores and twelve-vertex cap. No animation, effect or random state is skipped.
+The runtime retains an opt-in scene-admission phase profile; temporary per-group
+timers were removed before the final benchmark build.
+
+All 96 systems stock-reference tests pass. New coverage compares 90 scene queries
+with eager projection through branching portal graphs, plus 270 calls through
+reused and fresh scene-query storage. It checks ordered groups, fog and exact
+frustum bits across changing cameras, transforms, windows and model generations.
+All 331 runtime library tests pass (18 ignored), including WMO surface packet and
+pixel coverage. Clippy for both crates with all targets and warnings denied,
+formatting and diff checks pass.
+
+Separate diagnostics attribute the change: the final settled interval's outdoor
+traversal falls from 129.376 to 32.231 us, and scene admission from 153.609 to
+57.861 us. Those instrumented runs are excluded from the timing comparison below.
+Four uncaptured, unprofiled runs alternate new/Build 112/new/Build 112, with 2,400
+frames per phase. They use the same GTX 1070, 1280x720, shadow quality 2, uncapped
+noon profile and map-1 route as the resident-tile comparison above. This remains
+an offline installed terrain/FrameXML/Vulkan workload without network, movement
+solver, audio, overlays or authored NPC fixtures. Initial loading is excluded.
+
+| Phase | Build 112 mean ms | Demand-driven projection mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.981354 | 1.876301 | -5.30% |
+| Orbit | 2.237309 | 2.194274 | -1.92% |
+| Pointer/tooltip | 2.335135 | 2.237108 | -4.20% |
+| Travel out | 2.317835 | 2.283389 | -1.49% |
+| Travel back | 2.303729 | 2.271298 | -1.41% |
+| Settled | 2.024683 | 1.900005 | -6.16% |
+
+Across equal-sized non-loading phases, mean frame time falls from 2.200008 to
+2.127062 ms; scene preparation/presentation accounts for 68.276 of the 72.945 us
+saved. Phase means correspond to approximately 438-533 FPS. The new runs still
+have a 30.818 ms non-loading maximum, so neither the no-stall nor 1,200 FPS goal
+is achieved.
+
+All non-loading camera positions, detail/shadow draw counts and recorded screen
+effects match. Each travel leg admits and evicts 21 tiles over 24 changed frames;
+all four runs end with 49 resident tiles. A separate 23-image capture replay was
+excluded from timing. Twelve before/after view pairs retain consistent terrain
+and WMO coverage through orbit and both travel directions. Wall-time animation
+differs, and the existing strong terrain specular highlights remain unresolved.
+
+Local evidence: `target/lazy-portal-{before,after}-{one,two}.csv`,
+`target/compare-lazy-portal.py`, `target/check-lazy-portal-states.py`,
+`target/world-admission-group-diagnostic.log`, `target/lazy-portal-diagnostic.log`,
+`target/lazy-portal-after-captures/`, and
+`target/lazy-portal-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`43b269edd4e36991d728c90f2f948303348b208a9b21fb1f3e0f359985ede4cd`;
+the new benchmark, preserved as `target/benchmark-lazy-portal.exe`, is
+`b396cf3c43e52f4381ea4b639ce228f4db048a0ed59cea34854cab26b2ca9802`.

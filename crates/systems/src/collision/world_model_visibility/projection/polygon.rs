@@ -14,9 +14,68 @@ const EPSILON: f32 = 0.0001;
 pub struct WorldModelPortalProjector {
     buffers: [Vec<Vec3>; 2],
     windows: Vec<Option<[f32; 4]>>,
+    projected: Vec<bool>,
 }
 
 impl WorldModelPortalProjector {
+    /// Validate the complete admitted input before lazy scene traversal. A
+    /// rejected or malformed portal must not be confused with an unvisited one.
+    pub(in crate::collision::world_model_visibility) fn begin_scene(
+        &mut self,
+        model: &DecodedWorldModel,
+        frame: WorldModelPortalProjectionFrame,
+    ) -> Result<(), WorldModelVisibilityError> {
+        self.windows.clear();
+        self.projected.clear();
+        if !frame.is_finite() {
+            return Err(WorldModelVisibilityError::NonFiniteCoordinates);
+        }
+        for portal in model.portals() {
+            let start = usize::from(portal.vertex_start());
+            let end = start + usize::from(portal.vertex_count());
+            if !portal.normal().into_iter().all(f32::is_finite)
+                || !portal.distance().is_finite()
+                || !model.portal_vertices()[start..end]
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .all(f32::is_finite)
+            {
+                return Err(WorldModelVisibilityError::NonFiniteCoordinates);
+            }
+        }
+        self.windows.resize(model.portals().len(), None);
+        self.projected.resize(model.portals().len(), false);
+        Ok(())
+    }
+
+    /// Uses the same polygon arithmetic as eager projection, once per portal
+    /// reached by this query. Begin a new scene before changing model or frame.
+    pub(in crate::collision::world_model_visibility) fn scene_portal(
+        &mut self,
+        model: &DecodedWorldModel,
+        frame: WorldModelPortalProjectionFrame,
+        index: usize,
+    ) -> Result<Option<[f32; 4]>, WorldModelVisibilityError> {
+        if !self.projected[index] {
+            let portal = model.portals()[index];
+            let start = usize::from(portal.vertex_start());
+            let end = start + usize::from(portal.vertex_count());
+            let [x, y, z] = portal.normal();
+            let window = self.project_polygon(
+                &model.portal_vertices()[start..end],
+                [x, y, z, portal.distance()],
+                frame,
+            )?;
+            if window.is_some_and(|window| !window.into_iter().all(f32::is_finite)) {
+                return Err(WorldModelVisibilityError::NonFiniteCoordinates);
+            }
+            self.windows[index] = window;
+            self.projected[index] = true;
+        }
+        Ok(self.windows[index])
+    }
+
     /// Projects every authored portal, retaining capacity between frames.
     ///
     /// The optional native occlusion provider is disabled at this boundary.

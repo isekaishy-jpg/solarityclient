@@ -1,6 +1,9 @@
 //! Retained recursive group visits and once-per-root exterior portal encounters.
 
-use super::{WorldModelSceneVisibilityEvent, WorldModelVisibilityError, WorldModelVisibilityVisit};
+use super::{
+    WorldModelPortalProjectionFrame, WorldModelPortalProjector, WorldModelSceneVisibilityEvent,
+    WorldModelVisibilityError, WorldModelVisibilityVisit,
+};
 use glam::Vec3;
 use solarity_asset::DecodedWorldModel;
 
@@ -61,9 +64,9 @@ impl WorldModelVisibilityQuery {
             model,
             position,
             maximum_depth,
-            projected_portals,
+            |index| Ok(projected_portals[index]),
             TraversalOutput::Groups,
-        );
+        )?;
         Ok(&self.visits)
     }
 
@@ -103,9 +106,9 @@ impl WorldModelVisibilityQuery {
             model,
             position,
             maximum_depth,
-            projected_portals,
+            |index| Ok(projected_portals[index]),
             TraversalOutput::Groups,
-        );
+        )?;
         Ok(&self.visits)
     }
 
@@ -144,10 +147,75 @@ impl WorldModelVisibilityQuery {
             model,
             position,
             maximum_depth,
-            projected_portals,
+            |index| Ok(projected_portals[index]),
             TraversalOutput::Scene,
-        );
+        )?;
         Ok(&self.scene_events)
+    }
+
+    /// Runtime camera roots project only portals reached by native recursion.
+    pub(super) fn query_scene_projecting(
+        &mut self,
+        model: &DecodedWorldModel,
+        frame: WorldModelPortalProjectionFrame,
+        initial_groups: &[usize],
+        maximum_depth: u32,
+        projector: &mut WorldModelPortalProjector,
+    ) -> Result<&[WorldModelSceneVisibilityEvent], WorldModelVisibilityError> {
+        self.clear();
+        if initial_groups
+            .iter()
+            .any(|&group| group >= model.groups().len())
+        {
+            return Err(WorldModelVisibilityError::InvalidGroup);
+        }
+        projector.begin_scene(model, frame)?;
+        self.exterior_encountered
+            .resize(model.portals().len(), false);
+        for &group in initial_groups.iter().rev() {
+            self.push_initial(group, true, [-1., -1., 1., 1.]);
+        }
+        self.traverse(
+            model,
+            frame.local_camera,
+            maximum_depth,
+            |index| projector.scene_portal(model, frame, index),
+            TraversalOutput::Scene,
+        )?;
+        Ok(&self.scene_events)
+    }
+
+    /// Outdoor entries keep independent windows and visitation while sharing
+    /// projection only across repeated references within this one query.
+    pub(super) fn query_outdoor_projecting(
+        &mut self,
+        model: &DecodedWorldModel,
+        frame: WorldModelPortalProjectionFrame,
+        group: usize,
+        maximum_depth: u32,
+        screen_window: [f32; 4],
+        projector: &mut WorldModelPortalProjector,
+    ) -> Result<&[WorldModelVisibilityVisit], WorldModelVisibilityError> {
+        self.clear();
+        if group >= model.groups().len() {
+            return Err(WorldModelVisibilityError::InvalidGroup);
+        }
+        projector.begin_scene(model, frame)?;
+        if !screen_window.into_iter().all(f32::is_finite) {
+            return Err(WorldModelVisibilityError::NonFiniteCoordinates);
+        }
+        if screen_window[0] >= screen_window[2] || screen_window[1] >= screen_window[3] {
+            return Err(WorldModelVisibilityError::DegenerateFrustum);
+        }
+        self.push_initial(group, false, screen_window);
+        self.traverse(
+            model,
+            frame.local_camera,
+            maximum_depth,
+            |index| projector.scene_portal(model, frame, index),
+            TraversalOutput::Groups,
+        )?;
+        Ok(&self.visits)
     }
 
     /// Resets per-root results while retaining their allocations.
@@ -198,9 +266,9 @@ impl WorldModelVisibilityQuery {
         model: &DecodedWorldModel,
         position: Vec3,
         maximum_depth: u32,
-        projected_portals: &[Option<[f32; 4]>],
+        mut project: impl FnMut(usize) -> Result<Option<[f32; 4]>, WorldModelVisibilityError>,
         output: TraversalOutput,
-    ) {
+    ) -> Result<(), WorldModelVisibilityError> {
         let scene = output == TraversalOutput::Scene;
         while let Some(pending) = self.pending.pop() {
             let (mut visit, parent) = match pending {
@@ -240,7 +308,7 @@ impl WorldModelVisibilityQuery {
                 }
                 let portal_index = usize::from(reference.portal_index());
                 let portal = model.portals()[portal_index];
-                let Some(bounds) = projected_portals[portal_index] else {
+                let Some(bounds) = project(portal_index)? else {
                     continue;
                 };
                 let [x, y, z] = portal.normal().map(f64::from);
@@ -291,5 +359,6 @@ impl WorldModelVisibilityQuery {
                 }
             }
         }
+        Ok(())
     }
 }

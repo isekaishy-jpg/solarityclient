@@ -10,6 +10,195 @@ use solarity_systems::{
 
 use super::world_model_visibility::visibility_model;
 
+/// Reusing scene query storage must not reuse entry clips, recursion,
+/// fog writes or exterior banks. Compare every call with a fresh query while
+/// changing the admitted generation, both placement matrices and the camera.
+#[test]
+fn repeated_scene_queries_preserve_independent_projection_and_visits() -> Result<(), Box<dyn Error>>
+{
+    let mut retained = WorldModelCameraSceneQuery::default();
+    for portal_height in [0., 2., 0.] {
+        let model = Arc::new(visibility_model(
+            &[0, 8, 8],
+            &[0, 8, 8],
+            &[[0, 1], [0, 2]],
+            &[[0., 0., 1., portal_height], [0., 0., 1., -3.]],
+        )?);
+        let mut root = PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;
+        for transform in [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(2., -1., 0.5))
+                * Mat4::from_rotation_y(0.15)
+                * Mat4::from_scale(Vec3::splat(1.2)),
+            Mat4::IDENTITY,
+        ] {
+            root.set_transform(transform)?;
+            for (eye, aspect) in [
+                (Vec3::new(0., 0., 6.), 1.),
+                (Vec3::new(1., -2., 8.), 1.5),
+                (Vec3::new(0., 0., 6.), 1.),
+            ] {
+                let camera = WorldSceneCameraFrame::perspective(
+                    eye,
+                    Vec3::ZERO,
+                    -eye.normalize(),
+                    Vec3::Y,
+                    0.9424778,
+                    aspect,
+                    [0.2, 100.],
+                )?;
+                for _ in 0..2 {
+                    let mut fresh = WorldModelCameraSceneQuery::default();
+                    retained.query_camera_root(&root, camera, &[0])?;
+                    fresh.query_camera_root(&root, camera, &[0])?;
+                    assert_scene_queries_match(&retained, &fresh);
+                    for (group, window) in [
+                        (1, [0., 0., 1., 1.]),
+                        (2, [0.1234567, 0.2345678, 0.8123456, 0.9123456]),
+                        (1, [3., 3., 4., 4.]),
+                        (2, [0., 0., 1., 1.]),
+                    ] {
+                        let mut fresh = WorldModelCameraSceneQuery::default();
+                        retained.query_outdoor_group(&root, camera, group, window)?;
+                        fresh.query_outdoor_group(&root, camera, group, window)?;
+                        assert_scene_queries_match(&retained, &fresh);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn assert_scene_queries_match(
+    left: &WorldModelCameraSceneQuery,
+    right: &WorldModelCameraSceneQuery,
+) {
+    assert_eq!(left.groups(), right.groups());
+    assert_eq!(left.exterior_window(), right.exterior_window());
+    assert_eq!(left.sky_window(), right.sky_window());
+    assert_eq!(left.has_skybox_request(), right.has_skybox_request());
+    assert_eq!(left.visits().len(), right.visits().len());
+    for (left, right) in left.visits().iter().zip(right.visits()) {
+        assert_eq!(left.group, right.group);
+        assert_eq!(left.fog, right.fog);
+        super::world_model_visibility::assert_clip_bits(left.frustum, right.frustum);
+    }
+}
+
+/// Eager projection and native traversal remain independent references for
+/// demand-driven polygon evaluation through branches and repeated entries.
+#[test]
+fn scene_projection_matches_eager_portals_through_recursive_groups() -> Result<(), Box<dyn Error>> {
+    use solarity_systems::{
+        WorldModelPortalProjector, WorldModelSceneFog, WorldModelSceneVisibilityEvent,
+    };
+    let model = Arc::new(visibility_model(
+        &[8, 0, 0, 8],
+        &[8, 0, 0, 8],
+        &[[0, 1], [1, 2], [2, 3], [0, 2]],
+        &[
+            [0., 0., 1., 0.],
+            [0., 0., 1., -1.],
+            [0., 0., 1., -2.],
+            [0., 0., 1., -1.5],
+        ],
+    )?);
+    let mut root =
+        PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), Mat4::IDENTITY)?;
+    let mut lazy = WorldModelCameraSceneQuery::default();
+    let mut eager = WorldModelVisibilityQuery::default();
+    let mut projector = WorldModelPortalProjector::default();
+    let mut recursive_visits = 0;
+    for transform in [Mat4::IDENTITY, Mat4::from_rotation_y(0.2), Mat4::IDENTITY] {
+        root.set_transform(transform)?;
+        for eye in [
+            Vec3::new(0., 0., 6.),
+            Vec3::new(1., -2., 8.),
+            Vec3::new(0., 0., -6.),
+        ] {
+            let camera = WorldSceneCameraFrame::perspective(
+                eye,
+                Vec3::ZERO,
+                -eye.normalize(),
+                Vec3::Y,
+                0.9424778,
+                1.3,
+                [0.2, 100.],
+            )?;
+            let frame = camera.for_root(transform, root.inverse_transform())?;
+            let projected = projector.project(&model, frame)?;
+            for initial in [&[1][..], &[2, 1][..], &[][..], &[1, 1][..]] {
+                lazy.query_camera_root(&root, camera, initial)?;
+                let expected = eager
+                    .query_scene(&model, frame.local_camera, initial, 10, projected)?
+                    .iter()
+                    .filter_map(|event| match event {
+                        WorldModelSceneVisibilityEvent::Group(visit) => Some(*visit),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(lazy.visits().len(), expected.len());
+                for (actual, expected) in lazy.visits().iter().zip(expected) {
+                    recursive_visits += usize::from(expected.depth > 0);
+                    assert_eq!(actual.group, expected.group);
+                    assert_eq!(
+                        actual.fog,
+                        if expected.indoor_fog {
+                            WorldModelSceneFog::Indoor
+                        } else {
+                            WorldModelSceneFog::Outdoor
+                        }
+                    );
+                    super::world_model_visibility::assert_clip_bits(
+                        actual.frustum,
+                        expected.frustum(camera, camera.frustum())?,
+                    );
+                }
+            }
+            for window in [
+                [0., 0., 1., 1.],
+                [0.1234567, 0.2345678, 0.8123456, 0.9123456],
+            ] {
+                for group in [0, 3, 0] {
+                    lazy.query_outdoor_group(&root, camera, group, window)?;
+                    let clip = window.map(|value| (f64::from(value) * 2. - 1.) as f32);
+                    let expected = eager.query_outdoor(
+                        &model,
+                        frame.local_camera,
+                        group,
+                        10,
+                        clip,
+                        projected,
+                    )?;
+                    assert_eq!(lazy.visits().len(), expected.len());
+                    for (actual, expected) in lazy.visits().iter().zip(expected) {
+                        recursive_visits += usize::from(expected.depth > 0);
+                        assert_eq!(actual.group, expected.group);
+                        assert_eq!(
+                            actual.fog,
+                            if expected.indoor_fog {
+                                WorldModelSceneFog::Indoor
+                            } else {
+                                WorldModelSceneFog::Outdoor
+                            }
+                        );
+                        super::world_model_visibility::assert_clip_bits(
+                            actual.frustum,
+                            expected.frustum(camera, camera.frustum_for_window(window)?)?,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        recursive_visits > 0,
+        "fixture must exercise recursive portal clips"
+    );
+    Ok(())
+}
+
 /// Decodes exact original float stores without decimal conversion.
 fn float(word: &str) -> Result<f32, Box<dyn Error>> {
     Ok(f32::from_bits(u32::from_str_radix(word, 16)?))

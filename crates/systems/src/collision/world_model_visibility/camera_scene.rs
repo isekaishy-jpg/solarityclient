@@ -50,13 +50,12 @@ impl WorldModelCameraSceneQuery {
         let frame = camera.for_root(root.transform, root.inverse_transform)?;
         let forward_plane = camera.local_forward_plane(root.inverse_transform)?;
         let model = &root.model;
-        let projected = self.projector.project(model, frame)?;
-        let events = self.visibility.query_scene(
+        let events = self.visibility.query_scene_projecting(
             model,
-            frame.local_camera,
+            frame,
             initial_groups,
             10,
-            projected,
+            &mut self.projector,
         )?;
         for event in events {
             let WorldModelSceneVisibilityEvent::ExteriorPortal { reference } = event else {
@@ -162,16 +161,15 @@ impl WorldModelCameraSceneQuery {
             });
         } else if info.flags() & 8 != 0 {
             let frame = camera.for_root(root.transform, root.inverse_transform)?;
-            let projected = self.projector.project(model, frame)?;
             // 7B3A10 retains the multiply/subtract until each float store.
             let window = screen_window.map(|value| (f64::from(value) * 2. - 1.) as f32);
-            for visit in self.visibility.query_outdoor(
+            for visit in self.visibility.query_outdoor_projecting(
                 model,
-                frame.local_camera,
+                frame,
                 group,
                 10,
                 window,
-                projected,
+                &mut self.projector,
             )? {
                 self.groups.push(visit.group);
                 self.visits.push(WorldModelSceneGroupVisit {
