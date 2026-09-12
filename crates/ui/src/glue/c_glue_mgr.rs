@@ -1258,10 +1258,12 @@ impl GlueManager {
         // Preserve the old geometry until the retained update succeeds, and
         // re-solve every transitive parent/anchor dependent of these roots.
         let mut geometry = self.geometry.clone();
-        let changed_regions = geometry.refresh_dependency_regions(
-            &self.live,
-            dirty_objects.iter().map(|&(object_index, _)| object_index),
-        )?;
+        let changed_regions = geometry
+            .refresh_dependency_regions(
+                &self.live,
+                dirty_objects.iter().map(|&(object_index, _)| object_index),
+            )?
+            .affected_objects;
         let mut texture_objects = dirty_objects
             .iter()
             .map(|&(object_index, _)| object_index)
@@ -1425,17 +1427,17 @@ impl GlueManager {
         {
             return Ok(false);
         }
-        let previous_geometry = self.geometry.clone();
-        let changed_regions = self.geometry.refresh_dependency_regions(
+        let refreshed_geometry = self.geometry.refresh_dependency_regions(
             &self.live,
             dirty_objects.iter().map(|&(object_index, _)| object_index),
         )?;
         let resolved = started.elapsed();
-        self.runtime.publish_changed_resolved_geometry(
+        self.runtime.publish_resolved_geometry_objects(
             &self.bundle,
-            &previous_geometry,
             &self.geometry,
+            refreshed_geometry.changed_objects,
         )?;
+        let changed_regions = refreshed_geometry.affected_objects;
         synchronize_resolved_dimensions_for(
             &mut self.live,
             &self.geometry,

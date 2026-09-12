@@ -2133,3 +2133,29 @@ The playerbots server was stopped during these measurements. The user reported
 that it was unavailable for testing, and the existing local MySQL/login/world
 services were started after replay collection. These measurements do not validate
 live login, networking, or playerbot load.
+
+### September 12: borrow retained geometry during tooltip layout
+
+A separate Build 121 diagnostic with the playerbots server running found
+25,295 live UI objects but only 29 tooltip-dependent regions. The first trace
+spends 1.694 ms discovering dependencies, 0.882 ms seeding the dense resolver,
+and 0.009 ms solving the affected regions. Coverage checking and cloning the
+previous geometry take 0.693 ms. First hover callback dispatch takes 1.299 ms.
+Evidence is `target/tooltip-geometry-trace-before.{log,csv}`; temporary source
+probes and their executable are preserved under `target/tooltip-geometry-*`.
+
+Local resolution now borrows unaffected geometry and allocates result/cycle
+scratch only for the sorted affected region indices. It completes resolution
+before publishing any changes and returns the exact changed public slots.
+Tooltip Lua geometry publication consumes those slots, removing the full old
+geometry clone and full-arena comparison. Dependency discovery still scans the
+live arena; ordinary retained-content transactions preserve their rollback copy.
+
+All 26 UI unit tests and 157 integration tests pass, including a new comparison
+against complete geometry resolution with forward/backward anchors, inherited
+scale, alpha and animation, retargeted anchors, hide/show and unchanged updates.
+Cycle and invalid-root failures preserve the prior geometry. UI/runtime Clippy
+with all targets and warnings denied passes. The temporary probes were removed.
+The user supplied a current stock comparison showing excessive terrain highlights,
+so that lighting issue takes priority before benchmarking or packaging this change.
+No performance gain is claimed for this unmeasured candidate; Testing remains 121.

@@ -1774,22 +1774,41 @@ impl UiScriptRuntime {
                 message: "previous and current resolved geometry arenas differ".to_owned(),
             });
         }
+        self.publish_resolved_geometry_objects(
+            bundle,
+            geometry,
+            (0..geometry.region_count()).filter(|&index| {
+                previous.is_none_or(|previous| previous.region(index) != geometry.region(index))
+            }),
+        )
+    }
+
+    /// Publishes the changed slots returned by retained geometry resolution.
+    pub(crate) fn publish_resolved_geometry_objects(
+        &mut self,
+        bundle: &UiBundle,
+        geometry: &crate::UiRegionGeometryPlan,
+        object_indices: impl IntoIterator<Item = usize>,
+    ) -> Result<(), UiScriptError> {
+        if geometry.region_count() != self.registered_object_count() {
+            return Err(UiScriptError::Plan {
+                message: format!(
+                    "resolved geometry has {} objects; runtime registered {}",
+                    geometry.region_count(),
+                    self.registered_object_count()
+                ),
+            });
+        }
         let lua = bundle.lua();
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("publish resolved geometry", error))?;
-        for object_index in 0..geometry.region_count() {
+        for object_index in object_indices {
             let region = geometry
                 .region(object_index)
                 .ok_or_else(|| UiScriptError::Plan {
                     message: format!("resolved geometry object {object_index} is unavailable"),
                 })?;
-            if previous
-                .and_then(|previous| previous.region(object_index))
-                .is_some_and(|previous| previous == region)
-            {
-                continue;
-            }
             let object: Table = objects
                 .raw_get(object_index + 1)
                 .map_err(|error| execution_error("publish resolved geometry", error))?;

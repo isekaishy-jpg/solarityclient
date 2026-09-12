@@ -163,6 +163,11 @@ pub struct UiRegionGeometryPlan {
     presentations: Vec<Affine2>,
 }
 
+pub(crate) struct UiRegionGeometryRefresh {
+    pub(crate) affected_objects: Vec<usize>,
+    pub(crate) changed_objects: Vec<usize>,
+}
+
 impl UiRegionGeometryPlan {
     /// Moves one transform-only region while retaining the solved dependency graph.
     pub(crate) fn translate_region(&mut self, object_index: usize, delta: [f32; 2]) {
@@ -231,14 +236,14 @@ impl UiRegionGeometryPlan {
     /// Re-solves the transitive geometry island rooted at changed objects.
     ///
     /// Parent inheritance and authored anchor targets are the only edges that
-    /// can carry a region mutation to another object. Keeping every unrelated
-    /// resolved slot as a seed avoids walking the complete Glue arena for a
-    /// tooltip or another small dynamic layout island.
+    /// can carry a region mutation to another object. Dependency discovery scans
+    /// the live arena; resolution borrows unrelated slots as immutable seeds and
+    /// allocates scratch only for the affected island.
     pub(crate) fn refresh_dependency_regions(
         &mut self,
         live: &UiRuntimeObjectPlan,
         root_indices: impl IntoIterator<Item = usize>,
-    ) -> Result<Vec<usize>, UiLayoutError> {
+    ) -> Result<UiRegionGeometryRefresh, UiLayoutError> {
         if live.objects().len() != self.regions.len()
             || self.presentations.len() != self.regions.len()
         {
@@ -281,7 +286,10 @@ impl UiRegionGeometryPlan {
             .filter_map(|(object_index, affected)| affected.then_some(object_index))
             .collect::<Vec<_>>();
         if object_indices.is_empty() {
-            return Ok(object_indices);
+            return Ok(UiRegionGeometryRefresh {
+                affected_objects: object_indices,
+                changed_objects: Vec::new(),
+            });
         }
         let screen = UiScreenRect {
             left: 0.0,
@@ -289,38 +297,44 @@ impl UiRegionGeometryPlan {
             right: self.ui_extent.0,
             top: self.ui_extent.1,
         };
-        let resolved = self
-            .regions
-            .iter()
-            .copied()
-            .zip(self.presentations.iter().copied())
-            .enumerate()
-            .map(|(object_index, (public, presentation))| {
-                (!affected[object_index]).then_some(ResolvedRegion {
-                    public,
-                    presentation,
-                })
-            })
-            .collect();
         let mut resolver = GeometryResolver {
             live,
             screen,
-            resolved,
-            visiting: vec![false; live.objects().len()],
+            // Borrow unaffected seeds. Only this sorted dependency island owns
+            // new results and cycle-detection slots during a retained refresh.
+            retained: Some((self, &object_indices)),
+            resolved: vec![None; object_indices.len()],
+            visiting: vec![false; object_indices.len()],
         };
         for &object_index in &object_indices {
             resolver.resolve(object_index)?;
         }
-        for &object_index in &object_indices {
-            let resolved = resolver.resolved[object_index].ok_or_else(|| {
-                resolution_error(format!(
-                    "refreshed live region {object_index} remained unresolved"
-                ))
-            })?;
+        // Finish all resolution before publishing any results, including on
+        // cycles or invalid references reached through a changed anchor.
+        let refreshed = resolver
+            .resolved
+            .into_iter()
+            .zip(&object_indices)
+            .map(|(region, object_index)| {
+                region.ok_or_else(|| {
+                    resolution_error(format!(
+                        "refreshed live region {object_index} remained unresolved"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut changed_objects = Vec::new();
+        for (&object_index, resolved) in object_indices.iter().zip(refreshed) {
+            if self.regions[object_index] != resolved.public {
+                changed_objects.push(object_index);
+            }
             self.regions[object_index] = resolved.public;
             self.presentations[object_index] = resolved.presentation;
         }
-        Ok(object_indices)
+        Ok(UiRegionGeometryRefresh {
+            affected_objects: object_indices,
+            changed_objects,
+        })
     }
 }
 
@@ -354,6 +368,7 @@ impl UiRegionGeometryPlan {
         let mut resolver = GeometryResolver {
             live,
             screen,
+            retained: None,
             resolved: vec![None; live.objects().len()],
             visiting: vec![false; live.objects().len()],
         };
@@ -407,16 +422,39 @@ struct ResolvedRegion {
 struct GeometryResolver<'plan> {
     live: &'plan UiRuntimeObjectPlan,
     screen: UiScreenRect,
+    retained: Option<(&'plan UiRegionGeometryPlan, &'plan [usize])>,
     resolved: Vec<Option<ResolvedRegion>>,
     visiting: Vec<bool>,
 }
 
 impl GeometryResolver<'_> {
     fn resolve(&mut self, index: usize) -> Result<ResolvedRegion, UiLayoutError> {
-        if let Some(region) = self.resolved.get(index).copied().flatten() {
+        let slot = if let Some((retained, object_indices)) = self.retained {
+            match object_indices.binary_search(&index) {
+                Ok(slot) => slot,
+                Err(_) => {
+                    return retained
+                        .regions
+                        .get(index)
+                        .zip(retained.presentations.get(index))
+                        .map(|(&public, &presentation)| ResolvedRegion {
+                            public,
+                            presentation,
+                        })
+                        .ok_or_else(|| {
+                            resolution_error(format!(
+                                "live region index {index} is outside the arena"
+                            ))
+                        });
+                }
+            }
+        } else {
+            index
+        };
+        if let Some(region) = self.resolved.get(slot).copied().flatten() {
             return Ok(region);
         }
-        let Some(visiting) = self.visiting.get_mut(index) else {
+        let Some(visiting) = self.visiting.get_mut(slot) else {
             return Err(resolution_error(format!(
                 "live region index {index} is outside the arena"
             )));
@@ -428,9 +466,9 @@ impl GeometryResolver<'_> {
         }
 
         let result = self.resolve_inner(index);
-        self.visiting[index] = false;
+        self.visiting[slot] = false;
         let region = result?;
-        self.resolved[index] = Some(region);
+        self.resolved[slot] = Some(region);
         Ok(region)
     }
 
