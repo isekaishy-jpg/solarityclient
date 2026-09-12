@@ -392,8 +392,27 @@ the first authored ribbon pass performs common setup.
 
 The 2026-09-12 color/culling and retained-fog changes pass workspace Clippy with
 warnings denied and all 1,319 workspace tests (23 explicit environment-dependent
-tests ignored). Ribbon shadow reception and combined populated-world comparison
-remain open.
+tests ignored). Combined populated-world comparison remains open.
+
+### Ordinary ribbon shadow exclusion
+
+The shared `Color_T1`/`Combiners_Mod` BLS families contain shadow variants, but
+ordinary ribbons do not select them. `821A20` constructs a type-3 element at
+`8226EE..822730`, setting its shadow selector at `+0x3C` to zero. Mesh elements
+instead run `81F1D0` to compute receiver eligibility. The ribbon's `81FB10`
+common setup copies its zero selector into `D43010`, replacing any preceding
+mesh shadow state, and `980B70` selects programs through `873160(0)`.
+
+`tools/ghidra/ribbon_shadow_oracle.py` executes that constructor, common
+publication, lighting-bit publication and shader selection with poisoned
+previous shadow selectors 0/1/2, both filtering modes, zero/four local lights,
+and lit/unlit two-sided materials. All 24 cases publish zero shadows, select
+unshadowed vertex aliases 0/1/8/9 and pixel aliases 0/4, and render the original
+BLS programs. The expanded Vulkan color/culling test checks their RGBA outputs.
+Allocation, complete model admission and texture binding remain outside this
+instruction capture; the full caller establishes the ordinary type-3 path.
+Keeping this ribbon shader independent of world shadow-map descriptors matches
+that path. Specialized effect callbacks require their own selection evidence.
 
 ### Attached particle card size
 

@@ -5,6 +5,9 @@ cascaded environment maps before its main terrain, WMO, and M2 pass. Player
 and creature bodies, mounts, admitted attachments, scenery, and WMO groups
 contribute their eligible material batches. Terrain, model, and ground-detail
 receivers sample the published maps. Sky models retain their separate scene state.
+Ordinary ribbons explicitly publish an unshadowed selector before drawing;
+the shared shader family's shadow variants do not establish ribbon reception.
+See the [native ribbon selection audit](m2-effects.md#ordinary-ribbon-shadow-exclusion).
 
 ## Original-client evidence
 

@@ -98,7 +98,7 @@ fn ribbon_pixels_match_original_color_variants_and_material_culling() -> Result<
     let texture_set = renderer
         .prepare_m2_texture_sets(&[M2TextureSet::One(M2SampledTexture::new(texture, sampler))])?[0];
     let fog = Vec4::new(0., 100., 0., 1.);
-    let mut count = 0;
+    let mut cases = Vec::new();
     for line in include_str!("../../fixtures/ribbon_shader_native.txt")
         .lines()
         .filter(|line| !line.starts_with('#'))
@@ -107,6 +107,32 @@ fn ribbon_pixels_match_original_color_variants_and_material_culling() -> Result<
             .split_whitespace()
             .map(str::parse::<u32>)
             .collect::<Result<Vec<_>, _>>()?;
+        cases.push((line, row));
+    }
+    for line in include_str!("../../fixtures/ribbon_shadow_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let native = line
+            .split_whitespace()
+            .map(str::parse::<u32>)
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(&native[4..7], &[3, 0, 0], "{line}");
+        assert!(native[7] < 10 && matches!(native[8], 0 | 4), "{line}");
+        // Local-light aliases still select the even/odd Color_T1 rule;
+        // previous shadow state is overwritten by the native ribbon element.
+        let mut row = cases[..4]
+            .iter()
+            .find(|(_, row)| row[0] == native[0])
+            .ok_or("native ribbon material")?
+            .1
+            .clone();
+        row[2] = native[7] % 2;
+        row[4..8].copy_from_slice(&native[9..13]);
+        cases.push((line, row));
+    }
+    assert_eq!(cases.len(), 28);
+    for (line, row) in cases {
         let material = *model
             .materials()
             .iter()
@@ -186,8 +212,6 @@ fn ribbon_pixels_match_original_color_variants_and_material_culling() -> Result<
             }
             assert_eq!(visible, if state.cull_enabled() { 1 } else { 2 }, "{line}");
         }
-        count += 1;
     }
-    assert_eq!(count, 4);
     Ok(())
 }
