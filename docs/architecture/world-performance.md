@@ -2123,3 +2123,13 @@ the final candidate `target/benchmark-tooltip-materialization.exe` SHA-256 is
 Rejected-candidate evidence remains separately under `target/tooltip-insertion-*`.
 Next, isolate the retained tooltip geometry dependency scan and remaining hover
 callback cost before changing either path.
+
+Packaged and installed as Solarity 0.0.3a Build 121, source revision
+`978f809cdbd589f8f17251e7e52ade1981e9b5b6`. Installed `--build-info` confirms
+that identity and reports `dirty=true` from the build-number reservation.
+Packaged and installed executable SHA-256 values both equal
+`93087f845ef4fba7ab0b8e0f5ca5b1bfed4d0c101b9e11677f68a9d721f3e2ac`.
+The playerbots server was stopped during these measurements. The user reported
+that it was unavailable for testing, and the existing local MySQL/login/world
+services were started after replay collection. These measurements do not validate
+live login, networking, or playerbot load.
