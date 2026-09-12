@@ -98,3 +98,79 @@ fn saturated_population_admission_preserves_active_generations_until_replacement
     cpu.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn prepared_population_workers_publish_complete_mounts_with_current_motion()
+-> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_mount_effects()?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut presentation = unit_presentation(&fixture)?.with_glue_worker_catalog(catalog);
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
+    add_unit(&mut world, 40, ObjectKind::Player, 0)?;
+    presentation.synchronize_creatures(Some(&world), |_| None)?;
+    presentation.synchronize_remote_players(Some(&world))?;
+    let creature = presentation.resident_creature_frame_inputs()[0]
+        .generation()
+        .clone();
+    let player = presentation.resident_remote_player_frame_inputs()[0]
+        .generation()
+        .clone();
+    for guid in [30, 40] {
+        world.update_fields(guid, [(69, 102)])?;
+        solarity_systems::project_object_fields(&mut world, guid, [(69, 102)])?;
+    }
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let slots = NonZeroUsize::new(2).ok_or("two worker slots")?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(slots, slots))?;
+    presentation.synchronize_creatures_async(Some(&world), |_| None, &cpu, &mut renderer)?;
+    presentation.synchronize_remote_players_async(Some(&world), &cpu, &mut renderer)?;
+    // Executor shutdown joins the finite CPU jobs without a timing-dependent poll.
+    // Their completed immutable results still require render-owner admission.
+    cpu.shutdown()?;
+    let transform = solarity_ecs::WorldTransform::new(Vec3::new(3., 4., 5.), 0.5);
+    for guid in [30, 40] {
+        world.update_transform(guid, transform)?;
+    }
+    let mut creature_published = false;
+    let mut player_published = false;
+    for _ in 0..64 {
+        if !creature_published {
+            creature_published = presentation.synchronize_creatures_async(
+                Some(&world),
+                |_| None,
+                &cpu,
+                &mut renderer,
+            )? == RuntimeCreaturePoll::ModelsChanged;
+        }
+        if !player_published {
+            player_published =
+                presentation.synchronize_remote_players_async(Some(&world), &cpu, &mut renderer)?
+                    == RuntimeRemotePlayerPoll::ModelsChanged;
+        }
+        if creature_published && player_published {
+            break;
+        }
+    }
+    assert!(creature_published && player_published);
+    let creatures = presentation.resident_creature_frame_inputs();
+    assert_eq!(creatures.len(), 1);
+    assert!(!creatures[0].generation().matches(&creature));
+    assert!(creatures[0].mount().is_some());
+    assert_eq!(creatures[0].world_transform(), transform);
+    let players = presentation.resident_remote_player_frame_inputs();
+    assert_eq!(players.len(), 1);
+    assert!(!players[0].generation().matches(&player));
+    assert!(players[0].mount().is_some());
+    assert_eq!(players[0].world_transform(), transform);
+    Ok(())
+}

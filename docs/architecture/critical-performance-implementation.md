@@ -75,15 +75,29 @@ coverage, and native role reparenting retain complete reconstruction where the
 incremental contract does not apply; packet membership changes can rebuild the
 visible render mesh. Those boundaries remain visible to the existing opt-in frame
 scopes and should be evaluated with a populated live capture before further work.
+Dynamic bone palettes and material streams still publish per frame; the audit's
+candidate for separate immutable material storage has not been promoted into a
+critical fix without evidence of its contribution.
 
 Regression coverage includes reverse-link retargeting/cycle rollback, ordered
 spatial candidates, producer refill during packet callbacks, stale GUID reuse
 during population admission, saturation-safe retirement, deferred terrain
-publication, and mixed UI packet insertion/removal/reordering. Existing stock
+publication, real worker-loaded mounts with current motion at admission, and
+mixed UI packet insertion/removal/reordering. Existing stock
 animation, equipment, collision, UI, and GPU rendering tests cover behavior
-preservation. Formatting, workspace Clippy with all targets and features and
-warnings denied, and the all-feature workspace test suite passed before rebasing
-onto Testing Build 123. The combined result is checked again before publication.
+preservation.
+
+Validation passed after rebasing onto Testing Build 123 (`f5f5f4a8`):
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --locked --workspace --all-features`: 1,352 passed, 24 ignored.
+- The additional real population-worker completion regression passed in a
+  targeted workspace run after the broad suite. Only test/documentation changes
+  followed that broad run; formatting and Clippy passed again.
+
+These checks establish regression coverage, not live frame-time savings. No new
+live FPS result or package build is claimed by this implementation report.
 
 Large modified areas are split into folder-backed UI geometry/publication,
 presentation resolution, population preparation, M2 source admission, and terrain
