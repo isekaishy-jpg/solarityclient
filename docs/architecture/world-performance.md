@@ -1554,3 +1554,9 @@ Baseline benchmark SHA-256 is
 `e8412e88fa44c77a3302235c39d9ad7780ded0a015caf08658aa88ab16efb0fa`;
 the new benchmark, preserved as `target/benchmark-detail-retirement.exe`, is
 `8520d171334f5d52b1466c4b06af658e870be0e9d9627fff8f1a9573b8d201f0`.
+
+Packaged and installed as Solarity 0.0.3a Build 115, source revision
+`a07238df2b08e769203b44e2bf9e384c37f1910e`. The installed `--build-info` confirms
+that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
+compilation. Packaged and installed executable SHA-256 values both equal
+`051662b8e3982b9f217c2268bab8b3b35cfaa6252200fa00e1b5a464d2751605`.
