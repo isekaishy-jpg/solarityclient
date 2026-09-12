@@ -971,3 +971,9 @@ Local evidence: `target/terrain-admission-{before,after}-{one,two}.csv`,
 and `target/summarize-admission-profiles.py`. Benchmark SHA-256:
 previous `13271ad5a941df32e3496c256fb70c4d9ce939155ee77dcea8336a5482b335e7`,
 batched `53ee2b64bd940a476e1a2d2673d20f2508d1d26276da301867453248421f4226`.
+
+Testing Build 106 packages source revision `97d264e3`. The installed runtime
+matches the package SHA-256
+`0cb3a1f8485d58b427d8b536aaafa2f0b292c4ee503858b5b85291b2b16f5845`,
+with the reserved package number recorded as dirty source state. The measured
+batched benchmark is preserved as `target/benchmark-before-ui-dispatch.exe`.
