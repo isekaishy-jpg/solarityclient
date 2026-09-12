@@ -198,8 +198,10 @@ impl RuntimeTerrainCoordinator {
             };
             let source = self.take_worker_source()?;
             let request = TerrainRequest { map_id, tile };
-            let task =
-                permit.submit(move || prepare_terrain_on_worker(source, definition, request));
+            let specular_textures = self.specular_textures;
+            let task = permit.submit(move || {
+                prepare_terrain_on_worker(source, definition, request, specular_textures)
+            });
             self.pending_stream = Some(PendingTerrainGeneration {
                 request,
                 submitted_at: Instant::now(),

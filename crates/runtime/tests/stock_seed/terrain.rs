@@ -208,14 +208,15 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
             "World\\Maps\\Northrend\\Northrend_22_30.adt",
             &streaming_adt(second, 50.)?,
         ),
-        ("tileset\\fixture\\grass.blp", &bootstrap_texture_blp()),
+        ("tileset\\fixture\\grass_s.blp", &bootstrap_texture_blp()),
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(catalog.clone())?;
     let maps = MapCatalog::load(&mut store)?;
     let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps)
-        .with_worker_catalog(catalog);
+        .with_worker_catalog(catalog)
+        .with_specular_textures(true);
     let origin = Vec3::new(1000., 5800., 250.);
     let world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(571),
@@ -232,6 +233,12 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
         0.,
     ));
     terrain.synchronize(Some(&world))?;
+    assert_eq!(
+        terrain.resident_texture_sources().ok_or("textures")?[0]
+            .path()
+            .as_str(),
+        "TILESET\\FIXTURE\\GRASS_S.BLP"
+    );
     let movement_bounds =
         MovementCollisionBounds::new(Vec3::new(999., 5332., -1.), Vec3::new(1001., 5334., 60.))?;
     let mut movement = RuntimeStaticMovementQuery::new();

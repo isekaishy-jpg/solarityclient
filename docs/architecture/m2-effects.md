@@ -272,7 +272,8 @@ Rendering now samples the eleven emitter-time tracks through the selected M2
 and global clocks, while each particle's five lifetime ramps use the stock
 signed fixed-16 normalized domain `0x0000..=0x7FFF`. Continuous color, alpha,
 and scale ramps interpolate; byte-domain particle RGB becomes normalized only
-at the renderer boundary, and integer head/tail flipbook cells remain held. A
+at the renderer boundary, and integer head/tail flipbook cells interpolate
+before rounding to the nearest even integer. A
 particle-local stream reseeded from its stored 16-bit word applies shared or
 independent scale variation and multiply-high random head-cell selection in
 the executable's call order. Initial rotation and angular velocity use their
@@ -282,7 +283,7 @@ lifetime timestamps instead of making the interval search order-dependent.
 
 Ordinary particle heads and tails now prepare PNC0T0 vertices from the
 executable corner and atlas-coordinate tables. Each live particle samples its
-color, scale, held head/tail cell, and head rotation. Tails extend opposite
+color, scale, rounded head/tail cell, and head rotation. Tails extend opposite
 velocity for the authored length, optionally clamp that length to particle
 age, and reproduce the executable's short-projection fallback billboard.
 The process-wide twinkle table consumes one combined two-call CRT seed during
@@ -551,3 +552,25 @@ all four samples while preserving their live-particle counts.
 geometry bounds, alpha coverage, vertex counts, and triangle clip-plane
 rejection over 20 seconds. Surviving triangles are only candidates: this does
 not measure GPU occlusion, blended pixels, or equivalence to a stock capture.
+
+## September 12: street-brazier smoke flipbook
+
+The reported Orgrimmar gate brazier is `OrcBrazierStreetLamp.m2`. Its smoke
+emitter uses `Spells/ToonSmoke16.blp`, an 8-by-8 atlas. The head-frame ramp has
+keys `[0, 16384, 16384, 32767]` and cells `[0, 16, 17, 33]`. Holding the lower
+key kept the early atlas frame for almost half of each particle's 3.725-second
+life instead of advancing through the smoke animation.
+
+Native `979560` interpolates unsigned frame values through `9793B0` and
+`979330`, stores the result to float32, and uses nearest-even `FISTP` rounding.
+Two-key ramps use normalized age directly; three-key ramps split at the middle
+normalized timestamp. General ramps retain duplicate-key transitions. Both
+head and tail selection now follow that path. Random-cell selection for an
+absent head ramp retains its previous PRNG ordering.
+
+`particle_flipbook_oracle.py` executes those original functions without hooks.
+Its 792 cases cover single, two-key, three-key, descending, uneven, and actual
+brazier-style duplicate-midpoint ramps, including rounding ties and endpoint
+samples. Tests decode matching M2 ramps and compare both head and tail cells.
+This checks lifetime frame selection; a static screenshot cannot establish
+matching process-wide random histories or complete smoke motion.

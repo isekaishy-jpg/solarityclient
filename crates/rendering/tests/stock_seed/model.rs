@@ -10,6 +10,8 @@ mod file_filtering;
 mod mesh_transfer;
 #[path = "model/npc_equipment.rs"]
 mod npc_equipment;
+#[path = "model/particle_flipbook.rs"]
+mod particle_flipbook;
 #[path = "model/particle_fog.rs"]
 mod particle_fog;
 #[path = "model/particle_frame.rs"]
@@ -1199,8 +1201,8 @@ fn m2_particle_poses_sample_stock_track_domains() -> Result<(), Box<dyn Error>> 
         .max_element()
             < 0.0001
     );
-    assert_eq!(lifetime.head_texture_cell(), 2);
-    assert_eq!(lifetime.tail_texture_cell(), 4);
+    assert_eq!(lifetime.head_texture_cell(), 4);
+    assert_eq!(lifetime.tail_texture_cell(), 6);
     let rotation = M2ParticleRotationPose::sample(emitter, random_word);
     let mut rotation_random = M2ParticleRandom::new(u32::from(random_word));
     let expected_initial = 0.8 + rotation_random.next_signed() * 0.9;

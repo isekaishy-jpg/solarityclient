@@ -248,6 +248,7 @@ pub struct RuntimeTerrainCoordinator {
     streaming: Option<TerrainStreamingDemand>,
     pending_stream: Option<PendingTerrainGeneration>,
     failed_stream: std::collections::HashSet<TerrainTileIndex>,
+    specular_textures: bool,
     camera_profile: Option<camera_profile::CameraProfile>,
     camera_geometry: movement::CameraGeometry,
 }
@@ -289,9 +290,20 @@ impl RuntimeTerrainCoordinator {
             streaming: None,
             pending_stream: None,
             failed_stream: std::collections::HashSet::new(),
+            specular_textures: false,
             camera_profile: camera_profile::CameraProfile::from_environment(),
             camera_geometry: movement::CameraGeometry::default(),
         }
+    }
+
+    /// Selects terrain texture variants before any residency work begins.
+    ///
+    /// The client supplies its startup `specular` setting; standalone residency
+    /// users default to ordinary MTEX paths. Stock applies this setting on restart.
+    #[must_use]
+    pub fn with_specular_textures(mut self, enabled: bool) -> Self {
+        self.specular_textures = enabled;
+        self
     }
 
     /// Supplies the archive catalog used by bounded worker-side terrain preparation.
@@ -356,7 +368,10 @@ impl RuntimeTerrainCoordinator {
             Err(error) => return Err(error.into()),
         };
         let source = self.take_worker_source()?;
-        let task = permit.submit(move || prepare_terrain_on_worker(source, definition, request));
+        let specular_textures = self.specular_textures;
+        let task = permit.submit(move || {
+            prepare_terrain_on_worker(source, definition, request, specular_textures)
+        });
         self.pending = Some(PendingTerrainGeneration {
             request,
             submitted_at: std::time::Instant::now(),
@@ -538,7 +553,10 @@ impl RuntimeTerrainCoordinator {
             Err(error) => return Err(error.into()),
         };
         let source = self.take_worker_source()?;
-        let task = permit.submit(move || prepare_terrain_on_worker(source, definition, request));
+        let specular_textures = self.specular_textures;
+        let task = permit.submit(move || {
+            prepare_terrain_on_worker(source, definition, request, specular_textures)
+        });
         self.pending = Some(PendingTerrainGeneration {
             request,
             submitted_at: std::time::Instant::now(),
@@ -736,6 +754,7 @@ impl RuntimeTerrainCoordinator {
             .load_tile(&mut self.assets.borrow_mut(), tile_index)?;
         let resident = ResidentTerrainTile::prepare(
             decoded,
+            self.specular_textures,
             &mut self.ground_detail_assets,
             &mut self.liquid_assets,
             &mut self.textures,
@@ -1271,6 +1290,7 @@ impl TerrainWorkerState {
         &mut self,
         definition: &MapDefinition,
         request: TerrainRequest,
+        specular_textures: bool,
     ) -> Result<ResidentTerrainMap, RuntimeTerrainError> {
         let terrain = TerrainMap::load(&mut self.assets, definition)?;
         if self
@@ -1311,6 +1331,7 @@ impl TerrainWorkerState {
         let decoded = terrain.load_tile(&mut self.assets, request.tile)?;
         let tile = Some(ResidentTerrainTile::prepare(
             decoded,
+            specular_textures,
             &mut self.ground_detail_assets,
             &mut self.liquid_assets,
             &mut self.textures,
@@ -1345,6 +1366,7 @@ fn prepare_terrain_on_worker(
     source: TerrainWorkerSource,
     definition: MapDefinition,
     request: TerrainRequest,
+    specular_textures: bool,
 ) -> TerrainWorkerCompletion {
     let mut worker = match source {
         TerrainWorkerSource::Catalog(catalog) => match TerrainWorkerState::mount(catalog) {
@@ -1358,7 +1380,7 @@ fn prepare_terrain_on_worker(
         },
         TerrainWorkerSource::Ready(worker) => worker,
     };
-    let result = worker.prepare(&definition, request);
+    let result = worker.prepare(&definition, request, specular_textures);
     worker.collect_unused();
     TerrainWorkerCompletion {
         worker: Some(worker),
@@ -1444,8 +1466,11 @@ pub(super) struct ResidentTerrainTile {
 }
 
 impl ResidentTerrainTile {
+    // Borrow each independently owned asset cache for this admission transaction.
+    #[allow(clippy::too_many_arguments)]
     fn prepare(
         decoded: DecodedTerrainTile,
+        specular_textures: bool,
         ground_detail_assets: &mut GroundDetailAssetCache,
         liquid_assets: &mut LiquidAssetCache,
         texture_cache: &mut BlpTextureCache,
@@ -1455,12 +1480,15 @@ impl ResidentTerrainTile {
     ) -> Result<Self, RuntimeTerrainError> {
         // Resolve each MTEX entry exactly once before accepting the tile. This
         // preserves authored layer indices while avoiding partial residency.
-        let textures = decoded
+        let mesh = Arc::new(TerrainTileMeshPlan::prepare_with_specular(
+            &decoded,
+            specular_textures,
+        )?);
+        let textures = mesh
             .textures()
             .iter()
             .map(|path| texture_cache.load(store, path))
             .collect::<Result<Vec<_>, _>>()?;
-        let mesh = Arc::new(TerrainTileMeshPlan::prepare(&decoded)?);
         let ground_detail =
             ground_detail_assets.prepare(&decoded, model_cache, texture_cache, store)?;
         let collision = TerrainCollisionMesh::prepare(&decoded)?;

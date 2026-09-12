@@ -11,6 +11,65 @@ use wow_adt::{
 };
 use wow_wdt::chunks::MphdFlags;
 
+/// Missing MTXF flags and ordinary layers select stock's masked texture family.
+#[test]
+fn terrain_texture_paths_match_native_loader() -> Result<(), Box<dyn Error>> {
+    let maps = map_table();
+    let wdt = terrain_wdt()?;
+    for line in include_str!("../fixtures/terrain_texture_selection_native.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        let enabled = words[0] == "1";
+        let base = AdtBuilder::new()
+            .with_version(AdtVersion::WotLK)
+            .add_texture(words[2])
+            .build()?
+            .to_bytes()?;
+        let ParsedAdt::Root(mut root) = parse_adt(&mut Cursor::new(&base))? else {
+            return Err("root ADT".into());
+        };
+        root.texture_flags = if words[1] == "absent" {
+            None
+        } else {
+            Some(MtxfChunk {
+                flags: vec![words[1].parse()?],
+            })
+        };
+        let adt = BuiltAdt::from_root_adt(*root, None).to_bytes()?;
+        let fixture = Fixture::new(&[
+            FixtureFile {
+                path: "DBFilesClient/Map.dbc",
+                bytes: &maps,
+            },
+            FixtureFile {
+                path: "World/Maps/Northrend/Northrend.wdt",
+                bytes: &wdt,
+            },
+            FixtureFile {
+                path: "World/Maps/Northrend/Northrend_32_32.adt",
+                bytes: &adt,
+            },
+        ])?;
+        let mut store = AssetStore::mount(ArchiveCatalog::discover(
+            ClientDataRoot::new(fixture.data_root())?,
+            Locale::EnUs,
+        )?)?;
+        let maps = MapCatalog::load(&mut store)?;
+        let map = TerrainMap::load(&mut store, maps.map(571).ok_or("map")?)?;
+        let tile = map.load_tile(&mut store, TerrainTileIndex::new(32, 32).ok_or("tile")?)?;
+        let plan = TerrainTileMeshPlan::prepare_with_specular(&tile, enabled)?;
+        assert_eq!(plan.textures(), [AssetPath::new(words[3])?], "{line}");
+        assert_eq!(
+            tile.textures(),
+            [AssetPath::new(words[2])?],
+            "MTEX must remain authored"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn terrain_material_variants_match_native_shader_frames() -> Result<(), Box<dyn Error>> {
     let _lock = crate::support::sdl_test_lock();

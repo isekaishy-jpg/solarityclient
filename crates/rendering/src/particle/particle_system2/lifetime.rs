@@ -31,7 +31,7 @@ pub struct M2ParticleLifetimePose {
 }
 
 impl M2ParticleLifetimePose {
-    /// Samples continuous ramps linearly and holds discrete atlas selectors.
+    /// Samples lifetime ramps and rounds interpolated atlas selectors to cells.
     ///
     /// Build 12340 stores lifetime timestamps in a `u16` container but reads
     /// them as signed fixed-16 values. `0x0000..=0x7FFF` therefore maps birth
@@ -83,16 +83,14 @@ impl M2ParticleLifetimePose {
             from + (to - from) * amount
         });
         let mut random = M2ParticleRandom::new(u32::from(random_word));
-        let head_texture_cell = sample_held(emitter.head_uv_animation(), key, 0).map_or_else(
-            || {
+        let head_texture_cell = sample_cell(emitter.head_uv_animation(), normalized_age)
+            .unwrap_or_else(|| {
                 if emitter.flags() & CHOOSE_RANDOM_TEXTURE == 0 {
                     0
                 } else {
                     random_atlas_cell(emitter, &mut random)
                 }
-            },
-            u32::from,
-        );
+            });
         let mut scale = sample_linear(emitter.scale(), key, Vec2::ONE, Vec2::lerp);
         let variation = emitter.scale_variation();
         let scale_random = if emitter.flags() & INDEPENDENT_SCALE_VARIATION != 0 {
@@ -110,8 +108,8 @@ impl M2ParticleLifetimePose {
             color: color.extend(alpha),
             scale,
             head_texture_cell,
-            tail_texture_cell: sample_held(emitter.tail_uv_animation(), key, 0)
-                .map_or(0, u32::from),
+            tail_texture_cell: sample_cell(emitter.tail_uv_animation(), normalized_age)
+                .unwrap_or(0),
         })
     }
 
@@ -127,13 +125,13 @@ impl M2ParticleLifetimePose {
         self.scale
     }
 
-    /// Returns the held head flipbook-cell selector.
+    /// Returns the rounded head flipbook-cell selector.
     #[must_use]
     pub const fn head_texture_cell(self) -> u32 {
         self.head_texture_cell
     }
 
-    /// Returns the held tail flipbook-cell selector.
+    /// Returns the rounded tail flipbook-cell selector.
     #[must_use]
     pub const fn tail_texture_cell(self) -> u32 {
         self.tail_texture_cell
@@ -211,13 +209,41 @@ where
     interpolate(from, to, amount)
 }
 
-/// Samples an atlas selector as a held integer rather than a fractional cell.
-fn sample_held<T>(track: &M2ParticleLifetimeTrack<T>, key: f32, default: T) -> Option<T>
-where
-    T: Copy,
-{
-    let (lower, _upper, _amount) = interval(track, key)?;
-    Some(track.values().get(lower).copied().unwrap_or(default))
+/// 979560 interpolates unsigned cells, stores to f32, then uses nearest-even FISTP.
+/// 9793B0 specializes two/three-key ramps; keep its normalized-time arithmetic
+/// separate from the byte-domain color/scale sampler, including duplicate keys.
+fn sample_cell(track: &M2ParticleLifetimeTrack<u16>, age: f32) -> Option<u32> {
+    let values = track.values();
+    let timestamps = track.timestamps();
+    if values.len() == 1 {
+        return Some(u32::from(values[0]));
+    }
+    if values.is_empty() {
+        return None;
+    }
+    let age = f64::from(age.clamp(0.0, 1.0));
+    let time = |index: usize| f64::from(timestamps[index]) * f64::from(1.0_f32 / 32767.0);
+    let (lower, upper, amount) = match timestamps.len() {
+        2 => (0, 1, age),
+        3 if age < time(1) => (0, 1, age / time(1)),
+        3 => (1, 2, (age - time(1)) / (1.0 - time(1))),
+        _ => {
+            let upper = timestamps
+                .partition_point(|timestamp| {
+                    f64::from(*timestamp) * f64::from(1.0_f32 / 32767.0) <= age
+                })
+                .clamp(1, timestamps.len() - 1);
+            let lower = upper - 1;
+            (
+                lower,
+                upper,
+                (age - time(lower)) / (time(upper) - time(lower)),
+            )
+        }
+    };
+    let from = f64::from(values[lower]);
+    let to = f64::from(values[upper]);
+    Some(((from + (to - from) * amount) as f32).round_ties_even() as u32)
 }
 
 /// Reduces one raw generator word into the complete authored atlas domain.

@@ -17,6 +17,9 @@ pub const TERRAIN_MATERIAL_ATLAS_BYTE_COUNT: usize =
 /// Failure while aggregating a validated ADT into fixed Vulkan index ranges.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum TerrainTileMeshPlanError {
+    /// A terrain filename cannot be rewritten to its stock specular variant.
+    #[error("terrain specular texture requires a valid filename extension")]
+    TexturePath,
     /// The combined tile no longer fits stock's compact unsigned-short index ABI.
     #[error("terrain tile geometry exceeds unsigned-short vertex indexing")]
     IndexCapacity,

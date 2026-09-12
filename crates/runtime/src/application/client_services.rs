@@ -492,6 +492,7 @@ impl ClientServices {
             })?;
         let login = RuntimeLoginCoordinator::new(configuration.login().clone());
         let world = RuntimeWorldCoordinator::new();
+        let terrain_specular = glue.cvar_boolean("specular");
         Ok((
             Self {
                 renderer,
@@ -567,6 +568,7 @@ impl ClientServices {
                 .with_transport_catalog(transport_paths),
                 transport_update_time_ms: crate::platform::client_milliseconds(),
                 terrain: RuntimeTerrainCoordinator::new(assets, maps)
+                    .with_specular_textures(terrain_specular)
                     .with_worker_catalog(terrain_catalog),
                 terrain_frame: None,
                 liquids,

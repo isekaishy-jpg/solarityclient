@@ -17,6 +17,38 @@ impl TerrainTileMeshPlan {
     /// Returns [`TerrainTileMeshPlanError`] if fixed stock geometry can no
     /// longer fit the compact index or Vulkan draw-counter representation.
     pub fn prepare(tile: &DecodedTerrainTile) -> Result<Self, TerrainTileMeshPlanError> {
+        Self::prepare_with_specular(tile, false)
+    }
+
+    /// Selects the stock terrain texture family for the startup specular setting.
+    ///
+    /// `7D6980` replaces the extension with `_s.blp` when specular is enabled,
+    /// except for MTXF bit 0 (cube textures). The authored MTEX table stays intact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TerrainTileMeshPlanError`] for invalid selected paths or geometry.
+    pub fn prepare_with_specular(
+        tile: &DecodedTerrainTile,
+        specular_enabled: bool,
+    ) -> Result<Self, TerrainTileMeshPlanError> {
+        let textures = tile
+            .textures()
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let flags = tile.texture_flags().map_or(0, |flags| flags[index]);
+                if !specular_enabled || flags & 1 != 0 {
+                    return Ok(path.clone());
+                }
+                let (stem, _) = path
+                    .as_str()
+                    .rsplit_once('.')
+                    .ok_or(TerrainTileMeshPlanError::TexturePath)?;
+                solarity_asset::AssetPath::new(format!("{stem}_s.blp"))
+                    .map_err(|_| TerrainTileMeshPlanError::TexturePath)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut vertices = Vec::with_capacity(tile.chunks().len() * 145);
         let mut indices = Vec::with_capacity(tile.chunks().len() * 8 * 8 * 4 * 3);
         let mut chunks = Vec::with_capacity(tile.chunks().len());
@@ -59,7 +91,7 @@ impl TerrainTileMeshPlan {
             vertices,
             indices,
             chunks,
-            tile.textures().to_vec(),
+            textures,
             tile.texture_flags().map(<[u32]>::to_vec),
             atlas,
         ))

@@ -181,7 +181,7 @@ The controlled Valley of Trials scene isolates the conspicuous white patches
 to the specular contribution: disabling glow reduces their amplification;
 disabling specular removes them. These are diagnostic profile copies, not a
 change to the product defaults. A 02:00 replay retains strong highlights.
-The user's saved stock screenshot is a nighttime Orgrimmar-gate scene; the
+The user's saved stock screenshot is an afternoon Orgrimmar-gate scene; the
 earlier combined captures used a different Valley of Trials position at noon.
 They establish coexistence of the implemented features, not a matched stock
 lighting comparison. Native material selection, complete scene inputs and
@@ -195,3 +195,32 @@ This verifies the ambient/directional and tested specular terrain paths. It does
 entire outdoor lighting system. Dynamic shadow maps, other material families,
 and visual comparisons at the
 same camera/time/settings still require their own integration and checks.
+
+## September 12: Orgrimmar gate texture selection
+
+The live stock capture at 19:15 UTC reports day fraction 0.6286078 (about
+15:05 realm time), with specular enabled. Its c25/c26/c27 ambient, diffuse,
+and specular colors match the local LightCatalog sample. The loaded VS3 and
+PS3 terrain bytecode also retains the previously tested half-vector highlight.
+The screenshot's clock was previously misread as nighttime.
+
+The missing behavior was upstream of those shaders. Native `7D6980` replaces
+the MTEX filename extension with `_s.blp` when `CE049D` enables specular,
+unless MTXF bit 0 selects a cube texture. An absent MTXF table means zero
+flags. `7D9990` submits that selected filename; there is no ordinary-texture
+fallback in this selector. Durotar's dirt, smooth dirt, rock and road all have
+these BC2 variants with authored alpha masks. Their ordinary BC1 textures
+have opaque alpha, which incorrectly supplied a full-strength specular mask.
+
+The client now supplies its startup specular setting to synchronous terrain
+residency, initial worker preparation, and neighbor streaming. The mesh and
+texture source tables retain the same selected paths; the decoded MTEX table
+remains authored. Standalone terrain owners and ordinary mesh preparation
+retain their explicit non-specular default.
+
+`terrain_texture_selection_oracle.py` executes unchanged `7D6980`, `76ED20`
+and `76E720`, supplying only GPU capabilities and capturing texture requests.
+Its 24 fixtures cover enabled/disabled specular, absent/zero/mixed MTXF flags,
+and filenames with multiple dots. Rendering tests compare decoded tile plans
+with those requests. The streaming regression supplies only the `_s.blp`
+asset to prove both synchronous and worker paths actually load it.
