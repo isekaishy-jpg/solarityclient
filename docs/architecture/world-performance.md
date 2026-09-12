@@ -1171,3 +1171,9 @@ Local evidence: `target/m2-doodad-{before,after}-{one,two}.csv`,
 Benchmark SHA-256:
 previous `3c4d88f11d50e2aff931203538668f40536e356eaff2feaf41ba8c327db4cbcf`,
 retained `cea239d80b7d637f13ed6cad13666f8069ec95fc8739438ae11a05707253ef9e`.
+
+Testing Build 110 packages source revision `1ee504a8`. The installed runtime
+matches the package SHA-256
+`a5e458f5a164a24dc5df0ee08fdff26f1fc1456afa6f418c37a4b08a83c1efaf`,
+with the reserved package number recorded as dirty source state. The measured
+benchmark is preserved as `target/benchmark-build110-before-terrain-culling.exe`.
