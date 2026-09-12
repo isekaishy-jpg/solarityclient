@@ -53,6 +53,8 @@ pub(super) struct WorldSubmitTimings {
 }
 
 pub(super) struct RecordContext<'a> {
+    pub(super) scene: super::WorldFrameScene<'a>,
+    pub(super) submission_fog: super::fog::SubmissionFog,
     pub(super) shadow_pipeline: &'a crate::device::vulkan_shadow::ShadowPipelines,
     pub(super) shadow_resources: &'a crate::device::vulkan_shadow::ShadowFrameResources,
     pub(super) shadow_frame: Option<crate::WorldPrimaryShadowFrame<'a>>,
@@ -125,7 +127,9 @@ pub(super) struct RecordContext<'a> {
     pub(super) image_index: u32,
 }
 
-pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
+pub(super) fn record(
+    context: RecordContext<'_>,
+) -> Result<(usize, super::fog::SubmissionFog), VulkanError> {
     let begin =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     // SAFETY: Slot pool was reset and this primary buffer is not pending.
@@ -222,7 +226,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
             .device
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
-    let mut bindings = WorldCommandBindings::default();
+    let mut bindings = WorldCommandBindings::with_fog(context.submission_fog);
     if let Some(window) = context
         .sky_window
         .and_then(|window| window.clipped(context.screen_window))
@@ -301,7 +305,7 @@ pub(super) fn record(context: RecordContext<'_>) -> Result<usize, VulkanError> {
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end world command buffer", source))?;
-    Ok(low_detail_draw_count)
+    Ok((low_detail_draw_count, bindings.fog))
 }
 
 /// Dispatches the typed streams in their one stock scene-element order.
@@ -356,6 +360,7 @@ fn record_m2_scene_elements(
                     next_m2,
                     draw,
                     m2_scene_set(context, draw.light_bank()),
+                    effect_scene(context, draw.scene_index(), draw.light_bank())?,
                     bindings,
                 )?;
                 next_m2 += 1;
@@ -678,6 +683,24 @@ fn transition_to_ui_overlay(context: &RecordContext<'_>) {
     };
 }
 
+fn effect_scene(
+    context: &RecordContext<'_>,
+    scene_index: Option<u32>,
+    light_bank: crate::M2SceneLightBank,
+) -> Result<crate::M2SceneUniform, VulkanError> {
+    scene_index.map_or_else(
+        || Ok(context.scene.m2(light_bank)),
+        |index| {
+            context
+                .scene
+                .m2_instance_scenes()
+                .get(index as usize)
+                .copied()
+                .ok_or(VulkanError::WorldFrameCapacity)
+        },
+    )
+}
+
 fn record_particle(
     context: &RecordContext<'_>,
     draw: M2ParticlePreparedDraw,
@@ -697,6 +720,19 @@ fn record_particle(
         m2_scene_set(context, draw.light_bank()),
     )?;
     let sets = [scene_set, texture];
+    let scene = effect_scene(context, draw.scene_index(), draw.light_bank())?;
+    let material = context
+        .m2_particle_pipelines
+        .info(draw.pipeline())
+        .ok_or(VulkanError::UnknownM2ParticlePipelineHandle)?
+        .material();
+    if scene.fog_enabled() {
+        bindings.fog.publish(
+            scene.fog_parameters(),
+            material.fog_mode(),
+            scene.fog_color(),
+        );
+    }
     // SAFETY: The prepared packet proves compatible renderer-local handles;
     // frame validation proves every UINT32 index addresses the PNC0T0 stream.
     unsafe {
@@ -753,11 +789,32 @@ fn record_ribbon(
         m2_scene_set(context, draw.light_bank()),
     )?;
     let sets = [scene_set, texture];
+    let scene = effect_scene(context, draw.scene_index(), draw.light_bank())?;
+    let material = context
+        .m2_ribbon_pipelines
+        .info(draw.pipeline())
+        .ok_or(VulkanError::UnknownM2RibbonPipelineHandle)?
+        .material();
+    if draw.first_material_pass() && scene.fog_enabled() {
+        bindings.fog.publish(
+            scene.fog_parameters(),
+            material.fog_mode(),
+            scene.fog_color(),
+        );
+    }
+    let fog = bindings.fog.push_bytes(!material.is_unfogged());
     // SAFETY: The prepared packet proves compatible renderer-local handles and
     // its range was checked against the slot's mapped PCT0 stream.
     unsafe {
         bindings.bind_pipeline(context, pipeline);
         bindings.bind_vertex(context, context.ribbon_vertex_buffer);
+        context.device.cmd_push_constants(
+            context.command_buffer,
+            layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &fog,
+        );
         context.device.cmd_bind_descriptor_sets(
             context.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -847,6 +904,13 @@ fn record_world_model(
     draw: WorldModelPreparedDraw,
     bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
+    if let Some(color) = draw.submission_fog_color() {
+        bindings.fog.publish(
+            context.scene.world_model().fog_parameters(),
+            crate::M2FogMode::SceneColor,
+            color,
+        );
+    }
     let receives_shadow = context.shadow_frame.is_some();
     let (pipeline, layout) = if receives_shadow {
         context
@@ -912,6 +976,7 @@ fn record_sky_models(
                     index,
                     *draw,
                     context.frame_sets[9 + slot],
+                    batch.scene,
                     bindings,
                 )?;
                 index += 1;
@@ -919,7 +984,14 @@ fn record_sky_models(
         }
     } else {
         for draw in frame.stars {
-            record_m2(context, index, *draw, context.frame_sets[8], bindings)?;
+            record_m2(
+                context,
+                index,
+                *draw,
+                context.frame_sets[8],
+                frame.scene,
+                bindings,
+            )?;
             index += 1;
         }
     }
@@ -931,8 +1003,21 @@ fn record_m2(
     draw_index: usize,
     draw: M2PreparedDraw,
     scene_set: vk::DescriptorSet,
+    scene: crate::M2SceneUniform,
     bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
+    let material = context
+        .m2_pipelines
+        .info(draw.pipeline())
+        .ok_or(VulkanError::UnknownM2PipelineHandle)?
+        .material();
+    if scene.fog_enabled() {
+        bindings.fog.publish(
+            scene.fog_parameters(),
+            material.fog_mode(),
+            draw.material().fog_color(),
+        );
+    }
     // Sky model packets follow the ordinary M2 material range but do not
     // receive the ground-centered primary shadow map.
     let receives_shadow = context.shadow_frame.is_some() && draw_index < context.m2_draws.len();

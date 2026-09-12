@@ -347,10 +347,12 @@ the blend is opaque, and D3D culling is disabled to isolate color selection.
 The Vulkan framebuffer regression compares those pixels with scene lights both
 zero and overbright. It also reverses strip winding: a culled material must draw
 one side and a two-sided material must draw both. This checks cull enablement;
-it does not independently establish the stock front-face convention. Ribbon
-fog, multipass fog-color retention and shadow receiving require separate checks.
+it does not independently establish the stock front-face convention or shadow
+receiving.
 
-The pending fog implementation must preserve the shared submission state.
+### Ribbon fog and retained submission state
+
+Ribbon fog now preserves the shared submission state.
 `81FB10` publishes fog color/range/exponent through `873210` using the ribbon's
 first material. `980B70` toggles fog through `873390` for each pass without
 reselecting its color. Disabling fog uploads neutral vertex coefficients but
@@ -359,11 +361,39 @@ restore them even if the first material was unfogged. `7A8440` also publishes
 these constants during WMO rendering, selecting the local or outdoor fog bank
 and an optional black color through its cached mode. Consequently, an emitter
 alone is insufficient to reproduce inherited fog: the replay must follow the
-actual WMO/M2/effect submission order. The ribbon fragment shader still lacks
-that fog path.
+actual WMO/M2/effect submission order. The renderer retains this bank across
+frame slots, publishes each source in command order, and gives each ribbon pass
+a 32-byte push block. The vertex shader evaluates the original eye-depth fog
+equation and exponent before interpolation; the fragment shader blends RGB
+toward the retained color while preserving alpha. Scene colors cross the native
+packed-byte boundary, and doubled modulation selects `128/255` half-white.
+The native zero-initialized bank produces visibility one; this is explicit in
+GLSL because `pow(0, 0)` is otherwise undefined.
 
-The 2026-09-12 color/culling change passes workspace Clippy with warnings denied
-and all 1,317 workspace tests (23 explicit environment-dependent tests ignored).
+WMO publication follows the final physical surface pass. Ordinary missing-MOCV
+groups select outdoor fog; ordinary MOCV groups select their group bank.
+Unified nontransition callbacks force fog even for an unfogged MOMT material
+and select outdoor color for group flags `0x48`. Transition callbacks retain
+the material fog enable and selected group bank. This metadata describes the
+common registers inherited by later M2 effects; it does not establish complete
+WMO surface-shader parity.
+
+`tools/ghidra/ribbon_fog_oracle.py` executes native `81FB10`, `873210` and
+`873390`, then renders the original fingerprinted `Color_T1`/`Combiners_Mod`
+BLS programs through Direct3D9. Its 72 serial cases cover all seven first-pass
+blend modes, near/mid/end/beyond fog depth, two exponents, startup state,
+unfogged passes, scene-query disable and restoration across submissions.
+The Vulkan regression checks 143 RGBA captures, including a translated and
+rotated orthographic camera. A separate framebuffer regression resets the bank
+before each of nine model/particle/WMO handoffs and checks the inherited native
+pixels; model and particle sources use an instance scene distinct from the
+default frame scene. Runtime liquid-order coverage also verifies that exactly
+the first authored ribbon pass performs common setup.
+
+The 2026-09-12 color/culling and retained-fog changes pass workspace Clippy with
+warnings denied and all 1,319 workspace tests (23 explicit environment-dependent
+tests ignored). Ribbon shadow reception and combined populated-world comparison
+remain open.
 
 ### Attached particle card size
 

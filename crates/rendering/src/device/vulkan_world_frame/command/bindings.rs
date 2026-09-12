@@ -9,12 +9,20 @@ use super::RecordContext;
 /// Descriptor sets remain bound per draw with their current layout and offsets.
 #[derive(Default)]
 pub(super) struct WorldCommandBindings {
+    pub(super) fog: super::super::fog::SubmissionFog,
     pipeline: vk::Pipeline,
     vertex: Option<(vk::Buffer, vk::DeviceSize)>,
     index: Option<(vk::Buffer, vk::DeviceSize, vk::IndexType)>,
 }
 
 impl WorldCommandBindings {
+    pub(super) fn with_fog(fog: super::super::fog::SubmissionFog) -> Self {
+        Self {
+            fog,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn bind_pipeline(&mut self, context: &RecordContext<'_>, pipeline: vk::Pipeline) {
         if self.pipeline == pipeline {
             return;

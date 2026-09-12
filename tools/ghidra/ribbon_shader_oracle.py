@@ -47,7 +47,7 @@ def select(flags):
     return runtime, vertex, pixel
 
 
-def render(renderer, vertex_shader, pixel_shader):
+def render(renderer, vertex_shader, pixel_shader, fog_coefficients=None, fog_color=None, eye_depth=None):
     device = renderer.device
     vertex = renderer.create(device, 91, 'p', buffer(vertex_shader))
     pixel = renderer.create(device, 106, 'p', buffer(pixel_shader))
@@ -62,8 +62,13 @@ def render(renderer, vertex_shader, pixel_shader):
     constants[24:32] = [1., 0., 0., 0., 0., 1., 0., 0.]
     constants[120:124] = [0., 1., 1., 0.]
     constants[124:136] = [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0.]
+    if eye_depth is not None:
+        constants[132:136] = [0., 0., 0., eye_depth]
+        constants[16:20] = [0., 0., 0., .5]
+    if fog_coefficients is not None:
+        constants[120:124] = fog_coefficients
     call(device, 94, 'upu', 0, floats(constants), 35)
-    call(device, 109, 'upu', 2, floats([0., 0., 0., 0.]), 1)
+    call(device, 109, 'upu', 2, floats(fog_color if fog_color is not None else [0., 0., 0., 0.]), 1)
     texel = struct.pack('<4f', 204 / 255, 153 / 255, 102 / 255, 192 / 255)
     call(device, 65, 'up', 0, renderer.texture(texel * 16))
     vertices = b''.join(struct.pack('<3f4B2f', x, y, .5, 191, 128, 64, 96, .5, .5)

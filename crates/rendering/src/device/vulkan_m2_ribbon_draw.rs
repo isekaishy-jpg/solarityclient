@@ -20,9 +20,24 @@ pub struct M2RibbonPreparedDraw {
     order: M2EffectOrder,
     blend_order: u8,
     scene_order: u32,
+    first_material_pass: bool,
 }
 
 impl M2RibbonPreparedDraw {
+    /// Marks whether this pass performs the emitter's common scene setup.
+    /// Later passes retain the first pass's fog registers in authored order.
+    #[must_use]
+    pub const fn with_first_material_pass(mut self, first: bool) -> Self {
+        self.first_material_pass = first;
+        self
+    }
+
+    /// Reports whether this pass publishes the emitter's common fog state.
+    #[must_use]
+    pub const fn first_material_pass(self) -> bool {
+        self.first_material_pass
+    }
+
     /// Selects the world instance scene supplied in `WorldFrameScene`.
     #[must_use]
     pub const fn with_scene_index(mut self, index: Option<u32>) -> Self {
@@ -139,5 +154,6 @@ pub(in crate::device) fn prepare_draw(
         order,
         blend_order: material.blend_mode() as u8,
         scene_order: u32::MAX,
+        first_material_pass: true,
     })
 }

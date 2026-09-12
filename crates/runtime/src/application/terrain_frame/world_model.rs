@@ -455,17 +455,21 @@ impl WorldModelFrame {
                             requested: pass_index,
                             available: resources.pass_count,
                         })?;
-                    self.prepared_draws.push(renderer.prepare_world_model_draw(
-                        source.mesh,
-                        resource.pipeline,
-                        resource.texture_set,
-                        &source.plan,
-                        draw_index,
-                        pass_index,
-                        placement.plan.transform(),
-                        environment_emissive,
-                        fog_color,
-                    )?);
+                    self.prepared_draws.push(
+                        renderer
+                            .prepare_world_model_draw(
+                                source.mesh,
+                                resource.pipeline,
+                                resource.texture_set,
+                                &source.plan,
+                                draw_index,
+                                pass_index,
+                                placement.plan.transform(),
+                                environment_emissive,
+                                fog_color,
+                            )?
+                            .with_outdoor_fog_color(ordinary_fog_color),
+                    );
                 }
             }
         }

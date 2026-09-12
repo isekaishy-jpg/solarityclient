@@ -67,6 +67,7 @@ pub struct M2SceneUniform {
     diffuse_light: Vec3,
     light_direction: Vec3,
     fog_parameters: Vec4,
+    fog_enabled: bool,
     specular_enabled: bool,
     fog_color: Vec3,
     local_lights: [M2LocalLightState; 4],
@@ -103,6 +104,7 @@ impl M2SceneUniform {
             diffuse_light,
             light_direction,
             fog_parameters,
+            fog_enabled: fog_parameters.y > fog_parameters.x,
             specular_enabled: true,
             fog_color,
             local_lights,
@@ -140,6 +142,31 @@ impl M2SceneUniform {
     pub const fn with_fog_color(mut self, color: Vec3) -> Self {
         self.fog_color = color;
         self
+    }
+
+    /// Returns the retained start, end and exponent used by effect submission.
+    #[must_use]
+    pub const fn fog_parameters(self) -> Vec4 {
+        self.fog_parameters
+    }
+
+    /// Returns the owner-selected scene fog color before native byte packing.
+    #[must_use]
+    pub const fn fog_color(self) -> Vec3 {
+        self.fog_color
+    }
+
+    /// Sets the scene-query fog enable independently of its retained range.
+    #[must_use]
+    pub const fn with_fog_enabled(mut self, enabled: bool) -> Self {
+        self.fog_enabled = enabled;
+        self
+    }
+
+    /// Reports whether common M2 submission publishes this query's fog bank.
+    #[must_use]
+    pub const fn fog_enabled(self) -> bool {
+        self.fog_enabled
     }
 
     /// Applies the live build-12340 `specular` CVar to additive M2 stages.
@@ -188,6 +215,12 @@ pub struct M2MaterialUniform {
 }
 
 impl M2MaterialUniform {
+    /// Returns the owner-selected fog color retained for this mesh submission.
+    #[must_use]
+    pub fn fog_color(self) -> Vec3 {
+        self.fog_color.truncate()
+    }
+
     /// Byte size of the exact std140 material descriptor block.
     pub const BYTE_SIZE: usize = 320;
 

@@ -29,7 +29,14 @@ impl M2RibbonPipelineLayout {
             return Ok(());
         }
         let sets = [scene_set, texture_set];
-        let info = vk::PipelineLayoutCreateInfo::default().set_layouts(&sets);
+        let pushes = [vk::PushConstantRange {
+            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            offset: 0,
+            size: 32,
+        }];
+        let info = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&sets)
+            .push_constant_ranges(&pushes);
         // SAFETY: Both borrowed layouts are live and remain owned by the M2
         // pipeline registry until after this layout is destroyed.
         self.handle = unsafe { device.create_pipeline_layout(&info, None) }

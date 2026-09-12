@@ -18,6 +18,8 @@ use crate::{
 /// One immutable physical WMO pass ready for future world-frame recording.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldModelPreparedDraw {
+    submission_fog_color: Option<Vec3>,
+    submission_fog_outdoor: bool,
     mesh: WorldModelMeshHandle,
     pipeline: WorldModelPipelineHandle,
     texture_set: WorldModelTextureSetHandle,
@@ -135,6 +137,20 @@ pub(in crate::device) fn prepare_shadow_draw(
 }
 
 impl WorldModelPreparedDraw {
+    /// Supplies the ordinary bank for native WMO paths which force exterior fog.
+    /// The surface's existing selected material color remains independent.
+    #[must_use]
+    pub fn with_outdoor_fog_color(mut self, color: Vec3) -> Self {
+        if self.submission_fog_outdoor && self.submission_fog_color.is_some() {
+            self.submission_fog_color = Some(color);
+        }
+        self
+    }
+
+    pub(in crate::device) const fn submission_fog_color(self) -> Option<Vec3> {
+        self.submission_fog_color
+    }
+
     /// Returns the renderer-local combined geometry identity.
     #[must_use]
     pub const fn mesh(self) -> WorldModelMeshHandle {
@@ -259,6 +275,22 @@ pub(in crate::device) fn prepare_draw(
             return Err(VulkanError::WorldModelDrawTextureSetMismatch);
         }
     }
+    // 7AC6A0 uses the ordinary bank. 7AC9F0's final pass uses the selected
+    // group bank. 7A9380 also forces fog for nontransition batches, selecting
+    // the ordinary bank for exterior-lit groups regardless of MOMT unfogged.
+    let transition = matches!(
+        draw.class(),
+        solarity_asset::WorldModelBatchClass::Transition
+    );
+    let forced = passes.is_unified() && !transition;
+    let submission_fog_color = (pass_index + 1 == passes.passes().len()
+        && (forced || !pass.material().is_unfogged()))
+    .then_some(fog_color);
+    let submission_fog_outdoor = if passes.is_unified() {
+        forced && group_flags & 0x48 != 0
+    } else {
+        group_flags & 4 == 0
+    };
     let material = WorldModelMaterialUniform::new(
         model,
         plan.ambient_color(),
@@ -268,6 +300,8 @@ pub(in crate::device) fn prepare_draw(
         fog_color,
     );
     Ok(WorldModelPreparedDraw {
+        submission_fog_color,
+        submission_fog_outdoor,
         mesh,
         pipeline,
         texture_set,

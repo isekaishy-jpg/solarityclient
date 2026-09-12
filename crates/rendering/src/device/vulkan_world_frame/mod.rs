@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 mod command;
+mod fog;
 mod resource;
 mod types;
 
@@ -105,6 +106,7 @@ pub(in crate::device) struct WorldFrameWindow {
 }
 
 pub(in crate::device) struct WorldFrameRenderer {
+    submission_fog: fog::SubmissionFog,
     shadows: crate::device::vulkan_shadow::ShadowPipelines,
     environment_shadows: crate::device::vulkan_shadow::EnvironmentShadowImages,
     resources: WorldFrameResources,
@@ -116,6 +118,7 @@ pub(in crate::device) struct WorldFrameRenderer {
 impl Default for WorldFrameRenderer {
     fn default() -> Self {
         Self {
+            submission_fog: fog::SubmissionFog::default(),
             shadows: crate::device::vulkan_shadow::ShadowPipelines::default(),
             environment_shadows: crate::device::vulkan_shadow::EnvironmentShadowImages::default(),
             resources: WorldFrameResources::default(),
@@ -558,7 +561,9 @@ impl WorldFrameRenderer {
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let slot = self.resources.slot_mut(slot_index)?;
         let record_started = std::time::Instant::now();
-        let low_detail_draw_count = record(RecordContext {
+        let (low_detail_draw_count, submission_fog) = record(RecordContext {
+            scene,
+            submission_fog: self.submission_fog,
             shadow_pipeline: &self.shadows,
             shadow_resources: &slot.shadows,
             shadow_frame,
@@ -655,6 +660,7 @@ impl WorldFrameRenderer {
             image_index,
             self.profiler.is_some(),
         )?;
+        self.submission_fog = submission_fog;
         if scene.clouds().is_some() {
             slot.clouds.submitted();
         }

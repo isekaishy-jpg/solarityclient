@@ -232,6 +232,8 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
             assert_eq!(ribbons.len(), 4);
             for (index, passes) in ribbons.as_chunks::<2>().0.iter().enumerate() {
                 let ribbon = passes[0];
+                assert!(ribbon.first_material_pass());
+                assert!(!passes[1].first_material_pass());
                 assert_eq!(passes[1].scene_order(), ribbon.scene_order());
                 assert_eq!(passes[1].effect_order(), ribbon.effect_order());
                 assert_eq!(passes[1].first_vertex(), ribbon.first_vertex());

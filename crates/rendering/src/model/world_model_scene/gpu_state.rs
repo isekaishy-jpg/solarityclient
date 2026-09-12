@@ -60,6 +60,12 @@ impl WorldModelSceneUniform {
         self.view
     }
 
+    /// Returns the shared model fog interval and exponent.
+    #[must_use]
+    pub const fn fog_parameters(self) -> Vec4 {
+        self.fog_parameters
+    }
+
     /// Serializes without depending on Rust or glam memory layout.
     #[must_use]
     pub fn to_bytes(self) -> [u8; Self::BYTE_SIZE] {

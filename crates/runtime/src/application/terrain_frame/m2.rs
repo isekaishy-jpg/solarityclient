@@ -3537,7 +3537,7 @@ impl M2Frame {
                     self.particle_draws.len(),
                     first_draw,
                 )?;
-                for pass in passes {
+                for (pass_index, pass) in passes.iter().enumerate() {
                     let prepared = renderer
                         .prepare_m2_ribbon_draw_range(
                             pass.pipeline,
@@ -3548,7 +3548,8 @@ impl M2Frame {
                             vertex_count,
                         )?
                         .with_light_bank(light_bank)
-                        .with_scene_index(scene_index);
+                        .with_scene_index(scene_index)
+                        .with_first_material_pass(pass_index == 0);
                     self.ribbon_draws.push(if opaque {
                         prepared.with_scene_order(
                             u32::try_from(order)
