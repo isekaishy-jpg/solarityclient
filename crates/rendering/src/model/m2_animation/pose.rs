@@ -38,6 +38,8 @@ pub struct M2BonePose {
     transforms: Vec<Mat4>,
     local: Vec<Mat4>,
     states: Vec<u8>,
+    sequence_clocks: Vec<Option<M2AnimationClock>>,
+    identity_pose: bool,
 }
 
 /// Instance-owned modifications applied while composing the authored pose.
@@ -251,8 +253,28 @@ impl M2BonePose {
         bone_sequences: &[(u16, M2AnimationClock)],
     ) -> Result<(), M2BonePoseError> {
         let clock = clock.resolve(animations)?;
-        for (_, clock) in bone_sequences {
-            clock.resolve(animations)?;
+        self.sequence_clocks.resize(animations.bones().len(), None);
+        self.sequence_clocks.fill(None);
+        for &(key, clock) in bone_sequences {
+            let clock = clock.resolve(animations)?;
+            if let Some(index) = animations
+                .key_bone_lookup()
+                .get(usize::from(key))
+                .copied()
+                .flatten()
+            {
+                self.sequence_clocks[usize::from(index)] = Some(clock);
+            }
+        }
+        if !bone_sequences.is_empty() {
+            // Nearest root wins; later overrides at a root replaced earlier ones above.
+            for &index in animations.bone_parent_order() {
+                if self.sequence_clocks[index].is_none() {
+                    self.sequence_clocks[index] = animations.bones()[index]
+                        .parent()
+                        .and_then(|parent| self.sequence_clocks[usize::from(parent)]);
+                }
+            }
         }
         for (key_bone, transform) in bone_transforms {
             if !finite_matrix(*transform) {
@@ -279,10 +301,26 @@ impl M2BonePose {
             return Err(M2BonePoseError::BillboardViewRequired { bone });
         }
 
+        // Empty tracks have the same identity palette for every sequence and
+        // owner. Clocks and overrides above still validate, while all effect,
+        // event and attachment consumers continue through their ordinary paths.
+        if animations.has_identity_bone_pose() && bone_transforms.is_empty() {
+            let count = animations.bones().len();
+            if !self.identity_pose || self.transforms.len() != count {
+                self.transforms.resize(count, Mat4::IDENTITY);
+                self.transforms.fill(Mat4::IDENTITY);
+                self.local.resize(count, Mat4::IDENTITY);
+                self.local.fill(Mat4::IDENTITY);
+                self.states.resize(count, 2);
+                self.states.fill(2);
+            }
+            self.identity_pose = true;
+            return Ok(());
+        }
+        self.identity_pose = false;
         self.local.resize(animations.bones().len(), Mat4::IDENTITY);
         for (index, bone) in animations.bones().iter().enumerate() {
-            let clock = bone_sequence_clock(animations, index, bone_sequences)
-                .map_or(Ok(clock), |clock| clock.resolve(animations))?;
+            let clock = self.sequence_clocks[index].unwrap_or(clock);
             let finger_pose =
                 finger_pose.filter(|pose| pose.hands.includes(finger_pose_hand(animations, index)));
             let translation = sample_vec3(
@@ -432,48 +470,13 @@ fn track_clock<T>(
         .map_or(clock, |pose| pose.clock.inherit_secondary(clock))
 }
 
-/// `82F426..82F77F` inherits clocks along the authored parent tree.
-fn bone_sequence_clock(
-    animations: &M2AnimationSet,
-    mut index: usize,
-    sequences: &[(u16, M2AnimationClock)],
-) -> Option<M2AnimationClock> {
-    if sequences.is_empty() {
-        return None;
+/// Finger ancestry was resolved once with the immutable bone hierarchy.
+fn finger_pose_hand(animations: &M2AnimationSet, index: usize) -> M2FingerPoseHands {
+    match animations.finger_key_bone(index) {
+        Some(8..=12) => M2FingerPoseHands::Right,
+        Some(13..=17) => M2FingerPoseHands::Left,
+        _ => M2FingerPoseHands::None,
     }
-    for _ in 0..animations.bones().len() {
-        if let Some((_, clock)) = sequences.iter().rev().find(|(key, _)| {
-            animations
-                .key_bone_lookup()
-                .get(usize::from(*key))
-                .copied()
-                .flatten()
-                .is_some_and(|bone| usize::from(bone) == index)
-        }) {
-            return Some(*clock);
-        }
-        index = usize::from(animations.bones().get(index)?.parent()?);
-    }
-    None
-}
-
-/// Finds the nearest named finger ancestor in stock's key-bone domain.
-fn finger_pose_hand(animations: &M2AnimationSet, mut index: usize) -> M2FingerPoseHands {
-    for _depth in 0..animations.bones().len() {
-        let Some(bone) = animations.bones().get(index) else {
-            break;
-        };
-        match bone.key_bone_id() {
-            8..=12 => return M2FingerPoseHands::Right,
-            13..=17 => return M2FingerPoseHands::Left,
-            _ => {}
-        }
-        let Some(parent) = bone.parent() else {
-            break;
-        };
-        index = usize::from(parent);
-    }
-    M2FingerPoseHands::None
 }
 
 /// Resolves an arbitrarily ordered but cycle-free hierarchy once per bone.

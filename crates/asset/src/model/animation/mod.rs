@@ -8,6 +8,7 @@ use crate::{AssetError, AssetPath, AssetStore};
 mod attachment;
 mod camera;
 mod event;
+mod hierarchy;
 mod light;
 mod material;
 mod particle;
@@ -203,6 +204,7 @@ pub struct M2AnimationSet {
     animation_lookup: Vec<u16>,
     sequence_available: Vec<bool>,
     bones: Vec<M2Bone>,
+    hierarchy: hierarchy::BoneHierarchy,
     key_bone_lookup: Vec<Option<u16>>,
     attachments: Vec<M2Attachment>,
     attachment_lookup: Vec<u16>,
@@ -315,6 +317,7 @@ impl M2AnimationSet {
             sequences,
             animation_lookup,
             sequence_available: available,
+            hierarchy: hierarchy::BoneHierarchy::prepare(&bones),
             bones,
             key_bone_lookup,
             attachments,
@@ -329,6 +332,24 @@ impl M2AnimationSet {
             ribbons,
             particles,
         })
+    }
+
+    /// Borrows each validated bone once, after its parent, regardless of file order.
+    #[must_use]
+    pub fn bone_parent_order(&self) -> &[usize] {
+        &self.hierarchy.order
+    }
+
+    /// Returns the nearest authored finger key (8..=17), inherited through unnamed bones.
+    #[must_use]
+    pub fn finger_key_bone(&self, index: usize) -> Option<u16> {
+        self.hierarchy.fingers.get(index).copied().flatten()
+    }
+
+    /// Reports an entirely untracked, non-billboard skeleton with an identity bind pose.
+    #[must_use]
+    pub const fn has_identity_bone_pose(&self) -> bool {
+        self.hierarchy.identity_pose
     }
 
     /// Returns global clock periods in exact table order.
