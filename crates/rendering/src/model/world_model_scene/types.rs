@@ -2,8 +2,9 @@
 
 use solarity_asset::WorldModelBatchClass;
 
-/// Fixed 72-byte MapObj vertex payload consumed by the future WMO pipeline.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Fixed 72-byte MapObj vertex payload consumed by the WMO pipeline.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct WorldModelRenderVertex {
     position: [f32; 3],
     normal: [f32; 3],
@@ -227,3 +228,5 @@ impl WorldModelGroupRange {
         self.shadow_draw_range[0]..self.shadow_draw_range[1]
     }
 }
+
+const _: () = assert!(size_of::<WorldModelRenderVertex>() == WorldModelRenderVertex::BYTE_SIZE);

@@ -1,8 +1,9 @@
 //! Native WMO factory selection through decoded root, group and DBC records.
 
+use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
 use std::error::Error;
 
-use solarity_asset::{AssetPath, BlpTextureCache, WmoModelCache};
+use solarity_asset::{AssetPath, BlpTextureCache};
 use solarity_rendering::LiquidDepthCoordinates;
 
 use crate::application::liquid::{
@@ -10,6 +11,53 @@ use crate::application::liquid::{
 };
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelSource;
 use crate::test_support::{ClientFixture, liquid_models};
+
+/// Shared references reuse one worker result, while a retired decoded
+/// generation cannot lend its mesh to a later load of the same virtual path.
+#[test]
+fn world_model_worker_mesh_shares_and_retires_with_its_generation() -> Result<(), Box<dyn Error>> {
+    use std::sync::Arc;
+    let files = liquid_models::files(0, 0, 0, 1, 0xa1234567);
+    let fixture = ClientFixture::with_common_files(
+        &files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+            .collect::<Vec<_>>(),
+    )?;
+    let mut store = super::mounted(&fixture)?;
+    let path = AssetPath::new("World\\Liquid.wmo")?;
+    let mut cache = ResidentWorldModelCache::default();
+    let mut textures = BlpTextureCache::default();
+    let mut liquids = LiquidAssetCache::default();
+    let first =
+        ResidentWorldModelSource::load(&path, &mut cache, &mut textures, &mut liquids, &mut store)?;
+    let second =
+        ResidentWorldModelSource::load(&path, &mut cache, &mut textures, &mut liquids, &mut store)?;
+    assert!(Arc::ptr_eq(first.model(), second.model()));
+    assert!(Arc::ptr_eq(first.plan(), second.plan()));
+    let eager = solarity_rendering::WorldModelMeshPlan::prepare(first.model())?;
+    assert_eq!(first.plan().vertex_bytes(), eager.vertex_bytes());
+    assert_eq!(first.plan().index_bytes(), eager.index_bytes());
+    assert_eq!(first.plan().draws(), eager.draws());
+    assert_eq!(first.plan().shadow_draws(), eager.shadow_draws());
+    assert_eq!(cache.collect_unused(), 0);
+    let old_plan = Arc::clone(first.plan());
+    drop(first);
+    drop(second);
+    assert_eq!(cache.collect_unused(), 1);
+    let replacement =
+        ResidentWorldModelSource::load(&path, &mut cache, &mut textures, &mut liquids, &mut store)?;
+    assert!(!Arc::ptr_eq(&old_plan, replacement.plan()));
+    assert_eq!(old_plan.vertex_bytes(), replacement.plan().vertex_bytes());
+    let released = Arc::downgrade(replacement.plan());
+    drop(replacement);
+    assert!(
+        released.upgrade().is_none(),
+        "cache must not retain an unused mesh"
+    );
+    assert_eq!(cache.collect_unused(), 1);
+    Ok(())
+}
 
 /// All 224 expected factory choices come from original 793D20 instructions.
 #[test]
@@ -36,7 +84,7 @@ fn world_model_liquid_factory_matches_original_material_tint_and_lighting()
         let mut materials = LiquidAssetCache::default();
         let source = ResidentWorldModelSource::load(
             &AssetPath::new("World\\Liquid.wmo")?,
-            &mut WmoModelCache::default(),
+            &mut ResidentWorldModelCache::default(),
             &mut BlpTextureCache::default(),
             &mut materials,
             &mut store,

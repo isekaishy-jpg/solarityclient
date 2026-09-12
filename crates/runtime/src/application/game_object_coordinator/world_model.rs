@@ -1,5 +1,6 @@
 //! Complete default-set WMO resources owned by replicated GameObjects.
 
+use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -8,7 +9,6 @@ use std::sync::Arc;
 use glam::Mat4;
 use solarity_asset::{
     AnimationDataCatalog, AssetPath, AssetStore, BlpTextureCache, DecodedWorldModel, M2ModelCache,
-    WmoModelCache,
 };
 
 use crate::application::liquid::LiquidAssetCache;
@@ -36,7 +36,7 @@ pub(in crate::application) struct GameObjectWorldModelSource {
 impl GameObjectWorldModelSource {
     pub(super) fn load(
         path: &AssetPath,
-        roots: &mut WmoModelCache,
+        roots: &mut ResidentWorldModelCache,
         models: &mut M2ModelCache,
         textures: &mut BlpTextureCache,
         liquids: &mut LiquidAssetCache,

@@ -1,13 +1,14 @@
 //! Deduplicated WMO presentation residency joined to placed collision.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use glam::Vec3;
 use solarity_asset::{
     AssetPath, AssetStore, BlpTextureCache, BlpTextureSource, DecodedTerrainTile,
     DecodedWorldModel, M2ModelCache, TerrainWorldModelPlacement, WmoModelCache, WorldModelShader,
 };
+use solarity_rendering::WorldModelMeshPlan;
 use solarity_systems::{
     PlacedWorldModelCollision, PlacedWorldModelLiquid, WorldModelCollisionScene,
     WorldModelLiquidScene,
@@ -19,6 +20,51 @@ use crate::application::liquid::{
 
 use super::RuntimeTerrainError;
 use super::m2_residency::ResidentM2SceneBuilder;
+
+/// Worker-owned decoded generations and weak references to their prepared mesh.
+/// Resident CPU/GPU sources share the plan without extending retired lifetimes.
+#[derive(Default)]
+pub(in crate::application) struct ResidentWorldModelCache {
+    models: WmoModelCache,
+    plans: HashMap<AssetPath, (Weak<DecodedWorldModel>, Weak<WorldModelMeshPlan>)>,
+}
+
+impl ResidentWorldModelCache {
+    pub(in crate::application) fn new() -> Self {
+        Self::default()
+    }
+
+    fn load(
+        &mut self,
+        store: &mut AssetStore,
+        path: &AssetPath,
+    ) -> Result<(Arc<DecodedWorldModel>, Arc<WorldModelMeshPlan>), RuntimeTerrainError> {
+        let model = self.models.load(store, path)?;
+        let generation = Arc::downgrade(&model);
+        let retained = self.plans.get(path).and_then(|(previous, plan)| {
+            previous
+                .ptr_eq(&generation)
+                .then(|| plan.upgrade())
+                .flatten()
+        });
+        let plan = if let Some(plan) = retained {
+            plan
+        } else {
+            let plan = Arc::new(WorldModelMeshPlan::prepare(&model)?);
+            self.plans
+                .insert(path.clone(), (generation, Arc::downgrade(&plan)));
+            plan
+        };
+        Ok((model, plan))
+    }
+
+    pub(in crate::application) fn collect_unused(&mut self) -> usize {
+        let removed = self.models.collect_unused();
+        self.plans
+            .retain(|_, (model, plan)| model.strong_count() > 0 && plan.strong_count() > 0);
+        removed
+    }
+}
 
 /// One required MapObj stage after ordinary archive resolution.
 #[derive(Clone)]
@@ -40,6 +86,7 @@ pub(in crate::application) enum ResidentWorldModelMaterialTextures {
 /// One decoded root/group generation and its exact MOMT texture bindings.
 pub(in crate::application) struct ResidentWorldModelSource {
     model: Arc<DecodedWorldModel>,
+    plan: Arc<WorldModelMeshPlan>,
     materials: Vec<ResidentWorldModelMaterialTextures>,
     liquids: Vec<ResidentWorldModelLiquidBatch>,
 }
@@ -48,19 +95,25 @@ impl ResidentWorldModelSource {
     /// Loads one complete root/group generation and every MOMT texture stage.
     pub(in crate::application) fn load(
         path: &AssetPath,
-        model_cache: &mut WmoModelCache,
+        model_cache: &mut ResidentWorldModelCache,
         texture_cache: &mut BlpTextureCache,
         liquid_assets: &mut LiquidAssetCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
-        let model = model_cache.load(store, path)?;
+        let (model, plan) = model_cache.load(store, path)?;
         let materials = prepare_material_textures(&model, texture_cache, store)?;
         let liquids = prepare_world_model_liquids(&model, liquid_assets, texture_cache, store)?;
         Ok(Self {
             model,
+            plan,
             materials,
             liquids,
         })
+    }
+
+    /// Returns the complete worker-prepared surface and shadow geometry.
+    pub(in crate::application) const fn plan(&self) -> &Arc<WorldModelMeshPlan> {
+        &self.plan
     }
 
     /// Returns the immutable root/group generation selected by MPQ priority.
@@ -146,7 +199,7 @@ impl ResidentWorldModelScene {
 /// Admits WMO presentation, collision, and liquid state as one generation.
 pub(super) fn prepare_world_models(
     tile: &DecodedTerrainTile,
-    model_cache: &mut WmoModelCache,
+    model_cache: &mut ResidentWorldModelCache,
     m2_cache: &mut M2ModelCache,
     texture_cache: &mut BlpTextureCache,
     m2_builder: &mut ResidentM2SceneBuilder,
@@ -180,7 +233,7 @@ pub(super) fn prepare_world_models(
 /// Admits the sole WDT-level MODF owner used by a global-WMO map.
 pub(super) fn prepare_global_world_model(
     placement: &TerrainWorldModelPlacement,
-    model_cache: &mut WmoModelCache,
+    model_cache: &mut ResidentWorldModelCache,
     m2_cache: &mut M2ModelCache,
     texture_cache: &mut BlpTextureCache,
     m2_builder: &mut ResidentM2SceneBuilder,
@@ -208,7 +261,7 @@ pub(super) fn prepare_global_world_model(
 /// Joins selected MODF owners to their shared WMO, collision, and MODD state.
 fn prepare_world_model_placements<'placement>(
     placements: impl IntoIterator<Item = &'placement TerrainWorldModelPlacement>,
-    model_cache: &mut WmoModelCache,
+    model_cache: &mut ResidentWorldModelCache,
     m2_cache: &mut M2ModelCache,
     texture_cache: &mut BlpTextureCache,
     m2_builder: &mut ResidentM2SceneBuilder,

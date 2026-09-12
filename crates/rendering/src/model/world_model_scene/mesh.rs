@@ -1,5 +1,9 @@
 //! Shared root/group WMO geometry combination and stock MOCV fixup.
 
+#[cfg(test)]
+#[path = "../../../tests/model/world_model_upload_bytes.rs"]
+mod upload_tests;
+
 use solarity_asset::{AssetPath, DecodedWorldModel, WorldModelBlendMode, WorldModelMaterial};
 
 use super::{
@@ -20,6 +24,30 @@ pub struct WorldModelMeshPlan {
 }
 
 impl WorldModelMeshPlan {
+    /// Borrows the exact packed ABI on little-endian hosts. Other targets keep
+    /// the portable serialization path; no native-endian bytes reach Vulkan.
+    pub(crate) fn vertex_upload_bytes(&self) -> std::borrow::Cow<'_, [u8]> {
+        #[cfg(target_endian = "little")]
+        {
+            std::borrow::Cow::Borrowed(bytemuck::cast_slice(&self.vertices))
+        }
+        #[cfg(target_endian = "big")]
+        {
+            std::borrow::Cow::Owned(self.vertex_bytes())
+        }
+    }
+
+    pub(crate) fn index_upload_bytes(&self) -> std::borrow::Cow<'_, [u8]> {
+        #[cfg(target_endian = "little")]
+        {
+            std::borrow::Cow::Borrowed(bytemuck::cast_slice(&self.indices))
+        }
+        #[cfg(target_endian = "big")]
+        {
+            std::borrow::Cow::Owned(self.index_bytes())
+        }
+    }
+
     /// Combines independently loaded group files into one immutable mesh.
     ///
     /// The plan retains `u32` combined indices so large HD replacements are

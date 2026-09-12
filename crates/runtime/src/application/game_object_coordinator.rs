@@ -1,5 +1,6 @@
 //! Shared visible-GameObject generations and loading-card transport readiness.
 
+use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
 mod passenger;
 mod transport;
 mod transport_animation;
@@ -24,7 +25,7 @@ use std::sync::{Arc, Weak};
 
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStoreHandle, BlpTextureCache,
-    GameObjectDisplayCatalog, M2ModelCache, TransportCatalog, WmoModelCache, canonical_model_path,
+    GameObjectDisplayCatalog, M2ModelCache, TransportCatalog, canonical_model_path,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{
@@ -298,7 +299,7 @@ pub struct RuntimeGameObjectPresentation {
     displays: GameObjectDisplayCatalog,
     textures: BlpTextureCache,
     models: M2ModelCache,
-    world_models: WmoModelCache,
+    world_models: ResidentWorldModelCache,
     liquid_assets: LiquidAssetCache,
     instances: Vec<GameObjectInstance>,
     indices: HashMap<WorldObjectIdentity, usize>,
@@ -347,7 +348,7 @@ impl RuntimeGameObjectPresentation {
             displays,
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
-            world_models: WmoModelCache::new(),
+            world_models: ResidentWorldModelCache::new(),
             liquid_assets: LiquidAssetCache::default(),
             instances: Vec::new(),
             indices: HashMap::new(),

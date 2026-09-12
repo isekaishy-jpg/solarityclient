@@ -7,7 +7,8 @@ use super::{
 use crate::application::liquid::LiquidAssetCache;
 use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
-use solarity_asset::{ArchiveCatalog, AssetStore, BlpTextureCache, M2ModelCache, WmoModelCache};
+use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
+use solarity_asset::{ArchiveCatalog, AssetStore, BlpTextureCache, M2ModelCache};
 
 pub(super) enum GameObjectWorkerSource {
     Catalog(ArchiveCatalog),
@@ -18,7 +19,7 @@ pub(super) struct GameObjectWorkerState {
     assets: AssetStore,
     textures: BlpTextureCache,
     models: M2ModelCache,
-    world_models: WmoModelCache,
+    world_models: ResidentWorldModelCache,
     liquid_assets: LiquidAssetCache,
 }
 
@@ -28,7 +29,7 @@ impl GameObjectWorkerState {
             assets: AssetStore::mount(catalog).map_err(RuntimeTerrainError::from)?,
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
-            world_models: WmoModelCache::new(),
+            world_models: ResidentWorldModelCache::new(),
             liquid_assets: LiquidAssetCache::default(),
         })
     }

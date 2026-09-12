@@ -1,9 +1,10 @@
 //! Worker-prepared terrain residency and main-thread scene queries.
 
+use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
     DecodedTerrainTile, M2ModelCache, MapCatalog, MapDefinition, TerrainDoodadPlacement,
-    TerrainLowDetail, TerrainMap, TerrainTileIndex, WmoModelCache, WorldModelDoodadSetError,
+    TerrainLowDetail, TerrainMap, TerrainTileIndex, WorldModelDoodadSetError,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{ActiveWorld, WorldStateError};
@@ -54,6 +55,9 @@ use world_model_residency::{
 /// Failure while synchronizing authored terrain with authoritative world state.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainError {
+    /// Immutable WMO surface geometry failed before renderer publication.
+    #[error(transparent)]
+    WorldModelMesh(#[from] solarity_rendering::WorldModelMeshPlanError),
     /// Authored detail models could not complete on the terrain asset worker.
     #[error(transparent)]
     GroundDetail(#[from] solarity_rendering::GroundDetailError),
@@ -232,7 +236,7 @@ pub struct RuntimeTerrainCoordinator {
     maps: MapCatalog,
     textures: BlpTextureCache,
     models: M2ModelCache,
-    world_models: WmoModelCache,
+    world_models: ResidentWorldModelCache,
     liquid_assets: LiquidAssetCache,
     ground_detail_assets: GroundDetailAssetCache,
     active: Option<ResidentTerrainMap>,
@@ -273,7 +277,7 @@ impl RuntimeTerrainCoordinator {
             maps,
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
-            world_models: WmoModelCache::new(),
+            world_models: ResidentWorldModelCache::new(),
             liquid_assets: LiquidAssetCache::default(),
             ground_detail_assets: GroundDetailAssetCache::default(),
             active: None,
@@ -1245,7 +1249,7 @@ struct TerrainWorkerState {
     assets: AssetStore,
     textures: BlpTextureCache,
     models: M2ModelCache,
-    world_models: WmoModelCache,
+    world_models: ResidentWorldModelCache,
     liquid_assets: LiquidAssetCache,
     ground_detail_assets: GroundDetailAssetCache,
 }
@@ -1257,7 +1261,7 @@ impl TerrainWorkerState {
             low_detail: None,
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
-            world_models: WmoModelCache::new(),
+            world_models: ResidentWorldModelCache::new(),
             liquid_assets: LiquidAssetCache::default(),
             ground_detail_assets: GroundDetailAssetCache::default(),
         })
@@ -1394,7 +1398,7 @@ impl ResidentGlobalWorldModel {
         placement: &solarity_asset::TerrainWorldModelPlacement,
         texture_cache: &mut BlpTextureCache,
         model_cache: &mut M2ModelCache,
-        world_model_cache: &mut WmoModelCache,
+        world_model_cache: &mut ResidentWorldModelCache,
         liquid_assets: &mut LiquidAssetCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
@@ -1446,7 +1450,7 @@ impl ResidentTerrainTile {
         liquid_assets: &mut LiquidAssetCache,
         texture_cache: &mut BlpTextureCache,
         model_cache: &mut M2ModelCache,
-        world_model_cache: &mut WmoModelCache,
+        world_model_cache: &mut ResidentWorldModelCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
         // Resolve each MTEX entry exactly once before accepting the tile. This

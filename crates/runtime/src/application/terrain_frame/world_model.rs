@@ -494,8 +494,12 @@ fn prepare_gpu_source(
     base_mip: WorldModelBaseMip,
     liquid_materials: &mut LiquidGpuMaterialCache,
 ) -> Result<WorldModelGpuSource, RuntimeTerrainFrameError> {
-    let plan = Arc::new(WorldModelMeshPlan::prepare(source.model())?);
+    let mut profile =
+        crate::application::frame_profile::RuntimeFrameProfile::new("WMO source publication");
+    let plan = Arc::clone(source.plan());
+    profile.mark("mesh plan");
     let mesh = renderer.upload_world_model_mesh(&plan)?;
+    profile.mark("mesh upload");
     let mut uploads = Vec::new();
     let mut needs_stock_green = false;
     for textures in source.materials() {
@@ -520,6 +524,7 @@ fn prepare_gpu_source(
     } else {
         None
     };
+    profile.mark("texture uploads");
     let mut texture_requests = Vec::with_capacity(source.materials().len());
     for (material, textures) in plan.materials().iter().zip(source.materials()) {
         let state = WorldModelMaterialState::from_material(material);
@@ -552,6 +557,7 @@ fn prepare_gpu_source(
         renderer.prepare_world_model_texture_sets(&texture_requests)?
     };
     let draws = prepare_draw_resources(renderer, &plan, &texture_sets)?;
+    profile.mark("descriptors and pipelines");
     let draw_bounds = plan
         .draws()
         .iter()
@@ -563,6 +569,7 @@ fn prepare_gpu_source(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(solarity_systems::WorldModelVisibilityError::from)?;
+    profile.mark("draw bounds");
     let liquids = liquid_materials.prepare_world_model(renderer, source.liquids())?;
     let mut liquid_indices = vec![None; source.model().groups().len()];
     for (index, batch) in source.liquids().iter().enumerate() {
@@ -570,6 +577,7 @@ fn prepare_gpu_source(
             liquid_indices[batch.group] = Some(index);
         }
     }
+    profile.mark("liquids");
     Ok(WorldModelGpuSource {
         model: Arc::clone(source.model()),
         plan,

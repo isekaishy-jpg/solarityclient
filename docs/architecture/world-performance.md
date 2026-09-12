@@ -1384,3 +1384,83 @@ Packaged and installed as Solarity 0.0.3a Build 113, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `c454d2aa6e52452b36737301a1f478ce2ad3bd70c40632b18fef6d4727f01472`.
+
+
+## September 12: prepare WMO meshes in workers and defer GPU transfers
+
+Repeatable travel spikes prompted a source-publication profile. WMO publication
+still combined root/group geometry and serialized a second vertex/index byte
+array on the render thread, then waited for the GPU transfer fence. Resident
+terrain and GameObject loading now prepare and share the immutable mesh plan
+before publication. A worker-owned cache keys weak plan references by both path
+and decoded generation; retaining an old plan cannot bind it to a newly decoded
+model. Resident sources retain the plan through their normal lifetime, trading
+earlier CPU geometry allocation for less publication work.
+
+On little-endian targets the upload borrows the exact packed 72-byte vertex
+layout and index slice. Big-endian targets retain explicit portable serialization.
+WMO uploads now use the existing deferred mesh transfer path: transfer-to-input
+barriers precede draws on the same graphics queue, and fence polling retires
+staging without waiting on the calling thread. Renderer teardown waits for idle
+before releasing pending transfers. Opt-in WMO publication phase timings remain
+available for diagnosis.
+
+All 32 rendering unit tests, 184 rendering stock-reference tests, 332 runtime
+library tests (18 ignored), and 18 terrain integration tests pass. The new tests
+compare packed bytes with the original explicit serializer, including signed
+zero, subnormals, infinities and NaN payloads, and verify shared plan identity,
+retirement and replacement generations. Existing static and moving WMO pixel
+checks pass. Clippy for rendering/runtime with all targets and warnings denied,
+formatting and diff checks pass.
+
+Separate instrumented runs observed the largest WMO source publication fall
+from 42.741 to 9.1738 ms. Render-thread mesh-plan work falls from a maximum
+18,300.5 us to 1.1 us for retrieving the worker result; mesh upload falls from
+19,415.2 to 2,668.7 us. Texture upload and driver pipeline creation still cost
+up to 3,811.7 and 2,399.0 us in the new run. These diagnostics include initial
+loading and are excluded from the ordinary-frame timing comparison.
+
+Four uncaptured, unprofiled runs alternate new/Build 113/new/Build 113, using
+2,400 frames per phase and the same GTX 1070, 1280x720, shadow quality 2,
+uncapped noon profile and map-1 route as above. This remains an offline installed
+terrain/FrameXML/Vulkan workload without authored NPC fixtures, network, movement
+solver, audio or overlays. Initial loading is excluded below.
+
+| Phase | Build 113 mean ms | Worker/deferred WMO mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.873460 | 1.894102 | +1.10% |
+| Orbit | 2.214664 | 2.208348 | -0.29% |
+| Pointer/tooltip | 2.287670 | 2.237725 | -2.18% |
+| Travel out | 2.307979 | 2.288316 | -0.85% |
+| Travel back | 2.277000 | 2.304737 | +1.22% |
+| Settled | 1.945347 | 1.938388 | -0.36% |
+
+Overall mean frame time is effectively unchanged: 2.151020 to 2.145269 ms
+(-0.27%), with phase means of approximately 434-528 FPS. Across the 96 frames
+that change resident tiles in each variant, mean streaming time falls from
+7.000201 to 6.600050 ms, and mean total time from 13.071611 to 12.712375 ms.
+One baseline admission has a 27.068 ms streaming outlier; the other baseline
+run peaks at 14.593 ms, versus 12.311 and 12.443 ms in the new runs. These
+numbers support reduced publication cost, not a broad FPS or stall fix.
+The new changed-residency frames still reach 19.530 ms and all non-loading
+frames reach 23.796 ms. Repeatable return-leg eviction and presentation costs,
+M2 source pipeline creation and topology rebuilds remain follow-up targets.
+The no-stall and 1,200 FPS goals remain open.
+
+Every non-loading camera position, detail/shadow count and recorded screen
+effect matches. Each travel leg admits and evicts 21 tiles over 24 changed
+frames, and all four runs end with 49 resident tiles. A separate 23-image
+capture replay is excluded from timings. Twelve view pairs retain consistent
+terrain and WMO coverage through orbit and both travel directions. Wall-time
+animation differs, and the existing strong terrain specular highlights remain
+unresolved; this change does not establish combined-world lighting parity.
+
+Local evidence: `target/wmo-worker-{before,after}-{one,two}.csv`,
+`target/compare-wmo-worker.py`, `target/check-wmo-worker-states.py`,
+`target/compare-wmo-worker-spikes.py`, `target/wmo-publication-diagnostic.log`,
+`target/wmo-worker-deferred-diagnostic.log`, `target/wmo-worker-after-captures/`,
+and `target/wmo-worker-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`b396cf3c43e52f4381ea4b639ce228f4db048a0ed59cea34854cab26b2ca9802`;
+the new benchmark, preserved as `target/benchmark-wmo-streaming.exe`, is
+`e8412e88fa44c77a3302235c39d9ad7780ded0a015caf08658aa88ab16efb0fa`.
