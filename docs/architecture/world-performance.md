@@ -1241,3 +1241,9 @@ Local evidence: `target/terrain-culling-{before,after}-{one,two}.csv`,
 Benchmark SHA-256:
 previous `cea239d80b7d637f13ed6cad13666f8069ec95fc8739438ae11a05707253ef9e`,
 tile rejection `f0e9e979432e8893adf5a14633bef8671878a27b3c021c22748906de5f6622a1`.
+
+Testing Build 111 packages source revision `d622d4f2`. The installed runtime
+matches the package SHA-256
+`c8753310593d5b5d4535e9b1658e181b5d1b9b4a566cae33c3dc286eb2f0d4c8`,
+with the reserved package number recorded as dirty source state. The measured
+benchmark is preserved as `target/benchmark-build111-before-world-followup.exe`.
