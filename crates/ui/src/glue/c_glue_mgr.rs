@@ -1401,12 +1401,15 @@ impl GlueManager {
         visual_objects: &[usize],
         started: std::time::Instant,
     ) -> Result<bool, UiEventError> {
-        if !visual_objects.is_empty()
-            && !self.try_refresh_targeted_visual_objects(visual_objects)?
+        let missing_topology = !visual_objects.is_empty()
+            && !self.try_refresh_targeted_visual_objects(visual_objects)?;
+        if missing_topology
+            && !self.runtime.is_tooltip_materialization_journal(
+                &self.live,
+                tooltip_owner,
+                dirty_objects,
+            )
         {
-            // A first reveal can lack backdrop and glyph slots. Let the
-            // content publisher materialize them after copying this journal's
-            // text and layout, instead of building the old topology first.
             return Ok(false);
         }
         let text_objects =
@@ -1446,6 +1449,25 @@ impl GlueManager {
             &text_objects,
         )?;
         let laid_out = started.elapsed();
+        if missing_topology {
+            // Existing glyph coverage and the affected anchor graph are now
+            // current. Materialize the missing slots once, without resolving
+            // every unrelated screen's geometry again.
+            self.rebuild_visual_topology_from_live()?;
+            if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
+                eprintln!(
+                    "UI tooltip materialization: owner={tooltip_owner} text_objects={} copy={:.3}ms geometry={:.3}ms publish={:.3}ms glyphs={:.3}ms topology={:.3}ms total={:.3}ms",
+                    text_objects.len(),
+                    copied.as_secs_f64() * 1_000.0,
+                    (resolved - copied).as_secs_f64() * 1_000.0,
+                    (published - resolved).as_secs_f64() * 1_000.0,
+                    (laid_out - published).as_secs_f64() * 1_000.0,
+                    (started.elapsed() - laid_out).as_secs_f64() * 1_000.0,
+                    started.elapsed().as_secs_f64() * 1_000.0
+                );
+            }
+            return Ok(true);
+        }
         if !self.presentation.refresh_backdrop_object(
             &self.live,
             &self.geometry,

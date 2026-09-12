@@ -86,6 +86,8 @@ mod glue_character;
 mod glue_creation;
 #[path = "stock_seed/glue/model.rs"]
 mod glue_model;
+#[path = "stock_seed/glue/tooltip.rs"]
+mod glue_tooltip;
 #[path = "stock_seed/input.rs"]
 mod input;
 #[path = "stock_seed/notification.rs"]

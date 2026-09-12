@@ -1050,3 +1050,60 @@ matches the package SHA-256
 `81b723138a3c6d2d1b77bc7f86953dc2725d09a65d951e746180017be7396930`,
 with the reserved package number recorded as dirty source state. The measured
 cached benchmark is preserved as `target/benchmark-build107-before-tooltip.exe`.
+
+## First tooltip publication with local geometry
+
+A first tooltip reveal can have existing glyph coverage but no resident backdrop
+or glyph draw slots. It now resolves the affected anchor graph, publishes the
+changed dimensions and lays out its dirty text before materializing draw topology
+once. It avoids the full-screen geometry resolver and scroll-state reconstruction.
+The new route accepts only tooltip Frame/GameTooltip layout/backdrop-color changes
+and FontString layout/text changes under that owner. Other field journals and
+missing glyph coverage retain the general publication fallback. Existing retained
+tooltip updates continue through their previous path.
+
+The portable regression uses an original generated rectangle-outline TTF. It
+checks first reveal, text growth, two rendered lines, background bounds, hide/show,
+atlas reuse and fallback when a new character requires atlas coverage. It checks
+both visible glyph layout and the published render mesh without adding objects to
+the runtime arena. All 181 UI tests pass; workspace Clippy with warnings denied
+and formatting checks pass. The previous full workspace test run remains the
+Build 107 run documented above.
+
+Four unprofiled, uncaptured 2,400-frame-per-phase replays alternate new, Build 107,
+new, Build 107 on the same uncapped GTX 1070, 1280 x 720, shadow-quality-2 noon
+route. No compilation or tests run during measurement. First pointer entry:
+
+| Measurement | Build 107 runs | Local-geometry runs |
+| --- | ---: | ---: |
+| First-tooltip frame | 21.860 / 21.433 ms | 16.299 / 16.583 ms |
+| UI work in that frame | 19.441 / 18.981 ms | 13.873 / 14.107 ms |
+
+The mean first-tooltip frame falls from 21.646 to 16.441 ms (24.0%); mean UI
+work falls from 19.211 to 13.990 ms. A separate instrumented run confirms stock
+GameTooltip takes the new path: 12.311 ms publication includes 3.047 ms local
+geometry, 0.246 ms dimension publication, 1.276 ms glyph layout and 7.258 ms
+topology publication. The prior Build 107 diagnostic recorded 17.087 ms total
+publication, including 6.813 ms global geometry. Profile timings are attribution
+evidence, not the performance comparison.
+
+There is no sustained FPS improvement: phase means range from effectively
+unchanged stationary work to 1.76% slower settled work. Current means correspond
+to about 373-431 FPS. The remaining pointer updates reach 7.476 ms of UI work and
+non-loading frames still reach 23.894 ms. Presentation and admission stalls, the
+remaining tooltip topology cost and the 1,200 FPS target are still open.
+
+All non-loading positions, ground-detail and primary-shadow draw counts match
+across the four runs. Each travel direction admits and evicts 21 tiles; outbound
+changes residency on 24 frames and return on 23-24 frames. Every run ends with
+49 resident tiles. Separate 240-frame capture replays visually match the first
+tooltip; its 229 x 118 pixel rectangle is byte-identical between executables.
+These capture runs are excluded from timing comparisons.
+
+Local evidence: `target/tooltip-publication-{before,after}-{one,two}.csv`,
+`target/compare-tooltip-publication.py`, `target/analyze-tooltip-publication.py`,
+`target/tooltip-publication-after-diagnostic.log`, and
+`target/tooltip-publication-{before,after}-captures/pointer-0000.ppm`.
+Benchmark SHA-256:
+previous `615d2c509adcf7cbd852beff2b09652d9c95aff3dc64c3fffe110aa7fe28af40`,
+local geometry `3c4d88f11d50e2aff931203538668f40536e356eaff2feaf41ba8c327db4cbcf`.

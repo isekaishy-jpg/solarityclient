@@ -2283,6 +2283,27 @@ impl UiScriptRuntime {
                 .all(|&(_, flags)| flags == DIRTY_TEXTURE_VERTEX_COLOR)
     }
 
+    /// First-tooltip topology can be built from local layout and covered text.
+    pub(crate) fn is_tooltip_materialization_journal(
+        &self,
+        live: &super::runtime_state::UiRuntimeObjectPlan,
+        owner: usize,
+        dirty_objects: &[(usize, u32)],
+    ) -> bool {
+        live.objects().get(owner).is_some_and(|object| {
+            matches!(object.kind, UiObjectKind::Frame | UiObjectKind::GameTooltip)
+        }) && dirty_objects.iter().all(|&(index, flags)| {
+            if index == owner {
+                flags & !(DIRTY_LAYOUT | DIRTY_FRAME) == 0
+            } else {
+                live.objects()
+                    .get(index)
+                    .is_some_and(|object| object.kind == UiObjectKind::FontString)
+                    && flags & !(DIRTY_LAYOUT | DIRTY_TEXT) == 0
+            }
+        })
+    }
+
     /// Reports whether a journal can use the fixed-slot EditBox glyph path.
     pub(crate) fn is_edit_box_text_journal(
         &self,
