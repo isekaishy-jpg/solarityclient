@@ -4,6 +4,7 @@
 
 mod command;
 mod fog;
+mod gpu_profile;
 mod resource;
 mod types;
 
@@ -44,6 +45,7 @@ use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
 use crate::{M2ParticleRenderVertex, M2RibbonRenderVertex};
 
 use command::{RecordContext, record, submit_and_present};
+pub(in crate::device) use gpu_profile::GpuFrameProfiler;
 use resource::{FrameCreateContext, WorldFrameResources};
 
 pub use types::{WorldFrameReport, WorldFrameScene, WorldSkyModelBatch, WorldSkyModelFrame};
@@ -113,6 +115,7 @@ pub(in crate::device) struct WorldFrameRenderer {
     low_detail: LowDetailRegistry,
     ground_detail: DetailRegistry,
     profiler: Option<WorldFrameProfiler>,
+    gpu_profiler: Option<GpuFrameProfiler>,
 }
 
 impl Default for WorldFrameRenderer {
@@ -125,6 +128,7 @@ impl Default for WorldFrameRenderer {
             low_detail: LowDetailRegistry::default(),
             ground_detail: DetailRegistry::default(),
             profiler: WorldFrameProfiler::from_environment(),
+            gpu_profiler: None,
         }
     }
 }
@@ -138,7 +142,8 @@ struct WorldFrameProfiler {
     record_us: u128,
     queue_submit_us: u128,
     queue_present_us: u128,
-    maximum_us: [u128; 6],
+    fence_wait_us: u128,
+    maximum_us: [u128; 7],
 }
 
 impl WorldFrameProfiler {
@@ -152,11 +157,12 @@ impl WorldFrameProfiler {
             record_us: 0,
             queue_submit_us: 0,
             queue_present_us: 0,
-            maximum_us: [0; 6],
+            fence_wait_us: 0,
+            maximum_us: [0; 7],
         })
     }
 
-    fn record(&mut self, phases: [std::time::Duration; 6]) {
+    fn record(&mut self, phases: [std::time::Duration; 7]) {
         let elapsed_us = phases.map(|elapsed| elapsed.as_micros());
         self.frame_count = self.frame_count.saturating_add(1);
         self.ensure_us = self.ensure_us.saturating_add(elapsed_us[0]);
@@ -165,6 +171,7 @@ impl WorldFrameProfiler {
         self.record_us = self.record_us.saturating_add(elapsed_us[3]);
         self.queue_submit_us = self.queue_submit_us.saturating_add(elapsed_us[4]);
         self.queue_present_us = self.queue_present_us.saturating_add(elapsed_us[5]);
+        self.fence_wait_us = self.fence_wait_us.saturating_add(elapsed_us[6]);
         for (maximum, elapsed) in self.maximum_us.iter_mut().zip(elapsed_us) {
             *maximum = (*maximum).max(elapsed);
         }
@@ -181,12 +188,14 @@ impl WorldFrameProfiler {
             record_mean_us = self.record_us as f64 / divisor,
             queue_submit_mean_us = self.queue_submit_us as f64 / divisor,
             queue_present_mean_us = self.queue_present_us as f64 / divisor,
+            fence_wait_mean_us = self.fence_wait_us as f64 / divisor,
             ensure_max_us = self.maximum_us[0],
             wait_write_max_us = self.maximum_us[1],
             acquire_max_us = self.maximum_us[2],
             record_max_us = self.maximum_us[3],
             queue_submit_max_us = self.maximum_us[4],
             queue_present_max_us = self.maximum_us[5],
+            fence_wait_max_us = self.maximum_us[6],
             "profiled unified Vulkan frame phases"
         );
         self.window_started = std::time::Instant::now();
@@ -197,11 +206,20 @@ impl WorldFrameProfiler {
         self.record_us = 0;
         self.queue_submit_us = 0;
         self.queue_present_us = 0;
-        self.maximum_us = [0; 6];
+        self.fence_wait_us = 0;
+        self.maximum_us = [0; 7];
     }
 }
 
 impl WorldFrameRenderer {
+    /// Attaches explicitly requested GPU diagnostics before any frames are admitted.
+    pub(in crate::device) fn with_gpu_profiler(gpu_profiler: Option<GpuFrameProfiler>) -> Self {
+        Self {
+            gpu_profiler,
+            ..Self::default()
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::device) fn present(
         &mut self,
@@ -220,7 +238,7 @@ impl WorldFrameRenderer {
         window: WorldFrameWindow,
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
-        let ensure_started = std::time::Instant::now();
+        let ensure_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
         // An admitted world sky scene may be fully hidden inside a building.
         // Its fog clear is still a complete frame even when no geometry draws.
         let has_sky_scene = scene.sky_models().is_some() || scene.sky().is_some();
@@ -392,13 +410,25 @@ impl WorldFrameRenderer {
             extent: context.extent,
             depth_format: context.depth_format,
         })?;
-        let ensure_elapsed = ensure_started.elapsed();
+        let ensure_elapsed = ensure_started
+            .map(|started| started.elapsed())
+            .unwrap_or_default();
         let slot_index = self.resources.next_slot_index()?;
-        let wait_write_started = std::time::Instant::now();
-        let (acquired, wait_write_elapsed, acquire_elapsed) = {
-            let slot =
-                self.resources
-                    .prepare_slot(slot_index, context.device, context.allocator)?;
+        let gpu_sample = self
+            .gpu_profiler
+            .as_mut()
+            .is_some_and(GpuFrameProfiler::sample_next);
+        let wait_write_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
+        let (acquired, wait_write_elapsed, acquire_elapsed, fence_wait_elapsed) = {
+            let (slot, fence_wait_elapsed) = self.resources.prepare_slot(
+                slot_index,
+                context.device,
+                context.allocator,
+                self.profiler.is_some(),
+            )?;
+            if let Some(profiler) = self.gpu_profiler.as_mut() {
+                profiler.record(slot.gpu_timestamps.collect(context.device)?, context.extent);
+            }
             if let Some(frame) = shadow_frame {
                 slot.shadows.ensure(
                     context.device,
@@ -534,8 +564,10 @@ impl WorldFrameRenderer {
                 particle_indices,
                 ribbon_vertices,
             )?;
-            let wait_write_elapsed = wait_write_started.elapsed();
-            let acquire_started = std::time::Instant::now();
+            let wait_write_elapsed = wait_write_started
+                .map(|started| started.elapsed())
+                .unwrap_or_default();
+            let acquire_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
             // SAFETY: Swapchain and acquire semaphore live through submission.
             let acquired = unsafe {
                 context.swapchain_loader.acquire_next_image(
@@ -546,7 +578,14 @@ impl WorldFrameRenderer {
                 )
             }
             .map_err(|source| swapchain_error("acquire world frame image", source))?;
-            (acquired, wait_write_elapsed, acquire_started.elapsed())
+            (
+                acquired,
+                wait_write_elapsed,
+                acquire_started
+                    .map(|started| started.elapsed())
+                    .unwrap_or_default(),
+                fence_wait_elapsed,
+            )
         };
         let (image_index, _suboptimal) = acquired;
         let present_semaphore = self.resources.present_semaphore(image_index)?;
@@ -561,8 +600,14 @@ impl WorldFrameRenderer {
             .copied()
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let slot = self.resources.slot_mut(slot_index)?;
-        let record_started = std::time::Instant::now();
+        let record_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
+        let gpu_queries = if gpu_sample {
+            Some(slot.gpu_timestamps.ensure(context.device)?)
+        } else {
+            None
+        };
         let (low_detail_draw_count, submission_fog) = record(RecordContext {
+            gpu_queries,
             scene,
             submission_fog: self.submission_fog,
             shadow_pipeline: &self.shadows,
@@ -653,13 +698,16 @@ impl WorldFrameRenderer {
             glow: context.glow,
             image_index,
         })?;
-        let record_elapsed = record_started.elapsed();
+        let record_elapsed = record_started
+            .map(|started| started.elapsed())
+            .unwrap_or_default();
         let submit_timings = submit_and_present(
             &context,
             slot,
             present_semaphore,
             image_index,
             self.profiler.is_some(),
+            gpu_sample,
         )?;
         self.submission_fog = submission_fog;
         if scene.clouds().is_some() {
@@ -679,6 +727,7 @@ impl WorldFrameRenderer {
                 record_elapsed,
                 submit_timings.queue_submit,
                 submit_timings.queue_present,
+                fence_wait_elapsed,
             ]);
         }
         let environment_counts = scene

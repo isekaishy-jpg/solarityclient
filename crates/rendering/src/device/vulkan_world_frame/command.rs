@@ -53,6 +53,8 @@ pub(super) struct WorldSubmitTimings {
 }
 
 pub(super) struct RecordContext<'a> {
+    /// Present only for sampled frames; the slot fence protects query reuse.
+    pub(super) gpu_queries: Option<vk::QueryPool>,
     pub(super) scene: super::WorldFrameScene<'a>,
     pub(super) submission_fog: super::fog::SubmissionFog,
     pub(super) shadow_pipeline: &'a crate::device::vulkan_shadow::ShadowPipelines,
@@ -139,7 +141,26 @@ pub(super) fn record(
             .begin_command_buffer(context.command_buffer, &begin)
     }
     .map_err(|source| VulkanError::operation("begin world command buffer", source))?;
+    if let Some(pool) = context.gpu_queries {
+        // SAFETY: The owning slot has retired. Reset is outside rendering and
+        // precedes every timestamp write in this submitted command buffer.
+        unsafe {
+            context.device.cmd_reset_query_pool(
+                context.command_buffer,
+                pool,
+                0,
+                super::gpu_profile::QUERY_COUNT as u32,
+            );
+            context.device.cmd_write_timestamp(
+                context.command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                pool,
+                0,
+            );
+        }
+    }
     shadow::record_primary(&context)?;
+    timestamp(&context, 1);
     if !context.liquid_draws.is_empty() {
         context
             .liquid_resources
@@ -262,6 +283,7 @@ pub(super) fn record(
         }
     }
     let low_detail_draw_count = record_low_detail(&context, viewport, &mut bindings)?;
+    timestamp(&context, 2);
     // 79A870 restores the ordinary world interval after horizon/sky work.
     let world_viewport = vk::Viewport {
         max_depth: context.depth_maximum,
@@ -276,16 +298,21 @@ pub(super) fn record(
     for draw in context.terrain_draws.iter().copied() {
         record_terrain(&context, draw, &mut bindings)?;
     }
+    timestamp(&context, 3);
     for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
         record_world_model(&context, index, draw, &mut bindings)?;
     }
+    timestamp(&context, 4);
     // 4F9154 dispatches 7984A0 before the ordinary liquid/M2 scene queues.
     ground_detail::record_ground_detail(&context, &mut bindings)?;
+    timestamp(&context, 5);
     record_liquid_queue(&context, LiquidQueue::Opaque, &mut bindings)?;
+    timestamp(&context, 6);
     record_m2_scene_elements(&context, &mut bindings)?;
     record_underwater(&context, &mut bindings);
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
+    timestamp(&context, 7);
     if let Some((glow, settings)) = context.glow {
         glow.record(
             context.device,
@@ -297,15 +324,35 @@ pub(super) fn record(
             settings,
         )?;
     }
+    timestamp(&context, 8);
     if let Some(ui) = context.ui {
         transition_to_ui_overlay(&context);
         record_loaded_overlay(ui)?;
     }
+    timestamp(&context, 9);
     transition_to_present(&context);
+    timestamp(&context, 10);
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end world command buffer", source))?;
     Ok((low_detail_draw_count, bindings.fog))
+}
+
+/// Completion-stage boundaries expose elapsed GPU intervals without new barriers.
+/// Overlapping pipeline work prevents interpreting these as isolated shader costs.
+fn timestamp(context: &RecordContext<'_>, index: u32) {
+    if let Some(pool) = context.gpu_queries {
+        // SAFETY: This command buffer owns the reset query range; each boundary
+        // writes a distinct index and the selected graphics queue supports it.
+        unsafe {
+            context.device.cmd_write_timestamp(
+                context.command_buffer,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                pool,
+                index,
+            )
+        };
+    }
 }
 
 /// Dispatches the typed streams in their one stock scene-element order.
@@ -1175,12 +1222,15 @@ fn transition_to_present(context: &RecordContext<'_>) {
     };
 }
 
+/// Marks timestamp ownership only after submission succeeds; presentation failure
+/// still leaves its queries protected by the submitted slot fence.
 pub(super) fn submit_and_present(
     context: &WorldFrameContext<'_>,
     slot: &mut WorldFrameSlot,
     present_semaphore: vk::Semaphore,
     image_index: u32,
     profile: bool,
+    gpu_sample: bool,
 ) -> Result<Option<WorldSubmitTimings>, VulkanError> {
     let waits = [vk::SemaphoreSubmitInfo::default()
         .semaphore(slot.image_available())
@@ -1204,6 +1254,7 @@ pub(super) fn submit_and_present(
         slot.restore_signaled_fence(context.device)?;
         return Err(VulkanError::operation("submit world frame", source));
     }
+    slot.gpu_timestamps.submitted(gpu_sample);
     let queue_submit = queue_submit_started.map(|started| started.elapsed());
     let wait = [present_semaphore];
     let swapchains = [context.swapchain];

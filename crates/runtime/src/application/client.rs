@@ -317,6 +317,9 @@ impl ClientApplication {
         let mut admitted_event_count = 0_u64;
         let mut frame_limiter = FrameLimiter::new();
         loop {
+            // Includes live input and pacing, which the offline world replay omits.
+            let mut frame_profile =
+                super::frame_profile::RuntimeFrameProfile::new("live client frame");
             let mut pending_mouse_motion: Option<(u32, MouseMotionEvent)> = None;
             for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
                 let Some(event) = self.services.poll_platform_event() else {
@@ -370,17 +373,21 @@ impl ClientApplication {
                     admitted_event_count,
                 ));
             }
+            frame_profile.mark("platform input");
             if let Err(error) = self.services.service_login()
                 && !self.services.record_recoverable_error(&error)
             {
                 return Err(error);
             }
+            frame_profile.mark("session and world service");
             if let Err(error) = self.services.present_frame()
                 && !self.services.record_recoverable_error(&error)
             {
                 return Err(error);
             }
+            frame_profile.mark("presentation");
             frame_limiter.wait();
+            frame_profile.mark("frame limiter");
         }
     }
 

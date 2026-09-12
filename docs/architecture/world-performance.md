@@ -1,5 +1,9 @@
 # Offline World performance replay
 
+For measurements of the populated client at its actual display resolution, see
+[live CPU and sampled GPU timings](live-frame-timings.md). Replay throughput is
+not a substitute for profiling the user's live workload.
+
 `solarity-runtime`'s `benchmark_world` example exercises the production terrain
 streaming, environment, local-player presentation, FrameXML, camera collision,
 M2/WMO presentation, and Vulkan owners without authenticating or connecting to a

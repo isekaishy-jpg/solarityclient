@@ -166,6 +166,8 @@ impl FrameBufferLayout {
 }
 
 pub(super) struct WorldFrameSlot {
+    /// Diagnostic queries share this slot's fence and command-buffer lifetime.
+    pub(super) gpu_timestamps: super::gpu_profile::GpuTimestampSlot,
     pub(super) shadows: crate::device::vulkan_shadow::ShadowFrameResources,
     pub(super) liquids: LiquidFrameResources,
     pub(super) ripples: RippleFrameResources,
@@ -261,19 +263,30 @@ impl WorldFrameSlot {
         (self.buffer, self.layout.particle_index_offset)
     }
 
-    pub(super) fn wait_and_reset(&self, device: &Device) -> Result<(), VulkanError> {
+    /// Retires this slot and optionally measures only its normal fence wait.
+    /// Resetting the command pool stays outside the reported wait interval.
+    pub(super) fn wait_and_reset(
+        &self,
+        device: &Device,
+        profile: bool,
+    ) -> Result<std::time::Duration, VulkanError> {
+        let started = profile.then(std::time::Instant::now);
         // SAFETY: This slot owns both objects and prior use is fence-protected.
         unsafe {
             device
                 .wait_for_fences(&[self.fence], true, u64::MAX)
                 .map_err(|source| VulkanError::operation("wait for world frame slot", source))?;
+        }
+        let waited = started.map(|started| started.elapsed()).unwrap_or_default();
+        // SAFETY: The preceding fence retired every use of this slot's pool.
+        unsafe {
             device
                 .reset_command_pool(self.command_pool, vk::CommandPoolResetFlags::empty())
                 .map_err(|source| {
                     VulkanError::operation("reset world frame command pool", source)
                 })?;
         }
-        Ok(())
+        Ok(waited)
     }
 
     pub(super) fn reset_fence(&self, device: &Device) -> Result<(), VulkanError> {
@@ -771,6 +784,7 @@ impl WorldFrameSlot {
     }
 
     fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        self.gpu_timestamps.destroy(device);
         self.shadows.destroy(device, allocator);
         self.liquids.destroy(device, allocator);
         self.ripples.destroy(device, allocator);
@@ -819,6 +833,7 @@ impl WorldFrameSlot {
 
     fn empty(layout: FrameBufferLayout) -> Self {
         Self {
+            gpu_timestamps: super::gpu_profile::GpuTimestampSlot::default(),
             shadows: crate::device::vulkan_shadow::ShadowFrameResources::default(),
             liquids: LiquidFrameResources::empty(),
             ripples: RippleFrameResources::empty(),
@@ -998,12 +1013,13 @@ impl WorldFrameResources {
         index: usize,
         device: &Device,
         allocator: &vk_mem::Allocator,
-    ) -> Result<&mut WorldFrameSlot, VulkanError> {
+        profile: bool,
+    ) -> Result<(&mut WorldFrameSlot, std::time::Duration), VulkanError> {
         let layout = self.desired_layout.ok_or(VulkanError::WorldFrameCapacity)?;
         let slot = self.slot_mut(index)?;
-        slot.wait_and_reset(device)?;
+        let waited = slot.wait_and_reset(device, profile)?;
         slot.grow_buffer(device, allocator, layout)?;
-        Ok(slot)
+        Ok((slot, waited))
     }
 
     pub(super) fn slot_mut(&mut self, index: usize) -> Result<&mut WorldFrameSlot, VulkanError> {

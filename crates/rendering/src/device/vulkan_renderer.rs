@@ -270,6 +270,11 @@ impl VulkanRenderer {
         present_mode: VulkanPresentMode,
     ) -> Result<Self, VulkanError> {
         let selected = SelectedAdapter::select(&bootstrap, adapter_index, present_mode)?;
+        let gpu_profiler = crate::device::vulkan_world_frame::GpuFrameProfiler::from_environment(
+            &bootstrap.instance,
+            selected.physical_device,
+            selected.graphics_family,
+        )?;
         let device = create_device(&bootstrap, &selected)?;
         // SAFETY: Both family indices were queried from this physical device,
         // and queue zero was requested during logical-device creation.
@@ -300,7 +305,7 @@ impl VulkanRenderer {
             world_model_pipelines: WorldModelPipelineRegistry::default(),
             world_model_samplers: WorldModelSamplerRegistry::default(),
             world_model_texture_sets: WorldModelTextureSetRegistry::default(),
-            world_frames: WorldFrameRenderer::default(),
+            world_frames: WorldFrameRenderer::with_gpu_profiler(gpu_profiler),
             glow: VulkanGlowRenderer::default(),
             terrain_meshes: TerrainMeshRegistry::default(),
             liquid_meshes: LiquidMeshRegistry::default(),
