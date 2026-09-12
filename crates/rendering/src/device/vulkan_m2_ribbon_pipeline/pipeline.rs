@@ -66,6 +66,15 @@ pub(super) fn create_pipeline(
     program: &M2RibbonSpirvProgram,
 ) -> Result<vk::Pipeline, VulkanError> {
     let modules = ShaderModules::create(device, program)?;
+    let vertex_value = program.vertex_specialization()[0].to_ne_bytes();
+    let vertex_entries = [vk::SpecializationMapEntry {
+        constant_id: 0,
+        offset: 0,
+        size: 4,
+    }];
+    let vertex_specialization = vk::SpecializationInfo::default()
+        .map_entries(&vertex_entries)
+        .data(&vertex_value);
     let fragment_value = program.fragment_specialization()[0].to_ne_bytes();
     let fragment_entries = [vk::SpecializationMapEntry {
         constant_id: 0,
@@ -79,7 +88,8 @@ pub(super) fn create_pipeline(
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(modules.vertex)
-            .name(c"main"),
+            .name(c"main")
+            .specialization_info(&vertex_specialization),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(modules.fragment)
@@ -105,8 +115,11 @@ pub(super) fn create_pipeline(
         .scissor_count(1);
     let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
         .polygon_mode(vk::PolygonMode::FILL)
-        // Ribbons are authored as a single viewable sheet, not a closed mesh.
-        .cull_mode(vk::CullModeFlags::NONE)
+        .cull_mode(if material.cull_enabled() {
+            vk::CullModeFlags::BACK
+        } else {
+            vk::CullModeFlags::NONE
+        })
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()

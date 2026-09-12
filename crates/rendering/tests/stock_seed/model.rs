@@ -18,6 +18,8 @@ mod particle_frame;
 mod portrait;
 #[path = "model/projection.rs"]
 mod projection;
+#[path = "model/ribbon_shader.rs"]
+mod ribbon_shader;
 #[path = "model/scene_lights.rs"]
 mod scene_lights;
 #[path = "model/sequence_blend.rs"]

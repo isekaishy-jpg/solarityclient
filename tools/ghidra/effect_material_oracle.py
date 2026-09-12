@@ -2,8 +2,8 @@
 
 Runs unmodified 81FE90..820071 and 980D31..980E25, including the original
 GX dirty-state and alpha-reference helpers. Dirty records are preallocated.
-The ribbon input is the decoded material's runtime flag/operation record;
-texture binding, GPU submission and the model constructor are outside capture.
+833934..8339C1 converts the supplied root material into the runtime ribbon
+record. Allocation, the rest of construction, textures and draws are excluded.
 """
 import argparse
 import itertools
@@ -12,7 +12,7 @@ from pathlib import Path
 import wmo_registration_oracle as n
 from unicorn.x86_const import (
     UC_X86_REG_EBP, UC_X86_REG_ECX, UC_X86_REG_EDI,
-    UC_X86_REG_ESI, UC_X86_REG_ESP, UC_X86_REG_EIP,
+    UC_X86_REG_ESI, UC_X86_REG_ESP, UC_X86_REG_EIP, UC_X86_REG_EAX,
 )
 
 
@@ -45,10 +45,14 @@ def capture(executable):
         assert u.reg_read(UC_X86_REG_EIP) == 0x820071
         common = state_words(u, state)
 
-        runtime_flags = (~flags & 3) | (~(flags >> 1) & 12) | (~(flags << 2) & 16)
-        gx_blend = n.read_words(u, 0xa45570 + blend * 4, 1)[0]
+        # Execute the original root-material -> ribbon pass conversion, with
+        # the constructor's output vector already allocated.
+        n.write_words(u, 0xd4123c, passes)
+        u.reg_write(UC_X86_REG_ESI, material)
+        u.reg_write(UC_X86_REG_EAX, 0)
+        u.emu_start(0x833934, 0x8339c1, count=100_000)
+        assert u.reg_read(UC_X86_REG_EIP) == 0x8339c1
         n.write_words(u, ribbon + 0x11c, passes)
-        n.write_words(u, passes, runtime_flags, gx_blend)
         u.reg_write(UC_X86_REG_ESP, n.STACK + 0x18000)
         u.reg_write(UC_X86_REG_EBP, n.STACK + 0x17000)
         u.reg_write(UC_X86_REG_ESI, ribbon)

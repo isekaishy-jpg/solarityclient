@@ -297,9 +297,10 @@ both pipeline variants and pushes the reference separately for each draw.
 `tools/ghidra/effect_material_oracle.py` runs unmodified common and ribbon
 submission blocks and their GX helpers for 315 material/pass/alpha inputs.
 Decoded-material tests compare the resulting blend, depth, cull and alpha-test
-states, including the ribbon shader specialization. The capture supplies the
-ribbon's decoded runtime material record; it does not execute model construction,
-texture binding or GPU submission. A separate Vulkan test checks faded opaque
+states, including the ribbon shader specialization. The capture executes the
+original `833934..8339C1` root-material conversion into a preallocated ribbon
+pass record. Allocation, the rest of construction, texture binding and GPU
+submission are outside that capture. A separate Vulkan test checks faded opaque
 and alpha-key particle blending, alpha discard and retained depth writes using
 overlapping cards. The runtime liquid fixture checks old and newly created
 ribbon edge alpha across owner-opacity changes.
@@ -307,6 +308,32 @@ ribbon edge alpha across owner-opacity changes.
 The 2026-09-11 opacity change passes workspace Clippy with warnings denied and
 all 1,313 workspace tests (23 explicit environment-dependent tests ignored).
 These controlled checks do not establish complete populated-world effect parity.
+
+### Ribbon material color and culling
+
+`820F40` binds the scene's `Particle_Unlit` effect, initialized by `81F330`.
+`980B70` publishes each ribbon pass's lighting bit through `8731C0`, then
+`873160` selects the `Color_T1` vertex program. The even variant forwards PCT
+color and alpha for an unlit material. The odd variant outputs white, including
+alpha, for a material with lighting enabled. Neither variant computes diffuse
+lighting. Multiplicative root materials retain the shared model setup's effective
+unlit flag. Vulkan now specializes this color selection and applies the authored
+two-sided flag to back-face culling.
+
+`tools/ghidra/ribbon_shader_oracle.py` executes the original material conversion,
+lighting publication and shader selector for four effective flag combinations,
+then renders the selected original BLS programs through Direct3D9. The capture
+pins the executable and shader fingerprints; the fixture records RGBA with
+nonwhite tint and fractional texture/vertex alpha. Fog and shadows are neutral,
+the blend is opaque, and D3D culling is disabled to isolate color selection.
+The Vulkan framebuffer regression compares those pixels with scene lights both
+zero and overbright. It also reverses strip winding: a culled material must draw
+one side and a two-sided material must draw both. This checks cull enablement;
+it does not independently establish the stock front-face convention. Ribbon
+fog, multipass fog-color retention and shadow receiving require separate checks.
+
+The 2026-09-12 color/culling change passes workspace Clippy with warnings denied
+and all 1,317 workspace tests (23 explicit environment-dependent tests ignored).
 
 ### Attached particle card size
 

@@ -28,7 +28,7 @@ impl M2RibbonSpirvProgram {
         }
     }
 
-    /// Returns the fixed material state encoded into the fragment variant.
+    /// Returns the material state used by both shaders and the fixed pipeline.
     #[must_use]
     pub const fn material(&self) -> M2MaterialState {
         self.material
@@ -44,6 +44,12 @@ impl M2RibbonSpirvProgram {
     #[must_use]
     pub fn fragment_words(&self) -> &[u32] {
         &self.fragment_words
+    }
+
+    /// Selects Color_T1's white-color variant for a material without unlit.
+    #[must_use]
+    pub const fn vertex_specialization(&self) -> [u32; 1] {
+        [!self.material.is_unlit() as u32]
     }
 
     /// Returns the stock alpha-reference specialization.

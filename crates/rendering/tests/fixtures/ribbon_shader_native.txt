@@ -1,0 +1,8 @@
+# Stock Particle_Unlit, opaque, neutral fog/shadow; tint RGBA=64,128,191,96 texture=204,153,102,192
+# SHADERS_VERTEX_VS_3_0_COLOR_T1.BLS sha256=ec46462309e02362b52e98d810594406ace8712de5638c518c7024d0db5ec1f2
+# SHADERS_PIXEL_PS_3_0_COMBINERS_MOD.BLS sha256=b0757bd321bcc7810d3d0120bf32259ee7ce8421d73c1b853919c249bcf0b65a
+# effectiveFlags runtimeFlags vertexVariant pixelVariant red green blue alpha
+0 31 1 0 204 153 102 192
+1 30 0 0 51 77 76 72
+4 15 1 0 204 153 102 192
+5 14 0 0 51 77 76 72
