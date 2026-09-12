@@ -9,6 +9,10 @@ use solarity_rendering::{
     VulkanRenderer, WorldCameraFrame, WorldFrustum, WorldModelBaseMip, WorldModelTextureFiltering,
 };
 
+mod retirement;
+
+use retirement::CpuRetirementQueue;
+
 use super::RuntimeTerrainFrameError;
 use crate::application::terrain_coordinator::ResidentTerrainTile;
 
@@ -22,6 +26,7 @@ struct DetailTile {
 /// Native detail policy and immutable chunks shared with submitted GPU frames.
 pub(super) struct GroundDetailWorld {
     tiles: Vec<DetailTile>,
+    retired: CpuRetirementQueue<DetailTile>,
     draws: Vec<GroundDetailDraw>,
     density: GroundDetailDensity,
     distance: f32,
@@ -34,6 +39,7 @@ impl GroundDetailWorld {
     pub(super) fn new(filtering: WorldModelTextureFiltering, base_mip: WorldModelBaseMip) -> Self {
         Self {
             tiles: Vec::new(),
+            retired: CpuRetirementQueue::new(),
             draws: Vec::new(),
             density: GroundDetailDensity::default(),
             distance: 140.0,
@@ -57,7 +63,7 @@ impl GroundDetailWorld {
             .ok_or(RuntimeTerrainFrameError::InvalidGroundDetailCvar)?
             .clamp(0.0, 140.0);
         if density != self.density {
-            self.tiles.clear();
+            self.retired.extend(self.tiles.drain(..));
             self.density = density;
         }
         self.distance = distance;
@@ -72,12 +78,16 @@ impl GroundDetailWorld {
         camera: WorldCameraFrame,
         frustum: WorldFrustum,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let mut profile = crate::application::frame_profile::RuntimeFrameProfile::new(
+            "Ground detail preparation",
+        );
         self.draws.clear();
-        self.tiles.retain(|cached| {
-            residents
+        self.retired.extend(self.tiles.extract_if(.., |cached| {
+            !residents
                 .clone()
                 .any(|tile| Arc::ptr_eq(tile.mesh(), &cached.plan))
-        });
+        }));
+        profile.mark("retirement");
         if self.distance == 0.0 {
             return Ok(());
         }
@@ -131,18 +141,24 @@ impl GroundDetailWorld {
                     continue;
                 }
                 if draw.is_none() {
+                    let mut generation =
+                        crate::application::frame_profile::RuntimeFrameProfile::new(
+                            "Ground detail generation",
+                        );
                     let scatter = TerrainDetailChunk::prepare(
                         resident.decoded(),
                         chunk.chunk(),
                         catalog,
                         self.density,
                     )?;
+                    generation.mark("scatter");
                     let mesh = Arc::new(GroundDetailMeshPlan::prepare(
                         &scatter,
                         catalog,
                         self.density,
                         |id| assets.models.get(&id).map(Arc::as_ref),
                     )?);
+                    generation.mark("mesh");
                     let sources = mesh
                         .batches()
                         .iter()
@@ -161,6 +177,7 @@ impl GroundDetailWorld {
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let textures = renderer.upload_blp_textures(&sources)?;
+                    generation.mark("textures");
                     *draw = Some(GroundDetailDraw::new(
                         mesh,
                         textures,
@@ -177,6 +194,15 @@ impl GroundDetailWorld {
             }
         }
         Ok(())
+    }
+
+    /// Releases detached CPU plans on the bounded application worker pool.
+    /// GPU resources keep their existing renderer ownership and fence lifetimes.
+    pub(super) fn service_retirements(
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        self.retired.service(cpu)
     }
 
     /// Borrows prepared packets for the current submission's resource pinning.

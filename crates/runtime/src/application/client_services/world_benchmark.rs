@@ -534,6 +534,9 @@ impl ClientServices {
                 &[],
             )
             .map_err(ApplicationError::from)?;
+        frame
+            .service_cpu_retirements(&self.cpu)
+            .map_err(ApplicationError::from)?;
         let errors = frame.drain_recoverable_errors();
         if let Some(error) = errors.into_iter().next() {
             return Err(WorldBenchmarkError::Presentation(error));

@@ -1470,3 +1470,87 @@ Packaged and installed as Solarity 0.0.3a Build 114, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `01db6edb9b153587e3b47a011c583b8eeaae8f2eecab6c9c9065a7500f98c480`.
+
+
+## September 12: move detached detail-cache destruction off presentation
+
+The repeatable return-leg eviction frame included detail-cache retirement in
+addition to M2 topology rebuilding. A diagnostic build split detail retirement
+from scatter, mesh preparation and texture upload. Retirement reached 3.1215 ms;
+individual newly generated chunks peaked at 0.1375 ms. Earlier broad diagnostics
+had observed an 8.5625 ms detail phase. Temporary per-model timers added substantial
+overhead when applied to every culled placement; that run was stopped, timers were
+narrowed for diagnosis, and all per-model timers were removed from the final code.
+The new detail phase timings remain opt-in.
+
+Detached detail tiles now move into a CPU retirement queue instead of dropping
+inside cache retention or a density change. Both normal world presentation and
+the benchmark service that queue through the existing bounded CPU executor after
+submission. A capacity reservation precedes ownership transfer, so saturation
+keeps the data for a later frame without an inline destructor or a blocking wait.
+The executor owns admitted tasks through shutdown even after their unused result
+handles are discarded. Unsubmitted data remains owned by the frame and is released
+normally if the frame itself is destroyed. This can temporarily retain retired
+CPU allocations while workers are busy.
+
+Detail selection, generation, density, random-number consumption, draw order and
+GPU fence ownership are unchanged. Renderer-held plan references remain alive
+through their existing resource lifetime; worker destruction only releases the
+runtime's detached CPU references. Focused tests verify exactly-once destruction
+on a worker, preservation during saturation, retry after capacity returns, shutdown
+waiting, and retained ownership when admission has closed.
+
+All 334 runtime library tests pass (18 ignored), as do 18 terrain integration
+tests. Runtime Clippy with all targets and warnings denied, formatting and diff
+checks pass. The final separate diagnostic reports 55.1 us maximum detail-cache
+retirement and 0.1682 ms maximum complete detail preparation. Diagnostic runs are
+excluded from the uncaptured comparison below.
+
+Four unprofiled runs alternate new/Build 114/new/Build 114 with 2,400 frames per
+phase. They use the same GTX 1070, 1280x720, shadow quality 2, uncapped noon
+profile, map 1 at `(1100, -4500, 150)` and travel offset `(-1600, 0, 0)`.
+This remains an offline installed terrain/FrameXML/Vulkan workload without
+authored NPC fixtures, network, movement solver, audio or overlays. Initial
+loading is excluded.
+
+| Phase | Build 114 mean ms | Worker retirement mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.874081 | 1.902889 | +1.54% |
+| Orbit | 2.197995 | 2.214262 | +0.74% |
+| Pointer/tooltip | 2.221697 | 2.229343 | +0.34% |
+| Travel out | 2.290817 | 2.282374 | -0.37% |
+| Travel back | 2.256736 | 2.259854 | +0.14% |
+| Settled | 1.900895 | 1.968836 | +3.57% |
+
+The targeted return-leg frame 799 evicts seven tiles at the same camera position
+in all runs. Its total times fall from 20.0679/20.3315 to 10.3488/11.3017 ms;
+presentation falls from 13.7178/8.1877 to 4.4333/4.8783 ms. Across all 96 frames
+with residency changes in each variant, mean total time falls from 12.868179 to
+12.438625 ms. The return-leg maximum falls from 20.0679/20.3315 to
+13.1449/12.8816 ms.
+
+This is a targeted stall reduction, not an FPS gain: overall mean frame time is
+2.123703 versus 2.142927 ms (+0.91%), and the new phase means correspond to
+approximately 438-526 FPS. The new runs still include a 34.5787 ms admission
+frame, with 27.8407 ms in streaming. The no-stall and 1,200 FPS goals remain open.
+M2 topology rebuilding still recomputes static bounds and distance metadata
+across retained placements and remains a follow-up target alongside publication.
+
+All non-loading camera positions, detail/shadow counts and recorded screen
+effects match. Each travel leg admits and evicts 21 tiles over 24 changed frames;
+all four runs finish with 49 resident tiles. A separate 23-image capture replay
+is excluded from timings. Twelve before/after view pairs retain consistent world
+coverage through orbit and both travel directions. Wall-time animation differs,
+and strong terrain highlights and combined-world lighting parity remain unresolved.
+
+Local evidence: `target/detail-retirement-{before,after}-{one,two}.csv`,
+`target/compare-detail-retirement.py`, `target/check-detail-retirement-states.py`,
+`target/compare-detail-retirement-spikes.py`,
+`target/wmo-worker-admitted-instance-spike.log`,
+`target/detail-retirement-diagnostic.log`,
+`target/detail-retirement-after-captures/`, and
+`target/detail-retirement-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`e8412e88fa44c77a3302235c39d9ad7780ded0a015caf08658aa88ab16efb0fa`;
+the new benchmark, preserved as `target/benchmark-detail-retirement.exe`, is
+`8520d171334f5d52b1466c4b06af658e870be0e9d9627fff8f1a9573b8d201f0`.

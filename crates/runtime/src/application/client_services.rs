@@ -1436,6 +1436,7 @@ impl ClientServices {
             frame_draws,
             &self.runtime_overlay_draws,
         )?;
+        frame.service_cpu_retirements(&self.cpu)?;
         profile.mark("world animation and Vulkan present");
         let mount_camera_sample = frame.take_mount_camera_sample();
         let camera_time_ms = mount_camera_sample

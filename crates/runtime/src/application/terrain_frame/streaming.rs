@@ -12,6 +12,15 @@ use crate::random::CrtRand;
 use super::{RuntimeTerrainFrameError, TerrainFrame, TerrainGpuTile, prepare_tile_draws};
 
 impl TerrainFrame {
+    /// Services CPU-only detail retirement after frame publication. Saturation
+    /// retains ownership for the next frame instead of blocking or freeing inline.
+    pub(in crate::application) fn service_cpu_retirements(
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        self.ground_detail.service_retirements(cpu)
+    }
+
     /// Consumes this world frame and queues its ADTs for fence-covered destruction.
     pub(in crate::application) fn retire(
         self,
