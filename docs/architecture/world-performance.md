@@ -1724,3 +1724,101 @@ Packaged and installed as Solarity 0.0.3a Build 117, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `afaefa5911f5ddd71e0a23e65576e34638e2b08bcc47f628c70e1b24ed3521d9`.
+
+## September 12: size liquid texture descriptors by distinct image pairs
+
+Further timing separates the recurring orbit stall from slot fence waiting.
+The refined diagnostic reports liquid resource growth taking 14.1774 and
+14.2308 ms while the corresponding slot waits take 8.5 and 6.5 microseconds.
+Retaining the fixed procedural depth images and unchanged samplers alone does
+not resolve it: a follow-up still reports 13.4354 and 14.9474 ms growth.
+Detailed creation timing then isolates `vkAllocateDescriptorSets`, taking
+13.2712 ms at capacity 32 and 14.4829 ms at capacity 64. Buffer allocation,
+pool creation and old-bank destruction in those samples take microseconds.
+
+Liquid texture storage previously followed draw capacity, allocating one
+two-image descriptor set per draw alongside the dynamic uniform descriptor.
+It now has an independent bank sized to distinct depth/surface image-view pairs.
+Draws retain their original order, shader choice and independent uniform offset;
+only identical texture bindings share a material set. Every frame resolves all
+current texture views before mapping, rewrites used material descriptors after
+the slot fence, and uploads the current procedural depth images as before.
+Each material-bank allocation requests one set at a time from its checked pool;
+the uniform descriptor uses its own one-set pool.
+
+Uniform growth retains the independent material bank, fixed-size depth images
+and unchanged samplers. Filtering changes replace samplers and rewrite used
+bindings. Ownership transfers occur only after replacement allocations succeed;
+failed material-bank allocation destroys only the new unsubmitted pool. All
+resource destruction remains under the existing slot-fence/shutdown rules.
+
+The real Vulkan liquid pixel test now covers 18 frames of capacity growth and
+filter changes, mixed river/ocean/WMO depth images, both water shader variants,
+repeated image pairs and a distinct offscreen transform sharing another draw's
+textures. Its expected compositing calculation follows each original draw in
+order. Temporary phase probes are preserved locally and removed from production.
+
+The broader world-frame capacity path still recreates unrelated slot resources
+after a device-idle wait. That separate source of avoidable work remains open.
+
+Sharing texture sets alone moves the original problem frames into the 2.1-2.4 ms
+range but does not remove all orbit pauses. A later detailed replay of the
+individual-allocation version finds 15.3788 and 19.2219 ms in detail-mesh resource
+preparation; liquid growth takes 0.5/0.7 microseconds and liquid writes take
+7.4/12.2 microseconds in those same frames. The remaining wait/write stall now
+requires investigation of detail resources. This is not evidence of a stall-free
+renderer or an established broad FPS gain.
+
+Regression validation passes: 32 rendering unit tests, 184 rendering integration
+tests and 334 runtime library tests (18 ignored). After the final allocation-loop
+change, the expanded liquid pixel test passes again (183 other integration tests
+filtered), and rendering/runtime Clippy with all targets and warnings denied
+passes again. Formatting and whitespace checks pass.
+
+Two interleaved uncaptured runs per executable use the same installed-world route,
+GTX 1070, 1280x720, environment shadow quality 2 and 2,400 frames per phase. This
+offline fixture has no authored NPCs, network, movement solver, audio or overlays.
+
+| Phase | Build 117 mean ms | Shared liquid descriptors mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.909075 | 1.868624 | -2.12% |
+| Orbit | 2.217006 | 2.223218 | +0.28% |
+| Pointer | 2.257424 | 2.236311 | -0.94% |
+| Travel out | 2.279473 | 2.273157 | -0.28% |
+| Travel back | 2.270173 | 2.243647 | -1.17% |
+| Settled | 1.917047 | 1.901023 | -0.84% |
+
+Combined non-loading mean is 2.141700 versus 2.124330 ms (-0.81%); current phase
+means correspond to about 440-535 FPS. Orbit frame 289 takes 18.2286/21.4166 ms
+before and 2.0020/2.0230 ms after. Frame 1453 takes 15.3209/18.0599 ms before
+and 2.4239/2.1569 ms after. Other orbit frames still stall: the first new run has
+17.2927 ms at frame 301, and frame 1485 takes 16.7601/18.9346 ms in the two new
+runs. The second new run also contains an unattributed 35.0533 ms orbit frame.
+Across 96 changed-residency frames per variant, total mean is worse, 11.386974
+versus 11.814173 ms, including 6.669342 versus 6.894938 ms streaming. A new
+admission frame takes 31.4300 ms with 26.4269 ms streaming. The no-stall and
+1,200 FPS goals remain open; the small aggregate difference does not establish
+a broad performance gain from this change.
+
+All non-loading recorded camera, detail, primary/environment shadow and screen
+effect states match. Each travel leg admits and evicts 21 tiles over 24 changed
+frames, and every run finishes with 49 resident tiles. The separate 23-image
+capture replay is excluded from timings. Twelve reviewed view pairs retain
+consistent liquid/world coverage across orbit and both travel directions.
+Wall-time animation differs; strong terrain highlights and combined-world
+lighting parity remain unresolved.
+
+Local evidence: `target/wait-write-refined.log`,
+`target/wait-write-liquid-retention.log`,
+`target/wait-write-liquid-growth-phases.log`,
+`target/wait-write-liquid-single-phases.log`,
+`target/liquid-descriptor-diagnostic.log`,
+`target/liquid-descriptor-{before,after}-{one,two}.csv`,
+`target/compare-liquid-descriptor.py`, `target/check-liquid-descriptor-states.py`,
+`target/check-liquid-descriptor-orbit.py`, `target/compare-liquid-descriptor-spikes.py`,
+`target/liquid-descriptor-after-captures/`, and
+`target/liquid-descriptor-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`4eabf989c218dc4e89d25af0bcf8ddb10f6435e6863014b7a42f5740f9bb807d`;
+the final benchmark, preserved as `target/benchmark-liquid-descriptor.exe`, is
+`586ffd2edb29c1bfa9773fb3b6a17e53aecb60a2dc14fb902c8cd5e0164a08a8`.

@@ -35,7 +35,10 @@ pub(in crate::device) struct LiquidFrameResources {
     depth_offset: u64,
     pool: vk::DescriptorPool,
     uniform_set: vk::DescriptorSet,
+    material_layout: vk::DescriptorSetLayout,
+    material_pool: vk::DescriptorPool,
     material_sets: Vec<vk::DescriptorSet>,
+    draw_materials: Vec<usize>,
     samplers: [vk::Sampler; 2],
     filtering: WorldModelTextureFiltering,
     depths: [DepthImage; 3],
@@ -51,7 +54,10 @@ impl LiquidFrameResources {
             depth_offset: 0,
             pool: vk::DescriptorPool::null(),
             uniform_set: vk::DescriptorSet::null(),
+            material_layout: vk::DescriptorSetLayout::null(),
+            material_pool: vk::DescriptorPool::null(),
             material_sets: Vec::new(),
+            draw_materials: Vec::new(),
             samplers: [vk::Sampler::null(); 2],
             filtering: WorldModelTextureFiltering::Trilinear,
             depths: [
@@ -73,11 +79,26 @@ impl LiquidFrameResources {
             return Ok(());
         }
         let capacity = geometric_capacity(self.capacity, context.count);
+        let retain_depths = self.capacity != 0;
+        let retain_samplers = retain_depths && self.filtering == context.filtering;
         let mut replacement = Self::empty();
-        if let Err(error) = replacement.create(&context, capacity) {
+        if let Err(error) = replacement.create(&context, capacity, !retain_depths, !retain_samplers)
+        {
             replacement.destroy(context.device, context.allocator);
             return Err(error);
         }
+        // Fixed resources and texture sets do not depend on uniform capacity.
+        // Transfer only after replacement allocation succeeds; the retired slot's
+        // next write refreshes every used descriptor and procedural depth texel.
+        if retain_depths {
+            std::mem::swap(&mut replacement.depths, &mut self.depths);
+        }
+        if retain_samplers {
+            std::mem::swap(&mut replacement.samplers, &mut self.samplers);
+        }
+        std::mem::swap(&mut replacement.material_pool, &mut self.material_pool);
+        std::mem::swap(&mut replacement.material_sets, &mut self.material_sets);
+        std::mem::swap(&mut replacement.draw_materials, &mut self.draw_materials);
         self.destroy(context.device, context.allocator);
         *self = replacement;
         Ok(())
@@ -88,10 +109,13 @@ impl LiquidFrameResources {
         &mut self,
         context: &LiquidFrameCreateContext<'_>,
         capacity: usize,
+        create_depths: bool,
+        create_samplers: bool,
     ) -> Result<(), VulkanError> {
         let device = context.device;
         let allocator = context.allocator;
         let layouts = context.layouts;
+        self.material_layout = layouts[1];
         let alignment = context.alignment.max(1);
         self.filtering = context.filtering;
         self.stride = (LiquidShaderUniform::BYTE_SIZE as u64)
@@ -122,8 +146,10 @@ impl LiquidFrameResources {
             .map_err(|source| VulkanError::operation("create liquid frame buffer", source))?;
         self.buffer = buffer;
         self.allocation = Some(memory);
-        for depth in &mut self.depths {
-            depth.create(device, allocator)?;
+        if create_depths {
+            for depth in &mut self.depths {
+                depth.create(device, allocator)?;
+            }
         }
         for (index, address) in [
             vk::SamplerAddressMode::CLAMP_TO_EDGE,
@@ -131,6 +157,7 @@ impl LiquidFrameResources {
         ]
         .into_iter()
         .enumerate()
+        .filter(|_| create_samplers)
         {
             // 8A2450 keeps procedural depth linear/clamped; 4B9760 replaces
             // ordinary surface filtering with the global textureFilteringMode.
@@ -159,30 +186,16 @@ impl LiquidFrameResources {
             self.samplers[index] = unsafe { device.create_sampler(&info, None) }
                 .map_err(|source| VulkanError::operation("create liquid sampler", source))?;
         }
-        let count = u32::try_from(capacity).map_err(|_| VulkanError::WorldFrameCapacity)?;
-        let sets = count
-            .checked_add(1)
-            .ok_or(VulkanError::WorldFrameCapacity)?;
-        let sampled = count
-            .checked_mul(2)
-            .ok_or(VulkanError::WorldFrameCapacity)?;
-        let sizes = [
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .descriptor_count(1),
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(sampled),
-        ];
+        let sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+            .descriptor_count(1)];
         let info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(sets)
+            .max_sets(1)
             .pool_sizes(&sizes);
-        // SAFETY: Counts cover the one uniform and every two-texture material set.
+        // SAFETY: This pool owns only the slot's dynamic uniform descriptor.
         self.pool = unsafe { device.create_descriptor_pool(&info, None) }
             .map_err(|source| VulkanError::operation("create liquid descriptor pool", source))?;
-        let mut requested = Vec::with_capacity(capacity + 1);
-        requested.push(layouts[0]);
-        requested.resize(capacity + 1, layouts[1]);
+        let requested = [layouts[0]];
         let info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(self.pool)
             .set_layouts(&requested);
@@ -192,7 +205,6 @@ impl LiquidFrameResources {
                 VulkanError::operation("allocate liquid frame descriptors", source)
             })?;
         self.uniform_set = allocated.remove(0);
-        self.material_sets = allocated;
         let uniform = [vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .range(LiquidShaderUniform::BYTE_SIZE as u64)];
@@ -204,6 +216,56 @@ impl LiquidFrameResources {
         // SAFETY: The dynamic descriptor's base range is within the retained mapped buffer.
         unsafe { device.update_descriptor_sets(&writes, &[]) };
         self.capacity = capacity;
+        Ok(())
+    }
+
+    /// Texture storage follows distinct image pairs, independently of draw count.
+    /// A failed allocation leaves the retired slot's previous bank intact.
+    fn ensure_materials(&mut self, device: &Device, required: usize) -> Result<(), VulkanError> {
+        if self.material_sets.len() >= required {
+            return Ok(());
+        }
+        let capacity = geometric_capacity(self.material_sets.len(), required);
+        let count = u32::try_from(capacity).map_err(|_| VulkanError::WorldFrameCapacity)?;
+        let sampled = count
+            .checked_mul(2)
+            .ok_or(VulkanError::WorldFrameCapacity)?;
+        let sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(sampled)];
+        let info = vk::DescriptorPoolCreateInfo::default()
+            .max_sets(count)
+            .pool_sizes(&sizes);
+        // SAFETY: Every material layout contains exactly two sampled images.
+        let pool = unsafe { device.create_descriptor_pool(&info, None) }
+            .map_err(|source| VulkanError::operation("create liquid material pool", source))?;
+        let layouts = [self.material_layout];
+        let info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(pool)
+            .set_layouts(&layouts);
+        let mut sets = Vec::with_capacity(capacity);
+        // Keep the allocation shape fixed as the bank grows.
+        for _ in 0..capacity {
+            // SAFETY: The unsubmitted pool covers the complete bank; this call
+            // requests one compatible set and no concurrent caller uses the pool.
+            match unsafe { device.allocate_descriptor_sets(&info) } {
+                Ok(allocated) => sets.extend(allocated),
+                Err(source) => {
+                    // SAFETY: All sets allocated so far remain unsubmitted.
+                    unsafe { device.destroy_descriptor_pool(pool, None) };
+                    return Err(VulkanError::operation(
+                        "allocate liquid material descriptors",
+                        source,
+                    ));
+                }
+            }
+        }
+        if self.material_pool != vk::DescriptorPool::null() {
+            // SAFETY: The slot fence retired every user of the old material bank.
+            unsafe { device.destroy_descriptor_pool(self.material_pool, None) };
+        }
+        self.material_pool = pool;
+        self.material_sets = sets;
         Ok(())
     }
 
@@ -222,20 +284,22 @@ impl LiquidFrameResources {
             return Err(VulkanError::WorldFrameCapacity);
         }
         // Resolve every live view before mapping so errors cannot strand mapped memory.
-        let images = frame
-            .draws()
-            .iter()
-            .map(|draw| {
-                let surface = textures
-                    .view(draw.surface())
-                    .ok_or(VulkanError::UnknownBlpTextureHandle)?;
-                // Magma never reads binding zero. A valid surface descriptor there
-                // keeps the shared layout complete without inventing a depth input.
-                let depth = draw
-                    .material()
-                    .depth()
-                    .map_or(surface, |kind| self.depths[depth_index(kind)].view());
-                Ok([
+        let mut materials = std::collections::HashMap::new();
+        let mut images = Vec::new();
+        self.draw_materials.clear();
+        for draw in frame.draws() {
+            let surface = textures
+                .view(draw.surface())
+                .ok_or(VulkanError::UnknownBlpTextureHandle)?;
+            // Magma never reads binding zero. A valid surface descriptor there
+            // keeps the shared layout complete without inventing a depth input.
+            let depth = draw
+                .material()
+                .depth()
+                .map_or(surface, |kind| self.depths[depth_index(kind)].view());
+            let index = *materials.entry((depth, surface)).or_insert_with(|| {
+                let index = images.len();
+                images.push([
                     vk::DescriptorImageInfo::default()
                         .sampler(self.samplers[0])
                         .image_view(depth)
@@ -244,9 +308,12 @@ impl LiquidFrameResources {
                         .sampler(self.samplers[1])
                         .image_view(surface)
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
-                ])
-            })
-            .collect::<Result<Vec<_>, VulkanError>>()?;
+                ]);
+                index
+            });
+            self.draw_materials.push(index);
+        }
+        self.ensure_materials(device, images.len())?;
         let allocation = self
             .allocation
             .as_mut()
@@ -319,8 +386,9 @@ impl LiquidFrameResources {
         index: usize,
     ) -> Result<([vk::DescriptorSet; 2], u32), VulkanError> {
         let material = self
-            .material_sets
+            .draw_materials
             .get(index)
+            .and_then(|material| self.material_sets.get(*material))
             .copied()
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let offset = (index as u64)
@@ -338,6 +406,10 @@ impl LiquidFrameResources {
                 device.destroy_descriptor_pool(self.pool, None);
                 self.pool = vk::DescriptorPool::null();
             }
+            if self.material_pool != vk::DescriptorPool::null() {
+                device.destroy_descriptor_pool(self.material_pool, None);
+                self.material_pool = vk::DescriptorPool::null();
+            }
             for sampler in &mut self.samplers {
                 if *sampler != vk::Sampler::null() {
                     device.destroy_sampler(*sampler, None);
@@ -353,6 +425,7 @@ impl LiquidFrameResources {
             depth.destroy(device, allocator);
         }
         self.material_sets.clear();
+        self.draw_materials.clear();
         self.uniform_set = vk::DescriptorSet::null();
         self.capacity = 0;
     }

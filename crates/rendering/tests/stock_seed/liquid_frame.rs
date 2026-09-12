@@ -82,7 +82,26 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
     );
     let base =
         renderer.prepare_liquid_draw(background, LiquidDrawMaterial::Magma, white, uniform)?;
-    for (frame_index, count) in [1, 3, 1, 7, 2, 1, 4, 1, 2].into_iter().enumerate() {
+    // Shares base's image pair but requires a distinct dynamic uniform offset.
+    let offscreen = renderer.prepare_liquid_draw(
+        water,
+        LiquidDrawMaterial::Magma,
+        white,
+        LiquidShaderUniform::new(
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::X * 100.0),
+            Mat4::IDENTITY,
+            Mat4::IDENTITY,
+            LiquidLighting::new(-Vec3::Z, Vec3::ONE, Vec3::ZERO, Vec3::ZERO),
+            LiquidFog::new(Vec3::new(0.0, 1.0, 1.0), Vec3::ZERO),
+        ),
+    )?;
+    // First grow each slot without changing sampler policy, then grow and
+    // replace filtering while all three procedural depth images keep updating.
+    for (frame_index, count) in [1, 3, 1, 7, 2, 1, 4, 1, 2, 15, 16, 17, 31, 32, 33, 1, 2, 3]
+        .into_iter()
+        .enumerate()
+    {
         let alpha = [64, 128, 192][frame_index % 3];
         let river = LiquidDepthTexture::prepare(
             LiquidDepthTextureKind::River,
@@ -99,44 +118,54 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
             [0x0000_ffff; 2],
             [alpha; 2],
         );
-        let kind = [
-            LiquidDepthTextureKind::River,
-            LiquidDepthTextureKind::Ocean,
-            LiquidDepthTextureKind::WorldModel,
-        ][frame_index % 3];
-        let material = if frame_index % 2 == 0 {
-            LiquidDrawMaterial::Water(kind)
-        } else {
-            LiquidDrawMaterial::WaterNoSpecular(kind)
-        };
-        let draw = renderer.prepare_liquid_draw(water, material, black, uniform)?;
+        let kinds = (0..count)
+            .map(|index| {
+                [
+                    LiquidDepthTextureKind::River,
+                    LiquidDepthTextureKind::Ocean,
+                    LiquidDepthTextureKind::WorldModel,
+                ][(frame_index + if frame_index < 9 { 0 } else { index / 2 }) % 3]
+            })
+            .collect::<Vec<_>>();
         let mut draws = vec![base];
-        draws.extend(std::iter::repeat_n(draw, count));
+        for (index, &kind) in kinds.iter().enumerate() {
+            let material = if (frame_index + index) % 2 == 0 {
+                LiquidDrawMaterial::Water(kind)
+            } else {
+                LiquidDrawMaterial::WaterNoSpecular(kind)
+            };
+            draws.push(renderer.prepare_liquid_draw(water, material, black, uniform)?);
+        }
+        draws.push(offscreen);
         // Change immutable sampler state while slots also reuse existing capacity.
-        let filtering = [
-            WorldModelTextureFiltering::Bilinear,
-            WorldModelTextureFiltering::Anisotropic4x,
-            WorldModelTextureFiltering::Trilinear,
-            WorldModelTextureFiltering::Anisotropic16x,
-        ][frame_index % 4];
+        let filtering = if frame_index < 9 {
+            WorldModelTextureFiltering::Bilinear
+        } else {
+            [
+                WorldModelTextureFiltering::Bilinear,
+                WorldModelTextureFiltering::Anisotropic4x,
+                WorldModelTextureFiltering::Trilinear,
+                WorldModelTextureFiltering::Anisotropic16x,
+            ][frame_index % 4]
+        };
         let scene = scene().with_liquids(
             LiquidFrame::new(&draws, &river, &ocean, &wmo, 0).with_texture_filtering(filtering),
         );
         renderer.request_frame_capture()?;
         let report =
             renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
-        assert_eq!(report.liquid_draw_count(), count + 1);
+        assert_eq!(report.liquid_draw_count(), count + 2);
         let capture = renderer
             .take_captured_frame()?
             .ok_or("missing liquid capture")?;
-        let source: [f32; 3] = match kind {
-            LiquidDepthTextureKind::River => [0.0, 0.0, 255.0],
-            LiquidDepthTextureKind::Ocean => [0.0, 255.0, 0.0],
-            LiquidDepthTextureKind::WorldModel => [0.0, 255.0, 255.0],
-        };
         let mut expected = [255.0, 0.0, 0.0];
         let alpha = f32::from(alpha) / 255.0;
-        for _ in 0..count {
+        for kind in kinds {
+            let source: [f32; 3] = match kind {
+                LiquidDepthTextureKind::River => [0.0, 0.0, 255.0],
+                LiquidDepthTextureKind::Ocean => [0.0, 255.0, 0.0],
+                LiquidDepthTextureKind::WorldModel => [0.0, 255.0, 255.0],
+            };
             expected = std::array::from_fn(|channel| {
                 (source[channel] * alpha + expected[channel] * (1.0 - alpha)).round()
             });
