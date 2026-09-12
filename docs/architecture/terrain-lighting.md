@@ -224,3 +224,29 @@ Its 24 fixtures cover enabled/disabled specular, absent/zero/mixed MTXF flags,
 and filenames with multiple dots. Rendering tests compare decoded tile plans
 with those requests. The streaming regression supplies only the `_s.blp`
 asset to prove both synchronous and worker paths actually load it.
+
+An optimized before/after replay at position `(1299.02, -4373.88, 40)`,
+camera distance 35, pitch 0.5 and realm hour 15 uses matching settings and
+camera motion. The gate-facing orbit frame removes the broad yellow-white
+road/bank highlight while preserving orange surface detail. Local evidence is
+`target/gate-road-before-after.png` (Build 121 source above, corrected source
+below), with raw frames and logs under `target/gate-scene-v2-*`. This is a
+controlled Solarity regression comparison, not an exact stock camera replay
+or a performance measurement; builds, tests and playerbot servers were active.
+
+Testing Build 122 packages source `94bcc0c9087f341895926ede8ed9464d460184ca`
+from an isolated worktree, excluding concurrent frame-profiling work. Its
+reported dirty state records the packaging script's reserved BUILD_NUMBER
+change. The installed executable SHA-256 is
+`ae451fa0c6bccea68b94270cf2563c5e928ff6a3c2a6a2759042ce7e90eef319`.
+The package also includes the street-brazier flipbook correction described in
+`m2-effects.md`.
+
+Validation includes 24 native filename cases, 792 native flipbook samples,
+the masked-only streaming regression, 187 rendering integration tests, and
+334 runtime unit tests (18 tests remain opt-in). The workspace
+all-feature run passed its other targets; its one missing-texture fixture
+failure was corrected and the entire runtime unit target rerun successfully.
+Workspace formatting and all-target/all-feature Clippy with warnings denied
+passed. These checks do not establish exact live stock visual parity or the
+performance target.
