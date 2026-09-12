@@ -1107,3 +1107,11 @@ Local evidence: `target/tooltip-publication-{before,after}-{one,two}.csv`,
 Benchmark SHA-256:
 previous `615d2c509adcf7cbd852beff2b09652d9c95aff3dc64c3fffe110aa7fe28af40`,
 local geometry `3c4d88f11d50e2aff931203538668f40536e356eaff2feaf41ba8c327db4cbcf`.
+
+Testing Build 109 packages source revision `2dae7f2f`. The installed runtime
+matches the package SHA-256
+`b9b0c9cba4220cbfb4b8d8ae4631feae65bfa8122b12af8c11cbd7d50644dd9f`,
+with the reserved package number recorded as dirty source state. Build 108 was
+reserved by a failed attempt without the configured native-dependency environment;
+the successful retry keeps that sequence gap. The measured benchmark is preserved
+as `target/benchmark-build109-before-tooltip-topology.exe`.
