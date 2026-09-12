@@ -289,6 +289,48 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
             );
         }
     }
+    // Reused input storage must not keep a previously admitted sphere alive
+    // when its source disappears or its placement becomes invalid.
+    for source_present in [false, true] {
+        let removed = (!source_present).then(|| frame.sources[0].take()).flatten();
+        frame.doodad_scene.prepare(
+            &terrain,
+            &frame.placement_visibility,
+            &mut frame.placements,
+            &frame.sources,
+            Vec3::ZERO,
+            1.0,
+        )?;
+        if !source_present {
+            frame.sources[0] = removed;
+        }
+        for (index, placement) in frame.placements.iter().enumerate() {
+            let (_, doodad) = doodad_scene::owner_key(placement.owner).ok_or("owner")?;
+            assert_eq!(
+                frame.doodad_scene.fog_bank(index),
+                (source_present && doodad < 2).then_some(false),
+                "source availability must replace retained admission"
+            );
+            if !source_present {
+                assert_eq!(frame.doodad_scene.opacity(index), 1.0);
+            }
+        }
+    }
+    for placement in &mut frame.placements {
+        placement.placement_valid = false;
+    }
+    frame.doodad_scene.prepare(
+        &terrain,
+        &frame.placement_visibility,
+        &mut frame.placements,
+        &frame.sources,
+        Vec3::ZERO,
+        1.0,
+    )?;
+    for index in 0..frame.placements.len() {
+        assert_eq!(frame.doodad_scene.fog_bank(index), None);
+        assert_eq!(frame.doodad_scene.opacity(index), 1.0);
+    }
     if moving {
         world.remove_object(90)?;
         objects.synchronize(Some(&world))?;

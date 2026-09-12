@@ -1115,3 +1115,59 @@ with the reserved package number recorded as dirty source state. Build 108 was
 reserved by a failed attempt without the configured native-dependency environment;
 the successful retry keeps that sequence gap. The measured benchmark is preserved
 as `target/benchmark-build109-before-tooltip-topology.exe`.
+
+## Retained WMO doodad admission scratch
+
+An opt-in `M2 doodad admission` profile separates scratch reset, light owners,
+outdoor and indoor groups, and fog publication. The baseline reset averages
+66.763 microseconds across the reported intervals; group traversal averages
+19.779 microseconds combined. Reinitializing placement-sized sphere, distance,
+opacity and retained-fog arrays dominates admission work.
+
+The larger arrays now resize with residency and initialize individual entries
+when `prepare_model` visits them. Compact prepared/queued flags and current fog
+banks still reset each frame. An unvisited entry reports default opacity; a
+visited entry resets its sphere and opacity before checking source availability
+or placement validity. This prevents stale state after source removal, index
+reuse or invalid placement. Hidden light owners still prepare their distance
+opacity before group traversal. Reference ordering, clipping, fog selection and
+animation/effect advancement retain their existing behavior.
+
+The updated profile averages 4.421 microseconds for reset (93.4% lower), with
+19.108 microseconds for outdoor and indoor traversal combined. Initial/residency
+growth still initializes new entries; the diagnostic reset maximum remains
+371.3 microseconds. These instrumented runs establish attribution, not FPS.
+
+Four uncaptured, unprofiled replays alternate new, preserved Build 109, new,
+preserved Build 109. They use the same GTX 1070, 1280 x 720, shadow-quality-2,
+uncapped noon route with 2,400 frames per phase. No compilation or tests run
+during measurement. Means combine both runs:
+
+| Phase | Build 109 mean frame | Retained scratch mean frame |
+| --- | ---: | ---: |
+| Stationary | 2.308 ms | 2.236 ms |
+| Orbit | 2.548 ms | 2.469 ms |
+| Pointer | 2.642 ms | 2.570 ms |
+| Travel outbound | 2.674 ms | 2.599 ms |
+| Travel return | 2.616 ms | 2.544 ms |
+| Settled after travel | 2.342 ms | 2.305 ms |
+
+Mean frame times improve 1.60-3.10%, giving about 385-447 FPS. All non-loading
+positions, ground-detail draws and primary-shadow draws match. Each direction
+admits and evicts 21 tiles; outbound changes residency on 24 frames and return
+on 23-24 frames. Every run ends with 49 resident tiles. Non-loading frames still
+reach 22.249 ms; the remaining stalls and 1,200 FPS target remain open.
+
+All 330 runtime library tests pass, with 18 environment-dependent cases ignored.
+The GPU fixture checks portal visibility, fog pixels and hidden lights for both
+static and moving WMO doodads. It now also removes/restores sources and invalidates
+previously admitted placements to reject stale sphere/fog state. Existing source
+compaction and animation/effect tests pass. Workspace Clippy with warnings denied
+and formatting checks pass.
+
+Local evidence: `target/m2-doodad-{before,after}-{one,two}.csv`,
+`target/compare-m2-doodad.py`, `target/m2-doodad-{before,after}-diagnostic.log`,
+`target/analyze-m2-doodad.py`, and `target/m2-doodad-runtime-tests.log`.
+Benchmark SHA-256:
+previous `3c4d88f11d50e2aff931203538668f40536e356eaff2feaf41ba8c327db4cbcf`,
+retained `cea239d80b7d637f13ed6cad13666f8069ec95fc8739438ae11a05707253ef9e`.

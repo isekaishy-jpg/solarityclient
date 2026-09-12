@@ -62,15 +62,16 @@ impl M2DoodadScene {
         camera: Vec3,
         detail: f32,
     ) -> Result<(), crate::application::terrain_coordinator::RuntimeMovementRegistrationError> {
-        self.spheres.clear();
+        let mut profile =
+            crate::application::frame_profile::RuntimeFrameProfile::new("M2 doodad admission");
+        // Large model inputs are initialized lazily by prepare_model. The
+        // compact per-frame flags guard every consumer of retained entries.
         self.spheres.resize(placements.len(), None);
         self.fog_banks.clear();
         self.fog_banks.resize(placements.len(), None);
-        self.opacities.clear();
         self.opacities.resize(placements.len(), 1.0);
         self.queued.clear();
         self.queued.resize(placements.len(), false);
-        self.retained_fog.clear();
         self.retained_fog.resize(placements.len(), false);
         self.prepared.clear();
         self.prepared.resize(placements.len(), false);
@@ -79,11 +80,13 @@ impl M2DoodadScene {
         for bin in &mut self.outdoor_bins {
             bin.clear();
         }
+        profile.mark("scratch reset");
         // Hidden light owners still advance and publish with their distance
         // opacity. Other models need admission inputs only when a group visits them.
         for &index in visibility.world_model_doodad_light_indices() {
             self.prepare_model(index, visibility, placements, sources, camera, detail);
         }
+        profile.mark("light owners");
         let mut drained = 0;
         let mut outdoor_clip = None;
         for (depth, clip, group_bin, owner, references) in terrain.world_model_outdoor_doodads() {
@@ -118,6 +121,7 @@ impl M2DoodadScene {
                 drained += 1;
             }
         }
+        profile.mark("outdoor groups");
         terrain.visit_world_model_doodads(|owner, references, clips, depth, indoor_fog| {
             for &reference in references {
                 let Some(&index) = visibility
@@ -130,11 +134,13 @@ impl M2DoodadScene {
                 self.admit(index, clips, depth, detail, indoor_fog);
             }
         });
+        profile.mark("indoor groups");
         for &index in &self.accepted {
             if let Some(bank) = self.fog_banks[index] {
                 placements[index].scene_indoor_fog = bank;
             }
         }
+        profile.mark("fog publication");
         Ok(())
     }
 
@@ -152,6 +158,8 @@ impl M2DoodadScene {
             return;
         }
         self.prepared[index] = true;
+        self.spheres[index] = None;
+        self.opacities[index] = 1.0;
         let placement = &placements[index];
         self.retained_fog[index] = placement.scene_indoor_fog;
         if !placement.placement_valid {
@@ -220,6 +228,10 @@ impl M2DoodadScene {
     }
 
     pub(super) fn opacity(&self, index: usize) -> f32 {
-        self.opacities.get(index).copied().unwrap_or(1.0)
+        if self.prepared.get(index).copied().unwrap_or(false) {
+            self.opacities[index]
+        } else {
+            1.0
+        }
     }
 }
