@@ -248,6 +248,7 @@ pub struct VulkanRenderer {
     storage_buffer_alignment: vk::DeviceSize,
     sampler_anisotropy: bool,
     maximum_sampler_anisotropy: f32,
+    occlusion_query_precise: bool,
     file_texture_sampling: (WorldModelTextureFiltering, WorldModelBaseMip),
     file_texture_sampling_locked: bool,
 }
@@ -359,6 +360,7 @@ impl VulkanRenderer {
             storage_buffer_alignment: selected.storage_buffer_alignment,
             sampler_anisotropy: selected.sampler_anisotropy,
             maximum_sampler_anisotropy: selected.maximum_sampler_anisotropy,
+            occlusion_query_precise: selected.occlusion_query_precise,
             file_texture_sampling: (
                 WorldModelTextureFiltering::Anisotropic4x,
                 WorldModelBaseMip::Zero,
@@ -686,6 +688,12 @@ impl VulkanRenderer {
             capture.captured = true;
         }
         result
+    }
+
+    /// Returns the previous world frame's native sun-glare lighting response.
+    #[must_use]
+    pub fn world_glare_lighting(&self) -> crate::WorldGlareLighting {
+        self.world_frames.glare_lighting()
     }
 
     /// Requests one copy of the next successfully presented framebuffer.
@@ -2615,6 +2623,8 @@ impl VulkanRenderer {
                 detail_pipeline: &self.detail_pipeline,
                 cloud_pipeline: &self.cloud_pipeline,
                 celestial_pipeline: &self.celestial_pipeline,
+                color_format: self.color_format,
+                occlusion_query_precise: self.occlusion_query_precise,
                 liquid_meshes: &self.liquid_meshes,
                 liquid_textures: &self.blp_textures,
                 maximum_sampler_anisotropy: if self.sampler_anisotropy {
@@ -3054,6 +3064,7 @@ fn create_device(
         .dynamic_rendering(true)
         .synchronization2(true);
     let enabled_features = vk::PhysicalDeviceFeatures::default()
+        .occlusion_query_precise(selected.occlusion_query_precise)
         .shader_clip_distance(selected.shader_clip_distance)
         .sampler_anisotropy(selected.sampler_anisotropy)
         .texture_compression_bc(true);

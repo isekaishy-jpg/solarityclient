@@ -811,6 +811,11 @@ impl TerrainFrame {
             .prepare(renderer, terrain.resident_tiles(), camera, frustum)?;
         profile.mark("ground detail");
         let light = environment.light();
+        // 7816F0 uses the preceding post-world glare update for these two
+        // exterior channels; cloud/sky, fog, and specular colors are separate.
+        let glare_lighting = renderer.world_glare_lighting();
+        let ambient = glare_lighting.apply(light.ambient_color());
+        let diffuse = glare_lighting.apply(light.diffuse_color());
         self.sky.update(
             environment,
             camera,
@@ -824,8 +829,8 @@ impl TerrainFrame {
         let terrain_scene = TerrainSceneUniform::new(
             camera.projection(),
             camera.view(),
-            light.ambient_color(),
-            light.diffuse_color(),
+            ambient,
+            diffuse,
             environment.light_direction(),
         )
         .with_fog(camera.view(), fog_parameters, fog.color())
@@ -835,8 +840,8 @@ impl TerrainFrame {
             camera.projection(),
             camera.view(),
             camera.camera().position(),
-            light.ambient_color(),
-            light.diffuse_color(),
+            ambient,
+            diffuse,
             environment.light_direction(),
             fog_parameters,
         );
@@ -924,15 +929,15 @@ impl TerrainFrame {
                 m2_scene,
                 solarity_rendering::M2DirectionalLight::new(
                     -environment.light_direction(),
-                    light.ambient_color(),
-                    light.diffuse_color(),
+                    ambient,
+                    diffuse,
                 ),
             )),
             Some((
                 terrain,
                 solarity_systems::WorldEntityLightEnvironment::new(
-                    light.ambient_color(),
-                    light.diffuse_color(),
+                    ambient,
+                    diffuse,
                     -environment.light_direction(),
                     solarity_asset::exterior_light_ray_at(environment.day_fraction()),
                 ),
@@ -972,7 +977,7 @@ impl TerrainFrame {
             }
         }
         profile.mark("terrain culling and point lights");
-        let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera);
+        let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera, glare_lighting);
         self.liquid_draws.clear();
         for batch in self.tiles.iter().flat_map(|tile| &tile.liquids) {
             if let Some(draw) = batch.prepare_draw(
@@ -1068,6 +1073,14 @@ impl TerrainFrame {
                 environment.horizon_fog_color(),
                 self.horizon_scale,
             )?);
+        }
+        if environment.sky_enabled() {
+            scene = scene.with_glare(self.sky.glare_frame(
+                camera,
+                environment,
+                &celestial_resources,
+                sky_models.glare_suppression(),
+            ));
         }
         if default_sky {
             scene = scene

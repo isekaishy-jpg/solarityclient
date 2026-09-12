@@ -178,6 +178,7 @@ pub(super) struct WorldFrameSlot {
     pub(super) ground_detail: Vec<std::sync::Arc<crate::GroundDetailMeshPlan>>,
     pub(super) clouds: CloudFrameResources,
     pub(super) celestials: [CelestialFrameResources; 3],
+    pub(super) glare: super::glare::GlareSlot,
     buffer: vk::Buffer,
     buffer_allocation: Option<vk_mem::Allocation>,
     layout: FrameBufferLayout,
@@ -793,6 +794,7 @@ impl WorldFrameSlot {
         self.low_detail_map = None;
         self.ground_detail.clear();
         self.clouds.destroy(device, allocator);
+        self.glare.destroy(device, allocator);
         for body in &mut self.celestials {
             body.destroy(device, allocator);
         }
@@ -843,6 +845,7 @@ impl WorldFrameSlot {
             ground_detail: Vec::new(),
             clouds: CloudFrameResources::empty(),
             celestials: [const { CelestialFrameResources::empty() }; 3],
+            glare: super::glare::GlareSlot::default(),
             buffer: vk::Buffer::null(),
             buffer_allocation: None,
             layout,

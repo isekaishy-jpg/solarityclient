@@ -25,6 +25,7 @@ pub struct WorldFrameScene<'a> {
     world_depth_range: bool,
     clouds: Option<WorldCloudFrame<'a>>,
     celestials: Option<crate::WorldCelestialFrame<'a>>,
+    glare: Option<crate::WorldGlareFrame>,
     sky_models: Option<WorldSkyModelFrame<'a>>,
     sky_window: Option<crate::WorldSkyWindow>,
     background_color: glam::Vec4,
@@ -32,6 +33,17 @@ pub struct WorldFrameScene<'a> {
 }
 
 impl<'a> WorldFrameScene<'a> {
+    /// Adds stock's post-world sun/moon glare before screen effects and UI.
+    #[must_use]
+    pub const fn with_glare(mut self, frame: crate::WorldGlareFrame) -> Self {
+        self.glare = Some(frame);
+        self
+    }
+
+    pub(in crate::device) const fn glare(self) -> Option<crate::WorldGlareFrame> {
+        self.glare
+    }
+
     /// Adds the three persistent environment maps alongside the primary frame.
     #[must_use]
     pub const fn with_environment_shadows(
@@ -85,6 +97,7 @@ impl<'a> WorldFrameScene<'a> {
             world_depth_range: false,
             clouds: None,
             celestials: None,
+            glare: None,
             sky_models: None,
             sky_window: Some(crate::WorldSkyWindow::FULL),
             background_color: glam::Vec4::new(0., 0., 0., 1.),
@@ -330,6 +343,7 @@ impl<'a> WorldSkyModelBatch<'a> {
 /// Stars, three ordinary LightSkybox slots, and the independent global override.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorldSkyModelFrame<'a> {
+    glare_suppression: f32,
     pub(in crate::device) scene: M2SceneUniform,
     pub(in crate::device) bones: &'a [glam::Mat4],
     pub(in crate::device) stars: &'a [crate::M2PreparedDraw],
@@ -337,6 +351,19 @@ pub struct WorldSkyModelFrame<'a> {
 }
 
 impl<'a> WorldSkyModelFrame<'a> {
+    /// Retains the resolved owner weights even when sky model drawing is hidden.
+    #[must_use]
+    pub const fn with_glare_suppression(mut self, weight: f32) -> Self {
+        self.glare_suppression = weight;
+        self
+    }
+
+    /// Returns 7EF6E0's global-or-maximum-local sky attenuation weight.
+    #[must_use]
+    pub const fn glare_suppression(self) -> f32 {
+        self.glare_suppression
+    }
+
     /// Stars precede celestial strips; authored skyboxes follow the clouds.
     #[must_use]
     pub const fn new(
@@ -346,6 +373,7 @@ impl<'a> WorldSkyModelFrame<'a> {
         skyboxes: &'a [crate::M2PreparedDraw],
     ) -> Self {
         Self {
+            glare_suppression: 0.,
             scene,
             bones,
             stars,

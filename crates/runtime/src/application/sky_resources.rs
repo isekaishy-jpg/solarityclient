@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 /// Process-retained celestial textures and shared authored sky model scenes.
 pub(super) struct RuntimeSkyResources {
-    sources: [Option<BlpTextureSource>; 3],
-    textures: [Option<BlpTextureHandle>; 3],
+    sources: [Option<BlpTextureSource>; 5],
+    textures: [Option<BlpTextureHandle>; 5],
     lighting: solarity_rendering::WorldCelestialLighting,
     stars: Option<SkyM2Model>,
     animations: Arc<solarity_asset::AnimationDataCatalog>,
@@ -59,6 +59,7 @@ struct SkyModelInput<'a> {
 /// Uploaded celestial handles paired with the current packed light colors.
 pub(super) struct RuntimeCelestialResources {
     pub(super) textures: [BlpTextureHandle; 3],
+    pub(super) glare_textures: [BlpTextureHandle; 2],
     pub(super) colors: [u32; 3],
 }
 
@@ -72,11 +73,13 @@ impl RuntimeSkyResources {
         let handle = store.clone();
         let mut assets = store.borrow_mut();
         let store = &mut *assets;
-        let mut sources = [None, None, None];
+        let mut sources = [None, None, None, None, None];
         for (slot, path) in sources.iter_mut().zip([
             "Textures/sunCenter.blp",
             "Textures/moon.blp",
             "Textures/moon02.blp",
+            "Textures/sunGlare.blp",
+            "Textures/moonGlare.blp",
         ]) {
             let path = AssetPath::new(path)?;
             *slot = match BlpTextureSource::load(store, &path) {
@@ -105,7 +108,7 @@ impl RuntimeSkyResources {
             sources,
             stars,
             animations,
-            textures: [None; 3],
+            textures: [None; 5],
             lighting: Default::default(),
             store: handle,
             definitions: lights
@@ -189,12 +192,24 @@ impl RuntimeSkyResources {
             let model = self.resolve_name(path, 0, time_ms)?;
             skybox::replace_world_model(&mut slots, model, weight);
         }
+        // 7EF6E0 checks owner presence and weight, independently of model readiness,
+        // replacement flags and the window used to draw authored sky geometry.
+        let glare_suppression = if global.model.is_some() && global.weight > 0. {
+            global.weight
+        } else {
+            slots
+                .iter()
+                .filter(|slot| slot.model.is_some())
+                .map(|slot| slot.weight)
+                .fold(0.0_f32, f32::max)
+        };
         // Palette requests and 7F31C0 precede the draw gate. Invisible scenes
         // retain resident owners, but do not advance animation or consume RNG.
         if !input.visible {
             return Ok((
                 false,
-                solarity_rendering::WorldSkyModelFrame::new(sky_scene(camera), &[], &[], &[]),
+                solarity_rendering::WorldSkyModelFrame::new(sky_scene(camera), &[], &[], &[])
+                    .with_glare_suppression(glare_suppression),
             ));
         }
         let slots = [slots[0], slots[1], slots[2], global];
@@ -271,6 +286,7 @@ impl RuntimeSkyResources {
                 self.stars.as_ref().map_or(&[], SkyM2Model::draws),
                 &[],
             )
+            .with_glare_suppression(glare_suppression)
             .with_skybox_batches(std::array::from_fn(|index| {
                 WorldSkyModelBatch::new(scenes[index], &self.skybox_draws[index])
             }))
@@ -389,7 +405,14 @@ impl RuntimeSkyResources {
                 });
             }
         }
-        let [Some(sun), Some(moon), Some(second)] = self.textures else {
+        let [
+            Some(sun),
+            Some(moon),
+            Some(second),
+            Some(sun_glare),
+            Some(moon_glare),
+        ] = self.textures
+        else {
             return Err(solarity_rendering::VulkanError::WorldFrameCapacity.into());
         };
         self.lighting.update(
@@ -398,6 +421,7 @@ impl RuntimeSkyResources {
         );
         Ok(RuntimeCelestialResources {
             textures: [sun, moon, second],
+            glare_textures: [sun_glare, moon_glare],
             colors: self.lighting.colors(),
         })
     }

@@ -21,7 +21,8 @@ mod world_text;
 pub use weather::{
     WorldCelestialBody, WorldCelestialDraw, WorldCelestialFrame, WorldCelestialLighting,
     WorldCelestialMesh, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,
-    WorldClouds, WorldSkyDome, WorldSkyFrame, WorldSkyWindow, world_stars_alpha,
+    WorldClouds, WorldGlareEnvironment, WorldGlareFrame, WorldGlareKind, WorldGlareLighting,
+    WorldSkyDome, WorldSkyFrame, WorldSkyWindow, world_stars_alpha,
 };
 
 pub use camera::{

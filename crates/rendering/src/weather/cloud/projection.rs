@@ -3,6 +3,29 @@
 use super::WorldCloudLighting;
 use glam::Vec3;
 
+/// 7EF920 projects an unscaled world direction into the native 128-square dome.
+pub(super) fn opacity_coordinates(eye: Vec3, source: Vec3) -> [f32; 2] {
+    let x = f64::from(source.x) - f64::from(eye.x);
+    let y = f64::from(source.y) - f64::from(eye.y);
+    let z = f64::from(source.z) - f64::from(eye.z) + 0.785_398_185_253_143_3_f64.cos();
+    let angle = (z / (y * y + z * z + x * x).sqrt())
+        .acos()
+        .min(f64::from(std::f32::consts::FRAC_PI_4));
+    let radial = angle * f64::from(1.273_239_5_f32) * 0.5;
+    let x = f64::from(x as f32);
+    let y = f64::from(y as f32);
+    let length = (x * x + y * y).sqrt();
+    let (x, y) = if length > 0.000_01 {
+        (x / length, y / length)
+    } else {
+        (0., 0.)
+    };
+    [
+        (128. * (x * radial + 0.5)) as f32,
+        (128. * (y * radial + 0.5)) as f32,
+    ]
+}
+
 impl WorldCloudLighting {
     /// Samples 7EFAE0 from ambient/diffuse/emissive cloud bands, day, camera and celestials.
     /// `weather_blend` is the native retained precipitation/cloud attenuation scalar.

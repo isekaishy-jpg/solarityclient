@@ -19,6 +19,9 @@ use crate::support::{Fixture, FixtureFile};
 #[path = "celestial_frame.rs"]
 mod celestial;
 
+#[path = "glare_frame.rs"]
+mod glare;
+
 #[path = "terrain_low_detail_frame.rs"]
 mod low_detail;
 

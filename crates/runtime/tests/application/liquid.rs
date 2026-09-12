@@ -269,7 +269,7 @@ fn liquid_environment_matches_original_daylight_shader_constants() -> Result<(),
             * 8.;
         let up = if camera_index < 4 { Vec3::Z } else { Vec3::Y };
         let camera = WorldCamera::stock(eye, Vec3::ZERO, up, 100.).frame(1.)?;
-        let (lighting, fog) = super::liquid_environment(frame, camera);
+        let (lighting, fog) = super::liquid_environment(frame, camera, Default::default());
         let uniform = LiquidShaderUniform::new(
             camera.projection(),
             camera.view(),

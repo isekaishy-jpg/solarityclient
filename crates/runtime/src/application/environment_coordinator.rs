@@ -72,6 +72,7 @@ pub struct RuntimeWorldEnvironmentFrame {
     special_effect: bool,
     player_inebriation: Option<f64>,
     liquid_flags: Option<u32>,
+    camera_liquid_depth: Option<f32>,
     world_model_skybox_weight: f32,
     fog: WorldFogSample,
     ordinary_fog: WorldFogSample,
@@ -217,6 +218,12 @@ impl RuntimeWorldEnvironmentFrame {
     #[must_use]
     pub const fn has_camera_liquid(self) -> bool {
         self.liquid_flags.is_some()
+    }
+
+    /// Returns the camera immersion depth used by stock's gradual glare fade.
+    #[must_use]
+    pub const fn camera_liquid_depth(self) -> Option<f32> {
+        self.camera_liquid_depth
     }
 
     /// Returns stock's time-derived exterior sun direction.
@@ -510,6 +517,7 @@ impl RuntimeWorldEnvironment {
                     )
                 }),
             liquid_flags: None,
+            camera_liquid_depth: None,
             world_model_skybox_weight: 0.,
             light_direction: exterior_light_direction_at(sky_time.day_fraction()),
         };
@@ -566,6 +574,7 @@ impl RuntimeWorldEnvironment {
             |fog| frame.fog_context.resolve_manual_fog(fog, false),
         );
         frame.liquid_flags = (submerged.liquid_type != 0).then_some(liquid.flags());
+        frame.camera_liquid_depth = (submerged.liquid_type != 0).then_some(submerged.depth);
         frame.fog = frame.manual_fog.map_or_else(
             || light.final_fog(frame.fog_context, submerged.liquid_type != 0),
             |fog| {

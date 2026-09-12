@@ -13,6 +13,7 @@ pub(super) struct WorldSky {
     cloud_dome: WorldCloudDome,
     clouds: WorldClouds,
     last_update_ms: Option<u32>,
+    elapsed_seconds: f32,
     celestials: WorldCelestials,
     celestial_meshes: [WorldCelestialMesh; 3],
 }
@@ -29,6 +30,7 @@ impl WorldSky {
             cloud_dome: WorldCloudDome::new(),
             clouds: WorldClouds::new(1),
             last_update_ms: None,
+            elapsed_seconds: 0.,
         }
     }
 
@@ -77,6 +79,7 @@ impl WorldSky {
             .last_update_ms
             .map_or(0., |previous| time_ms.wrapping_sub(previous) as f32 * 0.001);
         self.clouds.update(elapsed, light.sky_floats()[1], lighting);
+        self.elapsed_seconds = elapsed;
         profile.mark("cloud rows");
         self.last_update_ms = Some(time_ms);
     }
@@ -100,5 +103,32 @@ impl WorldSky {
     }
     pub(super) fn cloud_frame(&self, camera: WorldCameraFrame) -> WorldCloudFrame<'_> {
         WorldCloudFrame::new(&self.cloud_dome, &self.clouds, camera)
+    }
+
+    /// Supplies glare after the world, with separate sky-owner and cloud attenuation.
+    pub(super) fn glare_frame(
+        &self,
+        camera: WorldCameraFrame,
+        environment: RuntimeWorldEnvironmentFrame,
+        resources: &crate::application::sky_resources::RuntimeCelestialResources,
+        skybox_weight: f32,
+    ) -> solarity_rendering::WorldGlareFrame {
+        let [sun, moon, _] = self.celestials.bodies();
+        solarity_rendering::WorldGlareFrame {
+            camera,
+            bodies: [sun, moon],
+            textures: resources.glare_textures,
+            colors: [resources.colors[0], resources.colors[1]],
+            environment: solarity_rendering::WorldGlareEnvironment {
+                day: environment.day_fraction(),
+                elapsed_seconds: self.elapsed_seconds,
+                cloud_alpha: [sun, moon].map(|body| {
+                    self.clouds
+                        .opacity_at(camera.camera().position(), body.position())
+                }),
+                liquid_depth: environment.camera_liquid_depth(),
+                skybox_weight,
+            },
+        }
     }
 }

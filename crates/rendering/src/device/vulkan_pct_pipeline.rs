@@ -14,6 +14,10 @@ pub(in crate::device) enum PctPipelineKind {
     Sky,
     Cloud,
     Celestial,
+    /// Additive, depth-disabled 9AC400 billboard.
+    Glare,
+    /// Color-masked disc used by 9ABE00's precise sample query.
+    GlareProbe,
 }
 
 /// Renderer-lifetime ownership of one PCT pipeline and descriptor ABI.
@@ -65,7 +69,11 @@ impl PctPipeline {
             .size(match kind {
                 PctPipelineKind::Ripple => 68,
                 PctPipelineKind::Underwater => 96,
-                PctPipelineKind::Sky | PctPipelineKind::Cloud | PctPipelineKind::Celestial => 64,
+                PctPipelineKind::Sky
+                | PctPipelineKind::Cloud
+                | PctPipelineKind::Celestial
+                | PctPipelineKind::Glare
+                | PctPipelineKind::GlareProbe => 64,
             })];
         let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&sets)
@@ -137,7 +145,11 @@ fn create_pipeline(
     let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default().topology(
         if matches!(
             kind,
-            PctPipelineKind::Sky | PctPipelineKind::Cloud | PctPipelineKind::Celestial
+            PctPipelineKind::Sky
+                | PctPipelineKind::Cloud
+                | PctPipelineKind::Celestial
+                | PctPipelineKind::Glare
+                | PctPipelineKind::GlareProbe
         ) {
             vk::PrimitiveTopology::TRIANGLE_STRIP
         } else {
@@ -155,7 +167,7 @@ fn create_pipeline(
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
     let depth = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(true)
+        .depth_test_enable(!matches!(kind, PctPipelineKind::Glare))
         .depth_write_enable(false)
         .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL);
     // Native GX blend 3 is source alpha / one; blend 2 uses inverse source
@@ -165,7 +177,9 @@ fn create_pipeline(
         PctPipelineKind::Underwater | PctPipelineKind::Cloud | PctPipelineKind::Celestial => {
             vk::BlendFactor::ONE_MINUS_SRC_ALPHA
         }
-        PctPipelineKind::Sky => vk::BlendFactor::ONE,
+        PctPipelineKind::Sky | PctPipelineKind::Glare | PctPipelineKind::GlareProbe => {
+            vk::BlendFactor::ONE
+        }
     };
     let attachments = [vk::PipelineColorBlendAttachmentState::default()
         .blend_enable(true)
@@ -175,7 +189,11 @@ fn create_pipeline(
         .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
         .dst_alpha_blend_factor(destination)
         .alpha_blend_op(vk::BlendOp::ADD)
-        .color_write_mask(vk::ColorComponentFlags::RGBA)];
+        .color_write_mask(if matches!(kind, PctPipelineKind::GlareProbe) {
+            vk::ColorComponentFlags::empty()
+        } else {
+            vk::ColorComponentFlags::RGBA
+        })];
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
@@ -256,7 +274,10 @@ impl<'a> ShaderModules<'a> {
                 include_bytes!(concat!(env!("OUT_DIR"), "/underwater.vert.spv")),
                 include_bytes!(concat!(env!("OUT_DIR"), "/underwater.frag.spv")),
             ),
-            PctPipelineKind::Cloud | PctPipelineKind::Celestial => (
+            PctPipelineKind::Cloud
+            | PctPipelineKind::Celestial
+            | PctPipelineKind::Glare
+            | PctPipelineKind::GlareProbe => (
                 include_bytes!(concat!(env!("OUT_DIR"), "/cloud.vert.spv")),
                 include_bytes!(concat!(env!("OUT_DIR"), "/cloud.frag.spv")),
             ),

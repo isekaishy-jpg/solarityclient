@@ -69,6 +69,33 @@ fn blp_native_bgra8_format_preserves_alpha_and_mips() -> Result<(), Box<dyn Erro
     Ok(())
 }
 
+/// The glare's high alpha flag does not change native format-2 BGRA pixels.
+#[test]
+fn blp_glare_alpha_flag_preserves_authored_transparency() -> Result<(), Box<dyn Error>> {
+    let mut blp = raw3_blp(2, 1, &[0x0012_3456, 0x78FE_DCBA]);
+    // Installed sunGlare.blp is RAW3, alpha byte 0x88, pixel format 2.
+    // Native 4B5FE0 selects BGRA8 independently of the alpha byte for format 2.
+    blp[9] = 0x88;
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Textures/SunGlare.blp",
+        bytes: &blp,
+    }])?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let path = AssetPath::new("Textures/SunGlare.blp")?;
+    let source = BlpTextureSource::load(&mut store, &path)?;
+    assert_eq!(source.mip_count(), 1);
+    assert_eq!(
+        source.decode_mip(0)?.rgba8(),
+        &[0x12, 0x34, 0x56, 0, 0xFE, 0xDC, 0xBA, 0x78]
+    );
+    assert_eq!(store.read(&path)?.bytes(), blp);
+    Ok(())
+}
+
 /// The native BGRA adapter does not bypass content or mip bounds validation.
 #[test]
 fn blp_native_bgra8_rejects_truncated_and_unsupported_input() -> Result<(), Box<dyn Error>> {

@@ -15,9 +15,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Textures/sunCenter.blp",
         "Textures/moon.blp",
         "Textures/moon02.blp",
+        "Textures/sunGlare.blp",
+        "Textures/moonGlare.blp",
     ] {
-        let source = BlpTextureSource::load(&mut store, &AssetPath::new(path)?)?;
+        let path = AssetPath::new(path)?;
+        let bytes = store.read(&path)?;
+        println!("{path}: header {:02x?}", &bytes.bytes()[..20]);
+        let source = BlpTextureSource::load(&mut store, &path)?;
         let decoded = source.decode_mip(0)?;
+        if let Some(directory) = std::env::args_os().nth(2) {
+            std::fs::create_dir_all(&directory)?;
+            let name = format!("{}.rgba", path.to_string().replace('\\', "_"));
+            std::fs::write(std::path::Path::new(&directory).join(name), decoded.rgba8())?;
+        }
         let visible = decoded
             .rgba8()
             .as_chunks::<4>()

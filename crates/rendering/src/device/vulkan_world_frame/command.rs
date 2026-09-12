@@ -92,6 +92,8 @@ pub(super) struct RecordContext<'a> {
     pub(super) celestial_pipeline: &'a PctPipeline,
     pub(super) celestial_resources: &'a [CelestialFrameResources; 3],
     pub(super) celestial_frame: Option<crate::WorldCelestialFrame<'a>>,
+    pub(super) glare: &'a super::glare::GlareRenderer,
+    pub(super) glare_slot: &'a super::glare::GlareSlot,
     pub(super) cloud_pipeline: &'a PctPipeline,
     pub(super) cloud_resources: &'a CloudFrameResources,
     pub(super) cloud_frame: Option<crate::WorldCloudFrame<'a>>,
@@ -160,6 +162,9 @@ pub(super) fn record(
         }
     }
     shadow::record_primary(&context)?;
+    context
+        .glare_slot
+        .reset(context.device, context.command_buffer);
     timestamp(&context, 1);
     if !context.liquid_draws.is_empty() {
         context
@@ -310,6 +315,12 @@ pub(super) fn record(
     timestamp(&context, 6);
     record_m2_scene_elements(&context, &mut bindings)?;
     record_underwater(&context, &mut bindings);
+    context.glare.record(
+        context.glare_slot,
+        context.device,
+        context.command_buffer,
+        viewport,
+    );
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     timestamp(&context, 7);

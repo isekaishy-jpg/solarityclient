@@ -80,6 +80,15 @@ impl WorldClouds {
         self.force = true;
     }
 
+    /// 7EFA30 samples the independent in-progress alpha bank toward a celestial
+    /// position. Glare uses direct dome projection, then truncates texel indices.
+    #[must_use]
+    pub fn opacity_at(&self, eye: glam::Vec3, source: glam::Vec3) -> f32 {
+        let coordinates = projection::opacity_coordinates(eye, source);
+        let [x, y] = coordinates.map(|v| (v as i32).clamp(0, Self::SIZE as i32 - 1) as usize);
+        f32::from(self.alpha[y * Self::SIZE + x]) * (1. / 255.)
+    }
+
     /// Advances one native frame: eight rows, or the full image after invalidation.
     pub fn update(&mut self, elapsed_seconds: f32, density: f32, lighting: WorldCloudLighting) {
         self.elapsed += elapsed_seconds;
@@ -178,3 +187,7 @@ fn shade(x: usize, y: usize, dx: f32, dy: f32, alpha: u8, light: WorldCloudLight
 #[cfg(test)]
 #[path = "../../tests/stock_seed/cloud_native.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/stock_seed/cloud_glare_native.rs"]
+mod glare_tests;

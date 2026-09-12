@@ -751,3 +751,100 @@ version `0.0.3a`, build number `86`, and that revision. Its installed SHA-256
 matches the optimized Cargo artifact:
 `ea4c95c970fad57d570e1eaf4926c2b8a95b2b40324f3edf7221f9a4508c3684`.
 The packaging-time dirty flag records the reserved build-number change.
+
+## Sun and moon glare (2026-09-12)
+
+The celestial discs were present, but the separate post-world glare owners were
+missing. Stock `7EE150` and `7EE230` create `Textures/sunGlare.blp` and
+`Textures/moonGlare.blp`; only the first moon has this owner. `7F0870` updates
+and draws both after world geometry and before screen effects and UI.
+
+`7EF6E0` combines cyclic day curves, cloud opacity, water depth, sky-model
+owner weights and retained occlusion visibility. Sun visibility rises at
+4/second, moon visibility at 3.030303/second, and both fall at
+1.5151515/second. The camera dot product has a 0.7 lower bound: approaching
+the sun expands its glare from 3 to 20 and increases opacity. The moon uses
+a glare twice its current disc size, with a separate opacity curve. `7EECC0`
+publishes the disc size into both moon glare endpoints every frame. Colors follow
+the existing celestial palette and weather alpha. The second moon remains a disc only.
+
+The last `7EF6E0` store is also significant: owner `+A4` receives the clamped
+camera dot raised to power ten, multiplied by retained visibility. `7816F0`
+consumes the preceding frame's sun value (`D38F4C`), scales it by 0.35, and
+dims the packed exterior ambient/diffuse colors. Terrain, WMO, M2 exterior
+lighting and liquid lighting consume that result; sky/cloud, fog and specular
+colors are independent. The renderer publishes this retained response before
+the runtime constructs its next scene. Moon `+A4` has no corresponding consumer.
+
+Cloud attenuation reads the independent in-progress 128x128 alpha bank.
+`7EFA30`/`7EF920` project the direct body position onto the dome and truncate
+the texel coordinates. This differs from the ray/sphere projection used to
+light clouds. Sun attenuation is `1-alpha`; moon attenuation is
+`1-abs(2*alpha-1)`. Water fades glare over ten depth units. Sky-model owner
+weights suppress glare even when their geometry is not currently drawn.
+
+The Vulkan owner follows `9ABE00` with precise, nonblocking occlusion counts
+for the uncut celestial disc. Queries and vertex banks belong to retired
+frame slots; fade state and last counts belong to the renderer. Counts are
+divided by the current projected disc area in the active viewport. The
+visible billboard follows `9AC400`: source-alpha/one blending, no depth test
+or depth writes, and clamp/linear sampling without mip filtering. Partial
+occlusion attenuates the whole glare, allowing it to spill across an occluder.
+The fixed-function table at `A2F9CC/A2F9E4` and consumers `6A4190/6A41F0`
+select texture-times-diffuse modulation for both RGB and alpha. The authored
+sun texture contains the star-shaped rays as well as the broad glow; there
+is no artificial intensity multiplier or replacement procedural halo.
+Devices lacking precise occlusion queries return an explicit capability
+error; stock's alternative CPU ray path (`9ABC60`) is not implemented here.
+
+The installed sun texture also exposed a parser gap: its RAW3 format-2
+header has alpha byte `0x88`. Native `4B5FE0` selects BGRA8 for format 2
+independently of that byte, and `6AFFD0` can publish RAW3 pixels directly.
+The existing format-2 adapter now accepts this header without changing
+authored pixel bytes, mip offsets or parser bounds validation. Both glare
+textures decode from the owned archives through normal precedence.
+
+`tools/ghidra/world_glare_oracle.py` executes the fingerprinted build-12340
+constructors and update routine with supplied external attenuation results.
+The 480 ordered sun/moon samples match packed colors exactly and float
+stores within one ULP, including the retained lighting response. Another 256
+native cloud samples match the direct lookup, and 512 packed color results
+from `7817D8..7818B6` cover the lighting multiplier. A Vulkan regression
+exercises clear, half-blocked, fully blocked,
+cloudy, underwater, sky-model-suppressed and moon views across repeated slot
+reuse. Installed-skybox coverage checks all five celestial texture requests
+and propagation of suppression weights. These establish the recovered
+effect boundaries; they do not claim parity for other unidentified sky effects.
+An installed-texture regression exercises the ordinary disc, authored sunburst,
+and normal glow compositor against a controlled background. It checks bright
+glare beyond the disc and the restoration of baseline pixels under cloud cover.
+That controlled fixture is not a stock map/weather screenshot oracle.
+
+An optimized Durotar replay at `(1299.02, -4373.88, 40)`, realm hour 15,
+pitch -0.970 and yaw 0.785398 completed 960 frames. The inspected comparison
+shows the broad additive halo around the previously isolated disc. The replay
+log contains no warnings or errors. Its captures are under
+`target/sun-glare-scene-after-captures`; `target/sun-glare-comparison.png`
+compares the before/after sun region. Concurrent build activity makes these
+visual checks unsuitable for performance claims.
+
+That short replay retained substantial cloud attenuation and was insufficient
+to evaluate the clear-sky burst. A longer 48,000-frame replay at
+`(1281.7312, -4430.397, 25.3)`, realm hour 17, pitch -0.617, reached zero
+cloud opacity and 0.987054 disc visibility. Its stationary-end capture shows
+the authored rays and broad additive glare crossing the gate geometry.
+The cloud-free frame is `target/sun-glare-uncovered.png`; debug inputs are in
+`target/sun-glare-long-scene-after.log`. The remaining warm tint follows the
+sampled `0xFFFEAA62` celestial color rather than a forced white replacement.
+
+A read-only snapshot of the user's live stock client at 17:08 on September 12
+found sun glare size 19.173656, retained visibility 0.9916503, and color
+`0xF7FEAA60`. The first-moon size was 5.25 (twice its 2.625-unit disc), with
+zero daytime visibility. This caught and corrected the per-frame moon-size
+handoff that constructor-only testing omitted. Live screenshot comparison
+was unavailable because the computer-use helper failed to initialize.
+
+Final validation passed formatting, warning-free workspace Clippy, and all
+1,345 workspace tests (24 environment-dependent tests ignored). The installed
+sunburst regression was also run explicitly and passed clear, partially
+covered and fully covered transitions with the real archive textures.

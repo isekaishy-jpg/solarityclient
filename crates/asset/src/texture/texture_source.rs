@@ -33,9 +33,10 @@ impl BlpTextureSource {
         // Stock 0x4b5fe0 maps native pixel format 2 (BGRA8) and format 8
         // with eight alpha bits to the same output format. wow-blp 0.7 names
         // this header field AlphaType and omits 2 from its enum. Translate
-        // only the equivalent BLP2/direct/RAW3/8-bit-alpha header; retain all
+        // only the equivalent BLP2/direct/RAW3 header; native format 2 does
+        // not inspect alpha bits (sunGlare.blp carries 0x88 here). Retain all
         // authored pixel bytes, mip offsets, and ordinary parser validation.
-        if bytes.starts_with(b"BLP2\x01\x00\x00\x00\x03\x08\x02") {
+        if bytes.starts_with(b"BLP2\x01\x00\x00\x00\x03") && bytes.get(10) == Some(&2) {
             bytes[10] = 8;
         }
         let image = if let Some(image) = super::dxt_source::parse(path, &bytes)? {

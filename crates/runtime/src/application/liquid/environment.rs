@@ -41,6 +41,7 @@ pub(in crate::application) fn liquid_depth_images(
 pub(in crate::application) fn liquid_environment(
     environment: RuntimeWorldEnvironmentFrame,
     camera: WorldCameraFrame,
+    glare: solarity_rendering::WorldGlareLighting,
 ) -> (LiquidLighting, LiquidFog) {
     let light = environment.light();
     // 7EEA90 -> 834AE0 -> 834F60 retains the native light-ray direction for
@@ -50,8 +51,8 @@ pub(in crate::application) fn liquid_environment(
         camera
             .view()
             .transform_vector3(-environment.light_direction()),
-        light.ambient_color(),
-        light.diffuse_color(),
+        glare.apply(light.ambient_color()),
+        glare.apply(light.diffuse_color()),
         light.specular_color(),
     );
     let fog = environment.fog();

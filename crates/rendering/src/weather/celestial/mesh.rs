@@ -19,7 +19,15 @@ impl WorldCelestialMesh {
     /// including weather alpha; it must not be multiplied into that alpha.
     #[must_use]
     pub fn new(body: WorldCelestialBody, eye: Vec3, color: u32) -> Self {
-        let mut mesh = Self {
+        let mut mesh = Self::unclipped(body.size(), color);
+        mesh.clip(body, eye);
+        mesh
+    }
+
+    /// 7EDBE0 also supplies the uncut disc used by glare occlusion queries;
+    /// 9AC400's visible glare uses the same first four local positions.
+    pub(crate) fn unclipped(size: f32, color: u32) -> Self {
+        Self {
             positions: [
                 [0., -0.5, 0.5],
                 [0., 0.5, 0.5],
@@ -28,13 +36,18 @@ impl WorldCelestialMesh {
                 [0., -0.5, 99.],
                 [0., 0.5, 99.],
             ]
-            .map(|p| p.map(|v| v * body.size())),
+            .map(|p| p.map(|v| v * size)),
             uv: [[0., 0.], [1., 0.], [0., 1.], [1., 1.], [0., 99.], [1., 99.]],
             colors: [color; 6],
             indices: [0, 1, 2, 3, 0, 0],
             vertex_count: 4,
             index_count: 4,
-        };
+        }
+    }
+
+    /// Applies only the ordinary celestial disc's horizon and alpha clipping.
+    fn clip(&mut self, body: WorldCelestialBody, eye: Vec3) {
+        let mesh = self;
         // x87 retains the unrounded height until the first alpha write, then
         // reloads its stored float for the subsequent vertices.
         let mut height = f64::from(body.position().z) - f64::from(eye.z);
@@ -42,7 +55,7 @@ impl WorldCelestialMesh {
         let bottom = f64::from(mesh.positions[2][2]) + height;
         if top < 0. && bottom < 0. {
             mesh.vertex_count = 0;
-            return mesh;
+            return;
         }
         if top <= 0. || bottom <= 0. {
             let ratio = top / (top - bottom);
@@ -75,11 +88,11 @@ impl WorldCelestialMesh {
             let offset = height + f64::from(mesh.positions[i][2]) - fade;
             if offset < epsilon {
                 let alpha = (((fade + offset) * 2.5).clamp(0., 1.) * 255.) as f32;
-                mesh.colors[i] = (color & 0x00ff_ffff) | (alpha.round_ties_even() as u32) << 24;
+                mesh.colors[i] =
+                    (mesh.colors[i] & 0x00ff_ffff) | (alpha.round_ties_even() as u32) << 24;
                 height = f64::from(height as f32);
             }
         }
-        mesh
     }
 
     /// Native local XYZ positions, including the reserved fade vertices.

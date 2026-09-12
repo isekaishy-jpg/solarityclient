@@ -1,5 +1,7 @@
 //! Real LightSkybox models through the retained world compositor and frame banks.
 
+#[path = "sky_glare.rs"]
+mod glare;
 #[path = "world_model_sky_resources.rs"]
 mod world_model;
 
@@ -30,6 +32,10 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
     let mut unique = std::collections::HashSet::new();
     definitions.retain(|row| unique.insert(row.model_path().to_uppercase()));
     let mut sky = RuntimeSkyResources::load(AssetStoreHandle::new(store), &lights, animations)?;
+    assert!(
+        sky.sources.iter().all(Option::is_some),
+        "all five stock celestial textures must decode, including sunGlare's 0x88 alpha flag"
+    );
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
     let window = video
@@ -77,6 +83,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
                 row.id()
             );
             let count = frame.draw_count();
+            assert_eq!(frame.glare_suppression(), opacity);
             assert!(count > 0, "skybox {} has no submitted batches", row.id());
             let scene = world_scene(camera).with_sky_models(frame);
             renderer.request_frame_capture()?;
@@ -167,6 +174,10 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         let (default_sky, frame) =
             sky.prepare_model_input(&mut renderer, camera, 200000, input, 5, &mut random)?;
         assert_eq!(default_sky, expected_default);
+        assert_eq!(
+            frame.glare_suppression(),
+            weights.into_iter().fold(0_f32, f32::max)
+        );
         let count = frame.draw_count();
         renderer.request_frame_capture()?;
         let report = renderer.present_world_frame(

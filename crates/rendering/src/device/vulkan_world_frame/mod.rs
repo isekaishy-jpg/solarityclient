@@ -4,6 +4,7 @@
 
 mod command;
 mod fog;
+mod glare;
 mod gpu_profile;
 mod resource;
 mod types;
@@ -76,6 +77,8 @@ pub(in crate::device) struct WorldFrameContext<'a> {
     pub(in crate::device) detail_pipeline: &'a DetailPipeline,
     pub(in crate::device) cloud_pipeline: &'a PctPipeline,
     pub(in crate::device) celestial_pipeline: &'a PctPipeline,
+    pub(in crate::device) color_format: vk::Format,
+    pub(in crate::device) occlusion_query_precise: bool,
     pub(in crate::device) liquid_meshes: &'a LiquidMeshRegistry,
     pub(in crate::device) liquid_textures: &'a BlpTextureRegistry,
     pub(in crate::device) maximum_sampler_anisotropy: f32,
@@ -116,6 +119,7 @@ pub(in crate::device) struct WorldFrameRenderer {
     ground_detail: DetailRegistry,
     profiler: Option<WorldFrameProfiler>,
     gpu_profiler: Option<GpuFrameProfiler>,
+    glare: glare::GlareRenderer,
 }
 
 impl Default for WorldFrameRenderer {
@@ -129,7 +133,15 @@ impl Default for WorldFrameRenderer {
             ground_detail: DetailRegistry::default(),
             profiler: WorldFrameProfiler::from_environment(),
             gpu_profiler: None,
+            glare: glare::GlareRenderer::default(),
         }
+    }
+}
+
+impl WorldFrameRenderer {
+    /// Retained sun response for the next frame's exterior lighting providers.
+    pub(in crate::device) fn glare_lighting(&self) -> crate::WorldGlareLighting {
+        self.glare.lighting()
     }
 }
 
@@ -241,7 +253,8 @@ impl WorldFrameRenderer {
         let ensure_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
         // An admitted world sky scene may be fully hidden inside a building.
         // Its fog clear is still a complete frame even when no geometry draws.
-        let has_sky_scene = scene.sky_models().is_some() || scene.sky().is_some();
+        let has_sky_scene =
+            scene.sky_models().is_some() || scene.sky().is_some() || scene.glare().is_some();
         let scene = scene.clip_sky(window.screen);
         let sky_models = scene.sky_models();
         let sky_bones = sky_models.map_or(&[][..], |frame| frame.bones);
@@ -414,6 +427,14 @@ impl WorldFrameRenderer {
             .map(|started| started.elapsed())
             .unwrap_or_default();
         let slot_index = self.resources.next_slot_index()?;
+        if scene.glare().is_some() {
+            self.glare.ensure(
+                context.device,
+                context.color_format,
+                context.depth_format,
+                context.occlusion_query_precise,
+            )?;
+        }
         let gpu_sample = self
             .gpu_profiler
             .as_mut()
@@ -429,6 +450,22 @@ impl WorldFrameRenderer {
             if let Some(profiler) = self.gpu_profiler.as_mut() {
                 profiler.record(slot.gpu_timestamps.collect(context.device)?, context.extent);
             }
+            let viewport_size = [
+                (window.screen.maximum_x() - window.screen.minimum_x())
+                    * 0.5
+                    * context.extent.0 as f32,
+                (window.screen.maximum_y() - window.screen.minimum_y())
+                    * 0.5
+                    * context.extent.1 as f32,
+            ];
+            self.glare.prepare(
+                &mut slot.glare,
+                context.device,
+                context.allocator,
+                context.liquid_textures,
+                scene.glare(),
+                viewport_size,
+            )?;
             if let Some(frame) = shadow_frame {
                 slot.shadows.ensure(
                     context.device,
@@ -645,6 +682,8 @@ impl WorldFrameRenderer {
             celestial_pipeline: context.celestial_pipeline,
             celestial_resources: &slot.celestials,
             celestial_frame: scene.celestials(),
+            glare: &self.glare,
+            glare_slot: &slot.glare,
             cloud_pipeline: context.cloud_pipeline,
             cloud_resources: &slot.clouds,
             cloud_frame: scene.clouds(),
@@ -710,6 +749,7 @@ impl WorldFrameRenderer {
             gpu_sample,
         )?;
         self.submission_fog = submission_fog;
+        slot.glare.submitted();
         if scene.clouds().is_some() {
             slot.clouds.submitted();
         }
@@ -772,5 +812,6 @@ impl WorldFrameRenderer {
         self.shadows.destroy(device);
         self.low_detail.destroy(allocator);
         self.ground_detail.destroy(device, allocator);
+        self.glare.destroy(device);
     }
 }
