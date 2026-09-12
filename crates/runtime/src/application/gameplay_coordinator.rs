@@ -428,7 +428,7 @@ impl RuntimeGameplayCoordinator {
         Ok(())
     }
 
-    /// Drains all packets admitted since the previous main-thread frame.
+    /// Dispatches the packet batch admitted at this main-thread service boundary.
     ///
     /// # Errors
     ///
@@ -458,7 +458,18 @@ impl RuntimeGameplayCoordinator {
             return Ok(0);
         };
         let mut applied = 0;
+        // NetClient 006321A0/006334F0 holds its queue lock through dispatch;
+        // the network producer 00633650 takes the same lock. Freeze this
+        // channel's admitted batch so producer refill cannot extend one frame.
+        // An empty closed receiver still reports the existing terminal error.
+        let admitted = active.receiver.len();
+        let mut received = 0;
         loop {
+            if received == admitted && (admitted != 0 || !active.receiver.is_closed()) {
+                self.active = Some(active);
+                break;
+            }
+            received += 1;
             match active.receiver.try_recv() {
                 Ok(Ok(GameplayNetworkEvent::LoggedOut(session))) => {
                     self.logged_out_session = Some(*session);
@@ -1559,3 +1570,7 @@ fn retain_unhandled(
     unhandled.push_back(packet);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../tests/application/network_batch.rs"]
+mod network_batch_tests;
