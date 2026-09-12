@@ -1711,3 +1711,16 @@ Baseline benchmark SHA-256 is
 `0f949543a46855efbb91609e371cead9b21a3b2d595ffd12c0f15159a4a27b98`;
 the new benchmark, preserved as `target/benchmark-topology-membership.exe`, is
 `4eabf989c218dc4e89d25af0bcf8ddb10f6435e6863014b7a42f5740f9bb807d`.
+
+The new diagnostic's recurring orbit presentation spikes fall inside the Vulkan
+wait/write phase: reported maxima of 19,697 and 18,447 microseconds in the two
+affected windows. That phase currently combines slot fence waiting, shadow and
+detail resource preparation, celestial/cloud/liquid writes and general slot
+uploads. Separating those costs is the next attribution step; this evidence
+does not identify fence waiting alone as the cause.
+
+Packaged and installed as Solarity 0.0.3a Build 117, source revision
+`33bc64d2ded78fcb1e3853a9eab1b86c14b747d3`. Installed `--build-info` confirms
+that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
+compilation. Packaged and installed executable SHA-256 values both equal
+`afaefa5911f5ddd71e0a23e65576e34638e2b08bcc47f628c70e1b24ed3521d9`.
