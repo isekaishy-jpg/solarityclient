@@ -977,3 +977,70 @@ matches the package SHA-256
 `0cb3a1f8485d58b427d8b536aaafa2f0b292c4ee503858b5b85291b2b16f5845`,
 with the reserved package number recorded as dirty source state. The measured
 batched benchmark is preserved as `target/benchmark-before-ui-dispatch.exe`.
+
+## Retained OnUpdate visibility checks
+
+Sampled `SOLARITY_UI_TIMINGS` diagnostics split the update dispatcher into setup,
+animation, caret, selection, individual authored callbacks, tooltip anchors and
+journal work. Across 132 samples, selection averages 388.6 microseconds while
+callbacks average 123.0 microseconds. The repeated type and ancestor-visibility
+queries dominate the roughly half-millisecond dispatcher cost.
+
+The dispatcher now retains frame eligibility between visibility/hierarchy
+mutations. A Lua-state-owned epoch changes when shown state changes, objects
+are registered or parentage changes, including scroll-child replacement. The
+cache checks that epoch before each candidate, so an earlier callback's
+Show/Hide/SetParent operation affects later candidates in the same transaction.
+Failed mutation paths also invalidate before subsequent callbacks can query the
+changed hierarchy. Alpha and animation changes do not invalidate visibility.
+Subscription membership and the current handler are still read before dispatch;
+the existing sequence boundary for newly subscribed handlers is preserved.
+
+Regression coverage warms the cache before changing ancestor visibility,
+reparenting to a hidden frame, detaching, attaching/replacing/clearing a scroll
+child, removing/restoring a handler, creating a new handler during dispatch,
+and re-hiding a frame from its own OnShow callback. These cases preserve the
+same update order and callback counts as the uncached path.
+All 1,323 workspace tests pass, with 23 environment-dependent cases ignored;
+workspace Clippy passes with warnings denied, and formatting checks pass.
+
+Two unprofiled, uncaptured runs per executable use the same GTX 1070, 1280 x 720,
+shadow-quality-2 uncapped noon route and 2,400 frames per phase. Order is cached,
+preserved 106, cached, preserved 106. No compiler or tests run during measurement.
+Means combine both runs:
+
+| Phase | Build 106 mean frame | Cached mean frame |
+| --- | ---: | ---: |
+| Stationary | 2.682 ms | 2.342 ms |
+| Orbit | 2.981 ms | 2.561 ms |
+| Pointer | 3.033 ms | 2.651 ms |
+| Travel outbound | 3.069 ms | 2.659 ms |
+| Travel return | 2.993 ms | 2.629 ms |
+| Settled after travel | 2.699 ms | 2.365 ms |
+
+Frame times improve 12.17-14.10%, giving about 376-427 FPS in this fixture.
+Mean UI work falls by 0.352-0.376 ms across phases; stationary UI falls from
+0.566 to 0.213 ms and settled UI from 0.559 to 0.207 ms. This exceeds the prior
+build's measured 36-49 microsecond UI regression.
+
+A separate cached profile has 132 samples: selection averages 85.8 microseconds
+(median 77.9) versus 388.6 (median 387.5), while callbacks average 118.6 versus
+123.0 microseconds. Total dispatcher time averages 228.8 versus 536.6
+microseconds. Cache invalidation still performs the full eligibility queries;
+the cached diagnostic maximum is 1.112 ms, including cold/changed state, so the
+cache does not impose a fixed upper bound on dispatch time.
+
+All non-loading positions, detail draws and primary-shadow draws match across
+the four runs. Each travel direction has 24 residency-changing frames,
+21 admissions and 21 evictions, and every run ends with 49 resident tiles.
+Non-loading frame maxima still reach 21.525 ms. First tooltip publication,
+terrain/M2/WMO admission and presentation spikes remain open; the offline
+fixture still excludes authored NPC population, network, movement solver,
+audio and overlays. These results do not establish the requested 1,200 FPS.
+
+Local evidence: `target/ui-dispatch-{before,after}-{one,two}.csv`,
+`target/compare-ui-dispatch.py`, `target/ui-dispatch-diagnostic.log`,
+`target/ui-dispatch-cached-profile.log`, and `target/analyze-ui-dispatch.py`.
+Benchmark SHA-256:
+previous `53ee2b64bd940a476e1a2d2673d20f2508d1d26276da301867453248421f4226`,
+cached `615d2c509adcf7cbd852beff2b09652d9c95aff3dc64c3fffe110aa7fe28af40`.

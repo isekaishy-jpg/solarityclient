@@ -2382,6 +2382,78 @@ fn glue_manager_dispatches_canonical_events() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Earlier callbacks can invalidate cached eligibility before a later slot is selected.
+#[test]
+fn glue_manager_update_selection_observes_same_transaction_hierarchy_changes()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[
+        FixtureFile { path: "Interface\\GlueXML\\GlueXML.toc", bytes: b"UpdateSelection.xml\n" },
+        FixtureFile { path: "Interface\\GlueXML\\UpdateSelection.xml", bytes: br#"<Ui>
+<Frame name="Driver"><Scripts><OnUpdate>
+  LOG = LOG .. "D"
+  if MODE == "hide" then UpdateRoot:Hide()
+  elseif MODE == "show" then UpdateRoot:Show()
+  elseif MODE == "reparent" then UpdateA:SetParent(HiddenRoot)
+  elseif MODE == "detach" then UpdateA:SetParent(nil)
+  elseif MODE == "scroll" then HiddenScroll:SetScrollChild(UpdateA)
+  elseif MODE == "replace" then HiddenScroll:SetScrollChild(UpdateB)
+  elseif MODE == "clear" then HiddenScroll:SetScrollChild(nil)
+  elseif MODE == "show_hidden" then HiddenRoot:Show()
+  elseif MODE == "hide_hidden" then HiddenRoot:Hide()
+  elseif MODE == "unsubscribe" then UpdateB:SetScript("OnUpdate", nil)
+  elseif MODE == "resubscribe" then UpdateB:SetScript("OnUpdate", function() LOG=LOG.."R" end)
+  elseif MODE == "create" then
+    local frame = CreateFrame("Frame", "NewUpdate")
+    frame:SetScript("OnUpdate", function() LOG=LOG.."N" end)
+  end
+</OnUpdate></Scripts></Frame>
+<Frame name="UpdateRoot"><Frames>
+  <Frame name="UpdateA"><Scripts><OnUpdate>LOG=LOG.."A"</OnUpdate></Scripts></Frame>
+  <Frame name="UpdateB"><Scripts><OnUpdate>LOG=LOG.."B"</OnUpdate></Scripts></Frame>
+</Frames></Frame>
+<Frame name="HiddenRoot" hidden="true">
+  <Scripts><OnShow>if REHIDE then self:Hide() end</OnShow></Scripts>
+  <Frames><Frame name="UpdateC"><Scripts><OnUpdate>LOG=LOG.."C"</OnUpdate></Scripts></Frame></Frames>
+</Frame>
+<ScrollFrame name="HiddenScroll" hidden="true"/>
+</Ui>"# },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    let globals = manager.bundle().lua().globals();
+    for (mode, expected) in [
+        ("idle", "DAB"),
+        ("idle", "DAB"),
+        ("hide", "D"),
+        ("show", "DAB"),
+        ("reparent", "DB"),
+        ("detach", "DAB"),
+        ("scroll", "DB"),
+        ("replace", "DA"),
+        ("clear", "DAB"),
+        ("show_hidden", "DABC"),
+        ("hide_hidden", "DAB"),
+        ("unsubscribe", "DA"),
+        ("resubscribe", "DAR"),
+        ("create", "DAR"),
+        ("idle", "DARN"),
+    ] {
+        globals.set("LOG", "")?;
+        globals.set("MODE", mode)?;
+        manager.update(0.016)?;
+        assert_eq!(globals.get::<String>("LOG")?, expected, "mode {mode}");
+        assert!(manager.take_callback_failure().is_none());
+    }
+    globals.set("REHIDE", true)?;
+    globals.set("LOG", "")?;
+    globals.set("MODE", "show_hidden")?;
+    manager.update(0.016)?;
+    assert_eq!(globals.get::<String>("LOG")?, "DARN");
+    assert!(manager.take_callback_failure().is_none());
+    Ok(())
+}
+
 /// Only visible frames receive one elapsed interval per native update, and a
 /// presentation rebuild occurs only when authored state actually changes.
 #[test]

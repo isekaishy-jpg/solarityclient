@@ -8,6 +8,7 @@ mod messages;
 pub(super) mod minimap;
 pub(super) mod status_bars;
 mod tooltips;
+mod update_visibility;
 mod world_scale;
 
 use std::cell::{Cell, RefCell};
@@ -368,6 +369,7 @@ pub struct UiScriptRuntime {
     executed_load_handlers: usize,
     callback_failures: VecDeque<String>,
     snapshot_count: Cell<usize>,
+    update_visibility: update_visibility::UpdateVisibilityCache,
 }
 
 pub(crate) struct UiUpdateDispatch {
@@ -1196,6 +1198,7 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("runtime templates", error))?;
         register_base_globals(lua, &environment, bundle.manifest().kind())
             .map_err(|error| execution_error("base globals", error))?;
+        let update_visibility = update_visibility::UpdateVisibilityCache::new(lua);
         let objects = lua
             .create_table()
             .map_err(|error| execution_error("registry", error))?;
@@ -1466,6 +1469,7 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("CreateFrame", error))?;
         Ok(Self {
             next_action: 0,
+            update_visibility,
             ui_extent: environment.ui_extent(),
             cursor_position: environment.cursor_position(),
             cursor_to_ui: (
@@ -1954,6 +1958,15 @@ impl UiScriptRuntime {
                 message: format!("invalid Glue update interval {elapsed_seconds}"),
             });
         }
+        static PROFILE_SEQUENCE: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let profile = std::env::var_os("SOLARITY_UI_TIMINGS")
+            .filter(|_| {
+                PROFILE_SEQUENCE
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    .is_multiple_of(128)
+            })
+            .map(|_| std::time::Instant::now());
         let lua = bundle.lua();
         clear_visual_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         clear_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
@@ -1969,14 +1982,17 @@ impl UiScriptRuntime {
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
+        let setup = profile.map(|start| start.elapsed());
         let mut animation_updates = advance_animations(lua, elapsed_seconds)
             .map_err(|error| execution_error("FrameXML animation update", error))?;
         // Timer-only animation groups must advance and run their callbacks,
         // but identical contributions do not invalidate native presentation.
         animation_updates
             .retain(|&(index, transform)| !live.animation_transform_matches(index, transform));
+        let animated = profile.map(|start| start.elapsed());
         advance_edit_box_caret(lua, &objects, elapsed_seconds)
             .map_err(|error| execution_error("Glue EditBox caret", error))?;
+        let caret = profile.map(|start| start.elapsed());
         let update_objects: Table = lua
             .named_registry_value(ON_UPDATE_OBJECTS_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
@@ -1984,6 +2000,7 @@ impl UiScriptRuntime {
             .named_registry_value(ON_UPDATE_MEMBERS_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let mut dispatched = 0;
+        let mut handler_timings = Vec::new();
         for slot in 1..=update_objects.raw_len() {
             let index = update_objects
                 .raw_get::<usize>(slot)
@@ -1994,28 +2011,27 @@ impl UiScriptRuntime {
             {
                 continue;
             }
-            let object = objects
-                .raw_get::<Table>(index)
-                .map_err(|error| execution_error("Glue OnUpdate", error))?;
-            if !is_script_frame_table(&object)
-                .and_then(|is_frame| {
-                    if is_frame {
-                        object_is_visible(lua, object.clone())
-                    } else {
-                        Ok(false)
-                    }
-                })
+            if !self
+                .update_visibility
+                .is_visible(lua, &objects, index)
                 .map_err(|error| execution_error("Glue OnUpdate", error))?
             {
                 continue;
             }
+            let object = objects
+                .raw_get::<Table>(index)
+                .map_err(|error| execution_error("Glue OnUpdate", error))?;
             let Some(function) = object_script_function(lua, &object, UiScriptHandler::Update)
                 .map_err(|error| execution_error("Glue OnUpdate", error))?
             else {
                 continue;
             };
-            if let Err(error) = call_number_object_handler(lua, &function, object, elapsed_seconds)
-            {
+            let handler_started = profile.map(|_| std::time::Instant::now());
+            let result = call_number_object_handler(lua, &function, object, elapsed_seconds);
+            if let Some(start) = handler_started {
+                handler_timings.push((index, start.elapsed()));
+            }
+            if let Err(error) = result {
                 // A recoverable authored callback must not cancel swapchain
                 // presentation and then fail again on every main-loop pass.
                 // Remove only this handler from the active update set and keep
@@ -2028,6 +2044,7 @@ impl UiScriptRuntime {
             }
             dispatched += 1;
         }
+        let called = profile.map(|start| start.elapsed());
         let cursor = self.cursor_position.get();
         tooltips::update_cursor_anchors(
             lua,
@@ -2037,6 +2054,7 @@ impl UiScriptRuntime {
             ),
         )
         .map_err(|error| execution_error("GameTooltip cursor update", error))?;
+        let tooltips = profile.map(|start| start.elapsed());
         let current_generation =
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let current_fallback_generation = fallback_state_generation(lua)
@@ -2070,6 +2088,46 @@ impl UiScriptRuntime {
             && fallback_mutations == 0
             && self.registered_object_count() == object_count
             && !dirty_objects.is_empty();
+        if let (
+            Some(start),
+            Some(setup),
+            Some(animated),
+            Some(caret),
+            Some(called),
+            Some(tooltips),
+        ) = (profile, setup, animated, caret, called, tooltips)
+        {
+            let total = start.elapsed();
+            let callback_time = handler_timings
+                .iter()
+                .map(|(_, elapsed)| *elapsed)
+                .sum::<std::time::Duration>();
+            let handlers = handler_timings
+                .iter()
+                .map(|(index, elapsed)| {
+                    let name = objects
+                        .raw_get::<Table>(*index)
+                        .ok()
+                        .and_then(|object| {
+                            object.raw_get::<Option<String>>(name_key()).ok().flatten()
+                        })
+                        .unwrap_or_else(|| format!("#{index}"));
+                    format!("{name}:{:.1}", elapsed.as_secs_f64() * 1_000_000.0)
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            eprintln!(
+                "UI update dispatch: setup={:.1}us animation={:.1}us caret={:.1}us selection={:.1}us callbacks={:.1}us tooltip={:.1}us journal={:.1}us total={:.1}us handlers=[{handlers}]",
+                setup.as_secs_f64() * 1_000_000.0,
+                (animated - setup).as_secs_f64() * 1_000_000.0,
+                (caret - animated).as_secs_f64() * 1_000_000.0,
+                (called - caret).saturating_sub(callback_time).as_secs_f64() * 1_000_000.0,
+                callback_time.as_secs_f64() * 1_000_000.0,
+                (tooltips - called).as_secs_f64() * 1_000_000.0,
+                (total - tooltips).as_secs_f64() * 1_000_000.0,
+                total.as_secs_f64() * 1_000_000.0
+            );
+        }
         Ok(UiUpdateDispatch {
             handler_count: dispatched,
             changed,
@@ -8793,6 +8851,7 @@ fn set_object_shown(lua: &Lua, object: &Table, shown: bool) -> mlua::Result<()> 
     }
 
     object.raw_set(shown_key(), shown)?;
+    update_visibility::invalidate(lua);
     mark_visual_state_changed(lua, object)?;
     for (candidate, was_visible) in subtree {
         let is_visible = object_is_visible(lua, candidate.clone())?;
@@ -8814,6 +8873,7 @@ fn register_child_relation(
     child_index: usize,
     parent_index: Option<usize>,
 ) -> mlua::Result<()> {
+    update_visibility::invalidate(lua);
     let Some(parent_index) = parent_index else {
         return Ok(());
     };
@@ -8838,6 +8898,7 @@ fn move_child_relation(
     if previous_parent == next_parent {
         return Ok(());
     }
+    update_visibility::invalidate(lua);
     let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
     if let Some(previous_parent) = previous_parent
         && let Some(direct) = children.raw_get::<Option<Table>>(previous_parent)?
