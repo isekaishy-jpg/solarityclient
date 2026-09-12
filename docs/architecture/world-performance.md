@@ -723,3 +723,48 @@ installed model through original portal projection, recursion, local clipping,
 and batch selection confirmed the new group and batch decisions before
 accepting the measurement. Per-group fog shaders, liquids, and attached
 doodads still have separate integration gaps described in the evidence.
+
+## Ribbon material and retained-fog replay
+
+On 2026-09-12, Build 103 includes the recent model/effect opacity, registered
+owner fog, ribbon color/culling, grouped material order and retained-fog changes.
+The ordinary ribbon shadow audit confirms that its native element selects no
+shadow receiver. The Testing shortcut now launches this build.
+
+Two uncaptured replays of each optimized executable used the same 1280 x 720
+GTX 1070, uncapped presentation, shadow quality 2, noon clock and 2,400 frames
+per phase. The route starts at map 1 `(1100, -4500, 150)`, travels 1,600 yards
+west and returns. Run order was current, previous, current, previous. Profiling
+was disabled and no compiler ran during these four measurements. The previous
+executable was preserved from the 2026-09-11 10:48 build, after model/liquid
+clipping work; this comparison spans several correctness changes.
+
+| Phase | Previous mean frame | Build 103 mean frame |
+| --- | ---: | ---: |
+| Stationary | 2.905 ms | 2.983 ms |
+| Orbit | 3.139 ms | 3.266 ms |
+| Pointer | 3.284 ms | 3.359 ms |
+| Travel outbound | 3.266 ms | 3.334 ms |
+| Travel return | 3.232 ms | 3.307 ms |
+| Settled after travel | 2.965 ms | 3.013 ms |
+
+Means combine both runs for each executable. Current frame times are about
+1.6–4.0% higher. All non-loading frame positions, terrain-detail draw counts
+and primary-shadow counts match across all four runs. Each direction retains
+24 changed frames, 21 tile admissions and 21 evictions; each run ends with
+49 resident tiles. The current runs still contain non-loading samples up to
+35.651 ms. These results establish neither stall elimination nor the requested
+1,200 FPS target; the phase means correspond to roughly 298–335 FPS in this
+offline fixture with no authored NPCs or network population.
+
+Separate profiled runs put final settled command recording at 408–409 µs
+current versus 394–398 µs previous. M2 preparation remains around 0.70–0.71 ms
+in those intervals. The uncaptured CSVs also show roughly 26–36 µs more UI time
+in the selected phases despite no corresponding UI change in this slice.
+The comparison does not isolate all added cost to the ribbon fog work; retain
+the performance regression as an open optimization item.
+
+Local evidence is `target/ribbon-world-{before,after}-{one,two}.csv` and the
+separate `before-profile`/`after-profile` logs. Benchmark executable SHA-256:
+previous `f10decaf9598d99fca5e8d6b2ceafa8b95f4d489aa4424604739698cc9f3327a`,
+current `61058fb453b93930ac60fc70ac9d3f7bebf3e54049530f19bb43de51c8bc1c9c`.

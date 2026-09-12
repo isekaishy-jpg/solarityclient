@@ -188,3 +188,21 @@ and liquid consumers select the admitted group's fog bank. Attached doodads
 consume their separate exterior/group routes. Indoor/exterior sky consumers
 still need integration.
 The bounded captures above do not establish combined live visual/FPS parity.
+
+## Remaining surface fog equations
+
+The 2026-09-12 ribbon audit confirms that original `MapObjDiffuse_T1` and
+`MapObjUDiffuse_T1` vertex programs evaluate fog from camera-space Z through
+the shared c30 coefficients before interpolation. The current WMO surface
+vertex shader still uses radial camera distance. The M2 surface shader uses
+clip W, which agrees with eye depth for its perspective projection but does
+not reproduce the native equation for an orthographic scene. These are
+confirmed follow-up gaps; the completed particle/ribbon depth-fog checks do
+not establish surface parity.
+
+WMO pass fog-color/enable policy also needs a surface-level comparison against
+`7AC6A0`, `7AC9F0` and `7A9380`. The retained register metadata added for ribbon
+inheritance follows those callbacks, including forced fog on unified
+nontransition passes, while the current WMO surface uniform still derives its
+fog mode from the material blend. Verify each physical pass with the original
+programs before extending that metadata to visible surface shading.
