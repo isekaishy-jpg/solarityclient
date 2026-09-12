@@ -1822,3 +1822,9 @@ Baseline benchmark SHA-256 is
 `4eabf989c218dc4e89d25af0bcf8ddb10f6435e6863014b7a42f5740f9bb807d`;
 the final benchmark, preserved as `target/benchmark-liquid-descriptor.exe`, is
 `586ffd2edb29c1bfa9773fb3b6a17e53aecb60a2dc14fb902c8cd5e0164a08a8`.
+
+Packaged and installed as Solarity 0.0.3a Build 118, source revision
+`32d9d1b32c7ee22da3c019efe7edd23bcd855652`. Installed `--build-info` confirms
+that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
+compilation. Packaged and installed executable SHA-256 values both equal
+`fc3bcc919d3be59cfabacb02c575bc2be3f5c4d8d7b7c894dd398ea301546fc2`.
