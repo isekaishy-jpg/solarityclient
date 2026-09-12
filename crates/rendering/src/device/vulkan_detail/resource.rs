@@ -1,4 +1,4 @@
-//! One immutable geometry upload and descriptor bank per retained detail chunk.
+//! Immutable detail geometry with shared, fence-retained texture bindings.
 
 #![allow(unsafe_code)]
 
@@ -10,6 +10,7 @@ use vk_mem::Alloc;
 use crate::VulkanError;
 use crate::device::vulkan_texture::BlpTextureRegistry;
 
+use super::material::{DetailMaterial, DetailMaterialKey, DetailMaterialRegistry};
 use super::{GroundDetailDraw, GroundDetailFrame};
 
 /// Live GPU dependencies and device limits needed for an unsubmitted detail chunk.
@@ -27,9 +28,7 @@ pub(in crate::device) struct DetailGpuMesh {
     draw: GroundDetailDraw,
     buffer: vk::Buffer,
     allocation: Option<vk_mem::Allocation>,
-    sampler: vk::Sampler,
-    pool: vk::DescriptorPool,
-    sets: Vec<vk::DescriptorSet>,
+    materials: Vec<Arc<DetailMaterial>>,
 }
 
 impl DetailGpuMesh {
@@ -37,24 +36,28 @@ impl DetailGpuMesh {
     fn create(
         context: &DetailCreateContext<'_>,
         draw: &GroundDetailDraw,
+        materials: &mut DetailMaterialRegistry,
     ) -> Result<Self, VulkanError> {
         let mut result = Self {
             draw: draw.clone(),
             buffer: vk::Buffer::null(),
             allocation: None,
-            sampler: vk::Sampler::null(),
-            pool: vk::DescriptorPool::null(),
-            sets: Vec::new(),
+            materials: Vec::new(),
         };
-        if let Err(error) = result.initialize(context) {
+        if let Err(error) = result.initialize(context, materials) {
             result.destroy(context.device, context.allocator);
+            materials.retire_unused(context.device);
             return Err(error);
         }
         Ok(result)
     }
 
     /// Uploads only newly encountered geometry; unchanged frames retain this bank.
-    fn initialize(&mut self, context: &DetailCreateContext<'_>) -> Result<(), VulkanError> {
+    fn initialize(
+        &mut self,
+        context: &DetailCreateContext<'_>,
+        materials: &mut DetailMaterialRegistry,
+    ) -> Result<(), VulkanError> {
         let bytes = self.draw.plan().bytes();
         let info = vk::BufferCreateInfo::default()
             .size(bytes.len() as u64)
@@ -92,67 +95,15 @@ impl DetailGpuMesh {
             context.allocator.unmap_memory(allocation);
         }
         flushed?;
-        let requested = self.draw.filtering().requested_anisotropy();
-        let anisotropy = if context.anisotropy_supported {
-            requested.min(context.maximum_anisotropy).max(1.0)
-        } else {
-            1.0
-        };
-        // 7D9990 calls 681BE0 with both wrapping bits enabled for detail textures.
-        let info = vk::SamplerCreateInfo::default()
-            .mag_filter(vk::Filter::LINEAR)
-            .min_filter(vk::Filter::LINEAR)
-            .mipmap_mode(if self.draw.filtering().uses_linear_mips() {
-                vk::SamplerMipmapMode::LINEAR
-            } else {
-                vk::SamplerMipmapMode::NEAREST
-            })
-            .address_mode_u(vk::SamplerAddressMode::REPEAT)
-            .address_mode_v(vk::SamplerAddressMode::REPEAT)
-            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-            .min_lod(self.draw.base_mip().level())
-            .max_lod(vk::LOD_CLAMP_NONE)
-            .anisotropy_enable(anisotropy > 1.0)
-            .max_anisotropy(anisotropy);
-        // SAFETY: Anisotropy is enabled only with the supported feature and capped limit.
-        self.sampler = unsafe { context.device.create_sampler(&info, None) }
-            .map_err(|source| VulkanError::operation("create detail sampler", source))?;
-        let count = self.draw.textures().len() as u32;
-        let sizes = [vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: count,
-        }];
-        let info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(count)
-            .pool_sizes(&sizes);
-        // SAFETY: Each nonempty batch needs exactly one immutable texture descriptor.
-        self.pool = unsafe { context.device.create_descriptor_pool(&info, None) }
-            .map_err(|source| VulkanError::operation("create detail descriptor pool", source))?;
-        let layouts = vec![context.descriptor; count as usize];
-        let info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(self.pool)
-            .set_layouts(&layouts);
-        // SAFETY: The prepared detail pipeline owns the compatible live descriptor layout.
-        self.sets = unsafe { context.device.allocate_descriptor_sets(&info) }
-            .map_err(|source| VulkanError::operation("allocate detail texture sets", source))?;
-        for (texture, set) in self.draw.textures().iter().zip(&self.sets) {
-            let view = context
-                .textures
-                .view(*texture)
-                .ok_or(VulkanError::UnknownBlpTextureHandle)?;
-            let images = [vk::DescriptorImageInfo::default()
-                .sampler(self.sampler)
-                .image_view(view)
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-            let writes = [vk::WriteDescriptorSet::default()
-                .dst_set(*set)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&images)];
-            // SAFETY: All image views are resident and no descriptor has been submitted.
-            unsafe {
-                context.device.update_descriptor_sets(&writes, &[]);
-            }
+        for &texture in self.draw.textures() {
+            self.materials.push(materials.acquire(
+                context,
+                DetailMaterialKey {
+                    texture,
+                    filtering: self.draw.filtering(),
+                    base_mip: self.draw.base_mip(),
+                },
+            )?);
         }
         Ok(())
     }
@@ -163,27 +114,20 @@ impl DetailGpuMesh {
     pub(in crate::device) fn index_buffer(&self) -> (vk::Buffer, u64) {
         (self.buffer, (self.draw.plan().vertices().len() * 36) as u64)
     }
-    pub(in crate::device) fn sets(&self) -> &[vk::DescriptorSet] {
-        &self.sets
+    pub(in crate::device) fn sets(&self) -> impl Iterator<Item = vk::DescriptorSet> {
+        self.materials.iter().map(|material| material.set())
     }
 
     /// Releases buffers only after both runtime ownership and all slot pins end.
-    fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+    fn destroy(&mut self, _device: &Device, allocator: &vk_mem::Allocator) {
         // SAFETY: Retirement proves no GPU readers; failed creation never submitted.
         unsafe {
-            if self.pool != vk::DescriptorPool::null() {
-                device.destroy_descriptor_pool(self.pool, None);
-            }
-            if self.sampler != vk::Sampler::null() {
-                device.destroy_sampler(self.sampler, None);
-            }
             if let Some(mut allocation) = self.allocation.take() {
                 allocator.destroy_buffer(self.buffer, &mut allocation);
             }
         }
         self.buffer = vk::Buffer::null();
-        self.pool = vk::DescriptorPool::null();
-        self.sampler = vk::Sampler::null();
+        self.materials.clear();
     }
 }
 
@@ -191,6 +135,7 @@ impl DetailGpuMesh {
 #[derive(Default)]
 pub(in crate::device) struct DetailRegistry {
     meshes: Vec<DetailGpuMesh>,
+    materials: DetailMaterialRegistry,
 }
 
 impl DetailRegistry {
@@ -220,10 +165,13 @@ impl DetailRegistry {
                 .filter(|draw| !draw.plan().indices().is_empty())
             {
                 if self.get(draw).is_none() {
-                    self.meshes.push(DetailGpuMesh::create(context, draw)?);
+                    self.meshes
+                        .push(DetailGpuMesh::create(context, draw, &mut self.materials)?);
                 }
             }
         }
+        // Arriving meshes can reuse banks whose preceding geometry just left.
+        self.materials.retire_unused(context.device);
         Ok(())
     }
 
@@ -237,5 +185,6 @@ impl DetailRegistry {
             mesh.destroy(device, allocator);
         }
         self.meshes.clear();
+        self.materials.destroy(device);
     }
 }

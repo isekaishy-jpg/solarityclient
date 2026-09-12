@@ -1828,3 +1828,85 @@ Packaged and installed as Solarity 0.0.3a Build 118, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `fc3bcc919d3be59cfabacb02c575bc2be3f5c4d8d7b7c894dd398ea301546fc2`.
+
+
+### September 12: share immutable ground-detail texture bindings
+
+A narrow detail-resource trace isolates the remaining allocation pauses in
+Build 118. Two new one-texture chunks spend 13.2153 and 11.0199 ms cumulatively
+through descriptor allocation, versus 23.9 and 23.2 microseconds through pool
+creation immediately before that call. Geometry serialization, buffer allocation,
+upload and sampler creation take microseconds. Neither frame retires any detail
+meshes. This establishes the slow API stage in these samples, without identifying
+the driver's internal cause.
+
+Detail meshes now share an immutable sampler and texture descriptor for each
+complete texture-handle/filtering/base-mip key. Geometry remains independently
+uploaded, and descriptors are bound in the original batch order. Existing sampler
+wrapping, anisotropy limits and mip selection are preserved. Texture identity is
+validated on every acquisition, including cache hits.
+
+Each mesh holds shared ownership of its materials. Existing runtime and submitted
+slot pins retain that mesh until GPU readers have retired. The registry destroys
+only materials with no mesh owners, after admitting new meshes so exchanged
+geometry can reuse the same bindings. Failed creation releases acquired owners
+and partial Vulkan allocations. No fence or device-idle policy changes.
+
+The native detail shader test reuses texture handles across independently built
+scatter plans and periodically releases CPU mesh generations. All 120 expected
+native pixel cases still exercise their original lighting, fog and distance inputs.
+This validates component pixels, not complete world lighting parity.
+
+
+Validation passes: 32 rendering unit tests, 184 rendering integration tests,
+334 runtime library tests (18 ignored), and rendering/runtime Clippy with all
+targets and warnings denied. Formatting and whitespace checks pass.
+
+Two interleaved uncaptured runs per executable use the same installed-world route,
+GTX 1070, 1280x720, environment shadow quality 2 and 2,400 frames per phase. This
+offline fixture has no authored NPCs, network, movement solver, audio or overlays.
+
+| Phase | Build 118 mean ms | Shared detail bindings mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.871088 | 1.939820 | +3.67% |
+| Orbit | 2.199816 | 2.246013 | +2.10% |
+| Pointer | 2.241805 | 2.260651 | +0.84% |
+| Travel out | 2.259129 | 2.289026 | +1.32% |
+| Travel back | 2.243478 | 2.265982 | +1.00% |
+| Settled | 1.933207 | 1.940264 | +0.37% |
+
+Orbit frame 301 falls from 17.6699/19.2710 ms to 2.1223/2.1167 ms; frame 1485
+falls from 16.6834/17.8369 ms to 2.5847/2.4505 ms. This removes the repeated
+allocation pauses at those frames. Combined non-loading mean is nevertheless
+worse, 2.124754 versus 2.156959 ms (+1.52%), so this is a targeted stall fix,
+not an established broad FPS gain. Current phase means are about 437-516 FPS.
+The first new run's orbit maximum is 5.4532 ms; the second includes separate
+14.8272 and 14.2022 ms orbit outliers, with 1.8473 and 13.4907 ms presentation
+respectively. It also has an unattributed 29.2715 ms stationary frame with
+1.6664 ms presentation. Pointer entry remains 15.8576/16.2787 ms. Across 96
+changed-residency frames per variant, total mean is 11.333863 versus 11.415839 ms,
+including 6.615344 versus 6.718791 ms streaming. The no-stall and 1,200 FPS goals
+remain open, along with the separate world-slot capacity recreation path.
+
+All non-loading recorded camera, detail, primary/environment shadow and screen
+effect states match. Each travel leg admits and evicts 21 tiles over 24 changed
+frames, and every run finishes with 49 resident tiles. A separate profile replay
+has an orbit maximum of 5.6997 ms but still reports a 13.791 ms wait/write maximum
+across its full route. That aggregate does not identify the responsible resource.
+
+The separate 23-image capture replay is excluded from timings. Twelve reviewed
+view pairs retain consistent world, liquid and scenery coverage across orbit and
+both travel directions. Wall-time animation differs; strong terrain highlights
+and combined-world lighting parity remain unresolved.
+
+Local evidence: `target/detail-resources-diagnostic.log`,
+`target/detail-resources-profile-source.rs`,
+`target/detail-material-{before,after}-{one,two}.csv`,
+`target/detail-material-diagnostic.log`, `target/compare-detail-material.py`,
+`target/check-detail-material-states.py`, `target/compare-detail-material-spikes.py`,
+`target/detail-material-after-captures/`, and
+`target/detail-material-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`586ffd2edb29c1bfa9773fb3b6a17e53aecb60a2dc14fb902c8cd5e0164a08a8`;
+the new benchmark, preserved as `target/benchmark-detail-material.exe`, is
+`6cbb14f6dd8cd604d19adba0cb7d4707ad4efcd5a914958f9cb034293d7ce458`.

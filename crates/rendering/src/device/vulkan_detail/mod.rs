@@ -1,5 +1,6 @@
 //! Immutable grass/detail buffers, native shader state, and fenced retirement.
 
+mod material;
 mod pipeline;
 mod resource;
 mod types;

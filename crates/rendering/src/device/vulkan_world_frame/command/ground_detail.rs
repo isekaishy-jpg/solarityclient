@@ -59,7 +59,7 @@ pub(super) fn record_ground_detail(
             for (batch, set) in draw.plan().batches().iter().zip(mesh.sets()) {
                 let sets = [
                     context.frame_sets[0],
-                    *set,
+                    set,
                     context.shadow_resources.receiver_set(),
                 ];
                 let set_count = if has_primary_shadow { 3 } else { 2 };

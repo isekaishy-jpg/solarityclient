@@ -8,10 +8,10 @@ use solarity_asset::{
     GroundEffectCatalog, Locale, MapCatalog, TerrainChunkIndex, TerrainMap, TerrainTileIndex,
 };
 use solarity_rendering::{
-    BlpColorSpace, GroundDetailDensity, GroundDetailDraw, GroundDetailFrame, GroundDetailMeshPlan,
-    GroundDetailModel, M2LocalLightState, M2SceneUniform, TerrainDetailChunk, TerrainSceneUniform,
-    VulkanRenderer, WorldFrameScene, WorldModelBaseMip, WorldModelSceneUniform,
-    WorldModelTextureFiltering,
+    BlpColorSpace, BlpTextureHandle, GroundDetailDensity, GroundDetailDraw, GroundDetailFrame,
+    GroundDetailMeshPlan, GroundDetailModel, M2LocalLightState, M2SceneUniform, TerrainDetailChunk,
+    TerrainSceneUniform, VulkanRenderer, WorldFrameScene, WorldModelBaseMip,
+    WorldModelSceneUniform, WorldModelTextureFiltering,
 };
 use wow_adt::{
     AdtVersion, ParsedAdt,
@@ -25,6 +25,7 @@ use crate::support::{Fixture, FixtureFile};
 /// A single native-selected instance fills the inspected viewport with a planar quad.
 pub(super) fn compare_native_detail(renderer: &mut VulkanRenderer) -> Result<(), Box<dyn Error>> {
     let mut draws = BTreeMap::new();
+    let mut textures = BTreeMap::new();
     let mut count = 0;
     for line in include_str!("../fixtures/ground-detail-shader-native.txt")
         .lines()
@@ -39,7 +40,16 @@ pub(super) fn compare_native_detail(renderer: &mut VulkanRenderer) -> Result<(),
         let shadow: u8 = row[8].parse()?;
         let key = (argb, tint, shadow);
         if let std::collections::btree_map::Entry::Vacant(entry) = draws.entry(key) {
-            entry.insert(prepare_draw(renderer, argb, tint, shadow)?);
+            let (draw, texture) = prepare_draw_at_with_texture(
+                renderer,
+                argb,
+                tint,
+                shadow,
+                Vec3::ZERO,
+                textures.get(&argb).copied(),
+            )?;
+            textures.insert(argb, texture);
+            entry.insert(draw);
         }
         let vector = |start: usize| -> Result<Vec3, Box<dyn Error>> {
             Ok(Vec3::new(
@@ -97,19 +107,14 @@ pub(super) fn compare_native_detail(renderer: &mut VulkanRenderer) -> Result<(),
             }
         }
         count += 1;
+        // Exchange CPU mesh generations while submitted slots retain their plans.
+        // Reused texture handles must keep the same native pixels across retirement.
+        if count % 11 == 0 {
+            draws.clear();
+        }
     }
     assert_eq!(count, 120);
     Ok(())
-}
-
-/// Builds one first-SKIN quad with native cell 32 as the only eligible scatter cell.
-fn prepare_draw(
-    renderer: &mut VulkanRenderer,
-    argb: u32,
-    tint: [u8; 3],
-    shadow: u8,
-) -> Result<GroundDetailDraw, Box<dyn Error>> {
-    prepare_draw_at(renderer, argb, tint, shadow, Vec3::ZERO)
 }
 
 /// Relocates the authored chunk to exercise local-vertex receiver precision.
@@ -120,6 +125,18 @@ pub(super) fn prepare_draw_at(
     shadow: u8,
     origin: Vec3,
 ) -> Result<GroundDetailDraw, Box<dyn Error>> {
+    prepare_draw_at_with_texture(renderer, argb, tint, shadow, origin, None).map(|(draw, _)| draw)
+}
+
+/// Shares texture identity across independently prepared native scatter generations.
+fn prepare_draw_at_with_texture(
+    renderer: &mut VulkanRenderer,
+    argb: u32,
+    tint: [u8; 3],
+    shadow: u8,
+    origin: Vec3,
+    shared_texture: Option<BlpTextureHandle>,
+) -> Result<(GroundDetailDraw, BlpTextureHandle), Box<dyn Error>> {
     let path = format!("fixture/detail_{argb:08x}.blp");
     let base = AdtBuilder::new()
         .with_version(AdtVersion::WotLK)
@@ -212,13 +229,19 @@ pub(super) fn prepare_draw_at(
         |_| Some(&model),
     )?);
     let source = BlpTextureSource::load(&mut store, &AssetPath::new(path)?)?;
-    let texture = renderer.upload_blp_texture(&source, BlpColorSpace::Linear)?;
-    Ok(GroundDetailDraw::new(
-        mesh,
-        vec![texture],
-        WorldModelTextureFiltering::Trilinear,
-        WorldModelBaseMip::Zero,
-    )?)
+    let texture = match shared_texture {
+        Some(texture) => texture,
+        None => renderer.upload_blp_texture(&source, BlpColorSpace::Linear)?,
+    };
+    Ok((
+        GroundDetailDraw::new(
+            mesh,
+            vec![texture],
+            WorldModelTextureFiltering::Trilinear,
+            WorldModelBaseMip::Zero,
+        )?,
+        texture,
+    ))
 }
 
 /// Uses a large horizontal quad so all inspected pixels share exact shader inputs.
