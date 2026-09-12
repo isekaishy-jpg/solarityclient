@@ -1636,3 +1636,9 @@ Baseline benchmark SHA-256 is
 `8520d171334f5d52b1466c4b06af658e870be0e9d9627fff8f1a9573b8d201f0`;
 the new benchmark, preserved as `target/benchmark-static-spatial.exe`, is
 `0f949543a46855efbb91609e371cead9b21a3b2d595ffd12c0f15159a4a27b98`.
+
+Packaged and installed as Solarity 0.0.3a Build 116, source revision
+`7883e4133bedd1fc5fa4ca60e38a232a5d2bd15a`. Installed `--build-info` confirms
+that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
+compilation. Packaged and installed executable SHA-256 values both equal
+`5eabd8aefc910e722e49efe90979a3c11d26b09b56ee929958403741f766ca8e`.
