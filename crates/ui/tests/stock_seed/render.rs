@@ -1151,3 +1151,59 @@ fn glue_render_plan_retains_scrolled_textures_without_moving_chrome() -> Result<
     );
     Ok(())
 }
+
+/// Mixed frame-order and source membership changes use the same native packet order as initial construction.
+#[test]
+fn targeted_packet_membership_reorders_adds_and_removes_named_owners() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new(&[
+        FixtureFile { path: "Interface/GlueXML/GlueXML.toc", bytes: b"PacketChanges.xml\n" },
+        FixtureFile { path: "Interface/GlueXML/PacketChanges.xml", bytes: br#"<Ui>
+<Frame name="FirstOwner" frameLevel="1"><Size x="40" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
+<Layers><Layer level="ARTWORK">
+<Texture name="First" file="Interface\Glues\First"><Size x="12" y="12"/></Texture>
+<Texture name="Extra"><Size x="8" y="8"/></Texture>
+</Layer></Layers><Scripts>
+<OnLoad>self:RegisterEvent("SET_GLUE_SCREEN")</OnLoad>
+<OnEvent>
+ if STEP == 1 then self:SetFrameLevel(3); Extra:SetTexture(1, 0, 0, 1)
+ elseif STEP == 2 then self:SetFrameLevel(1); First:SetTexture(nil)
+ elseif STEP == 3 then self:SetFrameLevel(3); First:SetTexture(1, 1, 1, 1); Extra:SetTexture(nil) end
+</OnEvent></Scripts></Frame>
+<Frame name="SecondOwner" frameLevel="2"><Size x="40" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
+<Layers><Layer level="ARTWORK"><Texture name="Second" file="Interface\Glues\Second"><Size x="10" y="10"/></Texture></Layer></Layers>
+</Frame></Ui>"# },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    for (step, expected) in [
+        (1, vec!["Second", "First", "Extra"]),
+        (2, vec!["Extra", "Second"]),
+        (3, vec!["Second", "First"]),
+    ] {
+        manager.bundle().lua().globals().set("STEP", step)?;
+        manager.dispatch_event("SET_GLUE_SCREEN", &solarity_ui::UiEventPayload::empty())?;
+        assert!(manager.take_callback_failure().is_none());
+        let names = manager
+            .presentation()
+            .members_in_draw_order()
+            .iter()
+            .map(|member| {
+                manager.objects()[member.object_index()]
+                    .name()
+                    .ok_or("unnamed member")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(names, expected);
+        let mesh_names = manager
+            .render_plan()
+            .mesh()
+            .object_indices()
+            .iter()
+            .map(|&index| manager.objects()[index].name().ok_or("unnamed quad"))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(mesh_names, expected);
+    }
+    Ok(())
+}

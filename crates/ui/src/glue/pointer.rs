@@ -1,6 +1,6 @@
 //! Stock-ordered pointer targeting for the retained Glue object arena.
 
-use crate::script::UiRuntimeObjectPlan;
+use crate::script::{UiRuntimeObject, UiRuntimeObjectPlan};
 use crate::{UiFrameStrata, UiObjectKind, UiObjectRole, UiRegionGeometryPlan};
 
 use super::UiPointerButton;
@@ -29,6 +29,8 @@ impl Drop for UiPointerButtonScope {
 /// Live interaction facts parallel to frame-capable objects.
 pub(super) struct UiPointerPlan {
     targets: Vec<Option<UiPointerTarget>>,
+    thumb_indices: Vec<Option<usize>>,
+    thumb_parents: Vec<(usize, Option<usize>)>,
 }
 
 impl UiPointerPlan {
@@ -47,31 +49,38 @@ impl UiPointerPlan {
             .objects()
             .iter()
             .enumerate()
-            .map(|(index, object)| {
-                Some(UiPointerTarget {
-                    kind: object.kind,
-                    parent: object.parent,
-                    strata: object.frame_strata?,
-                    level: object.frame_level?,
-                    keyboard_enabled: object.keyboard_enabled?,
-                    mouse_enabled: object.mouse_enabled?,
-                    mouse_wheel_enabled: object.mouse_wheel_enabled?,
-                    motion_scripts_while_disabled: object.motion_scripts_while_disabled?,
-                    enabled: object.enabled.unwrap_or(true),
-                    hit_rect_insets: object.hit_rect_insets?,
-                    click_action: object.click_action.unwrap_or(0),
-                    edit_focused: object.edit_focused.unwrap_or(false),
-                    slider: object.slider.map(|slider| UiPointerSlider {
-                        minimum: slider.minimum,
-                        maximum: slider.maximum,
-                        step: slider.step,
-                        vertical: slider.vertical,
-                        thumb_index: thumb_indices[index],
-                    }),
-                })
-            })
+            .map(|(index, object)| pointer_target(object, thumb_indices[index]))
             .collect();
-        Self { targets }
+        Self {
+            targets,
+            thumb_indices,
+            thumb_parents: live
+                .objects()
+                .iter()
+                .enumerate()
+                .filter(|(_, object)| object.role == UiObjectRole::ThumbTexture)
+                .map(|(index, object)| (index, object.parent))
+                .collect(),
+        }
+    }
+
+    /// Content journals preserve arena and thumb ownership; copy only changed hit-test facts.
+    pub(super) fn refresh_objects(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> bool {
+        for index in indices {
+            if self
+                .thumb_parents
+                .binary_search_by_key(&index, |(owner, _)| *owner)
+                .is_ok_and(|slot| self.thumb_parents[slot].1 != live.objects()[index].parent)
+            {
+                return false;
+            }
+            self.targets[index] = pointer_target(&live.objects()[index], self.thumb_indices[index]);
+        }
+        true
     }
 
     /// Refreshes EditBox focus without recopied hit-test state for every frame.
@@ -325,4 +334,29 @@ struct UiPointerSlider {
     step: f64,
     vertical: bool,
     thumb_index: Option<usize>,
+}
+
+/// Resolves one target using the retained immutable thumb ownership index.
+fn pointer_target(object: &UiRuntimeObject, thumb_index: Option<usize>) -> Option<UiPointerTarget> {
+    Some(UiPointerTarget {
+        kind: object.kind,
+        parent: object.parent,
+        strata: object.frame_strata?,
+        level: object.frame_level?,
+        keyboard_enabled: object.keyboard_enabled?,
+        mouse_enabled: object.mouse_enabled?,
+        mouse_wheel_enabled: object.mouse_wheel_enabled?,
+        motion_scripts_while_disabled: object.motion_scripts_while_disabled?,
+        enabled: object.enabled.unwrap_or(true),
+        hit_rect_insets: object.hit_rect_insets?,
+        click_action: object.click_action.unwrap_or(0),
+        edit_focused: object.edit_focused.unwrap_or(false),
+        slider: object.slider.map(|slider| UiPointerSlider {
+            minimum: slider.minimum,
+            maximum: slider.maximum,
+            step: slider.step,
+            vertical: slider.vertical,
+            thumb_index,
+        }),
+    })
 }

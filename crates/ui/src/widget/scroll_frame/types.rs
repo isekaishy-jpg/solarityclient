@@ -28,6 +28,26 @@ impl UiScrollFramePlan {
         }
     }
 
+    /// Copies offsets only for objects changed in the current retained transaction.
+    pub(crate) fn refresh_objects(
+        &mut self,
+        live: &UiRuntimeObjectPlan,
+        indices: impl IntoIterator<Item = usize>,
+    ) {
+        for index in indices {
+            let object = &live.objects()[index];
+            self.states[index] =
+                object
+                    .scroll_offset
+                    .zip(object.scroll_range)
+                    .map(|(offset, range)| UiScrollFrameState {
+                        offset,
+                        range,
+                        child: object.scroll_child,
+                    });
+        }
+    }
+
     /// Returns live offset/range state for one ScrollFrame arena index.
     #[must_use]
     pub fn state(&self, object_index: usize) -> Option<UiScrollFrameState> {
