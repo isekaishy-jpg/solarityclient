@@ -21,6 +21,7 @@ mod liquid;
 mod login_coordinator;
 mod login_model;
 mod login_ui;
+mod m2_spatial;
 mod model_playback;
 mod performance_overlay;
 mod player_camera;

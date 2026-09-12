@@ -95,7 +95,13 @@ pub(super) fn environment_maps(
         }
         _ => return Ok(0),
     };
-    let (_, radius) = placement_bounding_sphere(&source.model, placement.transform);
+    let static_spatial = matches!(placement.owner, M2GpuPlacementOwner::Static(_))
+        .then_some(placement.static_spatial)
+        .flatten();
+    let radius = static_spatial.map_or_else(
+        || placement_bounding_sphere(&source.model, placement.transform).1,
+        |spatial| spatial.sphere().1,
+    );
     let possible_maps = queries
         .admission
         .model_maps(kind, radius, queries.admission.active_maps());
@@ -108,10 +114,14 @@ pub(super) fn environment_maps(
             | ModelShadowKind::AnimatedScenery
             | ModelShadowKind::MovingWorldModelDoodad
     ) {
-        let bounds = source.model.bounds();
-        if !SceneryDistance::new(bounds.minimum(), bounds.maximum(), placement.transform)
-            .admits_shadow(camera, detail)
-        {
+        let scenery = static_spatial.map_or_else(
+            || {
+                let bounds = source.model.bounds();
+                SceneryDistance::new(bounds.minimum(), bounds.maximum(), placement.transform)
+            },
+            |spatial| spatial.scenery(),
+        );
+        if !scenery.admits_shadow(camera, detail) {
             return Ok(0);
         }
     }

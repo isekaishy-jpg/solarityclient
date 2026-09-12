@@ -1560,3 +1560,79 @@ Packaged and installed as Solarity 0.0.3a Build 115, source revision
 that identity and reports `dirty=true` from reserving `BUILD_NUMBER` before
 compilation. Packaged and installed executable SHA-256 values both equal
 `051662b8e3982b9f217c2268bab8b3b35cfaa6252200fa00e1b5a464d2751605`.
+
+
+## September 12: prepare immutable M2 spatial data before publication
+
+M2 topology rebuilding recomputed bounding spheres and native scenery distance
+classes for retained static placements. These model/transform pairs are immutable
+through their terrain-owned lifetime. Asset preparation now computes their sphere
+and scenery class alongside the existing collision placement. GPU placements copy
+that data and preserve it when source or placement slots are compacted.
+
+The unchanged native scenery calculations now live in a shared application CPU
+module. Topology rebuilding still reconstructs ordered owner, attachment, light,
+doodad and source-index metadata, but copies prepared static spatial values.
+Environment-shadow admission also reuses the static radius and distance class.
+Dynamic owners retain their current-transform calculation, and static records
+without a worker payload retain the complete original calculation. Debug builds
+check the prepared payload against its live static model/transform pair. The
+tradeoff is additional spatial data retained in CPU and GPU placement records.
+
+Tests compare prepared spheres bit-for-bit with the original presentation-time
+calculation across shared-owner retention and source compaction. Native distance
+and opacity fixtures exercise the prepared result, and actual frame checks cover
+placement removal/reindexing, a later dynamic transform, animated environment
+casters and inverted bounds. Existing random-state and playback-lifetime checks
+remain in the static residency tests.
+
+Validation: runtime library tests pass (334 passed, 18 ignored), terrain
+integration tests pass (18 passed, 47 filtered), and runtime Clippy with all
+targets and warnings denied passes. Formatting and whitespace checks pass.
+
+Separate diagnostic replays report 84 M2 topology rebuilds each. Their weighted
+mean falls from 1.893015 to 1.286123 ms (32.1%), with observed maxima of 4.0946
+and 2.5751 ms. The visibility portion falls from 1.628369 to 1.064811 ms on
+average. These instrumented windows include loading and are excluded from the
+following uncaptured frame-time comparison.
+
+Two interleaved runs per executable use the same offline installed-world route,
+GTX 1070, 1280x720, environment shadow quality 2 and 2,400 frames per phase.
+The fixture contains no authored NPCs, network, movement solver, audio or overlays.
+
+| Phase | Build 115 mean ms | Prepared spatial mean ms | Change |
+| --- | ---: | ---: | ---: |
+| Stationary | 1.874439 | 1.902425 | +1.49% |
+| Orbit | 2.203107 | 2.203164 | +0.00% |
+| Pointer | 2.271534 | 2.240375 | -1.37% |
+| Travel out | 2.291487 | 2.276319 | -0.66% |
+| Travel back | 2.255202 | 2.275031 | +0.88% |
+| Settled | 1.906572 | 1.913334 | +0.35% |
+
+The combined non-loading mean is essentially unchanged, 2.133724 versus 2.135108
+ms (+0.06%). Current phase means correspond to about 439-526 FPS; this is no
+demonstrated steady FPS improvement. Across 96 changed-residency frames per
+variant, total mean falls from 12.238758 to 11.573027 ms, while streaming mean
+rises from 6.632096 to 6.729446 ms. A new admission frame still takes 24.7789 ms,
+including 19.0884 ms streaming. Return frame 799 still evicts seven tiles in all
+runs: 10.3416/10.4152 ms before and 9.9984/16.0421 ms after. The slower new
+sample spends 11.2386 ms streaming. The no-stall and 1,200 FPS goals remain open.
+
+All non-loading recorded camera, detail, primary/environment shadow and screen
+effect states match. Each travel leg admits and evicts 21 tiles over 24 changed
+frames; all runs finish with 49 resident tiles. A separate 23-image capture run
+is excluded from timings. Twelve reviewed before/after pairs retain consistent
+world coverage across orbit and both travel directions. Wall-time animation
+differs; strong terrain highlights and combined-world lighting parity remain
+unresolved.
+
+Local evidence: `target/static-spatial-{before,after}-{one,two}.csv`,
+`target/static-spatial-{before,after}-diagnostic.log`,
+`target/compare-static-spatial.py`, `target/check-static-spatial-states.py`,
+`target/compare-static-spatial-spikes.py`,
+`target/static-spatial-after-captures/`, and
+`target/static-spatial-{orbit,outbound,return}-comparison.png`.
+Baseline benchmark SHA-256 is
+`8520d171334f5d52b1466c4b06af658e870be0e9d9627fff8f1a9573b8d201f0`;
+the new benchmark, preserved as `target/benchmark-static-spatial.exe`, is
+`0f949543a46855efbb91609e371cead9b21a3b2d595ffd12c0f15159a4a27b98`.

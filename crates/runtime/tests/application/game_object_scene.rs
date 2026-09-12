@@ -422,6 +422,17 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
         placement.entity_opacity = None;
         placement.transform = Mat4::from_translation(Vec3::Y * (index as f32 * 100.));
         placement.local_transform = placement.transform;
+        let bounds = frame.sources[placement.source_index]
+            .as_ref()
+            .ok_or("static source")?
+            .model
+            .bounds();
+        placement.static_spatial = Some(crate::application::m2_spatial::StaticM2Spatial::new(
+            bounds.minimum(),
+            bounds.maximum(),
+            bounds.sphere_radius(),
+            placement.transform,
+        ));
     }
     let visible_count =
         |frame: &mut M2Frame, random: &mut CrtRand, y: f32| -> Result<usize, Box<dyn Error>> {

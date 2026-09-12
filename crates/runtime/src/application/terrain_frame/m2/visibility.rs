@@ -1,6 +1,6 @@
 //! Compact placement admission and ordering metadata, separate from animated instances.
 
-use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, placement_bounding_sphere};
+use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource};
 use std::collections::HashMap;
 
 /// Ordered state-update candidates, borrowing rebuilt metadata or covering the
@@ -106,8 +106,27 @@ impl M2PlacementVisibility {
             if placement.unit_effect.is_some() {
                 self.effect_start = self.effect_start.min(index);
             }
-            let bounds = if matches!(placement.owner, M2GpuPlacementOwner::Static(_)) {
-                source.map(|source| placement_bounding_sphere(&source.model, placement.transform))
+            let spatial = if matches!(placement.owner, M2GpuPlacementOwner::Static(_)) {
+                source.map(|source| {
+                    let prepare = || {
+                        let bounds = source.model.bounds();
+                        crate::application::m2_spatial::StaticM2Spatial::new(
+                            bounds.minimum(),
+                            bounds.maximum(),
+                            bounds.sphere_radius(),
+                            placement.transform,
+                        )
+                    };
+                    if let Some(spatial) = placement.static_spatial {
+                        // Static source remapping cannot change the model or transform.
+                        debug_assert_eq!(spatial, prepare());
+                        spatial
+                    } else {
+                        // Synthetic/static conversions without worker metadata still
+                        // use the same complete spatial calculation.
+                        prepare()
+                    }
+                })
             } else {
                 self.dynamic_indices.push(index);
                 self.dynamic_owners.entry(placement.owner).or_insert(index);
@@ -120,19 +139,8 @@ impl M2PlacementVisibility {
                 }
                 None
             };
-            self.bounds.push(bounds);
-            self.scenery.push(if bounds.is_some() {
-                source.map(|source| {
-                    let bounds = source.model.bounds();
-                    super::distance::SceneryDistance::new(
-                        bounds.minimum(),
-                        bounds.maximum(),
-                        placement.transform,
-                    )
-                })
-            } else {
-                None
-            });
+            self.bounds.push(spatial.map(|spatial| spatial.sphere()));
+            self.scenery.push(spatial.map(|spatial| spatial.scenery()));
         }
         self.rebuild_scene_order();
     }

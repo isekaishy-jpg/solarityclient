@@ -43,6 +43,7 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     assert_eq!(owners(&frame), [10, 20]);
+    assert_worker_spatial(&frame)?;
     assert_eq!(frame.sources.len(), 2);
     let retained_mesh = frame.sources[1].as_ref().ok_or("shared source")?.mesh;
     frame.placements[1].last_effect_time_ms = 777;
@@ -65,6 +66,7 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         "duplicate ADT references start only one new owner"
     );
     assert_eq!(owners(&frame), [20, 30]);
+    assert_worker_spatial(&frame)?;
     assert_eq!(frame.sources.len(), 1);
     assert_eq!(frame.placements[0].source_index, 0);
     assert_eq!(
@@ -88,6 +90,7 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
     assert_eq!(random, expected);
     assert_eq!(owners(&frame), [20, 40, 50]);
+    assert_worker_spatial(&frame)?;
     assert_eq!(frame.sources.len(), 2);
     assert_eq!(
         frame
@@ -131,6 +134,7 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         "last-reference removal permits fresh playback on return"
     );
     assert_eq!(owners(&frame), [20, 40, 50]);
+    assert_worker_spatial(&frame)?;
     assert_eq!(
         frame.sources.len(),
         3,
@@ -240,9 +244,11 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
         &mut random,
     )?;
     assert_eq!(owners(&frame), [10, 20, 30]);
+    assert_worker_spatial(&frame)?;
     assert_eq!(random, expected, "two scene references share owner 20");
     frame.synchronize_static_scenes(&mut renderer, [&second].into_iter(), &mut random)?;
     assert_eq!(owners(&frame), [20, 30]);
+    assert_worker_spatial(&frame)?;
     assert_eq!(frame.placements[0].last_effect_time_ms, 777);
     assert_eq!(
         random, expected,
@@ -258,6 +264,7 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     assert!(!Arc::ptr_eq(&second, &reloaded));
     frame.synchronize_static_scenes(&mut renderer, [&reloaded].into_iter(), &mut random)?;
     assert_eq!(owners(&frame), [20, 30]);
+    assert_worker_spatial(&frame)?;
     assert_eq!(frame.placements[0].last_effect_time_ms, 777);
     assert_eq!(
         random, expected,
@@ -405,4 +412,51 @@ fn adt(owners: &[(u32, u32)]) -> Result<Vec<u8>, Box<dyn Error>> {
 
 fn set_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+/// Compare the worker payload with the original presentation-time sphere
+/// calculation after owner retention and source/placement slot compaction.
+fn assert_worker_spatial(frame: &M2Frame) -> Result<(), Box<dyn Error>> {
+    for placement in &frame.placements {
+        if !matches!(placement.owner, M2GpuPlacementOwner::Static(_)) {
+            continue;
+        }
+        let Some(source) = &frame.sources[placement.source_index] else {
+            assert!(placement.static_spatial.is_none());
+            continue;
+        };
+        let spatial = placement
+            .static_spatial
+            .ok_or("missing worker spatial data")?;
+        let expected = super::placement_bounding_sphere(&source.model, placement.transform);
+        assert_eq!(
+            spatial.sphere().0.to_array().map(f32::to_bits),
+            expected.0.to_array().map(f32::to_bits)
+        );
+        assert_eq!(spatial.sphere().1.to_bits(), expected.1.to_bits());
+        let bounds = source.model.bounds();
+        let reference = super::distance::SceneryDistance::new(
+            bounds.minimum(),
+            bounds.maximum(),
+            placement.transform,
+        );
+        for detail in [0.5, 1., 1.5] {
+            for depth in [0., 30., 100., 200., 750., 1250.] {
+                let camera = placement.transform.w_axis.truncate() + Vec3::X * depth;
+                assert_eq!(
+                    spatial.scenery().opacity(camera, detail).to_bits(),
+                    reference.opacity(camera, detail).to_bits()
+                );
+                assert_eq!(
+                    spatial.scenery().admits_shadow(camera, detail),
+                    reference.admits_shadow(camera, detail)
+                );
+                assert_eq!(
+                    spatial.scenery().admits_group(depth, detail),
+                    reference.admits_group(depth, detail)
+                );
+            }
+        }
+    }
+    Ok(())
 }

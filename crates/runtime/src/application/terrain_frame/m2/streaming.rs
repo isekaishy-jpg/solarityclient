@@ -332,6 +332,7 @@ pub(super) fn static_gpu_placement(
         None => (None, Vec::new(), Vec::new()),
     };
     Ok(M2GpuPlacement {
+        static_spatial: source.map(|_| placement.spatial()),
         ground_placement: None,
         scene_registration: None,
         rider_scale: 1.0,

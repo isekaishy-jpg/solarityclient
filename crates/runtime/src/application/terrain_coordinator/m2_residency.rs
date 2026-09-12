@@ -95,6 +95,7 @@ impl ResidentM2Source {
 /// One placed M2 with its already composed local-to-world transform.
 pub(in crate::application) struct ResidentM2Placement {
     source_index: usize,
+    spatial: crate::application::m2_spatial::StaticM2Spatial,
     transform: Mat4,
     owner: ResidentM2Owner,
     flags: u16,
@@ -102,6 +103,13 @@ pub(in crate::application) struct ResidentM2Placement {
 }
 
 impl ResidentM2Placement {
+    /// Returns worker-prepared bounds for this immutable model/transform pair.
+    pub(in crate::application) const fn spatial(
+        &self,
+    ) -> crate::application::m2_spatial::StaticM2Spatial {
+        self.spatial
+    }
+
     /// Returns the shared M2 generation used by this independent placement.
     pub(in crate::application) const fn source_index(&self) -> usize {
         self.source_index
@@ -270,10 +278,18 @@ impl ResidentM2SceneBuilder {
             index
         };
         let model = Arc::clone(self.scene.sources[source_index].model());
+        let bounds = model.bounds();
+        let spatial = crate::application::m2_spatial::StaticM2Spatial::new(
+            bounds.minimum(),
+            bounds.maximum(),
+            bounds.sphere_radius(),
+            transform,
+        );
         self.collision
             .add(PlacedM2Collision::prepare_transform(model, transform)?);
         self.scene.placements.push(ResidentM2Placement {
             source_index,
+            spatial,
             transform,
             owner,
             flags,

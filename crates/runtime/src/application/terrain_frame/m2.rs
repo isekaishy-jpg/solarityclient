@@ -188,6 +188,8 @@ struct UnitGroundPlacement {
 
 /// Exact per-instance state required by later animation and material assembly.
 struct M2GpuPlacement {
+    /// Static owners retain their worker-prepared spatial data through index remaps.
+    static_spatial: Option<crate::application::m2_spatial::StaticM2Spatial>,
     sound_lifetime: std::cell::OnceCell<Rc<sound::M2SoundKind>>,
     light_lifetime: std::cell::OnceCell<Rc<()>>,
     placement_valid: bool,
@@ -962,6 +964,7 @@ impl M2Frame {
             sources: vec![Some(source)],
             static_residency: streaming::StaticM2Residency::default(),
             placements: vec![M2GpuPlacement {
+                static_spatial: None,
                 sound_lifetime: Default::default(),
                 light_lifetime: Default::default(),
                 entity_lighting: Default::default(),
@@ -1259,6 +1262,7 @@ impl M2Frame {
             let source_index = self.sources.len();
             self.sources.push(Some(source));
             self.placements.push(M2GpuPlacement {
+                static_spatial: None,
                 sound_lifetime: Default::default(),
                 light_lifetime: Default::default(),
                 entity_lighting: Default::default(),
@@ -4066,6 +4070,7 @@ fn m2_gpu_placement(
         .map(M2RibbonTrail::new)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(M2GpuPlacement {
+        static_spatial: None,
         sound_lifetime: Default::default(),
         light_lifetime: Default::default(),
         entity_lighting: Default::default(),

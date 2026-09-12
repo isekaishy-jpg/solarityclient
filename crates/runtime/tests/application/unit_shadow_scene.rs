@@ -307,6 +307,21 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
                 None,
                 0,
             )?);
+            // Exercise prepared and uncached static inputs for each ordinary,
+            // animated and inverted-bounds source in the same native shadow test.
+            if offset == Vec3::ZERO {
+                let bounds = model.bounds();
+                frame
+                    .placements
+                    .last_mut()
+                    .ok_or("static placement")?
+                    .static_spatial = Some(crate::application::m2_spatial::StaticM2Spatial::new(
+                    bounds.minimum(),
+                    bounds.maximum(),
+                    bounds.sphere_radius(),
+                    Mat4::from_translation(center + offset),
+                ));
+            }
         }
     }
     let camera = WorldCamera::orthographic(

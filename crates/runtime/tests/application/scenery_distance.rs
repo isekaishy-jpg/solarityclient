@@ -120,7 +120,20 @@ fn scenery_size_transform_detail_and_alpha_match_original_admission()
             Vec3::from_slice(&values[3..6]),
             Mat4::from_cols_array(&matrix),
         );
+        let prepared = crate::application::m2_spatial::StaticM2Spatial::new(
+            Vec3::from_slice(&values[..3]),
+            Vec3::from_slice(&values[3..6]),
+            1.,
+            Mat4::from_cols_array(&matrix),
+        );
         let actual = scenery.opacity(Vec3::from_slice(&values[22..25]), values[25]);
+        assert_eq!(
+            prepared
+                .scenery()
+                .opacity(Vec3::from_slice(&values[22..25]), values[25])
+                .to_bits(),
+            actual.to_bits()
+        );
         let expected = values[26];
         assert!(
             (actual - expected).abs() < 0.00002,
