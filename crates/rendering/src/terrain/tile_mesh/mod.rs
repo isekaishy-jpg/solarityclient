@@ -1,5 +1,6 @@
 //! ADT-wide geometry and material-atlas preparation for one transfer.
 
+mod culling;
 mod light_batch;
 mod prepare;
 mod types;

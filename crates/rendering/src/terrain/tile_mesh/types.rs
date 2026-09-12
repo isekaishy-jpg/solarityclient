@@ -138,6 +138,7 @@ pub struct TerrainTileMeshPlan {
     vertices: Vec<TerrainRenderVertex>,
     indices: Vec<u16>,
     chunks: Vec<TerrainChunkDrawPlan>,
+    culling: Option<super::culling::TerrainTileCulling>,
     textures: Vec<AssetPath>,
     texture_flags: Option<Vec<u32>>,
     material_atlas_rgba: Box<[u8; TERRAIN_MATERIAL_ATLAS_BYTE_COUNT]>,
@@ -158,6 +159,7 @@ impl TerrainTileMeshPlan {
             tile,
             vertices,
             indices,
+            culling: super::culling::TerrainTileCulling::new(&chunks),
             chunks,
             textures,
             texture_flags,
@@ -191,6 +193,17 @@ impl TerrainTileMeshPlan {
     #[must_use]
     pub fn chunks(&self) -> &[TerrainChunkDrawPlan] {
         &self.chunks
+    }
+
+    /// Rejects only tiles whose existing chunk tests would all reject.
+    /// Surviving chunks still require their individual visibility tests.
+    /// Malformed bounds bypass this gate so those tests retain their errors.
+    #[must_use]
+    pub fn may_have_visible_chunks(&self, frustum: WorldFrustum) -> bool {
+        !self.chunks.is_empty()
+            && self
+                .culling
+                .is_none_or(|bounds| bounds.may_have_visible_chunks(frustum))
     }
 
     /// Returns the normalized MTEX table referenced by every chunk layer.

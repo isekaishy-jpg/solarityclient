@@ -130,6 +130,46 @@ impl WorldFrustum {
             .into_iter()
             .all(|(normal, constant)| !outside(normal, constant)))
     }
+
+    /// Rejects a group of axis-aligned boxes only when one plane rejects all
+    /// members. Inputs bound the centers and absolute half extents used by
+    /// intersects_box, rather than reconstructing a rounded enclosing box.
+    pub(crate) fn rejects_box_group(
+        self,
+        minimum_center: Vec3,
+        maximum_center: Vec3,
+        maximum_half: Vec3,
+    ) -> bool {
+        let minimum_offset = minimum_center - self.position;
+        let maximum_offset = maximum_center - self.position;
+        if !minimum_offset.is_finite() || !maximum_offset.is_finite() {
+            return false;
+        }
+        let maximum_offset_magnitude = minimum_offset.abs().max(maximum_offset.abs());
+        let axis_x = Vec3::new(maximum_half.x, 0.0, 0.0);
+        let axis_y = Vec3::new(0.0, maximum_half.y, 0.0);
+        let axis_z = Vec3::new(0.0, 0.0, maximum_half.z);
+        let outside = |normal: Vec3, constant: f32| {
+            // Overflow could make an individual box's expression NaN. Keep
+            // such groups on the original path instead of hiding its result.
+            if !(maximum_offset_magnitude.dot(normal.abs()) + constant.abs()).is_finite() {
+                return false;
+            }
+            let offset = Vec3::select(normal.cmpge(Vec3::ZERO), minimum_offset, maximum_offset);
+            let radius =
+                axis_x.dot(normal).abs() + axis_y.dot(normal).abs() + axis_z.dot(normal).abs();
+            // Each operation is the same monotone f32 operation as the member
+            // test: the selected offset gives a lower bound and the largest
+            // half axes give an upper bound. No epsilon or new plane math.
+            radius.is_finite() && offset.dot(normal) + constant > radius
+        };
+        outside(-self.forward, self.near)
+            || outside(self.forward, -self.far)
+            || self
+                .sides
+                .into_iter()
+                .any(|(normal, constant)| outside(normal, constant))
+    }
 }
 
 /// Tests all components before visibility math can propagate NaNs.

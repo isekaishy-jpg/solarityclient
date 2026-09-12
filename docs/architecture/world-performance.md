@@ -1177,3 +1177,67 @@ matches the package SHA-256
 `a5e458f5a164a24dc5df0ee08fdff26f1fc1456afa6f418c37a4b08a83c1efaf`,
 with the reserved package number recorded as dirty source state. The measured
 benchmark is preserved as `target/benchmark-build110-before-terrain-culling.exe`.
+
+## Conservative terrain tile rejection
+
+Terrain submission previously ran the chunk visibility test across every
+resident ADT each frame. Each immutable tile now retains the componentwise range
+of the exact f32 chunk centers and the largest absolute chunk half extents.
+A tile is rejected only when one frustum plane rejects that entire range.
+Surviving tiles still use the existing individual chunk tests in original order.
+Terrain point-light queries therefore remain attached to the same visible chunks;
+shadow collection and liquid submission use their separate existing paths.
+
+The coarse test bounds the original expressions rather than constructing a
+rounded enclosing box. For each plane it selects the smallest possible offset
+dot product and the largest possible projected half extent, using the same
+monotone f32 operations as the member test. Potentially overflowing calculations
+cannot reject the group. Invalid chunk bounds bypass the coarse gate so the
+original per-chunk errors remain observable. This needs no geometric epsilon.
+
+Regression coverage compares 2,985,984 original chunk decisions across 11,664
+tile/camera/window combinations, including perspective and asymmetric orthographic
+cameras, narrow clipped views and coordinates up to 33,554,432. Plane-boundary
+cases include adjacent representable floats, flat boxes, empty tiles and invalid
+bounds. A finite extreme-coordinate case also preserves the legacy overflowing
+plane calculation. All 216 rendering tests and 330 runtime library tests pass;
+18 runtime cases remain environment-dependent and ignored. Workspace Clippy
+with warnings denied and formatting checks pass.
+
+A separate diagnostic run reduces the weighted mean of terrain culling and
+point-light work from 269.797 to 111.309 microseconds (58.7%). Its maximum is
+326.0 microseconds versus 1,029.4 in the prior Build 110 diagnostic. Profiles
+provide attribution; the following comparison uses four uncaptured, unprofiled
+runs alternating new, preserved Build 110, new, preserved Build 110. No compiler
+or tests run during measurement. The same GTX 1070, 1280 x 720, shadow-quality-2,
+uncapped noon route uses 2,400 frames per phase. Means combine both runs:
+
+| Phase | Build 110 mean frame | Tile rejection mean frame |
+| --- | ---: | ---: |
+| Stationary | 2.221 ms | 2.058 ms |
+| Orbit | 2.466 ms | 2.283 ms |
+| Pointer | 2.564 ms | 2.380 ms |
+| Travel outbound | 2.600 ms | 2.412 ms |
+| Travel return | 2.574 ms | 2.357 ms |
+| Settled after travel | 2.286 ms | 2.074 ms |
+
+Average frame times improve 7.18-9.28%, corresponding to about 415-486 FPS.
+All non-loading positions, ground-detail draws and primary-shadow draws match
+across all four runs. Each travel direction changes residency on 24 frames,
+admits and evicts 21 tiles, and every run ends with 49 resident tiles.
+Non-loading frames still reach 27.612 ms. Remaining stalls and the 1,200 FPS
+target are not resolved by this change.
+
+Two separate 2,400-frame capture replays cover the same route. Twelve inspected
+before/after view pairs spanning stationary, orbit, outbound, return and settled
+phases show consistent terrain coverage without visible missing chunks. These
+capture runs are excluded from performance results; they are not asserted to
+be pixel-identical because animation uses elapsed wall time.
+
+Local evidence: `target/terrain-culling-{before,after}-{one,two}.csv`,
+`target/compare-terrain-culling.py`, `target/terrain-culling-after-diagnostic.log`,
+`target/analyze-terrain-culling.py`, and the three
+`target/terrain-culling-{orbit,outbound,return}-comparison.png` contact sheets.
+Benchmark SHA-256:
+previous `cea239d80b7d637f13ed6cad13666f8069ec95fc8739438ae11a05707253ef9e`,
+tile rejection `f0e9e979432e8893adf5a14633bef8671878a27b3c021c22748906de5f6622a1`.

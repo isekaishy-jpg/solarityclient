@@ -950,6 +950,9 @@ impl TerrainFrame {
         profile.mark("M2 packets");
         self.visible_draws.clear();
         for tile in &self.tiles {
+            if !tile.plan.may_have_visible_chunks(frustum) {
+                continue;
+            }
             for (chunk, draw) in tile.plan.chunks().iter().zip(&tile.draws) {
                 if chunk.is_visible(frustum)? {
                     // Animated M2 sources publish before terrain queries them.
