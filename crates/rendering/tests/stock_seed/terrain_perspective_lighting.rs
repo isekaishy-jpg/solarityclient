@@ -2,11 +2,21 @@
 #![allow(unsafe_code)]
 
 use super::*;
+use solarity_asset::{LightCatalog, exterior_light_direction};
 use std::io::Cursor;
 use wow_adt::{ParsedAdt, builder::BuiltAdt, parse_adt};
 
 #[test]
 fn terrain_perspective_lighting_matches_native_shader_frames() -> Result<(), Box<dyn Error>> {
+    compare_frames(false)
+}
+
+#[test]
+fn terrain_world_palettes_match_native_producer_and_shader_frames() -> Result<(), Box<dyn Error>> {
+    compare_frames(true)
+}
+
+fn compare_frames(world: bool) -> Result<(), Box<dyn Error>> {
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -26,12 +36,28 @@ fn terrain_perspective_lighting_matches_native_shader_frames() -> Result<(), Box
     let blp = solid_raw3_blp(4, 4, 0xff336699);
     let maps = map_table();
     let wdt = terrain_wdt()?;
+    let text = if world {
+        include_str!("../fixtures/terrain_world_palette_native.txt")
+    } else {
+        include_str!("../fixtures/terrain_perspective_lighting_native.txt")
+    };
+    let lights = world.then(|| palette_catalog(text)).transpose()?;
     let mut frames = 0;
-    for line in include_str!("../fixtures/terrain_perspective_lighting_native.txt")
+    for line in text
         .lines()
-        .filter_map(|line| line.strip_prefix("perspective "))
+        .filter_map(|line| line.strip_prefix(if world { "world " } else { "perspective " }))
     {
         let words = line.split_whitespace().collect::<Vec<_>>();
+        let palette = if let Some(lights) = &lights {
+            let time = words[1].parse()?;
+            Some((
+                lights.sample_parameter(words[0].parse()?, time)?,
+                exterior_light_direction(time),
+            ))
+        } else {
+            None
+        };
+        let words = &words[if world { 2 } else { 0 }..];
         let origin = [
             words[0].parse::<f32>()?,
             words[1].parse()?,
@@ -99,15 +125,23 @@ fn terrain_perspective_lighting_matches_native_shader_frames() -> Result<(), Box
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Mat4::from_cols_array(floats.as_slice().try_into()?))
         };
-        let direction = Vec3::new(words[6].parse()?, words[7].parse()?, words[8].parse()?);
-        let scene = TerrainSceneUniform::new(
-            matrix(25)?,
-            matrix(9)?,
-            Vec3::new(0.2, 0.3, 0.4),
-            Vec3::new(0.3, 0.2, 0.1),
-            direction,
-        )
-        .with_specular(Vec3::new(0.65, 0.35, 0.15), true);
+        let (ambient, diffuse, specular, direction) = if let Some((light, direction)) = palette {
+            (
+                light.ambient_color(),
+                light.diffuse_color(),
+                light.specular_color(),
+                direction,
+            )
+        } else {
+            (
+                Vec3::new(0.2, 0.3, 0.4),
+                Vec3::new(0.3, 0.2, 0.1),
+                Vec3::new(0.65, 0.35, 0.15),
+                Vec3::new(words[6].parse()?, words[7].parse()?, words[8].parse()?),
+            )
+        };
+        let scene = TerrainSceneUniform::new(matrix(25)?, matrix(9)?, ambient, diffuse, direction)
+            .with_specular(specular, true);
         renderer.request_frame_capture()?;
         renderer.present_terrain(scene, &[draw])?;
         let frame = renderer.take_captured_frame()?.ok_or("terrain UV frame")?;
@@ -134,6 +168,53 @@ fn terrain_perspective_lighting_matches_native_shader_frames() -> Result<(), Box
         assert!(compared > 100, "insufficient covered pixels {compared}");
         frames += 1;
     }
-    assert_eq!(frames, 12);
+    assert_eq!(frames, if world { 72 } else { 12 });
     Ok(())
+}
+
+/// Author the exact input WDBC rows retained by the native capture.
+fn palette_catalog(text: &str) -> Result<LightCatalog, Box<dyn Error>> {
+    let mut payloads = [Vec::new(), Vec::new(), Vec::new()];
+    for line in text
+        .lines()
+        .filter_map(|line| line.strip_prefix("parameter "))
+    {
+        let words = line.split_ascii_whitespace().collect::<Vec<_>>();
+        for (payload, hex) in payloads.iter_mut().zip(&words[1..]) {
+            for offset in (0..hex.len()).step_by(2) {
+                payload.push(u8::from_str_radix(&hex[offset..offset + 2], 16)?);
+            }
+        }
+    }
+    let table = |fields: u32, payload: &[u8]| -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut bytes = b"WDBC".to_vec();
+        for word in [
+            u32::try_from(payload.len())? / (fields * 4),
+            fields,
+            fields * 4,
+            1,
+        ] {
+            bytes.extend(word.to_le_bytes());
+        }
+        bytes.extend(payload);
+        bytes.push(0);
+        Ok(bytes)
+    };
+    let tables = [
+        ("DBFilesClient/Light.dbc", table(15, &[])?),
+        ("DBFilesClient/LightParams.dbc", table(9, &payloads[0])?),
+        ("DBFilesClient/LightIntBand.dbc", table(34, &payloads[1])?),
+        ("DBFilesClient/LightFloatBand.dbc", table(34, &payloads[2])?),
+        ("DBFilesClient/LightSkybox.dbc", table(3, &[])?),
+    ];
+    let files = tables
+        .iter()
+        .map(|(path, bytes)| FixtureFile { path, bytes })
+        .collect::<Vec<_>>();
+    let fixture = Fixture::new(&files)?;
+    let mut store = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    Ok(LightCatalog::load(&mut store)?)
 }

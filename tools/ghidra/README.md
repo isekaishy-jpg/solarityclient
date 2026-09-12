@@ -337,6 +337,20 @@ The ADT/BLP Vulkan integration compares nine locations per captured frame.
 python tools/ghidra/terrain_specular_shader_oracle.py target/world-shadow-shaders crates/rendering/tests/fixtures/terrain_specular_shader_native.txt
 ```
 
+`terrain_perspective_lighting_oracle.py --world-palettes` captures 72 more
+frames through original WDBC band sampling, packed palette derivation, daylight
+motion, the ordinary sun-upload suffix and `7CFBE0` terrain constants. It
+supplies decoded table rows at the lookup boundary and starts the upload after
+environment queries with zero blackout. The Vulkan test independently loads
+the fixture's WDBC rows through `LightCatalog`; it does not copy captured light
+colors or direction into the draw. This checks six times, two palettes, three
+normals and local/Durotar origins. Spatial/WMO/weather palette selection,
+blackout, glow and environment shadow casters remain separate checks.
+
+```text
+python tools/ghidra/terrain_perspective_lighting_oracle.py <path-to-Wow.exe> target/world-shadow-shaders crates/rendering/tests/fixtures/terrain_world_palette_native.txt --world-palettes
+```
+
 ## NPC virtual equipment
 
 `npc_virtual_items_oracle.py` captures 1,536 settled Unit_C equipment cases.

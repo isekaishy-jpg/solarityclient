@@ -155,6 +155,27 @@ permutation using `CE049D`, derived from the specular setting and shader support
   two RGB byte values. This extends the flat orthographic test to perspective
   interpolation and native constant production. It does not exercise native
   world-palette selection or environment shadow casters.
+- Its `--world-palettes` companion adds 72 original D3D9 frames: two distinct
+  authored palettes, six times (00:00, 02:00, 06:00, 12:00, 18:00 and 23:59:30),
+  three normals and both origins. Native `7ECD80` samples decoded WDBC rows,
+  `7EE750` derives the packed palette and `7EEA90` produces the daylight ray.
+  The original `7816F0` sun-upload suffix (`7817D8` through `7819AA`) executes
+  with zero blackout, including byte scaling, RGB conversion and `834AE0`
+  normalization, before `7CFBE0` produces the shader constants. The comparison
+  independently loads those WDBC inputs through `LightCatalog` and supplies
+  its ambient, diffuse and specular colors plus `exterior_light_direction` to
+  the Vulkan terrain draw. All 72 frames match covered interior pixels within
+  two RGB byte values. This checks the sampled-palette-to-terrain connection;
+  it does not exercise spatial palette selection, WMO/weather overlays,
+  blackout composition, glow or shadow casters.
+
+The September 12 follow-up found no mismatch in that ordinary palette upload.
+Native packed fields `D38CAC`, `D38CA8` and `D38BF8` supply the sun's ambient,
+diffuse and specular colors respectively; the native sampling layout reorders
+the first two DBC channels. The component shader tests alone did not establish
+this mapping, but the new comparison does. This is additional validation, with
+no production rendering change or new client package; installed Build 111 is
+unchanged.
 
 The controlled Valley of Trials scene isolates the conspicuous white patches
 to the specular contribution: disabling glow reduces their amplification;
