@@ -955,6 +955,7 @@ fn glue_manager_routes_authored_scroll_frame_wheel() -> Result<(), Box<dyn Error
             .range(),
         (0.0, 300.0)
     );
+    let snapshots = manager.runtime_snapshot_count();
     let target = manager.pointer_wheel((1920.0 / 1080.0 * 384.0, 384.0), -1.0)?;
     assert_eq!(target, Some(scroll_index));
     assert_eq!(
@@ -972,6 +973,11 @@ fn glue_manager_routes_authored_scroll_frame_wheel() -> Result<(), Box<dyn Error
             .globals()
             .get::<f64>("SCROLL_OFFSET")?,
         50.0
+    );
+    assert_eq!(
+        manager.runtime_snapshot_count(),
+        snapshots,
+        "scroll owners publish without a full Lua arena snapshot"
     );
     Ok(())
 }

@@ -1,9 +1,14 @@
 //! Allocation-conscious conversion from ordered UI quads to indexed mesh runs.
 
+mod clipping;
+mod replacement;
+mod storage;
+
 use super::UiRenderState;
 use super::{
     UiMeshPlanError, UiRenderBatch, UiRenderQuad, UiRenderSource, UiRenderTransform, UiRenderVertex,
 };
+use clipping::ClipIndex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -28,6 +33,9 @@ pub struct UiMeshPlan {
     object_quads: HashMap<usize, Vec<usize>>,
     object_batches: HashMap<usize, Vec<usize>>,
     vertex_revisions: VecDeque<UiVertexRevision>,
+    clip_indices: Vec<ClipIndex>,
+    storage: storage::QuadStorage,
+    transform_batches: HashMap<UiRenderTransform, Vec<usize>>,
 }
 
 impl UiMeshPlan {
@@ -82,10 +90,19 @@ impl UiMeshPlan {
             object_quads: HashMap::new(),
             object_batches: HashMap::new(),
             vertex_revisions: VecDeque::new(),
+            clip_indices: Vec::new(),
+            storage: storage::QuadStorage::default(),
+            transform_batches: HashMap::new(),
         };
         for quad in quads {
             plan.push_quad(quad)?;
         }
+        plan.clip_indices = plan
+            .batches
+            .iter()
+            .map(|batch| ClipIndex::new(&plan.vertices, batch))
+            .collect();
+        plan.rebuild_transform_batches();
         Ok(plan)
     }
 
@@ -148,6 +165,9 @@ impl UiMeshPlan {
             object_quads: HashMap::new(),
             object_batches: HashMap::from([(0, vec![0])]),
             vertex_revisions: VecDeque::new(),
+            clip_indices: Vec::new(),
+            storage: storage::QuadStorage::default(),
+            transform_batches: HashMap::new(),
         })
     }
 
@@ -157,7 +177,7 @@ impl UiMeshPlan {
         self.logical_extent
     }
 
-    /// Returns all four-corner quads in presentation order.
+    /// Returns physical quad storage; batch offsets determine presentation order.
     #[must_use]
     pub fn vertices(&self) -> &[UiRenderVertex] {
         &self.vertices
@@ -175,7 +195,7 @@ impl UiMeshPlan {
         &self.batches
     }
 
-    /// Returns live object identities parallel to the source quad order.
+    /// Returns physical slot owners; vacant allocation slots contain `usize::MAX`.
     #[must_use]
     pub fn object_indices(&self) -> &[usize] {
         &self.object_indices
@@ -202,55 +222,22 @@ impl UiMeshPlan {
     #[must_use]
     pub fn clipped_batch_quad_range(&self, batch_index: usize) -> Option<(u32, u32)> {
         let batch = self.batches.get(batch_index)?;
-        let Some([clip_left, clip_bottom, clip_right, clip_top]) = batch.clip() else {
-            return Some((batch.first_quad(), batch.quad_count()));
-        };
-        let [translate_x, translate_y] = batch.translation();
-        let first_quad = batch.first_quad() as usize;
-        let quad_count = batch.quad_count() as usize;
-        let mut first_visible = None;
-        let mut last_visible = 0;
-        for relative_quad in 0..quad_count {
-            let vertex = (first_quad + relative_quad) * 4;
-            let vertices = &self.vertices[vertex..vertex + 4];
-            let left = vertices
-                .iter()
-                .map(|vertex| vertex.position()[0])
-                .fold(f32::INFINITY, f32::min)
-                + translate_x;
-            let right = vertices
-                .iter()
-                .map(|vertex| vertex.position()[0])
-                .fold(f32::NEG_INFINITY, f32::max)
-                + translate_x;
-            let bottom = vertices
-                .iter()
-                .map(|vertex| vertex.position()[1])
-                .fold(f32::INFINITY, f32::min)
-                + translate_y;
-            let top = vertices
-                .iter()
-                .map(|vertex| vertex.position()[1])
-                .fold(f32::NEG_INFINITY, f32::max)
-                + translate_y;
-            if right <= clip_left || left >= clip_right || top <= clip_bottom || bottom >= clip_top
-            {
-                continue;
-            }
-            first_visible.get_or_insert(relative_quad);
-            last_visible = relative_quad + 1;
+        if batch.quad_count() == 0 {
+            return Some((batch.first_quad(), 0));
         }
-        let first_visible = first_visible.unwrap_or(0);
-        Some((
-            batch.first_quad() + first_visible as u32,
-            (last_visible - first_visible) as u32,
-        ))
+        Some(
+            self.clip_indices
+                .get(batch_index)?
+                .visible_range(&self.vertices, batch),
+        )
     }
 
     /// Reports whether an object already owns at least one retained draw slot.
     #[must_use]
     pub fn contains_object(&self, object_index: usize) -> bool {
-        self.object_batches.contains_key(&object_index)
+        self.object_batches
+            .get(&object_index)
+            .is_some_and(|batches| !batches.is_empty())
     }
 
     /// Returns the process-local identity preserved by clones of this generation.
@@ -294,14 +281,28 @@ impl UiMeshPlan {
         None
     }
 
+    /// Refreshes draw-slot membership only when source topology changes.
+    fn rebuild_transform_batches(&mut self) {
+        self.transform_batches.clear();
+        for (index, batch) in self.batches.iter().enumerate() {
+            if let Some(transform) = batch.transform() {
+                self.transform_batches
+                    .entry(transform)
+                    .or_default()
+                    .push(index);
+            }
+        }
+    }
+
     /// Changes one retained draw translation without touching serialized mesh bytes.
     pub fn set_transform_translation(
         &mut self,
         transform: UiRenderTransform,
         translation: [f32; 2],
     ) {
-        for batch in &mut self.batches {
-            if batch.transform() == Some(transform) {
+        for &index in self.transform_batches.get(&transform).into_iter().flatten() {
+            let batch = &mut self.batches[index];
+            {
                 batch.set_translation(translation);
             }
         }
@@ -309,8 +310,9 @@ impl UiMeshPlan {
 
     /// Moves one retained draw slot relative to its current presentation state.
     pub fn translate_transform(&mut self, transform: UiRenderTransform, delta: [f32; 2]) {
-        for batch in &mut self.batches {
-            if batch.transform() == Some(transform) {
+        for &index in self.transform_batches.get(&transform).into_iter().flatten() {
+            let batch = &mut self.batches[index];
+            {
                 let current = batch.transform_translation();
                 batch.set_translation([current[0] + delta[0], current[1] + delta[1]]);
             }
@@ -449,9 +451,9 @@ impl UiMeshPlan {
     /// The old object/source must occupy one uninterrupted range; replacement
     /// quads must share one object and source, in the owner's desired draw order.
     /// Other batches retain their order, vertices, transforms, and opacity;
-    /// following quad offsets move with the resized range. Replacement bounds
+    /// unrelated quad offsets remain stable when the run grows. Replacement bounds
     /// are absolute presentation coordinates, as for fixed-slot replacement.
-    /// Empty replacements and interrupted source ranges return `false` without
+    /// Interrupted source ranges return `false` without
     /// mutation so their owner can publish a complete topology change instead.
     ///
     /// # Errors
@@ -464,10 +466,10 @@ impl UiMeshPlan {
         previous_source: &UiRenderSource,
         quads: &[UiRenderQuad],
     ) -> Result<bool, UiMeshPlanError> {
-        let Some(first) = quads.first() else {
-            return Ok(false);
-        };
-        if first.object_index() != object_index {
+        if quads
+            .first()
+            .is_some_and(|first| first.object_index() != object_index)
+        {
             return Ok(false);
         }
         let mut matching = self
@@ -491,7 +493,7 @@ impl UiMeshPlan {
     }
 
     /// Inserts a new object/source at an existing batch boundary in caller draw order.
-    /// Existing vertices and draw states are retained; following offsets are shifted.
+    /// The insertion position counts drawn quads; physical neighbor offsets stay fixed.
     /// Returns `false` for empty input or a non-boundary position.
     ///
     /// # Errors
@@ -515,143 +517,19 @@ impl UiMeshPlan {
         if first.object_index() != object_index {
             return Ok(false);
         }
-        let batch_index = self
-            .batches
-            .partition_point(|batch| (batch.first_quad() as usize) < before_quad);
-        let boundary = self
-            .batches
-            .get(batch_index)
-            .map_or(self.object_indices.len(), |batch| {
-                batch.first_quad() as usize
-            });
+        let mut boundary = 0;
+        let mut batch_index = 0;
+        while let Some(batch) = self.batches.get(batch_index) {
+            if boundary == before_quad {
+                break;
+            }
+            boundary += batch.quad_count() as usize;
+            batch_index += 1;
+        }
         if boundary != before_quad {
             return Ok(false);
         }
         self.splice_object_source_run(object_index, batch_index..batch_index, quads)
-    }
-
-    fn splice_object_source_run(
-        &mut self,
-        object_index: usize,
-        old_batches: std::ops::Range<usize>,
-        quads: &[UiRenderQuad],
-    ) -> Result<bool, UiMeshPlanError> {
-        let Some(first) = quads.first() else {
-            return Ok(false);
-        };
-        let batch_index = old_batches.start;
-        let old_batch_end = old_batches.end;
-        let start = self
-            .batches
-            .get(batch_index)
-            .map_or(self.object_indices.len(), |batch| {
-                batch.first_quad() as usize
-            });
-        let old_end = if old_batches.is_empty() {
-            start
-        } else {
-            let last = &self.batches[old_batch_end - 1];
-            last.first_quad() as usize + last.quad_count() as usize
-        };
-        let old_count = old_end - start;
-        if !old_batches.is_empty() && old_count == 0 {
-            return Ok(false);
-        }
-        let new_count = quads.len();
-        let total_quads = self
-            .object_indices
-            .len()
-            .checked_sub(old_count)
-            .and_then(|count| count.checked_add(new_count))
-            .ok_or(UiMeshPlanError::Capacity { domain: "quad" })?;
-        let vertex_count = total_quads
-            .checked_mul(4)
-            .ok_or(UiMeshPlanError::Capacity { domain: "vertex" })?;
-        u32::try_from(vertex_count).map_err(|_| UiMeshPlanError::Capacity { domain: "vertex" })?;
-        vertex_count
-            .checked_mul(UiRenderVertex::BYTE_SIZE)
-            .ok_or(UiMeshPlanError::Capacity {
-                domain: "vertex byte",
-            })?;
-        let _index_count = new_count
-            .checked_mul(6)
-            .and_then(|count| u32::try_from(count).ok())
-            .ok_or(UiMeshPlanError::Capacity { domain: "index" })?;
-        let mut replacements: Vec<UiRenderBatch> = Vec::new();
-        let mut vertices = Vec::with_capacity(new_count * 4);
-        for (offset, quad) in quads.iter().enumerate() {
-            validate_quad(quad)?;
-            if quad.object_index() != object_index || quad.source() != first.source() {
-                return Ok(false);
-            }
-            if let Some(batch) = replacements.last_mut()
-                && batch.can_append(quad)
-            {
-                batch.append_quad();
-            } else {
-                replacements.push(UiRenderBatch::from_quad(quad, 0, (start + offset) as u32));
-            }
-            let positions = quad.positions();
-            let coordinates = quad.texture_coordinates();
-            let colors = quad.colors();
-            for corner in 0..4 {
-                vertices.push(UiRenderVertex::new(
-                    positions[corner],
-                    coordinates[corner],
-                    colors[corner],
-                ));
-            }
-        }
-        let new_batch_count = replacements.len();
-        let maximum_new_run = replacements
-            .iter()
-            .map(|batch| batch.quad_count() as usize)
-            .max()
-            .unwrap_or(0);
-        self.ensure_canonical_quad_indices(maximum_new_run)?;
-        self.object_quads.entry(object_index).or_default();
-        self.object_batches.entry(object_index).or_default();
-        self.vertices.splice(start * 4..old_end * 4, vertices);
-        self.object_indices
-            .splice(start..old_end, std::iter::repeat_n(object_index, new_count));
-        for (&owner, slots) in &mut self.object_quads {
-            let first = slots.partition_point(|&slot| slot < start);
-            let end = slots.partition_point(|&slot| slot < old_end);
-            for slot in &mut slots[end..] {
-                *slot = *slot - old_count + new_count;
-            }
-            if owner == object_index {
-                slots.splice(first..end, start..start + new_count);
-            }
-        }
-        let old_batch_count = old_batch_end - batch_index;
-        for (&owner, batches) in &mut self.object_batches {
-            let first = batches.partition_point(|&index| index < batch_index);
-            let end = batches.partition_point(|&index| index < old_batch_end);
-            for index in &mut batches[end..] {
-                *index = *index - old_batch_count + new_batch_count;
-            }
-            if owner == object_index {
-                batches.splice(first..end, batch_index..batch_index + new_batch_count);
-            }
-        }
-        self.batches
-            .splice(batch_index..old_batch_end, replacements);
-        for batch in &mut self.batches[batch_index + new_batch_count..] {
-            batch.set_first_quad((batch.first_quad() as usize - old_count + new_count) as u32);
-        }
-        let maximum_run = self
-            .batches
-            .iter()
-            .map(|batch| batch.quad_count() as usize)
-            .max()
-            .unwrap_or(0);
-        self.indices.truncate(maximum_run * 6);
-        // Moving following runs invalidates offsets from earlier byte revisions.
-        // The renderer compares the retained payload and uploads its changed span.
-        self.vertex_revisions.clear();
-        self.identity = next_identity();
-        Ok(true)
     }
 
     /// Replaces complete vertices for one object's topology-stable source slots.
@@ -669,43 +547,31 @@ impl UiMeshPlan {
         source: &UiRenderSource,
         quads: &[UiRenderQuad],
     ) -> Result<bool, UiMeshPlanError> {
-        let Some(object_slots) = self.object_quads.get(&object_index) else {
-            return Ok(quads.is_empty());
-        };
-        let slots = object_slots
-            .iter()
+        let slots = self
+            .object_batches
+            .get(&object_index)
+            .into_iter()
+            .flatten()
             .copied()
-            .filter(|&slot| {
-                self.batch_for_slot(slot)
-                    .is_some_and(|batch| batch.source() == source)
+            .filter(|&index| self.batches[index].source() == source)
+            .flat_map(|index| {
+                let batch = &self.batches[index];
+                let start = batch.first_quad() as usize;
+                (start..start + batch.quad_count() as usize).map(move |slot| (slot, index))
             })
             .collect::<Vec<_>>();
         if slots.len() != quads.len() {
             return Ok(false);
         }
-        let mut batch_index = slots.first().map_or(0, |&first_slot| {
-            self.batches.partition_point(|batch| {
-                batch.first_quad() as usize + batch.quad_count() as usize <= first_slot
-            })
-        });
-        for (slot, quad) in slots.iter().copied().zip(quads) {
+        for (&(_, batch_index), quad) in slots.iter().zip(quads) {
             validate_quad(quad)?;
-            if quad.object_index() != object_index || quad.source() != source {
-                return Ok(false);
-            }
-            while self.batches.get(batch_index).is_some_and(|batch| {
-                slot >= batch.first_quad() as usize + batch.quad_count() as usize
-            }) {
-                batch_index += 1;
-            }
-            let Some(batch) = self.batches.get(batch_index) else {
-                return Ok(false);
-            };
-            if slot < batch.first_quad() as usize || !batch.can_replace(quad) {
+            if quad.object_index() != object_index
+                || quad.source() != source
+                || !self.batches[batch_index].can_replace(quad)
+            {
                 return Ok(false);
             }
         }
-
         // Every slot for this object/source was validated above. Its freshly
         // resolved bounds supersede prior animation deltas; other sources
         // still use their old vertices and therefore retain those deltas.
@@ -717,7 +583,7 @@ impl UiMeshPlan {
             }
         }
         let mut changed_vertices: Option<(usize, usize)> = None;
-        for (slot, quad) in slots.iter().copied().zip(quads) {
+        for ((slot, _), quad) in slots.iter().copied().zip(quads) {
             let positions = quad.positions();
             let coordinates = quad.texture_coordinates();
             let colors = quad.colors();
@@ -737,6 +603,14 @@ impl UiMeshPlan {
             }
         }
         if let Some((start, end)) = changed_vertices {
+            if let Some(indices) = self.object_batches.get(&object_index) {
+                for &index in indices {
+                    let batch = &self.batches[index];
+                    if batch.source() == source {
+                        self.clip_indices[index] = ClipIndex::new(&self.vertices, batch);
+                    }
+                }
+            }
             let previous = self.identity;
             let current = next_identity();
             self.identity = current;
@@ -753,16 +627,6 @@ impl UiMeshPlan {
             });
         }
         Ok(true)
-    }
-
-    fn batch_for_slot(&self, slot: usize) -> Option<&UiRenderBatch> {
-        let batch_index = self.batches.partition_point(|batch| {
-            batch.first_quad() as usize + batch.quad_count() as usize <= slot
-        });
-        self.batches.get(batch_index).filter(|batch| {
-            slot >= batch.first_quad() as usize
-                && slot < batch.first_quad() as usize + batch.quad_count() as usize
-        })
     }
 
     /// Replaces opacity for one independently retained draw-state slot.
@@ -802,8 +666,9 @@ impl UiMeshPlan {
                 return Err(UiMeshPlanError::InvertedBounds { object_index });
             }
         }
-        for batch in &mut self.batches {
-            if batch.transform() == Some(transform) {
+        for &index in self.transform_batches.get(&transform).into_iter().flatten() {
+            let batch = &mut self.batches[index];
+            {
                 batch.set_clip(clip);
             }
         }

@@ -126,19 +126,6 @@ fn check_tooltip_reveal(with_backdrop: bool) -> Result<(), Box<dyn Error>> {
                 manager.scroll_frames(),
                 manager.geometry().ui_extent(),
             )?;
-            assert_eq!(mesh.object_indices(), complete.mesh().object_indices());
-            assert_eq!(mesh.vertices().len(), complete.mesh().vertices().len());
-            for (index, (actual, expected)) in mesh
-                .vertices()
-                .iter()
-                .zip(complete.mesh().vertices())
-                .enumerate()
-            {
-                // Invisible retained capacity keeps its old payload until used.
-                if actual.color()[3] != 0.0 || expected.color()[3] != 0.0 {
-                    assert_eq!(actual, expected, "{label}: vertex {index}");
-                }
-            }
             assert_eq!(mesh.batches().len(), complete.mesh().batches().len());
             for (index, (actual, expected)) in mesh
                 .batches()
@@ -146,7 +133,36 @@ fn check_tooltip_reveal(with_backdrop: bool) -> Result<(), Box<dyn Error>> {
                 .zip(complete.mesh().batches())
                 .enumerate()
             {
-                assert_eq!(actual, expected, "{label}: batch {index}");
+                assert_eq!(actual.source(), expected.source(), "{label}: batch {index}");
+                assert_eq!(actual.mask(), expected.mask());
+                assert_eq!(actual.blend(), expected.blend());
+                assert_eq!(actual.horizontal_address(), expected.horizontal_address());
+                assert_eq!(actual.vertical_address(), expected.vertical_address());
+                assert_eq!(actual.residency(), expected.residency());
+                assert_eq!(actual.desaturated(), expected.desaturated());
+                assert_eq!(actual.quad_count(), expected.quad_count());
+                assert_eq!(actual.index_count(), expected.index_count());
+                assert_eq!(actual.transform(), expected.transform());
+                assert_eq!(actual.state(), expected.state());
+                assert_eq!(actual.translation(), expected.translation());
+                assert_eq!(actual.opacity(), expected.opacity());
+                assert_eq!(actual.clip(), expected.clip());
+                let a = actual.first_quad() as usize;
+                let b = expected.first_quad() as usize;
+                let count = actual.quad_count() as usize;
+                assert_eq!(
+                    &mesh.object_indices()[a..a + count],
+                    &complete.mesh().object_indices()[b..b + count]
+                );
+                for (actual, expected) in mesh.vertices()[a * 4..(a + count) * 4]
+                    .iter()
+                    .zip(&complete.mesh().vertices()[b * 4..(b + count) * 4])
+                {
+                    // Invisible retained capacity keeps its old payload until used.
+                    if actual.color()[3] != 0.0 || expected.color()[3] != 0.0 {
+                        assert_eq!(actual, expected, "{label}: batch {index}");
+                    }
+                }
             }
         }
         for (object, expected) in [(first, glyph_count), (second, 6), (background, 1)] {

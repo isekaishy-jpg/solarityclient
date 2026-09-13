@@ -1,6 +1,7 @@
 //! Persistent ownership of the built-in login and character UI.
 
 mod publication;
+mod scrolling;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -51,7 +52,7 @@ pub struct GlueManager {
     pointer_capture: Option<(usize, UiPointerButton)>,
     edit_box_pointer_anchor: Option<usize>,
     pointer_hover: Option<usize>,
-    deferred_slider_refresh: Option<usize>,
+    deferred_scroll_refresh: Vec<(usize, u32)>,
     visual_indices: Vec<usize>,
     visual_work: Vec<usize>,
     incremental_visual_updates: bool,
@@ -397,7 +398,7 @@ impl GlueManager {
             pointer_capture: None,
             edit_box_pointer_anchor: None,
             pointer_hover: None,
-            deferred_slider_refresh: None,
+            deferred_scroll_refresh: Vec::new(),
             visual_indices: Vec::new(),
             visual_work: Vec::new(),
             incremental_visual_updates: std::env::var_os("SOLARITY_UI_FULL_VISUAL_REFRESH")
@@ -995,7 +996,7 @@ impl GlueManager {
         visual_objects: &[usize],
     ) -> Result<(), UiEventError> {
         let started = std::time::Instant::now();
-        self.deferred_slider_refresh = None;
+        self.deferred_scroll_refresh.clear();
         if !visual_objects.is_empty() {
             self.refresh_targeted_visual_objects(visual_objects)?;
         }
@@ -1316,36 +1317,28 @@ impl GlueManager {
             }
             return Ok(Some(object_index));
         };
-        self.runtime
+        let dispatch = self
+            .runtime
             .dispatch_slider_value(&self.bundle, object_index, value)?;
-        if defer_slider_refresh {
-            self.deferred_slider_refresh = Some(object_index);
+        if defer_slider_refresh
+            && dispatch.targeted_objects
+            && dispatch.visual_objects.is_empty()
+            && self.runtime.is_scroll_journal(&dispatch.dirty_objects)
+        {
+            for entry in dispatch.dirty_objects {
+                if !self
+                    .deferred_scroll_refresh
+                    .iter()
+                    .any(|(index, _)| *index == entry.0)
+                {
+                    self.deferred_scroll_refresh.push(entry);
+                }
+            }
         } else {
-            self.refresh_live_state()?;
+            self.flush_deferred_refresh()?;
+            self.refresh_event_mutations(&dispatch)?;
         }
         Ok(Some(object_index))
-    }
-
-    /// Commits one retained UI generation after a burst of Slider motion.
-    ///
-    /// Returns whether a deferred generation existed. Calling this without a
-    /// pending drag is intentionally free so non-motion event boundaries can
-    /// use it unconditionally.
-    pub fn flush_deferred_refresh(&mut self) -> Result<bool, UiEventError> {
-        let Some(slider_index) = self.deferred_slider_refresh.take() else {
-            return Ok(false);
-        };
-        let previous = self.live.clone();
-        self.runtime
-            .refresh_slider_scroll_snapshot(&self.bundle, &mut self.live, slider_index)?;
-        self.render_plan.refresh_scroll_transforms(
-            &previous,
-            &self.live,
-            &mut self.geometry,
-            &mut self.presentation,
-        );
-        self.scroll_frames = UiScrollFramePlan::from_live(&self.live);
-        Ok(true)
     }
 
     fn update_pointer_hover(
@@ -1747,9 +1740,10 @@ impl GlueManager {
         let Some(object_index) = self.pointer.wheel_hit_test(&self.geometry, position) else {
             return Ok(None);
         };
-        self.runtime
+        let dispatch = self
+            .runtime
             .dispatch_mouse_wheel(&self.bundle, object_index, delta)?;
-        self.refresh_live_state()?;
+        self.refresh_event_mutations(&dispatch)?;
         Ok(Some(object_index))
     }
 
@@ -1761,7 +1755,7 @@ impl GlueManager {
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
         let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
         let started = std::time::Instant::now();
-        self.deferred_slider_refresh = None;
+        self.deferred_scroll_refresh.clear();
         let mut live = self.runtime.snapshot_objects(&self.bundle)?;
         let first_snapshot_elapsed = started.elapsed();
         if live == self.live {

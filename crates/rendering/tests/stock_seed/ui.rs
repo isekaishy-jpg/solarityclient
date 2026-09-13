@@ -54,10 +54,7 @@ fn ui_mesh_inserts_source_runs_at_packet_boundaries() -> Result<(), Box<dyn Erro
         [prefix, text.clone(), text.clone(), tail].into_iter(),
     )?;
     complete.translate_object(8, [3., 5.])?;
-    assert_eq!(mesh.vertices(), complete.vertices());
-    assert_eq!(mesh.indices(), complete.indices());
-    assert_eq!(mesh.batches(), complete.batches());
-    assert_eq!(mesh.object_indices(), complete.object_indices());
+    assert_same_draw_output(&mesh, &complete);
     let before = mesh.clone();
     assert!(!mesh.insert_object_source_run(4, 2, std::slice::from_ref(&text))?);
     assert_eq!(mesh, before);
@@ -73,14 +70,18 @@ fn ui_mesh_inserts_source_runs_at_packet_boundaries() -> Result<(), Box<dyn Erro
         std::slice::from_ref(&text)
     )?);
     assert!(mesh.replace_object_quad_colors(8, &[[[0.25; 4]; 4]])?);
-    assert_eq!(mesh.vertices()[8].color(), [0.25; 4]);
+    assert_eq!(mesh.vertices()[4].color(), [0.25; 4]);
     assert_eq!(mesh.batches().last().ok_or("tail")?.translation(), [3., 5.]);
     // Beginning and end boundaries also preserve established middle runs.
     let front = quad(1, UiRenderSource::VertexColor, [-10., 0., 0., 10.]);
     assert!(mesh.insert_object_source_run(1, 0, &[front])?);
-    let end = mesh.object_indices().len();
+    let end = mesh
+        .batches()
+        .iter()
+        .map(|batch| batch.quad_count() as usize)
+        .sum();
     assert!(mesh.insert_object_source_run(4, end, &[text])?);
-    assert_eq!(mesh.object_indices(), [1, 2, 4, 8, 4]);
+    assert_eq!(drawn_owners(&mesh), [1, 2, 4, 8, 4]);
     Ok(())
 }
 
@@ -114,17 +115,17 @@ fn ui_mesh_resizes_source_run_without_rebuilding_neighbor_payloads() -> Result<(
     ];
     assert!(mesh.replace_object_source_run(4, &atlas, &replacement)?);
     assert_ne!(mesh.geometry_identity(), previous_identity);
-    assert_eq!(mesh.object_indices(), [4, 4, 4, 4, 8, 4]);
-    assert_eq!(&mesh.vertices()[16..], old_suffix);
+    assert_eq!(drawn_owners(&mesh), [4, 4, 4, 4, 8, 4]);
+    assert_eq!(&mesh.vertices()[8..16], old_suffix);
     assert_eq!(mesh.batches()[1].quad_count(), 3);
     assert_eq!(mesh.batches()[1].index_count(), 18);
-    assert_eq!(mesh.batches()[2].first_quad(), 4);
+    assert_eq!(mesh.batches()[2].first_quad(), 2);
     assert_eq!(
         mesh.batches()[2].translation(),
         old_suffix_batch.translation()
     );
     assert_eq!(mesh.batches()[2].opacity(), old_suffix_batch.opacity());
-    assert_eq!(mesh.batches()[3].first_quad(), 5);
+    assert_eq!(mesh.batches()[3].first_quad(), 3);
     let mut fresh = UiMeshPlan::prepare(
         [800.0, 600.0],
         [
@@ -138,15 +139,13 @@ fn ui_mesh_resizes_source_run_without_rebuilding_neighbor_payloads() -> Result<(
         .into_iter(),
     )?;
     fresh.translate_object(8, [3.0, 5.0])?;
-    assert_eq!(mesh.vertices(), fresh.vertices());
-    assert_eq!(mesh.indices(), fresh.indices());
-    assert_eq!(mesh.batches(), fresh.batches());
+    assert_same_draw_output(&mesh, &fresh);
     // A later targeted write must resolve the relocated tail, including an
     // additional source belonging to the resized text's own object.
     assert!(mesh.replace_object_quad_colors(8, &[[[0.25; 4]; 4]])?);
-    assert_eq!(mesh.vertices()[16].color(), [0.25; 4]);
+    assert_eq!(mesh.vertices()[8].color(), [0.25; 4]);
     assert!(mesh.replace_object_source_run(4, &atlas, &[text])?);
-    assert_eq!(mesh.object_indices(), [4, 4, 8, 4]);
+    assert_eq!(drawn_owners(&mesh), [4, 4, 8, 4]);
     assert_eq!(mesh.batches()[2].first_quad(), 2);
     assert_eq!(mesh.batches()[3].first_quad(), 3);
     assert_eq!(mesh.indices(), [0, 1, 2, 2, 1, 3]);
@@ -183,11 +182,11 @@ fn ui_mesh_source_replacement_merges_and_splits_adjacent_state_batches()
     assert_eq!(mesh.vertices()[8].color(), [0.5; 4]);
     assert!(mesh.replace_object_source_run(4, &atlas, &[text.clone(), caret.clone(), text])?);
     assert_eq!(mesh.batches().len(), 4);
-    assert_eq!(mesh.batches()[3].first_quad(), 3);
+    assert_eq!(mesh.batches()[3].first_quad(), 2);
     mesh.set_state_opacity(UiRenderState::EditBoxCaret(4), 0.75)?;
     assert_eq!(mesh.batches()[1].opacity(), 0.75);
     assert!(mesh.replace_object_source_run(8, &UiRenderSource::VertexColor, &[tail])?);
-    assert_eq!(mesh.vertices()[12].color(), [1.0; 4]);
+    assert_eq!(mesh.vertices()[8].color(), [1.0; 4]);
     Ok(())
 }
 
@@ -213,14 +212,16 @@ fn ui_mesh_replaces_single_run_material_and_rejects_split_runs_atomically()
         &[replacement.clone(), old.clone()]
     )?);
     assert_eq!(mesh, before);
-    assert!(!mesh.replace_object_source_run(4, &new_source, &[])?);
-    assert_eq!(mesh, before);
+
     let invalid = quad(4, new_source.clone(), [f32::NAN, 0.0, 10.0, 10.0]);
     assert!(
         mesh.replace_object_source_run(4, &new_source, &[replacement.clone(), invalid])
             .is_err()
     );
     assert_eq!(mesh, before);
+    assert!(mesh.replace_object_source_run(4, &new_source, &[])?);
+    assert!(mesh.batches().is_empty());
+    assert!(mesh.sources_for_object(4).next().is_none());
     let mut split = UiMeshPlan::prepare(
         [800.0, 600.0],
         [
@@ -614,4 +615,120 @@ fn quad(object_index: usize, source: UiRenderSource, bounds: [f32; 4]) -> UiRend
         [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]],
         [[1.0; 4]; 4],
     )
+}
+
+/// Equivalent draws may use different physical allocations after local growth.
+fn assert_same_draw_output(actual: &UiMeshPlan, expected: &UiMeshPlan) {
+    assert_eq!(actual.batches().len(), expected.batches().len());
+    assert_eq!(drawn_owners(actual), drawn_owners(expected));
+    for (a, b) in actual.batches().iter().zip(expected.batches()) {
+        assert_eq!(a.source(), b.source());
+        assert_eq!(a.mask(), b.mask());
+        assert_eq!(a.blend(), b.blend());
+        assert_eq!(a.horizontal_address(), b.horizontal_address());
+        assert_eq!(a.vertical_address(), b.vertical_address());
+        assert_eq!(a.residency(), b.residency());
+        assert_eq!(a.desaturated(), b.desaturated());
+        assert_eq!(a.index_count(), b.index_count());
+        assert_eq!(a.quad_count(), b.quad_count());
+        assert_eq!(a.transform(), b.transform());
+        assert_eq!(a.state(), b.state());
+        assert_eq!(a.translation(), b.translation());
+        assert_eq!(a.opacity(), b.opacity());
+        assert_eq!(a.clip(), b.clip());
+        let ar = a.first_quad() as usize * 4;
+        let br = b.first_quad() as usize * 4;
+        let count = a.quad_count() as usize * 4;
+        assert_eq!(
+            &actual.vertices()[ar..ar + count],
+            &expected.vertices()[br..br + count]
+        );
+    }
+}
+
+fn drawn_owners(mesh: &UiMeshPlan) -> Vec<usize> {
+    mesh.batches()
+        .iter()
+        .flat_map(|batch| {
+            let start = batch.first_quad() as usize;
+            mesh.object_indices()[start..start + batch.quad_count() as usize]
+                .iter()
+                .copied()
+        })
+        .collect()
+}
+
+/// Repeated edits reuse owner capacity and vacancies without historical growth.
+#[test]
+fn ui_text_growth_reuses_storage_and_preserves_neighbor_offsets() -> Result<(), Box<dyn Error>> {
+    let atlas = UiRenderSource::GlyphAtlas(7);
+    let text = quad(4, atlas.clone(), [0., 0., 10., 10.]);
+    let neighbor = quad(8, UiRenderSource::VertexColor, [20., 0., 30., 10.]);
+    let mut mesh = UiMeshPlan::prepare([800., 600.], [text.clone(), neighbor].into_iter())?;
+    let neighbor_vertices = mesh.vertices()[4..8].to_vec();
+    let mut warmed_extent = 0;
+    for cycle in 0..20 {
+        for length in [2, 8, 31, 256, 3, 0] {
+            let quads = vec![text.clone(); length];
+            if mesh.sources_for_object(4).next().is_none() {
+                assert!(mesh.insert_object_source_run(4, 0, &quads)?);
+            } else {
+                assert!(mesh.replace_object_source_run(4, &atlas, &quads)?);
+            }
+            assert_eq!(&mesh.vertices()[4..8], neighbor_vertices);
+            assert_eq!(mesh.batches().last().ok_or("neighbor")?.first_quad(), 1);
+        }
+        if cycle == 1 {
+            warmed_extent = mesh.vertices().len();
+        }
+        if cycle > 1 {
+            assert_eq!(mesh.vertices().len(), warmed_extent);
+        }
+    }
+    Ok(())
+}
+
+/// Ordered bounds match the former scalar clip test across pages and local edits.
+#[test]
+fn ui_document_clip_index_matches_scalar_windows_after_text_replacement()
+-> Result<(), Box<dyn Error>> {
+    let atlas = UiRenderSource::GlyphAtlas(7);
+    let transform = UiRenderTransform::ScrollFrame(3);
+    let document = |lines| {
+        (0..lines)
+            .map(|line| {
+                quad(
+                    4,
+                    atlas.clone(),
+                    [0., -(line as f32) * 12., 8., 10. - (line as f32) * 12.],
+                )
+                .with_transform(transform, [0., 0.], Some([0., 0., 100., 100.]))
+            })
+            .collect::<Vec<_>>()
+    };
+    let quads = document(20_000);
+    let mut mesh = UiMeshPlan::prepare([800., 600.], quads.into_iter())?;
+    for lines in [20_000, 20_003, 500] {
+        let quads = document(lines);
+        assert!(mesh.replace_object_source_run(4, &atlas, &quads)?);
+        for scroll in [-200., 0., 91., 12_340., 239_940., 250_000.] {
+            mesh.set_transform_translation(transform, [0., scroll]);
+            let visible = quads
+                .iter()
+                .enumerate()
+                .filter_map(|(i, quad)| {
+                    let bounds = quad.bounds();
+                    (bounds[3] + scroll > 0. && bounds[1] + scroll < 100.).then_some(i)
+                })
+                .collect::<Vec<_>>();
+            let first = visible.first().copied().unwrap_or(0);
+            let count = visible.last().map_or(0, |last| last + 1 - first);
+            let batch = &mesh.batches()[0];
+            assert_eq!(
+                mesh.clipped_batch_quad_range(0),
+                Some((batch.first_quad() + first as u32, count as u32))
+            );
+        }
+    }
+    Ok(())
 }

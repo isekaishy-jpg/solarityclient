@@ -7,6 +7,7 @@ mod frame_order;
 mod globals;
 mod messages;
 pub(super) mod minimap;
+mod scrolling;
 pub(super) mod status_bars;
 mod tooltips;
 mod update_visibility;
@@ -44,6 +45,7 @@ use super::model_intent::{
 };
 use super::runtime_state::{finite_region_number, snapshot_slider};
 use super::templates::{TEMPLATE_REGISTRY, slider_orientation};
+use scrolling::refresh_scroll_ranges;
 
 pub(crate) const OBJECT_REGISTRY: &str = "solarity.ui.objects";
 const OBJECT_CHILDREN_REGISTRY: &str = "solarity.ui.object_children";
@@ -73,6 +75,8 @@ pub(super) const DIRTY_FRAME: u32 = 1 << 5;
 pub(super) const DIRTY_TEXTURE_VERTEX_COLOR: u32 = 1 << 6;
 /// Frame order changes republish the affected subtree's packet and pointer keys.
 pub(super) const DIRTY_FRAME_ORDER: u32 = 1 << 7;
+/// Offset/value changes have no layout, text or material side effects of their own.
+pub(super) const DIRTY_SCROLL: u32 = 1 << 8;
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
 static NAME_TOKEN: u8 = 1;
@@ -1208,6 +1212,7 @@ impl UiScriptRuntime {
         lua.set_named_registry_value(OBJECT_REGISTRY, objects)
             .map_err(|error| execution_error("registry", error))?;
         frame_order::initialize(lua);
+        scrolling::initialize(lua);
         lua.set_named_registry_value(
             OBJECT_CHILDREN_REGISTRY,
             lua.create_table()
@@ -1804,6 +1809,7 @@ impl UiScriptRuntime {
             });
         }
         let lua = bundle.lua();
+        scrolling::invalidate_ranges(lua);
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("publish resolved geometry", error))?;
@@ -2574,7 +2580,7 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         object_index: usize,
         delta: f64,
-    ) -> Result<(), UiScriptError> {
+    ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let label = format!("ScrollFrame object {object_index}:OnMouseWheel");
         if object_index >= self.registered_object_count() || !delta.is_finite() {
             return Err(UiScriptError::Plan {
@@ -2582,6 +2588,7 @@ impl UiScriptRuntime {
             });
         }
         let lua = bundle.lua();
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), &label)?;
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error(&label, error))?;
@@ -2591,10 +2598,17 @@ impl UiScriptRuntime {
         let Some(function) = object_script_function(lua, &object, UiScriptHandler::MouseWheel)
             .map_err(|error| execution_error(&label, error))?
         else {
-            return Ok(());
+            return finish_mutation_dispatch(
+                lua,
+                self.registered_object_count(),
+                baseline,
+                0,
+                &label,
+            );
         };
         call_number_object_handler(lua, &function, object, delta)
-            .map_err(|error| execution_error(&label, error))
+            .map_err(|error| execution_error(&label, error))?;
+        finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, &label)
     }
 
     /// Gives native focus to one live EditBox and dispatches focus callbacks.
@@ -2821,7 +2835,7 @@ impl UiScriptRuntime {
         bundle: &UiBundle,
         object_index: usize,
         value: f64,
-    ) -> Result<(), UiScriptError> {
+    ) -> Result<UiScriptEventDispatch, UiScriptError> {
         let label = format!("Slider object {object_index}:pointer-value");
         if !value.is_finite() {
             return Err(UiScriptError::Plan {
@@ -2829,6 +2843,7 @@ impl UiScriptRuntime {
             });
         }
         let lua = bundle.lua();
+        let baseline = begin_mutation_dispatch(lua, self.registered_object_count(), &label)?;
         let object = self.runtime_object(lua, object_index, &label)?;
         if object
             .raw_get::<String>(type_key())
@@ -2843,73 +2858,16 @@ impl UiScriptRuntime {
             .raw_get::<bool>(enabled_key())
             .map_err(|error| execution_error(&label, error))?
         {
-            return Ok(());
-        }
-        set_range_value(lua, object, value).map_err(|error| execution_error(&label, error))
-    }
-
-    /// Copies the compact native state needed to present a captured Slider.
-    ///
-    /// Drag callbacks commonly update a ScrollFrame on every mouse event. A
-    /// frame-boundary refresh reads only the captured range and the finite set
-    /// of ScrollFrames; the release event still performs the complete arena
-    /// snapshot and therefore reconciles any unusual callback side effects.
-    pub(crate) fn refresh_slider_scroll_snapshot(
-        &self,
-        bundle: &UiBundle,
-        live: &mut super::runtime_state::UiRuntimeObjectPlan,
-        slider_index: usize,
-    ) -> Result<(), UiScriptError> {
-        let lua = bundle.lua();
-        let registry: Table = lua
-            .named_registry_value(OBJECT_REGISTRY)
-            .map_err(|error| execution_error("Slider scroll refresh", error))?;
-        let scroll_indices = live
-            .objects()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, object)| {
-                (object.kind == UiObjectKind::ScrollFrame).then_some(index)
-            })
-            .collect::<Vec<_>>();
-
-        let slider: Table = registry
-            .raw_get(slider_index + 1)
-            .map_err(|error| execution_error("Slider scroll refresh", error))?;
-        let slider_state = snapshot_slider(slider_index + 1, &slider)?;
-        live.replace_slider(slider_index, slider_state);
-
-        for object_index in scroll_indices {
-            let lua_index = object_index + 1;
-            let object: Table = registry
-                .raw_get(lua_index)
-                .map_err(|error| execution_error("Slider scroll refresh", error))?;
-            let offset = (
-                finite_region_number(
-                    &object,
-                    horizontal_scroll_key(),
-                    lua_index,
-                    "horizontal scroll",
-                )?,
-                finite_region_number(&object, vertical_scroll_key(), lua_index, "vertical scroll")?,
+            return finish_mutation_dispatch(
+                lua,
+                self.registered_object_count(),
+                baseline,
+                0,
+                &label,
             );
-            let range = (
-                finite_region_number(
-                    &object,
-                    horizontal_scroll_range_key(),
-                    lua_index,
-                    "horizontal scroll range",
-                )?,
-                finite_region_number(
-                    &object,
-                    vertical_scroll_range_key(),
-                    lua_index,
-                    "vertical scroll range",
-                )?,
-            );
-            live.replace_scroll_state(object_index, offset, range);
         }
-        Ok(())
+        set_range_value(lua, object, value).map_err(|error| execution_error(&label, error))?;
+        finish_mutation_dispatch(lua, self.registered_object_count(), baseline, 1, &label)
     }
 
     fn runtime_object(
@@ -7550,7 +7508,7 @@ fn register_scroll_frame_methods(
                 return Ok(());
             }
             object.raw_set(horizontal_scroll_key(), value)?;
-            mark_live_state_changed(lua)?;
+            mark_object_state_changed(lua, &object, DIRTY_SCROLL)?;
             if let Some(function) =
                 object_script_function(lua, &object, UiScriptHandler::HorizontalScroll)?
             {
@@ -7569,7 +7527,7 @@ fn register_scroll_frame_methods(
                 return Ok(());
             }
             object.raw_set(vertical_scroll_key(), value)?;
-            mark_live_state_changed(lua)?;
+            mark_object_state_changed(lua, &object, DIRTY_SCROLL)?;
             if let Some(function) =
                 object_script_function(lua, &object, UiScriptHandler::VerticalScroll)?
             {
@@ -7594,6 +7552,7 @@ fn register_scroll_frame_methods(
 /// state eagerly because FrameXML construction runs without an intervening
 /// native frame tick.
 fn update_scroll_child_rect(lua: &Lua, object: &Table, ui_extent: (f64, f64)) -> mlua::Result<()> {
+    scrolling::invalidate_ranges(lua);
     let (horizontal_range, vertical_range) = refresh_scroll_ranges(lua, object, ui_extent)?;
 
     let horizontal_scroll = object
@@ -7604,87 +7563,6 @@ fn update_scroll_child_rect(lua: &Lua, object: &Table, ui_extent: (f64, f64)) ->
         .clamp(0.0, vertical_range);
     object.raw_set(horizontal_scroll_key(), horizontal_scroll)?;
     object.raw_set(vertical_scroll_key(), vertical_scroll)
-}
-
-/// Publishes the range implied by the scroll frame's current live dimensions.
-fn refresh_scroll_ranges(
-    lua: &Lua,
-    object: &Table,
-    ui_extent: (f64, f64),
-) -> mlua::Result<(f64, f64)> {
-    let (frame_width, frame_height) = live_region_dimensions(lua, object, ui_extent)?;
-    let (child_width, child_height) = object
-        .raw_get::<Option<Table>>(scroll_child_key())?
-        .map(|child| scroll_child_content_dimensions(lua, &child, ui_extent))
-        .transpose()?
-        .unwrap_or((0.0, 0.0));
-    let horizontal_range = (child_width - frame_width).max(0.0);
-    let vertical_range = (child_height - frame_height).max(0.0);
-    object.raw_set(horizontal_scroll_range_key(), horizontal_range)?;
-    object.raw_set(vertical_scroll_range_key(), vertical_range)?;
-    Ok((horizontal_range, vertical_range))
-}
-
-/// Returns the top-left-origin content extent of a scroll child and all shown
-/// descendants. Build 12340 creation panes deliberately give the child frame
-/// a ten-pixel seed height while auto-sized FontStrings extend far below it;
-/// `CSimpleScrollFrame` includes those descendant region bounds in its range.
-fn scroll_child_content_dimensions(
-    lua: &Lua,
-    child: &Table,
-    ui_extent: (f64, f64),
-) -> mlua::Result<(f64, f64)> {
-    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-    let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
-    let screen = LiveRegionBounds {
-        left: 0.0,
-        bottom: 0.0,
-        right: ui_extent.0,
-        top: ui_extent.1,
-    };
-    let mut resolved = HashMap::new();
-    let mut visiting = Vec::new();
-    let Some(child_bounds) = resolve_live_region_bounds_inner(
-        &objects,
-        child.clone(),
-        screen,
-        &mut resolved,
-        &mut visiting,
-    )?
-    else {
-        return live_region_dimensions(lua, child, ui_extent);
-    };
-    let child_index = child.raw_get::<usize>(index_key())?;
-    let mut maximum_right = child_bounds.right;
-    let mut minimum_bottom = child_bounds.bottom;
-    let mut pending = vec![child_index];
-    while let Some(parent_index) = pending.pop() {
-        let Some(direct) = children.raw_get::<Option<Table>>(parent_index)? else {
-            continue;
-        };
-        for child_index in direct.sequence_values::<usize>() {
-            let child_index = child_index?;
-            let candidate: Table = objects.raw_get(child_index)?;
-            if !candidate.raw_get::<bool>(shown_key())? {
-                continue;
-            }
-            pending.push(child_index);
-            if let Some(bounds) = resolve_live_region_bounds_inner(
-                &objects,
-                candidate,
-                screen,
-                &mut resolved,
-                &mut visiting,
-            )? {
-                maximum_right = maximum_right.max(bounds.right);
-                minimum_bottom = minimum_bottom.min(bounds.bottom);
-            }
-        }
-    }
-    Ok((
-        (maximum_right - child_bounds.left).max(0.0),
-        (child_bounds.top - minimum_bottom).max(0.0),
-    ))
 }
 
 /// Recomputes the nearest owning ScrollFrame after an auto-sized FontString
@@ -7942,7 +7820,12 @@ fn set_range_value(lua: &Lua, object: Table, value: f64) -> mlua::Result<()> {
         return Ok(());
     }
     object.raw_set(slider_value_key(), value)?;
-    mark_object_state_changed(lua, &object, DIRTY_WIDGET)?;
+    let flags = if object.raw_get::<String>(type_key())? == "Slider" {
+        DIRTY_SCROLL
+    } else {
+        DIRTY_WIDGET
+    };
+    mark_object_state_changed(lua, &object, flags)?;
     if let Some(function) = object_script_function(lua, &object, UiScriptHandler::ValueChanged)? {
         call_number_object_handler(lua, &function, object, value)?;
     }
@@ -10380,6 +10263,9 @@ fn object_state_generation(lua: &Lua) -> mlua::Result<u64> {
 }
 
 pub(super) fn mark_object_state_changed(lua: &Lua, object: &Table, flags: u32) -> mlua::Result<()> {
+    if flags & (DIRTY_LAYOUT | DIRTY_TEXT | DIRTY_FRAME) != 0 {
+        scrolling::invalidate_ranges(lua);
+    }
     let generation = object_state_generation(lua)?;
     lua.set_named_registry_value(OBJECT_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))?;
     let dirty: Table = lua.named_registry_value(DIRTY_OBJECTS_REGISTRY)?;
@@ -10390,6 +10276,7 @@ pub(super) fn mark_object_state_changed(lua: &Lua, object: &Table, flags: u32) -
 }
 
 fn mark_visual_state_changed(lua: &Lua, object: &Table) -> mlua::Result<()> {
+    scrolling::invalidate_ranges(lua);
     let generation = visual_state_generation(lua)?;
     lua.set_named_registry_value(VISUAL_STATE_GENERATION_REGISTRY, generation.wrapping_add(1))?;
     let dirty: Table = lua.named_registry_value(VISUAL_DIRTY_OBJECTS_REGISTRY)?;
@@ -10468,6 +10355,7 @@ fn take_dirty_objects(lua: &Lua) -> mlua::Result<Vec<(usize, u32)>> {
 }
 
 pub(crate) fn mark_live_state_changed(lua: &Lua) -> mlua::Result<()> {
+    scrolling::invalidate_ranges(lua);
     let generation = fallback_state_generation(lua)?;
     lua.set_named_registry_value(
         FALLBACK_STATE_GENERATION_REGISTRY,

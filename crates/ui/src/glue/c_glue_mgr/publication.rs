@@ -16,9 +16,16 @@ impl GlueManager {
         dirty_objects: &[(usize, u32)],
         visual_objects: &[usize],
     ) -> Result<bool, UiEventError> {
+        if self.runtime.is_scroll_journal(dirty_objects) {
+            self.refresh_scroll_objects(dirty_objects)?;
+            if !visual_objects.is_empty() {
+                self.refresh_targeted_visual_objects(visual_objects)?;
+            }
+            return Ok(true);
+        }
         let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
         let started = std::time::Instant::now();
-        self.deferred_slider_refresh = None;
+        self.deferred_scroll_refresh.clear();
         let had_dirty_objects = !dirty_objects.is_empty();
         let effective =
             self.runtime

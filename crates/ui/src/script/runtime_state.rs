@@ -3,9 +3,9 @@
 use mlua::{Lua, Table};
 
 use super::simple_script::{
-    DIRTY_FRAME, DIRTY_FRAME_ORDER, DIRTY_LAYOUT, DIRTY_MODEL, DIRTY_TEXT, DIRTY_TEXTURE,
-    DIRTY_TEXTURE_VERTEX_COLOR, DIRTY_WIDGET, OBJECT_REGISTRY, alpha_key, anchors_key,
-    backdrop_border_color_key, backdrop_color_key, button_pressed_key, checked_key,
+    DIRTY_FRAME, DIRTY_FRAME_ORDER, DIRTY_LAYOUT, DIRTY_MODEL, DIRTY_SCROLL, DIRTY_TEXT,
+    DIRTY_TEXTURE, DIRTY_TEXTURE_VERTEX_COLOR, DIRTY_WIDGET, OBJECT_REGISTRY, alpha_key,
+    anchors_key, backdrop_border_color_key, backdrop_color_key, button_pressed_key, checked_key,
     click_action_key, desaturated_key, disabled_font_key, disabled_text_color_key, draw_layer_key,
     draw_sub_level_key, edit_caret_visible_key, edit_cursor_key, edit_focused_key,
     edit_highlight_color_key, edit_max_letters_key, edit_multi_line_key, edit_password_key,
@@ -939,7 +939,7 @@ pub(super) fn refresh_runtime_dirty_objects(
                 "backdrop border color",
             )?;
         }
-        if flags & DIRTY_WIDGET != 0 {
+        if flags & (DIRTY_WIDGET | DIRTY_SCROLL) != 0 {
             if kind == UiObjectKind::Minimap {
                 live.objects[object_index].minimap = Some(
                     super::simple_script::minimap::snapshot(&table).map_err(|error| {

@@ -631,58 +631,77 @@ impl UiRenderPlan {
         for (object_index, (old, new)) in
             previous.objects().iter().zip(current.objects()).enumerate()
         {
-            if old.scroll_offset != new.scroll_offset
-                && let (Some((horizontal, vertical)), Some(child)) =
-                    (new.scroll_offset, new.scroll_child)
-                && let Some(child_geometry) = geometry.region(child)
-            {
-                let scale = child_geometry.effective_scale() as f32;
-                self.mesh.set_transform_translation(
-                    UiRenderTransform::ScrollFrame(object_index),
-                    [-(horizontal as f32) * scale, vertical as f32 * scale],
-                );
-            }
-            let (Some(old_slider), Some(new_slider)) = (old.slider, new.slider) else {
-                continue;
-            };
-            if old_slider.value == new_slider.value {
+            if old.scroll_offset == new.scroll_offset && old.slider == new.slider {
                 continue;
             }
-            let Some(thumb_index) = current.objects().iter().position(|candidate| {
+            let thumb = current.objects().iter().position(|candidate| {
                 candidate.parent == Some(object_index)
                     && candidate.role == UiObjectRole::ThumbTexture
                     && current.anchors_for(candidate).is_empty()
-            }) else {
-                continue;
-            };
-            let (Some(track), Some(thumb)) =
-                (geometry.region(object_index), geometry.region(thumb_index))
-            else {
-                continue;
-            };
-            let old_fraction =
-                slider_fraction(old_slider.minimum, old_slider.maximum, old_slider.value);
-            let new_fraction =
-                slider_fraction(new_slider.minimum, new_slider.maximum, new_slider.value);
-            let fraction_delta = (new_fraction - old_fraction) as f32;
-            let track = track.presentation_bounds();
-            let thumb = thumb.presentation_bounds();
-            let delta = if new_slider.vertical {
-                [
-                    0.0,
-                    -fraction_delta * (track.height() - thumb.height()).max(0.0) as f32,
-                ]
-            } else {
-                [
-                    fraction_delta * (track.width() - thumb.width()).max(0.0) as f32,
-                    0.0,
-                ]
-            };
-            self.mesh
-                .translate_transform(UiRenderTransform::Slider(object_index), delta);
-            geometry.translate_region(thumb_index, delta);
-            presentation.translate_object(thumb_index, delta);
+            });
+            self.refresh_scroll_object(object_index, (old, new), thumb, geometry, presentation);
         }
+    }
+    /// Applies one journaled scroll owner using the retained direct-child index.
+    pub(crate) fn refresh_scroll_object(
+        &mut self,
+        object_index: usize,
+        states: (
+            &crate::script::UiRuntimeObject,
+            &crate::script::UiRuntimeObject,
+        ),
+        thumb_index: Option<usize>,
+        geometry: &mut UiRegionGeometryPlan,
+        presentation: &mut UiPresentationPlan,
+    ) {
+        let (old, new) = states;
+        if old.scroll_offset != new.scroll_offset
+            && let (Some((horizontal, vertical)), Some(child)) =
+                (new.scroll_offset, new.scroll_child)
+            && let Some(child_geometry) = geometry.region(child)
+        {
+            let scale = child_geometry.effective_scale() as f32;
+            self.mesh.set_transform_translation(
+                UiRenderTransform::ScrollFrame(object_index),
+                [-(horizontal as f32) * scale, vertical as f32 * scale],
+            );
+        }
+        let (Some(old_slider), Some(new_slider)) = (old.slider, new.slider) else {
+            return;
+        };
+        if old_slider.value == new_slider.value {
+            return;
+        }
+        let Some(thumb_index) = thumb_index else {
+            return;
+        };
+        let (Some(track), Some(thumb)) =
+            (geometry.region(object_index), geometry.region(thumb_index))
+        else {
+            return;
+        };
+        let old_fraction =
+            slider_fraction(old_slider.minimum, old_slider.maximum, old_slider.value);
+        let new_fraction =
+            slider_fraction(new_slider.minimum, new_slider.maximum, new_slider.value);
+        let fraction_delta = (new_fraction - old_fraction) as f32;
+        let track = track.presentation_bounds();
+        let thumb = thumb.presentation_bounds();
+        let delta = if new_slider.vertical {
+            [
+                0.0,
+                -fraction_delta * (track.height() - thumb.height()).max(0.0) as f32,
+            ]
+        } else {
+            [
+                fraction_delta * (track.width() - thumb.width()).max(0.0) as f32,
+                0.0,
+            ]
+        };
+        self.mesh
+            .translate_transform(UiRenderTransform::Slider(object_index), delta);
+        geometry.translate_region(thumb_index, delta);
+        presentation.translate_object(thumb_index, delta);
     }
 }
 
