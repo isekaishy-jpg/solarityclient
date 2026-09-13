@@ -74,10 +74,11 @@ shadow quality 2 and a different view-distance profile. Its 400+ FPS values
 therefore do not represent Soap's gameplay conditions, and the measured
 percentage must not be extrapolated to the user's 120 FPS baseline.
 
-A meaningful live comparison remains outstanding: Soap, identical location
-and camera, 2560x1440, the same actual graphics settings, all visible scene
-resources ready, and comparable population. Desktop capture failed on this
-host, so no visual entry validation or live Soap FPS result is claimed.
+A subsequent matching live diagnostic comparison on Soap is documented in
+[the Build 125 report](testing-build125-world-entry.md#live-soap-comparison).
+It uses the same camera and installed graphics profile, with 49 resident tiles
+on both builds. Desktop capture still failed, but native client login APIs and
+renderer framebuffer capture allowed the live comparison to complete.
 
 The subsequent source fix retains the loading card until the camera's required
 terrain window has completed GPU publication and visible ground-detail jobs

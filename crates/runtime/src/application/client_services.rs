@@ -3494,3 +3494,7 @@ mod tests {
         assert!(glue_screen_is_presented("login", Some("LOGIN")));
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/application/live_session_services.rs"]
+mod live_session_services_tests;

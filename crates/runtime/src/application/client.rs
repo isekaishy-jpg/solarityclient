@@ -521,3 +521,7 @@ impl ClientApplication {
         self.services.shutdown()
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/application/live_session.rs"]
+mod live_session_tests;
