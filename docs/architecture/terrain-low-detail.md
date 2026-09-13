@@ -360,3 +360,10 @@ live Soap comparison or an FPS result.
 
 Validation passed all 1,359 workspace tests with 27 ignored, all-target and
 all-feature Clippy with warnings denied, and the workspace formatting check.
+
+Testing Build 129 packages source `5df1f731f36bd5c35774100d17e69a4eba86c7d0`.
+The installed and sealed executables share SHA-256
+`b2544c259e79e55c0df7ba4d8d0a836540c3d271e30e2762a6ece6819071e468`.
+The package's dirty flag records the build-number reservation. Installed DLL
+hashes and the Testing shortcut were verified; Build 128 was backed up before
+replacement. The live Soap view has not been rechecked in this package.
