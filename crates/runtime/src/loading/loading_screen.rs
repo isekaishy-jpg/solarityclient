@@ -58,6 +58,7 @@ pub(crate) struct RuntimeLoadingScreen {
     frame: PreparedUiFrame,
     presented: bool,
     final_frame_presented: bool,
+    current_ready: bool,
 }
 
 struct UploadedLoadingTextures {
@@ -121,6 +122,7 @@ impl RuntimeLoadingScreen {
             frame,
             presented: false,
             final_frame_presented: false,
+            current_ready: false,
         })
     }
 
@@ -131,6 +133,10 @@ impl RuntimeLoadingScreen {
     /// or weakening any of stock's first-world prerequisites.
     pub(crate) fn advance(&mut self, readiness: RuntimeLoadingReadiness) {
         let stage = readiness.stage();
+        self.current_ready = stage == RuntimeLoadingStage::SceneReady;
+        if !self.current_ready {
+            self.final_frame_presented = false;
+        }
         let previous = self.stage;
         self.stage = previous.max(stage);
         if self.stage == previous {
@@ -159,7 +165,7 @@ impl RuntimeLoadingScreen {
             .replace_mesh(renderer, &self.plans[self.stage.index()])?;
         self.frame.present_with_overlay(renderer, overlay)?;
         self.presented = true;
-        if self.stage == RuntimeLoadingStage::SceneReady {
+        if self.current_ready {
             self.final_frame_presented = true;
         }
         Ok(())
@@ -167,7 +173,7 @@ impl RuntimeLoadingScreen {
 
     /// Reports that a complete card was presented after all first-world inputs.
     pub(crate) fn ready_to_complete(&self) -> bool {
-        self.stage == RuntimeLoadingStage::SceneReady && self.final_frame_presented
+        self.current_ready && self.final_frame_presented
     }
 
     /// Reports whether the transition surface has owned at least one present.

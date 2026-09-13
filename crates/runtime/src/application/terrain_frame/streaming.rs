@@ -12,6 +12,25 @@ use crate::random::CrtRand;
 use super::{RuntimeTerrainFrameError, TerrainFrame, TerrainGpuTile, prepare_tile_draws};
 
 impl TerrainFrame {
+    /// Uses the same camera/chunk selection during covered entry and gameplay.
+    pub(in crate::application) fn prepare_ground_detail<'a>(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        tiles: impl Iterator<Item = &'a ResidentTerrainTile> + Clone,
+        camera: solarity_rendering::WorldCameraFrame,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let frustum = solarity_rendering::WorldFrustum::new(
+            camera,
+            solarity_rendering::WorldScreenWindow::FULL,
+        )?;
+        self.ground_detail.prepare(renderer, tiles, camera, frustum)
+    }
+
+    /// All visible detail requests discovered by the last prepare are resident.
+    pub(in crate::application) fn ground_detail_ready(&self) -> bool {
+        self.ground_detail.is_ready()
+    }
+
     /// Services CPU-only detail retirement after frame publication. Saturation
     /// retains ownership for the next frame instead of blocking or freeing inline.
     pub(in crate::application) fn service_cpu_retirements(

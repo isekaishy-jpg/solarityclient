@@ -32,6 +32,18 @@ enum TileAdmissionPhase {
 }
 
 impl TerrainFrame {
+    /// Loading owns presentation, so finish the offered tile without waiting for
+    /// another rendered frame per resource. CPU jobs remain asynchronous, and the
+    /// caller returns to the event pump between complete tile publications.
+    pub(in crate::application) fn admit_loading_tile(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        resident: &ResidentTerrainTile,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
+        while !self.admit_tile(renderer, resident)? {}
+        Ok(true)
+    }
+
     /// Cancels staged resources without disturbing any visible placement or random clock.
     pub(super) fn clear_tile_admission(
         &mut self,

@@ -4,7 +4,7 @@ use solarity_rendering::{WorldCamera, WorldCameraFrame};
 use solarity_systems::TerrainStreamingWindow;
 
 use super::ClientServices;
-use crate::application::{ApplicationError, RuntimeTerrainError};
+use crate::application::{ApplicationError, RuntimeTerrainError, RuntimeTerrainStreamPoll};
 
 /// One frame's completed camera and the state after native feedback publication.
 pub(super) struct ResolvedCameraFrame {
@@ -102,20 +102,22 @@ impl ClientServices {
     }
 
     /// Supplies the resolved camera window while the loading card can still own presentation.
-    pub(super) fn service_terrain_streaming(&mut self) -> Result<(), ApplicationError> {
+    pub(super) fn service_terrain_streaming(&mut self) -> Result<bool, ApplicationError> {
         self.world_camera_frame = None;
         let Some(environment) = self.environment.current() else {
-            return Ok(());
+            return Ok(false);
         };
         let Some(camera) = self.resolved_world_camera()? else {
-            return Ok(());
+            return Ok(false);
         };
-        if self
-            .terrain
-            .active_map()
-            .is_none_or(|map| map.global_world_model().is_some())
-        {
-            return Ok(());
+        let Some(map) = self.terrain.active_map() else {
+            return Ok(false);
+        };
+        if map.global_world_model().is_some() {
+            return Ok(self
+                .terrain_frame
+                .as_ref()
+                .is_some_and(|frame| frame.belongs_to_map(environment.map_id())));
         }
         // WorldFrame.cpp 0x004FAADF uses the followed object's position during
         // ordinary follow mode, and the camera eye when no object is followed.
@@ -129,7 +131,10 @@ impl ClientServices {
             camera.terrain_streaming_corner(),
         )
         .map_err(RuntimeTerrainError::from)?;
-        self.terrain.synchronize_streaming_with_admission(
+        // Entry keeps presentation covered. Finish one completed tile's GPU
+        // resources there, rather than pacing each resource across visible frames.
+        let loading = self.loading_screen.is_some() || self.world_transfer.is_entering_world();
+        let poll = self.terrain.synchronize_streaming_with_admission(
             environment.map_id(),
             origin,
             window,
@@ -142,9 +147,15 @@ impl ClientServices {
                 else {
                     return Ok(false);
                 };
-                frame
-                    .admit_tile(&mut self.renderer, tile)
-                    .map_err(RuntimeTerrainError::from)
+                if loading {
+                    frame
+                        .admit_loading_tile(&mut self.renderer, tile)
+                        .map_err(RuntimeTerrainError::from)
+                } else {
+                    frame
+                        .admit_tile(&mut self.renderer, tile)
+                        .map_err(RuntimeTerrainError::from)
+                }
             },
         )?;
         if let Some(frame) = self
@@ -160,6 +171,29 @@ impl ClientServices {
                 &mut self.crt_rand,
             )?;
         }
-        Ok(())
+        Ok(poll == RuntimeTerrainStreamPoll::Current)
+    }
+
+    /// Prepare visible detail behind the card; ordinary world presentation owns
+    /// this work after entry. Workers must also be serviced while the card draws.
+    pub(super) fn prepare_world_entry_detail(&mut self) -> Result<bool, ApplicationError> {
+        if self.loading_screen.is_none() && !self.world_transfer.is_entering_world() {
+            return Ok(true);
+        }
+        let Some(camera) = self.resolved_world_camera()? else {
+            return Ok(false);
+        };
+        let settings = ["groundEffectDensity", "groundEffectDist"].map(|name| {
+            self.world_ui
+                .as_ref()
+                .map_or_else(|| self.glue.cvar_number(name), |ui| ui.cvar_number(name))
+        });
+        let Some(frame) = self.terrain_frame.as_mut() else {
+            return Ok(false);
+        };
+        frame.set_ground_detail(settings[0], settings[1])?;
+        frame.prepare_ground_detail(&mut self.renderer, self.terrain.resident_tiles(), camera)?;
+        frame.service_cpu_retirements(&self.cpu)?;
+        Ok(frame.ground_detail_ready())
     }
 }

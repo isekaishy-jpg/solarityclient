@@ -13,6 +13,10 @@ mod world_transfer;
 #[path = "../../tests/application/terrain_publication.rs"]
 mod terrain_publication_tests;
 
+#[cfg(test)]
+#[path = "../../tests/application/world_entry_readiness.rs"]
+mod world_entry_readiness_tests;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -2834,7 +2838,8 @@ impl ClientServices {
             tracing::debug!(transport_guid = guid, resource_kind = ?kind,
                 "updated local player transport readiness");
         }
-        self.service_terrain_streaming()?;
+        let terrain_ready = self.service_terrain_streaming()?;
+        let detail_ready = self.prepare_world_entry_detail()?;
         profile.mark("terrain streaming");
         self.gameplay.advance_corpse();
         self.gameplay.send_corpse_queries()?;
@@ -2842,6 +2847,8 @@ impl ClientServices {
         self.synchronize_world_ui_zone()?;
         self.complete_world_transfer_map()?;
         if self.player.resident_frame_input().is_some()
+            && terrain_ready
+            && detail_ready
             && self.terrain_frame.is_some()
             && self.environment.current().is_some()
             && self.game_objects.is_ready()
@@ -2882,6 +2889,8 @@ impl ClientServices {
                 player_ready: self.player.resident_frame_input().is_some()
                     && self.player_movement.initial_contact_ready(),
                 scene_ready: self.terrain_frame.is_some()
+                    && terrain_ready
+                    && detail_ready
                     && !self.world_transfer.holds_loading_card(),
                 ui_ready: self
                     .world_ui

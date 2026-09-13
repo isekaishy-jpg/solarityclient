@@ -267,6 +267,11 @@ impl GroundDetailWorld {
         self.retired.service(cpu)
     }
 
+    /// Disabled detail has no visible dependency; otherwise drain discovered work.
+    pub(super) fn is_ready(&self) -> bool {
+        self.distance == 0.0 || (self.requests.is_empty() && self.pending.is_none())
+    }
+
     /// Borrows prepared packets for the current submission's resource pinning.
     pub(super) fn frame(
         &self,

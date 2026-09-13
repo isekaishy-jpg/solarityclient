@@ -64,3 +64,26 @@ The previously recorded branch validation includes formatting, warning-free work
 - Analysis: `target/build124-summary.json`, `target/build124-residency.json`, `target/analyze-build124.py`, `target/report-build124.py`.
 - Reproduction: `target/run-build124-comparison.ps1`; compile evidence: `target/build124-package.log`, `target/build124-rebuild.log`.
 - The prior installed Build 123 runtime is preserved at `target/solarity-runtime-build123.exe` with its prior build-info file.
+
+## Live-session comparability correction
+
+The user reports approximately 120 FPS in Build 123 at 2K and identifies Soap
+as the default test character. The installed Testing profile uses shadow
+quality 5, farclip 1277, and environmentDetail 1.5. The fixture above used
+shadow quality 2 and a different view-distance profile. Its 400+ FPS values
+therefore do not represent Soap's gameplay conditions, and the measured
+percentage must not be extrapolated to the user's 120 FPS baseline.
+
+A meaningful live comparison remains outstanding: Soap, identical location
+and camera, 2560x1440, the same actual graphics settings, all visible scene
+resources ready, and comparable population. Desktop capture failed on this
+host, so no visual entry validation or live Soap FPS result is claimed.
+
+The subsequent source fix retains the loading card until the camera's required
+terrain window has completed GPU publication and visible ground-detail jobs
+have completed. Completed tiles finish GPU admission behind the loading card;
+normal gameplay retains incremental admission. Map-transfer acknowledgement
+continues to use its original prerequisites, while player completion waits for
+the scene. Loading-card completion also checks current readiness, preventing
+old completed progress from releasing a newly unready scene. These changes
+are subsequent to the installed Build 124 artifact documented above.
