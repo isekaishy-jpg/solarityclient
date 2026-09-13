@@ -149,6 +149,12 @@ The permanent runtime follows these boundaries:
 7. Scene and loading generations are prepared behind an existing movie or
    authentication cover. A transition becomes visible only when its complete
    UI, environment, character, and required material set is ready.
+8. World M2 packet preparation consumes one ordered frame work list. Static
+   residency publishes spatial metadata; moving models, offscreen shadows and
+   required updates join the same selection boundary. Growing distant residency
+   must not expand packet preparation to the full resident list. The
+   [model frame work implementation and scaling regressions](model-frame-work-2026-09-13.md)
+   enforce this boundary alongside the existing native behavior tests.
 
 The SolCL retained-runtime implementation confirms two details that matter to
 the next cut: resource assignments are subscribed when setters run even while

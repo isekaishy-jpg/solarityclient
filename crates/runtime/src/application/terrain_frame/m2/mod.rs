@@ -14,6 +14,7 @@ mod character_residency;
 mod distance;
 mod doodad_scene;
 mod entity_lighting;
+mod frame_work;
 mod game_objects;
 mod playback;
 mod portrait;
@@ -510,6 +511,7 @@ pub(in crate::application) struct M2Frame {
     transparent_elements: Vec<M2TransparentElement>,
     placement_topology_dirty: bool,
     placement_visibility: visibility::M2PlacementVisibility,
+    frame_work: frame_work::M2FrameWork,
     doodad_scene: doodad_scene::M2DoodadScene,
     /// Stock environmentDetail is clamped by its 78DC60 CVar callback.
     pub(super) environment_detail: f32,
@@ -566,7 +568,10 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
 impl M2Frame {
     #[cfg(test)]
     pub(super) fn log_diagnostic_workload(&self) {
+        let (frame_candidates, static_distance_tests) = self.frame_work.diagnostic_counts();
         tracing::info!(
+            frame_candidates,
+            static_distance_tests,
             placements = self.placements.len(),
             dynamic_placements = self.placement_visibility.dynamic_indices().len(),
             sources = self.sources.iter().flatten().count(),
@@ -630,6 +635,7 @@ impl M2Frame {
             transparent_elements: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
+            frame_work: frame_work::M2FrameWork::default(),
             doodad_scene: doodad_scene::M2DoodadScene::default(),
             environment_detail: 1.0,
             particle_vertices: Vec::new(),
@@ -776,6 +782,7 @@ impl M2Frame {
             transparent_elements: Vec::new(),
             placement_topology_dirty: true,
             placement_visibility: visibility::M2PlacementVisibility::default(),
+            frame_work: frame_work::M2FrameWork::default(),
             doodad_scene: doodad_scene::M2DoodadScene::default(),
             environment_detail: 1.0,
             particle_vertices: Vec::new(),
@@ -2221,27 +2228,45 @@ impl M2Frame {
             )?;
         }
         frame_profile.mark("WMO doodad admission");
+        self.placement_visibility.select_frame_work(
+            camera.camera().position(),
+            self.environment_detail,
+            scenery_shadows.is_some(),
+            &mut self.frame_work,
+        );
+        self.shadow_admission.resize(self.placements.len(), false);
+        self.environment_shadow_admission
+            .resize(self.placements.len(), 0);
+        frame_profile.mark("frame work selection");
         let effect_start = self.placement_visibility.effect_start();
-        let mut next_placement = 0;
+        let mut effects_published = false;
         loop {
-            if next_placement == effect_start
+            if !effects_published
                 && self
+                    .frame_work
+                    .next_index()
+                    .is_none_or(|index| index >= effect_start)
+            {
+                effects_published = true;
+                if self
                     .unit_effects
                     .publish(&mut self.placements, &mut self.sources)
-            {
-                self.placement_topology_dirty = true;
-                self.placement_visibility
-                    .rebuild(&self.placements, &self.sources);
-                self.placement_visibility
-                    .set_vehicle_parents(self.vehicle_passengers.parents());
+                {
+                    self.placement_topology_dirty = true;
+                    self.placement_visibility
+                        .rebuild(&self.placements, &self.sources);
+                    self.placement_visibility
+                        .set_vehicle_parents(self.vehicle_passengers.parents());
+                    self.shadow_admission.resize(self.placements.len(), false);
+                    self.environment_shadow_admission
+                        .resize(self.placements.len(), 0);
+                }
+                self.frame_work
+                    .publish_effect_tail(effect_start, self.placements.len());
             }
-            if next_placement == self.placements.len() {
+            let Some(placement_index) = self.frame_work.next() else {
                 break;
-            }
-            let placement_index = next_placement;
-            next_placement += 1;
-            self.shadow_admission.push(false);
-            self.environment_shadow_admission.push(0);
+            };
             // Moving-parent transforms have already been resolved. Forward
             // attachments query that same root; earlier roots reuse admission.
             let environment_maps = if let Some(queries) = scenery_shadows {

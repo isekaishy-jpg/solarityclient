@@ -25,6 +25,7 @@ impl Iterator for PlacementStateIndices<'_> {
 /// culling. Only terrain-owned placements have immutable world transforms.
 #[derive(Default)]
 pub(super) struct M2PlacementVisibility {
+    frame_work_index: super::frame_work::M2FrameWorkIndex,
     /// Source liveness can be marked without revisiting large instance records.
     source_indices: Vec<usize>,
     bounds: Vec<Option<(glam::Vec3, f32)>>,
@@ -143,6 +144,20 @@ impl M2PlacementVisibility {
             self.scenery.push(spatial.map(|spatial| spatial.scenery()));
         }
         self.rebuild_scene_order();
+        self.frame_work_index
+            .rebuild(&self.scenery, &self.has_lights);
+    }
+
+    /// Residency does not imply frame work. Every model packet consumer uses
+    /// the same ordered query, including offscreen shadows and update owners.
+    pub(super) fn select_frame_work(
+        &self,
+        camera: glam::Vec3,
+        detail: f32,
+        shadows: bool,
+        work: &mut super::frame_work::M2FrameWork,
+    ) {
+        self.frame_work_index.select(camera, detail, shadows, work);
     }
 
     /// Marks all placement-owned slots, including dynamic and empty geometry.

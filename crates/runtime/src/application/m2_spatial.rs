@@ -11,18 +11,57 @@ pub(super) struct SceneryDistance {
 }
 
 impl SceneryDistance {
-    /// 7BABC0 and the terrain shadow collector use ADF3DC: the square of the
-    /// fade-start radius, not the farther ordinary visibility cutoff. 78F570
-    /// retains the scaled radius and subtraction in x87 until the square store.
-    pub(super) fn admits_shadow(self, camera: Vec3, detail: f32) -> bool {
-        let far = [30., 100., 200., 750., 1250.][self.category];
-        let far = if (1..=3).contains(&self.category) {
+    const FAR: [f32; 5] = [30., 100., 200., 750., 1250.];
+    const FADE: [f32; 5] = [5., 10., 15., 20., 50.];
+
+    pub(super) const fn center(self) -> Vec3 {
+        self.center
+    }
+
+    pub(super) const fn category(self) -> usize {
+        self.category
+    }
+
+    fn ordinary_far(category: usize, detail: f32) -> f32 {
+        let far = Self::FAR[category];
+        if (1..=3).contains(&category) {
+            far * detail
+        } else {
+            far
+        }
+    }
+
+    fn shadow_square(category: usize, detail: f32) -> f32 {
+        let far = f64::from(Self::FAR[category]);
+        let far = if (1..=3).contains(&category) {
             far * f64::from(detail)
         } else {
             far
         };
-        let start = far - [5., 10., 15., 20., 50.][self.category];
-        let square = (start * start) as f32;
+        let start = far - f64::from(Self::FADE[category]);
+        (start * start) as f32
+    }
+
+    /// Conservative broad-query extents for the two existing distance policies.
+    /// The final decisions still use their original f32/x87-compatible math.
+    /// Padding covers f32 subtraction/square rounding at the ordinary boundary;
+    /// it expands only the candidate query, never actual visibility or shadows.
+    pub(super) fn frame_query_radii(detail: f32) -> [f64; 5] {
+        std::array::from_fn(|category| {
+            let far = Self::ordinary_far(category, detail);
+            if !detail.is_finite() || !far.is_finite() {
+                return f64::INFINITY;
+            }
+            let square = (far * far).max(Self::shadow_square(category, detail));
+            f64::from(square).sqrt() * (1.0 + 32.0 * f64::from(f32::EPSILON)) + 1.0e-6
+        })
+    }
+
+    /// 7BABC0 and the terrain shadow collector use ADF3DC: the square of the
+    /// fade-start radius, not the farther ordinary visibility cutoff. 78F570
+    /// retains the scaled radius and subtraction in x87 until the square store.
+    pub(super) fn admits_shadow(self, camera: Vec3, detail: f32) -> bool {
+        let square = Self::shadow_square(self.category, detail);
         self.center.as_dvec3().distance_squared(camera.as_dvec3()) <= f64::from(square)
     }
 
@@ -67,16 +106,11 @@ impl SceneryDistance {
     /// rejects beyond the far radius and snaps alpha at 0.01 and 0.99.
     pub(super) fn opacity(self, camera: Vec3, environment_detail: f32) -> f32 {
         let distance_squared = self.center.distance_squared(camera);
-        let distance = [30.0, 100.0, 200.0, 750.0, 1250.0][self.category];
-        let distance = if (1..=3).contains(&self.category) {
-            distance * environment_detail
-        } else {
-            distance
-        };
+        let distance = Self::ordinary_far(self.category, environment_detail);
         if distance_squared > distance * distance {
             return 0.0;
         }
-        let fade = [5.0, 10.0, 15.0, 20.0, 50.0][self.category];
+        let fade = Self::FADE[self.category];
         let start = distance - fade;
         if distance_squared <= start * start {
             return 1.0;

@@ -326,6 +326,24 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
             }
         }
     }
+    // Resident far tiles must not turn back into per-frame model preparation.
+    // Exercise the real packet path, including cached/uncached near props and
+    // offscreen shadow casters, rather than only testing the query in isolation.
+    for index in 0..4096 {
+        let model = &models[0];
+        let playback = M2Playback::default_sequence(model, &animations, 0, &mut random)?;
+        frame.placements.push(m2_gpu_placement(
+            0,
+            Mat4::from_translation(center + Vec3::Y * (10_000. + index as f32)),
+            M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad {
+                unique_id: frame.placements.len() as u32 + 1,
+            }),
+            model,
+            Some(M2PlaybackStorage::Local(playback)),
+            None,
+            0,
+        )?);
+    }
     let camera = WorldCamera::orthographic(
         center + Vec3::X * 8.,
         center,
@@ -414,6 +432,15 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
                     assert_eq!(caster.maps & 7 != 0, !animated);
                 }
             }
+            let (visited, distance_tests) = frame.frame_work.diagnostic_counts();
+            assert!(
+                visited <= 9,
+                "only the original nearby fixture candidates enter preparation: {visited}"
+            );
+            assert!(
+                distance_tests <= 64,
+                "distant resident tiles are rejected as spatial groups"
+            );
         }
         assert_eq!(
             observed, [true; 6],
