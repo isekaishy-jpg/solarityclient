@@ -63,6 +63,15 @@ of each phase and at quarter turns of the orbit or travel segments. This explici
 readback and writes images between frames, affecting both retirement and animation
 time. Use a separate run without this setting for timing comparisons.
 
+For visual checks, also set `SOLARITY_WORLD_CAPTURE_PRELOAD` to finish the
+current camera's terrain and ground-detail demand behind the normal loading
+card before replay begins. This requires capture output to be enabled and
+fails if entry does not complete within 180 seconds. The default replay
+continues to measure incremental streaming. Inspect `resident_tiles` in the
+CSV before interpreting skyline captures; a short replay can otherwise show
+only the primary tile. CSV surface counts distinguish ordinary terrain, WDL,
+and WMO submissions without additional scene traversal.
+
 This replay does not exercise the network, movement solver, remote population,
 audio, or diagnostic overlays. Its frame times are evidence about the exercised
 production paths, not a substitute for measurements from a populated live world.

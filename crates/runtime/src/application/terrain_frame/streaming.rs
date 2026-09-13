@@ -12,7 +12,8 @@ use crate::random::CrtRand;
 use super::{RuntimeTerrainFrameError, TerrainFrame, TerrainGpuTile, prepare_tile_draws};
 
 impl TerrainFrame {
-    /// Uses the same camera/chunk selection during covered entry and gameplay.
+    /// Prewarms camera-visible detail resources while the loading card covers
+    /// the world. Gameplay publication applies the current exterior clip.
     pub(in crate::application) fn prepare_ground_detail<'a>(
         &mut self,
         renderer: &mut VulkanRenderer,
@@ -23,7 +24,8 @@ impl TerrainFrame {
             camera,
             solarity_rendering::WorldScreenWindow::FULL,
         )?;
-        self.ground_detail.prepare(renderer, tiles, camera, frustum)
+        self.ground_detail
+            .prepare(renderer, tiles, camera, Some(frustum))
     }
 
     /// All visible detail requests discovered by the last prepare are resident.

@@ -1,8 +1,8 @@
 //! Shared WMO scene admission, ordered graphics clips and unit destinations.
 
 mod admission;
+mod exterior;
 mod graphics;
-mod horizon;
 mod outdoor;
 mod sky;
 

@@ -88,7 +88,7 @@ impl GroundDetailWorld {
         renderer: &mut VulkanRenderer,
         residents: impl Iterator<Item = &'a ResidentTerrainTile> + Clone,
         camera: WorldCameraFrame,
-        frustum: WorldFrustum,
+        frustum: Option<WorldFrustum>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut profile = crate::application::frame_profile::RuntimeFrameProfile::new(
             "Ground detail preparation",
@@ -111,6 +111,11 @@ impl GroundDetailWorld {
         if self.distance == 0.0 {
             return Ok(());
         }
+        // 799D40 reaches detail only for exterior-admitted terrain chunks.
+        // Retire/publish completed generations above even when the bank closes.
+        let Some(frustum) = frustum else {
+            return Ok(());
+        };
         for resident in residents {
             let assets = resident.ground_detail();
             let Some(catalog) = &assets.catalog else {

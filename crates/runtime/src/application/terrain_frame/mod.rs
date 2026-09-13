@@ -31,6 +31,7 @@ use crate::application::terrain_coordinator::world_model_residency::ResidentWorl
 use crate::random::CrtRand;
 
 mod admission;
+mod exterior;
 mod ground_detail;
 pub(in crate::application) mod m2;
 mod shadow;
@@ -819,9 +820,6 @@ impl TerrainFrame {
         self.world_models.update_game_object_states(game_objects)?;
         profile.mark("object states");
         let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
-        self.ground_detail
-            .prepare(renderer, terrain.resident_tiles(), camera, frustum)?;
-        profile.mark("ground detail");
         let light = environment.light();
         // 7816F0 uses the preceding post-world glare update for these two
         // exterior channels; cloud/sky, fog, and specular colors are separate.
@@ -965,33 +963,27 @@ impl TerrainFrame {
                 }),
         )?;
         profile.mark("M2 packets");
-        self.visible_draws.clear();
-        for tile in &self.tiles {
-            if !tile.plan.may_have_visible_chunks(frustum) {
-                continue;
-            }
-            for (chunk, draw) in tile.plan.chunks().iter().zip(&tile.draws) {
-                if chunk.is_visible(frustum)? {
-                    // Animated M2 sources publish before terrain queries them.
-                    // Copy the resident packet so retired lights cannot persist.
-                    let draw = if m2.scene_points.points().is_empty() {
-                        *draw
-                    } else {
-                        let (center, radius) = chunk.point_light_bounds();
-                        draw.with_point_lights(m2.scene_points.terrain_lighting(
-                            center,
-                            radius,
-                            camera.camera().position(),
-                        )?)
-                    };
-                    self.visible_draws.push(draw);
-                }
-            }
-        }
+        // M2 preparation has completed this camera's WMO scene traversal.
+        let exterior_frustum = terrain.world_terrain_frustum(camera)?;
+        self.ground_detail
+            .prepare(renderer, terrain.resident_tiles(), camera, exterior_frustum)?;
+        profile.mark("ground detail");
+        exterior::prepare_terrain_draws(
+            &self.tiles,
+            &mut self.visible_draws,
+            exterior_frustum,
+            camera,
+            m2.scene_points,
+        )?;
         profile.mark("terrain culling and point lights");
         let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera, glare_lighting);
         self.liquid_draws.clear();
-        for batch in self.tiles.iter().flat_map(|tile| &tile.liquids) {
+        for (frustum, batch) in exterior_frustum.into_iter().flat_map(|frustum| {
+            self.tiles
+                .iter()
+                .flat_map(|tile| &tile.liquids)
+                .map(move |batch| (frustum, batch))
+        }) {
             if let Some(draw) = batch.prepare_draw(
                 renderer,
                 frustum,

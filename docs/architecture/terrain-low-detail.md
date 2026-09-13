@@ -188,6 +188,62 @@ The earlier horizon evidence above already records conspicuous distant shapes.
 It also does not establish the uncertain outside-the-gate case: an exterior
 camera still admits WDL and may require the native occlusion work below.
 
+## Ordinary terrain admission follow-up
+
+The user confirmed that Build 127 still displayed mountains inside the city.
+Its earlier replay was not sufficient visual validation: the camera differed
+from the supplied view, its far clip was 777 rather than the Testing profile's
+1277, and short incremental streaming had not populated the surrounding ADTs.
+The WDL correction above remains independently supported by stock evidence,
+but did not close the ordinary-terrain submission path.
+
+Further recovery from the same pinned executable shows that `79A790` installs
+the ordinary exterior clip through `790AF0` before `799D40` selects ADT chunks.
+`799D40` performs chunk rejection before reaching ground detail (`7D3FE0`) and
+the eligible surface/water queues. The runtime previously used the full camera
+frustum for ADT terrain, terrain liquids, and ground detail even when primary
+WMO traversal closed exterior visibility.
+
+Those submissions now share the retained primary exterior window with WDL,
+using the ordinary camera projection for regular terrain. Preparation clears
+old draw packets when the window closes; sky and admitted WMO geometry remain
+independent. Terrain selection lives in a focused frame module, and the scene
+module owns both exterior projections. This reuses the existing WMO traversal
+and skips the terrain/chunk scan when closed. It introduces no live logging,
+GPU queries, or extra scene scan. Covered-entry resource prewarming retains its
+existing full-camera behavior; gameplay submission applies the exterior clip.
+
+Portable regression coverage checks ordinary-terrain window clipping and
+open/closed transitions. Installed city-group probes now assert suppression of
+both terrain projections. The offline capture CSV also records existing terrain,
+WDL, and WMO draw totals, and an explicit capture preload option prevents a
+partially streamed scene from being mistaken for a completed visual check.
+
+The follow-up passes formatting, all-target/all-feature Clippy with warnings
+denied, and 1,359 workspace tests with 27 ignored. The installed Orgrimmar
+probe also passed explicitly. Paired offline Vulkan replays use Build 127
+(`ec88379d`, with only the same diagnostic preload/count additions) and the
+candidate, both with all 49 terrain tiles resident. They start at Soap's saved
+server position `(1464.85, -4421.25, 25.4626)`, travel by `(45, 10, 0)`, and
+use camera distance 8.480558, pitch 0.06986, yaw 0.22892, realm hour 4,
+1280x720, and the Testing graphics CVars including farclip 1277.
+
+In `stationary-0000`, ordinary terrain draws change from 602 to zero while
+WDL remains zero and WMO draws remain 291. In `travel_out-0014`, ordinary
+terrain draws change from 603 to zero while WDL remains zero and WMO draws
+remain 322. The baseline images reproduce the extra silhouettes and bare
+ridges behind the towers and zeppelin; the candidate images remove them while
+retaining the city. The candidate orbit also admits exterior terrain again
+(67 terrain draws and 11 WDL draws at orbit frame 12).
+
+Evidence is retained locally under `target/orgrimmar-preloaded-before*` and
+`target/orgrimmar-preloaded-after*`, with stock recovery in
+`target/orgrimmar-terrain-admission.c`. These use an offline fixture character
+at saved coordinates, not Soap's exact latest live camera or server population.
+They establish the reproduced visual correction and submission difference,
+not a gameplay FPS change. Compilation/tests overlapped capture runs, so their
+timing columns must not be used for performance comparison.
+
 ## Remaining horizon work
 
 This change submits WDL terrain. The asset API retains MODF placements, but

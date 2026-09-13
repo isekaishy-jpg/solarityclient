@@ -17,6 +17,7 @@ use crate::application::run;
 use crate::application::terrain_frame::TerrainFrame;
 use crate::application::world_ui::RuntimeWorldUi;
 use crate::application::{ApplicationError, RuntimeTerrainFrameError};
+use crate::loading::RuntimeLoadingScreen;
 
 /// One measured production World transaction, with startup/streaming retained.
 #[derive(Clone, Debug)]
@@ -45,6 +46,12 @@ pub struct WorldBenchmarkSample {
     pub evicted_tiles: usize,
     /// Visible native terrain-detail texture buckets submitted this frame.
     pub ground_detail_draws: usize,
+    /// Actual surface submissions distinguish terrain from WMO skyline geometry.
+    pub terrain_draws: usize,
+    /// Actual WDL submissions use the independent horizon projection.
+    pub low_detail_draws: usize,
+    /// Visible physical WMO passes, retained when exterior terrain is closed.
+    pub world_model_draws: usize,
     /// Eligible unit and scenery packets submitted to the primary shadow map.
     pub primary_shadow_draws: usize,
     /// Actual near, middle, and far environment packets in this frame's updates.
@@ -215,6 +222,13 @@ impl ClientServices {
             return Err(error.into());
         }
         self.world_ui = Some(ui);
+        // Capture verification can explicitly finish the same covered GPU
+        // admission as real entry. Ordinary streaming benchmarks stay unchanged.
+        if capture_directory.is_some()
+            && std::env::var_os("SOLARITY_WORLD_CAPTURE_PRELOAD").is_some()
+        {
+            self.preload_world_capture(world.map_id().value())?;
+        }
         tracing::info!(
             initialization_ms = start.elapsed().as_secs_f64() * 1000.,
             "initialized offline World benchmark"
@@ -318,6 +332,50 @@ impl ClientServices {
         world.set_local_player_view(initial_view)?;
         world.update_transform(player_guid, initial_transform)?;
         Ok(samples)
+    }
+
+    /// Makes an explicitly requested capture wait for current terrain/detail demand.
+    fn preload_world_capture(&mut self, map: u32) -> Result<(), WorldBenchmarkError> {
+        self.loading_screen = Some(RuntimeLoadingScreen::prepare(
+            &mut self.renderer,
+            &self.assets,
+            &mut self.ui_textures,
+            &self.loading_directory,
+            Some(map),
+            self.platform.logical_extent(),
+        )?);
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
+                let Some(event) = self.poll_platform_event() else {
+                    break;
+                };
+                if run::exit_reason(&event.event, self.platform.window_id().value()).is_some() {
+                    return Err(WorldBenchmarkError::Cancelled);
+                }
+            }
+            let terrain_ready = self.service_terrain_streaming()?;
+            let detail_ready = self.prepare_world_entry_detail()?;
+            self.loading_screen
+                .as_mut()
+                .ok_or(WorldBenchmarkError::State("missing loading card"))?
+                .present(&mut self.renderer, &[])?;
+            if terrain_ready && detail_ready {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(WorldBenchmarkError::State(
+                    "capture terrain preload timed out",
+                ));
+            }
+            std::thread::yield_now();
+        }
+        self.loading_screen = None;
+        tracing::info!(
+            resident_tiles = self.terrain.resident_tile_count(),
+            "completed World capture preload"
+        );
+        Ok(())
     }
 
     fn benchmark_world_frame(
@@ -557,6 +615,9 @@ impl ClientServices {
             admitted_tiles,
             evicted_tiles,
             ground_detail_draws: report.ground_detail_draw_count(),
+            terrain_draws: report.terrain_draw_count(),
+            low_detail_draws: report.low_detail_draw_count(),
+            world_model_draws: report.world_model_draw_count(),
             primary_shadow_draws: report.primary_shadow_draw_count(),
             environment_shadow_draws: report.environment_shadow_draw_counts(),
             screen_effect,

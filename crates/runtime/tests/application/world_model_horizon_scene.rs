@@ -1,4 +1,4 @@
-//! True-exterior admission controls WDL publication independently of visible sky.
+//! True-exterior admission controls both terrain projections independently of sky.
 
 use std::{error::Error, path::PathBuf, sync::Arc};
 
@@ -29,6 +29,7 @@ fn sky_only_camera_root_does_not_publish_horizon() -> Result<(), Box<dyn Error>>
     assert!(scene.sky.has_window());
     let map = horizon_map()?;
     let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 777.).frame(16. / 9.)?;
+    assert!(scene.terrain_frustum(camera)?.is_none());
     assert!(
         scene
             .horizon_frame(&map, camera, Vec3::ONE, WorldHorizonScale::default())?
@@ -36,6 +37,7 @@ fn sky_only_camera_root_does_not_publish_horizon() -> Result<(), Box<dyn Error>>
     );
     // The same retained map remains eligible when traversal opens exterior.
     scene.outdoor_window = Some(WorldScreenWindow::FULL);
+    assert!(scene.terrain_frustum(camera)?.is_some());
     assert!(
         scene
             .horizon_frame(&map, camera, Vec3::ONE, WorldHorizonScale::default())?
@@ -109,12 +111,32 @@ fn installed_orgrimmar_sky_only_groups_do_not_publish_horizon() -> Result<(), Bo
                 .is_none()
         );
         assert!(scene.sky.has_window());
+        assert!(scene.terrain_frustum(camera)?.is_none());
         assert!(
             scene
                 .horizon_frame(&map, camera, Vec3::ONE, WorldHorizonScale::default())?
                 .is_none()
         );
     }
+    Ok(())
+}
+
+/// 790AF0 crops ordinary ADT selection to the primary exterior window.
+#[test]
+fn regular_terrain_uses_exterior_window_and_closes_between_views() -> Result<(), Box<dyn Error>> {
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 777.).frame(1.)?;
+    let mut scene = WorldSceneAdmission {
+        outdoor_window: Some(WorldScreenWindow::new(0., -1., 1., 1.)),
+        ..Default::default()
+    };
+    let frustum = scene.terrain_frustum(camera)?.ok_or("exterior clip")?;
+    assert!(frustum.contains_sphere(Vec3::new(100., -20., 0.), 1.)?);
+    assert!(!frustum.contains_sphere(Vec3::new(100., 20., 0.), 1.)?);
+    scene.outdoor_window = Some(WorldScreenWindow::FULL);
+    let frustum = scene.terrain_frustum(camera)?.ok_or("outdoor clip")?;
+    assert!(frustum.contains_sphere(Vec3::new(100., 20., 0.), 1.)?);
+    scene.outdoor_window = None;
+    assert!(scene.terrain_frustum(camera)?.is_none());
     Ok(())
 }
 
