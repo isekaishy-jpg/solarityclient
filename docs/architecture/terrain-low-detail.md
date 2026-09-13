@@ -244,6 +244,14 @@ They establish the reproduced visual correction and submission difference,
 not a gameplay FPS change. Compilation/tests overlapped capture runs, so their
 timing columns must not be used for performance comparison.
 
+Testing Build 128 packages revision
+`8f9b8335f6f1ebd00d461632f6f21ef16ef0729e`. The installed and sealed
+executables share SHA-256
+`1b0ebc905dbcf247bab91407c68221f8419a65ec81cb2e6a6e25ce2fad253118`.
+The dirty identity records the build-number reservation. Installation verified
+the runtime DLL hashes and Testing desktop shortcut and preserved a local
+Build 127 backup.
+
 ## Remaining horizon work
 
 This change submits WDL terrain. The asset API retains MODF placements, but
