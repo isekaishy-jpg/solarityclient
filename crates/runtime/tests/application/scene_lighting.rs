@@ -6,6 +6,59 @@ use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models};
 #[path = "interior_scene_lighting.rs"]
 mod interior;
 
+/// Reusing sparse storage must match a fresh bank across residency and graph changes.
+#[test]
+fn sparse_receiver_reset_cannot_inherit_removed_or_remapped_parents() -> Result<(), Box<dyn Error>>
+{
+    let mut retained = scene_lighting::SceneLighting::default();
+    let base = M2SceneUniform::new(
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Vec3::Z,
+        Vec4::ZERO,
+        Vec3::ZERO,
+        [M2LocalLightState::disabled(); 4],
+    );
+    let exterior = M2DirectionalLight::new(-Vec3::Z, Vec3::ZERO, Vec3::ONE);
+    let callback = M2DirectionalLight::new(Vec3::X, Vec3::Y, Vec3::Z);
+    retained.receiver_with_light(50_000, Some(50_001), Vec3::X, Some(callback), Some(Vec3::Y))?;
+    retained.receiver_with_light(50_001, None, Vec3::Y, Some(callback), None)?;
+    retained.finish(base, exterior)?;
+
+    for parent in [50_000, 1, 50_001, 75_000] {
+        retained.clear();
+        let mut fresh = scene_lighting::SceneLighting::default();
+        for bank in [&mut retained, &mut fresh] {
+            // The parent can be absent, move to an earlier index after compaction,
+            // or appear beyond a previous high-water mark. Every new frame must
+            // match a fresh bank even though backing storage remains allocated.
+            bank.receiver(0, Some(parent), Vec3::ZERO)?;
+            if parent == 1 || parent == 75_000 {
+                bank.receiver_with_light(parent, None, Vec3::Z, Some(callback), None)?;
+            }
+            bank.finish(base, exterior)?;
+        }
+        assert_eq!(retained.scenes, fresh.scenes);
+    }
+    // Backing storage must not change the old dense bank's bounded resolution
+    // of an attachment cycle reached from a separate receiver.
+    retained.clear();
+    retained.receiver(90_001, None, Vec3::ZERO)?;
+    retained.clear();
+    let mut fresh = scene_lighting::SceneLighting::default();
+    for bank in [&mut retained, &mut fresh] {
+        bank.receiver(0, Some(1), Vec3::ZERO)?;
+        bank.receiver_with_light(1, Some(2), Vec3::X, Some(callback), None)?;
+        bank.receiver_with_light(2, Some(1), Vec3::Y, Some(exterior), None)?;
+        bank.finish(base, exterior)?;
+    }
+    assert_eq!(retained.scenes, fresh.scenes);
+    Ok(())
+}
+
 #[test]
 fn directional_reenable_order_matches_native_and_attached_receivers_inherit()
 -> Result<(), Box<dyn Error>> {

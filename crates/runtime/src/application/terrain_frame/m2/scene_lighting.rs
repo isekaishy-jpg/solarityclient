@@ -31,6 +31,8 @@ pub(super) struct SceneLighting {
     placement_lights: Vec<Option<M2DirectionalLight>>,
     placement_parents: Vec<Option<usize>>,
     receiver_placements: Vec<usize>,
+    /// Current frame's indexed extent, independent of retained storage capacity.
+    placement_end: usize,
 }
 
 impl SceneLighting {
@@ -46,12 +48,20 @@ impl SceneLighting {
             light.active = false;
         }
         self.centers.clear();
-        self.placement_centers.clear();
+        // Placement indices include distant resident terrain. Reset only the
+        // receivers actually published last frame; preserving vector lengths
+        // avoids filling every intervening scenery slot at the next receiver.
+        // Clear all three facts together so removed or remapped parents cannot
+        // lend a stale center, light, or ancestry edge to the new frame.
+        for &placement in &self.receiver_placements {
+            self.placement_centers[placement] = None;
+            self.placement_lights[placement] = None;
+            self.placement_parents[placement] = None;
+        }
         self.receiver_lights.clear();
         self.receiver_fog.clear();
-        self.placement_lights.clear();
-        self.placement_parents.clear();
         self.receiver_placements.clear();
+        self.placement_end = 0;
     }
 
     pub fn publish(
@@ -110,6 +120,7 @@ impl SceneLighting {
         fog_color: Option<Vec3>,
     ) -> Result<u32, RuntimeTerrainFrameError> {
         let size = self.placement_centers.len().max(placement_index + 1);
+        self.placement_end = self.placement_end.max(placement_index + 1);
         self.placement_centers.resize(size, None);
         self.placement_centers[placement_index] = Some(center);
         self.placement_lights.resize(size, None);
@@ -150,7 +161,7 @@ impl SceneLighting {
             // after every source and entity callback has joined this frame.
             let (mut center, mut light) = (*center, *light);
             let mut current = *placement;
-            for _ in 0..self.placement_parents.len() {
+            for _ in 0..self.placement_end {
                 let Some(parent) = self.placement_parents.get(current).copied().flatten() else {
                     break;
                 };

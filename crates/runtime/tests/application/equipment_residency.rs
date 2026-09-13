@@ -328,9 +328,10 @@ fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result
             ..
         } = placement.owner
         {
-            let parent =
-                super::super::super::placement_parent_index(&frame.placements, index, placement)
-                    .ok_or("NPC equipment parent")?;
+            let parent = frame
+                .placement_visibility
+                .light_parent(index)
+                .ok_or("NPC equipment parent")?;
             assert_eq!(
                 frame.placements[parent].owner,
                 M2GpuPlacementOwner::CreatureBody { guid }

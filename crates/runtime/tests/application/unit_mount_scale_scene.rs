@@ -1,7 +1,6 @@
 //! Native mounted-unit scales survive residency, attachment posing and dismounts.
 
 use super::*;
-use crate::application::terrain_frame::m2::placement_parent_index;
 
 /// 73D5D0 attaches the body beneath a mount for non-player Unit_C owners too.
 #[test]
@@ -145,7 +144,7 @@ fn mounted_creatures_publish_a_mount_and_attached_rider() -> Result<(), Box<dyn 
             scale
         );
         assert!(body.ground_placement.is_none());
-        assert_eq!(placement_parent_index(&frame.placements, 1, body), Some(0));
+        assert_eq!(frame.placement_visibility.light_parent(1), Some(0));
         assert!(
             frame.visible_draws.len() >= 2,
             "both mounted NPC models draw"

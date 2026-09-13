@@ -10,7 +10,7 @@ use solarity_systems::EntityRetirement;
 
 use super::{
     GameObjectFrameInput, M2Frame, M2GpuPlacement, M2GpuPlacementOwner, M2PlaybackStorage,
-    RuntimeTerrainFrameError, held_item_finger_pose, placement_parent_index,
+    RuntimeTerrainFrameError, held_item_finger_pose,
 };
 use crate::application::unit_animation::UnitRetiredPose;
 
@@ -118,7 +118,7 @@ impl M2Frame {
             let parents = members
                 .iter()
                 .map(|&index| {
-                    placement_parent_index(&self.placements, index, &self.placements[index])
+                    super::ancestry::placement_parent(&self.placements, index)
                         .filter(|parent| members.contains(parent))
                 })
                 .collect::<Vec<_>>();

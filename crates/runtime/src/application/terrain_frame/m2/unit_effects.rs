@@ -183,8 +183,12 @@ impl UnitEffectPlacement {
             }
         }
     }
-    pub(super) fn attached_to(&self, owner: &Rc<UnitAnimationBehavior>) -> bool {
-        matches!(&self.binding, UnitEffectBinding::Attached { owner: parent, .. } if std::ptr::eq(parent.as_ptr(), Rc::as_ptr(owner)))
+    /// Identity of the same weak parent used by the native attachment binding.
+    pub(super) fn attachment_owner(&self) -> Option<*const UnitAnimationBehavior> {
+        match &self.binding {
+            UnitEffectBinding::Attached { owner, .. } => Some(owner.as_ptr()),
+            UnitEffectBinding::Positioned { .. } => None,
+        }
     }
 
     pub(super) fn retiring(&self) -> bool {

@@ -1,6 +1,9 @@
 //! Compact placement admission and ordering metadata, separate from animated instances.
 
+mod doodads;
+
 use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource};
+use crate::application::frame_profile::RuntimeFrameProfile;
 use std::collections::HashMap;
 
 /// Ordered state-update candidates, borrowing rebuilt metadata or covering the
@@ -38,22 +41,16 @@ pub(super) struct M2PlacementVisibility {
     dynamic_owners: HashMap<M2GpuPlacementOwner, usize>,
     game_object_indices: Vec<usize>,
     light_parents: Vec<Option<usize>>,
+    ancestry: super::ancestry::PlacementAncestry,
     vehicle_parents: HashMap<usize, usize>,
     model_distance_sort: Vec<bool>,
     has_lights: Vec<bool>,
     /// Admission must not load the large simulation record for rejected scenery.
     is_world_model_doodad: Vec<bool>,
-    /// Light owners are evaluated even without a visible MODR reference.
-    world_model_doodad_light_indices: Vec<usize>,
+    /// Ordered static membership survives unrelated unit/effect topology changes.
+    doodads: doodads::DoodadLookup,
     /// First effect, or the placement count when no effect is resident.
     effect_start: usize,
-    world_model_doodads: HashMap<
-        (
-            crate::application::terrain_coordinator::RuntimeWorldModelMovementOwner,
-            usize,
-        ),
-        usize,
-    >,
 }
 
 impl M2PlacementVisibility {
@@ -64,6 +61,7 @@ impl M2PlacementVisibility {
         placements: &[M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
     ) {
+        let mut profile = RuntimeFrameProfile::new("M2 placement metadata");
         self.source_indices.clear();
         self.bounds.clear();
         self.scenery.clear();
@@ -71,26 +69,22 @@ impl M2PlacementVisibility {
         self.retired_indices.clear();
         self.dynamic_owners.clear();
         self.game_object_indices.clear();
-        self.light_parents.clear();
+        self.ancestry.rebuild(placements, &mut self.light_parents);
+        profile.mark("attachment parents");
         self.vehicle_parents.clear();
         self.model_distance_sort.clear();
         self.has_lights.clear();
         self.is_world_model_doodad.clear();
-        self.world_model_doodad_light_indices.clear();
+        self.doodads.begin();
         self.effect_start = placements.len();
-        self.world_model_doodads.clear();
         for (index, placement) in placements.iter().enumerate() {
             if placement.retirement.is_some() {
                 self.retired_indices.push(index);
             }
             let doodad_owner = super::doodad_scene::owner_key(placement.owner);
             self.is_world_model_doodad.push(doodad_owner.is_some());
-            let first_doodad = doodad_owner.is_some_and(|owner| {
-                *self.world_model_doodads.entry(owner).or_insert(index) == index
-            });
             self.source_indices.push(placement.source_index);
-            let parent = super::placement_parent_index(placements, index, placement);
-            self.light_parents.push(parent);
+            let parent = self.light_parents[index];
             let source = sources[placement.source_index].as_ref();
             // Stock enables whole-model sorting for two or more external views;
             // an attachment inherits the containing model's transparency domain.
@@ -101,8 +95,8 @@ impl M2PlacementVisibility {
             let has_lights =
                 source.is_some_and(|source| !source.model.animations().lights().is_empty());
             self.has_lights.push(has_lights);
-            if first_doodad && has_lights {
-                self.world_model_doodad_light_indices.push(index);
+            if let Some(owner) = doodad_owner {
+                self.doodads.record(owner, index, has_lights);
             }
             if placement.unit_effect.is_some() {
                 self.effect_start = self.effect_start.min(index);
@@ -143,9 +137,14 @@ impl M2PlacementVisibility {
             self.bounds.push(spatial.map(|spatial| spatial.sphere()));
             self.scenery.push(spatial.map(|spatial| spatial.scenery()));
         }
+        profile.mark("placement fields");
+        self.doodads.finish();
+        profile.mark("doodad membership");
         self.rebuild_scene_order();
+        profile.mark("callback order");
         self.frame_work_index
             .rebuild(&self.scenery, &self.has_lights);
+        profile.mark("spatial membership");
     }
 
     /// Residency does not imply frame work. Every model packet consumer uses
@@ -182,7 +181,7 @@ impl M2PlacementVisibility {
         ),
         usize,
     > {
-        &self.world_model_doodads
+        self.doodads.index()
     }
 
     pub(super) fn scenery(&self, index: usize) -> Option<super::distance::SceneryDistance> {
@@ -295,7 +294,7 @@ impl M2PlacementVisibility {
     }
 
     pub(super) fn world_model_doodad_light_indices(&self) -> &[usize] {
-        &self.world_model_doodad_light_indices
+        self.doodads.light_indices()
     }
 
     pub(super) fn effect_start(&self) -> usize {
@@ -304,49 +303,5 @@ impl M2PlacementVisibility {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn callback_subtrees_match_original_scene_traversal() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let mut cases = 0;
-        for row in include_str!("../../../../tests/fixtures/native_model_scene_order.txt").lines() {
-            if row.starts_with('#') || row.is_empty() {
-                continue;
-            }
-            let (input, output) = row.split_once('|').ok_or("scene row")?;
-            let input = input
-                .split_whitespace()
-                .map(str::parse::<i32>)
-                .collect::<Result<Vec<_>, _>>()?;
-            let expected = output
-                .split_whitespace()
-                .map(str::parse::<usize>)
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut visibility = M2PlacementVisibility {
-                dynamic_indices: input[5..].iter().map(|index| *index as usize).collect(),
-                light_parents: input[..5]
-                    .iter()
-                    .map(|parent| usize::try_from(*parent).ok())
-                    .collect(),
-                ..Default::default()
-            };
-            visibility.rebuild_scene_order();
-            assert_eq!(visibility.dynamic_scene_indices(), expected, "{row}");
-            // The same graph can be supplied by vehicle attachment publication.
-            let parents = visibility
-                .light_parents
-                .iter()
-                .enumerate()
-                .filter_map(|(index, parent)| parent.map(|parent| (index, parent)))
-                .collect();
-            visibility.light_parents.fill(None);
-            visibility.set_vehicle_parents(&parents);
-            assert_eq!(visibility.dynamic_scene_indices(), expected, "{row}");
-            cases += 1;
-        }
-        assert_eq!(cases, 480);
-        Ok(())
-    }
-}
+#[path = "../../../../../tests/application/placement_visibility.rs"]
+mod tests;

@@ -9,6 +9,7 @@ mod game_object_scene_tests;
 mod unit_effect_model_tests;
 
 mod admission;
+mod ancestry;
 pub(super) use admission::M2SourceAdmission;
 mod character_residency;
 mod distance;
@@ -3605,71 +3606,6 @@ fn prepare_glue_character_gpu_source(
         cpu_source,
         orientation,
     )
-}
-
-/// Replays the shared-model distance bit computed after M2/SKIN publication.
-///
-/// Resolves the parent-first placement relations already used for transforms.
-fn placement_parent_index(
-    placements: &[M2GpuPlacement],
-    placement_index: usize,
-    placement: &M2GpuPlacement,
-) -> Option<usize> {
-    let preceding = &placements[..placement_index];
-    if let Some(retired) = &placement.retirement {
-        return retired.parent().and_then(|parent| {
-            preceding
-                .iter()
-                .rposition(|candidate| candidate.owner == parent)
-        });
-    }
-    if placement.glue_parent_attachment.is_some() {
-        return preceding.iter().rposition(|candidate| {
-            matches!(candidate.owner, M2GpuPlacementOwner::GlueModel { .. })
-        });
-    }
-    match placement.owner {
-        M2GpuPlacementOwner::Retired(_) => None,
-        M2GpuPlacementOwner::UnitEffect { .. } => preceding.iter().rposition(|candidate| {
-            candidate.unit_animation.as_ref().is_some_and(|owner| {
-                placement
-                    .unit_effect
-                    .as_ref()
-                    .is_some_and(|effect| effect.attached_to(owner))
-            })
-        }),
-        M2GpuPlacementOwner::PlayerBody { guid } => preceding
-            .iter()
-            .rposition(|candidate| candidate.owner == M2GpuPlacementOwner::PlayerMount { guid }),
-        M2GpuPlacementOwner::RemotePlayerBody { guid } => preceding.iter().rposition(|candidate| {
-            candidate.owner == M2GpuPlacementOwner::RemotePlayerMount { guid }
-        }),
-        M2GpuPlacementOwner::CreatureBody { guid } => preceding
-            .iter()
-            .rposition(|candidate| candidate.owner == M2GpuPlacementOwner::CreatureMount { guid }),
-        M2GpuPlacementOwner::UnitItem { guid, .. } => preceding.iter().rposition(|candidate| {
-            candidate.owner == M2GpuPlacementOwner::PlayerBody { guid }
-                || candidate.owner == M2GpuPlacementOwner::RemotePlayerBody { guid }
-                || candidate.owner == M2GpuPlacementOwner::CreatureBody { guid }
-        }),
-        M2GpuPlacementOwner::UnitItemVisual {
-            guid, item_point, ..
-        } => preceding.iter().rposition(|candidate| {
-            candidate.owner
-                == M2GpuPlacementOwner::UnitItem {
-                    guid,
-                    point: item_point,
-                }
-        }),
-        M2GpuPlacementOwner::Static(_)
-        | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
-        | M2GpuPlacementOwner::GlueModel { .. }
-        | M2GpuPlacementOwner::GluePet
-        | M2GpuPlacementOwner::PlayerMount { .. }
-        | M2GpuPlacementOwner::RemotePlayerMount { .. }
-        | M2GpuPlacementOwner::CreatureMount { .. }
-        | M2GpuPlacementOwner::GameObject { .. } => None,
-    }
 }
 
 /// Reproduces the direct `$CMA`/`$CFM` lookup performed on the active mount M2.
