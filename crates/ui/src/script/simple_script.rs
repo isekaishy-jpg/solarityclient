@@ -1343,12 +1343,13 @@ impl UiScriptRuntime {
             })
             .collect::<Result<Vec<_>, UiScriptError>>()?;
         let simple_html = if let Some(assets) = environment.assets() {
-            crate::UiSimpleHtmlPlan::resolve(
+            crate::UiSimpleHtmlPlan::resolve_with_system(
                 plan.tree,
                 plan.regions,
                 plan.fonts,
                 &mut assets.borrow_mut(),
                 environment.logical_extent().1,
+                text_measurement.font_system(),
             )?
         } else if crate::UiSimpleHtmlPlan::requires_asset_store(plan.tree) {
             return Err(UiScriptError::Plan {
@@ -1643,6 +1644,11 @@ impl UiScriptRuntime {
         &self.simple_html
     }
 
+    /// Shares font coverage/metrics across the lifetime of this mounted UI.
+    pub(crate) fn font_system(&self) -> crate::FontSystem {
+        self.text_measurement.font_system()
+    }
+
     /// Applies Lua-authored `SimpleHTML:SetText` documents to native layout.
     ///
     /// Document parsing and font measurement happen once per changed string.
@@ -1675,7 +1681,7 @@ impl UiScriptRuntime {
                 width,
                 fonts,
                 assets,
-                logical_height,
+                (logical_height, self.text_measurement.font_system()),
             )? {
                 changes.push((object_index, f64::from(height), clip_object));
             }

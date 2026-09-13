@@ -191,6 +191,7 @@ impl GlueManager {
                     &self.fonts,
                     &mut self.assets.borrow_mut(),
                     self.glyph_logical_height,
+                    self.runtime.font_system(),
                 )?;
             }
         }

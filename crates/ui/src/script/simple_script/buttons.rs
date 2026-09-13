@@ -74,11 +74,16 @@ pub(super) fn dispatch_click(
 pub(super) struct TextMeasurement {
     assets: Option<AssetStoreHandle>,
     fonts: Rc<RefCell<HashMap<String, FontDefinition>>>,
-    system: Rc<RefCell<FontSystem>>,
+    system: FontSystem,
     pixels_per_ui_unit: f64,
 }
 
 impl TextMeasurement {
+    /// Shares native coverage and metrics with HTML and atlas consumers.
+    pub(super) fn font_system(&self) -> FontSystem {
+        self.system.clone()
+    }
+
     pub(super) fn new(
         assets: Option<AssetStoreHandle>,
         fonts: Rc<RefCell<HashMap<String, FontDefinition>>>,
@@ -87,7 +92,7 @@ impl TextMeasurement {
         Ok(Self {
             assets,
             fonts,
-            system: Rc::new(RefCell::new(FontSystem::new()?)),
+            system: FontSystem::new()?,
             pixels_per_ui_unit: f64::from(logical_height) / 768.0,
         })
     }
@@ -190,7 +195,7 @@ impl TextMeasurement {
             )));
         };
         let mut assets = assets.borrow_mut();
-        let mut system = self.system.borrow_mut();
+        let mut system = self.system.clone();
         for line in text.lines() {
             let width = system
                 .measure_line_width_26_6(&mut assets, path, pixel_height, line, rasterization)
@@ -294,7 +299,7 @@ impl TextMeasurement {
         let mut widest = 0.0_f64;
         let mut line_count = 0_usize;
         let mut assets = assets.borrow_mut();
-        let mut system = self.system.borrow_mut();
+        let mut system = self.system.clone();
         for line in normalized.split('\n') {
             let advances = system
                 .measure_character_advances_26_6(

@@ -45,6 +45,65 @@ fn missing_stock_font_remains_missing() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Common glyphs share coverage across consumers, while a remount invalidates
+/// the provider even when its virtual font path is identical.
+#[test]
+fn shared_font_cache_retains_coverage_and_respects_provider_lifetimes() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new(&[FixtureFile {
+        path: "Fonts\\Shared.ttf",
+        bytes: include_bytes!("../fixtures/tooltip_fixture.ttf"),
+    }])?;
+    let mut store = mount(&fixture)?;
+    let path = AssetPath::new("Fonts/Shared.ttf")?;
+    let mut fonts = FontSystem::new()?;
+    let first = fonts.rasterize(&mut store, &path, 16, 'A', FontRasterization::Antialiased)?;
+    let bytes = fonts.cached_coverage_bytes();
+    let mut other = fonts.clone();
+    let repeated = other.rasterize(&mut store, &path, 16, 'A', FontRasterization::Antialiased)?;
+    assert_eq!(first.coverage().as_ptr(), repeated.coverage().as_ptr());
+    assert_eq!(fonts.cached_glyph_count(), 1);
+    assert_eq!(fonts.cached_coverage_bytes(), bytes);
+    let width = fonts.measure_line_width_26_6(
+        &mut store,
+        &path,
+        16,
+        "AAA",
+        FontRasterization::Antialiased,
+    )?;
+    assert_eq!(
+        other.measure_line_width_26_6(
+            &mut store,
+            &path,
+            16,
+            "AAA",
+            FontRasterization::Antialiased
+        )?,
+        width
+    );
+    other.rasterize(&mut store, &path, 20, 'A', FontRasterization::Antialiased)?;
+    assert_eq!(fonts.cached_glyph_count(), 2);
+    let missing = Fixture::new(&[])?;
+    let mut remounted = mount(&missing)?;
+    assert_ne!(remounted.identity(), store.identity());
+    assert!(matches!(
+        other.rasterize(
+            &mut remounted,
+            &path,
+            16,
+            'A',
+            FontRasterization::Antialiased
+        ),
+        Err(FontError::Asset(_))
+    ));
+    assert_eq!(fonts.cached_glyph_count(), 0);
+    assert_eq!(
+        first, repeated,
+        "existing immutable coverage remains pinned by its consumers"
+    );
+    Ok(())
+}
+
 /// Root font objects inherit only from definitions already constructed in load order.
 #[test]
 fn font_catalog_applies_ordered_stock_inheritance() -> Result<(), Box<dyn Error>> {

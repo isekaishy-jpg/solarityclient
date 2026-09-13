@@ -98,6 +98,7 @@ pub struct UiGlyphAtlasPlan {
     placements: HashMap<GlyphKey, AtlasPlacement>,
     metrics: HashMap<LineFontKey, FontMetrics>,
     native_font: Option<LineFontKey>,
+    font_system: FontSystem,
 }
 
 /// One archive-backed font and material contract for native text overlays.
@@ -170,7 +171,15 @@ impl UiGlyphAtlasPlan {
         assets: &mut AssetStore,
         logical_height: u32,
     ) -> Result<Self, FontError> {
-        Self::build(html, None, geometry, fonts, assets, logical_height)
+        Self::build(
+            html,
+            None,
+            geometry,
+            fonts,
+            assets,
+            logical_height,
+            FontSystem::new()?,
+        )
     }
 
     /// Rasterizes one fixed native-overlay character repertoire.
@@ -225,6 +234,7 @@ impl UiGlyphAtlasPlan {
             placements,
             metrics,
             native_font: Some(font),
+            font_system: system,
         })
     }
 
@@ -373,8 +383,17 @@ impl UiGlyphAtlasPlan {
         fonts: &FontCatalog,
         assets: &mut AssetStore,
         logical_height: u32,
+        system: FontSystem,
     ) -> Result<Self, FontError> {
-        Self::build(html, Some(live), geometry, fonts, assets, logical_height)
+        Self::build(
+            html,
+            Some(live),
+            geometry,
+            fonts,
+            assets,
+            logical_height,
+            system,
+        )
     }
 
     fn build(
@@ -384,6 +403,7 @@ impl UiGlyphAtlasPlan {
         fonts: &FontCatalog,
         assets: &mut AssetStore,
         logical_height: u32,
+        mut system: FontSystem,
     ) -> Result<Self, FontError> {
         let pixels_per_ui_unit = f64::from(logical_height) / 768.0;
         let mut requested = HashSet::new();
@@ -409,7 +429,6 @@ impl UiGlyphAtlasPlan {
             request_live_glyphs(live, pixels_per_ui_unit, &mut requested, &mut required)?;
         }
 
-        let mut system = FontSystem::new()?;
         let mut requested_keys = requested.into_iter().collect::<Vec<_>>();
         requested_keys.sort_by(|left, right| {
             left.face
@@ -479,6 +498,7 @@ impl UiGlyphAtlasPlan {
             placements,
             metrics,
             native_font: None,
+            font_system: system,
         })
     }
 

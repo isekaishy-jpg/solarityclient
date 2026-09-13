@@ -15,7 +15,7 @@ fn glyph(advance: i64) -> RasterizedGlyph {
         bearing_x: 0,
         bearing_y: 1,
         advance_x_26_6: advance * 64,
-        coverage: vec![255],
+        coverage: vec![255].into(),
     }
 }
 

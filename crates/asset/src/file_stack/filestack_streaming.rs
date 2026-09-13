@@ -2,6 +2,7 @@
 
 use crate::archive::{ArchiveDescriptor, AssetError, AssetPath, Locale, MountedArchive};
 use crate::file_stack::ArchiveCatalog;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Bytes returned with the exact archive selected by stock precedence.
 #[derive(Clone, Debug)]
@@ -37,6 +38,7 @@ impl AssetRead {
 /// millions of filenames. Runtime loading can later give this owner a dedicated
 /// asset thread without changing the public archive model.
 pub struct AssetStore {
+    identity: u64,
     pub(super) data_root: crate::archive::ClientDataRoot,
     locale: Locale,
     existing_locales: Vec<Locale>,
@@ -51,6 +53,7 @@ impl AssetStore {
     /// Returns [`AssetError::ArchiveOpen`] when any present stock archive is
     /// corrupt or unsupported.
     pub fn mount(catalog: ArchiveCatalog) -> Result<Self, AssetError> {
+        static NEXT_IDENTITY: AtomicU64 = AtomicU64::new(1);
         let data_root = catalog.data_root().clone();
         let locale = catalog.locale();
         let existing_locales = catalog.existing_locales().to_vec();
@@ -60,11 +63,19 @@ impl AssetStore {
             archives.push(MountedArchive::open(descriptor)?);
         }
         Ok(Self {
+            identity: NEXT_IDENTITY.fetch_add(1, Ordering::Relaxed),
             data_root,
             locale,
             existing_locales,
             archives,
         })
+    }
+
+    /// Identifies this immutable mounted provider lifetime for retained caches.
+    /// Remounting the same paths creates a new identity, including changed files.
+    #[must_use]
+    pub const fn identity(&self) -> u64 {
+        self.identity
     }
 
     /// Returns the locale whose archive set and localized tables are mounted.

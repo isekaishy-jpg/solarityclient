@@ -1,34 +1,29 @@
-//! Archive-backed FreeType ownership and glyph rasterization.
+//! Native font faces and exact per-size glyph/metric caches.
 
-use std::collections::HashMap;
-
-use freetype::bitmap::PixelMode;
+use super::{FontRasterization, bitmap::glyph_from_slot};
+use crate::font::{FontError, RasterizedGlyph};
 use freetype::face::{KerningMode, LoadFlag};
 use freetype::{Face, Library, RenderMode};
 use solarity_asset::{AssetPath, AssetStore};
+use std::collections::HashMap;
 
-use crate::font::{FontError, RasterizedGlyph};
-
-/// Stock font smoothing mode selected by a font object's `monochrome` flag.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum FontRasterization {
-    /// Grayscale antialiased coverage.
-    Antialiased,
-    /// One-bit coverage expanded to bytes for atlas storage.
-    Monochrome,
+/// A mounted face owns all scalar coverage and native metric results for its sizes.
+struct CachedFace {
+    face: Face,
+    glyphs: HashMap<(u32, FontRasterization, char), RasterizedGlyph>,
+    advances: HashMap<(u32, FontRasterization, char), i64>,
+    ascenders: HashMap<u32, i64>,
+    kerning: HashMap<(u32, char, char), i64>,
 }
 
-/// The UI-thread owner of FreeType and lazily loaded stock font faces.
-///
-/// Faces retain their archive bytes internally. The face map is declared
-/// before the library so Rust drops every face before the FreeType library it
-/// references.
-pub struct FontSystem {
-    faces: HashMap<AssetPath, Face>,
+/// Faces precede the library so their native allocations are released first.
+pub(super) struct FontSystemState {
+    faces: HashMap<AssetPath, CachedFace>,
+    provider: Option<u64>,
     library: Library,
 }
 
-impl FontSystem {
+impl FontSystemState {
     /// Initializes the process-local FreeType owner.
     ///
     /// # Errors
@@ -40,6 +35,7 @@ impl FontSystem {
         })?;
         Ok(Self {
             faces: HashMap::new(),
+            provider: None,
             library,
         })
     }
@@ -65,12 +61,17 @@ impl FontSystem {
     ) -> Result<RasterizedGlyph, FontError> {
         self.ensure_face(store, path)?;
 
-        let Some(face) = self.faces.get(path) else {
+        let Some(cached) = self.faces.get_mut(path) else {
             return Err(FontError::Face {
                 path: path.clone(),
                 message: "loaded face was not retained".to_owned(),
             });
         };
+        let key = (pixel_height, rasterization, character);
+        if let Some(glyph) = cached.glyphs.get(&key) {
+            return Ok(glyph.clone());
+        }
+        let face = &cached.face;
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
@@ -114,7 +115,9 @@ impl FontSystem {
                 message: error.to_string(),
             })?;
 
-        glyph_from_slot(path, face)
+        let glyph = glyph_from_slot(path, face)?;
+        cached.glyphs.insert(key, glyph.clone());
+        Ok(glyph)
     }
 
     /// Measures one line using build-12340's unfitted whole-pixel advances.
@@ -151,12 +154,13 @@ impl FontSystem {
         rasterization: FontRasterization,
     ) -> Result<Vec<i64>, FontError> {
         self.ensure_face(store, path)?;
-        let Some(face) = self.faces.get(path) else {
+        let Some(cached) = self.faces.get_mut(path) else {
             return Err(FontError::Face {
                 path: path.clone(),
                 message: "loaded face was not retained".to_owned(),
             });
         };
+        let face = &cached.face;
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
@@ -176,6 +180,11 @@ impl FontSystem {
         };
         let mut advances = Vec::with_capacity(text.chars().count());
         for character in text.chars() {
+            let key = (pixel_height, rasterization, character);
+            if let Some(&advance) = cached.advances.get(&key) {
+                advances.push(advance);
+                continue;
+            }
             let Some(index) = face.get_char_index(character as usize) else {
                 return Err(FontError::Glyph {
                     path: path.clone(),
@@ -190,7 +199,9 @@ impl FontSystem {
                     message: error.to_string(),
                 })?;
             let advance = i64::from(face.glyph().metrics().horiAdvance) / 64 + 1;
-            advances.push(advance.saturating_mul(64));
+            let advance = advance.saturating_mul(64);
+            cached.advances.insert(key, advance);
+            advances.push(advance);
         }
         Ok(advances)
     }
@@ -208,22 +219,32 @@ impl FontSystem {
         pixel_height: u32,
     ) -> Result<i64, FontError> {
         self.ensure_face(store, path)?;
-        let face = self.faces.get(path).ok_or_else(|| FontError::Face {
+        let cached = self.faces.get_mut(path).ok_or_else(|| FontError::Face {
             path: path.clone(),
             message: "loaded face was not retained".to_owned(),
         })?;
+        if let Some(&ascender) = cached.ascenders.get(&pixel_height) {
+            return Ok(ascender);
+        }
+        let face = &cached.face;
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
                 pixel_height,
                 message: error.to_string(),
             })?;
-        super::pixel_size::ascender_pixels(face.ascender(), face.descender(), pixel_height)
-            .map(|ascender| ascender * 64)
-            .ok_or_else(|| FontError::Face {
-                path: path.clone(),
-                message: "face has no vertical metric span".to_owned(),
-            })
+        let ascender = crate::font::pixel_size::ascender_pixels(
+            face.ascender(),
+            face.descender(),
+            pixel_height,
+        )
+        .map(|ascender| ascender * 64)
+        .ok_or_else(|| FontError::Face {
+            path: path.clone(),
+            message: "face has no vertical metric span".to_owned(),
+        })?;
+        cached.ascenders.insert(pixel_height, ascender);
+        Ok(ascender)
     }
 
     /// Returns hinted horizontal kerning for one adjacent character pair.
@@ -240,10 +261,15 @@ impl FontSystem {
         right: char,
     ) -> Result<i64, FontError> {
         self.ensure_face(store, path)?;
-        let face = self.faces.get(path).ok_or_else(|| FontError::Face {
+        let cached = self.faces.get_mut(path).ok_or_else(|| FontError::Face {
             path: path.clone(),
             message: "loaded face was not retained".to_owned(),
         })?;
+        let key = (pixel_height, left, right);
+        if let Some(&kerning) = cached.kerning.get(&key) {
+            return Ok(kerning);
+        }
+        let face = &cached.face;
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
@@ -264,13 +290,16 @@ impl FontSystem {
                 character: right,
                 message: "font face does not contain the requested character".to_owned(),
             })?;
-        face.get_kerning(left_index, right_index, KerningMode::KerningDefault)
+        let kerning = face
+            .get_kerning(left_index, right_index, KerningMode::KerningDefault)
             .map(|kerning| i64::from(kerning.x))
             .map_err(|error| FontError::Glyph {
                 path: path.clone(),
                 character: right,
                 message: format!("failed to read kerning: {error}"),
-            })
+            })?;
+        cached.kerning.insert(key, kerning);
+        Ok(kerning)
     }
 
     /// Returns the number of distinct archive-backed faces retained in memory.
@@ -279,7 +308,24 @@ impl FontSystem {
         self.faces.len()
     }
 
+    /// Reports retained common coverage without counting shared clones twice.
+    pub(super) fn coverage_bytes(&self) -> usize {
+        self.faces
+            .values()
+            .flat_map(|face| face.glyphs.values())
+            .map(|glyph| glyph.coverage().len())
+            .sum()
+    }
+
+    pub(super) fn glyph_count(&self) -> usize {
+        self.faces.values().map(|face| face.glyphs.len()).sum()
+    }
+
     fn ensure_face(&mut self, store: &mut AssetStore, path: &AssetPath) -> Result<(), FontError> {
+        if self.provider != Some(store.identity()) {
+            self.faces.clear();
+            self.provider = Some(store.identity());
+        }
         if self.faces.contains_key(path) {
             return Ok(());
         }
@@ -291,110 +337,16 @@ impl FontSystem {
                 path: path.clone(),
                 message: error.to_string(),
             })?;
-        self.faces.insert(path.clone(), face);
+        self.faces.insert(
+            path.clone(),
+            CachedFace {
+                face,
+                glyphs: HashMap::new(),
+                advances: HashMap::new(),
+                ascenders: HashMap::new(),
+                kerning: HashMap::new(),
+            },
+        );
         Ok(())
-    }
-}
-
-fn glyph_from_slot(path: &AssetPath, face: &Face) -> Result<RasterizedGlyph, FontError> {
-    let slot = face.glyph();
-    let bitmap = slot.bitmap();
-    let width = u32::try_from(bitmap.width()).map_err(|error| bitmap_error(path, error))?;
-    let height = u32::try_from(bitmap.rows()).map_err(|error| bitmap_error(path, error))?;
-    let coverage = if width == 0 || height == 0 {
-        Vec::new()
-    } else {
-        if bitmap.pitch() < 0 {
-            return Err(bitmap_error(path, "negative bitmap pitch"));
-        }
-        let pitch = usize::try_from(bitmap.pitch()).map_err(|error| bitmap_error(path, error))?;
-        let width_usize = usize::try_from(width).map_err(|error| bitmap_error(path, error))?;
-        let height_usize = usize::try_from(height).map_err(|error| bitmap_error(path, error))?;
-        match bitmap
-            .pixel_mode()
-            .map_err(|error| bitmap_error(path, error))?
-        {
-            PixelMode::Gray => {
-                copy_gray_bitmap(path, bitmap.buffer(), pitch, width_usize, height_usize)?
-            }
-            PixelMode::Mono => {
-                copy_mono_bitmap(path, bitmap.buffer(), pitch, width_usize, height_usize)?
-            }
-            mode => return Err(bitmap_error(path, format!("pixel mode {mode:?}"))),
-        }
-    };
-
-    Ok(RasterizedGlyph {
-        width,
-        height,
-        bearing_x: slot.bitmap_left(),
-        bearing_y: slot.bitmap_top(),
-        // Stock truncates the signed 26.6 horizontal metric to whole pixels
-        // and adds one pixel before retaining it for string layout.
-        advance_x_26_6: (i64::from(slot.metrics().horiAdvance) / 64 + 1) * 64,
-        coverage,
-    })
-}
-
-fn copy_gray_bitmap(
-    path: &AssetPath,
-    source: &[u8],
-    pitch: usize,
-    width: usize,
-    height: usize,
-) -> Result<Vec<u8>, FontError> {
-    validate_bitmap_size(path, source, pitch, width, height)?;
-    let mut coverage = Vec::with_capacity(width.saturating_mul(height));
-    for row in source.chunks_exact(pitch).take(height) {
-        coverage.extend_from_slice(&row[..width]);
-    }
-    Ok(coverage)
-}
-
-fn copy_mono_bitmap(
-    path: &AssetPath,
-    source: &[u8],
-    pitch: usize,
-    width: usize,
-    height: usize,
-) -> Result<Vec<u8>, FontError> {
-    let packed_width = width.div_ceil(8);
-    validate_bitmap_size(path, source, pitch, packed_width, height)?;
-    let mut coverage = Vec::with_capacity(width.saturating_mul(height));
-    for row in source.chunks_exact(pitch).take(height) {
-        for column in 0..width {
-            let mask = 0x80_u8 >> (column % 8);
-            coverage.push(if row[column / 8] & mask == 0 { 0 } else { 255 });
-        }
-    }
-    Ok(coverage)
-}
-
-fn validate_bitmap_size(
-    path: &AssetPath,
-    source: &[u8],
-    pitch: usize,
-    row_width: usize,
-    height: usize,
-) -> Result<(), FontError> {
-    let required = pitch
-        .checked_mul(height)
-        .ok_or_else(|| bitmap_error(path, "bitmap byte size overflow"))?;
-    if pitch < row_width || source.len() < required {
-        return Err(bitmap_error(
-            path,
-            format!(
-                "{} bytes with pitch {pitch} cannot hold {row_width}x{height} coverage",
-                source.len()
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn bitmap_error(path: &AssetPath, message: impl ToString) -> FontError {
-    FontError::Bitmap {
-        path: path.clone(),
-        message: message.to_string(),
     }
 }

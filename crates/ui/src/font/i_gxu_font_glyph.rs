@@ -8,7 +8,7 @@ pub struct RasterizedGlyph {
     pub(crate) bearing_x: i32,
     pub(crate) bearing_y: i32,
     pub(crate) advance_x_26_6: i64,
-    pub(crate) coverage: Vec<u8>,
+    pub(crate) coverage: std::sync::Arc<[u8]>,
 }
 
 impl RasterizedGlyph {

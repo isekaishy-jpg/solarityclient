@@ -344,6 +344,7 @@ impl GlueManager {
             &fonts,
             &mut assets.borrow_mut(),
             logical_extent.1,
+            runtime.font_system(),
         )?;
         let presentation = UiPresentationPlan::resolve(&live, &geometry, &backdrops);
         let render_plan = UiRenderPlan::prepare_with_glyphs(
@@ -1636,6 +1637,7 @@ impl GlueManager {
                 &self.fonts,
                 &mut self.assets.borrow_mut(),
                 self.glyph_logical_height,
+                self.runtime.font_system(),
             )?;
         }
         self.render_plan = UiRenderPlan::prepare_with_glyphs(
@@ -1835,6 +1837,7 @@ impl GlueManager {
                 &self.fonts,
                 &mut self.assets.borrow_mut(),
                 self.glyph_logical_height,
+                self.runtime.font_system(),
             )?;
         }
         let glyph_elapsed = started.elapsed();

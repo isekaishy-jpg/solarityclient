@@ -273,8 +273,27 @@ impl UiSimpleHtmlPlan {
         assets: &mut AssetStore,
         logical_height: u32,
     ) -> Result<Self, UiSimpleHtmlError> {
+        Self::resolve_with_system(
+            tree,
+            regions,
+            fonts,
+            assets,
+            logical_height,
+            FontSystem::new()?,
+        )
+    }
+
+    /// Uses the mounted UI's persistent font cache for paragraph measurement.
+    pub(crate) fn resolve_with_system(
+        tree: &UiObjectTree<'_>,
+        regions: &UiRegionStatePlan,
+        fonts: &FontCatalog,
+        assets: &mut AssetStore,
+        logical_height: u32,
+        mut font_system: FontSystem,
+    ) -> Result<Self, UiSimpleHtmlError> {
         let pixels_per_ui_unit = logical_height as f64 / 768.0;
-        let mut font_system = FontSystem::new()?;
+
         let mut nodes = Vec::with_capacity(tree.nodes().len());
         for (index, object) in tree.nodes().iter().enumerate() {
             if object.kind() != UiObjectKind::SimpleHtml {
@@ -352,8 +371,9 @@ impl UiSimpleHtmlPlan {
         width: f64,
         fonts: &FontCatalog,
         assets: &mut AssetStore,
-        logical_height: u32,
+        font: (u32, FontSystem),
     ) -> Result<Option<(f32, Option<usize>)>, UiSimpleHtmlError> {
+        let (logical_height, mut font_system) = font;
         let Some(node) = self.nodes.get_mut(object_index).and_then(Option::as_mut) else {
             return Ok(None);
         };
@@ -385,7 +405,7 @@ impl UiSimpleHtmlPlan {
                 .as_ref()
                 .map_or(&[], UiSimpleHtmlDocument::blocks)
         });
-        let mut font_system = FontSystem::new()?;
+
         let (lines, content_height) = wrap_blocks(
             blocks,
             &node.styles,
