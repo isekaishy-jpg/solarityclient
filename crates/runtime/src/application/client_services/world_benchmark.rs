@@ -242,6 +242,7 @@ impl ClientServices {
             })?;
         }
         let initial_view = world.local_player_view()?;
+        let capture_phase = std::env::var_os("SOLARITY_WORLD_CAPTURE_PHASE");
         let mut samples = Vec::new();
         let mut previous = Instant::now();
         let phases = ["streaming", "stationary", "orbit", "pointer"]
@@ -296,7 +297,8 @@ impl ClientServices {
                 };
                 world.set_local_player_view(view)?;
                 let capture = capture_directory.filter(|_| {
-                    index == 0
+                    capture_phase.as_deref() == Some(std::ffi::OsStr::new(phase))
+                        || index == 0
                         || index + 1 == frames_per_phase.get()
                         || (matches!(phase, "orbit" | "travel_out" | "travel_back")
                             && index.is_multiple_of((frames_per_phase.get() / 4).max(1)))
@@ -311,6 +313,13 @@ impl ClientServices {
                     self.benchmark_world_frame(world, clock, phase, index, elapsed, frame_start)?;
                 samples.push(sample);
                 if let Some(directory) = capture {
+                    let camera = self
+                        .resolved_world_camera()?
+                        .ok_or(WorldBenchmarkError::State("missing captured camera"))?;
+                    self.terrain
+                        .log_captured_camera_scene(camera, phase, index)
+                        .map_err(RuntimeTerrainFrameError::from)
+                        .map_err(ApplicationError::from)?;
                     let frame = self
                         .renderer
                         .take_captured_frame()

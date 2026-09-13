@@ -37,6 +37,36 @@ impl WorldSceneAdmission {
 }
 
 impl RuntimeTerrainCoordinator {
+    /// Explicit offline captures inspect registration after presentation; normal
+    /// gameplay never calls this additional query or emits these diagnostics.
+    pub(in crate::application) fn log_captured_camera_scene(
+        &mut self,
+        camera: WorldCameraFrame,
+        phase: &str,
+        frame: usize,
+    ) -> Result<(), crate::application::RuntimeMovementRegistrationError> {
+        if let Some(active) = &mut self.active {
+            let source = camera.camera();
+            let eye = source.position();
+            let registration = active.camera_registration(eye)?;
+            let primary = registration.map(|value| {
+                (
+                    active.movement.roots[value.primary.owner].owner(),
+                    value.primary.group,
+                    value.primary.secondary_group,
+                )
+            });
+            tracing::info!(phase, frame, ?eye, ?primary,
+                target = ?source.target(), forward = ?camera.forward(), up = ?camera.up(),
+                vertical_fov = ?source.vertical_field_of_view_radians(),
+                near_clip = source.near_clip(), far_clip = source.far_clip(),
+                aspect_ratio = camera.aspect_ratio(),
+                exterior = ?active.movement.scene.outdoor_window,
+                "captured World camera admission");
+        }
+        Ok(())
+    }
+
     /// Reuses this frame's primary exterior admission for ADT surfaces and effects.
     pub(in crate::application) fn world_terrain_frustum(
         &self,

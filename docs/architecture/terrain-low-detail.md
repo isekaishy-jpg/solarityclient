@@ -266,3 +266,50 @@ buffer (`78FDC0`). The new pass performs frustum selection and normal depth
 occlusion; those CPU occlusion rejection paths remain part of the broader
 world visibility/performance work. The GPU checks establish the implemented
 draw contract, not completion of every reported landscape defect.
+
+## Build 128 intermittent skyline investigation
+
+The September 13 report remains unresolved. An offline 96-step camera orbit
+at saved Soap position `(1515.34, -4417.27, 18.0499)`, initial yaw `0.190609`,
+distance `8.480558`, and diagnostic upward pitch `-0.25408655` reproduces a
+ridge behind the city skyline. The replay preloads 49 tiles at 1280x720.
+It uses the offline human character, not Soap's blood elf model; this is a
+layer-isolation reproduction, not a matched live stock or FPS comparison.
+
+At orbit frame 6, camera registration remains placement 165042, group 132.
+Its exterior window is approximately `[-0.8683223, -0.38903737,
+-0.62106085, 0.4860338]` in rendering min-X/min-Y/max-X/max-Y order.
+Temporarily omitting WDL removes the ridge while preserving the ordinary
+terrain and city draws. The temporary layer switch was removed from source;
+no replacement Testing package was installed. Local captures are
+`target/orgrimmar-city-gap-up/orbit-0006.ppm` and
+`target/orgrimmar-city-gap-no-wdl/orbit-0006.ppm`.
+
+An original-code replay of `7AC060` and `7A8F20` over all 144 installed groups
+and 157 portals opens essentially the same exterior window at the captured
+eye and reconstructed view basis. This bounds the primary portal decision,
+not the complete native scene. Optional occlusion and graphics consumers
+are excluded from that replay. The ordinary native WDL frustum test also
+admits tiles in this direction; it does not establish complete `7CC0B0`
+selection or final stock pixels.
+
+Two potential stock occluder sources were inspected and do not explain this
+specific root: the 62 static records visited by `7CD850` at `AF0040` contain
+no map-1 entries, and `7D82E0` only invokes the WMO horizon-edge builder
+`7D81C0` for groups named `antiportal` (string at `A405DC`). The installed
+Orgrimmar root has no such named group. Terrain horizon rejection and native
+render-state/order remain open comparisons. Local decompilations and native
+replays use the pinned executable fingerprint recorded above and are kept
+under `target/orgrimmar-*` and `target/ogrimmar-*-native.*`.
+
+Explicit offline captures now log the camera basis, projection range,
+registration, and retained exterior window after presentation. Set
+`SOLARITY_WORLD_CAPTURE_PHASE=orbit` together with
+`SOLARITY_WORLD_CAPTURE_DIR` to capture every orbit step. Other phases retain
+their normal sparse captures. The extra registration query and diagnostic
+logging run only for explicitly requested offline captures, outside measured
+presentation; normal gameplay gains no query, logging, or environment lookup.
+Capture runs themselves are not performance measurements.
+
+Diagnostic validation: workspace Clippy with warnings denied, formatting check,
+and all 1,359 workspace tests passed; 27 installed-data/manual tests were ignored.
