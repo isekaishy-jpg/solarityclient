@@ -6,6 +6,54 @@ use solarity_rendering::{
     CharacterAttachmentPoint, CharacterComponentTextureLevel, WorldCameraFrame,
 };
 
+/// Appearance reuse must leave authoritative movement live and invalidate on
+/// visible equipment changes, even when the canonical body model is unchanged.
+#[test]
+fn local_appearance_reuse_preserves_motion_and_equipment_changes() -> Result<(), Box<dyn Error>> {
+    let fixture = crate::test_support::unit_models::fixture_with_equipment()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.0,
+    ));
+    add_unit(&mut world, 7, ObjectKind::Player, 0)?;
+    fields(&mut world, 7, &[(122, 1), (313, 3000), (314, 900)])?;
+    presentation.synchronize(Some(&world))?;
+    let model = presentation.resident_model().ok_or("local model")?.clone();
+    let original = presentation
+        .resident_frame_input()
+        .ok_or("local frame")?
+        .generation()
+        .clone();
+    let transform = WorldTransform::new(Vec3::new(7., 8., 9.), 1.25);
+    world.update_transform(7, transform)?;
+    presentation.synchronize(Some(&world))?;
+    let current = presentation
+        .resident_frame_input()
+        .ok_or("moved local frame")?;
+    assert_eq!(current.world_transform(), transform);
+    assert!(current.generation().matches(&original));
+    assert!(Arc::ptr_eq(
+        presentation.resident_model().ok_or("retained model")?,
+        &model
+    ));
+    fields(&mut world, 7, &[(313, 0), (314, 0)])?;
+    presentation.synchronize(Some(&world))?;
+    let changed = presentation
+        .resident_frame_input()
+        .ok_or("unequipped frame")?;
+    assert!(!changed.generation().matches(&original));
+    assert_eq!(changed.world_transform(), transform);
+    presentation.synchronize(None)?;
+    assert!(presentation.resident_model().is_none());
+    presentation.synchronize(Some(&world))?;
+    assert!(presentation.resident_model().is_some());
+    Ok(())
+}
+
 #[test]
 fn npc_virtual_items_update_models_effects_and_native_hand_placement() -> Result<(), Box<dyn Error>>
 {

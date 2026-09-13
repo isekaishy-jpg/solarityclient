@@ -9,8 +9,9 @@ use solarity_ecs::{
 /// Motion, stand state and animation tier remain on their independent live path.
 /// The coordinator owns immutable DBC catalogs for its entire lifetime.
 #[derive(Clone, Copy, PartialEq)]
-pub(super) struct RemoteAppearanceInputs {
+pub(super) struct PlayerAppearanceInputs {
     pub(super) identity: WorldObjectIdentity,
+    pub(super) kind: solarity_ecs::ObjectKind,
     pub(super) object: ObjectPresentation,
     pub(super) unit: UnitIdentity,
     pub(super) appearance: PlayerAppearance,
@@ -20,7 +21,7 @@ pub(super) struct RemoteAppearanceInputs {
     pub(super) body_fields: [u32; 3],
 }
 
-impl RemoteAppearanceInputs {
+impl PlayerAppearanceInputs {
     /// Missing projections never become a cache hit; the ordinary resolver keeps
     /// ownership of its established absence and error behavior.
     pub(super) fn read(world: &ActiveWorld, guid: u64) -> Option<Self> {
@@ -31,6 +32,7 @@ impl RemoteAppearanceInputs {
         let fields = storage.get::<&ObjectFields>(entity).ok()?;
         Some(Self {
             identity,
+            kind: world.object_kind(guid)?,
             object: world.object_presentation(guid)?,
             unit: **storage.get::<&UnitIdentity>(entity).ok()?,
             appearance: **storage.get::<&PlayerAppearance>(entity).ok()?,

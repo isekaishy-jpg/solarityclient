@@ -26,6 +26,19 @@ fn rebuilt_ancestry_matches_point_queries_after_removal_and_reordering() {
     }
 }
 
+/// Effect-tail updates visit dynamic metadata without revisiting scenery.
+#[test]
+fn dynamic_ancestry_refresh_preserves_static_prefix_and_preceding_parents() {
+    let placements = placement_fixture(23_000, 300);
+    let indices = (23_000..placements.len()).collect::<Vec<_>>();
+    let mut ancestry = PlacementAncestry::default();
+    let mut parents = Vec::new();
+    ancestry.rebuild(&placements, &mut parents);
+    let expected = parents.clone();
+    ancestry.rebuild_dynamic(&placements, &indices, &mut parents);
+    assert_eq!(parents, expected);
+}
+
 /// Manual comparison isolates attachment lookup from live GPU and NPC variation.
 #[test]
 #[ignore = "manual optimized placement-lookup timing"]

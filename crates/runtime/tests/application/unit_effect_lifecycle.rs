@@ -119,6 +119,35 @@ fn completion_uses_authored_despawn_or_pins_the_terminal_pose() -> Result<(), Bo
                 0,
             )
         };
+        // Effect-only publication retains the ordinary scene index, then
+        // produces the same callback and work order as a complete rebuild.
+        let mut indexed = vec![ordinary(10)?, ordinary(20)?];
+        let mut visibility = super::super::visibility::M2PlacementVisibility::default();
+        let sources = [None];
+        visibility.rebuild(&indexed, &sources);
+        indexed.push(placement);
+        visibility.replace_effect_tail(&indexed, &sources);
+        let mut rebuilt = super::super::visibility::M2PlacementVisibility::default();
+        rebuilt.rebuild(&indexed, &sources);
+        assert_eq!(
+            visibility.dynamic_scene_indices(),
+            rebuilt.dynamic_scene_indices()
+        );
+        assert_eq!(visibility.effect_start(), 2);
+        let selected = |visibility: &super::super::visibility::M2PlacementVisibility| {
+            let mut work = super::super::frame_work::M2FrameWork::default();
+            visibility.select_frame_work(Vec3::ZERO, 1., true, &mut work);
+            std::iter::from_fn(|| work.next()).collect::<Vec<_>>()
+        };
+        assert_eq!(selected(&visibility), selected(&rebuilt));
+        let placement = indexed.pop().ok_or("published effect")?;
+        visibility.replace_effect_tail(&indexed, &sources);
+        rebuilt.rebuild(&indexed, &sources);
+        assert_eq!(selected(&visibility), selected(&rebuilt));
+        assert_eq!(
+            visibility.dynamic_scene_indices(),
+            rebuilt.dynamic_scene_indices()
+        );
         let mut placements = vec![ordinary(10)?, placement, ordinary(20)?];
         let first_effect = usize::from(despawn);
         scene

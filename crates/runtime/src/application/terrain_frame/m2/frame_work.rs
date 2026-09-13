@@ -122,6 +122,14 @@ pub(super) struct M2FrameWorkIndex {
 }
 
 impl M2FrameWorkIndex {
+    /// Effects occupy an ordered dynamic tail. Replacing that tail changes no
+    /// scenery bounds, distance classes or spatial search nodes.
+    pub(super) fn replace_effect_tail(&mut self, first: usize, end: usize) {
+        let retained = self.required.partition_point(|index| *index < first);
+        self.required.truncate(retained);
+        self.required.extend(first..end);
+    }
+
     pub(super) fn rebuild(&mut self, scenery: &[Option<SceneryDistance>], lights: &[bool]) {
         self.pending_members.clear();
         self.required.clear();

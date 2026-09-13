@@ -459,13 +459,14 @@ impl M2UnitEffectScene {
         &mut self,
         placements: &mut Vec<M2GpuPlacement>,
         sources: &mut Vec<Option<M2GpuSource>>,
+        first_effect: usize,
     ) -> bool {
         let changed = !self.pending.is_empty();
         while let Some(mut pending) = self.pending.pop_front() {
             if let Some(new) = &pending.placement.unit_effect
                 && matches!(new.binding, UnitEffectBinding::Attached { .. })
             {
-                for old in placements
+                for old in placements[first_effect..]
                     .iter_mut()
                     .filter_map(|placement| placement.unit_effect.as_mut())
                 {
@@ -478,7 +479,7 @@ impl M2UnitEffectScene {
                     }
                 }
             }
-            let index = placements
+            let index = placements[first_effect..]
                 .iter()
                 .find_map(|placement| {
                     placement

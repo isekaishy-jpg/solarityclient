@@ -6,14 +6,15 @@ use super::{
     ActiveWorld, AnimationDataCatalog, AssetPath, CharacterAttachmentPlan, CharacterCustomization,
     CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode,
     CharacterTexturePlan, CharacterWeaponState, DesiredRemotePlayerModel, M2ModelCache,
-    M2ParticleColorReplacement, OptionalTextureBinding, PlayerCameraHeightState,
-    PlayerEquipmentAppearanceError, PlayerViewState, RemoteAppearanceInputs, ResidentPlayerModel,
+    M2ParticleColorReplacement, OptionalTextureBinding, PlayerAppearanceInputs,
+    PlayerCameraHeightState, PlayerEquipmentAppearanceError, PlayerViewState, ResidentPlayerModel,
     RuntimePlayerError, RuntimePlayerPresentation, RuntimeRemotePlayerPoll, UnitAnimationTier,
     UnitLocomotionAnimation, UnitModelAppearanceError, UnitPresentationGeneration, WorldTransform,
     load_mount_model, load_optional_texture, load_player_attachments, mount_model_key,
-    prepare_model_textures, resolve_model_camera_subject_height, resolve_player_equipment,
-    resolve_resident_animation, resolve_unit_locomotion_animation, resolve_unit_model,
+    prepare_model_textures, resolve_model_camera_subject_height, resolve_resident_animation,
+    resolve_unit_locomotion_animation, resolve_unit_model,
 };
+use solarity_systems::resolve_player_equipment;
 
 impl RuntimePlayerPresentation {
     /// Synchronizes every visible non-local player through character composition.
@@ -61,14 +62,14 @@ impl RuntimePlayerPresentation {
             {
                 continue;
             }
-            let inputs = RemoteAppearanceInputs::read(world, guid);
+            let inputs = PlayerAppearanceInputs::read(world, guid);
             let previous = self
                 .remote_players
                 .binary_search_by_key(&guid, |resident| resident.guid)
                 .ok();
             if let Some(index) = previous
                 && inputs.is_some()
-                && self.remote_players[index].remote_inputs == inputs
+                && self.remote_players[index].appearance_inputs == inputs
             {
                 self.remote_worker
                     .discard_ready(self.remote_players[index].identity)?;
@@ -113,7 +114,7 @@ impl RuntimePlayerPresentation {
                     .discard_ready(self.remote_players[index].identity)?;
                 let resident = &mut self.remote_players[index];
                 resident.update_remote_motion(&desired, &self.animations)?;
-                resident.remote_inputs = inputs;
+                resident.appearance_inputs = inputs;
                 retained.push(guid);
             } else {
                 let inputs =
@@ -330,7 +331,7 @@ impl RuntimePlayerPresentation {
     pub(super) fn load_remote_player(
         &mut self,
         desired: DesiredRemotePlayerModel,
-        inputs: RemoteAppearanceInputs,
+        inputs: PlayerAppearanceInputs,
     ) -> Result<ResidentPlayerModel, RuntimePlayerError> {
         let appearance = inputs.appearance;
         let character = self.characters.resolve_player(
@@ -435,7 +436,7 @@ impl RuntimePlayerPresentation {
         )?;
         let generation = UnitPresentationGeneration::prepare(&model, &attachments, mount.as_ref())?;
         Ok(ResidentPlayerModel {
-            remote_inputs: Some(inputs),
+            appearance_inputs: Some(inputs),
             generation,
             identity: desired.identity,
             guid: desired.guid,

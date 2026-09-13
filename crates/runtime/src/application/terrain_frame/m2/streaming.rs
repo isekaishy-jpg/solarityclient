@@ -284,8 +284,12 @@ impl M2Frame {
     pub(super) fn compact_sources(&mut self) {
         let mut profile = RuntimeFrameProfile::new("M2 source compaction");
         let mut remap = vec![usize::MAX; self.sources.len()];
-        for placement in &self.placements {
-            remap[placement.source_index] = 0;
+        if self.placement_topology_dirty {
+            for placement in &self.placements {
+                remap[placement.source_index] = 0;
+            }
+        } else {
+            self.placement_visibility.mark_source_references(&mut remap);
         }
         profile.mark("referenced slots");
         self.compact_referenced_sources(remap);
@@ -302,9 +306,6 @@ impl M2Frame {
         if !remap.contains(&usize::MAX) {
             return;
         }
-        // The compact placement metadata also retains source slots. Rebuild it
-        // after a remap before any later publication can mark source liveness.
-        self.placement_topology_dirty = true;
         let mut index = 0;
         let mut next = 0;
         self.sources.retain(|_| {
@@ -318,6 +319,9 @@ impl M2Frame {
         });
         profile.mark("source retirement");
         self.static_residency.remap_sources(&remap);
+        if !self.placement_topology_dirty {
+            self.placement_visibility.remap_sources(&remap);
+        }
         profile.mark("static source remap");
         for placement in &mut self.placements {
             // Every surviving placement marked its source above.

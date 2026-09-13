@@ -1,6 +1,7 @@
 //! Compact placement admission and ordering metadata, separate from animated instances.
 
 mod doodads;
+mod effects;
 
 use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource};
 use crate::application::frame_profile::RuntimeFrameProfile;
@@ -231,13 +232,15 @@ impl M2PlacementVisibility {
 
     fn rebuild_scene_order(&mut self) {
         self.dynamic_scene_indices.clear();
-        let mut first_child = vec![None; self.light_parents.len()];
-        let mut next_sibling = vec![None; self.light_parents.len()];
+        // Allocate by callback membership, independent of the scenery count.
+        let mut first_child = HashMap::with_capacity(self.dynamic_indices.len());
+        let mut next_sibling = HashMap::with_capacity(self.dynamic_indices.len());
         let mut pending = Vec::new();
         for &index in self.dynamic_indices.iter().rev() {
             if let Some(parent) = self.light_parent(index) {
-                next_sibling[index] = first_child[parent];
-                first_child[parent] = Some(index);
+                if let Some(sibling) = first_child.insert(parent, index) {
+                    next_sibling.insert(index, sibling);
+                }
             } else {
                 pending.push(index);
             }
@@ -246,10 +249,10 @@ impl M2PlacementVisibility {
         // visits another root. A cycle has no root and is not admitted here.
         while let Some(index) = pending.pop() {
             self.dynamic_scene_indices.push(index);
-            if let Some(sibling) = next_sibling[index] {
+            if let Some(&sibling) = next_sibling.get(&index) {
                 pending.push(sibling);
             }
-            if let Some(child) = first_child[index] {
+            if let Some(&child) = first_child.get(&index) {
                 pending.push(child);
             }
         }

@@ -27,6 +27,31 @@ enum ParentBinding {
 }
 
 impl PlacementAncestry {
+    /// Rebuilds attachment owners from the compact dynamic membership. Static
+    /// placements have no parent binding or animation owner, so effect changes
+    /// can retain their existing parent slots without revisiting scenery.
+    pub(super) fn rebuild_dynamic(
+        &mut self,
+        placements: &[M2GpuPlacement],
+        indices: &[usize],
+        parents: &mut Vec<Option<usize>>,
+    ) {
+        self.owners.clear();
+        self.bodies.clear();
+        self.animations.clear();
+        self.glue = None;
+        parents.resize(placements.len(), None);
+        for &index in indices {
+            let placement = &placements[index];
+            parents[index] = self.parent(binding(placement));
+            self.insert(
+                placement.owner,
+                placement.unit_animation.as_ref().map(Rc::as_ptr),
+                index,
+            );
+        }
+    }
+
     /// Reuses storage across topology changes. Static placements cannot own any
     /// of these attachment families, so they do not enter the owner hash table.
     pub(super) fn rebuild(
