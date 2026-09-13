@@ -14,6 +14,7 @@ use crate::application::ApplicationError;
 /// One immutable UI mesh generation joined to renderer-owned resources.
 pub(crate) struct PreparedUiFrame {
     mesh: UiMeshHandle,
+    _resource_leases: Vec<solarity_rendering::GpuResourceLease>,
     mesh_identity: u64,
     logical_extent: [f32; 2],
     /// All resident packets, including inactive retained Button state skins.
@@ -87,6 +88,10 @@ impl PreparedUiFrame {
         } else {
             renderer.upload_ui_mesh(plan)?
         };
+        let mut resource_leases = vec![renderer.retain_ui_mesh(mesh)?];
+        for &texture in glyph_textures.values() {
+            resource_leases.push(renderer.retain_ui_glyph_texture(texture)?);
+        }
         let mut batch_resources = Vec::with_capacity(plan.batches().len());
         let mut sampled_textures = Vec::new();
         for (batch_index, batch) in plan.batches().iter().enumerate() {
@@ -200,6 +205,7 @@ impl PreparedUiFrame {
             })
             .collect();
         Ok(Self {
+            _resource_leases: resource_leases,
             mesh,
             mesh_identity: plan.geometry_identity(),
             logical_extent: plan.logical_extent(),

@@ -4,7 +4,9 @@
 
 mod liquid;
 mod portrait;
+mod resource_lifetime;
 mod terrain_retirement;
+pub use resource_lifetime::{GpuResourceLease, GpuResourceUsage};
 
 use crate::device::vulkan_liquid::{LiquidMeshRegistry, LiquidPipelines};
 use crate::device::vulkan_low_detail::LowDetailPipelines;
@@ -222,6 +224,7 @@ pub struct VulkanRenderer {
     terrain_pipelines: TerrainPipelineRegistry,
     terrain_frames: TerrainFrameRenderer,
     terrain_texture_sets: TerrainTextureSetRegistry,
+    resource_lifetimes: resource_lifetime::ResourceLifetimes,
     terrain_retirements: std::collections::VecDeque<terrain_retirement::TerrainRetirement>,
     m2_samplers: M2SamplerRegistry,
     m2_texture_sets: M2TextureSetRegistry,
@@ -318,6 +321,7 @@ impl VulkanRenderer {
             detail_pipeline: crate::device::vulkan_detail::DetailPipeline::default(),
             cloud_pipeline: PctPipeline::default(),
             celestial_pipeline: PctPipeline::default(),
+            resource_lifetimes: resource_lifetime::ResourceLifetimes::default(),
             terrain_retirements: std::collections::VecDeque::new(),
             terrain_materials: TerrainMaterialRegistry::default(),
             terrain_pipelines: TerrainPipelineRegistry::default(),
@@ -634,6 +638,7 @@ impl VulkanRenderer {
         mut present: impl FnMut(&mut Self) -> Result<T, VulkanError>,
     ) -> Result<T, VulkanError> {
         self.collect_retired_terrain()?;
+        self.collect_released_resources()?;
         if let Some(allocator) = self.allocator.as_ref() {
             self.terrain_meshes
                 .retire_completed_transfers(&self.device, allocator)?;
@@ -643,6 +648,24 @@ impl VulkanRenderer {
                 .retire_completed_transfers(&self.device, allocator)?;
             self.world_model_meshes
                 .retire_completed_transfers(&self.device, allocator)?;
+            let texture_context = TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            };
+            self.ui_glyph_textures.retire_transfers(texture_context)?;
+            self.character_atlas_textures
+                .retire_completed_transfers(texture_context)?;
+            self.blp_textures
+                .retire_completed_transfers(texture_context)
+                .map_err(|error| VulkanError::operation("retire BLP staging", error))?;
+            self.ui_meshes.retire_transfers(MeshUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            })?;
             self.liquid_meshes.collect(&self.device, allocator)?;
         }
         let result = match present(self) {
@@ -1456,6 +1479,9 @@ impl VulkanRenderer {
     /// Returns [`VulkanError`] for empty geometry, handle exhaustion, allocation,
     /// transfer recording, submission, or synchronization failure.
     pub fn upload_ui_mesh(&mut self, plan: &UiMeshPlan) -> Result<UiMeshHandle, VulkanError> {
+        // Admission can enqueue work even without a subsequent presentation.
+        // Shutdown must wait before destroying pending transfers or resources.
+        self.is_idle = false;
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
@@ -1476,6 +1502,9 @@ impl VulkanRenderer {
         handle: UiMeshHandle,
         plan: &UiMeshPlan,
     ) -> Result<(), VulkanError> {
+        // Admission can enqueue work even without a subsequent presentation.
+        // Shutdown must wait before destroying pending transfers or resources.
+        self.is_idle = false;
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
@@ -1509,6 +1538,9 @@ impl VulkanRenderer {
         extent: (u32, u32),
         rgba8: &[u8],
     ) -> Result<UiGlyphTextureHandle, VulkanError> {
+        // Admission can enqueue work even without a subsequent presentation.
+        // Shutdown must wait before destroying pending transfers or resources.
+        self.is_idle = false;
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
@@ -1537,6 +1569,9 @@ impl VulkanRenderer {
         rgba8: &[u8],
         rectangles: &[[u32; 4]],
     ) -> Result<(), VulkanError> {
+        // Admission can enqueue work even without a subsequent presentation.
+        // Shutdown must wait before destroying pending transfers or resources.
+        self.is_idle = false;
         let allocator = self.allocator.as_ref().ok_or_else(|| {
             VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
         })?;
@@ -2834,6 +2869,42 @@ impl VulkanRenderer {
         )
     }
 
+    /// Validates an immutable source draw once, before any placement uses it.
+    ///
+    /// # Errors
+    /// Returns the same cross-resource and SKIN errors as direct draw preparation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_m2_draw_template(
+        &self,
+        mesh: M2MeshHandle,
+        pipeline: M2PipelineHandle,
+        textures: M2TextureSetHandle,
+        plan: &M2MeshPlan,
+        draw_index: usize,
+        runtime_fade: bool,
+    ) -> Result<crate::M2DrawTemplate, VulkanError> {
+        let material = M2MaterialUniform::new(
+            glam::Mat4::IDENTITY,
+            [glam::Mat4::IDENTITY; 2],
+            glam::Mat4::IDENTITY,
+            glam::Vec4::ONE,
+            glam::Vec4::ZERO,
+            glam::Vec4::ZERO,
+        );
+        self.prepare_m2_draw(
+            mesh,
+            pipeline,
+            textures,
+            plan,
+            draw_index,
+            runtime_fade,
+            material,
+            0,
+            0,
+        )
+        .map(crate::M2DrawTemplate::new)
+    }
+
     /// Records and presents one asset-backed M2 scene using reusable frame slots.
     ///
     /// Resources grow to the submitted high-water draw/bone counts and are then
@@ -3018,6 +3089,7 @@ impl Drop for VulkanRenderer {
     fn drop(&mut self) {
         let _idle_result = self.wait_idle();
         let _pipeline_cache_result = self.save_pipeline_cache();
+        self.destroy_resource_retirements();
         self.ui_frames.destroy(&self.device);
         if let Some(allocator) = self.allocator.as_ref() {
             for batch in self.terrain_retirements.drain(..) {
@@ -3034,7 +3106,7 @@ impl Drop for VulkanRenderer {
             self.glow.destroy(&self.device, allocator);
             self.terrain_frames.destroy(&self.device, allocator);
             self.m2_frames.destroy(&self.device, allocator);
-            self.ui_meshes.destroy(allocator);
+            self.ui_meshes.destroy(&self.device, allocator);
             self.ui_texture_sets.destroy(&self.device);
             self.world_model_texture_sets.destroy(&self.device);
             self.m2_texture_sets.destroy(&self.device);

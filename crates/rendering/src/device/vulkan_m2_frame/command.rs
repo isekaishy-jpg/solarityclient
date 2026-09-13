@@ -27,7 +27,6 @@ pub(super) struct RecordContext<'a> {
     pub(super) depth_view: vk::ImageView,
     pub(super) extent: (u32, u32),
     pub(super) frame_sets: [vk::DescriptorSet; 3],
-    pub(super) material_stride: vk::DeviceSize,
     pub(super) pipelines: &'a M2PipelineRegistry,
     pub(super) meshes: &'a M2MeshRegistry,
     pub(super) texture_sets: &'a M2TextureSetRegistry,
@@ -44,7 +43,7 @@ struct M2CommandBindings {
 }
 
 /// Records attachment transitions, state binding, and every indexed draw.
-pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError> {
+pub(super) fn record_draws(context: RecordContext<'_>) -> Result<usize, VulkanError> {
     let begin_info =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     // SAFETY: The slot's primary buffer was reset and is not pending.
@@ -120,8 +119,22 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
     let mut bindings = M2CommandBindings::default();
-    for (draw_index, draw) in context.draws.iter().copied().enumerate() {
-        record_draw(&context, draw_index, draw, &mut bindings)?;
+    let mut draw_index = 0;
+    let mut submission_count = 0;
+    while let Some(&draw) = context.draws.get(draw_index) {
+        let count = 1 + context.draws[draw_index + 1..]
+            .iter()
+            .take_while(|other| draw.can_instance_with(**other))
+            .count();
+        record_draw(
+            &context,
+            draw_index,
+            draw,
+            u32::try_from(count).map_err(|_| VulkanError::M2FrameCapacity)?,
+            &mut bindings,
+        )?;
+        draw_index += count;
+        submission_count += 1;
     }
     // SAFETY: A matching dynamic-rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
@@ -146,6 +159,7 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
     // SAFETY: Every referenced resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end M2 frame command buffer", source))
+        .map(|()| submission_count)
 }
 
 /// Submits one completed slot and queues its acquired image for presentation.
@@ -204,6 +218,7 @@ fn record_draw(
     context: &RecordContext<'_>,
     draw_index: usize,
     draw: M2PreparedDraw,
+    instance_count: u32,
     bindings: &mut M2CommandBindings,
 ) -> Result<(), VulkanError> {
     let (pipeline, layout) = context
@@ -218,11 +233,7 @@ fn record_draw(
         .texture_sets
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    let dynamic_offset = u64::try_from(draw_index)
-        .ok()
-        .and_then(|index| index.checked_mul(context.material_stride))
-        .and_then(|offset| u32::try_from(offset).ok())
-        .ok_or(VulkanError::M2FrameCapacity)?;
+    let first_instance = u32::try_from(draw_index).map_err(|_| VulkanError::M2FrameCapacity)?;
     let descriptor_sets = [
         context.frame_sets[0],
         context.frame_sets[1],
@@ -264,7 +275,7 @@ fn record_draw(
             layout,
             0,
             &descriptor_sets,
-            &[0, dynamic_offset],
+            &[0, 0],
         );
         context.device.cmd_push_constants(
             context.command_buffer,
@@ -276,10 +287,10 @@ fn record_draw(
         context.device.cmd_draw_indexed(
             context.command_buffer,
             draw.index_count(),
-            1,
+            instance_count,
             draw.first_index(),
             0,
-            0,
+            first_instance,
         );
     }
     Ok(())

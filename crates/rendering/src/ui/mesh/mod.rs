@@ -466,6 +466,11 @@ impl UiMeshPlan {
         previous_source: &UiRenderSource,
         quads: &[UiRenderQuad],
     ) -> Result<bool, UiMeshPlanError> {
+        if let Some(first) = quads.first()
+            && quads.iter().any(|quad| quad.source() != first.source())
+        {
+            return Ok(false);
+        }
         if quads
             .first()
             .is_some_and(|first| first.object_index() != object_index)

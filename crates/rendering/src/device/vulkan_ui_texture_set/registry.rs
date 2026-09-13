@@ -18,6 +18,7 @@ use super::{UiSampledTexture, UiTextureImageHandle, UiTextureSetHandle, UiTextur
 /// One live set owned transitively by a registry descriptor pool.
 struct GpuUiTextureSet {
     handle: vk::DescriptorSet,
+    pool: vk::DescriptorPool,
     info: UiTextureSetInfo,
 }
 
@@ -25,8 +26,9 @@ struct GpuUiTextureSet {
 pub(in crate::device) struct UiTextureSetRegistry {
     registry_id: u64,
     handles: HashMap<UiSampledTexture, UiTextureSetHandle>,
-    resources: Vec<GpuUiTextureSet>,
-    pools: Vec<vk::DescriptorPool>,
+    resources: HashMap<u32, GpuUiTextureSet>,
+    next_slot: u32,
+    pools: HashMap<vk::DescriptorPool, usize>,
 }
 
 impl Default for UiTextureSetRegistry {
@@ -36,13 +38,19 @@ impl Default for UiTextureSetRegistry {
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
-            resources: Vec::new(),
-            pools: Vec::new(),
+            resources: HashMap::new(),
+            next_slot: 0,
+            pools: HashMap::new(),
         }
     }
 }
 
 impl UiTextureSetRegistry {
+    /// Number of live sampled-image descriptor resources.
+    pub(in crate::device) fn resource_count(&self) -> usize {
+        self.resources.len()
+    }
+
     /// Resolves input order while allocating only unique new descriptor sets.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::device) fn prepare(
@@ -85,11 +93,9 @@ impl UiTextureSetRegistry {
         if handle.registry_id != self.registry_id {
             return None;
         }
-        self.resources
-            .get(handle.slot as usize)
-            .and_then(|resource| {
-                (resource.handle != vk::DescriptorSet::null()).then_some(resource.info)
-            })
+        self.resources.get(&handle.slot).and_then(|resource| {
+            (resource.handle != vk::DescriptorSet::null()).then_some(resource.info)
+        })
     }
 
     /// Resolves one renderer-local identity to its live descriptor set.
@@ -98,8 +104,42 @@ impl UiTextureSetRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.handle)
+    }
+
+    /// Detaches all sampled sets for a retired glyph page.
+    pub(in crate::device) fn take_glyph(
+        &mut self,
+        glyph: crate::UiGlyphTextureHandle,
+    ) -> (
+        Vec<(vk::DescriptorPool, vk::DescriptorSet)>,
+        Vec<vk::DescriptorPool>,
+    ) {
+        let mut slots = Vec::new();
+        self.handles.retain(|pair, handle| {
+            if pair.texture() == UiTextureImageHandle::Glyph(glyph) {
+                slots.push(handle.slot);
+                false
+            } else {
+                true
+            }
+        });
+        let mut sets = Vec::new();
+        let mut pools = Vec::new();
+        for slot in slots {
+            if let Some(resource) = self.resources.remove(&slot) {
+                sets.push((resource.pool, resource.handle));
+                if let Some(count) = self.pools.get_mut(&resource.pool) {
+                    *count -= 1;
+                    if *count == 0 {
+                        self.pools.remove(&resource.pool);
+                        pools.push(resource.pool);
+                    }
+                }
+            }
+        }
+        (sets, pools)
     }
 
     /// Releases descriptor sets transitively through their owning pools.
@@ -108,7 +148,7 @@ impl UiTextureSetRegistry {
         self.resources.clear();
         // SAFETY: Pools belong to this device and descriptor use is retired.
         unsafe {
-            for pool in self.pools.drain(..).rev() {
+            for pool in self.pools.drain().map(|(pool, _)| pool) {
                 device.destroy_descriptor_pool(pool, None);
             }
         }
@@ -126,7 +166,7 @@ impl UiTextureSetRegistry {
         samplers: &UiSamplerRegistry,
         pending: &[UiSampledTexture],
     ) -> Result<(), VulkanError> {
-        let first_slot = u32::try_from(self.resources.len())
+        let first_slot = u32::try_from(self.next_slot as usize)
             .map_err(|_source| VulkanError::UiTextureSetCapacity)?;
         let added =
             u32::try_from(pending.len()).map_err(|_source| VulkanError::UiTextureSetCapacity)?;
@@ -137,6 +177,7 @@ impl UiTextureSetRegistry {
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(added)];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
+            .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(added)
             .pool_sizes(&pool_sizes);
         // SAFETY: Counts are nonzero because pending is nonempty.
@@ -168,19 +209,25 @@ impl UiTextureSetRegistry {
                 samplers,
                 pair,
             )?;
-            let slot = u32::try_from(self.resources.len())
-                .map_err(|_source| VulkanError::UiTextureSetCapacity)?;
+            let slot = self.next_slot;
+            self.next_slot = slot
+                .checked_add(1)
+                .ok_or(VulkanError::UiTextureSetCapacity)?;
             let handle = UiTextureSetHandle {
                 registry_id: self.registry_id,
                 slot,
             };
-            self.resources.push(GpuUiTextureSet {
-                handle: descriptor_set,
-                info: UiTextureSetInfo::new(pair),
-            });
+            self.resources.insert(
+                slot,
+                GpuUiTextureSet {
+                    handle: descriptor_set,
+                    pool,
+                    info: UiTextureSetInfo::new(pair),
+                },
+            );
             self.handles.insert(pair, handle);
         }
-        self.pools.push(pool);
+        self.pools.insert(pool, pending.len());
         Ok(())
     }
 }

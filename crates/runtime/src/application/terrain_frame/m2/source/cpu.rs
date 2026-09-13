@@ -1,6 +1,6 @@
 //! Shared immutable mesh preparation and incremental driver pipeline admission.
 
-use super::{RuntimeTerrainFrameError, STOCK_HIGH_CAPABILITY_PROFILE};
+use super::super::{RuntimeTerrainFrameError, STOCK_HIGH_CAPABILITY_PROFILE};
 use solarity_asset::{AssetPath, DecodedM2Model};
 use solarity_rendering::{
     M2LocalLightCount, M2MaterialState, M2MeshPlan, M2ModelOrientation, M2ParticleSpirvCompiler,
@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 /// CPU-only M2 generation prepared away from the presentation thread.
 pub(in crate::application) struct M2CpuSource {
     _model: Arc<DecodedM2Model>,
-    pub(super) plan: Arc<M2MeshPlan>,
+    pub(in crate::application) plan: Arc<M2MeshPlan>,
     pub(super) mesh_programs: HashMap<M2SpirvKey, M2SpirvProgram>,
     pub(super) particle_programs: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
     pub(super) ribbon_programs: HashMap<M2MaterialState, M2RibbonSpirvProgram>,

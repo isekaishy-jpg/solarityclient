@@ -38,6 +38,7 @@ use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
 
 mod bindings;
 mod ground_detail;
+mod instances;
 mod low_detail;
 mod shadow;
 use bindings::WorldCommandBindings;
@@ -75,7 +76,6 @@ pub(super) struct RecordContext<'a> {
     pub(super) background_color: glam::Vec4,
     pub(super) frame_sets: [vk::DescriptorSet; 13],
     pub(super) world_model_material_stride: vk::DeviceSize,
-    pub(super) m2_material_stride: vk::DeviceSize,
     pub(super) m2_scene_stride: vk::DeviceSize,
     pub(super) terrain_pipelines: &'a TerrainPipelineRegistry,
     pub(super) terrain_meshes: &'a TerrainMeshRegistry,
@@ -413,15 +413,30 @@ fn record_m2_scene_elements(
                     .get(next_m2)
                     .copied()
                     .ok_or(VulkanError::WorldFrameCapacity)?;
+                let boundary = particle_key
+                    .into_iter()
+                    .chain(ribbon_key)
+                    .map(|(order, _)| order)
+                    .chain(water_pending.then_some(context.liquid_scene_order))
+                    .min()
+                    .unwrap_or(u32::MAX);
+                let count = 1 + context.m2_draws[next_m2 + 1..]
+                    .iter()
+                    .take_while(|candidate| {
+                        candidate.scene_order() < boundary
+                            && instances::compatible(context, draw, **candidate)
+                    })
+                    .count();
                 record_m2(
                     context,
                     next_m2,
                     draw,
+                    u32::try_from(count).map_err(|_| VulkanError::WorldFrameCapacity)?,
                     m2_scene_set(context, draw.light_bank()),
                     effect_scene(context, draw.scene_index(), draw.light_bank())?,
                     bindings,
                 )?;
-                next_m2 += 1;
+                next_m2 += count;
             }
             Some(1) => {
                 let draw = context
@@ -1033,6 +1048,7 @@ fn record_sky_models(
                     context,
                     index,
                     *draw,
+                    1,
                     context.frame_sets[9 + slot],
                     batch.scene,
                     bindings,
@@ -1046,6 +1062,7 @@ fn record_sky_models(
                 context,
                 index,
                 *draw,
+                1,
                 context.frame_sets[8],
                 frame.scene,
                 bindings,
@@ -1060,6 +1077,7 @@ fn record_m2(
     context: &RecordContext<'_>,
     draw_index: usize,
     draw: M2PreparedDraw,
+    instance_count: u32,
     scene_set: vk::DescriptorSet,
     scene: crate::M2SceneUniform,
     bindings: &mut WorldCommandBindings,
@@ -1093,7 +1111,7 @@ fn record_m2(
         .m2_texture_sets
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    let dynamic_offset = dynamic_offset(draw_index, context.m2_material_stride)?;
+    let first_instance = u32::try_from(draw_index).map_err(|_| VulkanError::WorldFrameCapacity)?;
     let (scene_set, scene_offset) = instance_scene(context, draw.scene_index(), scene_set)?;
     let sets = [
         scene_set,
@@ -1113,7 +1131,7 @@ fn record_m2(
             layout,
             0,
             &sets[..if receives_shadow { 5 } else { 4 }],
-            &[scene_offset, dynamic_offset],
+            &[scene_offset, 0],
         );
         context.device.cmd_push_constants(
             context.command_buffer,
@@ -1125,10 +1143,10 @@ fn record_m2(
         context.device.cmd_draw_indexed(
             context.command_buffer,
             draw.index_count(),
-            1,
+            instance_count,
             draw.first_index(),
             0,
-            0,
+            first_instance,
         );
     }
     Ok(())

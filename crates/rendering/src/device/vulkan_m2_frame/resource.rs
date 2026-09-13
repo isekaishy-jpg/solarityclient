@@ -10,7 +10,7 @@ use crate::device::VulkanError;
 use crate::device::capacity::geometric_capacity;
 use crate::device::vulkan_m2_draw::M2PreparedDraw;
 use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
-use crate::model::{M2MaterialUniform, M2SceneUniform};
+use crate::model::M2SceneUniform;
 
 const BONE_TRANSFORM_BYTES: vk::DeviceSize = 64;
 
@@ -30,7 +30,7 @@ pub(super) struct FrameCreateContext<'a> {
 }
 
 /// Offsets and strides inside one host-visible scene/bone/material buffer.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 struct FrameBufferLayout {
     bone_offset: vk::DeviceSize,
     bone_bytes: vk::DeviceSize,
@@ -44,7 +44,7 @@ impl FrameBufferLayout {
     fn new(
         draw_capacity: usize,
         bone_capacity: usize,
-        uniform_alignment: vk::DeviceSize,
+        _uniform_alignment: vk::DeviceSize,
         storage_alignment: vk::DeviceSize,
     ) -> Result<Self, VulkanError> {
         let scene_bytes = u64::try_from(M2SceneUniform::BYTE_SIZE)
@@ -57,19 +57,15 @@ impl FrameBufferLayout {
             .ok()
             .and_then(|count| count.checked_mul(BONE_TRANSFORM_BYTES))
             .ok_or(VulkanError::M2FrameCapacity)?;
-        let material_alignment = uniform_alignment.max(1);
+        let material_alignment = storage_alignment.max(16);
         let material_offset = align_up(
             bone_offset
                 .checked_add(bone_bytes)
                 .ok_or(VulkanError::M2FrameCapacity)?,
             material_alignment,
         )?;
-        let material_stride = align_up(
-            u64::try_from(M2MaterialUniform::BYTE_SIZE)
-                .map_err(|source| VulkanError::operation("convert M2 material size", source))?,
-            material_alignment,
-        )?;
-        let material_bytes = u64::try_from(draw_capacity)
+        let material_stride = M2PreparedDraw::INSTANCE_BYTE_SIZE as u64;
+        let material_bytes = u64::try_from(draw_capacity.max(1))
             .ok()
             .and_then(|count| count.checked_mul(material_stride))
             .ok_or(VulkanError::M2FrameCapacity)?;
@@ -161,11 +157,6 @@ impl M2FrameSlot {
         self.depth_image
     }
 
-    /// Returns the material dynamic-offset stride.
-    pub(super) const fn material_stride(&self) -> vk::DeviceSize {
-        self.layout.material_stride
-    }
-
     /// Waits for prior GPU use, then resets the command pool for rerecording.
     pub(super) fn wait_and_reset(&self, device: &Device) -> Result<(), VulkanError> {
         // SAFETY: The fence and command pool belong to this live device. The
@@ -253,7 +244,7 @@ impl M2FrameSlot {
                 copy_bytes(
                     destination,
                     offset,
-                    &draw.material().to_bytes(),
+                    &draw.instance_bytes(),
                     self.layout.total_bytes,
                 )?;
             }
@@ -321,8 +312,44 @@ impl M2FrameSlot {
 
     /// Allocates the combined host-visible descriptor payload.
     fn create_buffer(&mut self, context: &FrameCreateContext<'_>) -> Result<(), VulkanError> {
+        let (buffer, allocation) = Self::allocate_buffer(context.allocator, self.layout)?;
+        self.buffer = buffer;
+        self.buffer_allocation = Some(allocation);
+        Ok(())
+    }
+
+    /// Only the selected, fence-retired slot changes storage. Allocate first so
+    /// a failed growth leaves its previous buffer and descriptors intact.
+    fn grow_buffer(
+        &mut self,
+        device: &Device,
+        allocator: &vk_mem::Allocator,
+        layout: FrameBufferLayout,
+    ) -> Result<(), VulkanError> {
+        if self.layout == layout {
+            return Ok(());
+        }
+        let (buffer, allocation) = Self::allocate_buffer(allocator, layout)?;
+        let previous = std::mem::replace(&mut self.buffer, buffer);
+        let old = self.buffer_allocation.replace(allocation);
+        self.layout = layout;
+        self.write_descriptors(device);
+        if let Some(mut allocation) = old {
+            // SAFETY: Selected slot's fence retired before replacement.
+            unsafe {
+                allocator.destroy_buffer(previous, &mut allocation);
+            }
+        }
+        Ok(())
+    }
+
+    /// Allocates the desired combined stream independently of publication.
+    fn allocate_buffer(
+        allocator: &vk_mem::Allocator,
+        layout: FrameBufferLayout,
+    ) -> Result<(vk::Buffer, vk_mem::Allocation), VulkanError> {
         let buffer_info = vk::BufferCreateInfo::default()
-            .size(self.layout.total_bytes)
+            .size(layout.total_bytes)
             .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let allocation_info = vk_mem::AllocationCreateInfo {
@@ -333,15 +360,10 @@ impl M2FrameSlot {
             ..Default::default()
         };
         // SAFETY: VMA binds the returned allocation to this exact buffer.
-        let (buffer, allocation) = unsafe {
-            context
-                .allocator
-                .create_buffer(&buffer_info, &allocation_info)
-        }
-        .map_err(|source| VulkanError::operation("create M2 frame buffer", source))?;
-        self.buffer = buffer;
-        self.buffer_allocation = Some(allocation);
-        Ok(())
+        let (buffer, allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &allocation_info) }
+                .map_err(|source| VulkanError::operation("create M2 frame buffer", source))?;
+        Ok((buffer, allocation))
     }
 
     /// Allocates and writes the three non-texture descriptor sets.
@@ -379,6 +401,12 @@ impl M2FrameSlot {
         }
         self.descriptor_sets.copy_from_slice(&sets);
 
+        self.write_descriptors(context.device);
+        Ok(())
+    }
+
+    /// Rewrites only this retired slot's existing descriptor sets.
+    fn write_descriptors(&self, device: &Device) {
         let scene_info = vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .offset(0)
@@ -390,7 +418,7 @@ impl M2FrameSlot {
         let material_info = vk::DescriptorBufferInfo::default()
             .buffer(self.buffer)
             .offset(self.layout.material_offset)
-            .range(M2MaterialUniform::BYTE_SIZE as vk::DeviceSize);
+            .range(self.layout.total_bytes - self.layout.material_offset);
         let scene_infos = [scene_info];
         let bone_infos = [bone_info];
         let material_infos = [material_info];
@@ -412,8 +440,7 @@ impl M2FrameSlot {
             ),
         ];
         // SAFETY: Every descriptor range lies within the live combined buffer.
-        unsafe { context.device.update_descriptor_sets(&writes, &[]) };
-        Ok(())
+        unsafe { device.update_descriptor_sets(&writes, &[]) };
     }
 
     /// Allocates the slot-local device depth/stencil image and view.
@@ -509,6 +536,8 @@ pub(super) struct M2FrameResources {
     next_slot: usize,
     draw_capacity: usize,
     bone_capacity: usize,
+    desired_layout: Option<FrameBufferLayout>,
+    extent: (u32, u32),
 }
 
 impl M2FrameResources {
@@ -518,25 +547,32 @@ impl M2FrameResources {
             && self.slots.len() == context.slot_count
             && self.draw_capacity >= context.draw_capacity
             && self.bone_capacity >= context.bone_capacity
+            && self.extent == context.extent
         {
             return Ok(());
         }
         if context.slot_count == 0 {
             return Err(VulkanError::M2FrameCapacity);
         }
-        // SAFETY: Rebuilding invalidates old buffers/descriptors; device idle
-        // proves no prior slot or texture descriptor is still referenced.
-        unsafe { context.device.device_wait_idle() }
-            .map_err(|source| VulkanError::operation("idle before M2 frame growth", source))?;
         let draw_capacity = geometric_capacity(self.draw_capacity, context.draw_capacity);
         let bone_capacity = geometric_capacity(self.bone_capacity, context.bone_capacity);
-        self.destroy(context.device, context.allocator);
         let layout = FrameBufferLayout::new(
             draw_capacity,
             bone_capacity,
             context.uniform_alignment,
             context.storage_alignment,
         )?;
+        self.desired_layout = Some(layout);
+        self.draw_capacity = draw_capacity;
+        self.bone_capacity = bone_capacity;
+        if self.slots.len() == context.slot_count && self.extent == context.extent {
+            return Ok(());
+        }
+        // Surface replacement alone requires presentation/depth teardown.
+        // SAFETY: Existing swapchain-bound resources must have retired.
+        unsafe { context.device.device_wait_idle() }
+            .map_err(|error| VulkanError::operation("idle before M2 surface rebuild", error))?;
+        self.destroy(context.device, context.allocator);
         let mut slots = Vec::with_capacity(context.slot_count);
         for _ in 0..context.slot_count {
             match M2FrameSlot::create(&context, layout) {
@@ -573,6 +609,8 @@ impl M2FrameResources {
             }
         }
         self.slots = slots;
+        self.desired_layout = Some(layout);
+        self.extent = context.extent;
         self.present_semaphores = present_semaphores;
         self.draw_capacity = draw_capacity;
         self.bone_capacity = bone_capacity;
@@ -588,6 +626,20 @@ impl M2FrameResources {
         let index = self.next_slot;
         self.next_slot = (self.next_slot + 1) % self.slots.len();
         Ok(index)
+    }
+
+    /// Applies high-water growth after the selected frame's ordinary fence wait.
+    pub(super) fn prepare_slot(
+        &mut self,
+        index: usize,
+        device: &Device,
+        allocator: &vk_mem::Allocator,
+    ) -> Result<&mut M2FrameSlot, VulkanError> {
+        let layout = self.desired_layout.ok_or(VulkanError::M2FrameCapacity)?;
+        let slot = self.slot_mut(index)?;
+        slot.wait_and_reset(device)?;
+        slot.grow_buffer(device, allocator, layout)?;
+        Ok(slot)
     }
 
     /// Returns one mutable frame slot by a previously selected index.

@@ -26,7 +26,8 @@ struct GpuCharacterAtlasTexture {
 pub(in crate::device) struct CharacterAtlasTextureRegistry {
     registry_id: u64,
     handles: HashMap<CharacterAtlasTextureKey, CharacterAtlasTextureHandle>,
-    resources: Vec<GpuCharacterAtlasTexture>,
+    resources: HashMap<u32, GpuCharacterAtlasTexture>,
+    next_slot: u32,
     pending_transfers: Vec<DeferredTextureTransfer>,
     upload_submission_count: u64,
 }
@@ -39,7 +40,8 @@ impl Default for CharacterAtlasTextureRegistry {
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
-            resources: Vec::new(),
+            resources: HashMap::new(),
+            next_slot: 0,
             pending_transfers: Vec::new(),
             upload_submission_count: 0,
         }
@@ -47,6 +49,17 @@ impl Default for CharacterAtlasTextureRegistry {
 }
 
 impl CharacterAtlasTextureRegistry {
+    /// On-demand content accounting, outside ordinary frame preparation.
+    pub(in crate::device) fn usage(&self) -> (usize, usize) {
+        (
+            self.resources.len(),
+            self.resources
+                .values()
+                .map(|resource| resource.info.upload_byte_count())
+                .sum(),
+        )
+    }
+
     /// Uploads one complete stock-composed mip chain as an M2 byte-space image.
     pub(in crate::device) fn upload(
         &mut self,
@@ -58,8 +71,10 @@ impl CharacterAtlasTextureRegistry {
             return Ok(*handle);
         }
         let (mips, byte_count) = validate_mips(atlas)?;
-        let slot = u32::try_from(self.resources.len())
-            .map_err(|_source| VulkanError::CharacterAtlasTextureCapacity)?;
+        let slot = self.next_slot;
+        self.next_slot = slot
+            .checked_add(1)
+            .ok_or(VulkanError::CharacterAtlasTextureCapacity)?;
         // The atlas occupies an ordinary M2 texture stage after composition;
         // preserve the same fixed-function byte-space sampling as authored BLPs.
         let (image, transfer) =
@@ -71,15 +86,18 @@ impl CharacterAtlasTextureRegistry {
             registry_id: self.registry_id,
             slot,
         };
-        self.resources.push(GpuCharacterAtlasTexture {
-            image,
-            info: CharacterAtlasTextureResourceInfo::new(
-                BlpColorSpace::Linear,
-                (top.width(), top.height()),
-                mips.len(),
-                byte_count,
-            ),
-        });
+        self.resources.insert(
+            slot,
+            GpuCharacterAtlasTexture {
+                image,
+                info: CharacterAtlasTextureResourceInfo::new(
+                    BlpColorSpace::Linear,
+                    (top.width(), top.height()),
+                    mips.len(),
+                    byte_count,
+                ),
+            },
+        );
         self.pending_transfers.push(transfer);
         self.handles.insert(atlas.key().clone(), handle);
         self.upload_submission_count = self.upload_submission_count.saturating_add(1);
@@ -87,7 +105,7 @@ impl CharacterAtlasTextureRegistry {
     }
 
     /// Reclaims staging storage without waiting for unfinished GPU work.
-    fn retire_completed_transfers(
+    pub(in crate::device) fn retire_completed_transfers(
         &mut self,
         context: TextureUploadContext<'_>,
     ) -> Result<(), VulkanError> {
@@ -102,6 +120,19 @@ impl CharacterAtlasTextureRegistry {
         Ok(())
     }
 
+    /// Detaches an unowned recipe after its last CPU source releases it.
+    pub(in crate::device) fn take(
+        &mut self,
+        handle: CharacterAtlasTextureHandle,
+    ) -> Option<GpuSampledImage> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        let resource = self.resources.remove(&handle.slot)?;
+        self.handles.retain(|_, candidate| *candidate != handle);
+        Some(resource.image)
+    }
+
     /// Returns stable allocation facts without exposing Vulkan handles.
     pub(in crate::device) fn info(
         &self,
@@ -111,7 +142,7 @@ impl CharacterAtlasTextureRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.info)
     }
 
@@ -124,7 +155,7 @@ impl CharacterAtlasTextureRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.image.view())
     }
 
@@ -144,7 +175,7 @@ impl CharacterAtlasTextureRegistry {
             transfer.destroy(device, allocator);
         }
         self.pending_transfers.clear();
-        for mut resource in self.resources.drain(..).rev() {
+        for mut resource in self.resources.drain().map(|(_, resource)| resource) {
             resource.image.destroy(device, allocator);
         }
     }

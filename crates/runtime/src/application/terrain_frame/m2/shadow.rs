@@ -10,7 +10,7 @@ use crate::application::terrain_coordinator::m2_residency::ResidentM2Owner;
 use glam::{Mat4, Vec3, Vec4};
 use solarity_rendering::{
     M2AnimationClock, M2MaterialPose, M2MaterialUniform, M2PreparedDraw, M2ShadowMaterial,
-    VulkanRenderer, WorldShadowProjection,
+    WorldShadowProjection,
 };
 
 /// 7BB9D0 admits dynamic unit roots; 834660 recursively visits their attachments.
@@ -153,7 +153,6 @@ pub(super) fn environment_maps(
 /// The returned packets use the caller's shared palette offset even off screen.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_packets(
-    renderer: &VulkanRenderer,
     source: &M2GpuSource,
     placement: &M2GpuPlacement,
     clock: M2AnimationClock,
@@ -163,9 +162,9 @@ pub(super) fn append_packets(
     material_poses: &mut Vec<Option<M2MaterialPose>>,
     mut destination: impl FnMut(M2PreparedDraw),
 ) -> Result<(), RuntimeTerrainFrameError> {
-    let Some(mesh) = source.mesh else {
+    if source.mesh.is_none() {
         return Ok(());
-    };
+    }
     if placement
         .unit_effect
         .as_ref()
@@ -214,17 +213,7 @@ pub(super) fn append_packets(
             Vec4::ZERO,
             Vec4::ZERO,
         );
-        destination(renderer.prepare_m2_draw(
-            mesh,
-            resources.pipeline,
-            resources.texture_set,
-            &source.plan,
-            draw_index,
-            false,
-            material,
-            bone_offset,
-            0,
-        )?);
+        destination(resources.template.instantiate(material, bone_offset, 0)?);
     }
     Ok(())
 }

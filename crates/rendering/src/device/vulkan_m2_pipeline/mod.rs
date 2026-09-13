@@ -9,6 +9,6 @@ mod types;
 pub(in crate::device) use registry::M2PipelineRegistry;
 pub use types::{M2PipelineHandle, M2PipelineInfo};
 
-/// Shared set-two ABI. M2 draws select one material block with a dynamic offset.
+/// Shared set-two ABI. Packed instances are selected by gl_InstanceIndex.
 pub(in crate::device) const M2_MATERIAL_DESCRIPTOR_TYPE: vk::DescriptorType =
-    vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC;
+    vk::DescriptorType::STORAGE_BUFFER_DYNAMIC;

@@ -26,6 +26,7 @@ pub(super) struct RuntimeUiResidency {
     textures: HashMap<AssetPath, BlpTextureHandle>,
     glyph_textures: HashMap<u64, UiGlyphTextureHandle>,
     glyph_revisions: HashMap<u64, u64>,
+    glyph_owners: HashMap<u64, (std::sync::Weak<()>, solarity_rendering::GpuResourceLease)>,
 }
 
 impl RuntimeUiResidency {
@@ -39,6 +40,14 @@ impl RuntimeUiResidency {
         renderer: &mut VulkanRenderer,
         atlas: &UiGlyphAtlasPlan,
     ) -> Result<(), ApplicationError> {
+        self.glyph_owners.retain(|identity, (owner, _lease)| {
+            if owner.strong_count() != 0 {
+                return true;
+            }
+            self.glyph_textures.remove(identity);
+            self.glyph_revisions.remove(identity);
+            false
+        });
         for page in atlas.pages() {
             if let Some(&handle) = self.glyph_textures.get(&page.identity()) {
                 let revision = self
@@ -58,6 +67,13 @@ impl RuntimeUiResidency {
                     page.rgba8(),
                 )?;
                 self.glyph_textures.insert(page.identity(), handle);
+                self.glyph_owners.insert(
+                    page.identity(),
+                    (
+                        std::sync::Arc::downgrade(&page.lifetime()),
+                        renderer.retain_ui_glyph_texture(handle)?,
+                    ),
+                );
             }
             self.glyph_revisions
                 .insert(page.identity(), page.revision());

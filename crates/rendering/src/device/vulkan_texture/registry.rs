@@ -51,6 +51,17 @@ impl Default for BlpTextureRegistry {
 }
 
 impl BlpTextureRegistry {
+    /// On-demand content accounting, outside ordinary frame preparation.
+    pub(in crate::device) fn usage(&self) -> (usize, usize) {
+        (
+            self.resources.len(),
+            self.resources
+                .iter()
+                .map(|resource| resource.info().upload_byte_count())
+                .sum(),
+        )
+    }
+
     /// Returns an existing identity or uploads every authored mip once.
     pub(in crate::device) fn upload(
         &mut self,
@@ -141,7 +152,7 @@ impl BlpTextureRegistry {
     }
 
     /// Reclaims staging storage without waiting for unfinished GPU work.
-    fn retire_completed_transfers(
+    pub(in crate::device) fn retire_completed_transfers(
         &mut self,
         context: TextureUploadContext<'_>,
     ) -> Result<(), BlpTextureUploadError> {

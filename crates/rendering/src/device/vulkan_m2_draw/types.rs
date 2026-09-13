@@ -25,6 +25,29 @@ pub struct M2PreparedDraw {
 }
 
 impl M2PreparedDraw {
+    /// Reuses validated immutable fields, changing only placement state.
+    pub(super) fn instantiate(
+        mut self,
+        material: M2MaterialUniform,
+        bone_offset: u32,
+        flags: u32,
+    ) -> Result<Self, crate::device::VulkanError> {
+        if self.required_bone_transforms != 0 {
+            self.required_bone_transforms = self
+                .required_bone_transforms
+                .checked_add(bone_offset as usize)
+                .ok_or(crate::device::VulkanError::M2BoneTransformRange)?;
+        }
+        self.material = material;
+        self.push_constants = self.push_constants.with_instance(bone_offset, flags);
+        // 834660 rejects translucent (<0.55) and NaN casters independently of
+        // the static authored material classification captured by the template.
+        if material.alpha() < 0.55 || material.alpha().is_nan() {
+            self.shadow_material = None;
+        }
+        Ok(self)
+    }
+
     /// Constructs a packet after the renderer validates every resource join.
     #[allow(clippy::too_many_arguments)]
     pub(super) const fn new(

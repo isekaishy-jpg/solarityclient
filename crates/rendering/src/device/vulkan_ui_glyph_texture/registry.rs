@@ -19,11 +19,12 @@ struct GpuUiGlyphTexture {
     info: UiGlyphTextureResourceInfo,
 }
 
-/// Owns every unique UI coverage generation until renderer teardown.
+/// Owns live glyph pages until their coverage bank and prepared frames depart.
 pub(in crate::device) struct UiGlyphTextureRegistry {
     registry_id: u64,
     handles: HashMap<u64, UiGlyphTextureHandle>,
-    resources: Vec<GpuUiGlyphTexture>,
+    resources: HashMap<u32, GpuUiGlyphTexture>,
+    next_slot: u32,
     pending: Vec<DeferredTextureTransfer>,
 }
 
@@ -33,13 +34,25 @@ impl Default for UiGlyphTextureRegistry {
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
-            resources: Vec::new(),
+            resources: HashMap::new(),
+            next_slot: 0,
             pending: Vec::new(),
         }
     }
 }
 
 impl UiGlyphTextureRegistry {
+    /// On-demand content accounting, outside ordinary frame preparation.
+    pub(in crate::device) fn usage(&self) -> (usize, usize) {
+        (
+            self.resources.len(),
+            self.resources
+                .values()
+                .map(|resource| resource.info.upload_byte_count())
+                .sum(),
+        )
+    }
+
     /// Returns the resident generation or uploads one tightly packed atlas.
     pub(in crate::device) fn upload(
         &mut self,
@@ -51,8 +64,10 @@ impl UiGlyphTextureRegistry {
         if let Some(handle) = self.handles.get(&identity) {
             return Ok(*handle);
         }
-        let slot = u32::try_from(self.resources.len())
-            .map_err(|_source| VulkanError::UiGlyphTextureCapacity)?;
+        let slot = self.next_slot;
+        self.next_slot = slot
+            .checked_add(1)
+            .ok_or(VulkanError::UiGlyphTextureCapacity)?;
         self.retire_transfers(context)?;
         let (image, transfer) = upload_rgba8_image_deferred(context, extent, rgba8)?;
         self.pending.push(transfer);
@@ -60,10 +75,13 @@ impl UiGlyphTextureRegistry {
             registry_id: self.registry_id,
             slot,
         };
-        self.resources.push(GpuUiGlyphTexture {
-            image,
-            info: UiGlyphTextureResourceInfo::new(identity, extent, rgba8.len()),
-        });
+        self.resources.insert(
+            slot,
+            GpuUiGlyphTexture {
+                image,
+                info: UiGlyphTextureResourceInfo::new(identity, extent, rgba8.len()),
+            },
+        );
         self.handles.insert(identity, handle);
         Ok(handle)
     }
@@ -83,7 +101,7 @@ impl UiGlyphTextureRegistry {
         }
         let resource = self
             .resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .ok_or(VulkanError::UnknownUiGlyphTextureHandle)?;
         if resource.info.extent() != extent {
             return Err(VulkanError::UiDrawTextureMismatch);
@@ -101,7 +119,10 @@ impl UiGlyphTextureRegistry {
     }
 
     /// Completed staging transfers release without blocking unfinished work.
-    fn retire_transfers(&mut self, context: TextureUploadContext<'_>) -> Result<(), VulkanError> {
+    pub(in crate::device) fn retire_transfers(
+        &mut self,
+        context: TextureUploadContext<'_>,
+    ) -> Result<(), VulkanError> {
         for index in (0..self.pending.len()).rev() {
             if self.pending[index].is_complete(context.device)? {
                 self.pending
@@ -112,6 +133,19 @@ impl UiGlyphTextureRegistry {
         Ok(())
     }
 
+    /// Invalidates the CPU handle and transfers image ownership to a fence batch.
+    pub(in crate::device) fn take(
+        &mut self,
+        handle: UiGlyphTextureHandle,
+    ) -> Option<GpuSampledImage> {
+        if handle.registry_id != self.registry_id {
+            return None;
+        }
+        let resource = self.resources.remove(&handle.slot)?;
+        self.handles.remove(&resource.info.identity());
+        Some(resource.image)
+    }
+
     /// Resolves renderer-local diagnostics without exposing Vulkan handles.
     pub(in crate::device) fn info(
         &self,
@@ -120,9 +154,7 @@ impl UiGlyphTextureRegistry {
         if handle.registry_id != self.registry_id {
             return None;
         }
-        self.resources
-            .get(handle.slot as usize)
-            .map(|item| item.info)
+        self.resources.get(&handle.slot).map(|item| item.info)
     }
 
     /// Resolves a renderer-local identity to its live sampled image view.
@@ -131,7 +163,7 @@ impl UiGlyphTextureRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|item| item.image.view())
     }
 
@@ -145,7 +177,7 @@ impl UiGlyphTextureRegistry {
             transfer.destroy(device, allocator);
         }
         self.handles.clear();
-        for mut resource in self.resources.drain(..).rev() {
+        for mut resource in self.resources.drain().map(|(_, resource)| resource) {
             resource.image.destroy(device, allocator);
         }
     }

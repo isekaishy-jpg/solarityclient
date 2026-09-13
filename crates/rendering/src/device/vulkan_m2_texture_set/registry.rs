@@ -18,6 +18,7 @@ use super::types::{M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2Tex
 /// One live descriptor set owned transitively by a registry descriptor pool.
 struct GpuM2TextureSet {
     handle: vk::DescriptorSet,
+    pool: vk::DescriptorPool,
     info: M2TextureSetInfo,
 }
 
@@ -25,7 +26,8 @@ struct GpuM2TextureSet {
 pub(in crate::device) struct M2TextureSetRegistry {
     registry_id: u64,
     handles: HashMap<M2TextureSet, M2TextureSetHandle>,
-    resources: Vec<GpuM2TextureSet>,
+    resources: HashMap<u32, GpuM2TextureSet>,
+    next_slot: u32,
     pools: Vec<M2DescriptorPool>,
 }
 
@@ -37,13 +39,19 @@ impl Default for M2TextureSetRegistry {
         Self {
             registry_id: NEXT_REGISTRY_ID.fetch_add(1, Ordering::Relaxed),
             handles: HashMap::new(),
-            resources: Vec::new(),
+            resources: HashMap::new(),
+            next_slot: 0,
             pools: Vec::new(),
         }
     }
 }
 
 impl M2TextureSetRegistry {
+    /// Number of live sampled-image descriptor resources.
+    pub(in crate::device) fn resource_count(&self) -> usize {
+        self.resources.len()
+    }
+
     /// Resolves a model batch in input order, allocating only unique new sets.
     pub(in crate::device) fn prepare(
         &mut self,
@@ -90,7 +98,7 @@ impl M2TextureSetRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.info)
     }
 
@@ -100,8 +108,40 @@ impl M2TextureSetRegistry {
             return None;
         }
         self.resources
-            .get(handle.slot as usize)
+            .get(&handle.slot)
             .map(|resource| resource.handle)
+    }
+
+    /// Removes descriptors referencing an obsolete character atlas.
+    pub(in crate::device) fn take_atlas(
+        &mut self,
+        atlas: crate::CharacterAtlasTextureHandle,
+    ) -> Vec<(vk::DescriptorPool, vk::DescriptorSet)> {
+        let mut slots = Vec::new();
+        self.handles.retain(|key, handle| {
+            if key
+                .stages()
+                .iter()
+                .any(|stage| stage.image() == M2TextureImageHandle::CharacterAtlas(atlas))
+            {
+                slots.push(handle.slot);
+                false
+            } else {
+                true
+            }
+        });
+        slots
+            .into_iter()
+            .filter_map(|slot| self.resources.remove(&slot))
+            .map(|resource| (resource.pool, resource.handle))
+            .collect()
+    }
+
+    /// Returns released descriptor capacity after the retirement fence completes.
+    pub(in crate::device) fn release_capacity(&mut self, pool: vk::DescriptorPool) {
+        if let Some(owner) = self.pools.iter_mut().find(|owner| owner.handle() == pool) {
+            owner.release_capacity();
+        }
     }
 
     /// Releases descriptor sets transitively by destroying their owning pools.
@@ -124,14 +164,14 @@ impl M2TextureSetRegistry {
         samplers: &M2SamplerRegistry,
         pending: &[M2TextureSet],
     ) -> Result<(), VulkanError> {
-        let first_slot = u32::try_from(self.resources.len())
+        let first_slot = u32::try_from(self.next_slot as usize)
             .map_err(|_source| VulkanError::M2TextureSetCapacity)?;
         let added =
             u32::try_from(pending.len()).map_err(|_source| VulkanError::M2TextureSetCapacity)?;
         first_slot
             .checked_add(added)
             .ok_or(VulkanError::M2TextureSetCapacity)?;
-        let sets = self.allocate_descriptors(device, layout, added)?;
+        let (pool, sets) = self.allocate_descriptors(device, layout, added)?;
 
         for (key, descriptor_set) in pending.iter().copied().zip(sets) {
             write_texture_set(
@@ -142,16 +182,22 @@ impl M2TextureSetRegistry {
                 samplers,
                 key,
             )?;
-            let slot = u32::try_from(self.resources.len())
-                .map_err(|_source| VulkanError::M2TextureSetCapacity)?;
+            let slot = self.next_slot;
+            self.next_slot = slot
+                .checked_add(1)
+                .ok_or(VulkanError::M2TextureSetCapacity)?;
             let handle = M2TextureSetHandle {
                 registry_id: self.registry_id,
                 slot,
             };
-            self.resources.push(GpuM2TextureSet {
-                handle: descriptor_set,
-                info: M2TextureSetInfo::new(key.stage_count()),
-            });
+            self.resources.insert(
+                slot,
+                GpuM2TextureSet {
+                    handle: descriptor_set,
+                    pool,
+                    info: M2TextureSetInfo::new(key.stage_count()),
+                },
+            );
             self.handles.insert(key, handle);
         }
         Ok(())
@@ -165,13 +211,11 @@ impl M2TextureSetRegistry {
         device: &Device,
         layout: vk::DescriptorSetLayout,
         count: u32,
-    ) -> Result<Vec<vk::DescriptorSet>, VulkanError> {
-        if let Some(pool) = self
-            .pools
-            .last_mut()
-            .filter(|pool| pool.can_allocate(count))
-        {
-            return pool.allocate(device, layout, count);
+    ) -> Result<(vk::DescriptorPool, Vec<vk::DescriptorSet>), VulkanError> {
+        if let Some(pool) = self.pools.iter_mut().find(|pool| pool.can_allocate(count)) {
+            return pool
+                .allocate(device, layout, count)
+                .map(|sets| (pool.handle(), sets));
         }
         // Each set charges two descriptors, whose Vulkan count is a u32.
         let capacity = self.pools.last().map_or(count, |pool| {
@@ -180,8 +224,9 @@ impl M2TextureSetRegistry {
         let mut pool = M2DescriptorPool::new(device, capacity)?;
         match pool.allocate(device, layout, count) {
             Ok(sets) => {
+                let handle = pool.handle();
                 self.pools.push(pool);
-                Ok(sets)
+                Ok((handle, sets))
             }
             Err(error) => {
                 pool.destroy(device);

@@ -61,16 +61,28 @@ pub(super) fn record_scenery(
         + context
             .shadow_frame
             .map_or(0, |frame| frame.casters().len());
-    for (index, caster) in frame.m2_casters().iter().enumerate() {
-        if caster.maps & mask != 0 {
-            record_m2(
-                context,
-                material_base + index,
-                caster.draw,
-                caster_set,
-                bindings,
-            )?;
+    let casters = frame.m2_casters();
+    let mut index = 0;
+    while let Some(caster) = casters.get(index) {
+        if caster.maps & mask == 0 {
+            index += 1;
+            continue;
         }
+        let count = 1 + casters[index + 1..]
+            .iter()
+            .take_while(|next| {
+                next.maps & mask != 0 && caster.draw.can_instance_shadow_with(next.draw)
+            })
+            .count();
+        record_m2_instances(
+            context,
+            material_base + index,
+            caster.draw,
+            u32::try_from(count).map_err(|_| VulkanError::WorldFrameCapacity)?,
+            caster_set,
+            bindings,
+        )?;
+        index += count;
     }
     Ok(())
 }
@@ -79,6 +91,18 @@ pub(super) fn record_m2(
     context: &RecordContext<'_>,
     material_index: usize,
     draw: M2PreparedDraw,
+    caster_set: vk::DescriptorSet,
+    bindings: &mut WorldCommandBindings,
+) -> Result<(), VulkanError> {
+    record_m2_instances(context, material_index, draw, 1, caster_set, bindings)
+}
+
+/// One indexed submission reads consecutive instance records from the frame stream.
+fn record_m2_instances(
+    context: &RecordContext<'_>,
+    material_index: usize,
+    draw: M2PreparedDraw,
+    instance_count: u32,
     caster_set: vk::DescriptorSet,
     bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
@@ -102,7 +126,8 @@ pub(super) fn record_m2(
         .m2_texture_sets
         .raw(draw.texture_set())
         .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    let offset = dynamic_offset(material_index, context.m2_material_stride)?;
+    let first_instance =
+        u32::try_from(material_index).map_err(|_| VulkanError::WorldFrameCapacity)?;
     let sets = [
         caster_set,
         context.frame_sets[6],
@@ -121,7 +146,7 @@ pub(super) fn record_m2(
             layout,
             0,
             &sets,
-            &[offset],
+            &[0],
         );
         context.device.cmd_push_constants(
             context.command_buffer,
@@ -133,10 +158,10 @@ pub(super) fn record_m2(
         context.device.cmd_draw_indexed(
             context.command_buffer,
             draw.index_count(),
-            1,
+            instance_count,
             draw.first_index(),
             0,
-            0,
+            first_instance,
         );
     }
     Ok(())

@@ -1,4 +1,4 @@
-//! Monotonic descriptor capacity for the common two-binding M2 texture layout.
+//! Reusable descriptor capacity for the common two-binding M2 texture layout.
 
 #![allow(unsafe_code)]
 
@@ -6,8 +6,8 @@ use ash::{Device, vk};
 
 use crate::device::VulkanError;
 
-/// Owns one pool until renderer teardown; successful allocations are never freed
-/// or reset individually, so published material descriptors remain stable.
+/// Owns one pool until renderer teardown; retired sets return capacity only
+/// after their final submitted GPU use. Live material descriptors stay stable.
 pub(super) struct M2DescriptorPool {
     handle: vk::DescriptorPool,
     /// Set slots, each charged for two combined image/sampler descriptors.
@@ -28,10 +28,11 @@ impl M2DescriptorPool {
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(descriptor_count)];
         let info = vk::DescriptorPoolCreateInfo::default()
+            .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(capacity)
             .pool_sizes(&sizes);
-        // SAFETY: Both counts are nonzero and cover the common M2 layout. No
-        // individual-free or update-after-bind flags change pool accounting.
+        // SAFETY: Both counts cover the common M2 layout. Individual frees are
+        // accounted for only after their resource retirement fence completes.
         let handle = unsafe { device.create_descriptor_pool(&info, None) }.map_err(|source| {
             VulkanError::operation("create M2 texture descriptor pool", source)
         })?;
@@ -40,6 +41,14 @@ impl M2DescriptorPool {
             capacity,
             remaining: capacity,
         })
+    }
+
+    pub(super) const fn handle(&self) -> vk::DescriptorPool {
+        self.handle
+    }
+    /// Returns a set slot only after its GPU retirement fence completes.
+    pub(super) fn release_capacity(&mut self) {
+        self.remaining += 1;
     }
 
     pub(super) const fn capacity(&self) -> u32 {

@@ -143,8 +143,9 @@ impl PortraitRegistry {
             handle
         };
         let entry = &mut self.resources[handle.slot as usize];
-        let slot = self.frames.slot_mut(0)?;
-        slot.wait_and_reset(context.device)?;
+        let slot = self
+            .frames
+            .prepare_slot(0, context.device, context.allocator)?;
         slot.write(context.allocator, scene, bones, draws)?;
         let mask_draws = [context.mask];
         record_draws(RecordContext {
@@ -157,7 +158,6 @@ impl PortraitRegistry {
             depth_view: slot.depth_view(),
             extent: EXTENT,
             frame_sets: slot.descriptor_sets(),
-            material_stride: slot.material_stride(),
             pipelines: context.pipelines,
             meshes: context.meshes,
             texture_sets: context.texture_sets,

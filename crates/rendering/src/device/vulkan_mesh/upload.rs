@@ -76,6 +76,11 @@ pub(in crate::device) struct GpuMeshBuffers {
 }
 
 impl GpuM2Mesh {
+    /// Transfers buffer ownership into a GPU retirement batch.
+    pub(super) fn into_buffers(self) -> GpuMeshBuffers {
+        self.buffers
+    }
+
     /// Returns the public, driver-independent description of this allocation.
     pub(super) const fn info(&self) -> &M2MeshResourceInfo {
         &self.info
@@ -150,13 +155,6 @@ impl DeferredMeshTransfer {
         // SAFETY: This transfer uniquely owns the submitted fence until retirement.
         unsafe { device.get_fence_status(self.fence) }
             .map_err(|source| VulkanError::operation("poll M2 buffer transfer", source))
-    }
-
-    /// Waits for callers whose mesh registry still requires synchronous admission.
-    fn wait(&self, device: &Device) -> Result<(), VulkanError> {
-        // SAFETY: The fence and all referenced resources remain owned through this wait.
-        unsafe { device.wait_for_fences(&[self.fence], true, u64::MAX) }
-            .map_err(|source| VulkanError::operation("wait for mesh buffer transfer", source))
     }
 
     /// Releases staging after fence completion or renderer-wide device idle.
@@ -369,26 +367,8 @@ pub(super) fn upload_mesh(
 }
 
 /// Uploads one nonempty serialized vertex/index pair for any typed mesh owner.
-pub(in crate::device) fn upload_mesh_buffers(
-    context: MeshUploadContext<'_>,
-    vertex_bytes: &[u8],
-    index_bytes: &[u8],
-) -> Result<GpuMeshBuffers, VulkanError> {
-    let (mut buffers, mut transfer) =
-        upload_mesh_buffers_deferred(context, vertex_bytes, index_bytes)?;
-    let result = transfer.wait(context.device);
-    transfer.destroy(context.device, context.allocator);
-    if let Err(error) = result {
-        buffers.destroy(context.allocator);
-        return Err(error);
-    }
-    Ok(buffers)
-}
-
-/// Records transfer-to-input barriers before later draws on the graphics queue.
-///
-/// Vulkan's submission-order dependency extends to subsequent submissions on
-/// this same queue. The fence controls staging lifetime, not draw readiness.
+/// Subsequent draws use the same queue. The fence controls staging lifetime,
+/// independently of draw readiness; admission never waits on the host.
 pub(in crate::device) fn upload_mesh_buffers_deferred(
     context: MeshUploadContext<'_>,
     vertex_bytes: &[u8],

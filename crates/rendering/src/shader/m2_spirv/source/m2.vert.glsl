@@ -36,7 +36,7 @@ layout(std430, set = 1, binding = 0) readonly buffer M2BoneTransforms {
     mat4 transforms[];
 } bones;
 
-layout(std140, set = 2, binding = 0) uniform M2MaterialState {
+struct M2Instance {
     mat4 model;
     mat4 texture_transforms[2];
     mat4 model_view;
@@ -44,14 +44,16 @@ layout(std140, set = 2, binding = 0) uniform M2MaterialState {
     vec4 fog_color;
     vec4 fragment_parameters;
     vec4 liquid_clip_plane;
-} material;
+    uvec4 palette;
+};
+layout(std430, set = 2, binding = 0) readonly buffer M2Instances {
+    M2Instance records[];
+} instances;
+#define material instances.records[gl_InstanceIndex]
+layout(location = 10) flat out uint instance_index;
 
-layout(push_constant) uniform M2DrawState {
-    uint bone_transform_offset;
-    uint bone_count;
-    uint texture_count;
-    uint flags;
-} draw_state;
+
+
 
 layout(location = 0) in vec3 model_position;
 layout(location = 1) in vec4 bone_weights;
@@ -73,18 +75,18 @@ layout(location = 9) out vec3 fragment_shadow_coordinates_3;
 
 // Build one skin matrix from the exact SKIN influence class selected by stock.
 mat4 skin_matrix() {
-    if (M2_BONE_CLASS == 0 || draw_state.bone_count == 0u) {
+    if (M2_BONE_CLASS == 0 || material.palette.y == 0u) {
         return mat4(1.0);
     }
     if (M2_BONE_CLASS == 1) {
-        return bones.transforms[draw_state.bone_transform_offset + bone_indices.x];
+        return bones.transforms[material.palette.x + bone_indices.x];
     }
 
     mat4 skin = mat4(0.0);
-    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.x] * bone_weights.x;
-    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.y] * bone_weights.y;
-    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.z] * bone_weights.z;
-    skin += bones.transforms[draw_state.bone_transform_offset + bone_indices.w] * bone_weights.w;
+    skin += bones.transforms[material.palette.x + bone_indices.x] * bone_weights.x;
+    skin += bones.transforms[material.palette.x + bone_indices.y] * bone_weights.y;
+    skin += bones.transforms[material.palette.x + bone_indices.z] * bone_weights.z;
+    skin += bones.transforms[material.palette.x + bone_indices.w] * bone_weights.w;
     return skin;
 }
 
@@ -153,6 +155,7 @@ vec3 shadow_coordinates(int map_index, vec3 view_position) {
 }
 
 void main() {
+    instance_index = gl_InstanceIndex;
     mat4 skin = skin_matrix();
     vec3 skinned_position = (skin * vec4(model_position, 1.0)).xyz;
     vec3 skinned_normal = normalize(mat3(skin) * model_normal);

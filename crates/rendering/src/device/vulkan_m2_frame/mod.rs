@@ -102,8 +102,9 @@ impl M2FrameRenderer {
         })?;
         let slot_index = self.resources.next_slot_index()?;
         let (image_index, _suboptimal) = {
-            let slot = self.resources.slot_mut(slot_index)?;
-            slot.wait_and_reset(context.device)?;
+            let slot =
+                self.resources
+                    .prepare_slot(slot_index, context.device, context.allocator)?;
             slot.write(context.allocator, scene, bone_transforms, draws)?;
             // SAFETY: The swapchain and slot acquire semaphore remain live until
             // the returned image is submitted and presented below.
@@ -133,7 +134,7 @@ impl M2FrameRenderer {
                 VulkanError::operation("index M2 frame view", "index is out of range")
             })?;
         let slot = self.resources.slot_mut(slot_index)?;
-        record_draws(RecordContext {
+        let submission_count = record_draws(RecordContext {
             device: context.device,
             capture: context.capture,
             command_buffer: slot.command_buffer(),
@@ -143,7 +144,6 @@ impl M2FrameRenderer {
             depth_view: slot.depth_view(),
             extent: context.extent,
             frame_sets: slot.descriptor_sets(),
-            material_stride: slot.material_stride(),
             pipelines: context.pipelines,
             meshes: context.meshes,
             texture_sets: context.texture_sets,
@@ -152,7 +152,11 @@ impl M2FrameRenderer {
             mask: None,
         })?;
         submit_and_present(&context, slot, present_semaphore, image_index)?;
-        Ok(M2FrameReport::new(draws.len(), bone_transforms.len()))
+        Ok(M2FrameReport::new(
+            draws.len(),
+            bone_transforms.len(),
+            submission_count,
+        ))
     }
 
     /// Releases all persistent frame children before their allocator/device.

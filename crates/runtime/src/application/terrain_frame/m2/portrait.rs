@@ -90,7 +90,7 @@ impl M2Frame {
             let bone_offset = u32::try_from(bones.len())
                 .map_err(|_| solarity_rendering::VulkanError::M2BoneTransformRange)?;
             bones.extend_from_slice(pose_scratch.transforms());
-            if let Some(mesh) = source.mesh {
+            if source.mesh.is_some() {
                 for (draw_index, resources) in source.draws.iter().enumerate() {
                     let Some(resources) = resources else {
                         continue;
@@ -104,15 +104,15 @@ impl M2Frame {
                         continue;
                     }
                     let fade = alpha == M2ElementAlphaState::Translucent && !state.blend_enabled();
-                    let pipeline = if fade {
-                        resources.runtime_fade_pipeline.ok_or_else(|| {
+                    let template = if fade {
+                        resources.fade_template.ok_or_else(|| {
                             RuntimeTerrainFrameError::M2RuntimeFadePipeline {
                                 model: source.model.path().clone(),
                                 draw_index,
                             }
                         })?
                     } else {
-                        resources.pipeline
+                        resources.template
                     };
                     let material = M2MaterialUniform::new(
                         transform,
@@ -123,17 +123,7 @@ impl M2Frame {
                         // Portraits disable world fog for every material.
                         Vec4::new(state.alpha_reference(1.0), 0.0, 0.0, 0.0),
                     );
-                    let prepared = renderer.prepare_m2_draw(
-                        mesh,
-                        pipeline,
-                        resources.texture_set,
-                        &source.plan,
-                        draw_index,
-                        fade,
-                        material,
-                        bone_offset,
-                        0,
-                    )?;
+                    let prepared = template.instantiate(material, bone_offset, 0)?;
                     if draw.transparent_sort_unit() || alpha == M2ElementAlphaState::Translucent {
                         let section_distance =
                             section_distance_key(draw, &pose_scratch, model_view)?;

@@ -18,8 +18,8 @@ use crate::device::vulkan_sky::SkyFrameResources;
 use crate::device::vulkan_underwater::UnderwaterFrameResources;
 use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
-    M2MaterialUniform, M2ParticleRenderVertex, M2RibbonRenderVertex, M2SceneUniform,
-    TerrainSceneUniform, WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
+    M2ParticleRenderVertex, M2RibbonRenderVertex, M2SceneUniform, TerrainSceneUniform,
+    WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
 const DESCRIPTOR_SET_COUNT: usize = 13;
@@ -111,9 +111,9 @@ impl FrameBufferLayout {
             bone_offset
                 .checked_add(bone_bytes)
                 .ok_or(VulkanError::WorldFrameCapacity)?,
-            uniform_alignment,
+            context.storage_alignment.max(16),
         )?;
-        let m2_material_stride = align_up(M2MaterialUniform::BYTE_SIZE as u64, uniform_alignment)?;
+        let m2_material_stride = M2PreparedDraw::INSTANCE_BYTE_SIZE as u64;
         validate_dynamic_range(context.m2_draw_capacity, m2_material_stride)?;
         let m2_material_bytes = (context.m2_draw_capacity.max(1) as u64)
             .checked_mul(m2_material_stride)
@@ -246,10 +246,6 @@ impl WorldFrameSlot {
 
     pub(super) const fn m2_scene_stride(&self) -> vk::DeviceSize {
         self.layout.m2_scene_stride
-    }
-
-    pub(super) const fn m2_material_stride(&self) -> vk::DeviceSize {
-        self.layout.m2_material_stride
     }
 
     pub(super) const fn ribbon_vertex_buffer(&self) -> (vk::Buffer, vk::DeviceSize) {
@@ -477,7 +473,7 @@ impl WorldFrameSlot {
                         self.layout.m2_material_stride,
                         index,
                     )?,
-                    &draw.material().to_bytes(),
+                    &draw.instance_bytes(),
                     self.layout.total_bytes,
                 )?;
             }
@@ -584,7 +580,10 @@ impl WorldFrameSlot {
                 .descriptor_count(2),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .descriptor_count(10),
+                .descriptor_count(9),
+            vk::DescriptorPoolSize::default()
+                .ty(M2_MATERIAL_DESCRIPTOR_TYPE)
+                .descriptor_count(1),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1),
@@ -651,7 +650,7 @@ impl WorldFrameSlot {
             buffer_info(
                 self.buffer,
                 self.layout.m2_material_offset,
-                M2MaterialUniform::BYTE_SIZE,
+                (self.layout.particle_vertex_offset - self.layout.m2_material_offset) as usize,
             ),
             buffer_info(
                 self.buffer,

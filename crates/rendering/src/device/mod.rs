@@ -75,7 +75,7 @@ pub use vulkan_glow::{
 };
 pub use vulkan_instance::VulkanBootstrap;
 pub use vulkan_liquid::{LiquidDrawMaterial, LiquidFrame, LiquidMeshHandle, LiquidPreparedDraw};
-pub use vulkan_m2_draw::{M2PreparedDraw, M2SceneLightBank};
+pub use vulkan_m2_draw::{M2DrawTemplate, M2PreparedDraw, M2SceneLightBank};
 pub use vulkan_m2_frame::{M2FrameReport, UiPortraitTextureHandle};
 pub use vulkan_m2_particle_draw::M2ParticlePreparedDraw;
 pub use vulkan_m2_particle_pipeline::{M2ParticlePipelineHandle, M2ParticlePipelineInfo};
@@ -86,7 +86,9 @@ pub use vulkan_m2_texture_set::{
     M2SampledTexture, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TextureSetInfo,
 };
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
-pub use vulkan_renderer::{VulkanPresentMode, VulkanRenderer, VulkanReport};
+pub use vulkan_renderer::{
+    GpuResourceLease, GpuResourceUsage, VulkanPresentMode, VulkanRenderer, VulkanReport,
+};
 pub use vulkan_ripple::{WaterRippleFrame, WaterRippleFrameError, WaterRipplePass};
 pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};
 pub use vulkan_shadow::{

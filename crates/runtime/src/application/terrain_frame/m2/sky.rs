@@ -190,9 +190,9 @@ impl SkyM2Model {
             self.local_lights[next_light] = point.local_light_state();
             next_light += 1;
         }
-        let Some(mesh) = source.mesh else {
+        if source.mesh.is_none() {
             return Ok(());
-        };
+        }
         for (draw_index, resources) in source.draws.iter().enumerate() {
             let Some(resources) = resources else {
                 continue;
@@ -206,15 +206,15 @@ impl SkyM2Model {
             }
             let state = M2MaterialState::from_material(draw.material());
             let runtime_fade = alpha == M2ElementAlphaState::Translucent && !state.blend_enabled();
-            let pipeline = if runtime_fade {
-                resources.runtime_fade_pipeline.ok_or_else(|| {
+            let template = if runtime_fade {
+                resources.fade_template.ok_or_else(|| {
                     RuntimeTerrainFrameError::M2RuntimeFadePipeline {
                         model: source.model.path().clone(),
                         draw_index,
                     }
                 })?
             } else {
-                resources.pipeline
+                resources.template
             };
             let material = M2MaterialUniform::new(
                 Mat4::IDENTITY,
@@ -224,17 +224,7 @@ impl SkyM2Model {
                 Vec4::ZERO,
                 Vec4::new(state.alpha_reference(opacity), 0., 0., 0.),
             );
-            let prepared = renderer.prepare_m2_draw(
-                mesh,
-                pipeline,
-                resources.texture_set,
-                &source.plan,
-                draw_index,
-                runtime_fade,
-                material,
-                bone_offset,
-                0,
-            )?;
+            let prepared = template.instantiate(material, bone_offset, 0)?;
             if draw.transparent_sort_unit() || alpha == M2ElementAlphaState::Translucent {
                 let distance = section_distance_key(draw, &self.pose, model_view)?;
                 let primary = if source.model.skin_profile_count() >= 2 {

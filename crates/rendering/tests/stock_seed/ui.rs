@@ -1,5 +1,7 @@
 //! External tests for the renderer-owned UI mesh and batching boundary.
 
+#[path = "ui/lifetime.rs"]
+mod lifetime;
 #[path = "ui/mask.rs"]
 mod mask;
 

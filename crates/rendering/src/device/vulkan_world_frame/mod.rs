@@ -665,7 +665,6 @@ impl WorldFrameRenderer {
             background_color: scene.background_color(),
             frame_sets: slot.descriptor_sets(),
             world_model_material_stride: slot.world_model_material_stride(),
-            m2_material_stride: slot.m2_material_stride(),
             m2_scene_stride: slot.m2_scene_stride(),
             terrain_pipelines: context.terrain_pipelines,
             terrain_meshes: context.terrain_meshes,

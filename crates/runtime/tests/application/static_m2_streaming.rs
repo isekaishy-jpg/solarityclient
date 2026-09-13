@@ -194,10 +194,13 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     assert_eq!(frame.sources.len(), 2);
     assert_eq!(frame.placements[1].source_index, 1);
     assert!(frame.sources[1].is_none());
-    assert!(frame.placement_topology_dirty);
+    assert!(
+        !frame.placement_topology_dirty,
+        "unused source removal preserves placement metadata"
+    );
 
-    // A hole before live slots rebases their indices. A later publication must
-    // use the live records until the compact metadata has been rebuilt.
+    // A hole before live slots rebases their indices. Compact metadata remaps
+    // directly, so a later publication must not rebuild placement topology.
     frame.sources.insert(0, None);
     for placement in &mut frame.placements {
         placement.source_index += 1;
@@ -207,13 +210,23 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         .rebuild(&frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     frame.compact_sources();
-    assert!(frame.placement_topology_dirty);
+    assert!(!frame.placement_topology_dirty);
+    let mut references = vec![usize::MAX; frame.sources.len()];
+    frame
+        .placement_visibility
+        .mark_source_references(&mut references);
+    assert_eq!(
+        references,
+        [0, 0],
+        "visibility references use the compact source indices"
+    );
     frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
     assert_eq!(frame.placements.len(), 2);
     assert_eq!(frame.sources.len(), 2);
     assert_eq!(frame.placements[1].source_index, 1);
     assert!(frame.sources[1].is_none());
     frame.placements.clear();
+    frame.placement_topology_dirty = true;
     frame.compact_sources();
     assert!(frame.sources.is_empty());
     assert_eq!(random, expected, "retirement consumes no randomness");

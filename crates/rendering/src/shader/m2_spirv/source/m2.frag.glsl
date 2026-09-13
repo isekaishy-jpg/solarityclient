@@ -35,7 +35,7 @@ layout(std140, set = 0, binding = 0) uniform M2SceneState {
     mat4 view;
 } scene;
 
-layout(std140, set = 2, binding = 0) uniform M2MaterialState {
+struct M2Instance {
     mat4 model;
     mat4 texture_transforms[2];
     mat4 model_view;
@@ -43,7 +43,14 @@ layout(std140, set = 2, binding = 0) uniform M2MaterialState {
     vec4 fog_color;
     vec4 fragment_parameters;
     vec4 liquid_clip_plane;
-} material;
+    uvec4 palette;
+};
+layout(std430, set = 2, binding = 0) readonly buffer M2Instances {
+    M2Instance records[];
+} instances;
+layout(location = 10) flat in uint instance_index;
+#define material instances.records[instance_index]
+
 
 layout(set = 3, binding = 0) uniform sampler2D model_texture_0;
 layout(set = 3, binding = 1) uniform sampler2D model_texture_1;
@@ -60,12 +67,7 @@ layout(set = 4, binding = 2) uniform sampler2DShadow shadow_map_2;
 layout(set = 4, binding = 3) uniform sampler2DShadow shadow_map_3;
 #endif
 
-layout(push_constant) uniform M2DrawState {
-    uint bone_transform_offset;
-    uint bone_count;
-    uint texture_count;
-    uint flags;
-} draw_state;
+
 
 layout(location = 0) in vec2 fragment_texture_coordinates_0;
 layout(location = 1) in vec2 fragment_texture_coordinates_1;

@@ -290,6 +290,13 @@ pub struct M2DrawPushConstants {
 }
 
 impl M2DrawPushConstants {
+    /// Preserves validated SKIN classes while selecting one placement palette.
+    pub(crate) const fn with_instance(mut self, offset: u32, flags: u32) -> Self {
+        self.bone_transform_offset = offset;
+        self.flags = flags;
+        self
+    }
+
     /// Byte size shared with the Vulkan pipeline layout.
     pub const BYTE_SIZE: usize = 16;
 
