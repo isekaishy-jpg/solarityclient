@@ -64,7 +64,9 @@ impl EntityLighting {
             cached.transform != transform
                 || cached.model_bounds != model_bounds
                 || cached.registration != registration
-                || cached.revision != revision
+                || (cached.revision != revision
+                    && (matches!(owner, M2GpuPlacementOwner::GameObject { .. })
+                        || terrain.unit_light_changed(cached.revision, cached.query.position)))
         }) {
             let collision = matches!(owner, M2GpuPlacementOwner::GameObject { .. })
                 .then(|| {
@@ -105,6 +107,10 @@ impl EntityLighting {
                 surface: height.map(|height| (height, bounds.maximum().z)),
             });
             retained.fog_revision = None;
+        }
+        if let Some(cached) = &mut retained.scene {
+            // Advance the dependency token even when this root motion was disjoint.
+            cached.revision = revision;
         }
         let scene_revision = terrain.model_scene_revision();
         if retained.fog_revision != Some(scene_revision)
@@ -165,6 +171,7 @@ impl EntityLighting {
             _ => None,
         };
         let sample = if let Some((root, index)) = doodad {
+            let revision = terrain.doodad_light_revision();
             let retained = self.retained.get_or_insert_with(Box::default);
             if retained
                 .cached
@@ -187,10 +194,12 @@ impl EntityLighting {
             )
         } else if ordinary_callback(owner) {
             let retained = self.retained.get_or_insert_with(Box::default);
-            if retained
-                .cached
-                .is_none_or(|(matrix, old, _, _, _)| old != revision || matrix != transform)
-            {
+            if retained.cached.is_none_or(|(matrix, old, _, _, _)| {
+                matrix != transform
+                    || (old != revision
+                        && (matches!(owner, M2GpuPlacementOwner::GameObject { .. })
+                            || terrain.unit_light_changed(old, transform.w_axis.truncate())))
+            }) {
                 let collision = if matches!(owner, M2GpuPlacementOwner::GameObject { .. }) {
                     Some(solarity_systems::PlacedM2Collision::prepare_transform(
                         std::sync::Arc::clone(model),
@@ -205,6 +214,9 @@ impl EntityLighting {
                     &mut retained.scratch,
                 )?;
                 retained.cached = Some((transform, revision, interior, floor, terrain_shadow));
+            }
+            if let Some((_, old, ..)) = &mut retained.cached {
+                *old = revision;
             }
             let state = retained
                 .state

@@ -390,7 +390,21 @@ impl RuntimeTerrainCoordinator {
     pub(in crate::application) fn model_light_revision(&self) -> u64 {
         self.active
             .as_ref()
-            .map_or(0, |active| active.movement.lighting_revision)
+            .map_or(0, |active| active.movement.lighting.revision())
+    }
+
+    /// MODR membership and group flags depend on source residency, not root motion.
+    pub(in crate::application) fn doodad_light_revision(&self) -> u64 {
+        self.active
+            .as_ref()
+            .map_or(0, |active| active.movement.lighting.topology_revision())
+    }
+
+    /// Retains a stationary unit's floor/liquid query across unrelated root motion.
+    pub(in crate::application) fn unit_light_changed(&self, previous: u64, position: Vec3) -> bool {
+        self.active
+            .as_ref()
+            .is_none_or(|active| active.movement.lighting.affects_unit(previous, position))
     }
 
     /// Uses the native Unit/MapObject registration's fallback face for floor color.

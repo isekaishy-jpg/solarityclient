@@ -86,7 +86,7 @@ impl ResidentTerrainMap {
         if !start.is_finite() || !end.is_finite() {
             return Err(solarity_systems::WorldModelCollisionError::NonFiniteSegment.into());
         }
-        if self.movement.root_index.revision != Some(self.movement.lighting_revision) {
+        if self.movement.root_index.revision != Some(self.movement.lighting.revision()) {
             let mut entries = Vec::with_capacity(self.movement.roots.len());
             for index in 0..self.movement.roots.len() {
                 let root = self.movement.roots[index];
@@ -95,7 +95,7 @@ impl ResidentTerrainMap {
             let mut nodes = Vec::with_capacity(entries.len() * 2 - 1);
             RootIndex::build(&mut entries, &mut nodes);
             self.movement.root_index = RootIndex {
-                revision: Some(self.movement.lighting_revision),
+                revision: Some(self.movement.lighting.revision()),
                 nodes,
             };
         }

@@ -231,7 +231,7 @@ impl ResidentGameObjectWorldModels {
 
 impl ResidentMovementScene {
     pub(super) fn clear_game_object_roots(&mut self) {
-        self.lighting_revision = self.lighting_revision.wrapping_add(1);
+        self.lighting.invalidate();
         self.game_object_world_models = ResidentGameObjectWorldModels::default();
         self.roots
             .retain(|root| matches!(root, MovementRootReference::Static(_)));
@@ -297,8 +297,9 @@ impl ResidentMovementScene {
                 && Arc::ptr_eq(root.collision.model(), source.model())
             {
                 if root.transform != transform {
+                    let previous = root.collision.root_bounds();
                     root.set_transform(transform)?;
-                    self.lighting_revision = self.lighting_revision.wrapping_add(1);
+                    self.lighting.moved(previous, root.collision.root_bounds());
                     self.dynamic.invalidate();
                 }
                 continue;
@@ -311,7 +312,7 @@ impl ResidentMovementScene {
                 GameObjectRoot::prepare(source, transform, instance.display_id())?,
             );
             self.roots.push(MovementRootReference::GameObject(identity));
-            self.lighting_revision = self.lighting_revision.wrapping_add(1);
+            self.lighting.invalidate();
             self.dynamic.invalidate();
         }
         let count = models.roots.len();
@@ -319,7 +320,7 @@ impl ResidentMovementScene {
             .roots
             .retain(|identity, _| models.live.contains(identity));
         if models.roots.len() != count {
-            self.lighting_revision = self.lighting_revision.wrapping_add(1);
+            self.lighting.invalidate();
             self.dynamic.invalidate();
         }
         self.roots.retain(|root| match root {
