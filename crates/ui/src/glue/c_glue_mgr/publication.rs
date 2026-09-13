@@ -1,8 +1,8 @@
 //! Retained UI generation publication and dependency-island updates.
 
 use super::{
-    GlueManager, UiEventError, UiFrameStrata, UiGlyphAtlasPlan, UiObjectKind, UiPointerPlan,
-    UiPresentationPlan, UiRenderPlan, synchronize_resolved_dimensions_for,
+    GlueManager, UiEventError, UiFrameStrata, UiObjectKind, UiPointerPlan, UiPresentationPlan,
+    UiRenderPlan, synchronize_resolved_dimensions_for,
 };
 
 impl GlueManager {
@@ -184,14 +184,13 @@ impl GlueManager {
                 self.glyphs
                     .refresh_live_text(&self.live, geometry, self.glyph_logical_height)?;
             } else {
-                self.glyphs = UiGlyphAtlasPlan::from_live_ui(
+                self.glyphs.rebuild_live_ui(
                     self.runtime.simple_html(),
                     &self.live,
                     geometry,
                     &self.fonts,
                     &mut self.assets.borrow_mut(),
                     self.glyph_logical_height,
-                    self.runtime.font_system(),
                 )?;
             }
         }
@@ -281,6 +280,12 @@ impl GlueManager {
             self.runtime
                 .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
         let copied = started.elapsed();
+        self.glyphs.ensure_live_text_objects(
+            &self.live,
+            &mut self.assets.borrow_mut(),
+            self.glyph_logical_height,
+            text_objects.iter().copied(),
+        )?;
         if !text_objects.is_empty()
             && !self.glyphs.supports_live_text_objects(
                 &self.live,
@@ -484,6 +489,12 @@ impl GlueManager {
             self.runtime
                 .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
         let copied = started.elapsed();
+        self.glyphs.ensure_live_text_objects(
+            &self.live,
+            &mut self.assets.borrow_mut(),
+            self.glyph_logical_height,
+            text_objects.iter().copied(),
+        )?;
         if text_objects.is_empty()
             || !self.glyphs.supports_live_text_objects(
                 &self.live,
@@ -609,6 +620,12 @@ impl GlueManager {
             self.runtime
                 .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
         let copied = started.elapsed();
+        self.glyphs.ensure_live_text_objects(
+            &self.live,
+            &mut self.assets.borrow_mut(),
+            self.glyph_logical_height,
+            text_objects.iter().copied(),
+        )?;
         if text_objects.is_empty()
             || !self.glyphs.supports_live_text_objects(
                 &self.live,

@@ -13,6 +13,6 @@ pub use types::{
 };
 pub(in crate::device) use upload::{
     DeferredTextureTransfer, GpuSampledImage, Rgba8MipUpload, TextureUploadContext,
-    upload_rg8_snorm_image_deferred, upload_rgba8_image, upload_rgba8_image_deferred,
+    update_rgba8_regions, upload_rg8_snorm_image_deferred, upload_rgba8_image_deferred,
     upload_rgba8_mip_chain_deferred,
 };

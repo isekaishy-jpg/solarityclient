@@ -2,6 +2,10 @@
 
 #![allow(unsafe_code)]
 
+mod regions;
+
+pub(in crate::device) use regions::update_rgba8_regions;
+
 use ash::{Device, vk};
 use solarity_asset::{AssetError, BlpBlockCompression, BlpTextureSource};
 use vk_mem::Alloc;
@@ -600,15 +604,6 @@ fn upload_stock_solid_texture(
         bytes.len(),
     );
     Ok(GpuBlpTexture { image, info })
-}
-
-/// Uploads one tightly packed linear RGBA8 image for a non-BLP typed owner.
-pub(in crate::device) fn upload_rgba8_image(
-    context: TextureUploadContext<'_>,
-    extent: (u32, u32),
-    bytes: &[u8],
-) -> Result<GpuSampledImage, VulkanError> {
-    upload_rgba8_image_with_color_space(context, extent, bytes, BlpColorSpace::Linear)
 }
 
 /// Queues a linear RGBA8 image while retaining its borrowed pixels only for staging.

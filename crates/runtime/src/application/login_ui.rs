@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use solarity_asset::{AssetPath, BlpTextureCache};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, UiFrameReport, UiGlyphTextureHandle,
-    UiRenderSource, VulkanRenderer,
+    VulkanRenderer,
 };
 use solarity_ui::{
     FrameManager, GlueManager, UiGlyphAtlasPlan, UiRenderPlan, UiTextureAssetBindings,
@@ -17,6 +17,7 @@ use crate::application::ui_frame::PreparedUiFrame;
 /// Prepared built-in UI generation retained across FIFO-paced presentation frames.
 pub(super) struct RuntimeUiFrame {
     frame: PreparedUiFrame,
+    coverage: (u64, u64),
 }
 
 /// Sampled images retained across every pre-world UI mesh generation.
@@ -24,11 +25,44 @@ pub(super) struct RuntimeUiFrame {
 pub(super) struct RuntimeUiResidency {
     textures: HashMap<AssetPath, BlpTextureHandle>,
     glyph_textures: HashMap<u64, UiGlyphTextureHandle>,
+    glyph_revisions: HashMap<u64, u64>,
 }
 
 impl RuntimeUiResidency {
     pub(super) fn new() -> Self {
         Self::default()
+    }
+
+    /// Synchronizes only coverage added since the last page publication.
+    fn synchronize_glyphs(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        atlas: &UiGlyphAtlasPlan,
+    ) -> Result<(), ApplicationError> {
+        for page in atlas.pages() {
+            if let Some(&handle) = self.glyph_textures.get(&page.identity()) {
+                let revision = self
+                    .glyph_revisions
+                    .get(&page.identity())
+                    .copied()
+                    .unwrap_or(0);
+                if revision == page.revision() {
+                    continue;
+                }
+                let changes = page.changes_since(revision).collect::<Vec<_>>();
+                renderer.update_ui_glyph_texture(handle, page.extent(), page.rgba8(), &changes)?;
+            } else {
+                let handle = renderer.upload_ui_glyph_texture(
+                    page.identity(),
+                    page.extent(),
+                    page.rgba8(),
+                )?;
+                self.glyph_textures.insert(page.identity(), handle);
+            }
+            self.glyph_revisions
+                .insert(page.identity(), page.revision());
+        }
+        Ok(())
     }
 
     /// Uploads decoded UI sources that are not already renderer-resident.
@@ -103,6 +137,14 @@ impl RuntimeUiFrame {
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
     ) -> Result<(), ApplicationError> {
+        let coverage = (
+            source.glyphs().identity(),
+            source.glyphs().coverage_revision(),
+        );
+        if self.coverage != coverage {
+            residency.synchronize_glyphs(renderer, source.glyphs())?;
+            self.coverage = coverage;
+        }
         if self
             .frame
             .try_replace_compatible_mesh(renderer, source.render_plan().mesh())?
@@ -138,6 +180,7 @@ impl RuntimeUiFrame {
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
     ) -> Result<Self, ApplicationError> {
+        residency.synchronize_glyphs(renderer, source.glyphs())?;
         let frame = Self::prepare_source_with_resources(
             renderer,
             source,
@@ -146,7 +189,13 @@ impl RuntimeUiFrame {
             &mut residency.textures,
             &mut residency.glyph_textures,
         )?;
-        Ok(Self { frame })
+        Ok(Self {
+            frame,
+            coverage: (
+                source.glyphs().identity(),
+                source.glyphs().coverage_revision(),
+            ),
+        })
     }
 
     /// Prepares material resources while retaining process-long sampled images.
@@ -192,42 +241,15 @@ impl RuntimeUiFrame {
             textures.insert(path, handle);
         }
         let glyph_started = std::time::Instant::now();
-        let glyph_texture = mesh_plan
-            .batches()
-            .iter()
-            .any(|batch| matches!(batch.source(), UiRenderSource::GlyphAtlas(_)))
-            .then(
-                || -> Result<UiGlyphTextureHandle, solarity_rendering::VulkanError> {
-                    let glyphs = source.glyphs();
-                    if let Some(texture) = glyph_textures.get(&glyphs.identity()).copied() {
-                        Ok(texture)
-                    } else {
-                        let texture = renderer.upload_ui_glyph_texture(
-                            glyphs.identity(),
-                            glyphs.extent(),
-                            glyphs.rgba8(),
-                        )?;
-                        glyph_textures.insert(glyphs.identity(), texture);
-                        Ok(texture)
-                    }
-                },
-            )
-            .transpose()?;
         let glyph_elapsed = glyph_started.elapsed();
-
-        let glyph_texture = glyph_texture.map(|texture| (source.glyphs().identity(), texture));
         let frame_started = std::time::Instant::now();
-        let frame = if let Some(mesh) = retained_mesh {
-            PreparedUiFrame::prepare_reusing_mesh(
-                renderer,
-                mesh,
-                mesh_plan,
-                textures,
-                glyph_texture,
-            )?
-        } else {
-            PreparedUiFrame::prepare(renderer, mesh_plan, textures, glyph_texture)?
-        };
+        let frame = PreparedUiFrame::prepare_pages(
+            renderer,
+            mesh_plan,
+            textures,
+            glyph_textures,
+            retained_mesh,
+        )?;
         let frame_elapsed = frame_started.elapsed();
         // Animated GlueXML can replace this mesh every presentation frame.
         // Keep the phase timings available for an explicit debug subscriber;

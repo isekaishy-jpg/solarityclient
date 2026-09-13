@@ -104,7 +104,7 @@ impl UiRenderPlan {
                         glyph.object_index(),
                         true,
                     ));
-                    render_glyph_quad(glyphs.identity(), glyph)
+                    render_glyph_quad(glyphs.page_identity(glyph.page()), glyph)
                 }
             }),
         )?;
@@ -215,11 +215,13 @@ impl UiRenderPlan {
         }
         for (object_index, (translation, correction)) in translations.into_iter().enumerate() {
             self.mesh.translate_object(object_index, translation)?;
-            self.mesh.translate_object_source(
-                object_index,
-                &UiRenderSource::GlyphAtlas(glyphs.identity()),
-                correction,
-            )?;
+            for page in glyphs.pages() {
+                self.mesh.translate_object_source(
+                    object_index,
+                    &UiRenderSource::GlyphAtlas(page.identity()),
+                    correction,
+                )?;
+            }
         }
         self.mesh.refresh_object_opacities(|object_index| {
             presentation.object_opacity(object_index).or_else(|| {
@@ -274,11 +276,13 @@ impl UiRenderPlan {
                     [current.left(), current.top()],
                     region.effective_scale(),
                 );
-                self.mesh.translate_object_source(
-                    change.object_index,
-                    &UiRenderSource::GlyphAtlas(glyphs.identity()),
-                    correction,
-                )?;
+                for page in glyphs.pages() {
+                    self.mesh.translate_object_source(
+                        change.object_index,
+                        &UiRenderSource::GlyphAtlas(page.identity()),
+                        correction,
+                    )?;
+                }
             }
             let opacity = presentation
                 .object_opacity(change.object_index)
@@ -339,14 +343,13 @@ impl UiRenderPlan {
         object_indices: &[usize],
     ) -> Result<bool, UiRenderError> {
         let quads = glyphs.retained_live_object_quads(object_indices, geometry, scroll_frames);
-        let source = UiRenderSource::GlyphAtlas(glyphs.identity());
         let mut batches_changed = false;
         for &object_index in object_indices {
             let first = quads.partition_point(|quad| quad.object_index() < object_index);
             let end = quads.partition_point(|quad| quad.object_index() <= object_index);
             let rendered = quads[first..end]
                 .iter()
-                .map(|quad| render_glyph_quad(glyphs.identity(), quad))
+                .map(|quad| render_glyph_quad(glyphs.page_identity(quad.page()), quad))
                 .collect::<Vec<_>>();
             let orders = quads[first..end]
                 .iter()
@@ -369,7 +372,7 @@ impl UiRenderPlan {
                 if self
                     .mesh
                     .sources_for_object(object_index)
-                    .any(|candidate| candidate == &source)
+                    .any(|candidate| matches!(candidate, UiRenderSource::GlyphAtlas(_)))
                 {
                     return Ok(false);
                 }
@@ -384,14 +387,14 @@ impl UiRenderPlan {
             }
             if !self
                 .mesh
-                .replace_object_source_quads(object_index, &source, &rendered)?
+                .replace_object_glyph_quads(object_index, &rendered)?
             {
                 let updated = if range.is_empty() {
                     self.mesh
                         .insert_object_source_run(object_index, range.start, &rendered)?
                 } else {
                     self.mesh
-                        .replace_object_source_run(object_index, &source, &rendered)?
+                        .replace_object_glyph_run(object_index, &rendered)?
                 };
                 if !updated {
                     return Ok(false);

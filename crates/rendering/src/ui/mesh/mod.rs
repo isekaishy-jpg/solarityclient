@@ -492,6 +492,48 @@ impl UiMeshPlan {
         self.splice_object_source_run(object_index, batch_index..old_batch_end, quads)
     }
 
+    /// Replaces all coverage pages for one text owner as one stable allocation.
+    /// Preserves page order within the text and all unrelated physical offsets.
+    ///
+    /// # Errors
+    /// Returns invalid geometry or capacity errors without publishing the run.
+    pub fn replace_object_glyph_run(
+        &mut self,
+        object_index: usize,
+        quads: &[UiRenderQuad],
+    ) -> Result<bool, UiMeshPlanError> {
+        if quads
+            .iter()
+            .any(|quad| !matches!(quad.source(), UiRenderSource::GlyphAtlas(_)))
+        {
+            return Ok(false);
+        }
+        if quads
+            .first()
+            .is_some_and(|first| first.object_index() != object_index)
+        {
+            return Ok(false);
+        }
+        let mut matching = self
+            .object_batches
+            .get(&object_index)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&index| matches!(self.batches[index].source(), UiRenderSource::GlyphAtlas(_)));
+        let Some(batch_index) = matching.next() else {
+            return Ok(false);
+        };
+        let mut old_batch_end = batch_index + 1;
+        for index in matching {
+            if index != old_batch_end {
+                return Ok(false);
+            }
+            old_batch_end += 1;
+        }
+        self.splice_object_source_run(object_index, batch_index..old_batch_end, quads)
+    }
+
     /// Inserts a new object/source at an existing batch boundary in caller draw order.
     /// The insertion position counts drawn quads; physical neighbor offsets stay fixed.
     /// Returns `false` for empty input or a non-boundary position.
@@ -547,13 +589,39 @@ impl UiMeshPlan {
         source: &UiRenderSource,
         quads: &[UiRenderQuad],
     ) -> Result<bool, UiMeshPlanError> {
+        self.replace_matching_quads(object_index, |candidate| candidate == source, quads)
+    }
+
+    /// Patches compatible glyph-page runs without changing their physical storage.
+    ///
+    /// # Errors
+    /// Returns invalid vertices before publishing any replacement.
+    pub fn replace_object_glyph_quads(
+        &mut self,
+        object_index: usize,
+        quads: &[UiRenderQuad],
+    ) -> Result<bool, UiMeshPlanError> {
+        self.replace_matching_quads(
+            object_index,
+            |source| matches!(source, UiRenderSource::GlyphAtlas(_)),
+            quads,
+        )
+    }
+
+    /// Validates the full selected owner group, then updates only changed vertices.
+    fn replace_matching_quads(
+        &mut self,
+        object_index: usize,
+        matches: impl Fn(&UiRenderSource) -> bool,
+        quads: &[UiRenderQuad],
+    ) -> Result<bool, UiMeshPlanError> {
         let slots = self
             .object_batches
             .get(&object_index)
             .into_iter()
             .flatten()
             .copied()
-            .filter(|&index| self.batches[index].source() == source)
+            .filter(|&index| matches(self.batches[index].source()))
             .flat_map(|index| {
                 let batch = &self.batches[index];
                 let start = batch.first_quad() as usize;
@@ -566,7 +634,7 @@ impl UiMeshPlan {
         for (&(_, batch_index), quad) in slots.iter().zip(quads) {
             validate_quad(quad)?;
             if quad.object_index() != object_index
-                || quad.source() != source
+                || !matches(quad.source())
                 || !self.batches[batch_index].can_replace(quad)
             {
                 return Ok(false);
@@ -577,7 +645,7 @@ impl UiMeshPlan {
         // still use their old vertices and therefore retain those deltas.
         if let Some(batch_indices) = self.object_batches.get(&object_index) {
             for &index in batch_indices {
-                if self.batches[index].source() == source {
+                if matches(self.batches[index].source()) {
                     self.batches[index].reset_object_translation();
                 }
             }
@@ -606,7 +674,7 @@ impl UiMeshPlan {
             if let Some(indices) = self.object_batches.get(&object_index) {
                 for &index in indices {
                     let batch = &self.batches[index];
-                    if batch.source() == source {
+                    if matches(batch.source()) {
                         self.clip_indices[index] = ClipIndex::new(&self.vertices, batch);
                     }
                 }

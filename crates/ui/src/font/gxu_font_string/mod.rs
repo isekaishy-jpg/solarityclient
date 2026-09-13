@@ -1,6 +1,10 @@
 //! Deduplicated glyph-atlas and quad generation for retained font strings.
 
+mod coverage;
 mod live_layout;
+mod publication;
+
+pub use coverage::UiGlyphAtlasPage;
 
 use live_layout::{layout_live_quads, layout_live_quads_for_objects};
 
@@ -28,6 +32,7 @@ const GLYPH_PADDING: u32 = 1;
 /// One positioned glyph sampling the current immutable coverage atlas.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiGlyphQuad {
+    page: usize,
     packet_key: Option<UiPresentationPacketKey>,
     object_index: usize,
     clip_object: Option<usize>,
@@ -40,6 +45,11 @@ pub struct UiGlyphQuad {
 }
 
 impl UiGlyphQuad {
+    /// Coverage page sampled by this quad.
+    pub const fn page(&self) -> usize {
+        self.page
+    }
+
     pub(crate) const fn packet_key(&self) -> Option<UiPresentationPacketKey> {
         self.packet_key
     }
@@ -83,12 +93,12 @@ impl UiGlyphQuad {
     }
 }
 
-/// One immutable coverage texture and every glyph quad that samples it.
-#[derive(Clone, Debug, PartialEq)]
+/// Stable coverage pages and retained text-owner geometry.
+#[derive(Debug, PartialEq)]
 pub struct UiGlyphAtlasPlan {
     identity: u64,
-    extent: (u32, u32),
-    rgba8: Vec<u8>,
+    pages: Vec<UiGlyphAtlasPage>,
+    coverage_revision: u64,
     html_quads: Vec<LocalGlyphQuad>,
     html_runs: Vec<LocalGlyphRun>,
     live_quads: Vec<Vec<LocalGlyphQuad>>,
@@ -221,10 +231,16 @@ impl UiGlyphAtlasPlan {
         let rgba8 = compose_atlas(extent, &keys, &glyphs, &placements)?;
         let ascender_26_6 = system.ascender_26_6(assets, &font.face, font.pixel_height)?;
         let metrics = HashMap::from([(font.clone(), FontMetrics { ascender_26_6 })]);
+        let identity = next_identity();
+        let next_row = placements
+            .iter()
+            .map(|(key, place)| place.y + glyphs[key].height() + GLYPH_PADDING * 2)
+            .max()
+            .unwrap_or(GLYPH_PADDING);
         Ok(Self {
-            identity: next_identity(),
-            extent,
-            rgba8,
+            identity,
+            pages: vec![UiGlyphAtlasPage::packed(identity, extent, rgba8, next_row)],
+            coverage_revision: 1,
             html_quads: Vec::new(),
             html_runs: Vec::new(),
             live_quads: Vec::new(),
@@ -286,10 +302,10 @@ impl UiGlyphAtlasPlan {
                 let top = baseline + f64::from(glyph.bearing_y()) / pixels_per_ui_unit;
                 let right = left + f64::from(glyph.width()) / pixels_per_ui_unit;
                 let bottom = top - f64::from(glyph.height()) / pixels_per_ui_unit;
-                let u0 = placement.x as f32 / self.extent.0 as f32;
-                let v0 = placement.y as f32 / self.extent.1 as f32;
-                let u1 = (placement.x + glyph.width()) as f32 / self.extent.0 as f32;
-                let v1 = (placement.y + glyph.height()) as f32 / self.extent.1 as f32;
+                let u0 = placement.x as f32 / placement.extent.0 as f32;
+                let v0 = placement.y as f32 / placement.extent.1 as f32;
+                let u1 = (placement.x + glyph.width()) as f32 / placement.extent.0 as f32;
+                let v1 = (placement.y + glyph.height()) as f32 / placement.extent.1 as f32;
                 glyph_quads.push((
                     [left as f32, bottom as f32, right as f32, top as f32],
                     [[u0, v0], [u0, v1], [u1, v0], [u1, v1]],
@@ -485,10 +501,16 @@ impl UiGlyphAtlasPlan {
                 extent,
             )
         })?;
+        let identity = next_identity();
+        let next_row = placements
+            .iter()
+            .map(|(key, place)| place.y + glyphs[key].height() + GLYPH_PADDING * 2)
+            .max()
+            .unwrap_or(GLYPH_PADDING);
         Ok(Self {
-            identity: next_identity(),
-            extent,
-            rgba8,
+            identity,
+            pages: vec![UiGlyphAtlasPage::packed(identity, extent, rgba8, next_row)],
+            coverage_revision: 1,
             html_quads: html_layout.quads,
             html_runs: html_layout.runs,
             live_quads: group_live_quads(live_layout.quads),
@@ -555,7 +577,7 @@ impl UiGlyphAtlasPlan {
             &self.glyphs,
             &self.placements,
             &self.metrics,
-            self.extent,
+            self.extent(),
         )?;
         self.live_quads = group_live_quads(layout.quads);
         self.text_origins = layout.origins;
@@ -581,7 +603,7 @@ impl UiGlyphAtlasPlan {
             &self.glyphs,
             &self.placements,
             &self.metrics,
-            self.extent,
+            self.extent(),
             object_indices.iter().copied(),
         )?;
         replace_live_object_quads(&mut self.live_quads, &layout.quads, object_indices);
@@ -686,14 +708,14 @@ impl UiGlyphAtlasPlan {
 
     /// Returns the coverage texture dimensions.
     #[must_use]
-    pub const fn extent(&self) -> (u32, u32) {
-        self.extent
+    pub fn extent(&self) -> (u32, u32) {
+        self.pages[0].extent()
     }
 
     /// Returns tightly packed linear RGBA8 pixels.
     #[must_use]
     pub fn rgba8(&self) -> &[u8] {
-        &self.rgba8
+        self.pages[0].rgba8()
     }
 
     /// Looks up the shared alignment anchor without duplicating it per glyph.
@@ -1025,6 +1047,7 @@ fn retained_glyph_state(
 /// One glyph positioned relative to the top-left of its `SimpleHTML` owner.
 #[derive(Clone, Debug, PartialEq)]
 struct LocalGlyphQuad {
+    page: usize,
     packet_key: Option<UiPresentationPacketKey>,
     object_index: usize,
     clip_object: Option<usize>,
@@ -1147,6 +1170,8 @@ struct FontMetrics {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AtlasPlacement {
+    page: usize,
+    extent: (u32, u32),
     x: u32,
     y: u32,
 }
@@ -1463,7 +1488,15 @@ fn pack(
     for key in keys {
         let glyph = &glyphs[key];
         if glyph.width() == 0 || glyph.height() == 0 {
-            placements.insert(key.clone(), AtlasPlacement { x: 0, y: 0 });
+            placements.insert(
+                key.clone(),
+                AtlasPlacement {
+                    x: 0,
+                    y: 0,
+                    page: 0,
+                    extent: (0, 0),
+                },
+            );
             continue;
         }
         let padded_width = glyph.width().saturating_add(GLYPH_PADDING * 2);
@@ -1474,7 +1507,15 @@ fn pack(
                 .ok_or_else(atlas_overflow)?;
             row_height = 0;
         }
-        placements.insert(key.clone(), AtlasPlacement { x, y });
+        placements.insert(
+            key.clone(),
+            AtlasPlacement {
+                x,
+                y,
+                page: 0,
+                extent: (0, 0),
+            },
+        );
         x = x.checked_add(padded_width).ok_or_else(atlas_overflow)?;
         row_height = row_height.max(glyph.height());
     }
@@ -1482,7 +1523,11 @@ fn pack(
         .checked_add(row_height)
         .and_then(|value| value.checked_add(GLYPH_PADDING))
         .ok_or_else(atlas_overflow)?;
-    Ok(((width, used_height.max(1).next_power_of_two()), placements))
+    let extent = (width, used_height.max(1).next_power_of_two());
+    for placement in placements.values_mut() {
+        placement.extent = extent;
+    }
+    Ok((extent, placements))
 }
 
 fn compose_atlas(
@@ -1531,7 +1576,7 @@ fn layout_quads(
     system: &mut FontSystem,
     glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
     placements: &HashMap<GlyphKey, AtlasPlacement>,
-    extent: (u32, u32),
+    _extent: (u32, u32),
 ) -> Result<HtmlGlyphLayout, FontError> {
     let mut layout = HtmlGlyphLayout::default();
     for object_index in 0..geometry.region_count() {
@@ -1587,16 +1632,17 @@ fn layout_quads(
                     let top = baseline + f64::from(glyph.bearing_y()) / pixels_per_ui_unit;
                     let right = left + f64::from(glyph.width()) / pixels_per_ui_unit;
                     let bottom = top - f64::from(glyph.height()) / pixels_per_ui_unit;
-                    let u0 = placement.x as f32 / extent.0 as f32;
-                    let v0 = placement.y as f32 / extent.1 as f32;
-                    let u1 = (placement.x + glyph.width()) as f32 / extent.0 as f32;
-                    let v1 = (placement.y + glyph.height()) as f32 / extent.1 as f32;
+                    let u0 = placement.x as f32 / placement.extent.0 as f32;
+                    let v0 = placement.y as f32 / placement.extent.1 as f32;
+                    let u1 = (placement.x + glyph.width()) as f32 / placement.extent.0 as f32;
+                    let v1 = (placement.y + glyph.height()) as f32 / placement.extent.1 as f32;
                     let bounds = [left as f32, bottom as f32, right as f32, top as f32];
                     run_bounds[0] = run_bounds[0].min(bounds[0]);
                     run_bounds[1] = run_bounds[1].min(bounds[1]);
                     run_bounds[2] = run_bounds[2].max(bounds[2]);
                     run_bounds[3] = run_bounds[3].max(bounds[3]);
                     layout.quads.push(LocalGlyphQuad {
+                        page: placement.page,
                         packet_key: live
                             .and_then(|live| UiPresentationPacketKey::for_text(live, object_index)),
                         object_index,
@@ -1675,6 +1721,7 @@ fn resolve_quad_with_owner_and_scroll(
 ) -> UiGlyphQuad {
     let [left, bottom, right, top] = quad.bounds;
     UiGlyphQuad {
+        page: quad.page,
         packet_key: quad.packet_key,
         object_index: quad.object_index,
         clip_object: quad.clip_object,

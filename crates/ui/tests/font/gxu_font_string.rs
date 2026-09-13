@@ -6,8 +6,58 @@ use super::{
     FontError, LocalGlyphQuad, compose_atlas, group_live_quads, replace_live_object_quads,
 };
 
+/// Appending through several allocation boundaries preserves every old glyph's
+/// coordinates and texels, including the solid caret sample at the page origin.
+#[test]
+fn coverage_growth_preserves_old_pages_and_uploads_only_new_rectangles() -> Result<(), FontError> {
+    let mut pages = vec![super::UiGlyphAtlasPage::packed(
+        7,
+        (8, 8),
+        {
+            let mut bytes = vec![0; 8 * 8 * 4];
+            bytes[..4].fill(255);
+            bytes
+        },
+        1,
+    )];
+    let glyph = super::RasterizedGlyph {
+        width: 4,
+        height: 4,
+        bearing_x: 0,
+        bearing_y: 4,
+        advance_x_26_6: 4 * 64,
+        coverage: vec![137; 16].into(),
+    };
+    let first = super::coverage::insert(&mut pages, &glyph)?;
+    let original = pages[0].rgba8().to_vec();
+    let revision = pages[0].revision();
+    for _ in 0..20_000 {
+        super::coverage::insert(&mut pages, &glyph)?;
+    }
+    assert!(pages.len() > 2);
+    assert_eq!(first.page, 0);
+    assert_eq!(pages[0].identity(), 7);
+    assert_eq!(pages[0].rgba8(), original);
+    assert_eq!(pages[0].revision(), revision);
+    assert_eq!(
+        pages[0].changes_since(1).collect::<Vec<_>>(),
+        [[first.x, first.y, 4, 4]]
+    );
+    assert_eq!(pages[0].changes_since(revision).count(), 0);
+    for page in &pages {
+        assert_eq!(&page.rgba8()[..4], &[255; 4]);
+        for [x, y, width, height] in page.changes_since(1) {
+            assert_eq!((width, height), (4, 4));
+            let offset = ((y * page.extent().0 + x) * 4) as usize;
+            assert_eq!(&page.rgba8()[offset..offset + 4], &[255, 255, 255, 137]);
+        }
+    }
+    Ok(())
+}
+
 fn local_quad(object_index: usize, caret: bool) -> LocalGlyphQuad {
     LocalGlyphQuad {
+        page: 0,
         packet_key: None,
         object_index,
         clip_object: None,

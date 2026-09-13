@@ -20,7 +20,7 @@ pub use c_simple_font::{
 };
 pub(crate) use edit_box_layout::EditBoxTextLayout;
 pub(crate) use gxu_font_string::wrap_line;
-pub use gxu_font_string::{UiGlyphAtlasPlan, UiGlyphQuad, UiNativeTextStyle};
+pub use gxu_font_string::{UiGlyphAtlasPage, UiGlyphAtlasPlan, UiGlyphQuad, UiNativeTextStyle};
 pub use gxu_font_util::{FontRasterization, FontSystem};
 pub use i_gxu_font_glyph::RasterizedGlyph;
 pub(crate) use pixel_size::{raster_pixel_height, text_pixel_height};

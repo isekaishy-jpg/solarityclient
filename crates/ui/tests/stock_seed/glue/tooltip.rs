@@ -8,8 +8,8 @@ use solarity_ui::{GlueManager, UiRenderPlan};
 use crate::support::{Fixture, FixtureFile};
 
 #[test]
-fn first_tooltip_reveal_publishes_covered_glyphs_and_falls_back_for_new_coverage()
--> Result<(), Box<dyn Error>> {
+fn first_tooltip_reveal_appends_coverage_without_replacing_the_atlas() -> Result<(), Box<dyn Error>>
+{
     check_tooltip_reveal(false)
 }
 
@@ -95,7 +95,7 @@ fn check_tooltip_reveal(with_backdrop: bool) -> Result<(), Box<dyn Error>> {
     for (label, glyph_count, retained_coverage) in [
         ("First", 5, true),
         ("Changed", 7, true),
-        ("\u{03a9}", 1, false),
+        ("\u{03a9}", 1, true),
     ] {
         manager.bundle().lua().globals().set("LABEL", label)?;
         manager.pointer_motion(pointer)?;

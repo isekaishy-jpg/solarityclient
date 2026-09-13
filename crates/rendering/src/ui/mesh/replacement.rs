@@ -29,7 +29,7 @@ impl UiMeshPlan {
         let mut vertices = Vec::with_capacity(count * 4);
         for (offset, quad) in quads.iter().enumerate() {
             validate_quad(quad)?;
-            if quad.object_index() != object_index || quad.source() != quads[0].source() {
+            if quad.object_index() != object_index {
                 return Ok(false);
             }
             if let Some(batch) = replacements.last_mut()

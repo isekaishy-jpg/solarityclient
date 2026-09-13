@@ -349,6 +349,7 @@ fn layout_text_objects(
                     && advance > 0.0
                 {
                     selection_quads.push(LocalGlyphQuad {
+                        page: 0,
                         packet_key,
                         object_index,
                         clip_object,
@@ -376,11 +377,12 @@ fn layout_text_objects(
                     let top = baseline + f64::from(glyph.bearing_y()) / glyph_pixels_per_ui_unit;
                     let right = left + f64::from(glyph.width()) / glyph_pixels_per_ui_unit;
                     let bottom = top - f64::from(glyph.height()) / glyph_pixels_per_ui_unit;
-                    let u0 = placement.x as f32 / extent.0 as f32;
-                    let v0 = placement.y as f32 / extent.1 as f32;
-                    let u1 = (placement.x + glyph.width()) as f32 / extent.0 as f32;
-                    let v1 = (placement.y + glyph.height()) as f32 / extent.1 as f32;
+                    let u0 = placement.x as f32 / placement.extent.0 as f32;
+                    let v0 = placement.y as f32 / placement.extent.1 as f32;
+                    let u1 = (placement.x + glyph.width()) as f32 / placement.extent.0 as f32;
+                    let v1 = (placement.y + glyph.height()) as f32 / placement.extent.1 as f32;
                     primary_quads.push(LocalGlyphQuad {
+                        page: placement.page,
                         packet_key,
                         object_index,
                         clip_object,
@@ -401,6 +403,7 @@ fn layout_text_objects(
                 // four color vertices instead of the complete material and
                 // draw topology of the Glue frame.
                 caret_quads.push(LocalGlyphQuad {
+                    page: 0,
                     packet_key,
                     object_index,
                     clip_object,
@@ -471,6 +474,7 @@ fn layout_text_objects(
             let regular_capacity = letters.saturating_mul(regular_passes);
             let used = quads.len() - regular_start;
             quads.extend((used..regular_capacity).map(|_| LocalGlyphQuad {
+                page: 0,
                 packet_key,
                 object_index,
                 clip_object,
@@ -482,6 +486,7 @@ fn layout_text_objects(
             }));
             if object.kind == UiObjectKind::EditBox && caret_quads.is_empty() {
                 caret_quads.push(LocalGlyphQuad {
+                    page: 0,
                     packet_key,
                     object_index,
                     clip_object,
@@ -506,6 +511,7 @@ fn solid_coordinates(extent: (u32, u32)) -> [[f32; 2]; 4] {
 /// Reuses one glyph's atlas coverage for an offset live-text material pass.
 fn offset_live_quad(source: &LocalGlyphQuad, offset: [f32; 2], color: [f32; 4]) -> LocalGlyphQuad {
     LocalGlyphQuad {
+        page: source.page,
         packet_key: source.packet_key,
         object_index: source.object_index,
         clip_object: source.clip_object,

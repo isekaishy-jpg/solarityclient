@@ -1525,6 +1525,35 @@ impl VulkanRenderer {
         )
     }
 
+    /// Updates newly admitted rectangles in a resident coverage page. Queue
+    /// ordering preserves in-flight samples without a CPU synchronization wait.
+    ///
+    /// # Errors
+    /// Returns invalid handle, rectangle, allocation, or submission errors.
+    pub fn update_ui_glyph_texture(
+        &mut self,
+        handle: UiGlyphTextureHandle,
+        extent: (u32, u32),
+        rgba8: &[u8],
+        rectangles: &[[u32; 4]],
+    ) -> Result<(), VulkanError> {
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        self.ui_glyph_textures.update(
+            TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            handle,
+            extent,
+            rgba8,
+            rectangles,
+        )
+    }
+
     /// Returns immutable diagnostics for one live glyph atlas.
     #[must_use]
     pub fn ui_glyph_texture_info(

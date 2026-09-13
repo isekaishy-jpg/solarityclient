@@ -1630,14 +1630,13 @@ impl GlueManager {
             self.glyphs
                 .refresh_live_text(&self.live, &self.geometry, self.glyph_logical_height)?;
         } else {
-            self.glyphs = UiGlyphAtlasPlan::from_live_ui(
+            self.glyphs.rebuild_live_ui(
                 self.runtime.simple_html(),
                 &self.live,
                 &self.geometry,
                 &self.fonts,
                 &mut self.assets.borrow_mut(),
                 self.glyph_logical_height,
-                self.runtime.font_system(),
             )?;
         }
         self.render_plan = UiRenderPlan::prepare_with_glyphs(
@@ -1830,14 +1829,13 @@ impl GlueManager {
             self.glyphs
                 .refresh_live_text(&live, &geometry, self.glyph_logical_height)?;
         } else {
-            self.glyphs = UiGlyphAtlasPlan::from_live_ui(
+            self.glyphs.rebuild_live_ui(
                 self.runtime.simple_html(),
                 &live,
                 &geometry,
                 &self.fonts,
                 &mut self.assets.borrow_mut(),
                 self.glyph_logical_height,
-                self.runtime.font_system(),
             )?;
         }
         let glyph_elapsed = started.elapsed();

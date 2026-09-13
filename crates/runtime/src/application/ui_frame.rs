@@ -36,7 +36,13 @@ impl PreparedUiFrame {
         textures: &HashMap<AssetPath, BlpTextureHandle>,
         glyph_texture: Option<(u64, UiGlyphTextureHandle)>,
     ) -> Result<Self, ApplicationError> {
-        Self::prepare_with_mesh(renderer, plan, textures, glyph_texture, None)
+        Self::prepare_with_mesh(
+            renderer,
+            plan,
+            textures,
+            &glyph_texture.into_iter().collect(),
+            None,
+        )
     }
 
     /// Rejoins changed material resources to an existing retained mesh slot.
@@ -47,7 +53,24 @@ impl PreparedUiFrame {
         textures: &HashMap<AssetPath, BlpTextureHandle>,
         glyph_texture: Option<(u64, UiGlyphTextureHandle)>,
     ) -> Result<Self, ApplicationError> {
-        Self::prepare_with_mesh(renderer, plan, textures, glyph_texture, Some(mesh))
+        Self::prepare_with_mesh(
+            renderer,
+            plan,
+            textures,
+            &glyph_texture.into_iter().collect(),
+            Some(mesh),
+        )
+    }
+
+    /// Joins all stable coverage pages while optionally retaining the mesh slot.
+    pub(crate) fn prepare_pages(
+        renderer: &mut VulkanRenderer,
+        plan: &UiMeshPlan,
+        textures: &HashMap<AssetPath, BlpTextureHandle>,
+        glyphs: &HashMap<u64, UiGlyphTextureHandle>,
+        mesh: Option<UiMeshHandle>,
+    ) -> Result<Self, ApplicationError> {
+        Self::prepare_with_mesh(renderer, plan, textures, glyphs, mesh)
     }
 
     /// Builds one validated draw list around new or retained geometry storage.
@@ -55,7 +78,7 @@ impl PreparedUiFrame {
         renderer: &mut VulkanRenderer,
         plan: &UiMeshPlan,
         textures: &HashMap<AssetPath, BlpTextureHandle>,
-        glyph_texture: Option<(u64, UiGlyphTextureHandle)>,
+        glyph_textures: &HashMap<u64, UiGlyphTextureHandle>,
         retained_mesh: Option<UiMeshHandle>,
     ) -> Result<Self, ApplicationError> {
         let mesh = if let Some(mesh) = retained_mesh {
@@ -96,11 +119,10 @@ impl PreparedUiFrame {
                     Some(index)
                 }
                 UiRenderSource::GlyphAtlas(identity) => {
-                    let (expected_identity, texture) =
-                        glyph_texture.ok_or(VulkanError::UnknownUiGlyphTextureHandle)?;
-                    if *identity != expected_identity {
-                        return Err(VulkanError::UiDrawTextureMismatch.into());
-                    }
+                    let texture = glyph_textures
+                        .get(identity)
+                        .copied()
+                        .ok_or(VulkanError::UnknownUiGlyphTextureHandle)?;
                     let sampler = renderer.prepare_ui_sampler(UiSamplerInfo::new(
                         batch.horizontal_address(),
                         batch.vertical_address(),
