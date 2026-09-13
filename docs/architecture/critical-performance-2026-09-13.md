@@ -147,3 +147,19 @@ regression, and the recovered native rendering, portal, registration, and
 callback-order fixtures. The manual optimized ancestry timing is separate from
 the deterministic test suite. Diagnostic hooks and session-resume edits are
 removed before packaging; the installed launcher leaves frame profiling off.
+
+## Testing package
+
+Solarity `0.0.3a`, **Build 000130**, is installed through the normal Testing
+installer and Desktop shortcut. The compiled source revision is
+`db0a0e2ed81af2297f72bffc405a86726fc59571`; its dirty flag records the package
+script's `BUILD_NUMBER` reservation. Product version and graphics quality are
+unchanged. The installed and built executables have the same SHA-256:
+
+`5049E4CC428827D6A117C32F4E415A08E60495AC67B17BD94B84B485389D7406`
+
+The normal installed launcher opened Build 130, initialized its Glue resources
+and Vulkan swapchain at 2560 by 1440 on the GTX 1070, and closed normally with
+no logged warnings or errors. Its first-run screen was `Movie`; this startup
+smoke check is separate from the automated live-world measurements above.
+Soap is offline at the measured city position for the next session.
