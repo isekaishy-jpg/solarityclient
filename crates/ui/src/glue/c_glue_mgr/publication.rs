@@ -109,14 +109,26 @@ impl GlueManager {
         {
             return Ok(true);
         }
+        let classified_elapsed = timings.then(|| started.elapsed());
         if !visual_objects_refreshed && !visual_objects.is_empty() {
             self.runtime
                 .refresh_visual_objects(&self.bundle, &mut self.live, visual_objects)?;
         }
+        let visual_elapsed = timings.then(|| started.elapsed());
         let mut text_objects =
             self.runtime
                 .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
         let copied_elapsed = started.elapsed();
+        if let (Some(classified), Some(visual)) = (classified_elapsed, visual_elapsed) {
+            tracing::info!(
+                dirty_objects = dirty_objects.len(),
+                visual_objects = visual_objects.len(),
+                classification_ms = classified.as_secs_f64() * 1000.0,
+                visual_copy_ms = visual.saturating_sub(classified).as_secs_f64() * 1000.0,
+                field_copy_ms = copied_elapsed.saturating_sub(visual).as_secs_f64() * 1000.0,
+                "targeted UI publication copy phases"
+            );
+        }
         let refreshed = self.geometry.refresh_dependency_regions(
             &self.live,
             dirty_objects

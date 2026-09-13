@@ -4,6 +4,10 @@ This implements the structural work from the [critical cost audit](critical-perf
 against baseline `0124053e`. It does not establish a new live FPS result or turn
 the 1,200 FPS stretch target into a guaranteed frame deadline.
 
+The [September 13 follow-up](critical-performance-2026-09-13.md) records live
+2K/Ultra measurements and the next lighting, placement, text, and frame-order
+changes, including the costs that remain.
+
 ## Recurring work
 
 - `ActiveWorld` retains sorted unit membership when objects enter, change kind,

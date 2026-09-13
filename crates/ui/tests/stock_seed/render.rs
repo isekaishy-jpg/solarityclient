@@ -1159,7 +1159,7 @@ fn targeted_packet_membership_reorders_adds_and_removes_named_owners() -> Result
     let fixture = Fixture::new(&[
         FixtureFile { path: "Interface/GlueXML/GlueXML.toc", bytes: b"PacketChanges.xml\n" },
         FixtureFile { path: "Interface/GlueXML/PacketChanges.xml", bytes: br#"<Ui>
-<Frame name="FirstOwner" frameLevel="1"><Size x="40" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
+<Frame name="FirstOwner" frameLevel="1" enableMouse="true"><Size x="40" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
 <Layers><Layer level="ARTWORK">
 <Texture name="First" file="Interface\Glues\First"><Size x="12" y="12"/></Texture>
 <Texture name="Extra"><Size x="8" y="8"/></Texture>
@@ -1170,13 +1170,14 @@ fn targeted_packet_membership_reorders_adds_and_removes_named_owners() -> Result
  elseif STEP == 2 then self:SetFrameLevel(1); First:SetTexture(nil)
  elseif STEP == 3 then self:SetFrameLevel(3); First:SetTexture(1, 1, 1, 1); Extra:SetTexture(nil) end
 </OnEvent></Scripts></Frame>
-<Frame name="SecondOwner" frameLevel="2"><Size x="40" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
+<Frame name="SecondOwner" frameLevel="2" enableMouse="true"><Size x="40" y="40"/><Anchors><Anchor point="CENTER"/></Anchors>
 <Layers><Layer level="ARTWORK"><Texture name="Second" file="Interface\Glues\Second"><Size x="10" y="10"/></Texture></Layer></Layers>
 </Frame></Ui>"# },
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut manager = GlueManager::start(AssetStore::mount(catalog)?, (1280, 720), false)?;
+    let snapshots = manager.runtime_snapshot_count();
     for (step, expected) in [
         (1, vec!["Second", "First", "Extra"]),
         (2, vec!["Extra", "Second"]),
@@ -1204,6 +1205,31 @@ fn targeted_packet_membership_reorders_adds_and_removes_named_owners() -> Result
             .map(|&index| manager.objects()[index].name().ok_or("unnamed quad"))
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(mesh_names, expected);
+        assert_eq!(manager.runtime_snapshot_count(), snapshots);
+        let first_owner = manager
+            .objects()
+            .iter()
+            .position(|object| object.name() == Some("FirstOwner"))
+            .ok_or("first owner")?;
+        let bounds = manager
+            .geometry()
+            .region(first_owner)
+            .ok_or("owner bounds")?
+            .presentation_bounds();
+        let hit = manager
+            .pointer_motion((
+                (bounds.left() + bounds.right()) * 0.5,
+                (bounds.bottom() + bounds.top()) * 0.5,
+            ))?
+            .ok_or("frontmost pointer owner")?;
+        assert_eq!(
+            manager.objects()[hit].name(),
+            Some(if step == 2 {
+                "SecondOwner"
+            } else {
+                "FirstOwner"
+            })
+        );
     }
     Ok(())
 }

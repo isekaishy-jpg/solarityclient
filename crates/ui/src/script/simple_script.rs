@@ -3,6 +3,7 @@
 mod addons;
 mod buttons;
 mod cvars;
+mod frame_order;
 mod globals;
 mod messages;
 pub(super) mod minimap;
@@ -70,6 +71,8 @@ pub(super) const DIRTY_FRAME: u32 = 1 << 5;
 /// Texture corner colors can patch an existing retained quad without resolving
 /// layout, packet ordering, or texture residency again.
 pub(super) const DIRTY_TEXTURE_VERTEX_COLOR: u32 = 1 << 6;
+/// Frame order changes republish the affected subtree's packet and pointer keys.
+pub(super) const DIRTY_FRAME_ORDER: u32 = 1 << 7;
 // Distinct values prevent identical-data folding from merging these private
 // light-userdata keys in optimized builds.
 static NAME_TOKEN: u8 = 1;
@@ -1204,6 +1207,7 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("registry", error))?;
         lua.set_named_registry_value(OBJECT_REGISTRY, objects)
             .map_err(|error| execution_error("registry", error))?;
+        frame_order::initialize(lua);
         lua.set_named_registry_value(
             OBJECT_CHILDREN_REGISTRY,
             lua.create_table()
@@ -3572,6 +3576,8 @@ impl UiScriptRuntime {
         objects
             .raw_set(node_index + 1, table.clone())
             .map_err(|error| execution_error("object registration", error))?;
+        frame_order::register(lua, &table)
+            .map_err(|error| execution_error("object registration", error))?;
         register_child_relation(
             lua,
             node_index + 1,
@@ -4263,6 +4269,7 @@ fn create_dynamic_object(
     object.set_metatable(Some(metatables.raw_get(kind)?))?;
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
     objects.raw_set(index, object.clone())?;
+    frame_order::register(lua, &object)?;
     register_child_relation(lua, index, object.raw_get(parent_key())?)?;
     if !matches!(kind, "Texture" | "FontString") {
         let subscribed = object_has_script(&object, UiScriptHandler::Update)?;
@@ -6503,12 +6510,12 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                     "Frame:SetFrameLevel(): Passed negative frame level: {value}"
                 )));
             }
-            set_frame_level(lua, &object, value, true)
+            frame_order::set_level(lua, &object, value)
         })?,
     )?;
     methods.raw_set(
         "Raise",
-        lua.create_function(|lua, object: Table| raise_frame(lua, &object))?,
+        lua.create_function(|lua, object: Table| frame_order::raise(lua, &object))?,
     )?;
     methods.raw_set(
         "GetFrameStrata",
@@ -6521,7 +6528,8 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 .ok_or_else(|| mlua::Error::runtime("invalid frame strata"))?;
             if object.raw_get::<String>(frame_strata_key())? != strata {
                 object.raw_set(frame_strata_key(), strata)?;
-                mark_live_state_changed(lua)?;
+                frame_order::update(lua, &object)?;
+                mark_object_state_changed(lua, &object, DIRTY_FRAME_ORDER)?;
             }
             Ok(())
         })?,
@@ -6708,85 +6716,6 @@ fn register_frame_visibility_methods(lua: &Lua, methods: &Table) -> mlua::Result
                 .then_some(Value::Number(1.0)))
         })?,
     )
-}
-
-/// Raises the stock top-level owner and preserves its descendants' level offsets.
-fn raise_frame(lua: &Lua, object: &Table) -> mlua::Result<()> {
-    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-    let mut raised = object.clone();
-    loop {
-        if raised.raw_get::<bool>(frame_top_level_key())? {
-            break;
-        }
-        let Some(parent_index) = raised.raw_get::<Option<usize>>(parent_key())? else {
-            return Ok(());
-        };
-        let Some(parent) = objects.raw_get::<Option<Table>>(parent_index)? else {
-            return Ok(());
-        };
-        raised = parent;
-    }
-
-    let strata = raised.raw_get::<String>(frame_strata_key())?;
-    let mut top_level = 0_i32;
-    for index in 1..=objects.raw_len() {
-        let Some(candidate) = objects.raw_get::<Option<Table>>(index)? else {
-            continue;
-        };
-        if candidate
-            .raw_get::<Option<String>>(frame_strata_key())?
-            .is_some_and(|candidate_strata| candidate_strata == strata)
-        {
-            top_level = top_level.max(
-                candidate
-                    .raw_get::<Option<i32>>(frame_level_key())?
-                    .unwrap_or(0)
-                    .saturating_add(1),
-            );
-        }
-    }
-    set_frame_level(lua, &raised, top_level, true)
-}
-
-/// Applies stock's bounded level delta and optionally shifts the whole child tree.
-fn set_frame_level(
-    lua: &Lua,
-    object: &Table,
-    requested_level: i32,
-    shift_children: bool,
-) -> mlua::Result<()> {
-    let old_level = object.raw_get::<i32>(frame_level_key())?;
-    let delta = requested_level.max(0).saturating_sub(old_level).min(128);
-    if delta == 0 {
-        return Ok(());
-    }
-
-    object.raw_set(frame_level_key(), old_level.saturating_add(delta))?;
-    if !shift_children {
-        return mark_live_state_changed(lua);
-    }
-
-    let root_index = object.raw_get::<usize>(index_key())?;
-    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-    let children: Table = lua.named_registry_value(OBJECT_CHILDREN_REGISTRY)?;
-    let mut pending = Vec::new();
-    if let Some(direct) = children.raw_get::<Option<Table>>(root_index)? {
-        for child in direct.sequence_values::<usize>() {
-            pending.push(child?);
-        }
-    }
-    while let Some(index) = pending.pop() {
-        let candidate: Table = objects.raw_get(index)?;
-        if let Some(level) = candidate.raw_get::<Option<i32>>(frame_level_key())? {
-            candidate.raw_set(frame_level_key(), level.saturating_add(delta).max(0))?;
-        }
-        if let Some(direct) = children.raw_get::<Option<Table>>(index)? {
-            for child in direct.sequence_values::<usize>() {
-                pending.push(child?);
-            }
-        }
-    }
-    mark_live_state_changed(lua)
 }
 
 fn effective_frame_depth(lua: &Lua, mut object: Table) -> mlua::Result<f64> {

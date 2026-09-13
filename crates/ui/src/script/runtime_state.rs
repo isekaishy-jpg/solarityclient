@@ -3,30 +3,30 @@
 use mlua::{Lua, Table};
 
 use super::simple_script::{
-    DIRTY_FRAME, DIRTY_LAYOUT, DIRTY_MODEL, DIRTY_TEXT, DIRTY_TEXTURE, DIRTY_TEXTURE_VERTEX_COLOR,
-    DIRTY_WIDGET, OBJECT_REGISTRY, alpha_key, anchors_key, backdrop_border_color_key,
-    backdrop_color_key, button_pressed_key, checked_key, click_action_key, desaturated_key,
-    disabled_font_key, disabled_text_color_key, draw_layer_key, draw_sub_level_key,
-    edit_caret_visible_key, edit_cursor_key, edit_focused_key, edit_highlight_color_key,
-    edit_max_letters_key, edit_multi_line_key, edit_password_key, edit_selection_end_key,
-    edit_selection_start_key, edit_text_insets_key, enabled_key, font_face_key, font_flags_key,
-    font_height_key, font_object_key, font_set_key, font_shadow_color_key, font_shadow_offset_key,
-    frame_level_key, frame_strata_key, height_key, highlight_font_key, highlight_locked_key,
-    hit_rect_insets_key, horizontal_scroll_key, horizontal_scroll_range_key, horizontal_tiling_key,
-    hovered_key, index_key, justify_h_key, justify_v_key, keyboard_enabled_key, max_text_lines_key,
-    model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
-    model_character_light_ghost_key, model_character_light_live_key, model_file_key,
-    model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
-    model_instance_generation_key, model_pet_light_ghost_key, model_pet_light_live_key,
-    model_rotation_key, model_scale_key, model_sequence_key, model_sequence_time_key,
-    model_sequence_time_sequence_key, model_unit_key, motion_scripts_while_disabled_key,
-    mouse_enabled_key, mouse_wheel_enabled_key, name_key, non_blocking_key, non_space_wrap_key,
-    normal_font_key, parent_key, parse_point, portrait_unit_key, role_key, scale_key,
-    scroll_child_key, shown_key, slider_max_key, slider_min_key, slider_orientation_key,
-    slider_step_key, slider_value_key, spacing_key, tex_coord_key, text_color_key, text_key,
-    texture_blend_mode_key, texture_color_key, texture_file_key, texture_solid_color_key, type_key,
-    vertex_color_set_key, vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key,
-    width_key, word_wrap_key,
+    DIRTY_FRAME, DIRTY_FRAME_ORDER, DIRTY_LAYOUT, DIRTY_MODEL, DIRTY_TEXT, DIRTY_TEXTURE,
+    DIRTY_TEXTURE_VERTEX_COLOR, DIRTY_WIDGET, OBJECT_REGISTRY, alpha_key, anchors_key,
+    backdrop_border_color_key, backdrop_color_key, button_pressed_key, checked_key,
+    click_action_key, desaturated_key, disabled_font_key, disabled_text_color_key, draw_layer_key,
+    draw_sub_level_key, edit_caret_visible_key, edit_cursor_key, edit_focused_key,
+    edit_highlight_color_key, edit_max_letters_key, edit_multi_line_key, edit_password_key,
+    edit_selection_end_key, edit_selection_start_key, edit_text_insets_key, enabled_key,
+    font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
+    font_shadow_color_key, font_shadow_offset_key, frame_level_key, frame_strata_key, height_key,
+    highlight_font_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
+    horizontal_scroll_range_key, horizontal_tiling_key, hovered_key, index_key, justify_h_key,
+    justify_v_key, keyboard_enabled_key, max_text_lines_key, model_background_light_ghost_key,
+    model_background_light_live_key, model_camera_key, model_character_light_ghost_key,
+    model_character_light_live_key, model_file_key, model_fog_color_key, model_fog_far_key,
+    model_fog_near_key, model_glow_key, model_instance_generation_key, model_pet_light_ghost_key,
+    model_pet_light_live_key, model_rotation_key, model_scale_key, model_sequence_key,
+    model_sequence_time_key, model_sequence_time_sequence_key, model_unit_key,
+    motion_scripts_while_disabled_key, mouse_enabled_key, mouse_wheel_enabled_key, name_key,
+    non_blocking_key, non_space_wrap_key, normal_font_key, parent_key, parse_point,
+    portrait_unit_key, role_key, scale_key, scroll_child_key, shown_key, slider_max_key,
+    slider_min_key, slider_orientation_key, slider_step_key, slider_value_key, spacing_key,
+    tex_coord_key, text_color_key, text_key, texture_blend_mode_key, texture_color_key,
+    texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key, vertical_scroll_key,
+    vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
 };
 use crate::animation::owner_animation_transforms;
 use crate::{
@@ -896,6 +896,14 @@ pub(super) fn refresh_runtime_dirty_objects(
         };
         let (kind, role, parent) = (current.kind, current.role, current.parent);
 
+        if flags & DIRTY_FRAME_ORDER != 0 {
+            live.objects[object_index].frame_level =
+                Some(table.raw_get(frame_level_key()).map_err(|error| {
+                    snapshot_error(format!("object {lua_index} frame level"), error)
+                })?);
+            live.objects[object_index].frame_strata =
+                Some(snapshot_frame_strata(lua_index, &table)?);
+        }
         if flags & DIRTY_LAYOUT != 0 {
             let (width, height, scale, anchors) = snapshot_layout(lua_index, &table, object_count)?;
             live.objects[object_index].width = width;

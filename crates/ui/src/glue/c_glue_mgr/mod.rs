@@ -887,10 +887,20 @@ impl GlueManager {
         function: &mlua::Function,
         pressed: bool,
     ) -> Result<bool, UiEventError> {
+        let started = std::env::var_os("SOLARITY_UI_TIMINGS").map(|_| std::time::Instant::now());
         let (dispatch, result) =
             self.runtime
                 .dispatch_binding(&self.bundle, name, function, pressed)?;
+        let dispatched = started.map(|started| started.elapsed());
         self.refresh_event_mutations(&dispatch)?;
+        if let (Some(started), Some(dispatched)) = (started, dispatched) {
+            tracing::info!(
+                binding = name,
+                dispatch_ms = dispatched.as_secs_f64() * 1000.0,
+                publish_ms = started.elapsed().saturating_sub(dispatched).as_secs_f64() * 1000.0,
+                "profiled UI binding phases"
+            );
+        }
         result?;
         Ok(dispatch.changed)
     }
