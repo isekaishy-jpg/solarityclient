@@ -176,6 +176,13 @@ Local evidence is retained under `target/orgrimmar-horizon-*`: stock owner and
 clip decompilations, installed probes, workspace/installed test logs, and
 `capture/stationary-0059.png`. Archive extracts and captures remain local.
 
+Testing Build 127 packages revision
+`2e3e3f257b984d94e9a5550ff713c687f922b272`. The installed and sealed
+executables share SHA-256
+`212c1f7511852caff37fbb28fdbeaff948e577d1c8ce4d7b0bb2152eaac6dafb`.
+The dirty identity records the package build-number reservation. Installed
+runtime DLL hashes and the Testing desktop shortcut were verified.
+
 This correction does not establish when the reported appearance first changed.
 The earlier horizon evidence above already records conspicuous distant shapes.
 It also does not establish the uncertain outside-the-gate case: an exterior
