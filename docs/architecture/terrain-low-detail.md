@@ -313,3 +313,50 @@ Capture runs themselves are not performance measurements.
 
 Diagnostic validation: workspace Clippy with warnings denied, formatting check,
 and all 1,359 workspace tests passed; 27 installed-data/manual tests were ignored.
+
+## Exterior coverage of admitted horizon tiles
+
+The remaining reproduction identifies a coverage leak after tile admission.
+At the same orbit-frame-6 eye, the true-exterior opening occupies approximately
+pixels X 84 through 242 at 1280 by 720. Kalimdor WDL tile `(39, 28)` intersects
+that opening, but its coarse mesh also covers the central sky gap around
+pixels `(555, 270)` and `(605, 260)`. Drawing the entire accepted tile puts
+mountains into that gap. The captured effective camera far plane is
+791.666687, after the legacy-map clamp on the configured 1277 request.
+
+The horizon frame now retains its exterior window through command recording.
+Tile-frustum tests still reject whole tiles cheaply; the WDL scissor also
+restricts surviving tiles to the admitted opening. Edge conversion follows
+the already recovered `6A38D0` backbuffer rounding and intersects the ordinary
+world scissor. Projection stays unchanged. The original scissor is restored
+before ordinary terrain, WMO, and M2 draws. This adds constant work and two
+scissor commands to an admitted horizon pass, with no allocation, additional
+scene traversal, query, or gameplay diagnostics. Outdoor full-window coverage
+and closed-bank suppression retain their existing behavior.
+
+The pinned native replay establishes the exterior window and conservative
+tile admission. It does not establish this scissor as stock's implementation
+of the final coverage restriction: the correction enforces the reported
+stock visual requirement at the Vulkan submission boundary. Full native
+terrain-horizon and portal-background composition remain separate research
+gaps. A local terrain-edge probe through `78F900` and `78FDC0` still admitted
+the offending tile, so that incomplete occlusion comparison was not used as
+the fix.
+
+The framebuffer regression alternates full, left, and right exterior windows
+over the same coarse tile and frame slots. It independently checks ray/plane
+coverage inside each opening and baseline sky pixels outside it, alongside
+face-bank culling, extended distance, and ordinary-world depth coverage.
+
+The corrected installed-archive replay completed seven 96-frame phases,
+including captures of every orbit frame, without renderer warnings or errors.
+The ridge is absent from the inspected frame 6 and adjacent skyline views
+4 through 12, with ordinary city geometry and sky retained. Additional
+inspected views 17, 19, 21, 23, 25, 37, and 41 cover the camera sweep away
+from that gap. Local evidence is under `target/orgrimmar-city-clip/`, with
+the prior-code comparison under `target/orgrimmar-city-current/`. These use
+the same offline scene and camera inputs; they do not establish a matched
+live Soap comparison or an FPS result.
+
+Validation passed all 1,359 workspace tests with 27 ignored, all-target and
+all-feature Clippy with warnings denied, and the workspace formatting check.

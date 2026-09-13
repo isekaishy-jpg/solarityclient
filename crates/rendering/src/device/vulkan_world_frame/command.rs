@@ -287,7 +287,7 @@ pub(super) fn record(
                 .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
         }
     }
-    let low_detail_draw_count = record_low_detail(&context, viewport, &mut bindings)?;
+    let low_detail_draw_count = record_low_detail(&context, viewport, scissor, &mut bindings)?;
     timestamp(&context, 2);
     // 79A870 restores the ordinary world interval after horizon/sky work.
     let world_viewport = vk::Viewport {

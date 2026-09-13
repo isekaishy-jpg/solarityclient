@@ -132,6 +132,16 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
             .take_captured_frame()?
             .ok_or("missing horizon baseline")?;
         for reuse in 0..4 {
+            // One coarse tile spans both sides of each portal. Whole-tile
+            // admission must not replace sky pixels outside the opening, and
+            // the next frame must not retain the previous portal's scissor.
+            let portal = match reuse {
+                1 => solarity_rendering::WorldScreenWindow::new(-1., -1., -0.5, 1.),
+                2 => solarity_rendering::WorldScreenWindow::new(0.5, -1., 1., 1.),
+                _ => solarity_rendering::WorldScreenWindow::FULL,
+            };
+            let frame =
+                WorldLowDetailFrame::new(&map, camera, fog, WorldHorizonScale::default(), portal)?;
             let mut scene = baseline.with_low_detail(frame);
             let foreground = case == 7 && reuse == 3;
             if foreground {
@@ -142,7 +152,7 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
                 renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
             assert_eq!(
                 report.low_detail_draw_count(),
-                if mask == 0xffff {
+                if !frame.is_visible(&map.tiles()[0])? {
                     0
                 } else if mask == 0 {
                     1
@@ -177,7 +187,11 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
                     let visible = (near..far).contains(&distance)
                         && in_tile
                         && mask != 0xffff
-                        && (!marked || !below);
+                        && (!marked || !below)
+                        // At this 256-pixel extent the native upper edge adds
+                        // one pixel: the left portal includes column 64.
+                        && (reuse != 1 || x <= 64)
+                        && (reuse != 2 || x >= 192);
                     let offset = (y * 256 + x) * 4;
                     let expected = if foreground && nx > 0. {
                         Vec3::new(255., 0., 0.)

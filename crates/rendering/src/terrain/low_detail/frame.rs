@@ -35,6 +35,7 @@ pub struct WorldLowDetailFrame<'a> {
     map: &'a Arc<TerrainLowDetailMap>,
     camera: WorldCameraFrame,
     frustum: WorldFrustum,
+    exterior_window: WorldScreenWindow,
     fog_color: Vec3,
 }
 
@@ -72,12 +73,18 @@ impl<'a> WorldLowDetailFrame<'a> {
             map,
             camera,
             frustum,
+            exterior_window,
             fog_color,
         })
     }
 
     pub(crate) const fn map(self) -> &'a Arc<TerrainLowDetailMap> {
         self.map
+    }
+
+    /// Keeps the pixel boundary alongside the conservative whole-tile test.
+    pub(crate) const fn exterior_window(self) -> WorldScreenWindow {
+        self.exterior_window
     }
 
     /// Returns the horizon camera for the fixed-function projection replacement.

@@ -10,9 +10,14 @@ use super::{RecordContext, WorldCommandBindings};
 pub(super) fn record_low_detail(
     context: &RecordContext<'_>,
     viewport: vk::Viewport,
+    world_scissor: vk::Rect2D,
     bindings: &mut WorldCommandBindings,
 ) -> Result<usize, VulkanError> {
     let Some(frame) = context.low_detail_frame else {
+        return Ok(0);
+    };
+    let Some(scissor) = exterior_scissor(frame.exterior_window(), context.extent, world_scissor)
+    else {
         return Ok(0);
     };
     let map = context
@@ -30,6 +35,9 @@ pub(super) fn record_low_detail(
         context
             .device
             .cmd_set_viewport(context.command_buffer, 0, &[viewport]);
+        context
+            .device
+            .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
     }
     let mut count = 0;
     for (index, tile) in frame.map().tiles().iter().enumerate() {
@@ -65,5 +73,43 @@ pub(super) fn record_low_detail(
             count += 1;
         }
     }
+    // SAFETY: The original attachment-bounded scissor belongs to the same scope.
+    // Ordinary world packets must not inherit the distant terrain portal clip.
+    unsafe {
+        context
+            .device
+            .cmd_set_scissor(context.command_buffer, 0, &[world_scissor]);
+    }
     Ok(count)
+}
+
+/// A 533-unit WDL tile can overlap an exterior portal while most of its pixels
+/// lie in sky-only gaps. Keep 790E20's admission window at the raster boundary.
+/// Conversion uses the existing 6A38D0 backbuffer edge rounding; projection and
+/// the ordinary world scissor remain independent of this coverage restriction.
+fn exterior_scissor(
+    window: crate::WorldScreenWindow,
+    extent: (u32, u32),
+    world: vk::Rect2D,
+) -> Option<vk::Rect2D> {
+    let normalized = |value| (f64::from(value) + 1.) * 0.5;
+    let width = f64::from(extent.0 as f32);
+    let height = f64::from(extent.1 as f32);
+    let left = ((normalized(window.minimum_x()) * width + 0.5) as u32).max(world.offset.x as u32);
+    let top =
+        (((1. - normalized(window.maximum_y())) * height + 0.5) as u32).max(world.offset.y as u32);
+    let right = ((normalized(window.maximum_x()) * width + 1.) as u32)
+        .min(world.offset.x as u32 + world.extent.width);
+    let bottom = (((1. - normalized(window.minimum_y())) * height + 1.) as u32)
+        .min(world.offset.y as u32 + world.extent.height);
+    (left < right && top < bottom).then(|| vk::Rect2D {
+        offset: vk::Offset2D {
+            x: left as i32,
+            y: top as i32,
+        },
+        extent: vk::Extent2D {
+            width: right - left,
+            height: bottom - top,
+        },
+    })
 }
