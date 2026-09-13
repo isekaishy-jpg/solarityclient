@@ -21,8 +21,13 @@ fn horizon_preserves_main_camera_basis_when_world_target_rounds() -> Result<(), 
             let camera = WorldCamera::stock(eye, eye + direction, Vec3::Z, 777.)
                 .with_view_direction(direction)
                 .frame(16. / 9.)?;
-            let horizon =
-                WorldLowDetailFrame::new(&map, camera, Vec3::ONE, WorldHorizonScale::default())?;
+            let horizon = WorldLowDetailFrame::new(
+                &map,
+                camera,
+                Vec3::ONE,
+                WorldHorizonScale::default(),
+                solarity_rendering::WorldScreenWindow::FULL,
+            )?;
             assert_eq!(horizon.camera().view(), camera.view());
             assert_eq!(horizon.camera().forward(), camera.forward());
             assert_eq!(horizon.camera().right(), camera.right());
@@ -101,7 +106,13 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
         let far = main_far * 4.;
         let camera = WorldCamera::stock(eye, eye + forward, Vec3::Z, main_far).frame(1.)?;
         let fog = Vec3::new(50. + case as f32 * 7., 90., 140.) / 255.;
-        let frame = WorldLowDetailFrame::new(&map, camera, fog, WorldHorizonScale::default())?;
+        let frame = WorldLowDetailFrame::new(
+            &map,
+            camera,
+            fog,
+            WorldHorizonScale::default(),
+            solarity_rendering::WorldScreenWindow::FULL,
+        )?;
         assert_eq!(frame.camera().camera().near_clip(), near);
         assert_eq!(frame.camera().camera().far_clip(), far);
         sky.update_colors(
@@ -220,7 +231,13 @@ fn horizon_scale_and_projection_match_original_registered_cvar() -> Result<(), B
         assert_eq!(scale.value().to_bits(), values[4].to_bits());
         let camera = WorldCamera::new(Vec3::ZERO, Vec3::X, Vec3::Z, values[5], 0.2, values[1])
             .frame(values[3])?;
-        let horizon = WorldLowDetailFrame::new(&map, camera, Vec3::ONE, scale)?;
+        let horizon = WorldLowDetailFrame::new(
+            &map,
+            camera,
+            Vec3::ONE,
+            scale,
+            solarity_rendering::WorldScreenWindow::FULL,
+        )?;
         let frame = horizon.camera();
         assert_eq!(frame.camera().near_clip().to_bits(), values[7].to_bits());
         assert_eq!(frame.camera().far_clip().to_bits(), values[8].to_bits());
@@ -242,6 +259,33 @@ fn horizon_scale_and_projection_match_original_registered_cvar() -> Result<(), B
         count += 1;
     }
     assert_eq!(count, 80);
+    Ok(())
+}
+
+/// 791980 passes the true-exterior window to 790E20 with the horizon projection.
+#[test]
+fn horizon_tiles_use_exterior_portal_window() -> Result<(), Box<dyn Error>> {
+    let map = Arc::new(flat_map([32, 32], 0)?);
+    let tile = &map.tiles()[0];
+    let [minimum, maximum] = tile.bounds().map(Vec3::from_array);
+    let center = (minimum + maximum) * 0.5;
+    // The whole tile lies to the camera's right inside the extended far range.
+    let eye = center - Vec3::X * 1600. + Vec3::Y * 650.;
+    let camera = WorldCamera::stock(eye, eye + Vec3::X, Vec3::Z, 777.).frame(1.)?;
+    let frame = |window| {
+        WorldLowDetailFrame::new(
+            &map,
+            camera,
+            Vec3::ONE,
+            WorldHorizonScale::default(),
+            window,
+        )
+    };
+    assert!(frame(solarity_rendering::WorldScreenWindow::FULL)?.is_visible(tile)?);
+    assert!(frame(solarity_rendering::WorldScreenWindow::new(0., -1., 1., 1.))?.is_visible(tile)?);
+    assert!(
+        !frame(solarity_rendering::WorldScreenWindow::new(-1., -1., 0., 1.))?.is_visible(tile)?
+    );
     Ok(())
 }
 

@@ -39,15 +39,17 @@ pub struct WorldLowDetailFrame<'a> {
 }
 
 impl<'a> WorldLowDetailFrame<'a> {
-    /// Uses `791170`'s farclip-minus-50 near plane and registered horizon scale.
+    /// Uses `791170`'s horizon projection and `790E20`'s true-exterior window.
     ///
     /// # Errors
-    /// Returns camera validation failures for a non-perspective source or invalid far range.
+    /// Returns validation failures for a non-perspective source, invalid far
+    /// range, or nonfinite/empty exterior window.
     pub fn new(
         map: &'a Arc<TerrainLowDetailMap>,
         camera: WorldCameraFrame,
         fog_color: Vec3,
         scale: WorldHorizonScale,
+        exterior_window: WorldScreenWindow,
     ) -> Result<Self, WorldCameraError> {
         let source = camera.camera();
         let fov = source
@@ -65,7 +67,7 @@ impl<'a> WorldLowDetailFrame<'a> {
         // particular, do not rebuild direction from a rounded world target.
         .with_view_direction(source.view_direction())
         .frame(camera.aspect_ratio())?;
-        let frustum = WorldFrustum::new(camera, WorldScreenWindow::FULL)?;
+        let frustum = WorldFrustum::new(camera, exterior_window)?;
         Ok(Self {
             map,
             camera,

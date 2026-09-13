@@ -1076,15 +1076,13 @@ impl TerrainFrame {
                 environment.with_casters(m2.environment_shadow_draws, world_model_shadow_draws),
             );
         }
-        if let Some(map) = terrain.low_detail() {
-            // 7D5E70 consumes DayNight+8C after 7816F0/7F16F0 resolution;
-            // the blended camera-interior color remains separately at +A0.
-            scene = scene.with_low_detail(solarity_rendering::WorldLowDetailFrame::new(
-                map,
-                camera,
-                environment.horizon_fog_color(),
-                self.horizon_scale,
-            )?);
+        // 7D5E70 consumes DayNight+8C; camera-interior color remains at +A0.
+        if let Some(horizon) = terrain.world_low_detail_frame(
+            camera,
+            environment.horizon_fog_color(),
+            self.horizon_scale,
+        )? {
+            scene = scene.with_low_detail(horizon);
         }
         if environment.sky_enabled() {
             scene = scene.with_glare(self.sky.glare_frame(

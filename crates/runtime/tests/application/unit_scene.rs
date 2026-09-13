@@ -6,6 +6,9 @@ mod overlap;
 #[path = "world_model_sky_scene.rs"]
 mod sky;
 
+#[path = "world_model_horizon_scene.rs"]
+mod horizon;
+
 use std::{error::Error, sync::Arc};
 
 use glam::{Mat4, Vec3};

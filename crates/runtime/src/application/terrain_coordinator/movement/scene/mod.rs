@@ -2,6 +2,7 @@
 
 mod admission;
 mod graphics;
+mod horizon;
 mod outdoor;
 mod sky;
 

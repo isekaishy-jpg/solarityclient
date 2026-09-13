@@ -39,6 +39,8 @@ pub(in crate::application::terrain_coordinator::movement) struct WorldSceneAdmis
     overlap_groups: HashSet<(RuntimeWorldModelMovementOwner, usize)>,
     outdoor: Option<WorldSceneDepthFrame>,
     outdoor_clip: Option<solarity_systems::WorldSceneFrustum>,
+    /// 79A790/791980 admit horizon tiles only through the true-exterior bank.
+    pub(super) outdoor_window: Option<solarity_rendering::WorldScreenWindow>,
     frame_revision: u64,
     sky: super::sky::WorldSceneSky,
 }
@@ -59,6 +61,7 @@ impl WorldSceneAdmission {
         self.overlap_groups.clear();
         self.outdoor = None;
         self.outdoor_clip = None;
+        self.outdoor_window = None;
         self.frame_revision = self.frame_revision.wrapping_add(1);
         self.sky.begin();
         let source = camera.camera();
@@ -120,6 +123,14 @@ impl WorldSceneAdmission {
             let depth = WorldSceneDepthFrame::new(eye, target)?;
             self.outdoor = Some(depth);
             self.outdoor_clip = Some(scene.frustum_for_window(window)?);
+            // Native windows are min-Y/min-X/max-Y/max-X in zero-to-one space.
+            // Keep offscreen bounds: 790E20 interpolates them without clamping.
+            self.outdoor_window = Some(solarity_rendering::WorldScreenWindow::new(
+                window[1] * 2. - 1.,
+                window[0] * 2. - 1.,
+                window[3] * 2. - 1.,
+                window[2] * 2. - 1.,
+            ));
             for index in 0..active.movement.roots.len() {
                 let reference = active.movement.roots[index];
                 // 792AD0 sends roots marked 0x400 to a separate ordered list.

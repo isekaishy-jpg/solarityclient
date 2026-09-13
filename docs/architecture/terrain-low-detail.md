@@ -121,6 +121,66 @@ far plane, and ordinary geometry at almost-far depth covering the horizon.
 The real archive validator reads 988 Kalimdor, 687 Eastern
 Kingdoms, 800 Outland and 1131 Northrend WDL tiles.
 
+## Orgrimmar true-exterior admission correction
+
+Build 126 still published a WDL frame whenever the resident map had low-detail
+terrain. This bypassed an existing distinction in camera traversal: a WMO can
+admit sky without opening any exterior terrain. The reported city view showed
+flat teal mountain silhouettes behind the skyline, while the supplied stock
+view showed sky.
+
+Disassembly and Ghidra recovery against the pinned build-12340 executable
+(SHA-256 `aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8`)
+establish the missing admission:
+
+- `79A870` keeps independent sky (`ADF570..ADF580`) and true-exterior
+  (`ADF58C..ADF59C`) banks. An unregistered camera opens the full exterior
+  bank. A registered camera reaches `79A790` only when primary traversal
+  opens the true-exterior bank.
+- `79A790` calls `791980` after the ordinary exterior traversal.
+  `791980` builds the horizon projection, passes the exterior window to
+  `790E20`, and then calls `7CC0B0` to queue eligible horizon tiles.
+- `790E20` interpolates the horizon frustum corners with that normalized
+  window, including bounds outside the viewport. The later `795F80` draw
+  consumes the queued list; its unconditional call does not authorize every
+  map tile.
+
+The runtime now retains the already-computed primary exterior window and
+publishes the horizon frame through a focused scene module. A closed bank
+publishes no WDL frame. An open bank supplies the horizon frustum's side
+planes; sky visibility remains independent. This adds no scene scan, logging,
+allocation, or GPU query. The outdoor case retains the existing tile loop.
+
+Installed archive probes against Orgrimmar MODF 165042 at
+`(1500, -4400, 35)`, `(1550, -4400, 35)`, and `(1600, -4400, 35)`, looking
+along positive X, select camera groups 132, 132, and 133 respectively. All
+three have visible sky and no true-exterior window. These repeatable WMO
+probes omit ADT ray limiting and do not claim to reproduce the exact supplied
+screenshot camera. The ignored installed-data regression exercises these
+groups and verifies that they publish no horizon frame. Portable regressions
+cover sky-only frame suppression, an open exterior bank, and horizon tiles
+accepted/rejected by opposite portal windows.
+
+Validation passed 1,358 workspace tests with 27 ignored, plus the ignored
+installed Orgrimmar regression run explicitly. Workspace formatting and
+all-target/all-feature Clippy with warnings denied passed. A 240-frame offline
+Vulkan replay at player position `(1525, -4400, 35)`, camera distance 25,
+pitch/yaw zero, realm hour 3 and 1280x720 shows clear sky behind the city
+towers. The stationary final capture retains the foreground city geometry
+without the teal silhouettes. This uses the offline fixture character, not
+Soap's exact pose, and establishes no FPS change. The development example
+needed a larger stack reserve in a disposable copied executable; the packaged
+client is built normally.
+
+Local evidence is retained under `target/orgrimmar-horizon-*`: stock owner and
+clip decompilations, installed probes, workspace/installed test logs, and
+`capture/stationary-0059.png`. Archive extracts and captures remain local.
+
+This correction does not establish when the reported appearance first changed.
+The earlier horizon evidence above already records conspicuous distant shapes.
+It also does not establish the uncertain outside-the-gate case: an exterior
+camera still admits WDL and may require the native occlusion work below.
+
 ## Remaining horizon work
 
 This change submits WDL terrain. The asset API retains MODF placements, but
