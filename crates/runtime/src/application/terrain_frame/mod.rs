@@ -579,6 +579,11 @@ pub(super) struct TerrainFrame {
 }
 
 impl TerrainFrame {
+    #[cfg(test)]
+    pub(super) fn log_diagnostic_workload(&self) {
+        self.m2.log_diagnostic_workload();
+    }
+
     pub(super) fn emit_unit_effect(
         &mut self,
         request: m2::unit_effects::UnitEffectRequest,

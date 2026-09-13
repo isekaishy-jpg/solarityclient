@@ -168,3 +168,9 @@ Additional evidence in the canonical checkout:
   `2026-09-13T03:47:56.497703Z`). No frame-profile reports appear in this log.
 - `target/analyze-live-scopes.py`, paired `*.scopes.json`, and paired
   `*.vulkan.json` reproduce the nested timing breakdown above.
+
+## Subsequent shadow preparation work
+
+The [2026-09-13 follow-up](live-shadow-work-2026-09-13.md) documents the
+presentation-state confound and the later repeated live gains from reducing
+model shadow preparation and redundant command bindings.

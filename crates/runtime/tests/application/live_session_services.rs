@@ -86,6 +86,9 @@ impl ClientServices {
             shadow_quality = ?self.glue.cvar_number("extShadowQuality"),
             environment_detail = ?self.glue.cvar_number("environmentDetail"),
             "live diagnostic scene ready");
+        if let Some(frame) = &self.terrain_frame {
+            frame.log_diagnostic_workload();
+        }
         self.renderer.request_frame_capture()?;
         self.present_frame()?;
         let frame = self

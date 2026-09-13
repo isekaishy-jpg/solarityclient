@@ -294,7 +294,9 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
                 .animated_shadow_caster,
             source_index == 1
         );
-        for offset in [Vec3::ZERO, Vec3::Z * 10.] {
+        // The distant prop lies within an environment cascade but beyond
+        // this model size class's shadow and ordinary visibility cutoffs.
+        for offset in [Vec3::ZERO, Vec3::Z * 10., Vec3::X * 50.] {
             let playback = M2Playback::default_sequence(model, &animations, 0, &mut random)?;
             frame.placements.push(m2_gpu_placement(
                 source_index,
@@ -309,7 +311,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
             )?);
             // Exercise prepared and uncached static inputs for each ordinary,
             // animated and inverted-bounds source in the same native shadow test.
-            if offset == Vec3::ZERO {
+            if offset != Vec3::Z * 10. {
                 let bounds = model.bounds();
                 frame
                     .placements
@@ -417,9 +419,9 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
             observed, [true; 6],
             "both caster classes and the empty-box sentinel include the offscreen prop"
         );
-        assert_eq!(frame.placements[1].last_effect_time_ms, 0);
-        assert_eq!(frame.placements[3].last_effect_time_ms, 0);
-        assert_eq!(frame.placements[5].last_effect_time_ms, 0);
+        for index in [1, 2, 4, 5, 7, 8] {
+            assert_eq!(frame.placements[index].last_effect_time_ms, 0);
+        }
     }
     renderer.shutdown()?;
     Ok(())

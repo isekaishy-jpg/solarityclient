@@ -160,6 +160,7 @@ pub(super) fn append_packets(
     model_view: Mat4,
     opacity: f32,
     bone_offset: u32,
+    material_poses: &mut Vec<Option<M2MaterialPose>>,
     mut destination: impl FnMut(M2PreparedDraw),
 ) -> Result<(), RuntimeTerrainFrameError> {
     let Some(mesh) = source.mesh else {
@@ -172,6 +173,8 @@ pub(super) fn append_packets(
     {
         return Ok(());
     }
+    // The caller clears the retained scratch at each placement boundary.
+    material_poses.resize(source.draws.len(), None);
     let mut instance_color = placement_mesh_color(placement.owner, placement.color);
     if let Some(animation) = &placement.unit_animation {
         instance_color *= placement_color(animation.model_color().to_le_bytes());
@@ -188,6 +191,7 @@ pub(super) fn append_packets(
             continue;
         };
         let pose = M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
+        material_poses[draw_index] = Some(pose);
         let draw = &source.plan.draws()[draw_index];
         let color = pose.mesh_color() * instance_color;
         if M2ShadowMaterial::select(

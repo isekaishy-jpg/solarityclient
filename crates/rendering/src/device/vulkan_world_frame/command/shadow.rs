@@ -5,7 +5,7 @@
 mod casters;
 mod environment;
 
-use super::RecordContext;
+use super::{RecordContext, WorldCommandBindings};
 use crate::device::VulkanError;
 use ash::vk;
 
@@ -102,9 +102,17 @@ pub(super) fn record_primary(context: &RecordContext<'_>) -> Result<(), VulkanEr
     }
     let material_base =
         context.m2_draws.len() + context.sky_models.map_or(0, |models| models.draw_count());
-    casters::record_scenery(context, resources.caster_set(), 8)?;
+    // Begin with unknown bindings at each pass boundary.
+    let mut bindings = WorldCommandBindings::default();
+    casters::record_scenery(context, resources.caster_set(), 8, &mut bindings)?;
     for (index, draw) in frame.casters().iter().copied().enumerate() {
-        casters::record_m2(context, material_base + index, draw, resources.caster_set())?;
+        casters::record_m2(
+            context,
+            material_base + index,
+            draw,
+            resources.caster_set(),
+            &mut bindings,
+        )?;
     }
     let barrier = [vk::ImageMemoryBarrier2::default()
         .image(resources.color_image())

@@ -124,10 +124,12 @@ pub(super) fn record(context: &RecordContext<'_>) -> Result<(), VulkanError> {
                 .device
                 .cmd_set_scissor(context.command_buffer, 0, &[rect]);
         }
+        let mut bindings = super::WorldCommandBindings::default();
         casters::record_scenery(
             context,
             context.shadow_resources.environment_caster_set(index),
             1 << index,
+            &mut bindings,
         )?;
         let barrier = [vk::ImageMemoryBarrier2::default()
             .image(color_image)

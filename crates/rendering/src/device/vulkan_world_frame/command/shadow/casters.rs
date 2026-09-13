@@ -2,7 +2,7 @@
 
 #![allow(unsafe_code)]
 
-use super::super::{RecordContext, dynamic_offset};
+use super::super::{RecordContext, WorldCommandBindings, dynamic_offset};
 use crate::{M2PreparedDraw, M2ShadowMaterial, device::VulkanError};
 use ash::vk;
 
@@ -11,6 +11,7 @@ pub(super) fn record_scenery(
     context: &RecordContext<'_>,
     caster_set: vk::DescriptorSet,
     mask: u8,
+    bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let Some(frame) = context.environment_frame else {
         return Ok(());
@@ -39,20 +40,9 @@ pub(super) fn record_scenery(
         let range = draw.index_range();
         // SAFETY: The validated logical packet shares the world material and texture ABI.
         unsafe {
-            context.device.cmd_bind_pipeline(
-                context.command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline,
-            );
-            context
-                .device
-                .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
-            context.device.cmd_bind_index_buffer(
-                context.command_buffer,
-                indices,
-                0,
-                vk::IndexType::UINT32,
-            );
+            bindings.bind_pipeline(context, pipeline);
+            bindings.bind_vertex(context, (vertex, 0));
+            bindings.bind_index(context, (indices, 0), vk::IndexType::UINT32);
             context.device.cmd_bind_descriptor_sets(
                 context.command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -73,7 +63,13 @@ pub(super) fn record_scenery(
             .map_or(0, |frame| frame.casters().len());
     for (index, caster) in frame.m2_casters().iter().enumerate() {
         if caster.maps & mask != 0 {
-            record_m2(context, material_base + index, caster.draw, caster_set)?;
+            record_m2(
+                context,
+                material_base + index,
+                caster.draw,
+                caster_set,
+                bindings,
+            )?;
         }
     }
     Ok(())
@@ -84,6 +80,7 @@ pub(super) fn record_m2(
     material_index: usize,
     draw: M2PreparedDraw,
     caster_set: vk::DescriptorSet,
+    bindings: &mut WorldCommandBindings,
 ) -> Result<(), VulkanError> {
     let Some(material) = draw.shadow_material() else {
         return Ok(());
@@ -115,20 +112,9 @@ pub(super) fn record_m2(
     let layout = context.shadow_pipeline.layout();
     // SAFETY: Prepared packets and the frame's palette/range validation establish each resource join.
     unsafe {
-        context.device.cmd_bind_pipeline(
-            context.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline,
-        );
-        context
-            .device
-            .cmd_bind_vertex_buffers(context.command_buffer, 0, &[vertex], &[0]);
-        context.device.cmd_bind_index_buffer(
-            context.command_buffer,
-            indices,
-            0,
-            vk::IndexType::UINT16,
-        );
+        bindings.bind_pipeline(context, pipeline);
+        bindings.bind_vertex(context, (vertex, 0));
+        bindings.bind_index(context, (indices, 0), vk::IndexType::UINT16);
         context.device.cmd_bind_descriptor_sets(
             context.command_buffer,
             vk::PipelineBindPoint::GRAPHICS,

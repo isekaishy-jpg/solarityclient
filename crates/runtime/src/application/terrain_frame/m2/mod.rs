@@ -499,6 +499,8 @@ pub(in crate::application) struct M2Frame {
     unit_scene_time_ms: f32,
     retirement: retirement::M2RetirementScene,
     bone_pose_scratch: M2BonePose,
+    /// Reused only between shadow and ordinary draws of the current placement.
+    material_pose_scratch: Vec<Option<M2MaterialPose>>,
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
     shadow_draws: Vec<M2PreparedDraw>,
@@ -562,6 +564,21 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
 }
 
 impl M2Frame {
+    #[cfg(test)]
+    pub(super) fn log_diagnostic_workload(&self) {
+        tracing::info!(
+            placements = self.placements.len(),
+            dynamic_placements = self.placement_visibility.dynamic_indices().len(),
+            sources = self.sources.iter().flatten().count(),
+            visible_draws = self.visible_draws.len(),
+            primary_shadow_draws = self.shadow_draws.len(),
+            environment_shadow_draws = self.environment_shadow_draws.len(),
+            bones = self.bone_transforms.len(),
+            particle_vertices = self.particle_vertices.len(),
+            "live diagnostic retained model workload"
+        );
+    }
+
     /// Publishes profile zero and its fully resolved static material resources.
     pub(super) fn prepare(
         renderer: &mut VulkanRenderer,
@@ -603,6 +620,7 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            material_pose_scratch: Vec::new(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             shadow_draws: Vec::new(),
@@ -748,6 +766,7 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            material_pose_scratch: Vec::new(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             shadow_draws: Vec::new(),
@@ -2232,6 +2251,17 @@ impl M2Frame {
                     .unwrap_or(placement_index);
                 if root < placement_index {
                     self.environment_shadow_admission[root]
+                } else if self
+                    .placement_visibility
+                    .scenery(root)
+                    .is_some_and(|scenery| {
+                        !scenery.admits_shadow(camera.camera().position(), self.environment_detail)
+                    })
+                {
+                    // Immutable scenery uses this same cutoff in environment_maps.
+                    // Reject it from compact metadata before loading the large
+                    // placement and source records for distant resident tiles.
+                    0
                 } else if !self.vehicle_passengers.hidden(root)
                     && let Some(source) = &self.sources[self.placements[root].source_index]
                 {
@@ -2863,6 +2893,8 @@ impl M2Frame {
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
             let first_shadow_draw = self.shadow_draws.len();
             let first_environment_draw = self.environment_shadow_draws.len();
+            // A new instance/clock must never observe the previous model's samples.
+            self.material_pose_scratch.clear();
             if shadow_admitted || environment_maps != 0 {
                 shadow::append_packets(
                     renderer,
@@ -2872,6 +2904,7 @@ impl M2Frame {
                     model_view,
                     shadow_opacity,
                     shadow_bone_offset,
+                    &mut self.material_pose_scratch,
                     |draw| {
                         if shadow_admitted {
                             self.shadow_draws.push(draw);
@@ -3143,8 +3176,22 @@ impl M2Frame {
                     let Some(resources) = resources else {
                         continue;
                     };
-                    let pose =
-                        M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
+                    let pose = self
+                        .material_pose_scratch
+                        .get(draw_index)
+                        .copied()
+                        .flatten()
+                        .map_or_else(
+                            || {
+                                M2MaterialPose::sample(
+                                    &source.model,
+                                    &source.plan,
+                                    draw_index,
+                                    clock,
+                                )
+                            },
+                            Ok,
+                        )?;
                     let draw = &source.plan.draws()[draw_index];
                     let material_state = M2MaterialState::from_material(draw.material());
                     let element_alpha = pose.mesh_color().w * instance_color.w;
