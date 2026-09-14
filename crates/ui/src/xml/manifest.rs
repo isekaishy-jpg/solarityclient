@@ -227,20 +227,19 @@ impl UiBundle {
     /// Returns the first manifest, asset, XML, or Lua compilation failure in
     /// stock load order.
     pub fn load(store: &mut AssetStore, kind: UiManifestKind) -> Result<Self, UiLoadError> {
-        let manifest = UiManifest::load(store, kind)?;
-        let mut loader = UiBundleLoader::new(store, manifest.entries.len());
-        for entry in &manifest.entries {
-            loader.load_entry(&entry.path, entry.kind)?;
-        }
-        let (resources, actions, lua) = loader.finish();
+        let (sources, lua) = UiSourceImage::load(store, kind)?;
         Ok(Self {
-            sources: std::rc::Rc::new(UiSourceImage {
-                manifest,
-                resources,
-                actions,
-            }),
+            sources: std::rc::Rc::new(sources),
             lua,
         })
+    }
+
+    /// Admits worker-validated declarations into a new, main-thread Lua owner.
+    pub(crate) fn from_prepared_sources(sources: UiSourceImage) -> Self {
+        Self {
+            sources: std::rc::Rc::new(sources),
+            lua: Lua::new(),
+        }
     }
 
     /// Returns the parsed manifest.
@@ -285,6 +284,30 @@ impl UiBundle {
 }
 
 impl UiSourceImage {
+    /// Reads and validates declarations without executing any authored callbacks.
+    /// The temporary validator belongs to this thread; only owned sources cross
+    /// a worker boundary. Execution still compiles into the final owner's Lua.
+    pub(crate) fn load(
+        store: &mut AssetStore,
+        kind: UiManifestKind,
+    ) -> Result<(Self, Lua), UiLoadError> {
+        let _profile = solarity_profiling::profile!("ui.source.load");
+        let manifest = UiManifest::load(store, kind)?;
+        let mut loader = UiBundleLoader::new(store, manifest.entries.len());
+        for entry in &manifest.entries {
+            loader.load_entry(&entry.path, entry.kind)?;
+        }
+        let (resources, actions, lua) = loader.finish();
+        Ok((
+            Self {
+                manifest,
+                resources,
+                actions,
+            },
+            lua,
+        ))
+    }
+
     pub(crate) fn append_declaration(&self, resource: &UiResource, element_index: usize) -> Self {
         let mut next = self.clone();
         let resource_index = next

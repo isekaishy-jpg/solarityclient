@@ -137,3 +137,6 @@ mod widget_texture;
 mod world;
 #[path = "stock_seed/xml.rs"]
 mod xml;
+
+#[path = "stock_seed/frame_sources.rs"]
+mod frame_sources;

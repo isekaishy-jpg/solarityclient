@@ -84,7 +84,7 @@ use crate::application::world_coordinator::{
     RuntimeWorldState,
 };
 use crate::application::world_transfer::RuntimeWorldTransferCoordinator;
-use crate::application::world_ui::RuntimeWorldUi;
+use crate::application::world_ui::{RuntimeWorldUi, WorldUiSourcePreparation};
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
 use crate::loading::{LoadingScreenDirectory, RuntimeLoadingReadiness, RuntimeLoadingScreen};
@@ -132,6 +132,7 @@ pub(crate) struct ClientServices {
     glue_gpu_texture_prewarm_pending: bool,
     pending_glue_texture_prewarm: Option<ConfiguredGlueTexturePrewarmJob>,
     world_ui: Option<RuntimeWorldUi>,
+    world_ui_sources: WorldUiSourcePreparation,
     world_ui_catalog: ArchiveCatalog,
     glue_model: RuntimeGlueModelScene,
     cinematic: RuntimeCinematicCoordinator,
@@ -522,6 +523,7 @@ impl ClientServices {
                 glue_gpu_texture_prewarm_pending: false,
                 pending_glue_texture_prewarm,
                 world_ui: None,
+                world_ui_sources: Default::default(),
                 glue_model,
                 cinematic: RuntimeCinematicCoordinator::default(),
                 sound,
@@ -2984,6 +2986,8 @@ impl ClientServices {
         {
             return Ok(());
         }
+        self.world_ui_sources
+            .request(&self.cpu, &self.world_ui_catalog)?;
         let Some(active) = self.gameplay.world() else {
             return Ok(());
         };
@@ -2997,6 +3001,13 @@ impl ClientServices {
             .glue
             .localized_text("GENERAL")
             .map_err(GlueError::from)?;
+        // Speculative archive failures belong to UI admission, not an earlier
+        // login phase. Cancelled entry retains the owned result until reuse or
+        // shutdown; no callbacks or world state are published by the worker.
+        self.world_ui_sources.poll()?;
+        let Some(sources) = self.world_ui_sources.take() else {
+            return Ok(());
+        };
         let cvar_values = self.world_cvar_values();
         let (world_ui, startup_errors) = RuntimeWorldUi::prepare(
             &mut self.renderer,
@@ -3014,6 +3025,7 @@ impl ClientServices {
             self.gameplay.player_ui(),
             general_tab_name,
             self.sound.output_names(),
+            sources,
         )?;
         for error in &startup_errors {
             let captured = self.record_recoverable_error(error);
@@ -3123,6 +3135,7 @@ impl ClientServices {
         let retired = self.disconnect_from_server();
         let sound_result = self.sound.shutdown().map_err(ApplicationError::from);
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
+        let ui_sources_result = self.world_ui_sources.finish();
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {
             network.shutdown_timeout(self.network_shutdown_timeout);
@@ -3130,6 +3143,7 @@ impl ClientServices {
         retired
             .and(sound_result)
             .and(renderer_result)
+            .and(ui_sources_result)
             .and(cpu_result)
     }
 

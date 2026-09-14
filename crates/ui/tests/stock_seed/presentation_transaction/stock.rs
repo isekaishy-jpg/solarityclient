@@ -60,12 +60,30 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
                 0,
             )]);
         let started = Instant::now();
-        let mut manager = FrameManager::start_shared(
-            AssetStoreHandle::new(AssetStore::mount(catalog.clone())?),
-            environment,
-            &[],
-            &AddonCatalog::default(),
-        )?;
+        let mut source_duration = std::time::Duration::ZERO;
+        let mut manager = if batched {
+            let worker_catalog = catalog.clone();
+            let sources = std::thread::spawn(move || {
+                solarity_ui::FrameUiSources::load(&mut AssetStore::mount(worker_catalog)?)
+            })
+            .join()
+            .map_err(|_| "source worker panicked")??;
+            source_duration = started.elapsed();
+            FrameManager::start_with_sources(
+                AssetStoreHandle::new(AssetStore::mount(catalog.clone())?),
+                environment,
+                &[],
+                &AddonCatalog::default(),
+                sources,
+            )?
+        } else {
+            FrameManager::start_shared(
+                AssetStoreHandle::new(AssetStore::mount(catalog.clone())?),
+                environment,
+                &[],
+                &AddonCatalog::default(),
+            )?
+        };
         let load = started.elapsed();
         let started = Instant::now();
         manager.with_suppressed_sound_entries(|manager| {
@@ -83,8 +101,10 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
             action_events(&mut manager)?;
         }
         println!(
-            "FrameXML batched={batched} load_ms={:.3} entry_ms={:.3} action_ms={:.3} objects={}",
+            "FrameXML batched={batched} load_ms={:.3} source_worker_ms={:.3} main_construction_ms={:.3} entry_ms={:.3} action_ms={:.3} objects={}",
             load.as_secs_f64() * 1000.,
+            source_duration.as_secs_f64() * 1000.,
+            (load - source_duration).as_secs_f64() * 1000.,
             entry.as_secs_f64() * 1000.,
             started.elapsed().as_secs_f64() * 1000.,
             manager.geometry().region_count()

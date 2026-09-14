@@ -182,3 +182,55 @@ and it does not measure the physical vector compaction before publication.
 F10 now records newly built static metadata
 and actual spatial rebuild membership independently of total published placements.
 This source work follows Build 135 and is not in that installed executable.
+
+
+### World UI archive preparation
+
+The live world-entry path now admits one bounded background job after the loading
+card has been presented. The job mounts the fixed archive catalog, loads localized
+spell names and default bindings, expands the FrameXML manifest and validates Lua
+syntax. It returns owned declarations; the validator Lua state is destroyed on its
+worker. No authored Lua callback, live character handle or GPU resource crosses
+threads. Main-thread construction consumes the result only with current authoritative
+world facts. Validation failures are observed at that admission boundary, preserving
+the earlier login/metadata error order. Synchronous diagnostic construction remains
+available as a comparison.
+
+Saturation leaves admission pending and never runs archive work on the frame caller.
+The owner polls completion without joining unfinished work. A cancelled entry can
+retain one completed character-independent source image for the next entry; shutdown
+observes any outstanding result/error before closing the CPU pool. There is no cache
+of historical UI generations. Frame-manager loading and runtime construction have
+been separated from their live update implementations into focused child modules.
+
+`ui.source.load`, `ui.frame.source_preparation` and
+`runtime.world_ui.source_preparation` record the archive phases on their executing
+thread. `ui.startup` now measures main-thread construction after declarations are
+available, so its total excludes the former `bundle` phase. Compare source and
+construction costs separately when comparing against Build 134.
+
+The automated UI suite passes 28 library and 168 integration tests. New cases prove
+that valid Lua which would throw at execution still prepares on a foreign thread,
+invalid Lua retains its typed error and normalized source path, and prepared
+construction matches synchronous geometry. The sound-admission regression now
+crosses the worker boundary. The full stock comparison also crosses that boundary
+and matches all 25,099 regions and ordered presentation packets after world-entry
+and action events.
+
+A debug observation includes 1,593 ms of worker source preparation and 5,363 ms of
+remaining main-thread construction. Its total 6,956 ms is **not** a loading-speed
+improvement claim (the synchronous pass was 5,946 ms). This change relocates and
+allows overlap of source preparation; static planning, Lua execution and first
+presentation remain synchronous and the loading completion requirement stays open.
+The optimized `test-client` comparison also passes. Its source job (including
+thread startup and archive mount in this diagnostic) took 181.334 ms, and the
+remaining main-thread construction took 1,054.330 ms. The sequential pass took
+1,389.072 ms total; the prepared pass took 1,235.664 ms total. These are one-pass
+fixture observations, not a matched live loading or FPS result. In particular,
+the remaining approximately one-second main-thread block still needs attention.
+
+Final formatting, workspace all-target/all-feature Clippy with warnings denied,
+and workspace all-feature tests pass: 1,409 passed, zero failed, 32 ignored. This
+includes the admission-order correction and source-job capacity/retirement tests.
+The optimized stock comparison ran separately and passed. No additional numbered
+package has been reserved after Build 135; the goal remains active.

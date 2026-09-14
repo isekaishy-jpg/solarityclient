@@ -1,14 +1,18 @@
 //! Persistent ownership of the built-in active-world interface.
 
+mod startup;
+
+pub use startup::FrameUiSources;
+
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use solarity_asset::{AssetStoreHandle, BlpTextureCache};
+use solarity_asset::BlpTextureCache;
 
-use super::{GlueError, GlueManager};
+use super::GlueManager;
 use crate::{
-    AddonCatalog, UiBindingAssignments, UiBindingCatalog, UiEventDispatch, UiEventError,
-    UiEventPayload, UiGlyphAtlasPlan, UiKeyboardModifiers, UiPointerButton, UiPointerDispatch,
-    UiProcessAction, UiRenderPlan, UiScriptEnvironment, UiTextureAssetBindings,
+    UiBindingAssignments, UiBindingCatalog, UiEventDispatch, UiEventError, UiEventPayload,
+    UiGlyphAtlasPlan, UiKeyboardModifiers, UiPointerButton, UiPointerDispatch, UiProcessAction,
+    UiRenderPlan, UiTextureAssetBindings,
 };
 
 /// Complete built-in FrameXML state retained across the active-world lifetime.
@@ -63,79 +67,6 @@ impl FrameManager {
                 label: format!("localization token {token}"),
                 message: error.to_string(),
             })
-    }
-
-    /// Loads, executes, and retains the stock FrameXML manifest.
-    ///
-    /// The supplied environment must already contain the selected character's
-    /// synchronous world facts. This owner attaches the shared asset stack,
-    /// profile CVars, AddOn catalog, and stock default binding image before Lua
-    /// receives control.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GlueError`] at the first archive, XML, layout, object, font,
-    /// texture, or Lua compatibility boundary.
-    pub fn start_shared(
-        assets: AssetStoreHandle,
-        environment: UiScriptEnvironment,
-        cvar_values: &[(String, String)],
-        addon_catalog: &AddonCatalog,
-    ) -> Result<Self, GlueError> {
-        // 52A980 brackets the complete FrameXML load with 4CFB80/4CFB90.
-        let _sound_admission = crate::script::UiSoundSuppression::new(environment.media_intent());
-        let (catalog, bindings) = {
-            let mut store = assets.borrow_mut();
-            let catalog = UiBindingCatalog::load_builtin(&mut store)?;
-            let bindings = UiBindingAssignments::load_defaults(&mut store, &catalog)?;
-            (catalog, bindings)
-        };
-        let environment = environment
-            .with_shared_asset_store(assets.clone())
-            .with_cvar_values(cvar_values)
-            .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog))
-            .with_binding_assignments(bindings);
-        let binding_assignments =
-            environment
-                .binding_assignments()
-                .ok_or_else(|| crate::UiScriptError::Execution {
-                    label: "FrameXML bindings".to_owned(),
-                    message: "missing attached binding assignments".to_owned(),
-                })?;
-        let movement_input = environment.movement_input();
-        let tutorials = environment.world_state().tutorials();
-        let world = environment.world_state();
-        let combat_log = environment.combat_log_state();
-        let media_intent = environment.media_intent();
-        let owner = GlueManager::start_shared_frame(assets, environment)?;
-        let mut binding_functions = HashMap::new();
-        for binding in catalog.bindings() {
-            let function = owner
-                .bundle()
-                .lua()
-                .load(format!(
-                    "return function(keystate, pressure, angle, precision)\n{}\nend",
-                    binding.body()
-                ))
-                .set_name(binding.name())
-                .eval::<mlua::Function>()
-                .map_err(|error| crate::UiScriptError::Execution {
-                    label: binding.name().to_owned(),
-                    message: error.to_string(),
-                })?;
-            binding_functions.insert(binding.name().to_owned(), function);
-        }
-        Ok(Self {
-            owner,
-            binding_catalog: catalog,
-            binding_assignments,
-            binding_functions,
-            movement_input,
-            tutorials,
-            world,
-            combat_log,
-            media_intent,
-        })
     }
 
     /// Resolves physical input against the same assignment image used by Lua.

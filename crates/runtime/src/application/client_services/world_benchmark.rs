@@ -201,6 +201,9 @@ impl ClientServices {
             .localized_text("GENERAL")
             .map_err(GlueError::from)
             .map_err(ApplicationError::from)?;
+        let sources =
+            super::super::world_ui::WorldUiSourceImage::load(&mut self.assets.borrow_mut())
+                .map_err(ApplicationError::from)?;
         let (ui, errors) = RuntimeWorldUi::prepare(
             &mut self.renderer,
             self.platform.window_id(),
@@ -217,6 +220,7 @@ impl ClientServices {
             &super::super::gameplay_coordinator::player_ui::RuntimePlayerUiState::default(),
             general,
             self.sound.output_names(),
+            sources,
         )?;
         if let Some(error) = errors.into_iter().next() {
             return Err(error.into());

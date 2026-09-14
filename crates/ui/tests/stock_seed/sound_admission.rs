@@ -74,11 +74,18 @@ fn frame_startup_and_world_entry_suppress_sound_entries_without_delaying_them()
     let fixture = Fixture::new(&files)?;
     let archive =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let mut manager = FrameManager::start_shared(
+    let worker_archive = archive.clone();
+    let sources = std::thread::spawn(move || {
+        solarity_ui::FrameUiSources::load(&mut AssetStore::mount(worker_archive)?)
+    })
+    .join()
+    .map_err(|_| "source worker panicked")??;
+    let mut manager = FrameManager::start_with_sources(
         AssetStoreHandle::new(AssetStore::mount(archive)?),
         UiScriptEnvironment::new(800, 600, false)?,
         &[],
         &AddonCatalog::default(),
+        sources,
     )?;
     assert_eq!(
         manager.take_media_action(),

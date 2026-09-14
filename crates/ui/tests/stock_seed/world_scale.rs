@@ -126,6 +126,48 @@ fn world_scale_loads_profile_without_rescaling_glue() -> Result<(), Box<dyn Erro
     Ok(())
 }
 
+/// Prepared declarations observe the same post-load profile scale and geometry.
+#[test]
+fn worker_prepared_frame_sources_match_synchronous_geometry() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture()?;
+    let cvars = [
+        ("useUiScale".to_owned(), "1".to_owned()),
+        ("uiScale".to_owned(), "0.75".to_owned()),
+    ];
+    let expected = frame(&fixture, &cvars)?;
+    let archive =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let worker_archive = archive.clone();
+    let sources = std::thread::spawn(move || {
+        solarity_ui::FrameUiSources::load(&mut AssetStore::mount(worker_archive)?)
+    })
+    .join()
+    .map_err(|_| "source worker panicked")??;
+    let actual = FrameManager::start_with_sources(
+        AssetStoreHandle::new(AssetStore::mount(archive)?),
+        UiScriptEnvironment::new(2560, 1440, false)?,
+        &cvars,
+        &AddonCatalog::default(),
+        sources,
+    )?;
+    assert_eq!(
+        expected.geometry().region_count(),
+        actual.geometry().region_count()
+    );
+    for index in 0..expected.geometry().region_count() {
+        let left = expected
+            .geometry()
+            .region(index)
+            .ok_or("expected geometry")?;
+        let right = actual.geometry().region(index).ok_or("prepared geometry")?;
+        assert_eq!(expected.object_name(index), actual.object_name(index));
+        assert_eq!(left.presentation_bounds(), right.presentation_bounds());
+        assert_eq!(left.effective_scale(), right.effective_scale());
+        assert_eq!(left.effectively_shown(), right.effectively_shown());
+    }
+    Ok(())
+}
+
 fn frame(fixture: &Fixture, cvars: &[(String, String)]) -> Result<FrameManager, Box<dyn Error>> {
     let archive =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
