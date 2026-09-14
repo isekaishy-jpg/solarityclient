@@ -2,6 +2,7 @@
 
 mod doodads;
 mod effects;
+mod publication;
 
 use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource};
 use std::collections::HashMap;
@@ -28,9 +29,11 @@ impl Iterator for PlacementStateIndices<'_> {
 /// culling. Only terrain-owned placements have immutable world transforms.
 #[derive(Default)]
 pub(super) struct M2PlacementVisibility {
+    static_metadata: Vec<Option<publication::StaticMetadata>>,
+    pending_static: Vec<Option<publication::StaticMetadata>>,
+    /// Previous publication indices map to their new slot or usize::MAX on removal.
+    placement_remap: Vec<usize>,
     frame_work_index: super::frame_work::M2FrameWorkIndex,
-    /// Source liveness can be marked without revisiting large instance records.
-    source_indices: Vec<usize>,
     bounds: Vec<Option<(glam::Vec3, f32)>>,
     scenery: Vec<Option<super::distance::SceneryDistance>>,
     dynamic_indices: Vec<usize>,
@@ -54,99 +57,6 @@ pub(super) struct M2PlacementVisibility {
 }
 
 impl M2PlacementVisibility {
-    /// Rebuilds every placement-dependent flag in parent-first order. Residency
-    /// replacement and effect publication invalidate these alongside the bounds.
-    pub(super) fn rebuild(
-        &mut self,
-        placements: &[M2GpuPlacement],
-        sources: &[Option<M2GpuSource>],
-    ) {
-        let mut profile = solarity_profiling::profile!("M2 placement metadata");
-        self.source_indices.clear();
-        self.bounds.clear();
-        self.scenery.clear();
-        self.dynamic_indices.clear();
-        self.retired_indices.clear();
-        self.dynamic_owners.clear();
-        self.game_object_indices.clear();
-        self.ancestry.rebuild(placements, &mut self.light_parents);
-        profile.mark("attachment parents");
-        self.vehicle_parents.clear();
-        self.model_distance_sort.clear();
-        self.has_lights.clear();
-        self.is_world_model_doodad.clear();
-        self.doodads.begin();
-        self.effect_start = placements.len();
-        for (index, placement) in placements.iter().enumerate() {
-            if placement.retirement.is_some() {
-                self.retired_indices.push(index);
-            }
-            let doodad_owner = super::doodad_scene::owner_key(placement.owner);
-            self.is_world_model_doodad.push(doodad_owner.is_some());
-            self.source_indices.push(placement.source_index);
-            let parent = self.light_parents[index];
-            let source = sources[placement.source_index].as_ref();
-            // Stock enables whole-model sorting for two or more external views;
-            // an attachment inherits the containing model's transparency domain.
-            let authored_sort = source.is_some_and(|source| source.model.skin_profile_count() >= 2);
-            self.model_distance_sort.push(
-                authored_sort && parent.is_none_or(|parent| self.model_distance_sort[parent]),
-            );
-            let has_lights =
-                source.is_some_and(|source| !source.model.animations().lights().is_empty());
-            self.has_lights.push(has_lights);
-            if let Some(owner) = doodad_owner {
-                self.doodads.record(owner, index, has_lights);
-            }
-            if placement.unit_effect.is_some() {
-                self.effect_start = self.effect_start.min(index);
-            }
-            let spatial = if matches!(placement.owner, M2GpuPlacementOwner::Static(_)) {
-                source.map(|source| {
-                    let prepare = || {
-                        let bounds = source.model.bounds();
-                        crate::application::m2_spatial::StaticM2Spatial::new(
-                            bounds.minimum(),
-                            bounds.maximum(),
-                            bounds.sphere_radius(),
-                            placement.transform,
-                        )
-                    };
-                    if let Some(spatial) = placement.static_spatial {
-                        // Static source remapping cannot change the model or transform.
-                        debug_assert_eq!(spatial, prepare());
-                        spatial
-                    } else {
-                        // Synthetic/static conversions without worker metadata still
-                        // use the same complete spatial calculation.
-                        prepare()
-                    }
-                })
-            } else {
-                self.dynamic_indices.push(index);
-                self.dynamic_owners.entry(placement.owner).or_insert(index);
-                if matches!(
-                    placement.owner,
-                    M2GpuPlacementOwner::GameObject { .. }
-                        | M2GpuPlacementOwner::GameObjectWorldModelDoodad { .. }
-                ) {
-                    self.game_object_indices.push(index);
-                }
-                None
-            };
-            self.bounds.push(spatial.map(|spatial| spatial.sphere()));
-            self.scenery.push(spatial.map(|spatial| spatial.scenery()));
-        }
-        profile.mark("placement fields");
-        self.doodads.finish();
-        profile.mark("doodad membership");
-        self.rebuild_scene_order();
-        profile.mark("callback order");
-        self.frame_work_index
-            .rebuild(&self.scenery, &self.has_lights);
-        profile.mark("spatial membership");
-    }
-
     /// Residency does not imply frame work. Every model packet consumer uses
     /// the same ordered query, including offscreen shadows and update owners.
     pub(super) fn select_frame_work(
@@ -157,15 +67,6 @@ impl M2PlacementVisibility {
         work: &mut super::frame_work::M2FrameWork,
     ) {
         self.frame_work_index.select(camera, detail, shadows, work);
-    }
-
-    /// Marks all placement-owned slots, including dynamic and empty geometry.
-    /// Callers must rebuild after any placement or source-index remap before
-    /// using this compact list; the ordinary topology dirty flag covers both.
-    pub(super) fn mark_source_references(&self, remap: &mut [usize]) {
-        for &source_index in &self.source_indices {
-            remap[source_index] = 0;
-        }
     }
 
     pub(super) fn bounds(&self) -> &[Option<(glam::Vec3, f32)>] {

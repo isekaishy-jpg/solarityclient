@@ -52,29 +52,6 @@ impl PlacementAncestry {
         }
     }
 
-    /// Reuses storage across topology changes. Static placements cannot own any
-    /// of these attachment families, so they do not enter the owner hash table.
-    pub(super) fn rebuild(
-        &mut self,
-        placements: &[M2GpuPlacement],
-        parents: &mut Vec<Option<usize>>,
-    ) {
-        self.owners.clear();
-        self.bodies.clear();
-        self.animations.clear();
-        self.glue = None;
-        parents.clear();
-        parents.reserve(placements.len());
-        for (index, placement) in placements.iter().enumerate() {
-            parents.push(self.parent(binding(placement)));
-            self.insert(
-                placement.owner,
-                placement.unit_animation.as_ref().map(Rc::as_ptr),
-                index,
-            );
-        }
-    }
-
     /// Resolves only declarations already encountered in native placement order.
     fn parent(&self, binding: ParentBinding) -> Option<usize> {
         match binding {

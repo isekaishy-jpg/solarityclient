@@ -1,5 +1,8 @@
 //! Native callback ordering survives cached ancestry and forward vehicle parents.
 
+#[path = "placement_visibility/reference.rs"]
+mod reference;
+
 use super::M2PlacementVisibility;
 
 /// Replays the recovered native traversal for both ordinary and vehicle parents.

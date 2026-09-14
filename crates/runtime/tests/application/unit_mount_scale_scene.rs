@@ -893,7 +893,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
         if index % 2 == 0 {
             frame
                 .placement_visibility
-                .rebuild(&frame.placements, &frame.sources);
+                .rebuild(&mut frame.placements, &frame.sources);
             frame.placement_topology_dirty = false;
         }
         if index == 5 {

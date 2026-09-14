@@ -221,3 +221,28 @@ fn effect_parent_uses_animation_allocation_identity_instead_of_guid() {
     );
     assert_eq!(index.parent(ParentBinding::Animation(first)), Some(2));
 }
+
+impl PlacementAncestry {
+    /// Reuses storage across topology changes. Static placements cannot own any
+    /// of these attachment families, so they do not enter the owner hash table.
+    pub(in crate::application::terrain_frame::m2) fn rebuild(
+        &mut self,
+        placements: &[super::M2GpuPlacement],
+        parents: &mut Vec<Option<usize>>,
+    ) {
+        self.owners.clear();
+        self.bodies.clear();
+        self.animations.clear();
+        self.glue = None;
+        parents.clear();
+        parents.reserve(placements.len());
+        for (index, placement) in placements.iter().enumerate() {
+            parents.push(self.parent(super::binding(placement)));
+            self.insert(
+                placement.owner,
+                placement.unit_animation.as_ref().map(std::rc::Rc::as_ptr),
+                index,
+            );
+        }
+    }
+}

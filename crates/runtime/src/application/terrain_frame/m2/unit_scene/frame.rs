@@ -31,7 +31,7 @@ impl M2Frame {
             }
             self.vehicle_passengers.refresh_callback_pose(
                 index,
-                &mut self.placements,
+                self.placements.as_mut_slice(),
                 &self.sources,
                 &self.placement_visibility,
                 &self.requested_items,

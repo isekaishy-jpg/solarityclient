@@ -297,7 +297,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
         frame.doodad_scene.prepare(
             &terrain,
             &frame.placement_visibility,
-            &mut frame.placements,
+            frame.placements.as_mut_slice(),
             &frame.sources,
             Vec3::ZERO,
             1.0,
@@ -323,7 +323,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
     frame.doodad_scene.prepare(
         &terrain,
         &frame.placement_visibility,
-        &mut frame.placements,
+        frame.placements.as_mut_slice(),
         &frame.sources,
         Vec3::ZERO,
         1.0,

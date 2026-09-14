@@ -116,7 +116,10 @@ impl M2Frame {
         }
         // Detach the retained placements before retiring the old characters.
         // Their source indices stay live and retain the same GPU handles.
-        for (index, mut placement) in std::mem::take(&mut self.placements).into_iter().enumerate() {
+        for (index, mut placement) in self
+            .placements
+            .extract_from(0, |index, _| retained.contains_key(&index))
+        {
             if let Some((character, order, state)) = retained.remove(&index) {
                 match state {
                     RetainedCharacterState::Item { identity, owner } => {
@@ -135,8 +138,6 @@ impl M2Frame {
                     }
                 }
                 characters[character].ready.push((order, placement));
-            } else {
-                self.placements.push(placement);
             }
         }
         debug_assert!(

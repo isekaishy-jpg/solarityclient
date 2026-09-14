@@ -23,7 +23,7 @@ impl M2Frame {
         self.retire_removed_models();
         let topology_before = self.placements.len();
         let sources = &self.sources;
-        self.placements.retain(|placement| {
+        self.placements.retain_dynamic(|placement| {
             let (identity, display_id, doodad_index) = match placement.owner {
                 M2GpuPlacementOwner::GameObject {
                     identity,

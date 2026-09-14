@@ -127,7 +127,7 @@ impl M2Frame {
             let parents = members
                 .iter()
                 .map(|&index| {
-                    super::ancestry::placement_parent(&self.placements, index)
+                    super::ancestry::placement_parent(self.placements.as_slice(), index)
                         .filter(|parent| members.contains(parent))
                 })
                 .collect::<Vec<_>>();
@@ -259,7 +259,7 @@ impl M2Frame {
         }
         if !expired.is_empty() {
             let topology_before = self.placements.len();
-            self.placements.retain(|placement| {
+            self.placements.retain_dynamic(|placement| {
                 !matches!(placement.owner, M2GpuPlacementOwner::Retired(key) if expired.contains(&key.serial))
             });
             self.retirement

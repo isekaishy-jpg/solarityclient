@@ -230,41 +230,25 @@ impl M2Frame {
         // Publish references only after every new owner is ready, so a failed
         // resource preparation cannot make the next attempt skip that owner.
         let retired = self.static_residency.publish_scenes(update);
-        // Both retention paths mark source use for the later compactor. Include
-        // new owners before they join the placement vector.
+        // Include new owners before they join the placement vector; retained
+        // references come from the storage journal after retirement below.
         let mut remap = vec![usize::MAX; self.sources.len()];
         for placement in &added {
             remap[placement.source_index] = 0;
         }
-        if retired.is_empty() {
-            // Most tile admissions and departures leave every shared M2 owner
-            // alive. Mark source use directly; unchanged owner lifetimes need
-            // no membership checks or placement record compaction.
-            if self.placement_topology_dirty {
-                for placement in &self.placements {
-                    remap[placement.source_index] = 0;
-                }
-            } else {
-                self.placement_visibility.mark_source_references(&mut remap);
-            }
-        } else {
-            self.placements.retain(|placement| {
-                let keep = match placement.owner {
-                    M2GpuPlacementOwner::Static(owner) => {
-                        let keep = !retired.contains(&owner);
-                        if !keep {
-                            self.static_residency.owners.remove(&owner);
-                        }
-                        keep
+        if !retired.is_empty() {
+            self.placements.retain(|placement| match placement.owner {
+                M2GpuPlacementOwner::Static(owner) => {
+                    let keep = !retired.contains(&owner);
+                    if !keep {
+                        self.static_residency.owners.remove(&owner);
                     }
-                    _ => true,
-                };
-                if keep {
-                    remap[placement.source_index] = 0;
+                    keep
                 }
-                keep
+                _ => true,
             });
         }
+        self.placements.mark_source_references(&mut remap);
         profile.mark("placement retirement");
         // Scene references can change without changing any live placement.
         // Preserve valid topology in that case, including attachment/effect order.
@@ -290,13 +274,7 @@ impl M2Frame {
     pub(super) fn compact_sources(&mut self) {
         let mut profile = solarity_profiling::profile!("M2 source compaction");
         let mut remap = vec![usize::MAX; self.sources.len()];
-        if self.placement_topology_dirty {
-            for placement in &self.placements {
-                remap[placement.source_index] = 0;
-            }
-        } else {
-            self.placement_visibility.mark_source_references(&mut remap);
-        }
+        self.placements.mark_source_references(&mut remap);
         profile.mark("referenced slots");
         self.compact_referenced_sources(remap);
         profile.mark("source compaction");
@@ -325,14 +303,9 @@ impl M2Frame {
         });
         profile.mark("source retirement");
         self.static_residency.remap_sources(&remap);
-        if !self.placement_topology_dirty {
-            self.placement_visibility.remap_sources(&remap);
-        }
+        self.placement_visibility.remap_sources(&remap);
         profile.mark("static source remap");
-        for placement in &mut self.placements {
-            // Every surviving placement marked its source above.
-            placement.source_index = remap[placement.source_index];
-        }
+        self.placements.remap_sources(&remap);
         profile.mark("placement source remap");
     }
 }

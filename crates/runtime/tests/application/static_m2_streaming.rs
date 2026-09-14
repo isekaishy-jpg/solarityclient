@@ -20,6 +20,167 @@ use crate::test_support::{
 
 use super::{CrtRand, M2Frame, M2GpuPlacementOwner, M2PlaybackStorage, ResidentM2Owner};
 
+/// Interleaved dynamics move static indices without changing static lifetimes.
+/// Compare every publication with the former full traversal, including repeated
+/// source compaction before a deferred publication and reuse of a retired owner.
+#[test]
+fn dynamic_publications_retain_scenery_through_remapping_and_replacement()
+-> Result<(), Box<dyn Error>> {
+    exercise_dynamic_publications(false)
+}
+
+/// Reports publication work alone, without GPU draws or live scene variation.
+#[test]
+#[ignore = "manual optimized 26000-placement publication timing"]
+fn profile_dynamic_placement_publication() -> Result<(), Box<dyn Error>> {
+    exercise_dynamic_publications(true)
+}
+
+/// Shares the same residency transitions between correctness and timing runs.
+fn exercise_dynamic_publications(measure: bool) -> Result<(), Box<dyn Error>> {
+    let _guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = fixture()?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let maps = MapCatalog::load(&mut store)?;
+    let mut terrain = RuntimeTerrainCoordinator::new(AssetStoreHandle::new(store), maps);
+    terrain.synchronize(Some(&world(1000.)))?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        terrain.resident_m2_scene().ok_or("initial scene")?,
+        animations,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    let model = Arc::clone(&frame.sources[0].as_ref().ok_or("source")?.model);
+    let placement = |owner, source, x| {
+        let mut placement = super::m2_gpu_placement(
+            source,
+            glam::Mat4::from_translation(Vec3::new(x, 0., 0.)),
+            owner,
+            &model,
+            None,
+            None,
+            0,
+        )?;
+        if matches!(owner, M2GpuPlacementOwner::Static(_)) {
+            let bounds = model.bounds();
+            placement.static_spatial = Some(crate::application::m2_spatial::StaticM2Spatial::new(
+                bounds.minimum(),
+                bounds.maximum(),
+                bounds.sphere_radius(),
+                placement.transform,
+            ));
+        }
+        Ok::<_, super::RuntimeTerrainFrameError>(placement)
+    };
+    frame.placements.clear();
+    frame.placements.push(placement(
+        M2GpuPlacementOwner::CreatureMount { guid: 7 },
+        0,
+        0.,
+    )?);
+    for id in 0..26_000 {
+        if id % 1000 == 0 {
+            frame.placements.push(placement(
+                M2GpuPlacementOwner::CreatureBody { guid: 7 },
+                0,
+                id as f32,
+            )?);
+        }
+        frame.placements.push(placement(
+            M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad { unique_id: id }),
+            1,
+            id as f32,
+        )?);
+    }
+    for stage in 0..6 {
+        match stage {
+            0 => {}
+            1 => frame.placements.retain_dynamic(|placement| {
+                !matches!(placement.owner, M2GpuPlacementOwner::CreatureMount { .. })
+            }),
+            2 => {
+                frame.placements.push(placement(
+                    M2GpuPlacementOwner::CreatureMount { guid: 7 },
+                    0,
+                    17.,
+                )?);
+                frame.placements.push(placement(
+                    M2GpuPlacementOwner::CreatureBody { guid: 7 },
+                    0,
+                    17.,
+                )?);
+            }
+            3 => {
+                frame.placements.retain_dynamic(|_| false);
+                frame.placement_topology_dirty = true;
+                frame.compact_sources();
+                // Retire another source before the cached generation publishes.
+                frame.sources.push(None);
+                frame.compact_sources();
+            }
+            4 => {
+                frame.placements.retain(|placement| {
+                    !matches!(
+                        placement.owner,
+                        M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad {
+                            unique_id: 0
+                        })
+                    )
+                });
+                // An owner key reused at a different transform is a new lifetime.
+                frame.placements.push(placement(
+                    M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad { unique_id: 0 }),
+                    0,
+                    -500.,
+                )?);
+            }
+            5 => {
+                frame.placements.clear();
+                frame.placements.push(placement(
+                    M2GpuPlacementOwner::CreatureBody { guid: 9 },
+                    0,
+                    0.,
+                )?);
+            }
+            _ => unreachable!(),
+        }
+        frame.placement_topology_dirty = true;
+        frame.publish_placement_topology();
+        frame
+            .placement_visibility
+            .assert_matches_reference(frame.placements.as_slice(), &frame.sources);
+        if measure && stage == 2 {
+            let mut reference = super::visibility::M2PlacementVisibility::default();
+            let mut incremental = std::time::Duration::ZERO;
+            let mut full = std::time::Duration::ZERO;
+            for _ in 0..40 {
+                let started = std::time::Instant::now();
+                frame.placement_topology_dirty = true;
+                frame.publish_placement_topology();
+                incremental += started.elapsed();
+                let started = std::time::Instant::now();
+                reference.rebuild_reference(frame.placements.as_slice(), &frame.sources);
+                full += started.elapsed();
+                std::hint::black_box((&frame.placement_visibility, &reference));
+            }
+            eprintln!(
+                "placement publication: resident={} full_metadata_ms={:.6} incremental_total_ms={:.6}",
+                frame.placements.len(),
+                full.as_secs_f64() * 25.,
+                incremental.as_secs_f64() * 25.,
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials()
 -> Result<(), Box<dyn Error>> {
@@ -103,7 +264,7 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     assert_eq!(frame.placements[0].last_effect_time_ms, 777);
     frame
         .placement_visibility
-        .rebuild(&frame.placements, &frame.sources);
+        .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
     assert!(
@@ -186,7 +347,7 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     // retain the dynamic empty mesh and discard an unreferenced prepared slot.
     frame
         .placement_visibility
-        .rebuild(&frame.placements, &frame.sources);
+        .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     frame.sources.push(None);
     frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
@@ -202,19 +363,17 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     // A hole before live slots rebases their indices. Compact metadata remaps
     // directly, so a later publication must not rebuild placement topology.
     frame.sources.insert(0, None);
-    for placement in &mut frame.placements {
-        placement.source_index += 1;
-    }
+    let relocation = (1..frame.sources.len()).collect::<Vec<_>>();
+    frame.placements.remap_sources(&relocation);
+    frame.placement_visibility.remap_sources(&relocation);
     frame
         .placement_visibility
-        .rebuild(&frame.placements, &frame.sources);
+        .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     frame.compact_sources();
     assert!(!frame.placement_topology_dirty);
     let mut references = vec![usize::MAX; frame.sources.len()];
-    frame
-        .placement_visibility
-        .mark_source_references(&mut references);
+    frame.placements.mark_source_references(&mut references);
     assert_eq!(
         references,
         [0, 0],
@@ -295,7 +454,7 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     assert!(!Arc::ptr_eq(&second, &reloaded));
     frame
         .placement_visibility
-        .rebuild(&frame.placements, &frame.sources);
+        .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     let previous_bounds = frame.placement_visibility.bounds().to_vec();
     frame.synchronize_static_scenes(&mut renderer, [&reloaded].into_iter(), &mut random)?;
@@ -306,7 +465,7 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     assert_eq!(frame.placement_visibility.bounds(), previous_bounds);
     let mut referenced_sources = vec![usize::MAX; frame.sources.len()];
     frame
-        .placement_visibility
+        .placements
         .mark_source_references(&mut referenced_sources);
     assert!(
         frame

@@ -16,7 +16,7 @@ and sustained frame time require separate verification.
 - [ ] M2 preparation: establish explicit consumer requirements and retained
   preparation across animation, shadows, effects and packets; validate reduced
   work and unchanged output using representative city consumers.
-- [ ] Placement topology: ordinary dynamic membership changes must not rebuild
+- [x] Placement topology: ordinary dynamic membership changes must not rebuild
   immutable scenery metadata. Cover additions, retirement and source remapping.
 - [ ] GameObject publication and collision: replace redundant polling/publication
   with owner changes and bound re-registration to affected geometry. Preserve
@@ -139,3 +139,46 @@ This is an intermediate package, not completion of the performance goal. Live
 loading/frame-time improvements have not been measured for this executable;
 M2 preparation, ordinary placement topology and the other unchecked requirements
 remain in progress. Work continues without waiting for a user-run test.
+
+### Retained scenery publication
+
+Ordered placement storage now carries compact source references, static/effect
+classification and previous publication indices through removal, extraction and
+stable effect ordering. Dynamic owner filtering does not read scenery simulation
+records. Character component retention extracts only the selected components;
+it no longer drains and reconstructs the entire scenery vector.
+
+Visibility publication builds immutable scenery facts once per placement lifetime
+and retains them across ordinary dynamic changes. Dynamic ancestry and attachment
+requests use dynamic membership. Index relocation remaps spatial leaf references
+without rebuilding their unchanged partition nodes. A static addition/removal
+still performs the required spatial membership rebuild. Reusing an owner key at a
+different transform creates new metadata, rather than inheriting a retired owner.
+
+Source liveness comes directly from current compact storage even before topology
+publication. Source compaction writes only relocated simulation slots and updates
+cached static references, including multiple compactions before publication.
+This replaces a dirty-cache full simulation traversal and avoids writing every
+instance when an unused source suffix retires. Cache storage remains bounded by
+current/pending publication capacities; it does not retain GPU resource generations.
+
+The former full metadata traversal is retained in the test tree as an independent
+oracle. A 26,000-scenery fixture interleaves dynamics, removes and re-adds mounts,
+compacts sources repeatedly, replaces a static owner at a new transform, and
+empties the scene. All ancestry/admission fields and camera/shadow selections
+agree. Existing camera, lighting, equipment, retirement and effect lifecycle
+regressions also pass. A fixture that previously changed a live object's static
+classification in place now transfers it through the storage admission boundary;
+its visibility assertions remain unchanged.
+
+Formatting, workspace all-target/all-feature Clippy with warnings denied, and
+all-feature workspace tests pass: 1,404 passed, zero failed, 32 ignored. The
+manual optimized publication comparison also passes. Across 40 forced
+publications of the same 26,028-placement fixture, the former metadata traversal
+alone averages 2.675855 ms; the complete incremental topology publication averages
+1.112025 ms. Both measurements include stock worker-prepared static spatial data.
+This isolates publication CPU work; it is not a live frame-time or FPS comparison,
+and it does not measure the physical vector compaction before publication.
+F10 now records newly built static metadata
+and actual spatial rebuild membership independently of total published placements.
+This source work follows Build 135 and is not in that installed executable.

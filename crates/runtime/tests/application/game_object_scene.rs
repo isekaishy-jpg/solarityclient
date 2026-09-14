@@ -234,7 +234,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     )?;
     frame
         .placement_visibility
-        .rebuild(&frame.placements, &frame.sources);
+        .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     frame.update_game_object_states(objects.frame_input(Some(&world)), 400.0, &mut random)?;
     assert!(!frame.placements[0].placement_valid);
@@ -307,7 +307,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     // even before resource synchronization retires their GPU placements.
     frame
         .placement_visibility
-        .rebuild(&frame.placements, &frame.sources);
+        .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     objects.disconnect();
     let before_disconnect = random;
@@ -414,7 +414,10 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
 
     // Two terrain-owned instances using the same admitted model generation.
     // Keep the ordinary object fixture's independent playback owners.
-    for (index, placement) in frame.placements.iter_mut().enumerate() {
+    // Converting this fixture's object family constructs a new placement
+    // lifetime, just as terrain residency does in production.
+    let converted = frame.placements.extract_from(0, |_, _| true);
+    for (index, mut placement) in converted {
         placement.owner = M2GpuPlacementOwner::Static(ResidentM2Owner::TerrainDoodad {
             unique_id: index as u32,
         });
@@ -433,6 +436,7 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
             bounds.sphere_radius(),
             placement.transform,
         ));
+        frame.placements.push(placement);
     }
     let visible_count =
         |frame: &mut M2Frame, random: &mut CrtRand, y: f32| -> Result<usize, Box<dyn Error>> {
@@ -472,7 +476,9 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
     assert_eq!(visible_count(&mut frame, &mut random, 0.)?, 0);
     assert_eq!(visible_count(&mut frame, &mut random, 100.)?, 1);
     // Dynamic transforms must remain live after the topology cache is built.
-    frame.placements[0].owner = M2GpuPlacementOwner::GluePet;
+    let mut dynamic = frame.placements.remove(0);
+    dynamic.owner = M2GpuPlacementOwner::GluePet;
+    frame.placements.push(dynamic);
     frame.placement_topology_dirty = true;
     assert_eq!(visible_count(&mut frame, &mut random, 100.)?, 1);
     frame.placements[0].transform = Mat4::IDENTITY;

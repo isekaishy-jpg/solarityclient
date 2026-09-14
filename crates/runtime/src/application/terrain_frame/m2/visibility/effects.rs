@@ -1,6 +1,6 @@
 //! Effect-tail publication preserves immutable scenery and ordinary membership.
 
-use super::{M2GpuPlacement, M2GpuSource, M2PlacementVisibility};
+use super::{M2GpuSource, M2PlacementVisibility};
 
 impl M2PlacementVisibility {
     /// Replaces only the effect suffix after an append or ordered retirement.
@@ -8,12 +8,11 @@ impl M2PlacementVisibility {
     /// compaction has its own remap and does not invalidate spatial metadata.
     pub(in super::super) fn replace_effect_tail(
         &mut self,
-        placements: &[M2GpuPlacement],
+        placements: &mut super::super::placements::M2PlacementStorage,
         sources: &[Option<M2GpuSource>],
     ) {
         let first = self.effect_start;
         debug_assert!(first <= placements.len());
-        self.source_indices.truncate(first);
         self.bounds.truncate(first);
         self.scenery.truncate(first);
         self.model_distance_sort.truncate(first);
@@ -23,12 +22,14 @@ impl M2PlacementVisibility {
         self.dynamic_owners.retain(|_, index| *index < first);
         self.retired_indices.retain(|index| *index < first);
         self.dynamic_indices.extend(first..placements.len());
-        self.ancestry
-            .rebuild_dynamic(placements, &self.dynamic_indices, &mut self.light_parents);
+        self.ancestry.rebuild_dynamic(
+            placements.as_slice(),
+            &self.dynamic_indices,
+            &mut self.light_parents,
+        );
         for (index, placement) in placements.iter().enumerate().skip(first) {
             debug_assert!(placement.unit_effect.is_some());
             let source = sources[placement.source_index].as_ref();
-            self.source_indices.push(placement.source_index);
             self.bounds.push(None);
             self.scenery.push(None);
             self.has_lights
@@ -47,12 +48,19 @@ impl M2PlacementVisibility {
         self.rebuild_scene_order();
         self.frame_work_index
             .replace_effect_tail(first, placements.len());
+        self.static_metadata.truncate(first);
+        self.static_metadata.resize(placements.len(), None);
+        placements.published_from(first);
     }
 
     /// Resource-slot relocation does not change authored bounds or membership.
     pub(in super::super) fn remap_sources(&mut self, remap: &[usize]) {
-        for index in &mut self.source_indices {
-            *index = remap[*index];
+        // Pending removals can leave dead cached slots until the next topology
+        // publication. Their lineage is gone, so they must not index a later map.
+        for metadata in self.static_metadata.iter_mut().flatten() {
+            if metadata.source_index != usize::MAX {
+                metadata.source_index = remap[metadata.source_index];
+            }
         }
     }
 }

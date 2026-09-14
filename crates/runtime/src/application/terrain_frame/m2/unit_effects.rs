@@ -230,12 +230,12 @@ impl M2UnitEffectScene {
     /// contain no effects; callers pass zero while topology metadata is dirty.
     pub(super) fn retire_drained(
         &mut self,
-        placements: &mut Vec<M2GpuPlacement>,
+        placements: &mut super::placements::M2PlacementStorage,
         first_effect: usize,
     ) -> bool {
         let previous = placements.len();
         placements
-            .extract_if(first_effect.., |placement| {
+            .extract_from(first_effect, |_, placement| {
                 placement.unit_effect.as_ref().is_some_and(|effect| {
                     effect.retiring()
                         && placement
@@ -244,6 +244,7 @@ impl M2UnitEffectScene {
                             .all(|particle| particle.simulation.particles().is_empty())
                 })
             })
+            .into_iter()
             .for_each(drop);
         let changed = previous != placements.len();
         if changed {
@@ -470,7 +471,7 @@ impl M2UnitEffectScene {
     /// Repeated attached requests retire the prior matching CEffect first.
     pub(super) fn publish(
         &mut self,
-        placements: &mut Vec<M2GpuPlacement>,
+        placements: &mut super::placements::M2PlacementStorage,
         sources: &mut Vec<Option<M2GpuSource>>,
         first_effect: usize,
     ) -> bool {

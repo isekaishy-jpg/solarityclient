@@ -121,14 +121,15 @@ fn completion_uses_authored_despawn_or_pins_the_terminal_pose() -> Result<(), Bo
         };
         // Effect-only publication retains the ordinary scene index, then
         // produces the same callback and work order as a complete rebuild.
-        let mut indexed = vec![ordinary(10)?, ordinary(20)?];
+        let mut indexed =
+            super::super::placements::M2PlacementStorage::from(vec![ordinary(10)?, ordinary(20)?]);
         let mut visibility = super::super::visibility::M2PlacementVisibility::default();
         let sources = [None];
-        visibility.rebuild(&indexed, &sources);
+        visibility.rebuild(&mut indexed, &sources);
         indexed.push(placement);
-        visibility.replace_effect_tail(&indexed, &sources);
+        visibility.replace_effect_tail(&mut indexed, &sources);
         let mut rebuilt = super::super::visibility::M2PlacementVisibility::default();
-        rebuilt.rebuild(&indexed, &sources);
+        rebuilt.rebuild_reference(indexed.as_slice(), &sources);
         assert_eq!(
             visibility.dynamic_scene_indices(),
             rebuilt.dynamic_scene_indices()
@@ -140,15 +141,36 @@ fn completion_uses_authored_despawn_or_pins_the_terminal_pose() -> Result<(), Bo
             std::iter::from_fn(|| work.next()).collect::<Vec<_>>()
         };
         assert_eq!(selected(&visibility), selected(&rebuilt));
-        let placement = indexed.pop().ok_or("published effect")?;
-        visibility.replace_effect_tail(&indexed, &sources);
-        rebuilt.rebuild(&indexed, &sources);
+        let placement = indexed.remove(indexed.len() - 1);
+        visibility.replace_effect_tail(&mut indexed, &sources);
+        rebuilt.rebuild_reference(indexed.as_slice(), &sources);
         assert_eq!(selected(&visibility), selected(&rebuilt));
         assert_eq!(
             visibility.dynamic_scene_indices(),
             rebuilt.dynamic_scene_indices()
         );
-        let mut placements = vec![ordinary(10)?, placement, ordinary(20)?];
+        let mut placements = super::super::placements::M2PlacementStorage::from(vec![
+            ordinary(10)?,
+            placement,
+            ordinary(20)?,
+        ]);
+        if despawn {
+            placements.published_from(0);
+            placements.order_effects_last();
+            assert_eq!(
+                placements
+                    .lineage()
+                    .iter()
+                    .map(|slot| slot.previous)
+                    .collect::<Vec<_>>(),
+                [Some(0), Some(2), Some(1)]
+            );
+            assert_eq!(
+                placements[1].owner,
+                M2GpuPlacementOwner::CreatureBody { guid: 20 }
+            );
+            assert!(placements[2].unit_effect.is_some());
+        }
         let first_effect = usize::from(despawn);
         scene
             .anchors

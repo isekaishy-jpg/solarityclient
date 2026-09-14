@@ -17,6 +17,7 @@ mod doodad_scene;
 mod entity_lighting;
 mod frame_work;
 mod game_objects;
+mod placements;
 mod playback;
 mod portrait;
 mod preparation;
@@ -499,7 +500,7 @@ impl RuntimeM2Event {
 pub(in crate::application) struct M2Frame {
     animations: Arc<AnimationDataCatalog>,
     sources: Vec<Option<M2GpuSource>>,
-    placements: Vec<M2GpuPlacement>,
+    placements: placements::M2PlacementStorage,
     static_residency: streaming::StaticM2Residency,
     prepared_static: Vec<admission::PreparedStaticM2>,
     particle_twinkle: Arc<M2ParticleTwinkleTable>,
@@ -630,7 +631,7 @@ impl M2Frame {
         Ok(Self {
             animations,
             sources,
-            placements,
+            placements: placements.into(),
             static_residency: streaming::StaticM2Residency::new(scene),
             prepared_static: Vec::new(),
             particle_twinkle,
@@ -783,7 +784,8 @@ impl M2Frame {
                 // This widget model was created at its local clock origin.
                 last_effect_time_ms: 0,
                 unit_effect: None,
-            }],
+            }]
+            .into(),
             particle_twinkle,
             animation_started_at,
             unit_scene_time_ms: 0.0,
@@ -1673,7 +1675,7 @@ impl M2Frame {
                 _ => None,
             });
         let mut player_sources = Vec::new();
-        self.placements.retain(|placement| {
+        self.placements.retain_dynamic(|placement| {
             let owned = match placement.owner {
                 M2GpuPlacementOwner::Retired(_) => false,
                 M2GpuPlacementOwner::PlayerBody { .. }
@@ -1722,7 +1724,7 @@ impl M2Frame {
             })
             .collect::<Vec<_>>();
         let mut creature_sources = Vec::new();
-        self.placements.retain(|placement| {
+        self.placements.retain_dynamic(|placement| {
             let owned = match placement.owner {
                 M2GpuPlacementOwner::CreatureBody { guid }
                 | M2GpuPlacementOwner::CreatureMount { guid } => !retained.contains(&guid),
@@ -1761,7 +1763,7 @@ impl M2Frame {
             })
             .collect::<Vec<_>>();
         let mut remote_sources = Vec::new();
-        self.placements.retain(|placement| {
+        self.placements.retain_dynamic(|placement| {
             let owned = match placement.owner {
                 M2GpuPlacementOwner::Retired(_) => false,
                 M2GpuPlacementOwner::RemotePlayerBody { guid }
@@ -1842,7 +1844,7 @@ impl M2Frame {
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.vehicle_passengers.advance_unbound(
             scene,
-            &mut self.placements,
+            self.placements.as_mut_slice(),
             &self.sources,
             &self.requested_items,
             now,

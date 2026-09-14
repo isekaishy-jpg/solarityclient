@@ -93,14 +93,14 @@ impl M2Frame {
         {
             if !self.placement_topology_dirty {
                 self.placement_visibility
-                    .replace_effect_tail(&self.placements, &self.sources);
+                    .replace_effect_tail(&mut self.placements, &self.sources);
             }
             self.compact_sources();
         }
         self.publish_placement_topology();
         frame_profile.mark("residency and topology");
         self.vehicle_passengers.prepare_timing(
-            &mut self.placements,
+            self.placements.as_mut_slice(),
             &self.sources,
             &self.placement_visibility,
             &self.requested_items,
@@ -159,7 +159,7 @@ impl M2Frame {
             }
         }
         self.vehicle_passengers.prepare(
-            &mut self.placements,
+            self.placements.as_mut_slice(),
             &self.sources,
             &self.placement_visibility,
             &self.requested_items,
@@ -211,7 +211,7 @@ impl M2Frame {
             self.doodad_scene.prepare(
                 terrain,
                 &self.placement_visibility,
-                &mut self.placements,
+                self.placements.as_mut_slice(),
                 &self.sources,
                 camera.camera().position(),
                 self.environment_detail,
@@ -243,7 +243,7 @@ impl M2Frame {
                     .publish(&mut self.placements, &mut self.sources, effect_start)
                 {
                     self.placement_visibility
-                        .replace_effect_tail(&self.placements, &self.sources);
+                        .replace_effect_tail(&mut self.placements, &self.sources);
                     self.placement_visibility
                         .set_vehicle_parents(self.vehicle_passengers.parents());
                     self.shadow_admission.resize(self.placements.len(), false);

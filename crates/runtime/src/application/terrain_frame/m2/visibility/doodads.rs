@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::application::terrain_coordinator::RuntimeWorldModelMovementOwner;
 
-type Owner = (RuntimeWorldModelMovementOwner, usize);
+pub(super) type Owner = (RuntimeWorldModelMovementOwner, usize);
 
 /// Placement indices and first-owner light facts are the lookup's full dependency.
 #[derive(Clone, Copy, Eq, PartialEq)]
