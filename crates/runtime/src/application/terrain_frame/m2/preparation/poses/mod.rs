@@ -17,6 +17,17 @@ pub(in crate::application::terrain_frame::m2) struct PoseBatch {
 }
 
 impl PoseBatch {
+    /// Reports results actually left unconsumed, rather than assuming every job helped.
+    pub(in crate::application::terrain_frame::m2) fn report_consumption(&self) {
+        if solarity_profiling::detail_enabled() {
+            solarity_profiling::profile_value!("m2.pose_batch.prepared", self.jobs.len());
+            solarity_profiling::profile_value!(
+                "m2.pose_batch.unconsumed",
+                self.jobs.iter().filter(|job| job.unconsumed()).count()
+            );
+        }
+    }
+
     /// Consumes a current exact-input palette once, transferring its storage.
     pub(in crate::application::terrain_frame::m2) fn take(
         &mut self,

@@ -183,8 +183,16 @@ impl ResidentDynamicMovement {
         objects: &RuntimeGameObjectPresentation,
         cache: MovementBspCacheMode,
     ) -> Result<(), RuntimeMovementRegistrationError> {
+        let _profile = solarity_profiling::profile!("world.collision.dynamic_registration");
+        let sampled = solarity_profiling::detail_enabled();
+        let mut visited = 0_u64;
+        let mut retained = 0_u64;
+        let mut registered = 0_u64;
         self.live.clear();
         for instance in objects.movement_instances() {
+            if sampled {
+                visited += 1;
+            }
             let identity = instance.identity();
             if world.object_identity(identity.guid()) != Some(identity) {
                 continue;
@@ -204,7 +212,13 @@ impl ResidentDynamicMovement {
                     && owner.residency == RuntimeStaticMovementResidency::Ready
             });
             if unchanged && !self.invalidated {
+                if sampled {
+                    retained += 1;
+                }
                 continue;
+            }
+            if sampled {
+                registered += 1;
             }
             self.registration.clear();
             // 7C2F80 removes old destinations before a changed placement can
@@ -254,6 +268,11 @@ impl ResidentDynamicMovement {
             if new_owner {
                 self.order.push(identity);
             }
+        }
+        if sampled {
+            solarity_profiling::profile_value!("world.collision.visited", visited);
+            solarity_profiling::profile_value!("world.collision.unchanged", retained);
+            solarity_profiling::profile_value!("world.collision.reregistered", registered);
         }
         for index in 0..self.order.len() {
             let identity = self.order[index];

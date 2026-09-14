@@ -36,6 +36,9 @@ fn main() -> io::Result<()> {
         measure("disabled value", || {
             solarity_profiling::profile_value!("bench.value", 12);
         });
+        measure("disabled cycle span", || {
+            black_box(solarity_profiling::profile_cycles!("bench.cycles"));
+        });
         capture.toggle()?;
         drop(begin_frame());
         while solarity_profiling::detail_enabled() {
@@ -47,6 +50,9 @@ fn main() -> io::Result<()> {
         });
         measure("enabled value", || {
             solarity_profiling::profile_value!("bench.value", 12);
+        });
+        measure("enabled cycle span", || {
+            black_box(solarity_profiling::profile_cycles!("bench.cycles"));
         });
         measure("unsampled detail scope", || {
             black_box(solarity_profiling::detail_profile!("bench.detail"));

@@ -156,7 +156,7 @@ impl WorldFrameRenderer {
         window: WorldFrameWindow,
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
-        let _profile = solarity_profiling::profile!("rendering.vulkan.world");
+        let _profile = solarity_profiling::profile_cycles!("rendering.vulkan.world");
         let profile_epoch = solarity_profiling::generation();
         let profile_enabled = profile_epoch != 0;
         let ensure_started = profile_enabled.then(std::time::Instant::now);

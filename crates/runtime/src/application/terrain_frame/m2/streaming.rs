@@ -269,6 +269,13 @@ impl M2Frame {
         // Scene references can change without changing any live placement.
         // Preserve valid topology in that case, including attachment/effect order.
         // Source compaction below separately invalidates indices when needed.
+        if !added.is_empty() || !retired.is_empty() {
+            solarity_profiling::profile_event_value!("m2.topology.static.added", added.len());
+            solarity_profiling::profile_event_value!(
+                "m2.topology.static.retired_owners",
+                retired.len()
+            );
+        }
         self.placement_topology_dirty |= !added.is_empty() || !retired.is_empty();
         self.placements.extend(added);
         self.static_residency.owners.extend(added_owners);

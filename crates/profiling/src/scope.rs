@@ -101,6 +101,22 @@ impl Site {
         self.record(generation(), "", value, DETAIL.load(Ordering::Relaxed));
     }
 
+    /// Publishes a delayed synchronous observation only to its original capture.
+    pub fn value_for_generation(&'static self, epoch: u64, value: u64) {
+        self.record(epoch, "", value, DETAIL.load(Ordering::Relaxed));
+    }
+
+    /// Retains an infrequent causal value in the event stream on ordinary frames too.
+    /// Callers must not use this for per-item logging in a hot traversal.
+    pub fn event_value(&'static self, epoch: u64, value: u64) {
+        if epoch != 0
+            && generation() == epoch
+            && let Some(metric) = self.metric("")
+        {
+            recorder::record(epoch, metric, DETAIL.load(Ordering::Relaxed), value, true);
+        }
+    }
+
     /// Records an asynchronous duration only in the generation that submitted it.
     /// Used by retired GPU queries and queue-residence measurements.
     pub fn duration(&'static self, epoch: u64, phase: &'static str, duration: Duration) {

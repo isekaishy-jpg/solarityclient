@@ -397,8 +397,11 @@ impl RuntimeGameObjectPresentation {
         world: Option<&ActiveWorld>,
         cpu: &CpuExecutor,
     ) -> Result<RuntimeTransportPoll, RuntimeGameObjectError> {
+        let mut profile = solarity_profiling::profile!("world.game_objects.residency");
         self.refresh_instances(world)?;
+        profile.mark("owner projection");
         self.finish_pending()?;
+        profile.mark("resource completion");
         if self.pending.is_none()
             && let Some(request) = self.next_request()
         {
@@ -474,6 +477,10 @@ impl RuntimeGameObjectPresentation {
         &mut self,
         world: Option<&ActiveWorld>,
     ) -> Result<(), RuntimeGameObjectError> {
+        let _profile = solarity_profiling::profile!("world.game_objects.refresh");
+        let sampled = solarity_profiling::detail_enabled();
+        let mut visited = 0_u64;
+        let mut unchanged = 0_u64;
         self.admit_world(world);
         let Some(world) = world else {
             return Ok(());
@@ -509,6 +516,9 @@ impl RuntimeGameObjectPresentation {
         }
 
         for identity in world.visible_game_objects() {
+            if sampled {
+                visited += 1;
+            }
             let presentation = world
                 .game_object_presentation(identity.guid())
                 .unwrap_or_default();
@@ -534,6 +544,15 @@ impl RuntimeGameObjectPresentation {
                 .filter(|scale| scale.is_finite() && *scale > 0.0);
             if let Some(index) = index {
                 let instance = &mut self.instances[index];
+                if sampled
+                    && instance.presentation == presentation
+                    && instance.entry == entry
+                    && instance.placement.as_ref().ok() == placement.as_ref().ok()
+                    && instance.transform == transform
+                    && instance.scale == scale
+                {
+                    unchanged += 1;
+                }
                 if display_changed {
                     instance.world_model_state.borrow_mut().take();
                     if let Some(behavior) = instance.behavior() {
@@ -586,6 +605,13 @@ impl RuntimeGameObjectPresentation {
                 });
                 self.scene_revision = self.scene_revision.wrapping_add(1);
             }
+        }
+        if sampled {
+            solarity_profiling::profile_value!("world.game_objects.projected", visited);
+            solarity_profiling::profile_value!(
+                "world.game_objects.projection_unchanged",
+                unchanged
+            );
         }
         if self.scene_revision != previous_revision {
             self.collect_unused();

@@ -19,14 +19,22 @@ fn records_bounded_scopes_and_restarts_without_stale_samples() -> io::Result<()>
         1
     });
     assert!(!evaluated);
+    solarity_profiling::profile_event_value!("disabled.event", {
+        evaluated = true;
+        1
+    });
+    assert!(!evaluated);
     let (active, first) = capture.toggle()?;
     assert!(active);
     let epoch = generation();
     let stale = solarity_profiling::profile!("stale.scope");
+    let stale_cycles = solarity_profiling::profile_cycles!("stale.cycles");
     for _ in 0..130 {
         let _frame = begin_frame();
         let _detail = solarity_profiling::detail_profile!("fixture.detail");
         solarity_profiling::profile_value!("fixture.value", 7);
+        solarity_profiling::profile_event_value!("fixture.change", 3);
+        drop(solarity_profiling::profile_cycles!("fixture.charged"));
     }
     std::thread::Builder::new()
         .name("fixture-worker".to_owned())
@@ -69,11 +77,17 @@ fn records_bounded_scopes_and_restarts_without_stale_samples() -> io::Result<()>
         130
     );
     assert!(events.contains("\"fixture.value\",\"\",detail,value,7"));
+    assert!(events.contains("\"fixture.change\",\"\",ordinary,value,3"));
+    assert!(summary.contains("fixture.charged.cycles_available"));
     let (_, second) = capture.toggle()?;
     assert_ne!(epoch, generation());
     static GPU: Site = Site::new("stale.gpu", true);
     GPU.duration(epoch, "", Duration::from_millis(100));
     drop(stale);
+    drop(stale_cycles);
+    static OLD_VALUE: Site = Site::counter("stale.value");
+    OLD_VALUE.event_value(epoch, 1);
+    OLD_VALUE.value_for_generation(epoch, 1);
     drop(solarity_profiling::profile!("fresh.scope"));
     capture.shutdown()?;
     let summary = std::fs::read_to_string(second.with_extension("summary.csv"))?;

@@ -21,6 +21,28 @@ def percentile(values, fraction):
     return ordered[max(0, math.ceil(len(ordered) * fraction) - 1)]
 
 
+def report_deep_work(rows, warmup):
+    """Keep causal totals, sampled per-frame counts and charged cycles distinct."""
+    counts = defaultdict(lambda: [0, 0])
+    for row in rows:
+        if float(row["elapsed_seconds"]) <= warmup or row["unit"] != "value":
+            continue
+        scope = row["scope"]
+        if not scope.startswith(("m2.work.", "m2.pose_batch.", "m2.topology.",
+                                 "world.game_objects.", "world.collision.")) and not scope.endswith(".cycles"):
+            continue
+        key = (row["thread"], scope, row["frame_lane"])
+        counts[key][0] += int(row["count"])
+        counts[key][1] += int(row["total"])
+    if counts:
+        print("\nDeep work: mean per observation and total (causes are mutations, not frames):")
+        for (thread, scope, lane), (count, total) in sorted(counts.items()):
+            print(f"{lane:8} {total / count:12.2f} mean; {total:12} total; "
+                  f"{count:8} observations; {thread} {scope}")
+        print("Demand reasons overlap. Palettes without draws may still serve CPU consumers. "
+              "Cycles are charged CPU cycles, not nanoseconds or a direct off-CPU duration.")
+
+
 def report(path, warmup):
     """Separate full frames, overlapping phases, sampled details and memory trends."""
     rows = read_rows(path)
@@ -28,6 +50,7 @@ def report(path, warmup):
     resources = read_rows(path.with_suffix(".resources.csv"))
     print(path.with_suffix(".txt").read_text(encoding="utf-8"))
     print(f"\nAnalysis excludes the first {warmup:g} seconds of writer intervals.")
+    report_deep_work(rows, warmup)
     frames = [row for row in events if row["scope"] == "frame.live"
               and not row["phase"] and float(row["elapsed_seconds"]) > warmup]
     for lane in ("ordinary", "detail"):

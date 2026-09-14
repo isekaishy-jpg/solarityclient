@@ -91,6 +91,11 @@ impl M2Frame {
         let mut groups = groups.into_values().collect::<Vec<_>>();
         groups.sort_by_key(|members| members[0]);
         let mut rejected = Vec::new();
+        let retiring_members = if solarity_profiling::enabled() {
+            groups.iter().map(Vec::len).sum::<usize>()
+        } else {
+            0
+        };
         for members in groups {
             let root = members[0];
             let Some(removed) = self.placements[root]
@@ -196,6 +201,10 @@ impl M2Frame {
             });
             self.compact_sources();
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.retirement.started_members",
+            retiring_members
+        );
         self.placement_topology_dirty = true;
     }
 
@@ -249,12 +258,21 @@ impl M2Frame {
             }
         }
         if !expired.is_empty() {
+            let topology_before = self.placements.len();
             self.placements.retain(|placement| {
                 !matches!(placement.owner, M2GpuPlacementOwner::Retired(key) if expired.contains(&key.serial))
             });
             self.retirement
                 .groups
                 .retain(|serial, _| !expired.contains(serial));
+            solarity_profiling::profile_event_value!(
+                "m2.topology.retirement.expired_groups",
+                expired.len()
+            );
+            solarity_profiling::profile_event_value!(
+                "m2.topology.retirement.removed",
+                topology_before - self.placements.len()
+            );
             self.placement_topology_dirty = true;
             self.compact_sources();
         }

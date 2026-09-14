@@ -4,6 +4,7 @@ mod capture;
 mod host;
 mod recorder;
 mod scope;
+mod thread_cycles;
 
 #[cfg(test)]
 #[path = "../tests/unit/aggregate.rs"]
@@ -11,6 +12,32 @@ mod tests;
 
 pub use capture::Capture;
 pub use scope::{Profile, Site, begin_frame, detail_enabled, enabled, generation};
+pub use thread_cycles::ThreadCycles;
+
+/// Records an infrequent cause or workload change, including its completion frame.
+#[macro_export]
+macro_rules! profile_event_value {
+    ($label:literal, $value:expr) => {{
+        let epoch = $crate::generation();
+        if epoch != 0 {
+            static SITE: $crate::Site = $crate::Site::counter($label);
+            SITE.event_value(epoch, $value as u64);
+        }
+    }};
+}
+
+/// Pairs a coarse wall span with charged thread cycles; both retain slow-span events.
+/// Cycles are not nanoseconds and must not be subtracted from wall duration.
+#[macro_export]
+macro_rules! profile_cycles {
+    ($label:literal) => {{
+        static WALL: $crate::Site = $crate::Site::new($label, false);
+        static CYCLES: $crate::Site = $crate::Site::counter(concat!($label, ".cycles"));
+        static AVAILABLE: $crate::Site =
+            $crate::Site::counter(concat!($label, ".cycles_available"));
+        $crate::ThreadCycles::new(&WALL, &CYCLES, &AVAILABLE)
+    }};
+}
 
 /// Measures active polls of an async operation, excluding time parked on I/O.
 /// Invoke inside an async function; the future is pinned on the caller's stack.

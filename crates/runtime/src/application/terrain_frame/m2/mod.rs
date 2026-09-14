@@ -1136,9 +1136,14 @@ impl M2Frame {
         )?];
         self.retain_character_instances(&mut prepared);
         self.remove_player();
+        let topology_retained = self.placements.len();
         for character in prepared {
             self.publish_character(character);
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.local.added",
+            self.placements.len() - topology_retained
+        );
         Ok(())
     }
 
@@ -1274,9 +1279,14 @@ impl M2Frame {
 
         self.retain_character_instances(&mut prepared);
         self.remove_creatures(&retained);
+        let topology_retained = self.placements.len();
         for character in prepared {
             self.publish_character(character);
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.creatures.added",
+            self.placements.len() - topology_retained
+        );
         Ok(())
     }
 
@@ -1312,9 +1322,14 @@ impl M2Frame {
         }
         self.retain_character_instances(&mut prepared);
         self.remove_remote_players(&retained);
+        let topology_retained = self.placements.len();
         for character in prepared {
             self.publish_character(character);
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.remote_players.added",
+            self.placements.len() - topology_retained
+        );
         Ok(())
     }
 
@@ -1648,6 +1663,7 @@ impl M2Frame {
 
     /// Drops local references to the previous player generation.
     fn remove_player(&mut self) {
+        let topology_before = self.placements.len();
         self.placement_topology_dirty = true;
         let local_guid = self
             .placements
@@ -1685,10 +1701,15 @@ impl M2Frame {
                 *source = None;
             }
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.local.removed",
+            topology_before - self.placements.len()
+        );
     }
 
     /// Drops local references to the previous visible-creature generation.
     fn remove_creatures(&mut self, retained: &[u64]) {
+        let topology_before = self.placements.len();
         self.placement_topology_dirty = true;
         let removed_guids = self
             .placements
@@ -1719,10 +1740,15 @@ impl M2Frame {
                 *source = None;
             }
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.creatures.removed",
+            topology_before - self.placements.len()
+        );
     }
 
     /// Drops remote character bodies and every child placement they own.
     fn remove_remote_players(&mut self, retained: &[u64]) {
+        let topology_before = self.placements.len();
         self.placement_topology_dirty = true;
         let remote_guids = self
             .placements
@@ -1763,6 +1789,10 @@ impl M2Frame {
                 *source = None;
             }
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.remote_players.removed",
+            topology_before - self.placements.len()
+        );
     }
 
     /// Returns the number of selected shared M2 GPU generations.

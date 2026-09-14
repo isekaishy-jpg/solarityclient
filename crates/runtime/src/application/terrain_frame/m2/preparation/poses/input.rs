@@ -23,6 +23,11 @@ pub(super) struct PoseJob {
 }
 
 impl PoseJob {
+    /// A result remains present when traversal rejected it or never requested it.
+    pub(super) fn unconsumed(&self) -> bool {
+        self.result.is_some()
+    }
+
     /// Pins the decoded generation while retaining scratch storage for later frames.
     pub(super) fn new(model: Arc<DecodedM2Model>) -> Self {
         Self {

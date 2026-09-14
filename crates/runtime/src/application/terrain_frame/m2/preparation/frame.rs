@@ -45,6 +45,8 @@ impl M2Frame {
         >,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         let mut frame_profile = solarity_profiling::profile!("M2 frame preparation");
+        let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
+        let mut work = super::diagnostics::Work::new();
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
         if let Some((terrain, ..)) = spatial_lighting.as_mut() {
@@ -255,6 +257,10 @@ impl M2Frame {
                 break;
             };
             let mut placement_profile = solarity_profiling::detail_profile!("m2.placement");
+            let mut observed = work.placement();
+            let first_mesh = self.visible_draws.len();
+            let first_particle = self.particle_draws.len();
+            let first_ribbon = self.ribbon_draws.len();
             // Moving-parent transforms have already been resolved. Forward
             // attachments query that same root; earlier roots reuse admission.
             let environment_maps = if let Some(queries) = scenery_shadows {
@@ -293,6 +299,8 @@ impl M2Frame {
             };
             let publishes_lights =
                 world_lighting.is_some() && self.placement_visibility.has_lights(placement_index);
+            observed.light_owner = publishes_lights;
+            observed.environment_shadow = environment_maps != 0;
             let bounds = self.placement_visibility.bounds()[placement_index];
             let doodad_scene_active = spatial_lighting.is_some()
                 && self
@@ -498,6 +506,10 @@ impl M2Frame {
                 continue;
             };
             let owner = placement.owner;
+            observed.callback_owner = placement.unit_animation.is_some()
+                || placement.unit_effect.is_some()
+                || matches!(owner, M2GpuPlacementOwner::GameObject { .. });
+            observed.particle_owner = !placement.particles.is_empty();
             // ADT/WMO placements were culled from compact immutable bounds
             // before touching instance state. Replicated WMO doodads can move
             // with their parent and require their current transform here.
@@ -694,16 +706,22 @@ impl M2Frame {
                 bone_transforms,
                 bone_sequences: &bone_sequences,
             };
+            observed.admitted = true;
+            observed.visible = visible;
+            observed.primary_shadow = shadow_admitted;
+            observed.palette = needs_palette;
             placement_profile.mark("admission and animation");
             let bone_pose: &dyn solarity_rendering::M2BoneTransforms = if needs_palette {
-                if !self.pose_batch.take(
+                let batch_hit = self.pose_batch.take(
                     placement_index,
                     &source.model,
                     clock,
                     model_view,
                     overrides,
                     &mut self.bone_pose_scratch,
-                )? {
+                )?;
+                observed.batch_hit = batch_hit;
+                if !batch_hit {
                     self.bone_pose_scratch.recompose_with_overrides(
                         source.model.animations(),
                         clock,
@@ -734,6 +752,11 @@ impl M2Frame {
                 &self.bone_samples_scratch
             };
             placement_profile.mark("pose");
+            let first_cpu_output = self.triggered_events.len()
+                + self.rider_transforms.len()
+                + self.item_transforms.len()
+                + self.visual_transforms.len()
+                + self.glue_attachment_transforms.len();
             super::publication::CpuPublication {
                 retirement: &mut self.retirement,
                 triggered_events: &mut self.triggered_events,
@@ -762,6 +785,12 @@ impl M2Frame {
                     publishes_lights,
                 },
             )?;
+            observed.cpu_output = self.triggered_events.len()
+                + self.rider_transforms.len()
+                + self.item_transforms.len()
+                + self.visual_transforms.len()
+                + self.glue_attachment_transforms.len()
+                != first_cpu_output;
             placement_profile.mark("CPU publication");
             // 4F8D10 updates unit state/placement before clearing model activity.
             // Preserve attachment samples, but hidden player hierarchies publish
@@ -818,6 +847,7 @@ impl M2Frame {
             }
             let has_shadow_bones = self.shadow_draws.len() != first_shadow_draw
                 || self.environment_shadow_draws.len() != first_environment_draw;
+            observed.shadow_output = has_shadow_bones;
             if has_shadow_bones {
                 self.bone_transforms
                     .extend_from_slice(bone_pose.transforms());
@@ -1312,7 +1342,11 @@ impl M2Frame {
                     "placement-local ribbon entered unified world frame"
                 );
             }
+            observed.mesh_output = self.visible_draws.len() != first_mesh;
+            observed.particle_output = self.particle_draws.len() != first_particle;
+            observed.ribbon_output = self.ribbon_draws.len() != first_ribbon;
         }
+        self.pose_batch.report_consumption();
         frame_profile.mark("instance traversal");
         solarity_profiling::profile_value!("m2.resident_placements", self.placements.len());
         solarity_profiling::profile_value!(

@@ -155,11 +155,19 @@ impl CpuTaskPermit<'_> {
         T: Send,
         F: Fn(&mut T) + Send + Sync,
     {
-        let _profile_scope = solarity_profiling::profile!("cpu.pool.executor.for_each");
+        let _profile_scope = solarity_profiling::profile_cycles!("cpu.pool.executor.for_each");
         solarity_profiling::profile_value!("cpu.batch.items", items.len());
         let Self { pool, lease } = self;
         let outcome = catch_unwind(AssertUnwindSafe(|| {
+            let queued = solarity_profiling::enabled().then(Instant::now);
+            let epoch = solarity_profiling::generation();
             pool.install(|| {
+                if let Some(queued) = queued {
+                    static QUEUE: solarity_profiling::Site =
+                        solarity_profiling::Site::new("cpu.batch.dispatch_wait", false);
+                    QUEUE.cpu_duration(epoch, "", queued.elapsed());
+                }
+                let _execution = solarity_profiling::profile_cycles!("cpu.batch.execution");
                 items.par_iter_mut().for_each(|item| {
                     let _item_profile =
                         solarity_profiling::detail_profile!("cpu.batch.worker_item");

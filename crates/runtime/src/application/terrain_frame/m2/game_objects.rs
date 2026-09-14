@@ -21,6 +21,7 @@ impl M2Frame {
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.retire_removed_models();
+        let topology_before = self.placements.len();
         let sources = &self.sources;
         self.placements.retain(|placement| {
             let (identity, display_id, doodad_index) = match placement.owner {
@@ -63,6 +64,7 @@ impl M2Frame {
                 _ => false,
             }
         });
+        let topology_retained = self.placements.len();
         let retained = self
             .placements
             .iter()
@@ -206,6 +208,14 @@ impl M2Frame {
                 }
             }
         }
+        solarity_profiling::profile_event_value!(
+            "m2.topology.game_objects.removed",
+            topology_before - topology_retained
+        );
+        solarity_profiling::profile_event_value!(
+            "m2.topology.game_objects.added",
+            self.placements.len() - topology_retained
+        );
         self.placement_topology_dirty = true;
         self.compact_sources();
         Ok(())

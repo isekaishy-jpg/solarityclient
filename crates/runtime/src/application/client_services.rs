@@ -1761,6 +1761,7 @@ impl ClientServices {
         self.unit_effects
             .service_sources(&self.cpu, &mut self.renderer)?;
         let mut profile = solarity_profiling::profile!("session and world service");
+        let _cycles = solarity_profiling::profile_cycles!("world.service_cpu");
         let Some(network) = self.network.as_ref() else {
             return Ok(());
         };
@@ -2576,11 +2577,13 @@ impl ClientServices {
         let transport_poll = self
             .game_objects
             .synchronize_async(self.gameplay.world(), &self.cpu)?;
+        profile.mark("game object residency");
         self.game_objects
             .synchronize_templates(self.gameplay.game_object_templates_mut());
         self.gameplay.send_game_object_queries()?;
         self.gameplay.send_creature_queries()?;
         self.gameplay.send_player_name_queries()?;
+        profile.mark("object templates and network query admission");
         self.game_objects.synchronize_transport_passengers(
             self.player_movement
                 .passenger_transport(self.gameplay.world())
@@ -2600,14 +2603,16 @@ impl ClientServices {
         if transport_elapsed_ms as i32 > 0 {
             self.transport_update_time_ms = transport_time_ms;
         }
+        profile.mark("transport placement");
         self.game_objects
             .synchronize_animations(self.gameplay.world(), &mut self.crt_rand)?;
+        profile.mark("game object animation and collision transforms");
         self.terrain.synchronize_game_object_movement(
             self.gameplay.world(),
             &self.game_objects,
             solarity_systems::MovementBspCacheMode::Enabled,
         )?;
-        profile.mark("game object residency and collision registry");
+        profile.mark("game object collision registration");
         if let Some(ui) = &self.world_ui {
             self.player_movement
                 .refresh_camera_settings(ui.cvar_revision(), |name| ui.cvar_number(name));
@@ -2674,6 +2679,7 @@ impl ClientServices {
             &mut self.player_movement,
             crate::platform::client_milliseconds(),
         )?;
+        profile.mark("local movement effects and area triggers");
         self.remote_movement.service(
             &self.gameplay,
             &mut self.terrain,
@@ -2682,6 +2688,7 @@ impl ClientServices {
             &self.liquids,
             crate::platform::client_milliseconds(),
         )?;
+        profile.mark("remote movement");
         self.player_movement.refresh_passenger_projection(
             self.gameplay.world(),
             &self.game_objects,
@@ -2734,6 +2741,7 @@ impl ClientServices {
                 .world()
                 .and_then(|world| self.terrain.map_kind(world.map_id().value())),
         );
+        profile.mark("remote movement effects and passenger publication");
         match self.player.synchronize(self.gameplay.world())? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (
