@@ -72,3 +72,58 @@ fn revision_wrap_preserves_recent_motion_dependencies() {
     assert!(changes.affects_unit(u64::MAX, Vec3::ZERO));
     assert!(!changes.affects_unit(u64::MAX, Vec3::splat(-1000.)));
 }
+
+/// MapObject registration covers both its render box and independent collision center.
+#[test]
+fn map_object_motion_dependencies_cover_boxes_columns_and_distant_roots()
+-> Result<(), Box<dyn std::error::Error>> {
+    use solarity_systems::MovementCollisionBounds;
+    let mut changes = LightingChanges::default();
+    let before = changes.revision();
+    changes.moved_map_root(
+        box_at(0., 0.),
+        box_at(20., 0.),
+        [
+            glam::Mat4::IDENTITY,
+            glam::Mat4::from_translation(Vec3::new(-20., 0., 0.)),
+        ],
+        box_at(0., 0.),
+    );
+    let distant = MovementCollisionBounds::new(Vec3::splat(100.), Vec3::splat(110.))?;
+    assert!(!changes.affects_map_object(before, Vec3::splat(105.), distant));
+    // A collision center can lie outside the render box and still select a root.
+    assert!(changes.affects_map_object(before, Vec3::new(5., 5., 900.), distant));
+    for x in [0., 20., 30.] {
+        let render =
+            MovementCollisionBounds::new(Vec3::new(x, 5., -1.), Vec3::new(x + 1., 6., 1.))?;
+        assert!(changes.affects_map_object(before, Vec3::splat(105.), render));
+    }
+    assert!(!changes.affects_map_object(changes.revision(), Vec3::ZERO, distant));
+    changes.invalidate();
+    assert!(changes.affects_map_object(before, Vec3::splat(105.), distant));
+    Ok(())
+}
+
+/// Native inverse-AABB registration admits contacts outside the world root AABB.
+#[test]
+fn rotated_map_root_preserves_native_registration_over_admission()
+-> Result<(), Box<dyn std::error::Error>> {
+    use solarity_systems::MovementCollisionBounds;
+    let local = MovementCollisionBounds::new(Vec3::new(-10., -1., -1.), Vec3::new(10., 1., 1.))?;
+    let transform = glam::Mat4::from_rotation_z(std::f32::consts::FRAC_PI_4);
+    let world = local.transformed(transform)?;
+    let render = MovementCollisionBounds::new(Vec3::new(8., -8., -0.5), Vec3::new(10., 8., 0.5))?;
+    assert!(!world.intersects(render));
+    assert!(local.intersects(render.transformed(transform.inverse())?));
+    let mut changes = LightingChanges::default();
+    changes.moved_map_root(
+        [world.minimum(), world.maximum()],
+        [world.minimum(), world.maximum()],
+        [transform.inverse(); 2],
+        [local.minimum(), local.maximum()],
+    );
+    assert!(changes.affects_map_object(0, Vec3::new(9., 0., 0.), render));
+    let distant = MovementCollisionBounds::new(Vec3::splat(100.), Vec3::splat(110.))?;
+    assert!(!changes.affects_map_object(0, Vec3::splat(105.), distant));
+    Ok(())
+}

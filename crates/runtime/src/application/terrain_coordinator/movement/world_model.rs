@@ -298,9 +298,16 @@ impl ResidentMovementScene {
             {
                 if root.transform != transform {
                     let previous = root.collision.root_bounds();
+                    let previous_inverse = root.transform.inverse();
                     root.set_transform(transform)?;
-                    self.lighting.moved(previous, root.collision.root_bounds());
-                    self.dynamic.invalidate();
+                    self.lighting.moved_map_root(
+                        previous,
+                        root.collision.root_bounds(),
+                        [previous_inverse, transform.inverse()],
+                        root.collision.model().bounds().map(glam::Vec3::from_array),
+                    );
+                    // Registration consumers test this motion against their own
+                    // native probe/box domains; distant owners keep their lists.
                 }
                 continue;
             }

@@ -157,6 +157,8 @@ pub(super) struct ResidentDynamicMovement {
     live: HashSet<WorldObjectIdentity>,
     registration: RuntimeMovementRegistrationQuery,
     invalidated: bool,
+    /// All retained owners have observed root changes through this revision.
+    registration_revision: u64,
 }
 
 impl ResidentDynamicMovement {
@@ -211,7 +213,12 @@ impl ResidentDynamicMovement {
                     && owner.transform == model.transform()
                     && owner.residency == RuntimeStaticMovementResidency::Ready
             });
-            if unchanged && !self.invalidated {
+            let root_changed = map.movement.lighting.affects_map_object(
+                self.registration_revision,
+                model.collision_center(),
+                model.render_bounds(),
+            );
+            if unchanged && !self.invalidated && !root_changed {
                 if sampled {
                     retained += 1;
                 }
@@ -282,8 +289,15 @@ impl ResidentDynamicMovement {
         }
         self.order.retain(|identity| self.live.contains(identity));
         self.lists.retain(|_, list| !list.is_empty());
-        self.map_models
-            .synchronize(map, world, objects, cache, self.invalidated)?;
+        self.map_models.synchronize(
+            map,
+            world,
+            objects,
+            cache,
+            self.invalidated,
+            self.registration_revision,
+        )?;
+        self.registration_revision = map.movement.lighting.revision();
         self.invalidated = false;
         self.world_identity = world
             .local_player_guid()

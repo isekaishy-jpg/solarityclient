@@ -50,6 +50,7 @@ impl ResidentMapModels {
         objects: &RuntimeGameObjectPresentation,
         cache: MovementBspCacheMode,
         invalidated: bool,
+        registration_revision: u64,
     ) -> Result<(), RuntimeMovementRegistrationError> {
         for list in self.lists.values_mut() {
             list.clear();
@@ -80,6 +81,11 @@ impl ResidentMapModels {
                 self.touched.insert(identity);
                 self.updated.push(identity);
             } else if !invalidated
+                && !map.movement.lighting.affects_map_object(
+                    registration_revision,
+                    model.collision_center(),
+                    model.render_bounds(),
+                )
                 && self.owners.get(&identity).is_some_and(|registered| {
                     registered.residency == RuntimeStaticMovementResidency::Ready
                 })
