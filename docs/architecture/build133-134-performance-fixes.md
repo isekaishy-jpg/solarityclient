@@ -101,9 +101,9 @@ The UI suite passes 28 library tests and 165 integration tests, with the full-st
 test run separately. A new 2,048-unrelated-frame regression covers registration of
 later and earlier owners during dispatch, removal of later subscribers, newly
 created owners, duplicate/all-event admission, and complete unregistration.
-Workspace Clippy passes with warnings denied after these changes. The earlier
-complete workspace run passed before the event index and final sound-scope edit;
-the final numbered build still requires complete workspace verification.
+Workspace Clippy passes with warnings denied after these changes. The complete
+workspace run after the event index and final sound-scope edit also passes;
+the intermediate Build 135 package records that verification below.
 
 ### Collision registration dependencies
 
@@ -119,3 +119,23 @@ Committed as `02e45a00`. Tests cover arrival/departure, inclusive contacts, dist
 center outside its render box, and the rotated-root over-admission case. Full
 runtime workspace checks pass; matched live measurements remain pending. GameObject source
 publication polling is a separate unfinished part of this requirement.
+
+### Intermediate Testing build 135
+
+Installed on 2026-09-14 from source `9040f672fff09b552f4fa5c1eda47117d477e0e8`,
+including the scheduler, collision dependency and UI event/publication commits.
+Formatting, workspace all-target/all-feature Clippy with warnings denied, and
+workspace all-feature tests pass: 1,403 passed, zero failed, 31 ignored. The
+full-stock UI comparison above was run separately. The official package script
+reserved Build 135 and completed the optimized `test-client` build.
+
+The installed executable reports product `0.0.3a`, build `135`, and that source
+revision. Its dirty flag reflects the reserved BUILD_NUMBER change. Installed
+and packaged SHA-256 hashes both equal
+`3942BC182A28E35B2685453D43B7EBD43F3926FEA23106CFE025292CB12B63AE`.
+Installation retains the 2560x1440 Testing launcher and normal F10 activation.
+
+This is an intermediate package, not completion of the performance goal. Live
+loading/frame-time improvements have not been measured for this executable;
+M2 preparation, ordinary placement topology and the other unchecked requirements
+remain in progress. Work continues without waiting for a user-run test.
