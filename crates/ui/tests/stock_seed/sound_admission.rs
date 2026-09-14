@@ -80,13 +80,19 @@ fn frame_startup_and_world_entry_suppress_sound_entries_without_delaying_them()
     })
     .join()
     .map_err(|_| "source worker panicked")??;
-    let mut manager = FrameManager::start_with_sources(
+    let mut startup = FrameManager::begin_with_sources(
         AssetStoreHandle::new(AssetStore::mount(archive)?),
         UiScriptEnvironment::new(800, 600, false)?,
         &[],
         &AddonCatalog::default(),
         sources,
-    )?;
+    );
+    let mut manager = loop {
+        match startup.advance(std::time::Duration::ZERO) {
+            std::task::Poll::Pending => {}
+            std::task::Poll::Ready(result) => break result?,
+        }
+    };
     assert_eq!(
         manager.take_media_action(),
         Some(UiGlueMediaAction::PlaySoundFile("Sound/Direct.wav".into()))

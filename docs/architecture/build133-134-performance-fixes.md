@@ -234,3 +234,65 @@ and workspace all-feature tests pass: 1,409 passed, zero failed, 32 ignored. Thi
 includes the admission-order correction and source-job capacity/retirement tests.
 The optimized stock comparison ran separately and passed. No additional numbered
 package has been reserved after Build 135; the goal remains active.
+
+
+### Cooperative world UI construction and entry publication
+
+The remaining FrameXML constructor now owns a local, pinned construction task.
+Runtime advances it behind the loading card, preserving source order and whole
+Lua callbacks. The caller retains one task, never exposes a partial FrameManager,
+and drops all partial plans and sound guards on cancellation. Lua and live world
+handles stay on the main thread. The source worker remains separate.
+
+World-entry events use the same ownership boundary. Their callbacks run in the
+original order, retain immediate Lua geometry and scroll-range callbacks, and
+merge native presentation journals before one final publication. Session
+publication stays held until construction and entry complete, just as it was
+held by the old synchronous call. Network workers retain their existing bounded
+queues; packets are not consumed and discarded while the UI is incomplete.
+Loading-card presentation, platform input, close handling and F10 remain serviced.
+
+Full Lua snapshots now copy the ordered arena in 64-object groups. Ordinary live
+snapshots and refreshes use the same implementation synchronously, without a
+heap task allocation or an active deadline. Live refresh retains its existing F10
+phase names. Covered startup/entry records active poll work and excludes time
+between polls. Construction, event publication, snapshot copying and full refresh
+have focused modules; runtime state now has a folder-backed module.
+
+The live loading allowance is 8 ms per advance, checked between operations. It
+is deliberately larger than the 2 ms stress budget in the stock fixture so load
+completion does not require hundreds of separately paced loading-card frames.
+A callback or unsplit native operation can exceed that allowance: this is not a
+hard frame deadline. Total loading latency under VSync still needs measurement.
+GPU admission, native runtime initialization and some initial plans remain
+indivisible, and this work does not establish a live loading-speed or FPS claim.
+
+Glyph request construction previously hashed the common 224-character range for
+every text owner. It now requests that range once for each distinct font while
+preserving actual required characters, optional coverage and sorted glyph order.
+The full-stock optimized diagnostic used 17 distinct font keys. The glyph phase
+fell from 157.986 ms to 48.987 ms in successive fixture observations. This removes
+redundant CPU work; it does not change glyph rendering or require new cache
+lifetimes. Total construction varied between runs, so that phase measurement
+must not be reported as an equivalent reduction in overall loading time.
+
+The stock fixture compares the synchronous path with worker source preparation,
+sliced construction, sliced entry callbacks and sliced final publication. It
+checks all 25,099 regions and ordered presentation packets after entry and 144
+action-slot notifications. Focused tests cover callback-time created geometry,
+scroll-range event ordering, source-order construction, and sound admission on
+completion or cancellation. Final formatting, workspace all-target/all-feature Clippy with warnings denied,
+and all-feature workspace tests pass: 1,411 passed, zero failed, 32 ignored.
+The two focused construction ownership tests also passed separately.
+
+
+The final optimized stock comparison passes. With its stricter 2 ms stress budget,
+construction took 1,017.841 ms of caller work over 195 advances; the largest advance
+was 72.799 ms. Entry publication took 347.836 ms over 71 advances, with a largest
+advance of 45.205 ms. The synchronous comparison blocked for 1,110.413 ms during
+construction and 514.184 ms during entry events. Source preparation added
+177.090 ms in the staged fixture. These are back-to-back caller polls with capture
+enabled, not presented live frames: they establish matching output and shorter
+uninterrupted UI work, not lower total loading latency or a hard 8 ms ceiling.
+The remaining native construction blocks and renderer admission are still open.
+No new numbered package has been reserved after Build 135.

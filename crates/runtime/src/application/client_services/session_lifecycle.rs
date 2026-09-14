@@ -63,6 +63,7 @@ impl ClientServices {
             .transpose()
             .map_err(ApplicationError::from);
         self.world_ui = None;
+        self.world_ui_construction = None;
         self.loading_screen = None;
         leaving
             .map(|_| ())

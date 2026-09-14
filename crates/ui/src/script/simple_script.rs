@@ -1867,6 +1867,29 @@ impl UiScriptRuntime {
         Ok(snapshot)
     }
 
+    /// Suspends the initial arena copy without permitting callbacks to mutate it.
+    /// Poll timing lives outside this future so inter-frame waits are not charged.
+    pub(crate) async fn snapshot_objects_for_startup(
+        &self,
+        bundle: &UiBundle,
+        budget: &crate::startup::StartupBudget,
+    ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
+        self.snapshot_count.set(self.snapshot_count.get() + 1);
+        {
+            let _profile = solarity_profiling::profile!("ui.startup.snapshot_layout");
+            self.prepare_snapshot_layout(bundle)?;
+        }
+        budget.checkpoint().await;
+        solarity_profiling::profile_await!(
+            "ui.startup.snapshot_objects",
+            super::runtime_state::snapshot_runtime_objects_cooperatively(
+                bundle.lua(),
+                self.registered_object_count(),
+                Some(budget)
+            )
+        )
+    }
+
     /// Preserves layout callbacks at an event boundary without copying the Lua arena.
     /// Native ScrollRangeChanged handlers can affect later events in the batch.
     pub(crate) fn prepare_snapshot_layout(&self, bundle: &UiBundle) -> Result<(), UiScriptError> {

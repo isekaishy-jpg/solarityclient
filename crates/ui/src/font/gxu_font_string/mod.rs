@@ -1291,15 +1291,20 @@ fn request_live_glyphs(
     requested: &mut HashSet<GlyphKey>,
     required: &mut HashSet<GlyphKey>,
 ) -> Result<(), FontError> {
+    let mut resident_fonts = HashSet::new();
     for text in live
         .objects()
         .iter()
         .filter_map(|object| object.text.as_ref())
     {
         let font = runtime_font_key(text, pixels_per_ui_unit)?;
-        for value in 0x20..=0xff {
-            if let Some(character) = char::from_u32(value) {
-                requested.insert(GlyphKey::new(&font, character));
+        // Coverage belongs to a font, not each of its text owners. Thousands
+        // of FrameXML strings otherwise clone/hash the same 224 keys repeatedly.
+        if resident_fonts.insert(font.clone()) {
+            for value in 0x20..=0xff {
+                if let Some(character) = char::from_u32(value) {
+                    requested.insert(GlyphKey::new(&font, character));
+                }
             }
         }
         for presented in presented_characters(text)
@@ -1312,6 +1317,7 @@ fn request_live_glyphs(
             required.insert(key);
         }
     }
+    solarity_profiling::profile_value!("ui.glyph.resident_font_requests", resident_fonts.len());
     Ok(())
 }
 

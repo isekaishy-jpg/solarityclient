@@ -84,7 +84,7 @@ use crate::application::world_coordinator::{
     RuntimeWorldState,
 };
 use crate::application::world_transfer::RuntimeWorldTransferCoordinator;
-use crate::application::world_ui::{RuntimeWorldUi, WorldUiSourcePreparation};
+use crate::application::world_ui::{RuntimeWorldUi, WorldUiConstruction, WorldUiSourcePreparation};
 use crate::configuration::{RuntimeConfiguration, StartupProfile};
 use crate::input::{InputControl, InputFrameMotion, stock_keyboard_name};
 use crate::loading::{LoadingScreenDirectory, RuntimeLoadingReadiness, RuntimeLoadingScreen};
@@ -132,6 +132,7 @@ pub(crate) struct ClientServices {
     glue_gpu_texture_prewarm_pending: bool,
     pending_glue_texture_prewarm: Option<ConfiguredGlueTexturePrewarmJob>,
     world_ui: Option<RuntimeWorldUi>,
+    world_ui_construction: Option<WorldUiConstruction>,
     world_ui_sources: WorldUiSourcePreparation,
     world_ui_catalog: ArchiveCatalog,
     glue_model: RuntimeGlueModelScene,
@@ -523,6 +524,7 @@ impl ClientServices {
                 glue_gpu_texture_prewarm_pending: false,
                 pending_glue_texture_prewarm,
                 world_ui: None,
+                world_ui_construction: None,
                 world_ui_sources: Default::default(),
                 glue_model,
                 cinematic: RuntimeCinematicCoordinator::default(),
@@ -1760,10 +1762,16 @@ impl ClientServices {
     /// Applies ordered Glue actions and polls one asynchronous login result.
     pub(crate) fn service_login(&mut self) -> Result<(), ApplicationError> {
         self.world_camera_frame = None;
-        self.unit_effects
-            .service_sources(&self.cpu, &mut self.renderer)?;
         let mut profile = solarity_profiling::profile!("session and world service");
         let _cycles = solarity_profiling::profile_cycles!("world.service_cpu");
+        // The old synchronous load was atomic with respect to session publication.
+        // Keep that ordering while allowing the loading card and platform pump to
+        // run between construction slices; network workers retain queued packets.
+        if self.world_ui_construction.is_some() {
+            return self.advance_world_ui_construction();
+        }
+        self.unit_effects
+            .service_sources(&self.cpu, &mut self.renderer)?;
         let Some(network) = self.network.as_ref() else {
             return Ok(());
         };
@@ -1997,6 +2005,7 @@ impl ClientServices {
                 }
                 UiGlueNetworkAction::EnterWorld { guid } => {
                     self.world_ui = None;
+                    self.world_ui_construction = None;
                     let display_extent = self.platform.logical_extent();
                     let character_location = self
                         .world
@@ -2507,6 +2516,9 @@ impl ClientServices {
         }
         profile.mark("scene GPU publication");
         self.prepare_world_ui_if_ready()?;
+        if self.world_ui_construction.is_some() {
+            return Ok(());
+        }
         self.publish_player_ui_notifications()?;
         if let (Some(world_ui), Some(clock)) = (self.world_ui.as_mut(), self.gameplay.realm_clock())
         {
@@ -3009,9 +3021,7 @@ impl ClientServices {
             return Ok(());
         };
         let cvar_values = self.world_cvar_values();
-        let (world_ui, startup_errors) = RuntimeWorldUi::prepare(
-            &mut self.renderer,
-            self.platform.window_id(),
+        let construction = WorldUiConstruction::begin(
             self.assets.clone(),
             self.world_ui_catalog.clone(),
             self.platform.logical_extent(),
@@ -3026,6 +3036,29 @@ impl ClientServices {
             general_tab_name,
             self.sound.output_names(),
             sources,
+        )?;
+        self.world_ui_construction = Some(construction);
+        Ok(())
+    }
+
+    /// Advances the single owned FrameXML load while session publication is held.
+    fn advance_world_ui_construction(&mut self) -> Result<(), ApplicationError> {
+        let Some(mut construction) = self.world_ui_construction.take() else {
+            return Ok(());
+        };
+        let (manager, startup_errors) =
+            match construction.advance(super::world_ui::WORLD_UI_CONSTRUCTION_BUDGET) {
+                std::task::Poll::Pending => {
+                    self.world_ui_construction = Some(construction);
+                    return Ok(());
+                }
+                std::task::Poll::Ready(result) => result?,
+            };
+        let (world_ui, startup_errors) = construction.finish(
+            &mut self.renderer,
+            self.platform.window_id(),
+            manager,
+            startup_errors,
         )?;
         for error in &startup_errors {
             let captured = self.record_recoverable_error(error);
@@ -3354,6 +3387,7 @@ impl ClientServices {
         }
         self.loading_screen = None;
         self.world_ui = None;
+        self.world_ui_construction = None;
         self.character_screen_published = false;
         self.character_directory_published = false;
         if let Some(selected) = &self.selected_realm {

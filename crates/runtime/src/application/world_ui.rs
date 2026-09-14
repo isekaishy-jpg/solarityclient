@@ -6,6 +6,7 @@ mod logout;
 mod minimap;
 mod mirror_timer;
 mod startup;
+pub(super) use construction::{WORLD_UI_CONSTRUCTION_BUDGET, WorldUiConstruction};
 use minimap::RuntimeMinimapScene;
 pub(super) use startup::{WorldUiSourceImage, WorldUiSourcePreparation};
 

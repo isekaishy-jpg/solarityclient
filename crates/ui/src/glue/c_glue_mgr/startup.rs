@@ -5,6 +5,7 @@ use solarity_asset::AssetStoreHandle;
 use super::{GlueManager, build_live_hierarchy, synchronize_resolved_dimensions, transaction};
 use crate::glue::pointer::UiPointerPlan;
 use crate::glue::{GlueError, GlueStartupReport};
+use crate::startup::{StartupBudget, StartupTask};
 use crate::{
     FontCatalog, UiAnimationPlan, UiBackdropPlan, UiBackdropStatePlan, UiBundle, UiEventArgument,
     UiEventPayload, UiFramePlan, UiGlyphAtlasPlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
@@ -15,12 +16,21 @@ use crate::{
 
 impl GlueManager {
     /// Constructs one independently owned active-world FrameXML runtime.
-    pub(in crate::glue) fn start_shared_frame(
+    pub(in crate::glue) async fn start_shared_frame(
         assets: AssetStoreHandle,
         environment: UiScriptEnvironment,
         bundle: UiBundle,
+        budget: StartupBudget,
     ) -> Result<Self, GlueError> {
-        Self::start_with_bundle(assets, environment, UiManifestKind::Frame, None, bundle)
+        Self::start_with_bundle(
+            assets,
+            environment,
+            UiManifestKind::Frame,
+            None,
+            bundle,
+            budget,
+        )
+        .await
     }
 
     /// Builds common retained script, object, layout, and rendering state.
@@ -31,37 +41,71 @@ impl GlueManager {
         initial_screen: Option<crate::glue::GlueInitialScreen>,
     ) -> Result<Self, GlueError> {
         let bundle = UiBundle::load(&mut assets.borrow_mut(), manifest_kind)?;
-        Self::start_with_bundle(assets, environment, manifest_kind, initial_screen, bundle)
+        let _profile = solarity_profiling::profile!("ui.startup");
+        StartupTask::new(move |budget| {
+            Self::start_with_bundle(
+                assets,
+                environment,
+                manifest_kind,
+                initial_screen,
+                bundle,
+                budget,
+            )
+        })
+        .complete()
     }
 
     /// Executes prepared declarations and creates one native presentation owner.
-    fn start_with_bundle(
+    async fn start_with_bundle(
         assets: AssetStoreHandle,
         environment: UiScriptEnvironment,
         manifest_kind: UiManifestKind,
         initial_screen: Option<crate::glue::GlueInitialScreen>,
         bundle: UiBundle,
+        budget: StartupBudget,
     ) -> Result<Self, GlueError> {
         if manifest_kind == UiManifestKind::Glue {
             environment.record_model_actions();
         }
-        let mut ui_profile = solarity_profiling::profile!("ui.startup");
         let logical_extent = environment.logical_extent();
-        let fonts = FontCatalog::from_bundle(&bundle)?;
-        let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
-        let tree = UiObjectTree::from_catalog(&catalog, &fonts)?;
+        let fonts = {
+            let _profile = solarity_profiling::profile!("ui.startup.fonts");
+            FontCatalog::from_bundle(&bundle)?
+        };
+        budget.checkpoint().await;
+        let catalog = {
+            let _profile = solarity_profiling::profile!("ui.startup.catalog");
+            UiObjectCatalog::from_bundle(&bundle, &fonts)?
+        };
+        budget.checkpoint().await;
+        let tree = {
+            let _profile = solarity_profiling::profile!("ui.startup.object_tree");
+            UiObjectTree::from_catalog(&catalog, &fonts)?
+        };
+        budget.checkpoint().await;
         let frame_plan = UiFramePlan::from_tree(&tree)?;
         let frames = frame_plan.resolve(&tree)?;
         let layout = UiLayoutPlan::from_tree(&tree)?;
-        let regions = UiRegionStatePlan::resolve(&tree, &layout)?;
+        let regions = {
+            let _profile = solarity_profiling::profile!("ui.startup.regions");
+            UiRegionStatePlan::resolve(&tree, &layout)?
+        };
+        budget.checkpoint().await;
         let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
-        let templates = UiRuntimeTemplatePlan::from_catalog(&catalog, &fonts, bundle.lua())?;
+        let templates = {
+            let _profile = solarity_profiling::profile!("ui.startup.templates");
+            UiRuntimeTemplatePlan::from_catalog(&catalog, &fonts, bundle.lua())?
+        };
+        budget.checkpoint().await;
         let textures = UiTexturePlan::from_tree(&tree)?;
         let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
         let backdrop_plan = UiBackdropPlan::from_tree(&tree)?;
         let backdrops = UiBackdropStatePlan::resolve(&tree, &backdrop_plan)?;
-        let animations = UiAnimationPlan::from_tree(&tree)?;
-        ui_profile.mark("static plans");
+        let animations = {
+            let _profile = solarity_profiling::profile!("ui.startup.animations");
+            UiAnimationPlan::from_tree(&tree)?
+        };
+        budget.checkpoint().await;
         let media_intent = environment.media_intent();
         let network = environment.network();
         let process = environment.process();
@@ -75,9 +119,14 @@ impl GlueManager {
             &fonts,
             &texture_states,
         );
-        let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?;
-        ui_profile.mark("Lua runtime");
-        runtime.execute_all(&bundle, &tree, &scripts)?;
+        let mut runtime = {
+            let _profile = solarity_profiling::profile!("ui.startup.runtime");
+            UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?
+        };
+        budget.checkpoint().await;
+        while runtime.execute_next(&bundle, &tree, &scripts)? {
+            budget.checkpoint().await;
+        }
         if manifest_kind == UiManifestKind::Frame {
             runtime.initialize_frame_scale(&bundle, &environment)?;
         }
@@ -90,31 +139,49 @@ impl GlueManager {
             let _dispatch =
                 runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
         }
-        ui_profile.mark("Lua execution");
 
-        let mut live = runtime.snapshot_objects(&bundle)?;
-        let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
+        budget.checkpoint().await;
+        let mut live = runtime
+            .snapshot_objects_for_startup(&bundle, &budget)
+            .await?;
+        budget.checkpoint().await;
+        let geometry = {
+            let _profile = solarity_profiling::profile!("ui.startup.geometry");
+            UiRegionGeometryPlan::resolve(&live, ui_extent)?
+        };
+        budget.checkpoint().await;
         runtime.publish_resolved_geometry(&bundle, &geometry)?;
         synchronize_resolved_dimensions(&mut live, &geometry);
         let scroll_frames = UiScrollFramePlan::from_live(&live);
-        let glyphs = UiGlyphAtlasPlan::from_live_ui(
-            runtime.simple_html(),
-            &live,
-            &geometry,
-            &fonts,
-            &mut assets.borrow_mut(),
-            logical_extent.1,
-            runtime.font_system(),
-        )?;
-        let presentation = UiPresentationPlan::resolve(&live, &geometry, &backdrops);
-        let render_plan = UiRenderPlan::prepare_with_glyphs(
-            &presentation,
-            &glyphs,
-            &geometry,
-            &scroll_frames,
-            ui_extent,
-        )?;
-        ui_profile.mark("live presentation");
+        budget.checkpoint().await;
+        let glyphs = {
+            let _profile = solarity_profiling::profile!("ui.startup.glyphs");
+            UiGlyphAtlasPlan::from_live_ui(
+                runtime.simple_html(),
+                &live,
+                &geometry,
+                &fonts,
+                &mut assets.borrow_mut(),
+                logical_extent.1,
+                runtime.font_system(),
+            )?
+        };
+        budget.checkpoint().await;
+        let presentation = {
+            let _profile = solarity_profiling::profile!("ui.startup.presentation");
+            UiPresentationPlan::resolve(&live, &geometry, &backdrops)
+        };
+        budget.checkpoint().await;
+        let render_plan = {
+            let _profile = solarity_profiling::profile!("ui.startup.render_plan");
+            UiRenderPlan::prepare_with_glyphs(
+                &presentation,
+                &glyphs,
+                &geometry,
+                &scroll_frames,
+                ui_extent,
+            )?
+        };
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let pointer = UiPointerPlan::from_live(&live);
         let report = GlueStartupReport::new(

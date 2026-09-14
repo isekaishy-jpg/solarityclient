@@ -1,5 +1,8 @@
 //! Owned region and identity state copied from live Lua object tables.
 
+mod snapshot;
+pub(super) use snapshot::{snapshot_runtime_objects, snapshot_runtime_objects_cooperatively};
+
 use mlua::{Lua, Table};
 
 use super::simple_script::{
@@ -12,21 +15,19 @@ use super::simple_script::{
     edit_selection_end_key, edit_selection_start_key, edit_text_insets_key, enabled_key,
     font_face_key, font_flags_key, font_height_key, font_object_key, font_set_key,
     font_shadow_color_key, font_shadow_offset_key, frame_level_key, frame_strata_key, height_key,
-    highlight_font_key, highlight_locked_key, hit_rect_insets_key, horizontal_scroll_key,
-    horizontal_scroll_range_key, horizontal_tiling_key, hovered_key, index_key, justify_h_key,
-    justify_v_key, keyboard_enabled_key, max_text_lines_key, model_background_light_ghost_key,
-    model_background_light_live_key, model_camera_key, model_character_light_ghost_key,
-    model_character_light_live_key, model_file_key, model_fog_color_key, model_fog_far_key,
-    model_fog_near_key, model_glow_key, model_instance_generation_key, model_pet_light_ghost_key,
-    model_pet_light_live_key, model_rotation_key, model_scale_key, model_sequence_key,
-    model_sequence_time_key, model_sequence_time_sequence_key, model_unit_key,
-    motion_scripts_while_disabled_key, mouse_enabled_key, mouse_wheel_enabled_key, name_key,
-    non_blocking_key, non_space_wrap_key, normal_font_key, parent_key, parse_point,
-    portrait_unit_key, role_key, scale_key, scroll_child_key, shown_key, slider_max_key,
-    slider_min_key, slider_orientation_key, slider_step_key, slider_value_key, spacing_key,
-    tex_coord_key, text_color_key, text_key, texture_blend_mode_key, texture_color_key,
-    texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key, vertical_scroll_key,
-    vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
+    highlight_font_key, highlight_locked_key, horizontal_scroll_key, horizontal_scroll_range_key,
+    horizontal_tiling_key, hovered_key, justify_h_key, justify_v_key, max_text_lines_key,
+    model_background_light_ghost_key, model_background_light_live_key, model_camera_key,
+    model_character_light_ghost_key, model_character_light_live_key, model_file_key,
+    model_fog_color_key, model_fog_far_key, model_fog_near_key, model_glow_key,
+    model_instance_generation_key, model_pet_light_ghost_key, model_pet_light_live_key,
+    model_rotation_key, model_scale_key, model_sequence_key, model_sequence_time_key,
+    model_sequence_time_sequence_key, model_unit_key, name_key, non_blocking_key,
+    non_space_wrap_key, normal_font_key, parse_point, portrait_unit_key, scale_key, shown_key,
+    slider_max_key, slider_min_key, slider_orientation_key, slider_step_key, slider_value_key,
+    spacing_key, tex_coord_key, text_color_key, text_key, texture_blend_mode_key,
+    texture_color_key, texture_file_key, texture_solid_color_key, type_key, vertex_color_set_key,
+    vertical_scroll_key, vertical_scroll_range_key, vertical_tiling_key, width_key, word_wrap_key,
 };
 use crate::animation::owner_animation_transforms;
 use crate::{
@@ -449,309 +450,6 @@ impl UiRuntimeObjectPlan {
         }
         changed
     }
-}
-
-pub(super) fn snapshot_runtime_objects(
-    lua: &Lua,
-    object_count: usize,
-) -> Result<UiRuntimeObjectPlan, UiScriptError> {
-    let registry: Table = lua
-        .named_registry_value(OBJECT_REGISTRY)
-        .map_err(|error| snapshot_error("object registry", error))?;
-    let mut objects = Vec::with_capacity(object_count);
-    let mut anchors = Vec::new();
-    let animation_transforms = owner_animation_transforms(lua, object_count)
-        .map_err(|error| snapshot_error("object animations", error))?;
-
-    for lua_index in 1..=object_count {
-        let table: Table = registry
-            .raw_get(lua_index)
-            .map_err(|error| snapshot_error(format!("object {lua_index}"), error))?;
-        let stored_index = table
-            .raw_get::<usize>(index_key())
-            .map_err(|error| snapshot_error(format!("object {lua_index} index"), error))?;
-        if stored_index != lua_index {
-            return Err(UiScriptError::Plan {
-                message: format!(
-                    "live UI object {lua_index} stores mismatched index {stored_index}"
-                ),
-            });
-        }
-
-        let kind_name = table
-            .raw_get::<String>(type_key())
-            .map_err(|error| snapshot_error(format!("object {lua_index} type"), error))?;
-        let kind =
-            UiObjectKind::from_element_name(&kind_name).ok_or_else(|| UiScriptError::Plan {
-                message: format!("live UI object {lua_index} has unknown type {kind_name}"),
-            })?;
-        let role_name = table
-            .raw_get::<String>(role_key())
-            .map_err(|error| snapshot_error(format!("object {lua_index} role"), error))?;
-        let role = parse_role(&role_name).ok_or_else(|| UiScriptError::Plan {
-            message: format!("live UI object {lua_index} has unknown role {role_name}"),
-        })?;
-        let parent = table
-            .raw_get::<Option<usize>>(parent_key())
-            .map_err(|error| snapshot_error(format!("object {lua_index} parent"), error))?
-            .map(|index| index.saturating_sub(1));
-        if parent.is_some_and(|index| index >= object_count || index + 1 == lua_index) {
-            return Err(UiScriptError::Plan {
-                message: format!("live UI object {lua_index} has invalid parent"),
-            });
-        }
-
-        let first_anchor = anchors.len();
-        snapshot_anchors(lua_index, &table, object_count, &mut anchors)?;
-        let texture = (kind == UiObjectKind::Texture)
-            .then(|| snapshot_texture(lua_index, &table))
-            .transpose()?;
-        let text = if matches!(
-            kind,
-            UiObjectKind::FontString | UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
-        ) {
-            let (presentation_font, presentation_color) =
-                button_presentation_font(&registry, role, parent)?;
-            snapshot_text(
-                lua_index,
-                kind,
-                &table,
-                presentation_font.as_ref(),
-                presentation_color,
-            )?
-        } else {
-            None
-        };
-        let model = matches!(
-            kind,
-            UiObjectKind::Model
-                | UiObjectKind::PlayerModel
-                | UiObjectKind::DressUpModel
-                | UiObjectKind::TabardModel
-                | UiObjectKind::ModelFfx
-        )
-        .then(|| snapshot_model(lua_index, &table))
-        .transpose()?;
-        let is_frame = !matches!(kind, UiObjectKind::Texture | UiObjectKind::FontString);
-        let is_button = matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton);
-        let click_action = is_button
-            .then(|| table.raw_get::<u64>(click_action_key()))
-            .transpose()
-            .map_err(|error| snapshot_error(format!("object {lua_index} click action"), error))?;
-        // Snapshot the assigned child identity rather than inferring ownership
-        // from ancestry; ScrollFrame chrome shares the same direct parent.
-        let scroll_child = (kind == UiObjectKind::ScrollFrame)
-            .then(|| {
-                table
-                    .raw_get::<Option<Table>>(scroll_child_key())
-                    .map_err(|error| {
-                        snapshot_error(format!("object {lua_index} scroll child"), error)
-                    })?
-                    .map(|child| {
-                        let stored = child.raw_get::<usize>(index_key()).map_err(|error| {
-                            snapshot_error(
-                                format!("object {lua_index} scroll child index"),
-                                error,
-                            )
-                        })?;
-                        let index = stored.checked_sub(1).ok_or_else(|| UiScriptError::Plan {
-                            message: format!(
-                                "live UI object {lua_index} has invalid scroll child index {stored}"
-                            ),
-                        })?;
-                        if index >= object_count || stored == lua_index {
-                            return Err(UiScriptError::Plan {
-                                message: format!(
-                                    "live UI object {lua_index} has invalid scroll child index {stored}"
-                                ),
-                            });
-                        }
-                        Ok(index)
-                    })
-                    .transpose()
-            })
-            .transpose()?
-            .flatten();
-        let animation = animation_transforms[stored_index - 1];
-        objects.push(UiRuntimeObject {
-            name: table
-                .raw_get(name_key())
-                .map_err(|error| snapshot_error(format!("object {lua_index} name"), error))?,
-            kind,
-            role,
-            parent,
-            width: finite_region_number(&table, width_key(), lua_index, "width")?,
-            height: finite_region_number(&table, height_key(), lua_index, "height")?,
-            shown: table
-                .raw_get(shown_key())
-                .map_err(|error| snapshot_error(format!("object {lua_index} visibility"), error))?,
-            alpha: finite_region_number(&table, alpha_key(), lua_index, "alpha")?,
-            scale: positive_region_number(&table, scale_key(), lua_index, "scale")?,
-            clamp_insets: snapshot_clamp_insets(&table, lua_index)?,
-            animation_alpha_delta: animation.alpha_delta,
-            animation_offset: animation.offset,
-            animation_active: animation.active,
-            first_anchor,
-            anchor_count: anchors.len() - first_anchor,
-            texture,
-            text,
-            simple_html_text: (kind == UiObjectKind::SimpleHtml)
-                .then(|| table.raw_get::<Option<String>>(text_key()))
-                .transpose()
-                .map_err(|error| {
-                    snapshot_error(format!("object {lua_index} SimpleHTML text"), error)
-                })?
-                .flatten(),
-            model,
-            minimap: (kind == UiObjectKind::Minimap)
-                .then(|| super::simple_script::minimap::snapshot(&table))
-                .transpose()
-                .map_err(|error| snapshot_error(format!("object {lua_index} minimap"), error))?,
-            backdrop_color: is_frame
-                .then(|| {
-                    snapshot_optional_color(
-                        lua_index,
-                        &table,
-                        backdrop_color_key(),
-                        "backdrop color",
-                    )
-                })
-                .transpose()?
-                .flatten(),
-            backdrop_border_color: is_frame
-                .then(|| {
-                    snapshot_optional_color(
-                        lua_index,
-                        &table,
-                        backdrop_border_color_key(),
-                        "backdrop border color",
-                    )
-                })
-                .transpose()?
-                .flatten(),
-            frame_level: is_frame
-                .then(|| {
-                    table.raw_get(frame_level_key()).map_err(|error| {
-                        snapshot_error(format!("object {lua_index} frame level"), error)
-                    })
-                })
-                .transpose()?,
-            frame_strata: is_frame
-                .then(|| snapshot_frame_strata(lua_index, &table))
-                .transpose()?,
-            keyboard_enabled: is_frame
-                .then(|| table.raw_get(keyboard_enabled_key()))
-                .transpose()
-                .map_err(|error| {
-                    snapshot_error(format!("object {lua_index} keyboard input"), error)
-                })?,
-            mouse_enabled: is_frame
-                .then(|| table.raw_get(mouse_enabled_key()))
-                .transpose()
-                .map_err(|error| {
-                    snapshot_error(format!("object {lua_index} mouse input"), error)
-                })?,
-            motion_scripts_while_disabled: is_frame
-                .then(|| table.raw_get(motion_scripts_while_disabled_key()))
-                .transpose()
-                .map_err(|error| {
-                    snapshot_error(format!("object {lua_index} disabled motion scripts"), error)
-                })?,
-            mouse_wheel_enabled: is_frame
-                .then(|| table.raw_get(mouse_wheel_enabled_key()))
-                .transpose()
-                .map_err(|error| {
-                    snapshot_error(format!("object {lua_index} mouse wheel input"), error)
-                })?,
-            hit_rect_insets: is_frame
-                .then(|| {
-                    table
-                        .raw_get::<Table>(hit_rect_insets_key())
-                        .map_err(|error| {
-                            snapshot_error(format!("object {lua_index} hit rect insets"), error)
-                        })
-                        .and_then(|values| {
-                            numeric_array::<4>(&values, lua_index, "hit rect insets")
-                        })
-                })
-                .transpose()?,
-            scroll_offset: (kind == UiObjectKind::ScrollFrame)
-                .then(|| {
-                    Ok::<(f64, f64), UiScriptError>((
-                        finite_region_number(
-                            &table,
-                            horizontal_scroll_key(),
-                            lua_index,
-                            "horizontal scroll",
-                        )?,
-                        finite_region_number(
-                            &table,
-                            vertical_scroll_key(),
-                            lua_index,
-                            "vertical scroll",
-                        )?,
-                    ))
-                })
-                .transpose()?,
-            scroll_range: (kind == UiObjectKind::ScrollFrame)
-                .then(|| {
-                    Ok::<(f64, f64), UiScriptError>((
-                        finite_region_number(
-                            &table,
-                            horizontal_scroll_range_key(),
-                            lua_index,
-                            "horizontal scroll range",
-                        )?,
-                        finite_region_number(
-                            &table,
-                            vertical_scroll_range_key(),
-                            lua_index,
-                            "vertical scroll range",
-                        )?,
-                    ))
-                })
-                .transpose()?,
-            scroll_child,
-            status_bar: (kind == UiObjectKind::StatusBar)
-                .then(|| super::simple_script::status_bars::snapshot(&table))
-                .transpose()
-                .map_err(|error| snapshot_error(format!("object {lua_index} status bar"), error))?,
-            slider: (kind == UiObjectKind::Slider)
-                .then(|| snapshot_slider(lua_index, &table))
-                .transpose()?,
-            enabled: matches!(
-                kind,
-                UiObjectKind::Button | UiObjectKind::CheckButton | UiObjectKind::Slider
-            )
-            .then(|| table.raw_get(enabled_key()))
-            .transpose()
-            .map_err(|error| snapshot_error(format!("object {lua_index} enabled"), error))?,
-            click_action,
-            checked: (kind == UiObjectKind::CheckButton)
-                .then(|| table.raw_get(checked_key()))
-                .transpose()
-                .map_err(|error| snapshot_error(format!("object {lua_index} checked"), error))?,
-            highlighted: matches!(kind, UiObjectKind::Button | UiObjectKind::CheckButton)
-                .then(|| {
-                    Ok::<bool, mlua::Error>(
-                        table.raw_get::<bool>(highlight_locked_key())?
-                            || table.raw_get::<bool>(hovered_key())?,
-                    )
-                })
-                .transpose()
-                .map_err(|error| snapshot_error(format!("object {lua_index} highlight"), error))?,
-            pushed: is_button
-                .then(|| table.raw_get::<bool>(button_pressed_key()))
-                .transpose()
-                .map_err(|error| snapshot_error(format!("object {lua_index} pushed"), error))?,
-            edit_focused: (kind == UiObjectKind::EditBox)
-                .then(|| table.raw_get::<bool>(edit_focused_key()))
-                .transpose()
-                .map_err(|error| snapshot_error(format!("object {lua_index} focus"), error))?,
-        });
-    }
-
-    Ok(UiRuntimeObjectPlan { objects, anchors })
 }
 
 /// Updates only values that can change through a classified visual transform tick.
@@ -1953,5 +1651,5 @@ fn snapshot_error(label: impl Into<String>, error: mlua::Error) -> UiScriptError
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/runtime_state.rs"]
+#[path = "../../../tests/unit/runtime_state.rs"]
 mod tests;

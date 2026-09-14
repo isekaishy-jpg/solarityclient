@@ -143,13 +143,21 @@ fn worker_prepared_frame_sources_match_synchronous_geometry() -> Result<(), Box<
     })
     .join()
     .map_err(|_| "source worker panicked")??;
-    let actual = FrameManager::start_with_sources(
+    let mut startup = FrameManager::begin_with_sources(
         AssetStoreHandle::new(AssetStore::mount(archive)?),
         UiScriptEnvironment::new(2560, 1440, false)?,
         &cvars,
         &AddonCatalog::default(),
         sources,
-    )?;
+    );
+    let mut pauses = 0;
+    let actual = loop {
+        match startup.advance(std::time::Duration::ZERO) {
+            std::task::Poll::Pending => pauses += 1,
+            std::task::Poll::Ready(result) => break result?,
+        }
+    };
+    assert!(pauses > 2, "construction must actually cross caller polls");
     assert_eq!(
         expected.geometry().region_count(),
         actual.geometry().region_count()

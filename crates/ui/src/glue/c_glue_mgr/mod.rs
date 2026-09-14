@@ -1,6 +1,7 @@
 //! Persistent ownership of the built-in login and character UI.
 
 mod publication;
+mod refresh;
 mod scrolling;
 mod startup;
 mod transaction;
@@ -1541,108 +1542,6 @@ impl GlueManager {
     /// Takes the native completion generated when authored Lua stops a movie.
     pub fn take_movie_stop_completion(&self) -> Option<usize> {
         self.media_intent.borrow_mut().take_movie_stop_completion()
-    }
-
-    fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
-        let mut ui_profile = solarity_profiling::profile!("ui.mod.refresh_live_state");
-        self.deferred_scroll_refresh.clear();
-        let mut live = self.runtime.snapshot_objects(&self.bundle)?;
-        ui_profile.mark("first_snapshot");
-        if live == self.live {
-            return Ok(());
-        }
-        if live.is_scroll_only_update_from(&self.live) {
-            return self.refresh_scroll_state(live);
-        }
-        if live.is_visual_transform_only_update_from(&self.live) {
-            return self.refresh_visual_transform_state(live);
-        }
-        if live.is_visibility_only_update_from(&self.live)
-            && self.visibility_slots_are_resident(&live)?
-        {
-            return self.refresh_visibility_state(live);
-        }
-        if live.is_button_state_only_update_from(&self.live) {
-            return self.refresh_button_state(live);
-        }
-        let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
-        ui_profile.mark("first_geometry");
-        let html_changed = self.runtime.refresh_simple_html_layout(
-            &self.bundle,
-            &live,
-            &geometry,
-            &self.fonts,
-            &mut self.assets.borrow_mut(),
-            self.glyph_logical_height,
-        )?;
-        if html_changed {
-            live = self.runtime.snapshot_objects(&self.bundle)?;
-            geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
-        }
-        self.runtime
-            .publish_resolved_geometry(&self.bundle, &geometry)?;
-        ui_profile.mark("published");
-        synchronize_resolved_dimensions(&mut live, &geometry);
-        let scroll_frames = UiScrollFramePlan::from_live(&live);
-        ui_profile.mark("scroll");
-        let text_changes = (!html_changed)
-            .then(|| live.text_layout_changes_from(&self.live))
-            .flatten();
-
-        if let Some(text_changes) = text_changes.as_ref()
-            && self.glyphs.supports_live_text_objects(
-                &live,
-                self.glyph_logical_height,
-                text_changes.iter().copied(),
-            )
-        {
-            self.glyphs.refresh_live_text_objects(
-                &live,
-                &geometry,
-                self.glyph_logical_height,
-                text_changes,
-            )?;
-        } else if !html_changed
-            && self
-                .glyphs
-                .supports_live_text(&live, self.glyph_logical_height)
-        {
-            self.glyphs
-                .refresh_live_text(&live, &geometry, self.glyph_logical_height)?;
-        } else {
-            self.glyphs.rebuild_live_ui(
-                self.runtime.simple_html(),
-                &live,
-                &geometry,
-                &self.fonts,
-                &mut self.assets.borrow_mut(),
-                self.glyph_logical_height,
-            )?;
-        }
-        ui_profile.mark("glyph");
-        let presentation = UiPresentationPlan::resolve(&live, &geometry, &self.backdrops);
-        ui_profile.mark("presentation");
-        let render_plan = UiRenderPlan::prepare_with_glyphs(
-            &presentation,
-            &self.glyphs,
-            &geometry,
-            &scroll_frames,
-            geometry.ui_extent(),
-        )?;
-        ui_profile.mark("render");
-        let (objects, child_indices) = build_live_hierarchy(&live)?;
-        let pointer = UiPointerPlan::from_live(&live);
-        ui_profile.mark("plans");
-        self.live = live;
-        self.geometry = geometry;
-        self.scroll_frames = scroll_frames;
-        self.presentation = presentation;
-        self.render_plan = render_plan;
-        self.objects = objects;
-        self.child_indices = child_indices;
-        self.pointer = pointer;
-
-        Ok(())
     }
 
     /// Updates only retained draw state and transform-only public geometry.

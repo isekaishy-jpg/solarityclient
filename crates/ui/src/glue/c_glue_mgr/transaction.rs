@@ -74,6 +74,14 @@ impl GlueManager {
 
     /// Publishes once at the outermost boundary; nested scopes leave journals intact.
     pub(in crate::glue) fn flush_deferred_presentation(&mut self) -> Result<(), UiEventError> {
+        crate::startup::complete_unyielding(self.flush_deferred_presentation_cooperatively(None))
+    }
+
+    /// Covered entry shares the same dirty journals and native publication rules.
+    pub(in crate::glue) async fn flush_deferred_presentation_cooperatively(
+        &mut self,
+        budget: Option<&crate::startup::StartupBudget>,
+    ) -> Result<(), UiEventError> {
         if self.deferred_presentation.depth.get() != 0 {
             return Ok(());
         }
@@ -96,7 +104,10 @@ impl GlueManager {
         visual.sort_unstable();
         visual.dedup();
         let result = if full {
-            self.refresh_live_state()
+            solarity_profiling::profile_await!(
+                "ui.entry.full_publication",
+                self.refresh_live_state_cooperatively(budget)
+            )
         } else if !dirty.is_empty() {
             self.refresh_targeted_objects(&dirty, &visual).map(|_| ())
         } else if !visual.is_empty() {

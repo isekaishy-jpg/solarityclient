@@ -18,6 +18,16 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
 -> Result<(), Box<dyn Error>> {
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
     let catalog = ArchiveCatalog::discover(ClientDataRoot::new(root)?, Locale::EnUs)?;
+    let mut capture = std::env::var_os("SOLARITY_UI_STARTUP_PROFILE_ROOT").map(|root| {
+        solarity_profiling::Capture::new(
+            std::path::Path::new(&root),
+            "fixture=FrameXML startup".to_owned(),
+        )
+    });
+    if let Some(capture) = &mut capture {
+        let (_, path) = capture.toggle()?;
+        println!("FrameXML profile={}", path.display());
+    }
     let mut managers = Vec::new();
     for batched in [false, true] {
         let environment = UiScriptEnvironment::new(2560, 1440, false)?;
@@ -61,6 +71,8 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
             )]);
         let started = Instant::now();
         let mut source_duration = std::time::Duration::ZERO;
+        let mut max_slice = std::time::Duration::ZERO;
+        let mut slice_count = 0;
         let mut manager = if batched {
             let worker_catalog = catalog.clone();
             let sources = std::thread::spawn(move || {
@@ -69,13 +81,23 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
             .join()
             .map_err(|_| "source worker panicked")??;
             source_duration = started.elapsed();
-            FrameManager::start_with_sources(
+            let mut construction = FrameManager::begin_with_sources(
                 AssetStoreHandle::new(AssetStore::mount(catalog.clone())?),
                 environment,
                 &[],
                 &AddonCatalog::default(),
                 sources,
-            )?
+            );
+            loop {
+                let _frame = capture.as_ref().map(|_| solarity_profiling::begin_frame());
+                let slice_start = Instant::now();
+                let result = construction.advance(std::time::Duration::from_millis(2));
+                max_slice = max_slice.max(slice_start.elapsed());
+                slice_count += 1;
+                if let std::task::Poll::Ready(result) = result {
+                    break result?;
+                }
+            }
         } else {
             FrameManager::start_shared(
                 AssetStoreHandle::new(AssetStore::mount(catalog.clone())?),
@@ -86,13 +108,36 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
         };
         let load = started.elapsed();
         let started = Instant::now();
-        manager.with_suppressed_sound_entries(|manager| {
-            if batched {
-                manager.with_deferred_presentation(entry_events)?
-            } else {
-                entry_events(manager)
+        let mut entry_max_slice = std::time::Duration::ZERO;
+        let mut entry_slices = 0;
+        if batched {
+            let mut events = ENTRY_EVENTS.into_iter();
+            let mut publication = manager.begin_suppressed_publication(move |manager| {
+                let Some(event) = events.next() else {
+                    return std::ops::ControlFlow::Break(Ok(()));
+                };
+                match manager.dispatch_event(event, &UiEventPayload::empty()) {
+                    Ok(_) => std::ops::ControlFlow::Continue(()),
+                    Err(error) => std::ops::ControlFlow::Break(Err(error)),
+                }
+            });
+            loop {
+                let _frame = capture.as_ref().map(|_| solarity_profiling::begin_frame());
+                let slice_start = Instant::now();
+                let result = publication.advance(std::time::Duration::from_millis(2));
+                entry_max_slice = entry_max_slice.max(slice_start.elapsed());
+                entry_slices += 1;
+                if let std::task::Poll::Ready(result) = result {
+                    let (published, callbacks) = result?;
+                    callbacks?;
+                    manager = published;
+                    break;
+                }
             }
-        })?;
+            assert!(entry_slices > 2);
+        } else {
+            manager.with_suppressed_sound_entries(entry_events)?;
+        }
         let entry = started.elapsed();
         let started = Instant::now();
         if batched {
@@ -101,15 +146,22 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
             action_events(&mut manager)?;
         }
         println!(
-            "FrameXML batched={batched} load_ms={:.3} source_worker_ms={:.3} main_construction_ms={:.3} entry_ms={:.3} action_ms={:.3} objects={}",
+            "FrameXML batched={batched} load_ms={:.3} source_worker_ms={:.3} main_construction_ms={:.3} max_slice_ms={:.3} slices={} entry_ms={:.3} entry_max_slice_ms={:.3} entry_slices={} action_ms={:.3} objects={}",
             load.as_secs_f64() * 1000.,
             source_duration.as_secs_f64() * 1000.,
             (load - source_duration).as_secs_f64() * 1000.,
+            max_slice.as_secs_f64() * 1000.,
+            slice_count,
             entry.as_secs_f64() * 1000.,
+            entry_max_slice.as_secs_f64() * 1000.,
+            entry_slices,
             started.elapsed().as_secs_f64() * 1000.,
             manager.geometry().region_count()
         );
         managers.push(manager);
+    }
+    if let Some(capture) = &mut capture {
+        capture.shutdown()?;
     }
     let [sequential, batched] = managers.as_slice() else {
         return Err("two managers required".into());
@@ -156,15 +208,18 @@ fn stock_framexml_entry_and_action_events_match_sequential_publication()
     Ok(())
 }
 
+/// Stock initial notifications, shared by the sequential and staged paths.
+const ENTRY_EVENTS: [&str; 5] = [
+    "VARIABLES_LOADED",
+    "UPDATE_CHAT_WINDOWS",
+    "PLAYER_LOGIN",
+    "UPDATE_BINDINGS",
+    "PLAYER_ENTERING_WORLD",
+];
+
 /// Executes the same ordered initial notifications as RuntimeWorldUi.
 fn entry_events(manager: &mut FrameManager) -> Result<(), UiEventError> {
-    for event in [
-        "VARIABLES_LOADED",
-        "UPDATE_CHAT_WINDOWS",
-        "PLAYER_LOGIN",
-        "UPDATE_BINDINGS",
-        "PLAYER_ENTERING_WORLD",
-    ] {
+    for event in ENTRY_EVENTS {
         manager.dispatch_event(event, &UiEventPayload::empty())?;
     }
     Ok(())

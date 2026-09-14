@@ -13,6 +13,7 @@ mod notification;
 mod region;
 mod render;
 mod script;
+mod startup;
 mod widget;
 mod world;
 mod xml;
@@ -65,10 +66,11 @@ pub use frame::{
     UiObjectTree,
 };
 pub use glue::{
-    FrameManager, FrameUiSources, GlueError, GlueInitialScreen, GlueManager, GlueObject,
-    GlueStartupReport, UiCharacterCreationError, UiCharacterCreationPreview,
-    UiCharacterCreationRequest, UiCharacterCreationState, UiCharacterExpansion,
-    UiCreationClassRoles, UiKeyboardModifiers, UiPointerButton, UiPointerDispatch,
+    FrameManager, FramePublication, FrameStartup, FrameUiSources, GlueError, GlueInitialScreen,
+    GlueManager, GlueObject, GlueStartupReport, UiCharacterCreationError,
+    UiCharacterCreationPreview, UiCharacterCreationRequest, UiCharacterCreationState,
+    UiCharacterExpansion, UiCreationClassRoles, UiKeyboardModifiers, UiPointerButton,
+    UiPointerDispatch,
 };
 pub use input::{UiModifierKeyState, UiModifierKeys};
 pub use region::{

@@ -1,8 +1,10 @@
 //! Persistent ownership of the built-in active-world interface.
 
+mod publication;
 mod startup;
+pub use publication::FramePublication;
 
-pub use startup::FrameUiSources;
+pub use startup::{FrameStartup, FrameUiSources};
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
