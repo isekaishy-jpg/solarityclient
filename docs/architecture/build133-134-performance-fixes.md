@@ -23,7 +23,7 @@ and sustained frame time require separate verification.
   moving transports, tile readiness and native candidate ordering.
 - [x] Validate the world-service action/event spike through the shared UI update
   changes; distinguish genuine work from fence/limiter/scheduling waits.
-- [ ] Run required formatting, workspace Clippy and tests; record targeted
+- [x] Run required formatting, workspace Clippy and tests; record targeted
   measurements, commit/push completed work, and finish with an installed numbered
   Testing build. Do not claim a matched FPS gain from unmatched route windows.
 
@@ -446,3 +446,45 @@ workloads and matched desktop FPS remain measurement limits. The implementation
 work does not depend on another user-run test, and the numerical limits above
 remain explicit rather than treating this as a claim that all performance work
 or every possible hitch is finished.
+
+
+The final capture also retains two long dispatch outliers. At frames 1269 and
+1413, caller batch time is 34.885 and 31.273 ms, while dispatch alone is 25.729
+and 30.833 ms. Caller cycle counts are only 82,606 and 49,816. The primary frame
+worker's dispatch p99 histogram bound is 0.064 ms and mean 0.037 ms. This identifies
+a wait rather than tens of milliseconds of caller pose computation. It does not
+identify the external scheduling cause or prove that every long join is fixed.
+The tested fix specifically prevents frame work from entering the background
+archive queue; no priority override, busy-wait policy or speculative fallback is
+introduced to hide these residual observations.
+
+
+### Longer route and final Testing build 136
+
+A third uncaptured hidden route runs 2,048 frames per phase (14,336 total) without
+concurrent compilation. It completes successfully. The longer stationary window
+continues admitting terrain: its first/last 512 frames average 4.00/9.76 resident
+tiles, about 9,688/12,115 particle vertices, and 5.78/6.76 ms. Later pointer work
+reaches 49 resident tiles. Travel reaches 56 tiles, then returns to 49.
+
+The final settled phase holds exactly 49 tiles, 852 M2 packets and 11,016 palette
+transforms throughout. Its mean is 6.866 ms and p95 7.363 ms. The first/last
+512-frame means are 6.866/7.007 ms, while particle vertices decline from about
+13,712 to 12,317. This bounds scene residency in this run; it does not prove the
+absence of a slow leak or eliminate timing drift. The run still contains isolated
+hitches (maximum 68.911 ms in settled work). Evidence:
+`target/joined-world-long.csv` and `target/joined-world-long.log`.
+
+The official package script reserved and built **Solarity 0.0.3a, Build 136**
+from `bbb82e921c57ea1a71bdb6ae57d3bebd001c034d`. Installation and executable
+identity verification passed on 2026-09-14. The dirty identity reflects package
+reservation; all functional source changes were committed before compilation.
+Installed and packaged SHA-256 hashes agree:
+`767B46E71B1CDD9A041F88AE4D0EC8D6F3F1ABC71F60744913D548242C4452E4`.
+
+The persistent Testing shortcut targets the installed build, retaining 2560x1440
+fullscreen-windowed settings, four CPU workers, two network workers and manual
+F10 activation. No visible client was launched. Required workspace checks and
+final changed-runtime checks are recorded above. The identified implementation
+work is complete and this numbered build is the delivery checkpoint; remaining
+measurement limits and dispatch/streaming hitches are explicitly retained above.
