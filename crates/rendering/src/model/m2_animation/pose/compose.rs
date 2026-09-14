@@ -1,12 +1,16 @@
 //! Parent-first M2 bone transform composition.
 
+mod samples;
+
+pub use samples::M2BoneSamples;
+
 use glam::{Mat3, Mat4, Vec3};
 use solarity_asset::{M2AnimationSet, M2Attachment, M2ParticleEmitter, M2Track};
 
-use super::quaternion::quaternion_matrix;
-use super::sample::sample_discrete;
-use super::sample::{sample_quaternion, sample_vec3};
-use super::{M2AnimationClock, M2BonePoseError};
+use super::super::quaternion::quaternion_matrix;
+use super::super::sample::sample_discrete;
+use super::super::sample::{sample_quaternion, sample_vec3};
+use super::super::{M2AnimationClock, M2BonePoseError};
 
 /// Per-hand selection for the model-authored `HandsClosed` finger pose.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,6 +162,7 @@ impl M2BonePose {
             None,
             &[],
             &[],
+            None,
         )
     }
 
@@ -216,6 +221,7 @@ impl M2BonePose {
             overrides.finger_pose,
             overrides.bone_transforms,
             overrides.bone_sequences,
+            None,
         )
     }
 
@@ -235,6 +241,7 @@ impl M2BonePose {
             None,
             &[],
             &[],
+            None,
         )?;
         Ok(pose)
     }
@@ -250,6 +257,7 @@ impl M2BonePose {
         finger_pose: Option<(M2AnimationClock, M2FingerPoseHands)>,
         bone_transforms: &[(u16, Mat4)],
         bone_sequences: &[(u16, M2AnimationClock)],
+        required: Option<&[bool]>,
     ) -> Result<(), M2BonePoseError> {
         let clock = clock.resolve(animations)?;
         self.sequence_clocks.resize(animations.bones().len(), None);
@@ -300,6 +308,12 @@ impl M2BonePose {
             return Err(M2BonePoseError::BillboardViewRequired { bone });
         }
 
+        // Callback-only transactions with no active bone consumers still
+        // validate their clocks and overrides, but touch no palette storage.
+        if required.is_some_and(|mask| !mask.iter().any(|required| *required)) {
+            return Ok(());
+        }
+
         // Empty tracks have the same identity palette for every sequence and
         // owner. Clocks and overrides above still validate, while all effect,
         // event and attachment consumers continue through their ordinary paths.
@@ -317,6 +331,9 @@ impl M2BonePose {
         self.identity_pose = false;
         self.local.resize(animations.bones().len(), Mat4::IDENTITY);
         for (index, bone) in animations.bones().iter().enumerate() {
+            if required.is_some_and(|mask| !mask[index]) {
+                continue;
+            }
             let transform = bone_transforms
                 .iter()
                 .rev()
@@ -365,6 +382,9 @@ impl M2BonePose {
 
         self.transforms.resize(self.local.len(), Mat4::IDENTITY);
         for &index in animations.bone_parent_order() {
+            if required.is_some_and(|mask| !mask[index]) {
+                continue;
+            }
             compose_bone(
                 index,
                 animations,

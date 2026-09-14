@@ -6,7 +6,7 @@ use solarity_asset::{M2AnimationSet, M2Light, M2LightKind};
 use crate::{M2DirectionalLight, M2PointLight};
 
 use super::sample::{sample_discrete, sample_scalar, sample_vec3};
-use super::{M2AnimationClock, M2BonePose, M2BonePoseError};
+use super::{M2AnimationClock, M2BonePoseError, M2BoneTransforms};
 
 /// Samples every visible authored directional light in scene coordinates.
 ///
@@ -21,7 +21,7 @@ use super::{M2AnimationClock, M2BonePose, M2BonePoseError};
 /// authored light references a bone absent from the supplied pose.
 pub fn sample_m2_directional_lights(
     animations: &M2AnimationSet,
-    pose: &M2BonePose,
+    pose: &dyn M2BoneTransforms,
     clock: M2AnimationClock,
     model_transform: Mat4,
 ) -> Result<Vec<M2DirectionalLight>, M2BonePoseError> {
@@ -48,7 +48,7 @@ pub struct M2SampledLights {
 /// authored light references a bone absent from the supplied pose.
 pub fn sample_m2_lights(
     animations: &M2AnimationSet,
-    pose: &M2BonePose,
+    pose: &dyn M2BoneTransforms,
     clock: M2AnimationClock,
     model_transform: Mat4,
 ) -> Result<M2SampledLights, M2BonePoseError> {
@@ -75,7 +75,7 @@ pub fn sample_m2_lights(
 /// Returns the same failures as [`sample_m2_lights`].
 pub fn sample_m2_lights_into(
     animations: &M2AnimationSet,
-    pose: &M2BonePose,
+    pose: &dyn M2BoneTransforms,
     clock: M2AnimationClock,
     model_transform: Mat4,
     directional: &mut Vec<M2DirectionalLight>,
@@ -111,7 +111,7 @@ pub fn sample_m2_lights_into(
 /// Returns the same clock and bone failures as [`sample_m2_lights_into`].
 pub fn sample_m2_scene_lights_into(
     animations: &M2AnimationSet,
-    pose: &M2BonePose,
+    pose: &dyn M2BoneTransforms,
     clock: M2AnimationClock,
     model_transform: Mat4,
     directional: &mut Vec<(usize, M2DirectionalLight)>,
@@ -133,7 +133,7 @@ pub fn sample_m2_scene_lights_into(
 
 fn sample_lights_with(
     animations: &M2AnimationSet,
-    pose: &M2BonePose,
+    pose: &dyn M2BoneTransforms,
     clock: M2AnimationClock,
     model_transform: Mat4,
     mut directional: impl FnMut(usize, M2DirectionalLight),
@@ -151,10 +151,10 @@ fn sample_lights_with(
         // identity-bone substitution for an invalid stock matrix reference.
         let bone = light
             .bone_index()
-            .and_then(|index| pose.transforms().get(usize::from(index)))
+            .and_then(|index| pose.bone_transform(usize::from(index)))
             .ok_or(M2BonePoseError::LightBoneIndex {
                 requested: light.bone_index().unwrap_or(u16::MAX),
-                available: pose.transforms().len(),
+                available: pose.bone_count(),
             })?;
         if light.kind() == M2LightKind::Point {
             let position =

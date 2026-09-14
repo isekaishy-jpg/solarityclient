@@ -5,6 +5,14 @@ use thiserror::Error;
 /// A decoded animation set cannot produce the requested model pose.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum M2BonePoseError {
+    /// A CPU consumer requested a bone outside the admitted model.
+    #[error("m2 requested bone {requested} is unavailable; model has {available} bones")]
+    RequestedBoneIndex {
+        /// Requested zero-based bone index.
+        requested: usize,
+        /// Number of admitted bones.
+        available: usize,
+    },
     /// The caller selected a sequence index outside the model catalog.
     #[error("M2 animation sequence {requested} is unavailable; model has {available} sequences")]
     SequenceIndex {

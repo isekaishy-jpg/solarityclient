@@ -1,6 +1,10 @@
 //! 73D5D0 registers the unit's authored-event adapter on its mount too.
 
-use super::*;
+use super::super::{
+    CrtRand, M2BonePoseOverrides, M2BoneTransforms, M2Frame, M2GpuPlacementOwner, M2Playback, Mat4,
+    Rc, RuntimeTerrainFrameError, WorldCameraFrame, append_triggered_events, unit_effects,
+};
+use crate::application::model_playback::M2ExpiredVariation;
 use glam::Vec3;
 
 impl M2Frame {
@@ -46,7 +50,11 @@ impl M2Frame {
                          _: u32,
                          event: &M2ExpiredVariation,
                          random: &mut CrtRand| {
-            self.bone_pose_scratch.recompose_with_overrides(
+            self.bone_demand.clear();
+            self.bone_demand
+                .events(&source.model, placement.owner, event.event_window);
+            self.bone_demand.attachment(&source.model, 0);
+            self.bone_samples_scratch.recompose(
                 source.model.animations(),
                 event.clock,
                 camera.view() * transform,
@@ -55,6 +63,7 @@ impl M2Frame {
                     bone_sequences: &event.bone_sequences,
                     ..Default::default()
                 },
+                self.bone_demand.bones(),
             )?;
             let first = self.triggered_events.len();
             append_triggered_events(
@@ -63,7 +72,7 @@ impl M2Frame {
                 placement.owner,
                 transform,
                 &placement.sound_lifetime,
-                &self.bone_pose_scratch,
+                &self.bone_samples_scratch,
                 event.event_window,
             )?;
             let Some((animation, body_source, rider_scale)) = &body else {
@@ -79,7 +88,7 @@ impl M2Frame {
             let clock = playback.sample_clock(now as u32);
             let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
             if clock != event.clock || sequences != event.bone_sequences {
-                self.bone_pose_scratch.recompose_with_overrides(
+                self.bone_samples_scratch.recompose(
                     source.model.animations(),
                     clock,
                     camera.view() * transform,
@@ -88,6 +97,7 @@ impl M2Frame {
                         bone_sequences: &sequences,
                         ..Default::default()
                     },
+                    self.bone_demand.bones(),
                 )?;
             }
             let attachment = source.model.attachment(0).ok_or_else(|| {
@@ -97,17 +107,16 @@ impl M2Frame {
                 }
             })?;
             let bone = self
-                .bone_pose_scratch
-                .transforms()
-                .get(usize::from(attachment.bone_index()))
+                .bone_samples_scratch
+                .bone_transform(usize::from(attachment.bone_index()))
                 .ok_or(solarity_rendering::M2BonePoseError::AttachmentBoneIndex {
                     requested: attachment.bone_index(),
-                    available: self.bone_pose_scratch.transforms().len(),
+                    available: self.bone_samples_scratch.bone_count(),
                 })?;
             // Bone queries do not test an attachment's enable channel. That
             // channel governs the later rider callback traversal separately.
             let body_transform = transform
-                * *bone
+                * bone
                 * Mat4::from_translation(attachment.position())
                 * Mat4::from_scale(Vec3::splat(*rider_scale));
             for event in &self.triggered_events[first..] {

@@ -70,12 +70,13 @@ use solarity_ecs::{WorldObjectIdentity, WorldTransform};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, CharacterAtlasTexture, CharacterAttachmentPoint,
     CharacterGeosetPlan, CreatureGeosetPlan, M2AnimationClock, M2BonePose, M2BonePoseOverrides,
-    M2CameraEffectScale, M2DrawCall, M2EffectOrder, M2ElementAlphaState, M2EventTimeWindow,
-    M2FingerPoseHands, M2LocalLightCount, M2MaterialPose, M2MaterialState, M2MaterialUniform,
-    M2MeshHandle, M2MeshPlan, M2ModelOrientation, M2ParticleColorReplacement, M2ParticleMeshPlan,
-    M2ParticleMeshPlanError, M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw,
-    M2ParticleRenderVertex, M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle,
-    M2PreparedDraw, M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
+    M2BoneSamples, M2BoneTransforms, M2CameraEffectScale, M2DrawCall, M2EffectOrder,
+    M2ElementAlphaState, M2EventTimeWindow, M2FingerPoseHands, M2LocalLightCount, M2MaterialPose,
+    M2MaterialState, M2MaterialUniform, M2MeshHandle, M2MeshPlan, M2ModelOrientation,
+    M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
+    M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
+    M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
+    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
     M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
     M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvKey,
     M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentPass,
@@ -508,7 +509,11 @@ pub(in crate::application) struct M2Frame {
     unit_scene_time_ms: f32,
     retirement: retirement::M2RetirementScene,
     bone_pose_scratch: M2BonePose,
+    /// CPU samples cannot be mistaken for a complete render palette.
+    bone_samples_scratch: M2BoneSamples,
+    bone_demand: preparation::demand::CpuBoneDemand,
     pose_batch: preparation::poses::PoseBatch,
+    receiver_frame: preparation::receivers::ReceiverFrame,
     /// Reused only between shadow and ordinary draws of the current placement.
     material_pose_scratch: Vec<Option<M2MaterialPose>>,
     bone_transforms: Vec<Mat4>,
@@ -634,7 +639,10 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            bone_samples_scratch: M2BoneSamples::default(),
+            bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
+            receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -782,7 +790,10 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            bone_samples_scratch: M2BoneSamples::default(),
+            bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
+            receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -2098,7 +2109,7 @@ fn prepare_glue_character_gpu_source(
 fn sample_mount_camera(
     model: &DecodedM2Model,
     model_transform: Mat4,
-    bone_pose: &M2BonePose,
+    bone_pose: &dyn M2BoneTransforms,
     time_ms: f32,
 ) -> Result<RuntimeMountCameraSample, RuntimeTerrainFrameError> {
     let animations = model.animations();
@@ -2110,9 +2121,7 @@ fn sample_mount_camera(
     {
         let bone = match event.bone_index() {
             Some(bone_index) => bone_pose
-                .transforms()
-                .get(bone_index as usize)
-                .copied()
+                .bone_transform(bone_index as usize)
                 .ok_or_else(|| RuntimeTerrainFrameError::M2EventBoneIndex {
                     model: model.path().clone(),
                     event_index,
@@ -2147,16 +2156,14 @@ fn append_triggered_events(
     owner: M2GpuPlacementOwner,
     model_transform: Mat4,
     sound_lifetime: &std::cell::OnceCell<Rc<sound::M2SoundKind>>,
-    bone_pose: &M2BonePose,
+    bone_pose: &dyn M2BoneTransforms,
     window: M2EventTimeWindow,
 ) -> Result<(), RuntimeTerrainFrameError> {
     for event_index in triggered_m2_event_indices(model.animations(), window) {
         let event = &model.animations().events()[event_index];
         let bone = match event.bone_index() {
             Some(bone_index) => bone_pose
-                .transforms()
-                .get(bone_index as usize)
-                .copied()
+                .bone_transform(bone_index as usize)
                 .ok_or_else(|| RuntimeTerrainFrameError::M2EventBoneIndex {
                     model: model.path().clone(),
                     event_index,
@@ -2180,13 +2187,12 @@ fn append_triggered_events(
             // attachment enable track; its fallback is origin + world Z*2.
             callback.position = if let Some(attachment) = model.attachment(17) {
                 let bone = bone_pose
-                    .transforms()
-                    .get(usize::from(attachment.bone_index()))
+                    .bone_transform(usize::from(attachment.bone_index()))
                     .ok_or(solarity_rendering::M2BonePoseError::AttachmentBoneIndex {
                         requested: attachment.bone_index(),
-                        available: bone_pose.transforms().len(),
+                        available: bone_pose.bone_count(),
                     })?;
-                (model_transform * *bone).transform_point3(attachment.position())
+                (model_transform * bone).transform_point3(attachment.position())
             } else {
                 model_transform.transform_point3(glam::Vec3::ZERO) + glam::Vec3::Z * 2.0
             };

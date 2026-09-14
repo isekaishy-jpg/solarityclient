@@ -1,4 +1,106 @@
-# M2 preparation: unit pose batches and shared registration
+# M2 preparation: consumer demand, pose batches and shared registration
+
+## Consumer-driven preparation
+
+The traversal now resolves camera and light-volume admission after final
+placement joins and before complete skeletal sampling. A model's scene callback
+does not by itself request a render palette. Shadow-only models still sample a
+complete palette and submit their admitted shadows independently of the camera.
+The early worker batch accepts unattached roots admitted by either the camera or
+the independent shadow collectors. Attached transforms are sampled after their
+final admission in traversal. Shadow-only roots retain worker sampling instead
+of being pushed back into the serial traversal by camera culling.
+
+CPU queries use the separate `M2BoneSamples` type through `M2BoneTransforms`.
+It has no palette accessor. Current event crossings, active item/effect/retired
+attachments, mount-camera queries and authored light emitters request named
+bones; the sampler closes their ancestry and uses the same clock, override,
+billboard and matrix arithmetic as complete poses. Unrequested matrices cannot
+be read from a prior model or frame. Callback-only models without active bone
+consumers validate their inputs without touching palette storage. Ordinary unit
+and mount callbacks use the same demand boundary, including expired variations.
+
+This retains build-12340's independent `832450` callback traversal, `823F10`
+render registration, and `831330` attachment queries. Event ordering, RNG,
+completion, attachment enable tracks and offscreen light publication remain
+ordered on the client thread. The new demand modules do not suppress those
+callbacks or substitute the camera's admission for shadow admission.
+
+Liquid/fog classification now follows camera admission. Color receiver requests
+retain logical placement ancestry until mesh, particle and ribbon packets have
+survived admission. Only their actual receivers and required ancestors perform
+lighting callbacks, in traversal order, before scene-bank finalization. This
+follows the registered-root lighting drain in `821A20` through `831AF0`.
+An offscreen light emitter still contributes its light without allocating its
+own unused receiver scene. Missing submitted receiver mappings are errors;
+they cannot silently choose another light bank.
+
+Focused folder modules own CPU demand, selected sampling, ordered publication,
+receiver resolution and unit callbacks. Ordered publication accepts a borrowed
+`M2BoneTransforms` capability and has no renderer or palette-upload interface.
+All scratch storage is retained; no timing or per-model diagnostic logging was
+added to the ordinary frame loop.
+
+Regression coverage includes exact selected/full matrices with reversed parents
+and changing overrides, shrinking/empty requests, failure invalidation, forward
+receiver ancestry and frame reuse. Existing scene tests verify offscreen event
+and effect construction with zero speculative unit palettes, offscreen animated
+lights, independent shadow palettes, mounts, equipment and retirement. The same
+offscreen callback fixture also admits primary shadows for fully opaque units
+and checks that both palettes are consumed from the prepared batch.
+
+The completed consumer-demand implementation passes `cargo fmt --all -- --check`,
+workspace Clippy with all targets/features and warnings denied, and workspace
+tests with all features: 1,390 passed, zero failed, 29 explicitly ignored.
+
+The requested five-millisecond whole-frame reduction is not established by these
+structural changes. The hidden diagnostic replay uses Soap's recorded appearance,
+equipment, route and camera at 2560 x 1440 / Ultra, but an authored population of
+120 Goblins rather than the captured live population. It advances animation on
+a fixed 1/120-second clock and includes stationary, orbit and travel phases.
+Asynchronous streaming still creates some differences in resident tile and draw
+counts between runs. It cannot replace a matched live Soap measurement.
+
+The replay's hidden Vulkan presentation blocks for several milliseconds, versus
+roughly 0.1 ms in the earlier live capture. Therefore changes in its total frame
+time or FPS cannot be credited to M2 preparation. Component comparisons must
+use the M2 profile scope and omit intervals spanning phase boundaries. The first
+candidate also excluded offscreen shadow casters from worker sampling, pushing
+their full palettes into serial traversal; the final batch admission explicitly
+includes both camera and independent shadow collectors.
+
+The corrected baseline/candidate/candidate/baseline replay on 2026-09-14 measured
+the following weighted M2-scope means, using only intervals wholly inside each
+phase. Both executables used the same temporary diagnostic adapter and four CPU
+workers. Each run contained 512 frames per phase; boundary-spanning profiler
+intervals are excluded from this table.
+
+| Phase | Build 132 source (ms) | Consumer demand (ms) | Difference (ms) |
+| --- | ---: | ---: | ---: |
+| Stationary | 2.739 | 2.502 | 0.238 |
+| Orbit | 2.529 | 2.032 | 0.497 |
+| Pointer | 3.037 | 2.864 | 0.172 |
+| Travel out | 2.986 | 2.683 | 0.303 |
+| Travel back | 3.032 | 2.768 | 0.264 |
+| Settled | 3.289 | 3.141 | 0.148 |
+
+These component results are substantially below the requested 5 ms reduction.
+The frame-time means were generally worse in the candidate hidden runs, while
+queue presentation waited longer; neither a live frame-rate gain nor a live
+regression can be inferred from that comparison. Terrain, WDL, WMO and primary
+shadow draw counts matched at corresponding frames in the first pair, but M2,
+far environment-shadow and particle counts had some differences during streaming.
+This work establishes the CPU demand boundary; it does not complete the
+longstanding M2 frame-cost fix or establish doubled/tripled FPS.
+
+The production source passed the required checks before the diagnostic build;
+the adapter restored those exact source bytes afterward. The installed Testing
+client remains Build 132. No new client package is represented by these results.
+
+The measurements below describe the earlier Build 132 work. They do not establish
+a whole-frame saving for consumer-driven preparation.
+
+## Build 132 measurements and implementation
 
 Build 131's Orgrimmar route ended with approximately 5.5 ms of M2 preparation,
 including 4.65 ms inside placement traversal. Instanced submission did not remove

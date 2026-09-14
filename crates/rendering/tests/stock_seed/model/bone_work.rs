@@ -1,7 +1,7 @@
 //! Empty local tracks still inherit animated parents and instance overrides.
 
 use super::*;
-use solarity_rendering::M2BonePoseOverrides;
+use solarity_rendering::{M2BonePoseOverrides, M2BoneSamples, M2BoneTransforms};
 
 #[test]
 fn empty_bone_locals_preserve_out_of_order_parents_and_changing_overrides()
@@ -44,6 +44,7 @@ fn empty_bone_locals_preserve_out_of_order_parents_and_changing_overrides()
     assert!(model.animations().has_identity_bone_local(1));
     assert!(!model.animations().has_identity_bone_local(2));
     let mut pose = M2BonePose::default();
+    let mut samples = M2BoneSamples::default();
     for (time, extra) in [(500., 0.), (500., 3.), (750., 0.)] {
         let overrides = [(0, Mat4::from_translation(Vec3::Y * extra))];
         pose.recompose_with_overrides(
@@ -65,6 +66,44 @@ fn empty_bone_locals_preserve_out_of_order_parents_and_changing_overrides()
                 ))
             );
         }
+        // CPU demands can shrink, disappear, and grow while time/overrides
+        // change. Unrequested storage must never leak a previous frame's pose.
+        for requested in [&[0][..], &[1][..], &[], &[2][..]] {
+            samples.recompose(
+                model.animations(),
+                M2AnimationClock::new(0, time, time),
+                Mat4::IDENTITY,
+                M2BonePoseOverrides {
+                    bone_transforms: if extra == 0. { &[] } else { &overrides },
+                    ..Default::default()
+                },
+                requested,
+            )?;
+            assert_eq!(samples.bone_count(), 3);
+            for index in 0..3 {
+                let demanded = requested.first().is_some_and(|first| index >= *first);
+                assert_eq!(
+                    samples.bone_transform(index),
+                    demanded.then_some(pose.transforms()[index]),
+                );
+            }
+        }
     }
+    assert!(
+        samples
+            .recompose(
+                model.animations(),
+                M2AnimationClock::new(0, 0., 0.),
+                Mat4::IDENTITY,
+                M2BonePoseOverrides::default(),
+                &[3],
+            )
+            .is_err()
+    );
+    assert_eq!(
+        samples.bone_transform(2),
+        None,
+        "failed sampling invalidates old results"
+    );
     Ok(())
 }

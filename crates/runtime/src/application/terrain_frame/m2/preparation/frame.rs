@@ -5,13 +5,12 @@ use super::super::{
     M2EffectOrder, M2ElementAlphaState, M2Frame, M2GpuPlacementOwner, M2MaterialPose,
     M2MaterialState, M2MaterialUniform, M2ParticleMeshPlan, M2ParticleMeshPlanError,
     M2ParticlePose, M2PlaybackStorage, M2RibbonMeshPlan, M2RibbonPose, M2TransparentDrawIndex,
-    M2TransparentElement, M2TransparentPass, M2TransparentSortKey, M2VisibleFrame, Mat4, Rc,
+    M2TransparentElement, M2TransparentPass, M2TransparentSortKey, M2VisibleFrame, Mat4,
     RuntimeFrameProfile, RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum,
     advance_ribbons, append_triggered_events, compare_m2_transparent, held_item_finger_pose,
     m2_model_distance_key, particle_emission_density, particle_lod_origin,
     placement_bounding_sphere, placement_color, placement_light_bank, placement_mesh_color,
-    sample_m2_lights_into, sample_mount_camera, scene_element_count, section_distance_key, shadow,
-    unit_effects,
+    scene_element_count, section_distance_key, shadow, unit_effects,
 };
 
 impl M2Frame {
@@ -72,6 +71,7 @@ impl M2Frame {
         self.glue_directional_lights.clear();
         self.glue_point_lights.clear();
         self.scene_lighting.clear();
+        self.receiver_frame.clear();
         let mut particle_vertex_capacity = 0_usize;
         let mut particle_index_capacity = 0_usize;
         frame_profile.mark("scene setup");
@@ -193,7 +193,17 @@ impl M2Frame {
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
         frame_profile.mark("dynamic models");
-        self.prepare_unit_poses(cpu, camera.view(), animation_time_ms as u32)?;
+        self.prepare_unit_poses(
+            cpu,
+            super::poses::PoseAdmission::new(
+                camera,
+                frustum,
+                shadow_projection,
+                scenery_shadows,
+                self.environment_detail,
+            ),
+            animation_time_ms as u32,
+        )?;
         frame_profile.mark("unit pose batch");
         if let Some((terrain, ..)) = spatial_lighting.as_ref() {
             self.doodad_scene.prepare(
@@ -360,42 +370,6 @@ impl M2Frame {
                 .light_parent(placement_index)
                 .and_then(|_| self.placement_visibility.light_root(placement_index))
                 .map(|root| m2_model_distance_key(camera.view() * self.placements[root].transform));
-            let (root_liquid, owner_fog) =
-                if let Some((terrain, _, _, liquid_types)) = spatial_lighting.as_mut() {
-                    let root = self
-                        .placement_visibility
-                        .light_root(placement_index)
-                        .unwrap_or(placement_index);
-                    let root = &mut self.placements[root];
-                    if root.placement_valid
-                        && !root
-                            .entity_opacity
-                            .as_ref()
-                            .is_some_and(|owner| owner.hidden())
-                        && let Some(source) = &self.sources[root.source_index]
-                    {
-                        root.entity_lighting.scene_state(
-                            root.retirement
-                                .as_ref()
-                                .map_or(root.owner, |retired| retired.original_owner),
-                            &source.model,
-                            root.local_transform,
-                            root.scene_registration,
-                            terrain,
-                            liquid_types,
-                            camera.view(),
-                        )?
-                    } else {
-                        (solarity_rendering::M2LiquidState::Above, None)
-                    }
-                } else {
-                    (solarity_rendering::M2LiquidState::Above, None)
-                };
-            if owner_fog == Some(false) {
-                placement_fog_color = spatial_lighting
-                    .as_ref()
-                    .map_or(fog_color, |(_, _, ordinary, _)| *ordinary);
-            }
             let placement = &mut self.placements[placement_index];
             if self.vehicle_passengers.hidden(placement_index) {
                 if let M2GpuPlacementOwner::PlayerMount { guid }
@@ -609,7 +583,10 @@ impl M2Frame {
                 .as_ref()
                 .map_or(&[][..], |pose| pose.bone_transforms());
             for expired in advance.expired_variations {
-                self.bone_pose_scratch.recompose_with_overrides(
+                self.bone_demand.clear();
+                self.bone_demand
+                    .events(&source.model, owner, expired.event_window);
+                self.bone_samples_scratch.recompose(
                     source.model.animations(),
                     expired.clock,
                     camera.view() * placement.transform,
@@ -619,6 +596,7 @@ impl M2Frame {
                         bone_sequences: &expired.bone_sequences,
                         ..Default::default()
                     },
+                    self.bone_demand.bones(),
                 )?;
                 let first_event = self.triggered_events.len();
                 append_triggered_events(
@@ -627,7 +605,7 @@ impl M2Frame {
                     placement.owner,
                     placement.transform,
                     &placement.sound_lifetime,
-                    &self.bone_pose_scratch,
+                    &self.bone_samples_scratch,
                     expired.event_window,
                 )?;
                 if let Some(effect) = &placement.unit_effect {
@@ -662,226 +640,18 @@ impl M2Frame {
                 prepared_event_window.unwrap_or_else(|| playback.event_window(animation_time_ms));
             drop(playback);
             let model_view = camera.view() * placement.transform;
-            let model_bounds = source.model.bounds();
-            let particle_liquid = root_liquid.classify_model(
-                (model_bounds.minimum() + model_bounds.maximum()) * 0.5,
-                model_bounds.sphere_radius(),
-                model_view,
-                true,
-                false,
-            );
-            let model_liquid = particle_liquid.with_clipping_support(
-                renderer.m2_liquid_clipping_enabled(),
-                first_transparent_pass == M2TransparentPass::One,
-            );
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             let instance_distance =
                 inherited_model_distance.unwrap_or_else(|| m2_model_distance_key(model_view));
-            let overrides = M2BonePoseOverrides {
-                model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
-                finger_pose,
-                bone_transforms,
-                bone_sequences: &bone_sequences,
-            };
-            if !self.pose_batch.take(
-                placement_index,
-                &source.model,
-                clock,
-                model_view,
-                overrides,
-                &mut self.bone_pose_scratch,
-            )? {
-                self.bone_pose_scratch.recompose_with_overrides(
-                    source.model.animations(),
-                    clock,
-                    model_view,
-                    overrides,
-                )?;
-            }
-            let bone_pose = &self.bone_pose_scratch;
-            self.retirement
-                .publish_attachments(placement, &source.model, bone_pose, clock)?;
-            let first_event = self.triggered_events.len();
-            append_triggered_events(
-                &mut self.triggered_events,
-                &source.model,
-                placement.owner,
-                placement.transform,
-                &placement.sound_lifetime,
-                bone_pose,
-                event_window,
-            )?;
-            if let Some(effect) = &placement.unit_effect {
-                effect.bind_sound_events(&mut self.triggered_events[first_event..]);
-            }
-            if let Some(animation) = &placement.unit_animation {
-                self.unit_effects.update_anchor(
-                    animation,
-                    &source.model,
-                    bone_pose,
-                    placement.transform,
-                )?;
-            }
-            if publishes_lights {
-                solarity_rendering::sample_m2_scene_lights_into(
-                    source.model.animations(),
-                    bone_pose,
-                    clock,
-                    placement.transform,
-                    &mut self.scene_lighting.sample_directional,
-                    &mut self.scene_lighting.sample_points,
-                )?;
-                self.scene_lighting.publish(
-                    placement.light_lifetime.get_or_init(|| Rc::new(())),
-                    placement_mesh_color(placement.owner, placement.color).w * placement_opacity,
-                )?;
-            }
-            if matches!(placement.owner, M2GpuPlacementOwner::GlueModel { .. }) {
-                sample_m2_lights_into(
-                    source.model.animations(),
-                    bone_pose,
-                    clock,
-                    placement.transform,
-                    &mut self.glue_directional_lights,
-                    &mut self.glue_point_lights,
-                )?;
-                for attachment_id in &self.glue_attachment_ids {
-                    let attachment = source.model.attachment(*attachment_id).ok_or_else(|| {
-                        RuntimeTerrainFrameError::MissingGlueM2Attachment {
-                            model: source.model.path().clone(),
-                            attachment_id: *attachment_id,
-                        }
-                    })?;
-                    let transform = bone_pose.attachment_transform(
-                        source.model.animations(),
-                        attachment,
-                        clock,
-                        placement.transform,
-                    )?;
-                    self.glue_attachment_transforms
-                        .push((*attachment_id, transform));
-                }
-            }
-            if let M2GpuPlacementOwner::PlayerMount { guid }
-            | M2GpuPlacementOwner::RemotePlayerMount { guid }
-            | M2GpuPlacementOwner::CreatureMount { guid } = placement.owner
-            {
-                if matches!(placement.owner, M2GpuPlacementOwner::PlayerMount { .. }) {
-                    self.mount_camera_sample = Some(sample_mount_camera(
-                        &source.model,
-                        placement.transform,
-                        bone_pose,
-                        animation_time_ms,
-                    )?);
-                }
-                let attachment = source.model.attachment(0).ok_or_else(|| {
-                    RuntimeTerrainFrameError::MissingMountM2Attachment {
-                        model: source.model.path().clone(),
-                        attachment_id: 0,
-                    }
-                })?;
-                let transform = bone_pose.attachment_transform(
-                    source.model.animations(),
-                    attachment,
-                    clock,
-                    placement.transform,
-                )?;
-                self.rider_transforms.push((guid, transform));
-            }
-            if let M2GpuPlacementOwner::PlayerBody { guid }
-            | M2GpuPlacementOwner::RemotePlayerBody { guid }
-            | M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
-            {
-                for (_owner_guid, point) in self
-                    .requested_items
-                    .iter()
-                    .filter(|(owner_guid, _point)| *owner_guid == guid)
-                {
-                    let attachment = source.model.attachment(point.id()).ok_or_else(|| {
-                        RuntimeTerrainFrameError::MissingPlayerM2Attachment {
-                            model: source.model.path().clone(),
-                            attachment_id: point.id(),
-                        }
-                    })?;
-                    let transform = bone_pose.attachment_transform(
-                        source.model.animations(),
-                        attachment,
-                        clock,
-                        placement.transform,
-                    )?;
-                    self.item_transforms.push((guid, *point, transform));
-                }
-            }
-            if let M2GpuPlacementOwner::UnitItem { guid, point } = placement.owner {
-                for (_owner_guid, _owner_item_point, effect_point) in self
-                    .requested_visuals
-                    .iter()
-                    .filter(|(owner_guid, item_point, _)| {
-                        *owner_guid == guid && *item_point == point
-                    })
-                {
-                    let attachment = source.model.attachment(*effect_point).ok_or_else(|| {
-                        RuntimeTerrainFrameError::MissingPlayerM2Attachment {
-                            model: source.model.path().clone(),
-                            attachment_id: *effect_point,
-                        }
-                    })?;
-                    let transform = bone_pose.attachment_transform(
-                        source.model.animations(),
-                        attachment,
-                        clock,
-                        placement.transform,
-                    )?;
-                    self.visual_transforms
-                        .push((guid, point, *effect_point, transform));
-                }
-            }
-            // 4F8D10 updates unit state/placement before clearing model activity.
-            // Preserve attachment samples, but hidden player hierarchies publish
-            // no model lights, shadow packets, visible effects or mesh packets.
-            if placement
+            // 832450 callbacks remain active independently of 823F10 render
+            // registration. Resolve geometry demand before full-palette work.
+            let hidden = placement
                 .entity_opacity
                 .as_ref()
-                .is_some_and(|owner| owner.hidden())
-            {
-                continue;
-            }
-            let scene_index = if world_lighting.is_some() {
-                // 831AF0 queries matrix F4's translation at +124 with radius
-                // zero. Authored mesh bounds do not move the lighting center.
-                let center = placement.transform.w_axis.truncate();
-                let parent = self.placement_visibility.light_parent(placement_index);
-                let callback = if parent.is_none()
-                    && let Some((terrain, environment, _, _)) = spatial_lighting.as_mut()
-                {
-                    placement.entity_lighting.sample(
-                        placement
-                            .retirement
-                            .as_ref()
-                            .map_or(placement.owner, |retired| retired.original_owner),
-                        &source.model,
-                        placement.transform,
-                        placement.color,
-                        animation_time_ms,
-                        terrain,
-                        *environment,
-                    )?
-                } else {
-                    None
-                };
-                Some(self.scene_lighting.receiver_with_light(
-                    placement_index,
-                    parent,
-                    center,
-                    callback,
-                    (doodad_scene_active || owner_fog.is_some()).then_some(placement_fog_color),
-                )?)
-            } else {
-                None
-            };
+                .is_some_and(|owner| owner.hidden());
             // Native shadow traversal uses the light volume independently of
             // camera visibility, and attached models inherit root admission.
-            let shadow_admitted = if let Some(projection) = shadow_projection {
+            let shadow_admitted = if let Some(projection) = shadow_projection.filter(|_| !hidden) {
                 if let Some(parent) = self.placement_visibility.light_parent(placement_index) {
                     if parent < placement_index {
                         self.shadow_admission[parent]
@@ -901,6 +671,117 @@ impl M2Frame {
             };
             self.shadow_admission[placement_index] = shadow_admitted;
             self.environment_shadow_admission[placement_index] = environment_maps;
+            let visible = !hidden
+                && if environment_maps != 0 && scenery_opacity == 0. {
+                    false
+                } else if doodad_scene_active {
+                    doodad_visible && scenery_opacity != 0.
+                } else if !static_visibility_resolved
+                    || environment_maps != 0
+                    || (publishes_lights && placement.unit_effect.is_none())
+                {
+                    let (center, radius) =
+                        placement_bounding_sphere(&source.model, placement.transform);
+                    frustum.contains_sphere(center, radius)?
+                } else {
+                    true
+                };
+            let needs_palette = !hidden && (visible || shadow_admitted || environment_maps != 0);
+            let overrides = M2BonePoseOverrides {
+                model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+                finger_pose,
+                bone_transforms,
+                bone_sequences: &bone_sequences,
+            };
+            let bone_pose: &dyn solarity_rendering::M2BoneTransforms = if needs_palette {
+                if !self.pose_batch.take(
+                    placement_index,
+                    &source.model,
+                    clock,
+                    model_view,
+                    overrides,
+                    &mut self.bone_pose_scratch,
+                )? {
+                    self.bone_pose_scratch.recompose_with_overrides(
+                        source.model.animations(),
+                        clock,
+                        model_view,
+                        overrides,
+                    )?;
+                }
+
+                &self.bone_pose_scratch
+            } else {
+                self.bone_demand.model(super::demand::CpuModelInputs {
+                    placement,
+                    model: &source.model,
+                    window: event_window,
+                    items: &self.requested_items,
+                    visuals: &self.requested_visuals,
+                    glue_ids: &self.glue_attachment_ids,
+                    effects: &self.unit_effects,
+                    publishes_lights,
+                });
+                self.bone_samples_scratch.recompose(
+                    source.model.animations(),
+                    clock,
+                    model_view,
+                    overrides,
+                    self.bone_demand.bones(),
+                )?;
+                &self.bone_samples_scratch
+            };
+            super::publication::CpuPublication {
+                retirement: &mut self.retirement,
+                triggered_events: &mut self.triggered_events,
+                unit_effects: &mut self.unit_effects,
+                scene_lighting: &mut self.scene_lighting,
+                glue_directional_lights: &mut self.glue_directional_lights,
+                glue_point_lights: &mut self.glue_point_lights,
+                glue_attachment_ids: &self.glue_attachment_ids,
+                glue_attachment_transforms: &mut self.glue_attachment_transforms,
+                mount_camera_sample: &mut self.mount_camera_sample,
+                rider_transforms: &mut self.rider_transforms,
+                requested_items: &self.requested_items,
+                item_transforms: &mut self.item_transforms,
+                requested_visuals: &self.requested_visuals,
+                visual_transforms: &mut self.visual_transforms,
+            }
+            .publish(
+                &source.model,
+                placement,
+                bone_pose,
+                super::publication::CpuSample {
+                    clock,
+                    event_window,
+                    animation_time_ms,
+                    placement_opacity,
+                    publishes_lights,
+                },
+            )?;
+            // 4F8D10 updates unit state/placement before clearing model activity.
+            // Preserve attachment samples, but hidden player hierarchies publish
+            // no model lights, shadow packets, visible effects or mesh packets.
+            if placement
+                .entity_opacity
+                .as_ref()
+                .is_some_and(|owner| owner.hidden())
+            {
+                continue;
+            }
+            // Receiver callbacks belong to submitted geometry. Retain only the
+            // ancestry inputs here; the final demand pass selects actual consumers.
+            let scene_index = if world_lighting.is_some() {
+                Some(self.receiver_frame.record(
+                    placement_index,
+                    self.placement_visibility.light_parent(placement_index),
+                    placement.transform.w_axis.truncate(),
+                    doodad_scene_active.then_some(placement_fog_color),
+                )?)
+            } else {
+                None
+            };
+            let bone_pose = &self.bone_pose_scratch;
             let shadow_bone_offset = u32::try_from(self.bone_transforms.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
             let first_shadow_draw = self.shadow_draws.len();
@@ -937,22 +818,64 @@ impl M2Frame {
                 self.bone_transforms
                     .extend_from_slice(bone_pose.transforms());
             }
-            if environment_maps != 0 && scenery_opacity == 0. {
+            if !visible {
                 continue;
             }
-            if doodad_scene_active {
-                if !doodad_visible || scenery_opacity == 0.0 {
-                    continue;
-                }
-            } else if !static_visibility_resolved
-                || environment_maps != 0
-                || (publishes_lights && placement.unit_effect.is_none())
-            {
-                let (center, radius) =
-                    placement_bounding_sphere(&source.model, placement.transform);
-                if !frustum.contains_sphere(center, radius)? {
-                    continue;
-                }
+
+            let (root_liquid, owner_fog) =
+                if let Some((terrain, _, _, liquid_types)) = spatial_lighting.as_mut() {
+                    let root = self
+                        .placement_visibility
+                        .light_root(placement_index)
+                        .unwrap_or(placement_index);
+                    let root = &mut self.placements[root];
+                    if root.placement_valid
+                        && !root
+                            .entity_opacity
+                            .as_ref()
+                            .is_some_and(|owner| owner.hidden())
+                        && let Some(source) = &self.sources[root.source_index]
+                    {
+                        root.entity_lighting.scene_state(
+                            root.retirement
+                                .as_ref()
+                                .map_or(root.owner, |retired| retired.original_owner),
+                            &source.model,
+                            root.local_transform,
+                            root.scene_registration,
+                            terrain,
+                            liquid_types,
+                            camera.view(),
+                        )?
+                    } else {
+                        (solarity_rendering::M2LiquidState::Above, None)
+                    }
+                } else {
+                    (solarity_rendering::M2LiquidState::Above, None)
+                };
+            if owner_fog == Some(false) {
+                placement_fog_color = spatial_lighting
+                    .as_ref()
+                    .map_or(fog_color, |(_, _, ordinary, _)| *ordinary);
+            }
+            let placement = &mut self.placements[placement_index];
+            let model_bounds = source.model.bounds();
+            let particle_liquid = root_liquid.classify_model(
+                (model_bounds.minimum() + model_bounds.maximum()) * 0.5,
+                model_bounds.sphere_radius(),
+                model_view,
+                true,
+                false,
+            );
+            let model_liquid = particle_liquid.with_clipping_support(
+                renderer.m2_liquid_clipping_enabled(),
+                first_transparent_pass == M2TransparentPass::One,
+            );
+            if world_lighting.is_some() {
+                self.receiver_frame.set_fog(
+                    placement_index,
+                    (doodad_scene_active || owner_fog.is_some()).then_some(placement_fog_color),
+                );
             }
 
             // 0x00828A00 advances a model from its own previous effect update.
@@ -1382,6 +1305,15 @@ impl M2Frame {
             }
         }
         frame_profile.mark("instance traversal");
+        if world_lighting.is_some() {
+            self.prepare_visible_receivers(
+                animation_time_ms,
+                spatial_lighting
+                    .as_mut()
+                    .map(|(terrain, environment, ..)| (&mut **terrain, *environment)),
+            )?;
+        }
+        frame_profile.mark("visible receiver queries");
         self.transparent_elements.sort_unstable_by(|left, right| {
             (left.pass != first_transparent_pass)
                 .cmp(&(right.pass != first_transparent_pass))

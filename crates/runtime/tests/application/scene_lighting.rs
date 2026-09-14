@@ -311,6 +311,11 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
             "offscreen sources publish without drawing"
         );
         assert_eq!(
+            visible.instance_scenes.len(),
+            2,
+            "offscreen light emitters do not allocate color receiver scenes"
+        );
+        assert_eq!(
             visible.scene_points.points().len(),
             if now < 500. { 2 } else { 0 }
         );

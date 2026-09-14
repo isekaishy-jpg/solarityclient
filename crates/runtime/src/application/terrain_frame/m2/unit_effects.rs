@@ -389,9 +389,23 @@ impl M2UnitEffectScene {
         Ok(())
     }
 
-    /// Owners with attached effects need a final palette before draw admission.
+    /// Owners with attached effects need current attachment samples before draw admission.
     pub(super) fn has_anchors(&self, owner: &Rc<UnitAnimationBehavior>) -> bool {
         self.anchors.contains_key(&Rc::as_ptr(owner).addr())
+    }
+
+    /// Only attached effects currently owned by this unit request bone samples.
+    pub(super) fn request_anchor_bones(
+        &self,
+        owner: &Rc<UnitAnimationBehavior>,
+        model: &solarity_asset::DecodedM2Model,
+        demand: &mut super::preparation::demand::CpuBoneDemand,
+    ) {
+        if let Some(attachments) = self.anchors.get(&Rc::as_ptr(owner).addr()) {
+            for &id in attachments.keys() {
+                demand.attachment(model, id);
+            }
+        }
     }
 
     /// Each requested attachment inherits its current parent bone and placement.
@@ -399,7 +413,7 @@ impl M2UnitEffectScene {
         &mut self,
         owner: &Rc<UnitAnimationBehavior>,
         model: &solarity_asset::DecodedM2Model,
-        bones: &solarity_rendering::M2BonePose,
+        bones: &dyn solarity_rendering::M2BoneTransforms,
         transform: Mat4,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let Some(attachments) = self.anchors.get_mut(&Rc::as_ptr(owner).addr()) else {
@@ -408,13 +422,12 @@ impl M2UnitEffectScene {
         for (id, anchor) in attachments {
             if let Some(attachment) = model.attachment(*id) {
                 let bone = bones
-                    .transforms()
-                    .get(usize::from(attachment.bone_index()))
+                    .bone_transform(usize::from(attachment.bone_index()))
                     .ok_or(solarity_rendering::M2BonePoseError::AttachmentBoneIndex {
                         requested: attachment.bone_index(),
-                        available: bones.transforms().len(),
+                        available: bones.bone_count(),
                     })?;
-                *anchor = Some(transform * *bone * Mat4::from_translation(attachment.position()));
+                *anchor = Some(transform * bone * Mat4::from_translation(attachment.position()));
             }
         }
         Ok(())

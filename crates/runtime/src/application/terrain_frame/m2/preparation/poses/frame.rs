@@ -10,7 +10,7 @@ impl M2Frame {
     pub(in crate::application::terrain_frame::m2) fn prepare_unit_poses(
         &mut self,
         cpu: Option<&CpuExecutor>,
-        view: glam::Mat4,
+        admission: super::PoseAdmission<'_>,
         now: u32,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let batch = &mut self.pose_batch;
@@ -30,6 +30,22 @@ impl M2Frame {
             let Some(source) = &self.sources[placement.source_index] else {
                 continue;
             };
+            // Attached transforms are finalized during ordered traversal. Hidden
+            // roots have no render consumers; other roots use the same camera
+            // and independent shadow demands as final packet preparation.
+            if !placement.placement_valid
+                || self.placement_visibility.light_parent(index).is_some()
+                || self.vehicle_passengers.hidden(index)
+                || placement
+                    .entity_opacity
+                    .as_ref()
+                    .is_some_and(|owner| owner.hidden())
+            {
+                continue;
+            }
+            if !admission.allows(source, placement)? {
+                continue;
+            }
             let Some(playback) = &placement.playback else {
                 continue;
             };
@@ -69,7 +85,7 @@ impl M2Frame {
                 index,
                 source,
                 clock,
-                view * placement.transform,
+                admission.view * placement.transform,
                 finger_pose,
                 animation.body_pose().bone_transforms(),
                 playback.bone_sequence_clocks(&source.model, clock, now),

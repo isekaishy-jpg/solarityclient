@@ -1,12 +1,13 @@
 //! Authored unit callbacks run during the scene tick, before draw admission.
 
-use super::*;
+use super::super::{
+    CrtRand, M2BonePoseOverrides, M2BoneTransforms, M2Frame, M2GpuPlacementOwner, M2Playback, Mat4,
+    RuntimeTerrainFrameError, WorldCameraFrame, append_triggered_events, unit_effects,
+};
 use crate::application::model_playback::M2ExpiredVariation;
 
-mod mount;
-
 impl M2Frame {
-    pub(super) fn advance_unit_callbacks(
+    pub(in crate::application::terrain_frame::m2) fn advance_unit_callbacks(
         &mut self,
         camera: WorldCameraFrame,
         now: f32,
@@ -73,7 +74,10 @@ impl M2Frame {
                              _: u32,
                              event: &M2ExpiredVariation,
                              random: &mut CrtRand| {
-                self.bone_pose_scratch.recompose_with_overrides(
+                self.bone_demand.clear();
+                self.bone_demand
+                    .events(&source.model, placement.owner, event.event_window);
+                self.bone_samples_scratch.recompose(
                     source.model.animations(),
                     event.clock,
                     camera.view() * transform,
@@ -83,6 +87,7 @@ impl M2Frame {
                         bone_sequences: &event.bone_sequences,
                         ..Default::default()
                     },
+                    self.bone_demand.bones(),
                 )?;
                 let first = self.triggered_events.len();
                 append_triggered_events(
@@ -91,7 +96,7 @@ impl M2Frame {
                     placement.owner,
                     transform,
                     &placement.sound_lifetime,
-                    &self.bone_pose_scratch,
+                    &self.bone_samples_scratch,
                     event.event_window,
                 )?;
                 if let Some(callback) = effect_callback.as_mut() {
@@ -112,7 +117,13 @@ impl M2Frame {
                 let playback = playback.borrow();
                 let clock = playback.sample_clock(now as u32);
                 let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
-                self.bone_pose_scratch.recompose_with_overrides(
+                self.bone_demand.clear();
+                self.unit_effects.request_anchor_bones(
+                    animation,
+                    &source.model,
+                    &mut self.bone_demand,
+                );
+                self.bone_samples_scratch.recompose(
                     source.model.animations(),
                     clock,
                     camera.view() * transform,
@@ -122,11 +133,12 @@ impl M2Frame {
                         bone_sequences: &sequences,
                         ..Default::default()
                     },
+                    self.bone_demand.bones(),
                 )?;
                 self.unit_effects.update_anchor(
                     animation,
                     &source.model,
-                    &self.bone_pose_scratch,
+                    &self.bone_samples_scratch,
                     transform,
                 )?;
             }
@@ -174,7 +186,9 @@ impl M2Frame {
         let playback = playback.borrow();
         let clock = playback.sample_clock(now as u32);
         let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
-        self.bone_pose_scratch.recompose_with_overrides(
+        self.bone_demand.clear();
+        self.bone_demand.attachment(&source.model, 0);
+        self.bone_samples_scratch.recompose(
             source.model.animations(),
             clock,
             camera.view() * placement.transform,
@@ -183,6 +197,7 @@ impl M2Frame {
                 bone_sequences: &sequences,
                 ..Default::default()
             },
+            self.bone_demand.bones(),
         )?;
         let attachment = source.model.attachment(0).ok_or_else(|| {
             RuntimeTerrainFrameError::MissingMountM2Attachment {
@@ -190,7 +205,7 @@ impl M2Frame {
                 attachment_id: 0,
             }
         })?;
-        let transform = self.bone_pose_scratch.attachment_transform(
+        let transform = self.bone_samples_scratch.attachment_transform(
             source.model.animations(),
             attachment,
             clock,

@@ -58,6 +58,12 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
                 .map(|owner| (owner.identity().guid(), Rc::clone(owner)))
         })
         .collect::<std::collections::HashMap<_, _>>();
+    // Finish model entry opacity independently of the event clock. A unit still
+    // fading in cannot publish an opaque shadow material at the first callback.
+    for owner in owners.values() {
+        owner.opacity_owner().advance(1000);
+        assert_eq!(owner.opacity_owner().opacity(), 1.);
+    }
     let camera = WorldCamera::stock(Vec3::new(8., 0., 0.), Vec3::new(16., 0., 0.), Vec3::Z, 100.)
         .frame(1.)?;
     let lifetime = Rc::new(());
@@ -115,6 +121,18 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
                 },
             })
         };
+        // Offscreen roots still enter the worker palette batch when their
+        // primary shadow is needed. With neither consumer, no palette is built.
+        let shadow = if now == 1. {
+            Some(solarity_rendering::WorldShadowProjection::primary(
+                solarity_rendering::WorldShadowQuality::UnitsHigh,
+                Vec3::ZERO,
+                camera.camera().position(),
+                -Vec3::Z,
+            )?)
+        } else {
+            None
+        };
         let draws = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
             None,
@@ -129,7 +147,7 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
             Some(&mut callback),
             None,
             None,
-            None,
+            shadow,
             None,
         )?;
         assert_eq!(
@@ -138,9 +156,14 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
             "the offscreen units contribute no mesh; both CEffects retain their scene pass"
         );
         assert_eq!(
+            draws.shadow_draws.len(),
+            if now == 1. { 2 } else { 0 },
+            "offscreen units retain their independently admitted shadows"
+        );
+        assert_eq!(
             frame.pose_batch.consumption(),
-            (2, 2),
-            "both callback-selected poses are consumed without resampling"
+            if now == 1. { (2, 2) } else { (0, 0) },
+            "shadow demand uses prepared palettes; callbacks alone request none"
         );
     }
     assert_eq!(order, [30, 31]);

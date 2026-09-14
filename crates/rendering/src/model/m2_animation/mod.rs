@@ -23,7 +23,9 @@ pub use light::{
     sample_m2_scene_lights_into,
 };
 pub use material::M2MaterialPose;
-pub use pose::{M2BonePose, M2BonePoseOverrides, M2FingerPoseHands};
+pub use pose::{
+    M2BonePose, M2BonePoseOverrides, M2BoneSamples, M2BoneTransforms, M2FingerPoseHands,
+};
 pub use sequence_blend::M2ModelSequenceBlend;
 pub use sequence_timer::{M2ModelSequenceTimer, M2SequenceStartPhase};
 pub use status::{M2BonePoseError, M2MaterialPoseError};

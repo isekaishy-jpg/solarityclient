@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use glam::Mat4;
-use solarity_rendering::{M2AnimationClock, M2BonePose, M2FingerPoseHands};
+use solarity_rendering::{M2AnimationClock, M2BoneTransforms, M2FingerPoseHands};
 use solarity_systems::EntityRetirement;
 
 use super::{
@@ -39,6 +39,10 @@ pub(super) struct RetiredM2Placement {
 }
 
 impl RetiredM2Placement {
+    pub(super) fn attachments(&self) -> &[u32] {
+        &self.attachments
+    }
+
     pub fn opacity(&self) -> f32 {
         self.group.opacity.get()
     }
@@ -277,7 +281,7 @@ impl M2RetirementScene {
         &mut self,
         placement: &M2GpuPlacement,
         model: &solarity_asset::DecodedM2Model,
-        bones: &M2BonePose,
+        bones: &dyn M2BoneTransforms,
         clock: M2AnimationClock,
     ) -> Result<(), RuntimeTerrainFrameError> {
         if let (M2GpuPlacementOwner::Retired(key), Some(retired)) =

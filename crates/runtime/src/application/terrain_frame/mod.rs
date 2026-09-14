@@ -262,6 +262,12 @@ pub enum RuntimeTerrainFrameError {
         /// Resident ADT Y coordinate.
         tile_y: u8,
     },
+    /// A submitted M2 packet lost its required color-receiver preparation.
+    #[error("submitted M2 placement {placement} has no prepared color receiver")]
+    MissingM2Receiver {
+        /// Current frame's logical placement index.
+        placement: u32,
+    },
     /// Terrain residency and the retained GPU generation became inconsistent.
     #[error("current terrain tile [{tile_x}, {tile_y}] has no matching GPU generation")]
     MissingGpuGeneration {

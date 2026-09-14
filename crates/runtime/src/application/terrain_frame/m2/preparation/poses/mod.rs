@@ -1,7 +1,10 @@
 //! Pure unit pose work follows callbacks and precedes ordered scene publication.
 
+mod admission;
 mod frame;
 mod input;
+
+pub(in crate::application::terrain_frame::m2) use admission::PoseAdmission;
 
 use super::super::{M2BonePose, RuntimeTerrainFrameError};
 use input::PoseJob;
