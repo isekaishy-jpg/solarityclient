@@ -77,3 +77,22 @@ impl Drop for Work {
         record!(early_rejected);
     }
 }
+
+impl Work {
+    /// Completes output accounting after an admitted visible model joins its workers.
+    pub(in super::super) fn geometry_outputs(
+        &mut self,
+        mesh: bool,
+        particle: bool,
+        ribbon: bool,
+        shadow: bool,
+    ) {
+        if self.epoch == 0 {
+            return;
+        }
+        self.mesh_owners += u64::from(mesh);
+        self.particle_outputs += u64::from(particle);
+        self.ribbon_outputs += u64::from(ribbon);
+        self.palettes_without_draws += u64::from(!mesh && !particle && !ribbon && !shadow);
+    }
+}

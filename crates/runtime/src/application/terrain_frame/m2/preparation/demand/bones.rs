@@ -77,3 +77,16 @@ impl CpuBoneDemand {
         }
     }
 }
+
+/// A complete model domain with no requested CPU transforms. GPU palette jobs
+/// own validation/composition; ordered callbacks cannot observe stale scratch.
+pub(in crate::application::terrain_frame::m2) struct UnrequestedBones(pub usize);
+
+impl solarity_rendering::M2BoneTransforms for UnrequestedBones {
+    fn bone_count(&self) -> usize {
+        self.0
+    }
+    fn bone_transform(&self, _index: usize) -> Option<glam::Mat4> {
+        None
+    }
+}

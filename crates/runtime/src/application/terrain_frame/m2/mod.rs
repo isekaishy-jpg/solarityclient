@@ -48,6 +48,7 @@ mod unit_scene;
 mod unit_shadow_tests;
 mod vehicle_passengers;
 mod visibility;
+
 use crate::application::entity_opacity::EntityOpacityOwner;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use character_residency::{
@@ -55,6 +56,7 @@ use character_residency::{
     prepare_character_gpu, prepare_mount_gpu, prepare_unit_equipment_gpu,
 };
 use playback::M2PlaybackStorage;
+use preparation::geometry::advance_ribbons;
 use unit_registration::UnitSceneRegistration;
 
 use std::collections::HashMap;
@@ -76,13 +78,12 @@ use solarity_rendering::{
     M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
     M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
     M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
-    M2RibbonControlPoint, M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose,
-    M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank,
-    M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvKey,
-    M2TextureImageHandle, M2TextureSet, M2TextureSetHandle, M2TransparentPass,
-    M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum, compare_m2_transparent,
-    m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
-    triggered_m2_event_indices,
+    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
+    M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2ShaderPermutation,
+    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvKey, M2TextureImageHandle,
+    M2TextureSet, M2TextureSetHandle, M2TransparentPass, M2TransparentSortKey, VulkanRenderer,
+    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
+    m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
 };
 
 use crate::application::game_object_coordinator::{
@@ -509,6 +510,7 @@ pub(in crate::application) struct M2Frame {
     unit_scene_time_ms: f32,
     retirement: retirement::M2RetirementScene,
     bone_pose_scratch: M2BonePose,
+    geometry_batch: preparation::geometry::GeometryBatch,
     /// CPU samples cannot be mistaken for a complete render palette.
     bone_samples_scratch: M2BoneSamples,
     bone_demand: preparation::demand::CpuBoneDemand,
@@ -531,6 +533,7 @@ pub(in crate::application) struct M2Frame {
     pub(super) environment_detail: f32,
     particle_vertices: Vec<M2ParticleRenderVertex>,
     particle_indices: Vec<u32>,
+    #[cfg(test)]
     particle_sort_indices: Vec<usize>,
     particle_draws: Vec<M2ParticlePreparedDraw>,
     ribbon_vertices: Vec<M2RibbonRenderVertex>,
@@ -639,6 +642,7 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            geometry_batch: Default::default(),
             bone_samples_scratch: M2BoneSamples::default(),
             bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
@@ -658,6 +662,7 @@ impl M2Frame {
             environment_detail: 1.0,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
+            #[cfg(test)]
             particle_sort_indices: Vec::new(),
             particle_draws: Vec::new(),
             ribbon_vertices: Vec::new(),
@@ -791,6 +796,7 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            geometry_batch: Default::default(),
             bone_samples_scratch: M2BoneSamples::default(),
             bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
@@ -810,6 +816,7 @@ impl M2Frame {
             environment_detail: 1.0,
             particle_vertices: Vec::new(),
             particle_indices: Vec::new(),
+            #[cfg(test)]
             particle_sort_indices: Vec::new(),
             particle_draws: Vec::new(),
             ribbon_vertices: Vec::new(),
@@ -2426,54 +2433,6 @@ fn particle_emission_density(flags: u32, emitter_origin: glam::Vec3, camera: gla
         return STOCK_DEFAULT_PARTICLE_DENSITY;
     }
     STOCK_DEFAULT_PARTICLE_DENSITY * (1.0 - (distance - 50.0) * 0.02).clamp(0.25, 1.0)
-}
-
-/// Advances every shared declaration through its placement-owned edge history.
-fn advance_ribbons(
-    model: &DecodedM2Model,
-    placement: &mut M2GpuPlacement,
-    bone_pose: &M2BonePose,
-    clock: M2AnimationClock,
-    delta_seconds: f32,
-    effect_scale: M2CameraEffectScale,
-    instance_alpha: f32,
-) -> Result<(), RuntimeTerrainFrameError> {
-    let emitters = model.animations().ribbons();
-    if placement.ribbons.len() != emitters.len() {
-        return Err(RuntimeTerrainFrameError::M2RibbonTrailCount {
-            model: model.path().clone(),
-            trail_count: placement.ribbons.len(),
-            emitter_count: emitters.len(),
-        });
-    }
-    for (ribbon_index, (emitter, trail)) in emitters.iter().zip(&mut placement.ribbons).enumerate()
-    {
-        let bone = match emitter.bone_index() {
-            Some(bone_index) => bone_pose
-                .transforms()
-                .get(bone_index as usize)
-                .copied()
-                .ok_or_else(|| RuntimeTerrainFrameError::M2RibbonBoneIndex {
-                    model: model.path().clone(),
-                    ribbon_index,
-                    bone_index,
-                })?,
-            None => Mat4::IDENTITY,
-        };
-        // Stock appends the emitter-local translation to the animated bone,
-        // then composes the placement. Its column-major matrix passes Y as the
-        // strip width axis and Z as the interpolation tangent.
-        let transform = placement.transform * bone * Mat4::from_translation(emitter.position());
-        let control = M2RibbonControlPoint::new(
-            transform.w_axis.truncate(),
-            transform.y_axis.truncate() * effect_scale.factor(),
-            transform.z_axis.truncate(),
-        );
-        let pose = M2RibbonPose::sample(model.animations(), emitter, clock)?
-            .with_instance_alpha(instance_alpha);
-        trail.advance(delta_seconds, control, pose)?;
-    }
-    Ok(())
 }
 
 /// Computes stock's animated section-center key, including SKIN radius flags.

@@ -14,6 +14,7 @@ pub struct M2ParticlePreparedDraw {
     pipeline: M2ParticlePipelineHandle,
     texture_set: M2TextureSetHandle,
     vertex_offset: i32,
+    vertex_count: u32,
     first_index: u32,
     index_count: u32,
     light_bank: M2SceneLightBank,
@@ -25,6 +26,47 @@ pub struct M2ParticlePreparedDraw {
 }
 
 impl M2ParticlePreparedDraw {
+    /// Relocates a worker-local stream and producer order into the joined frame.
+    /// # Errors
+    /// Returns range overflow before a relocated packet is published.
+    pub fn relocate(
+        mut self,
+        vertices: u32,
+        indices: u32,
+        scene: u32,
+        effects: u32,
+    ) -> Result<Self, VulkanError> {
+        let first = u32::try_from(self.vertex_offset)
+            .ok()
+            .and_then(|first| first.checked_add(vertices))
+            .ok_or(VulkanError::M2ParticleDrawVertexRange)?;
+        first
+            .checked_add(self.vertex_count)
+            .ok_or(VulkanError::M2ParticleDrawVertexRange)?;
+        self.vertex_offset =
+            i32::try_from(first).map_err(|_| VulkanError::M2ParticleDrawVertexRange)?;
+        self.first_index = self
+            .first_index
+            .checked_add(indices)
+            .ok_or(VulkanError::M2ParticleDrawIndexRange)?;
+        self.first_index
+            .checked_add(self.index_count)
+            .ok_or(VulkanError::M2ParticleDrawIndexRange)?;
+        self.order = M2EffectOrder::new(
+            self.priority_plane(),
+            self.effect_order()
+                .checked_add(effects)
+                .ok_or(VulkanError::M2ParticleDrawIndexRange)?,
+        );
+        if self.scene_order != u32::MAX {
+            self.scene_order = self
+                .scene_order
+                .checked_add(scene)
+                .ok_or(VulkanError::M2ParticleDrawIndexRange)?;
+        }
+        Ok(self)
+    }
+
     /// Returns the per-element alpha-test threshold supplied by `81FE90`.
     #[must_use]
     pub const fn alpha_reference(self) -> f32 {
@@ -162,6 +204,7 @@ pub(in crate::device) fn prepare_draw(
         pipeline,
         texture_set,
         vertex_offset,
+        vertex_count,
         first_index,
         index_count,
         light_bank: M2SceneLightBank::Environment,

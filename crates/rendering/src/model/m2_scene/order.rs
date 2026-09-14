@@ -157,6 +157,13 @@ impl M2TransparentSortKey {
         self.producer_order = producer_order;
         self
     }
+
+    /// Relocates the ordered producer ordinal after independently prepared runs join.
+    #[must_use]
+    pub fn relocate_producer(mut self, offset: u32) -> Option<Self> {
+        self.producer_order = self.producer_order.checked_add(offset)?;
+        Some(self)
+    }
 }
 
 /// Replays the common prefix of build 12340's pass-one/pass-two comparator.

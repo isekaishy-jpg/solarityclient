@@ -14,6 +14,7 @@ pub(in super::super) struct Placement<'a> {
     pub(in super::super) palette: bool,
     pub(in super::super) batch_hit: bool,
     pub(in super::super) mesh_output: bool,
+    pub(in super::super) geometry_pending: bool,
     pub(in super::super) shadow_output: bool,
     pub(in super::super) particle_output: bool,
     pub(in super::super) ribbon_output: bool,
@@ -34,6 +35,7 @@ impl<'a> Placement<'a> {
             palette: false,
             batch_hit: false,
             mesh_output: false,
+            geometry_pending: false,
             shadow_output: false,
             particle_output: false,
             ribbon_output: false,
@@ -59,6 +61,7 @@ impl Drop for Placement<'_> {
         self.work.batch_hits += u64::from(self.batch_hit);
         self.work.palettes_without_draws += u64::from(
             self.palette
+                && !self.geometry_pending
                 && !self.mesh_output
                 && !self.shadow_output
                 && !self.particle_output

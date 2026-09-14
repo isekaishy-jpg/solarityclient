@@ -2,6 +2,8 @@
 
 #![allow(unsafe_code)]
 
+mod effect_draws;
+pub use effect_draws::M2EffectDrawCatalog;
 mod liquid;
 mod portrait;
 mod resource_lifetime;

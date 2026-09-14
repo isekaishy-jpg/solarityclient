@@ -24,6 +24,37 @@ pub struct M2RibbonPreparedDraw {
 }
 
 impl M2RibbonPreparedDraw {
+    /// Relocates a worker-local strip and producer order into the joined frame.
+    /// # Errors
+    /// Returns range overflow before a relocated packet is published.
+    pub fn relocate(
+        mut self,
+        vertices: u32,
+        scene: u32,
+        effects: u32,
+    ) -> Result<Self, VulkanError> {
+        self.first_vertex = self
+            .first_vertex
+            .checked_add(vertices)
+            .ok_or(VulkanError::M2RibbonDrawVertexRange)?;
+        self.first_vertex
+            .checked_add(self.vertex_count)
+            .ok_or(VulkanError::M2RibbonDrawVertexRange)?;
+        self.order = M2EffectOrder::new(
+            self.priority_plane(),
+            self.effect_order()
+                .checked_add(effects)
+                .ok_or(VulkanError::M2RibbonDrawVertexRange)?,
+        );
+        if self.scene_order != u32::MAX {
+            self.scene_order = self
+                .scene_order
+                .checked_add(scene)
+                .ok_or(VulkanError::M2RibbonDrawVertexRange)?;
+        }
+        Ok(self)
+    }
+
     /// Marks whether this pass performs the emitter's common scene setup.
     /// Later passes retain the first pass's fog registers in authored order.
     #[must_use]
