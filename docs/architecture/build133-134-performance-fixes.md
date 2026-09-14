@@ -7,21 +7,21 @@ and sustained frame time require separate verification.
 
 ## Completion requirements
 
-- [ ] World-entry UI: remove repeated broad presentation reconstruction between
+- [x] World-entry UI: remove repeated broad presentation reconstruction between
   initialization events, preserve script-visible geometry, and address the
   synchronous 2.45-second initialization stall. Exercise real FrameXML loading.
-- [ ] Frame-critical CPU batches: resolve the dependency behind the 75 ms pose
+- [x] Frame-critical CPU batches: resolve the dependency behind the 75 ms pose
   join; isolate frame work from background loading without discarding required
   poses or introducing detached work. Validate under occupied loader workers.
-- [ ] M2 preparation: establish explicit consumer requirements and retained
+- [x] M2 preparation: establish explicit consumer requirements and retained
   preparation across animation, shadows, effects and packets; validate reduced
   work and unchanged output using representative city consumers.
 - [x] Placement topology: ordinary dynamic membership changes must not rebuild
   immutable scenery metadata. Cover additions, retirement and source remapping.
-- [ ] GameObject publication and collision: replace redundant polling/publication
-  with owner changes and bound re-registration to affected geometry. Preserve
+- [x] GameObject publication and collision: retain owner membership, suppress
+  unchanged publication and bound re-registration to affected geometry. Preserve
   moving transports, tile readiness and native candidate ordering.
-- [ ] Validate the world-service action/event spike through the shared UI update
+- [x] Validate the world-service action/event spike through the shared UI update
   changes; distinguish genuine work from fence/limiter/scheduling waits.
 - [ ] Run required formatting, workspace Clippy and tests; record targeted
   measurements, commit/push completed work, and finish with an installed numbered
@@ -294,5 +294,155 @@ construction and 514.184 ms during entry events. Source preparation added
 177.090 ms in the staged fixture. These are back-to-back caller polls with capture
 enabled, not presented live frames: they establish matching output and shorter
 uninterrupted UI work, not lower total loading latency or a hard 8 ms ceiling.
-The remaining native construction blocks and renderer admission are still open.
-No new numbered package has been reserved after Build 135.
+Native construction and renderer admission can still exceed the loading allowance.
+Those residual blocks are not covered by a hard frame-time guarantee.
+
+
+### Joined M2 visible work
+
+The ordered traversal now captures explicit visible inputs and transfers each
+admitted model's particle and ribbon storage to a joined frame job. Workers own
+simulation, particle/ribbon geometry, material packets and transparent sort keys.
+They borrow immutable CPU resource-validation tables; Vulkan devices, queues,
+allocators and recorders remain on their existing owner. No detached task or
+per-frame clone of live particle pools is introduced.
+
+Clock advancement, CRT consumption, completion/event callbacks, attachments,
+light publication and shadow admission remain ordered. Existing unit palettes
+are consumed once. A visible model with no CPU bone consumer can instead compose
+its complete palette in the geometry job. Its CPU publication receives an
+explicit empty transform view, so it does not run a second pose calculation.
+Shadow upload offsets reserve the same ordered palette ranges. Models with CPU
+bone consumers and shadow-only models retain the existing sampling path.
+
+The join returns all placement-owned effect state, including on worker errors.
+Publication merges output in traversal order with checked vertex/index and
+producer-order relocation. The current admitted job count bounds scratch owners;
+obsolete model generations are not pinned by the job list. Focused modules own
+palette inputs, simulation/packets, ribbon updates and ordered publication.
+
+A frozen pre-change traversal from `20b26515` is retained as an independent test
+oracle. The comparison exercises 24 moving/faded models, visibility changes,
+removal/compaction, particles, ribbons and shadows over 16 frames. It compares
+complete packets, geometry, palettes, liquid ordering, simulation histories and
+the shared CRT stream. Range-overflow and resource-failure cases exercise the
+new ownership boundary. Formatting, all-target/all-feature workspace Clippy with warnings denied, and
+all-feature workspace tests pass (1,412 passed, zero failed, 33 ignored). After
+removing the redundant empty CPU pose traversal, Clippy passed again and the
+complete runtime suite passed (466 passed, zero failed, 28 ignored).
+Uncontended optimized and installed-world measurements are recorded below.
+
+The first optimized geometry-only synthetic comparison (512 owners, 224 measured
+frames) observed 4.480136 ms for the original traversal and 3.678358 ms for the
+joined path. A later run overlapped workspace validation and is excluded from
+performance conclusions. These are synthetic CPU preparation observations, not
+matched Orgrimmar FPS or evidence of a five-millisecond total-frame reduction.
+
+### Retained GameObject membership and changed publication
+
+ActiveWorld retains GameObject membership in native admission order alongside
+its existing unit membership. GameObject projection no longer discovers those
+owners by probing every unrelated entity. Duplicate creates retain position;
+remove/recreate receives a new lifetime at the end. World replacement owns a new
+membership image.
+
+Projection still resolves current parent placement, but an identical complete
+instance image no longer reassigns resource/behavior handles or republishes the
+owner. Passenger and map-model placement remain separate comparisons; errors are
+compared in full rather than treating all invalid placements as equivalent.
+Loading completion, native clocks and collision dependencies retain independent
+owners. The implementation is separated into the coordinator's publication
+module. F10 records changed publication separately from polled owners. The
+Build 134 capture put this projection at about 0.064 ms on average, so this is an
+ownership correction, not a claimed multi-millisecond saving.
+
+### Repeatable hidden-world diagnostics
+
+The installed-world benchmark has explicit `--hidden` and `--soap` options.
+Hidden startup retains the native Vulkan surface without showing/focusing a
+window. Soap selects the saved female blood-elf mage appearance/equipment fixture;
+NPC populations remain explicitly authored and are not a recorded server crowd.
+The benchmark records M2 packets, particle vertices and palette counts alongside
+stationary/orbit/travel timings and advances F10 frame correlation. Hidden timing
+does not establish visible-desktop FPS. It also uses the synchronous diagnostic
+UI constructor and cannot establish live sliced-loading latency.
+
+
+### Final autonomous measurements
+
+The final optimized M2 comparison runs five times without concurrent compilers or
+workspace tests. Each run compares 512 owners over 224 measured frames against
+the frozen original traversal, with identical fixed simulation steps. Complete
+output/state assertions execute outside the timed calls and pass in every run.
+
+| Run | Original traversal (ms) | Joined preparation (ms) |
+|---|---:|---:|
+| 1 | 4.205884 | 3.382313 |
+| 2 | 4.177312 | 3.334233 |
+| 3 | 4.201904 | 3.346536 |
+| 4 | 4.259024 | 3.364479 |
+| 5 | 4.198076 | 3.327109 |
+| Mean | 4.208440 | 3.350934 |
+
+This is a 0.857506 ms (20.38%) reduction in this CPU preparation workload. It does
+not establish a five-millisecond total-frame reduction or doubled live FPS.
+Evidence: `target/m2-final-quiet-benchmark.log`.
+
+Two hidden Vulkan city routes complete against installed stock assets, using
+Soap's saved appearance, 2560x1440, Ultra shadows, four CPU workers, disabled
+VSync, and 120 authored NPCs. The route starts at map 1, position
+(1515.34, -4417.27, 18.0499), and includes 512 frames per phase. No desktop window
+is shown or focused. The isolated diagnostic profile disables audio. This is an
+offline scene workload; network sessions and live movement solving are absent.
+
+| Phase | Capture off mean (ms) | Capture off p95 (ms) | Capture on mean (ms) |
+|---|---:|---:|---:|
+| Stationary | 5.269 | 5.856 | 5.228 |
+| Camera orbit | 4.682 | 6.154 | 4.911 |
+| Pointer | 5.817 | 6.199 | 5.887 |
+| Travel out | 5.195 | 5.980 | 5.223 |
+| Travel back | 5.331 | 6.071 | 5.363 |
+| Settled | 6.167 | 6.732 | 6.230 |
+
+Settled work is larger than the first stationary window: resident tiles increase
+from 1.68 to 7.06 on average, particle vertices from about 5,007 to 12,386, and M2
+packets from 753 to 778. The elapsed-time increase cannot by itself demonstrate a
+leak or performance decay. Initial streaming still has an isolated 124.55 ms
+maximum; the first buffer-growth frames are included. These routes do not prove
+all streaming hitches resolved.
+
+Capture `1789420438676-1` records zero dropped samples, event rows or capacity
+overflows. Ordinary M2 preparation averages 2.4278 ms, joined geometry 0.4887 ms,
+and ordered geometry publication 0.0950 ms. These scopes overlap and must not be
+added. The routes use wall-clock animation, so capture-on/off differences are
+observations, not a controlled estimate of instrumentation overhead. Neither
+route can be compared directly with the older fixed-step replay or user-driven
+Build 134 session to claim an FPS gain.
+
+Evidence: `target/joined-world-final.csv`, `target/joined-world-profile.csv`, and
+`target/joined-world-profile-profile/Profiles/capture-1789420438676-1.*`.
+
+### Scope disposition
+
+The identified mechanisms now have implementation and autonomous validation:
+background saturation cannot hold the frame batch; static placement metadata
+survives dynamic publication; independent M2 work runs in owned joined jobs;
+GameObject membership and collision dependencies retain their owners; and world
+entry/action dispatch no longer repeatedly discovers all regions and rebuilds
+presentation after every event. GameObject parent transforms are still resolved
+when polled because transport movement can change placement independently of an
+object-field update. Unchanged publication is suppressed after that comparison.
+
+The real 25,099-region FrameXML fixture validates the action/event consumer as
+well as startup. The optimized indexed 144-action batch was approximately
+18?20 ms total in the recorded runs; the debug before/after comparison above
+isolates the former broad subscriber scan. This establishes removal of that
+algorithmic source, not a replay of the exact live world-service spike. Frame
+worker waiting, GPU fences and live service timings remain separately exposed
+by F10; no wait is subtracted from total frame time to report a speedup.
+
+Residual native startup blocks, first-use GPU admission, live network/audio
+workloads and matched desktop FPS remain measurement limits. The implementation
+work does not depend on another user-run test, and the numerical limits above
+remain explicit rather than treating this as a claim that all performance work
+or every possible hitch is finished.
