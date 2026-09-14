@@ -12,6 +12,7 @@ pub(super) struct UiFrameSlot {
     command_buffer: vk::CommandBuffer,
     image_available: vk::Semaphore,
     fence: vk::Fence,
+    pub(super) timestamps: crate::device::vulkan_world_frame::GpuTimestampSlot<2>,
 }
 
 impl UiFrameSlot {
@@ -80,6 +81,7 @@ impl UiFrameSlot {
             command_buffer,
             image_available,
             fence,
+            timestamps: Default::default(),
         })
     }
 
@@ -95,6 +97,9 @@ impl UiFrameSlot {
 
     /// Waits for prior use and resets this slot's complete command arena.
     pub(super) fn wait_and_reset(&self, device: &Device) -> Result<(), VulkanError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "rendering.device.vulkan_ui_frame.resource.wait_and_reset"
+        );
         // SAFETY: The fence was created signaled or submitted once since reset.
         unsafe {
             device
@@ -125,6 +130,7 @@ impl UiFrameSlot {
     }
 
     fn destroy(&mut self, device: &Device) {
+        self.timestamps.destroy(device);
         // SAFETY: Renderer idle guarantees no child remains in flight.
         unsafe {
             device.destroy_fence(self.fence, None);
@@ -150,6 +156,8 @@ impl UiFrameResources {
         queue_family: u32,
         slot_count: usize,
     ) -> Result<(), VulkanError> {
+        let _profile_scope =
+            solarity_profiling::profile!("rendering.device.vulkan_ui_frame.resource.ensure");
         if self.slots.len() == slot_count && self.present_semaphores.len() == slot_count {
             return Ok(());
         }

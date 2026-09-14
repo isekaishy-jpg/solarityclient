@@ -4,6 +4,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
+use std::time::Instant;
 
 use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -154,9 +155,17 @@ impl CpuTaskPermit<'_> {
         T: Send,
         F: Fn(&mut T) + Send + Sync,
     {
+        let _profile_scope = solarity_profiling::profile!("cpu.pool.executor.for_each");
+        solarity_profiling::profile_value!("cpu.batch.items", items.len());
         let Self { pool, lease } = self;
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            pool.install(|| items.par_iter_mut().for_each(operation));
+            pool.install(|| {
+                items.par_iter_mut().for_each(|item| {
+                    let _item_profile =
+                        solarity_profiling::detail_profile!("cpu.batch.worker_item");
+                    operation(item);
+                })
+            });
         }));
         drop(lease);
         outcome.map_err(|_| CpuError::TaskPanicked)
@@ -173,7 +182,15 @@ impl CpuTaskPermit<'_> {
         let (sender, receiver) = sync_channel(1);
         let finished = Arc::new(AtomicBool::new(false));
         let finished_by_worker = Arc::clone(&finished);
+        let epoch = solarity_profiling::generation();
+        let queued = (epoch != 0).then(Instant::now);
         pool.spawn_fifo(move || {
+            let _profile = solarity_profiling::profile!("cpu.job.execute");
+            if let Some(queued) = queued {
+                static QUEUE: solarity_profiling::Site =
+                    solarity_profiling::Site::new("cpu.job.queue_wait", false);
+                QUEUE.cpu_duration(epoch, "", queued.elapsed());
+            }
             let outcome = match catch_unwind(AssertUnwindSafe(operation)) {
                 Ok(value) => TaskOutcome::Completed(value),
                 Err(_panic_payload) => TaskOutcome::Panicked,

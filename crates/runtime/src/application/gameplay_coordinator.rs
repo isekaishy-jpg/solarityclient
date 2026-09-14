@@ -441,6 +441,9 @@ impl RuntimeGameplayCoordinator {
         &mut self,
         notify: &mut GameObjectObserver<'_>,
     ) -> Result<usize, RuntimeGameplayError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.gameplay_coordinator.service_with_game_objects"
+        );
         if let Some(clock) = &mut self.realm_clock {
             clock.advance();
         }
@@ -1117,8 +1120,11 @@ async fn pump_world_packets(
     commands: mpsc::Sender<WorldWriterCommand>,
     command_receiver: Receiver<WorldWriterCommand>,
 ) {
-    let mut duplex = session.into_duplex();
-    let result = async {
+    solarity_profiling::profile_await!(
+        "runtime.application.gameplay_coordinator.pump_world_packets",
+        async {
+            let mut duplex = session.into_duplex();
+            let result = async {
         {
             let (reader, writer) = duplex.io();
             let mut writing = std::pin::pin!(service_world_writer(writer, command_receiver));
@@ -1148,9 +1154,11 @@ async fn pump_world_packets(
         Ok(())
     }
     .await;
-    if let Err(error) = result {
-        let _sent = sender.send(Err(error)).await;
-    }
+            if let Err(error) = result {
+                let _sent = sender.send(Err(error)).await;
+            }
+        }
+    )
 }
 
 /// Retains every encrypted read until its packet boundary or connection failure.
@@ -1162,39 +1170,44 @@ async fn receive_world_packets<R>(
 where
     R: AsyncRead + Unpin + Send,
 {
-    loop {
-        let packet = reader.receive_packet().await?;
-        if packet.logout()? == Some(WorldLogout::Complete) {
-            return Ok(true);
-        }
-        if let Some(sequence) = packet.pong_sequence()? {
-            if liveness_sender
-                .send(WorldWriterCommand::Pong(sequence))
-                .await
-                .is_err()
-            {
-                return Ok(false);
+    solarity_profiling::profile_await!(
+        "runtime.application.gameplay_coordinator.receive_world_packets",
+        async {
+            loop {
+                let packet = reader.receive_packet().await?;
+                if packet.logout()? == Some(WorldLogout::Complete) {
+                    return Ok(true);
+                }
+                if let Some(sequence) = packet.pong_sequence()? {
+                    if liveness_sender
+                        .send(WorldWriterCommand::Pong(sequence))
+                        .await
+                        .is_err()
+                    {
+                        return Ok(false);
+                    }
+                    continue;
+                }
+                if let Some(counter) = packet.time_sync_counter()? {
+                    if liveness_sender
+                        .send(WorldWriterCommand::TimeSync(counter))
+                        .await
+                        .is_err()
+                    {
+                        return Ok(false);
+                    }
+                    continue;
+                }
+                if sender
+                    .send(Ok(GameplayNetworkEvent::Packet(packet)))
+                    .await
+                    .is_err()
+                {
+                    return Ok(false);
+                }
             }
-            continue;
         }
-        if let Some(counter) = packet.time_sync_counter()? {
-            if liveness_sender
-                .send(WorldWriterCommand::TimeSync(counter))
-                .await
-                .is_err()
-            {
-                return Ok(false);
-            }
-            continue;
-        }
-        if sender
-            .send(Ok(GameplayNetworkEvent::Packet(packet)))
-            .await
-            .is_err()
-        {
-            return Ok(false);
-        }
-    }
+    )
 }
 
 /// Serializes application commands and liveness without cancelling partial writes.
@@ -1205,89 +1218,95 @@ async fn service_world_writer<W>(
 where
     W: AsyncWrite + Unpin + Send,
 {
-    let process_start = Instant::now();
-    let mut ping_interval = tokio::time::interval_at(process_start + PING_INTERVAL, PING_INTERVAL);
-    let mut sequence = 0_u32;
-    let mut round_time = 0_u32;
-    let mut pending_ping = None;
-    loop {
-        tokio::select! {
-            _instant = ping_interval.tick() => {
-                sequence = sequence.wrapping_add(1);
-                writer.send_ping(sequence, round_time).await?;
-                pending_ping = Some((sequence, Instant::now()));
-            }
-            event = receiver.recv() => {
-                let Some(event) = event else {
-                    return Ok(());
-                };
-                match event {
-                    WorldWriterCommand::Handoff => return Ok(()),
-                    WorldWriterCommand::Logout(request) => writer.send_logout(request).await?,
-                    WorldWriterCommand::Pong(received) => {
-                        if let Some((expected, sent_at)) = pending_ping
-                            && received == expected
-                        {
-                            round_time = duration_millis_u32(sent_at.elapsed());
-                            pending_ping = None;
+    solarity_profiling::profile_await!(
+        "runtime.application.gameplay_coordinator.service_world_writer",
+        async {
+            let process_start = Instant::now();
+            let mut ping_interval =
+                tokio::time::interval_at(process_start + PING_INTERVAL, PING_INTERVAL);
+            let mut sequence = 0_u32;
+            let mut round_time = 0_u32;
+            let mut pending_ping = None;
+            loop {
+                tokio::select! {
+                    _instant = ping_interval.tick() => {
+                        sequence = sequence.wrapping_add(1);
+                        writer.send_ping(sequence, round_time).await?;
+                        pending_ping = Some((sequence, Instant::now()));
+                    }
+                    event = receiver.recv() => {
+                        let Some(event) = event else {
+                            return Ok(());
+                        };
+                        match event {
+                            WorldWriterCommand::Handoff => return Ok(()),
+                            WorldWriterCommand::Logout(request) => writer.send_logout(request).await?,
+                            WorldWriterCommand::Pong(received) => {
+                                if let Some((expected, sent_at)) = pending_ping
+                                    && received == expected
+                                {
+                                    round_time = duration_millis_u32(sent_at.elapsed());
+                                    pending_ping = None;
+                                }
+                            }
+                            WorldWriterCommand::TimeSync(counter) => {
+                                writer
+                                    .send_time_sync_response(
+                                        counter,
+                                        crate::platform::client_milliseconds(),
+                                    )
+                                    .await?;
+                            }
+                            WorldWriterCommand::WorldportAcknowledgement => {
+                                writer.send_worldport_acknowledgement().await?;
+                            }
+                            WorldWriterCommand::Movement(message) => {
+                                writer.send_movement(&message).await?;
+                            }
+                            WorldWriterCommand::SplineDone { movement, path_id } => {
+                                writer.send_spline_done(&movement, path_id).await?;
+                            }
+                            WorldWriterCommand::MovementTimeSkipped { guid, milliseconds } => {
+                                writer.send_movement_time_skipped(guid, milliseconds).await?;
+                            }
+                            WorldWriterCommand::StandState(state) => {
+                                writer.send_stand_state(state).await?;
+                            }
+                            WorldWriterCommand::PlayerDeath(action) => match action {
+                                solarity_ui::UiPlayerDeathAction::ReleaseSpirit { automatic } => writer.send_release_spirit(automatic).await?,
+                                solarity_ui::UiPlayerDeathAction::SelfResurrect => writer.send_self_resurrect().await?,
+                                solarity_ui::UiPlayerDeathAction::ResurrectionResponse { guid, accept } => writer.send_resurrection_response(guid, accept).await?,
+                                solarity_ui::UiPlayerDeathAction::ReclaimCorpse { guid } => writer.send_reclaim_corpse(guid).await?,
+                            },
+                            WorldWriterCommand::Tutorial(action) => match action {
+                                solarity_ui::UiTutorialAction::Flag(index) => writer.send_tutorial_flag(index).await?,
+                                solarity_ui::UiTutorialAction::Clear => writer.send_tutorial_clear().await?,
+                                solarity_ui::UiTutorialAction::Reset => writer.send_tutorial_reset().await?,
+                            },
+                            WorldWriterCommand::ActiveMover(guid) => {
+                                writer.send_active_mover(guid).await?;
+                            }
+                            WorldWriterCommand::GameObjectQuery { entry, guid } => {
+                                writer.send_game_object_query(entry, guid).await?;
+                            }
+                            WorldWriterCommand::CreatureQuery { entry, guid } => {
+                                writer.send_creature_query(entry, guid).await?;
+                            }
+                            WorldWriterCommand::PlayerNameQuery(guid) => writer.send_player_name_query(guid).await?,
+                            WorldWriterCommand::CorpseQuery(query) => match query {
+                                player_corpse::CorpseQuery::Location => writer.send_corpse_query().await?,
+                                player_corpse::CorpseQuery::Transport(counter) => writer.send_corpse_transport_query(counter).await?,
+                            },
+                            WorldWriterCommand::AreaTrigger { heartbeat, trigger_id } => {
+                                writer.send_movement(&heartbeat).await?;
+                                writer.send_area_trigger(trigger_id).await?;
+                            }
                         }
-                    }
-                    WorldWriterCommand::TimeSync(counter) => {
-                        writer
-                            .send_time_sync_response(
-                                counter,
-                                crate::platform::client_milliseconds(),
-                            )
-                            .await?;
-                    }
-                    WorldWriterCommand::WorldportAcknowledgement => {
-                        writer.send_worldport_acknowledgement().await?;
-                    }
-                    WorldWriterCommand::Movement(message) => {
-                        writer.send_movement(&message).await?;
-                    }
-                    WorldWriterCommand::SplineDone { movement, path_id } => {
-                        writer.send_spline_done(&movement, path_id).await?;
-                    }
-                    WorldWriterCommand::MovementTimeSkipped { guid, milliseconds } => {
-                        writer.send_movement_time_skipped(guid, milliseconds).await?;
-                    }
-                    WorldWriterCommand::StandState(state) => {
-                        writer.send_stand_state(state).await?;
-                    }
-                    WorldWriterCommand::PlayerDeath(action) => match action {
-                        solarity_ui::UiPlayerDeathAction::ReleaseSpirit { automatic } => writer.send_release_spirit(automatic).await?,
-                        solarity_ui::UiPlayerDeathAction::SelfResurrect => writer.send_self_resurrect().await?,
-                        solarity_ui::UiPlayerDeathAction::ResurrectionResponse { guid, accept } => writer.send_resurrection_response(guid, accept).await?,
-                        solarity_ui::UiPlayerDeathAction::ReclaimCorpse { guid } => writer.send_reclaim_corpse(guid).await?,
-                    },
-                    WorldWriterCommand::Tutorial(action) => match action {
-                        solarity_ui::UiTutorialAction::Flag(index) => writer.send_tutorial_flag(index).await?,
-                        solarity_ui::UiTutorialAction::Clear => writer.send_tutorial_clear().await?,
-                        solarity_ui::UiTutorialAction::Reset => writer.send_tutorial_reset().await?,
-                    },
-                    WorldWriterCommand::ActiveMover(guid) => {
-                        writer.send_active_mover(guid).await?;
-                    }
-                    WorldWriterCommand::GameObjectQuery { entry, guid } => {
-                        writer.send_game_object_query(entry, guid).await?;
-                    }
-                    WorldWriterCommand::CreatureQuery { entry, guid } => {
-                        writer.send_creature_query(entry, guid).await?;
-                    }
-                    WorldWriterCommand::PlayerNameQuery(guid) => writer.send_player_name_query(guid).await?,
-                    WorldWriterCommand::CorpseQuery(query) => match query {
-                        player_corpse::CorpseQuery::Location => writer.send_corpse_query().await?,
-                        player_corpse::CorpseQuery::Transport(counter) => writer.send_corpse_transport_query(counter).await?,
-                    },
-                    WorldWriterCommand::AreaTrigger { heartbeat, trigger_id } => {
-                        writer.send_movement(&heartbeat).await?;
-                        writer.send_area_trigger(trigger_id).await?;
                     }
                 }
             }
         }
-    }
+    )
 }
 
 fn duration_millis_u32(duration: Duration) -> u32 {
@@ -1517,6 +1536,8 @@ fn apply_state_packet(
     packet: &WorldServerPacket,
     player_ui: &mut player_ui::RuntimePlayerUiState,
 ) -> Result<bool, RuntimeGameplayError> {
+    let _profile_scope =
+        solarity_profiling::profile!("runtime.application.gameplay_coordinator.apply_state_packet");
     if let Some(update) = packet.player_corpse()? {
         player_ui.receive_corpse(world, update);
         return Ok(true);

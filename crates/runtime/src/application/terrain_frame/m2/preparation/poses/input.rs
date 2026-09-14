@@ -72,6 +72,9 @@ impl PoseJob {
 
     /// Computes pure skeletal work without publishing errors or scene state.
     pub(super) fn sample(&mut self) {
+        let _profile_scope = solarity_profiling::detail_profile!(
+            "runtime.application.terrain_frame.m2.preparation.poses.input.sample"
+        );
         self.result = Some(self.pose.recompose_with_overrides(
             self.model.animations(),
             self.clock,

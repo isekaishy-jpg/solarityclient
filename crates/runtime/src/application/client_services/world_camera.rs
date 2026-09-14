@@ -29,6 +29,9 @@ impl ClientServices {
     pub(super) fn resolved_world_camera(
         &mut self,
     ) -> Result<Option<WorldCameraFrame>, ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.client_services.world_camera.resolved_world_camera"
+        );
         if let Some(cached) = &self.world_camera_frame
             && self.camera_inputs().as_ref() == Some(&cached.inputs)
         {
@@ -103,6 +106,9 @@ impl ClientServices {
 
     /// Supplies the resolved camera window while the loading card can still own presentation.
     pub(super) fn service_terrain_streaming(&mut self) -> Result<bool, ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.client_services.world_camera.service_terrain_streaming"
+        );
         self.world_camera_frame = None;
         let Some(environment) = self.environment.current() else {
             return Ok(false);
@@ -177,6 +183,9 @@ impl ClientServices {
     /// Prepare visible detail behind the card; ordinary world presentation owns
     /// this work after entry. Workers must also be serviced while the card draws.
     pub(super) fn prepare_world_entry_detail(&mut self) -> Result<bool, ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.client_services.world_camera.prepare_world_entry_detail"
+        );
         if self.loading_screen.is_none() && !self.world_transfer.is_entering_world() {
             return Ok(true);
         }

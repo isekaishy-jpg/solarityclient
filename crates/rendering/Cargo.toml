@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+solarity-profiling.workspace = true
 ash.workspace = true
 bytemuck.workspace = true
 glam.workspace = true

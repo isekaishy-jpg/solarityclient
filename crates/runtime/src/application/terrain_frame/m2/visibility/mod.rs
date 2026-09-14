@@ -4,7 +4,6 @@ mod doodads;
 mod effects;
 
 use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource};
-use crate::application::frame_profile::RuntimeFrameProfile;
 use std::collections::HashMap;
 
 /// Ordered state-update candidates, borrowing rebuilt metadata or covering the
@@ -62,7 +61,7 @@ impl M2PlacementVisibility {
         placements: &[M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
     ) {
-        let mut profile = RuntimeFrameProfile::new("M2 placement metadata");
+        let mut profile = solarity_profiling::profile!("M2 placement metadata");
         self.source_indices.clear();
         self.bounds.clear();
         self.scenery.clear();

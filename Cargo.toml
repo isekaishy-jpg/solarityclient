@@ -6,6 +6,7 @@ members = [
     "crates/ecs",
     "crates/media",
     "crates/network",
+    "crates/profiling",
     "crates/rendering",
     "crates/runtime",
     "crates/systems",
@@ -53,6 +54,7 @@ shipyard = { version = "=0.11.5", default-features = false, features = [
 ] }
 solarity-asset = { path = "crates/asset" }
 solarity-cpu = { path = "crates/cpu" }
+solarity-profiling = { path = "crates/profiling" }
 solarity-ecs = { path = "crates/ecs" }
 solarity-media = { path = "crates/media" }
 solarity-network = { path = "crates/network" }

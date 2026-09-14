@@ -59,6 +59,8 @@ impl FontSystemState {
         character: char,
         rasterization: FontRasterization,
     ) -> Result<RasterizedGlyph, FontError> {
+        let _profile_scope =
+            solarity_profiling::detail_profile!("ui.font.gxu_font_util.state.rasterize");
         self.ensure_face(store, path)?;
 
         let Some(cached) = self.faces.get_mut(path) else {
@@ -137,6 +139,9 @@ impl FontSystemState {
         text: &str,
         rasterization: FontRasterization,
     ) -> Result<i64, FontError> {
+        let _profile_scope = solarity_profiling::detail_profile!(
+            "ui.font.gxu_font_util.state.measure_line_width_26_6"
+        );
         self.measure_character_advances_26_6(store, path, pixel_height, text, rasterization)
             .map(|advances| advances.into_iter().fold(0_i64, i64::saturating_add))
     }
@@ -153,6 +158,9 @@ impl FontSystemState {
         text: &str,
         rasterization: FontRasterization,
     ) -> Result<Vec<i64>, FontError> {
+        let _profile_scope = solarity_profiling::detail_profile!(
+            "ui.font.gxu_font_util.state.measure_character_advances_26_6"
+        );
         self.ensure_face(store, path)?;
         let Some(cached) = self.faces.get_mut(path) else {
             return Err(FontError::Face {
@@ -322,6 +330,8 @@ impl FontSystemState {
     }
 
     fn ensure_face(&mut self, store: &mut AssetStore, path: &AssetPath) -> Result<(), FontError> {
+        let _profile_scope =
+            solarity_profiling::detail_profile!("ui.font.gxu_font_util.state.ensure_face");
         if self.provider != Some(store.identity()) {
             self.faces.clear();
             self.provider = Some(store.identity());

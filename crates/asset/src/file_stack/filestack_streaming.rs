@@ -119,6 +119,8 @@ impl AssetStore {
     /// Returns a lookup or read error from the selected archive, or
     /// [`AssetError::AssetNotFound`] when no mounted archive contains the path.
     pub fn read(&mut self, path: &AssetPath) -> Result<AssetRead, AssetError> {
+        let _profile_scope =
+            solarity_profiling::profile!("asset.file_stack.filestack_streaming.read");
         for archive in &mut self.archives {
             let Some(bytes) = archive.read_if_present(path)? else {
                 continue;

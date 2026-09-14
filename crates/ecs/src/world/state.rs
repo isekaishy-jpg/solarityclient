@@ -596,6 +596,7 @@ impl ActiveWorld {
     where
         I: IntoIterator<Item = (u16, u32)>,
     {
+        let _profile_scope = solarity_profiling::detail_profile!("ecs.world.state.update_fields");
         let entity = self.require_entity(guid)?;
         let fields = fields.into_iter();
         let mut object_fields = self
@@ -660,6 +661,8 @@ impl ActiveWorld {
         guid: u64,
         transform: WorldTransform,
     ) -> Result<(), WorldStateError> {
+        let _profile_scope =
+            solarity_profiling::detail_profile!("ecs.world.state.update_transform");
         let entity = self.require_entity(guid)?;
         self.storage.add_component(entity, (transform,));
         Ok(())
@@ -675,6 +678,7 @@ impl ActiveWorld {
         guid: u64,
         movement: WorldMovementState,
     ) -> Result<(), WorldStateError> {
+        let _profile_scope = solarity_profiling::detail_profile!("ecs.world.state.update_movement");
         let entity = self.require_entity(guid)?;
         self.storage.add_component(entity, (movement,));
         Ok(())
@@ -707,6 +711,7 @@ impl ActiveWorld {
     /// Returns [`WorldStateError`] for an unknown GUID or an attempt to remove
     /// the controlled player through an out-of-range update.
     pub fn remove_object(&mut self, guid: u64) -> Result<(), WorldStateError> {
+        let _profile_scope = solarity_profiling::detail_profile!("ecs.world.state.remove_object");
         let entity = self.require_entity(guid)?;
         if entity == self.local_player {
             return Err(WorldStateError::LocalPlayerOutOfRange { guid });

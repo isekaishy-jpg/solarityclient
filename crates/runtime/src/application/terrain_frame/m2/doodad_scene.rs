@@ -62,8 +62,7 @@ impl M2DoodadScene {
         camera: Vec3,
         detail: f32,
     ) -> Result<(), crate::application::terrain_coordinator::RuntimeMovementRegistrationError> {
-        let mut profile =
-            crate::application::frame_profile::RuntimeFrameProfile::new("M2 doodad admission");
+        let mut profile = solarity_profiling::profile!("M2 doodad admission");
         // Large model inputs are initialized lazily by prepare_model. The
         // compact per-frame flags guard every consumer of retained entries.
         self.spheres.resize(placements.len(), None);

@@ -83,8 +83,10 @@ checkout cannot relabel an older executable. The installed `build-info.txt`
 also records the executable's SHA-256 and installation time.
 
 Normal Testing installs omit `-FrameTimings`; enable it only for an explicit
-diagnostic run. Instrumented application timings are aggregated every two
-seconds, and the normal launcher does not enable them.
+capture from startup. F10 starts/stops the shared profiler during a normal run.
+All subsystem captures write one-second intervals off-thread, with detailed CPU
+and GPU work sampled separately. See [F10 instrumentation](architecture/f10-instrumentation.md)
+for coverage, report paths and measured observer overhead.
 
 The executable reports product identity through `--version`, `--build-info`,
 the window title, and the startup log. Source revision and dirty status are

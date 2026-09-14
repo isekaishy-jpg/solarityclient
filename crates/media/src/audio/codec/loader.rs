@@ -113,15 +113,8 @@ impl SoundLoader {
             .ok_or(SoundDecodeError::Capacity)?;
         let mixer = LoadingMixer(Arc::clone(&self.mixer));
         let task = match cpu.try_submit(move || {
-            let timing =
-                std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_| std::time::Instant::now());
-            let result = mixer.prepare(&encoded, mode);
-            if let Some(start) = timing {
-                tracing::info!(path = %encoded.path(), ?mode,
-                    elapsed_ms = start.elapsed().as_secs_f64() * 1_000.0,
-                    "prepared sound resource on worker");
-            }
-            result
+            let _profile = solarity_profiling::profile!("audio.decode.worker");
+            mixer.prepare(&encoded, mode)
         }) {
             Ok(task) => task,
             Err(CpuError::AtCapacity { .. }) => return Ok(None),

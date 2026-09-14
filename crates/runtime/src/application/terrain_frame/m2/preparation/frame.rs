@@ -6,11 +6,11 @@ use super::super::{
     M2MaterialState, M2MaterialUniform, M2ParticleMeshPlan, M2ParticleMeshPlanError,
     M2ParticlePose, M2PlaybackStorage, M2RibbonMeshPlan, M2RibbonPose, M2TransparentDrawIndex,
     M2TransparentElement, M2TransparentPass, M2TransparentSortKey, M2VisibleFrame, Mat4,
-    RuntimeFrameProfile, RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum,
-    advance_ribbons, append_triggered_events, compare_m2_transparent, held_item_finger_pose,
-    m2_model_distance_key, particle_emission_density, particle_lod_origin,
-    placement_bounding_sphere, placement_color, placement_light_bank, placement_mesh_color,
-    scene_element_count, section_distance_key, shadow, unit_effects,
+    RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum, advance_ribbons,
+    append_triggered_events, compare_m2_transparent, held_item_finger_pose, m2_model_distance_key,
+    particle_emission_density, particle_lod_origin, placement_bounding_sphere, placement_color,
+    placement_light_bank, placement_mesh_color, scene_element_count, section_distance_key, shadow,
+    unit_effects,
 };
 
 impl M2Frame {
@@ -44,7 +44,7 @@ impl M2Frame {
             crate::application::terrain_frame::shadow::SceneryShadowQueries<'_>,
         >,
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
-        let mut frame_profile = RuntimeFrameProfile::new("M2 frame preparation");
+        let mut frame_profile = solarity_profiling::profile!("M2 frame preparation");
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
         if let Some((terrain, ..)) = spatial_lighting.as_mut() {
@@ -254,6 +254,7 @@ impl M2Frame {
             let Some(placement_index) = self.frame_work.next() else {
                 break;
             };
+            let mut placement_profile = solarity_profiling::detail_profile!("m2.placement");
             // Moving-parent transforms have already been resolved. Forward
             // attachments query that same root; earlier roots reuse admission.
             let environment_maps = if let Some(queries) = scenery_shadows {
@@ -693,6 +694,7 @@ impl M2Frame {
                 bone_transforms,
                 bone_sequences: &bone_sequences,
             };
+            placement_profile.mark("admission and animation");
             let bone_pose: &dyn solarity_rendering::M2BoneTransforms = if needs_palette {
                 if !self.pose_batch.take(
                     placement_index,
@@ -731,6 +733,7 @@ impl M2Frame {
                 )?;
                 &self.bone_samples_scratch
             };
+            placement_profile.mark("pose");
             super::publication::CpuPublication {
                 retirement: &mut self.retirement,
                 triggered_events: &mut self.triggered_events,
@@ -759,6 +762,7 @@ impl M2Frame {
                     publishes_lights,
                 },
             )?;
+            placement_profile.mark("CPU publication");
             // 4F8D10 updates unit state/placement before clearing model activity.
             // Preserve attachment samples, but hidden player hierarchies publish
             // no model lights, shadow packets, visible effects or mesh packets.
@@ -818,6 +822,7 @@ impl M2Frame {
                 self.bone_transforms
                     .extend_from_slice(bone_pose.transforms());
             }
+            placement_profile.mark("shadow preparation");
             if !visible {
                 continue;
             }
@@ -878,6 +883,7 @@ impl M2Frame {
                 );
             }
 
+            placement_profile.mark("liquid and fog");
             // 0x00828A00 advances a model from its own previous effect update.
             // The scene clock and subtraction wrap as unsigned milliseconds.
             let effect_time_ms = animation_time_ms as u32;
@@ -1090,6 +1096,7 @@ impl M2Frame {
                     "placement-local particles entered unified world frame"
                 );
             }
+            placement_profile.mark("particle simulation and geometry");
             advance_ribbons(
                 &source.model,
                 placement,
@@ -1099,6 +1106,7 @@ impl M2Frame {
                 effect_scale,
                 instance_color.w,
             )?;
+            placement_profile.mark("ribbon simulation");
             if !has_shadow_bones {
                 self.bone_transforms
                     .extend_from_slice(bone_pose.transforms());
@@ -1214,6 +1222,7 @@ impl M2Frame {
             } else {
                 debug_assert!(effect_retiring || source.draws.iter().all(Option::is_none));
             }
+            placement_profile.mark("material and mesh packets");
             for (ribbon_index, ((emitter, trail), passes)) in source
                 .model
                 .animations()
@@ -1305,6 +1314,13 @@ impl M2Frame {
             }
         }
         frame_profile.mark("instance traversal");
+        solarity_profiling::profile_value!("m2.resident_placements", self.placements.len());
+        solarity_profiling::profile_value!(
+            "m2.dynamic_placements",
+            self.placement_visibility.dynamic_indices().len()
+        );
+        solarity_profiling::profile_value!("m2.particle_vertices", self.particle_vertices.len());
+        solarity_profiling::profile_value!("m2.bone_transforms", self.bone_transforms.len());
         if world_lighting.is_some() {
             self.prepare_visible_receivers(
                 animation_time_ms,

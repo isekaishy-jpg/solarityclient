@@ -72,6 +72,8 @@ impl MovementSwimInterval {
         self,
         geometry: &mut G,
     ) -> Result<MovementSwimAdvance, MovementSwimAdvanceError> {
+        let _profile_scope =
+            solarity_profiling::profile!("systems.movement.swimming.collision.advance");
         if !self.direction.is_finite() || !self.distance.is_finite() || self.distance < 0. {
             return Err(MovementSwimAdvanceError::InvalidState);
         }

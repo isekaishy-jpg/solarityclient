@@ -805,8 +805,7 @@ impl TerrainFrame {
         ui_draws: &[UiPreparedDraw],
         ui_overlay_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, RuntimeTerrainFrameError> {
-        let mut profile =
-            crate::application::frame_profile::RuntimeFrameProfile::new("World scene preparation");
+        let mut profile = solarity_profiling::profile!("World scene preparation");
         match (self.tile, plan) {
             (Some(frame), Some(plan)) if frame != plan => {
                 return Err(RuntimeTerrainFrameError::TileMismatch {
@@ -1304,8 +1303,7 @@ fn prepare_tile_draws(
     plan: &TerrainTileMeshPlan,
     sources: &[Arc<BlpTextureSource>],
 ) -> Result<Vec<TerrainPreparedDraw>, RuntimeTerrainFrameError> {
-    let mut profile =
-        crate::application::frame_profile::RuntimeFrameProfile::new("Terrain tile upload");
+    let mut profile = solarity_profiling::profile!("Terrain tile upload");
     validate_texture_table(plan, sources)?;
 
     // The shared tile allocations are immutable. Renderer registries use

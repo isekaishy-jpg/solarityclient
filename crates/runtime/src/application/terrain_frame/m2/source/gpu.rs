@@ -162,8 +162,7 @@ pub(in super::super) fn prepare_gpu_source_with_plan(
     cpu_source: Option<&M2CpuSource>,
     orientation: M2ModelOrientation,
 ) -> Result<M2GpuSource, RuntimeTerrainFrameError> {
-    let mut profile =
-        crate::application::frame_profile::RuntimeFrameProfile::new("M2 source publication");
+    let mut profile = solarity_profiling::profile!("M2 source publication");
     if textures.len() != model.textures().len() {
         return Err(RuntimeTerrainFrameError::M2TextureTableCount {
             model: model.path().clone(),

@@ -31,6 +31,7 @@ impl DecodedM2Model {
     /// the model is not exact build-12340 MD20 data, a required external profile
     /// is missing or malformed, or cross-file geometry references are invalid.
     pub fn load(store: &mut AssetStore, path: &AssetPath) -> Result<Self, AssetError> {
+        let _profile_scope = solarity_profiling::profile!("asset.model.m2_model.load");
         Self::load_profiles(store, path, SkinProfileLoad::All)
     }
 
@@ -49,6 +50,8 @@ impl DecodedM2Model {
         store: &mut AssetStore,
         path: &AssetPath,
     ) -> Result<Self, AssetError> {
+        let _profile_scope =
+            solarity_profiling::profile!("asset.model.m2_model.load_primary_profile");
         Self::load_profiles(store, path, SkinProfileLoad::Primary)
     }
 

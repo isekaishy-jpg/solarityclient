@@ -46,7 +46,7 @@ use crate::device::vulkan_world_model_texture_set::WorldModelTextureSetRegistry;
 use crate::{M2ParticleRenderVertex, M2RibbonRenderVertex};
 
 use command::{RecordContext, record, submit_and_present};
-pub(in crate::device) use gpu_profile::GpuFrameProfiler;
+pub(in crate::device) use gpu_profile::{GpuFrameProfiler, GpuTimestampSlot};
 use resource::{FrameCreateContext, WorldFrameResources};
 
 pub use types::{WorldFrameReport, WorldFrameScene, WorldSkyModelBatch, WorldSkyModelFrame};
@@ -110,6 +110,7 @@ pub(in crate::device) struct WorldFrameWindow {
     pub(in crate::device) screen: WorldScreenWindow,
 }
 
+#[derive(Default)]
 pub(in crate::device) struct WorldFrameRenderer {
     submission_fog: fog::SubmissionFog,
     shadows: crate::device::vulkan_shadow::ShadowPipelines,
@@ -117,109 +118,14 @@ pub(in crate::device) struct WorldFrameRenderer {
     resources: WorldFrameResources,
     low_detail: LowDetailRegistry,
     ground_detail: DetailRegistry,
-    profiler: Option<WorldFrameProfiler>,
     gpu_profiler: Option<GpuFrameProfiler>,
     glare: glare::GlareRenderer,
-}
-
-impl Default for WorldFrameRenderer {
-    fn default() -> Self {
-        Self {
-            submission_fog: fog::SubmissionFog::default(),
-            shadows: crate::device::vulkan_shadow::ShadowPipelines::default(),
-            environment_shadows: crate::device::vulkan_shadow::EnvironmentShadowImages::default(),
-            resources: WorldFrameResources::default(),
-            low_detail: LowDetailRegistry::default(),
-            ground_detail: DetailRegistry::default(),
-            profiler: WorldFrameProfiler::from_environment(),
-            gpu_profiler: None,
-            glare: glare::GlareRenderer::default(),
-        }
-    }
 }
 
 impl WorldFrameRenderer {
     /// Retained sun response for the next frame's exterior lighting providers.
     pub(in crate::device) fn glare_lighting(&self) -> crate::WorldGlareLighting {
         self.glare.lighting()
-    }
-}
-
-struct WorldFrameProfiler {
-    window_started: std::time::Instant,
-    frame_count: u64,
-    ensure_us: u128,
-    wait_write_us: u128,
-    acquire_us: u128,
-    record_us: u128,
-    queue_submit_us: u128,
-    queue_present_us: u128,
-    fence_wait_us: u128,
-    maximum_us: [u128; 7],
-}
-
-impl WorldFrameProfiler {
-    fn from_environment() -> Option<Self> {
-        std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_value| Self {
-            window_started: std::time::Instant::now(),
-            frame_count: 0,
-            ensure_us: 0,
-            wait_write_us: 0,
-            acquire_us: 0,
-            record_us: 0,
-            queue_submit_us: 0,
-            queue_present_us: 0,
-            fence_wait_us: 0,
-            maximum_us: [0; 7],
-        })
-    }
-
-    fn record(&mut self, phases: [std::time::Duration; 7]) {
-        let elapsed_us = phases.map(|elapsed| elapsed.as_micros());
-        self.frame_count = self.frame_count.saturating_add(1);
-        self.ensure_us = self.ensure_us.saturating_add(elapsed_us[0]);
-        self.wait_write_us = self.wait_write_us.saturating_add(elapsed_us[1]);
-        self.acquire_us = self.acquire_us.saturating_add(elapsed_us[2]);
-        self.record_us = self.record_us.saturating_add(elapsed_us[3]);
-        self.queue_submit_us = self.queue_submit_us.saturating_add(elapsed_us[4]);
-        self.queue_present_us = self.queue_present_us.saturating_add(elapsed_us[5]);
-        self.fence_wait_us = self.fence_wait_us.saturating_add(elapsed_us[6]);
-        for (maximum, elapsed) in self.maximum_us.iter_mut().zip(elapsed_us) {
-            *maximum = (*maximum).max(elapsed);
-        }
-        let window_elapsed = self.window_started.elapsed();
-        if window_elapsed < std::time::Duration::from_secs(2) {
-            return;
-        }
-        let divisor = self.frame_count.max(1) as f64;
-        tracing::info!(
-            frame_count = self.frame_count,
-            ensure_mean_us = self.ensure_us as f64 / divisor,
-            wait_write_mean_us = self.wait_write_us as f64 / divisor,
-            acquire_mean_us = self.acquire_us as f64 / divisor,
-            record_mean_us = self.record_us as f64 / divisor,
-            queue_submit_mean_us = self.queue_submit_us as f64 / divisor,
-            queue_present_mean_us = self.queue_present_us as f64 / divisor,
-            fence_wait_mean_us = self.fence_wait_us as f64 / divisor,
-            ensure_max_us = self.maximum_us[0],
-            wait_write_max_us = self.maximum_us[1],
-            acquire_max_us = self.maximum_us[2],
-            record_max_us = self.maximum_us[3],
-            queue_submit_max_us = self.maximum_us[4],
-            queue_present_max_us = self.maximum_us[5],
-            fence_wait_max_us = self.maximum_us[6],
-            "profiled unified Vulkan frame phases"
-        );
-        self.window_started = std::time::Instant::now();
-        self.frame_count = 0;
-        self.ensure_us = 0;
-        self.wait_write_us = 0;
-        self.acquire_us = 0;
-        self.record_us = 0;
-        self.queue_submit_us = 0;
-        self.queue_present_us = 0;
-        self.fence_wait_us = 0;
-        self.maximum_us = [0; 7];
     }
 }
 
@@ -250,7 +156,10 @@ impl WorldFrameRenderer {
         window: WorldFrameWindow,
         ui: Option<WorldUiOverlay<'_>>,
     ) -> Result<WorldFrameReport, VulkanError> {
-        let ensure_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
+        let _profile = solarity_profiling::profile!("rendering.vulkan.world");
+        let profile_epoch = solarity_profiling::generation();
+        let profile_enabled = profile_epoch != 0;
+        let ensure_started = profile_enabled.then(std::time::Instant::now);
         // An admitted world sky scene may be fully hidden inside a building.
         // Its fog clear is still a complete frame even when no geometry draws.
         let has_sky_scene =
@@ -439,13 +348,13 @@ impl WorldFrameRenderer {
             .gpu_profiler
             .as_mut()
             .is_some_and(GpuFrameProfiler::sample_next);
-        let wait_write_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
+        let wait_write_started = profile_enabled.then(std::time::Instant::now);
         let (acquired, wait_write_elapsed, acquire_elapsed, fence_wait_elapsed) = {
             let (slot, fence_wait_elapsed) = self.resources.prepare_slot(
                 slot_index,
                 context.device,
                 context.allocator,
-                self.profiler.is_some(),
+                profile_enabled,
             )?;
             if let Some(profiler) = self.gpu_profiler.as_mut() {
                 profiler.record(slot.gpu_timestamps.collect(context.device)?, context.extent);
@@ -604,7 +513,7 @@ impl WorldFrameRenderer {
             let wait_write_elapsed = wait_write_started
                 .map(|started| started.elapsed())
                 .unwrap_or_default();
-            let acquire_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
+            let acquire_started = profile_enabled.then(std::time::Instant::now);
             // SAFETY: Swapchain and acquire semaphore live through submission.
             let acquired = unsafe {
                 context.swapchain_loader.acquire_next_image(
@@ -637,7 +546,7 @@ impl WorldFrameRenderer {
             .copied()
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let slot = self.resources.slot_mut(slot_index)?;
-        let record_started = self.profiler.as_ref().map(|_| std::time::Instant::now());
+        let record_started = profile_enabled.then(std::time::Instant::now);
         let gpu_queries = if gpu_sample {
             Some(slot.gpu_timestamps.ensure(context.device)?)
         } else {
@@ -744,7 +653,7 @@ impl WorldFrameRenderer {
             slot,
             present_semaphore,
             image_index,
-            self.profiler.is_some(),
+            profile_enabled,
             gpu_sample,
         )?;
         self.submission_fog = submission_fog;
@@ -755,11 +664,23 @@ impl WorldFrameRenderer {
         if environment_frame.is_some() {
             self.environment_shadows.submitted();
         }
-        if let Some(profiler) = self.profiler.as_mut() {
+        if profile_enabled {
             let submit_timings = submit_timings.ok_or_else(|| {
                 VulkanError::operation("profile world frame", "queue timings are unavailable")
             })?;
-            profiler.record([
+            static CPU_PHASES: solarity_profiling::Site =
+                solarity_profiling::Site::new("rendering.vulkan.phases", false);
+            for (name, duration) in [
+                "resource admission",
+                "slot wait and upload",
+                "image acquisition",
+                "command recording",
+                "queue submit",
+                "queue present",
+                "fence wait",
+            ]
+            .into_iter()
+            .zip([
                 ensure_elapsed,
                 wait_write_elapsed,
                 acquire_elapsed,
@@ -767,8 +688,28 @@ impl WorldFrameRenderer {
                 submit_timings.queue_submit,
                 submit_timings.queue_present,
                 fence_wait_elapsed,
-            ]);
+            ]) {
+                CPU_PHASES.cpu_duration(profile_epoch, name, duration);
+            }
         }
+        solarity_profiling::profile_value!("rendering.terrain.draws", terrain_draws.len());
+        solarity_profiling::profile_value!("rendering.wmo.draws", world_model_draws.len());
+        solarity_profiling::profile_value!("rendering.m2.draws", m2_draws.len());
+        solarity_profiling::profile_value!("rendering.m2.bones", bone_count);
+        solarity_profiling::profile_value!("rendering.particles.vertices", particle_vertices.len());
+        solarity_profiling::profile_value!("rendering.particles.draws", particle_draws.len());
+        solarity_profiling::profile_value!("rendering.ribbons.vertices", ribbon_vertices.len());
+        solarity_profiling::profile_value!("rendering.shadows.primary_draws", shadow_draws.len());
+        solarity_profiling::profile_value!(
+            "rendering.shadows.environment_m2_draws",
+            environment_m2.len()
+        );
+        solarity_profiling::profile_value!("rendering.width", context.extent.0);
+        solarity_profiling::profile_value!("rendering.height", context.extent.1);
+        solarity_profiling::profile_value!(
+            "rendering.gpu_timestamps_supported",
+            self.gpu_profiler.is_some()
+        );
         let environment_counts = scene
             .environment_shadows()
             .map_or([0; 4], |frame| frame.draw_counts());

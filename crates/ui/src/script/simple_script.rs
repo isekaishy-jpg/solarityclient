@@ -1853,7 +1853,7 @@ impl UiScriptRuntime {
         &self,
         bundle: &UiBundle,
     ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
-        let started = std::time::Instant::now();
+        let mut ui_profile = solarity_profiling::profile!("ui.simple_script.snapshot_objects");
         self.snapshot_count.set(self.snapshot_count.get() + 1);
         self.synchronize_auto_text_measurement(bundle.lua())?;
         status_bars::flush_pending(bundle.lua(), self.ui_extent)
@@ -1864,22 +1864,12 @@ impl UiScriptRuntime {
             self.ui_extent,
         )
         .map_err(|error| execution_error("ScrollFrame content extent", error))?;
-        let measurement_elapsed = started.elapsed();
+        ui_profile.mark("measurement");
         let snapshot = super::runtime_state::snapshot_runtime_objects(
             bundle.lua(),
             self.registered_object_count(),
         )?;
-        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-            eprintln!(
-                "UI Lua snapshot: auto_text={:.3}ms object_copy={:.3}ms",
-                measurement_elapsed.as_secs_f64() * 1_000.0,
-                started
-                    .elapsed()
-                    .saturating_sub(measurement_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-            );
-        }
+
         Ok(snapshot)
     }
 
@@ -1923,6 +1913,8 @@ impl UiScriptRuntime {
         event: &'static str,
         payload: &UiEventPayload,
     ) -> Result<UiScriptEventDispatch, UiScriptError> {
+        let _profile_scope =
+            solarity_profiling::profile!("ui.script.simple_script.dispatch_glue_event");
         let lua = bundle.lua();
         clear_visual_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
         clear_dirty_objects(lua).map_err(|error| execution_error(event, error))?;
@@ -1993,15 +1985,7 @@ impl UiScriptRuntime {
                 message: format!("invalid Glue update interval {elapsed_seconds}"),
             });
         }
-        static PROFILE_SEQUENCE: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let profile = std::env::var_os("SOLARITY_UI_TIMINGS")
-            .filter(|_| {
-                PROFILE_SEQUENCE
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                    .is_multiple_of(128)
-            })
-            .map(|_| std::time::Instant::now());
+        let mut ui_profile = solarity_profiling::profile!("ui.update.phases");
         let lua = bundle.lua();
         clear_visual_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         clear_dirty_objects(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
@@ -2017,17 +2001,17 @@ impl UiScriptRuntime {
         let objects: Table = lua
             .named_registry_value(OBJECT_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
-        let setup = profile.map(|start| start.elapsed());
+        ui_profile.mark("setup");
         let mut animation_updates = advance_animations(lua, elapsed_seconds)
             .map_err(|error| execution_error("FrameXML animation update", error))?;
         // Timer-only animation groups must advance and run their callbacks,
         // but identical contributions do not invalidate native presentation.
         animation_updates
             .retain(|&(index, transform)| !live.animation_transform_matches(index, transform));
-        let animated = profile.map(|start| start.elapsed());
+        ui_profile.mark("animated");
         advance_edit_box_caret(lua, &objects, elapsed_seconds)
             .map_err(|error| execution_error("Glue EditBox caret", error))?;
-        let caret = profile.map(|start| start.elapsed());
+        ui_profile.mark("caret");
         let update_objects: Table = lua
             .named_registry_value(ON_UPDATE_OBJECTS_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
@@ -2035,7 +2019,6 @@ impl UiScriptRuntime {
             .named_registry_value(ON_UPDATE_MEMBERS_REGISTRY)
             .map_err(|error| execution_error("Glue OnUpdate", error))?;
         let mut dispatched = 0;
-        let mut handler_timings = Vec::new();
         for slot in 1..=update_objects.raw_len() {
             let index = update_objects
                 .raw_get::<usize>(slot)
@@ -2061,11 +2044,9 @@ impl UiScriptRuntime {
             else {
                 continue;
             };
-            let handler_started = profile.map(|_| std::time::Instant::now());
+            let handler_profile = solarity_profiling::detail_profile!("ui.update.handler");
             let result = call_number_object_handler(lua, &function, object, elapsed_seconds);
-            if let Some(start) = handler_started {
-                handler_timings.push((index, start.elapsed()));
-            }
+            drop(handler_profile);
             if let Err(error) = result {
                 // A recoverable authored callback must not cancel swapchain
                 // presentation and then fail again on every main-loop pass.
@@ -2079,7 +2060,7 @@ impl UiScriptRuntime {
             }
             dispatched += 1;
         }
-        let called = profile.map(|start| start.elapsed());
+        ui_profile.mark("called");
         let cursor = self.cursor_position.get();
         tooltips::update_cursor_anchors(
             lua,
@@ -2089,7 +2070,7 @@ impl UiScriptRuntime {
             ),
         )
         .map_err(|error| execution_error("GameTooltip cursor update", error))?;
-        let tooltips = profile.map(|start| start.elapsed());
+        ui_profile.mark("tooltips");
         let current_generation =
             live_state_generation(lua).map_err(|error| execution_error("Glue OnUpdate", error))?;
         let current_fallback_generation = fallback_state_generation(lua)
@@ -2123,46 +2104,7 @@ impl UiScriptRuntime {
             && fallback_mutations == 0
             && self.registered_object_count() == object_count
             && !dirty_objects.is_empty();
-        if let (
-            Some(start),
-            Some(setup),
-            Some(animated),
-            Some(caret),
-            Some(called),
-            Some(tooltips),
-        ) = (profile, setup, animated, caret, called, tooltips)
-        {
-            let total = start.elapsed();
-            let callback_time = handler_timings
-                .iter()
-                .map(|(_, elapsed)| *elapsed)
-                .sum::<std::time::Duration>();
-            let handlers = handler_timings
-                .iter()
-                .map(|(index, elapsed)| {
-                    let name = objects
-                        .raw_get::<Table>(*index)
-                        .ok()
-                        .and_then(|object| {
-                            object.raw_get::<Option<String>>(name_key()).ok().flatten()
-                        })
-                        .unwrap_or_else(|| format!("#{index}"));
-                    format!("{name}:{:.1}", elapsed.as_secs_f64() * 1_000_000.0)
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            eprintln!(
-                "UI update dispatch: setup={:.1}us animation={:.1}us caret={:.1}us selection={:.1}us callbacks={:.1}us tooltip={:.1}us journal={:.1}us total={:.1}us handlers=[{handlers}]",
-                setup.as_secs_f64() * 1_000_000.0,
-                (animated - setup).as_secs_f64() * 1_000_000.0,
-                (caret - animated).as_secs_f64() * 1_000_000.0,
-                (called - caret).saturating_sub(callback_time).as_secs_f64() * 1_000_000.0,
-                callback_time.as_secs_f64() * 1_000_000.0,
-                (tooltips - called).as_secs_f64() * 1_000_000.0,
-                (total - tooltips).as_secs_f64() * 1_000_000.0,
-                total.as_secs_f64() * 1_000_000.0
-            );
-        }
+
         Ok(UiUpdateDispatch {
             handler_count: dispatched,
             changed,
@@ -2587,6 +2529,8 @@ impl UiScriptRuntime {
         object_index: usize,
         delta: f64,
     ) -> Result<UiScriptEventDispatch, UiScriptError> {
+        let _profile_scope =
+            solarity_profiling::profile!("ui.script.simple_script.dispatch_mouse_wheel");
         let label = format!("ScrollFrame object {object_index}:OnMouseWheel");
         if object_index >= self.registered_object_count() || !delta.is_finite() {
             return Err(UiScriptError::Plan {
@@ -2902,6 +2846,7 @@ impl UiScriptRuntime {
         scripts: &UiScriptPlan,
         batch: UiObjectBatch,
     ) -> Result<(), UiScriptError> {
+        let _profile_scope = solarity_profiling::profile!("ui.script.simple_script.execute_batch");
         let mut visited = 0;
         self.execute_object(lua, tree, scripts, batch, batch.root(), &mut visited)?;
         if visited != batch.node_count() {
@@ -4463,6 +4408,8 @@ fn dispatch_event_callbacks(
     event: &str,
     arguments: &[Value],
 ) -> mlua::Result<usize> {
+    let _profile_scope =
+        solarity_profiling::profile!("ui.script.simple_script.dispatch_event_callbacks");
     let globals = lua.globals();
     let previous_event = globals.raw_get::<Value>("event")?;
     let mut previous_arguments = Vec::with_capacity(crate::event::LEGACY_EVENT_ARGUMENT_GLOBALS);

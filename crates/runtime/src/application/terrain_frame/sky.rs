@@ -1,7 +1,6 @@
 //! One retained native sky simulation for the active map's world frames.
 
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
-use crate::application::frame_profile::RuntimeFrameProfile;
 use solarity_rendering::{
     BlpTextureHandle, WorldCameraFrame, WorldCelestialDraw, WorldCelestialFrame,
     WorldCelestialMesh, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,
@@ -41,7 +40,7 @@ impl WorldSky {
         time_ms: u32,
         celestial_colors: [u32; 3],
     ) {
-        let mut profile = RuntimeFrameProfile::new("World sky update");
+        let mut profile = solarity_profiling::profile!("World sky update");
         let light = environment.light();
         self.gradient.update_colors(
             light.sky_colors(),

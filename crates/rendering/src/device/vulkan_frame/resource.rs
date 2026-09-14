@@ -312,6 +312,8 @@ impl FrameResources {
 
     /// Waits every source reader before decoded pixels may be replaced.
     pub(super) fn wait_all(&self, device: &Device) -> Result<(), VulkanError> {
+        let _profile_scope =
+            solarity_profiling::profile!("rendering.device.vulkan_frame.resource.wait_all");
         let fences = self.slots.iter().map(FrameSlot::fence).collect::<Vec<_>>();
         if fences.is_empty() {
             return Ok(());
@@ -347,6 +349,8 @@ impl FrameResources {
         allocator: &vk_mem::Allocator,
         rgba8: &[u8],
     ) -> Result<(), VulkanError> {
+        let _profile_scope =
+            solarity_profiling::profile!("rendering.device.vulkan_frame.resource.write_source");
         self.source
             .as_ref()
             .ok_or(VulkanError::FrameCapacity)?

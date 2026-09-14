@@ -1,7 +1,6 @@
 //! Ordinary residency publication and attachment membership.
 
 use super::super::{M2Frame, M2GpuPlacementOwner};
-use crate::application::frame_profile::RuntimeFrameProfile;
 
 impl M2Frame {
     /// Publishes a changed ordinary scene before animation visits any owner.
@@ -9,7 +8,7 @@ impl M2Frame {
         if !self.placement_topology_dirty {
             return;
         }
-        let mut profile = RuntimeFrameProfile::new("M2 placement topology");
+        let mut profile = solarity_profiling::profile!("M2 placement topology");
         // Changes to body residency can append a parent after retained
         // CEffects. Keep every effect behind its current parent pose.
         self.placements

@@ -57,6 +57,8 @@ impl MovementFallState {
         interval: MovementFallInterval,
         geometry: &mut G,
     ) -> Result<MovementFallAdvance<G::TriangleIdentity>, MovementFallAdvanceError> {
+        let _profile_scope =
+            solarity_profiling::profile!("systems.movement.airborne.advance.advance_with_geometry");
         let mut state = self.snapshot;
         let original = state;
         let mut volume =

@@ -31,6 +31,8 @@ pub(super) struct RecordContext<'a> {
 
 /// Records a changed upload, aspect-fit linear blit, and optional UI overlay.
 pub(super) fn record_frame(context: RecordContext<'_>) -> Result<(), VulkanError> {
+    let _profile_scope =
+        solarity_profiling::profile!("rendering.device.vulkan_frame.command.record_frame");
     let begin =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     // SAFETY: The slot was fenced and its command pool was reset.
@@ -302,6 +304,8 @@ pub(super) fn submit_and_present(
     present_semaphore: vk::Semaphore,
     image_index: u32,
 ) -> Result<(), VulkanError> {
+    let _profile_scope =
+        solarity_profiling::profile!("rendering.device.vulkan_frame.command.submit_and_present");
     let waits = [vk::SemaphoreSubmitInfo::default()
         .semaphore(slot.image_available())
         .stage_mask(vk::PipelineStageFlags2::TRANSFER)];

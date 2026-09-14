@@ -376,6 +376,8 @@ impl<'output> SoundEngine<'output> {
     /// Returns [`SoundEngineError`] when backend state or gain application
     /// fails.
     pub fn set_settings(&mut self, settings: SoundEngineSettings) -> Result<(), SoundEngineError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.engine.sound_engine.set_settings");
         self.collect_stopped_unmanaged_voices()?;
         if self.settings != settings {
             // Voice admission and runtime-gain changes already apply the current
@@ -589,6 +591,15 @@ impl<'output> SoundEngine<'output> {
     /// Returns [`SoundEngineError`] if the backend cannot inspect an owned
     /// voice.
     pub fn collect_stopped_voices(&mut self) -> Result<usize, SoundEngineError> {
+        solarity_profiling::profile_value!("audio.active_voices", self.active_voice_count());
+        solarity_profiling::profile_value!("audio.encoded_sounds", self.cached_sound_count());
+        solarity_profiling::profile_value!("audio.decoded_sounds", self.decoded_sound_count());
+        solarity_profiling::profile_value!(
+            "audio.decoded_sample_bytes",
+            self.decoded_sample_cache_bytes()
+        );
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.engine.sound_engine.collect_stopped_voices");
         let before = self.active_voices.len();
         let mut index = 0;
         while index < self.active_voices.len() {
@@ -605,6 +616,9 @@ impl<'output> SoundEngine<'output> {
 
     /// Collects ordinary voices while service-owned generations remain stable.
     fn collect_stopped_unmanaged_voices(&mut self) -> Result<usize, SoundEngineError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "media.audio.engine.sound_engine.collect_stopped_unmanaged_voices"
+        );
         let before = self.active_voices.len();
         let mut index = 0;
         while index < self.active_voices.len() {
@@ -627,6 +641,8 @@ impl<'output> SoundEngine<'output> {
     /// Decoder resources remain independently owned by SDL after their one
     /// adapter-boundary copy.
     pub fn collect_unused_encoded(&mut self) -> usize {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.engine.sound_engine.collect_unused_encoded");
         self.cache.collect_unused()
     }
 
@@ -637,6 +653,8 @@ impl<'output> SoundEngine<'output> {
     /// Returns [`SoundEngineError`] if this engine uses a device output or SDL
     /// reports memory-generation failure.
     pub fn generate(&self, buffer: &mut [u8]) -> Result<usize, SoundEngineError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.engine.sound_engine.generate");
         Ok(self.backend.generate(buffer)?)
     }
 }

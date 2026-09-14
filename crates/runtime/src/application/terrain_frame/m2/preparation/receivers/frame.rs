@@ -14,6 +14,9 @@ impl M2Frame {
         animation_time_ms: f32,
         mut spatial: Option<(&mut RuntimeTerrainCoordinator, WorldEntityLightEnvironment)>,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.terrain_frame.m2.preparation.receivers.frame.prepare_visible_receivers"
+        );
         for index in self
             .visible_draws
             .iter()

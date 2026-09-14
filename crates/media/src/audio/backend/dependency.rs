@@ -189,6 +189,8 @@ impl SoundOutput {
     /// Returns [`SoundBackendError`] when this output targets a device or SDL
     /// reports generation failure.
     pub fn generate(&self, buffer: &mut [u8]) -> Result<usize, SoundBackendError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.backend.dependency.generate");
         if self.target != SoundOutputTarget::Memory {
             return Err(SoundBackendError::NotMemoryOutput);
         }
@@ -403,6 +405,8 @@ impl<'output> SoundBackend<'output> {
     /// Returns [`SoundBackendError`] when no movie track exists or SDL rejects
     /// the queued samples.
     pub fn queue_cinematic_audio(&mut self, samples: &[i16]) -> Result<(), SoundBackendError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.backend.dependency.queue_cinematic_audio");
         let cinematic = self
             .cinematic
             .as_ref()
@@ -481,6 +485,8 @@ impl<'output> SoundBackend<'output> {
         sound: DecodedSoundHandle,
         options: super::SoundVoiceStart,
     ) -> Result<SoundBackendPlayback, SoundBackendError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.backend.dependency.play_prepared");
         let super::SoundVoiceStart {
             gain,
             looping,
@@ -583,6 +589,8 @@ impl<'output> SoundBackend<'output> {
     /// Returns [`SoundBackendError::UnknownVoice`] for a stale or foreign
     /// handle.
     pub fn state(&self, voice: SoundVoiceHandle) -> Result<SoundVoiceState, SoundBackendError> {
+        let _profile_scope =
+            solarity_profiling::detail_profile!("media.audio.backend.dependency.state");
         let slot = self.voice(voice)?;
         if slot.track.is_paused() {
             Ok(SoundVoiceState::Paused)
@@ -657,6 +665,8 @@ impl<'output> SoundBackend<'output> {
         voice: SoundVoiceHandle,
         gain: f32,
     ) -> Result<(), SoundBackendError> {
+        let _profile_scope =
+            solarity_profiling::detail_profile!("media.audio.backend.dependency.set_gain");
         if !gain.is_finite() || gain < 0.0 {
             return Err(SoundBackendError::InvalidGain { gain });
         }
@@ -678,6 +688,9 @@ impl<'output> SoundBackend<'output> {
         voice: SoundVoiceHandle,
         position: Option<SoundSpatialPosition>,
     ) -> Result<(), SoundBackendError> {
+        let _profile_scope = solarity_profiling::detail_profile!(
+            "media.audio.backend.dependency.set_spatial_position"
+        );
         self.set_spatial_mix(voice, position, 1.0)
     }
 
@@ -698,6 +711,8 @@ impl<'output> SoundBackend<'output> {
         position: Option<SoundSpatialPosition>,
         pan_level: f32,
     ) -> Result<(), SoundBackendError> {
+        let _profile_scope =
+            solarity_profiling::detail_profile!("media.audio.backend.dependency.set_spatial_mix");
         if !pan_level.is_finite() || !(0.0..=1.0).contains(&pan_level) {
             return Err(SoundBackendError::InvalidSpatialPanLevel { level: pan_level });
         }
@@ -760,6 +775,8 @@ impl<'output> SoundBackend<'output> {
     /// Returns [`SoundBackendError`] when the output targets a device or SDL
     /// reports generation failure.
     pub fn generate(&self, buffer: &mut [u8]) -> Result<usize, SoundBackendError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.backend.dependency.generate");
         self.output.generate(buffer)
     }
 

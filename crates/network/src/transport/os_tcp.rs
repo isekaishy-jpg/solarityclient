@@ -19,19 +19,21 @@ impl TcpTransport {
     /// Returns [`TransportError::Connect`] when resolution or connection fails,
     /// or [`TransportError::Configure`] when TCP no-delay cannot be enabled.
     pub async fn connect(endpoint: &TcpEndpoint) -> Result<TcpStream, TransportError> {
-        let authority = endpoint.to_string();
-        let stream = TcpStream::connect((endpoint.host(), endpoint.port()))
-            .await
-            .map_err(|error| TransportError::Connect {
-                endpoint: authority.clone(),
-                message: error.to_string(),
-            })?;
-        stream
-            .set_nodelay(true)
-            .map_err(|error| TransportError::Configure {
-                endpoint: authority,
-                message: error.to_string(),
-            })?;
-        Ok(stream)
+        solarity_profiling::profile_await!("network.transport.os_tcp.connect", async {
+            let authority = endpoint.to_string();
+            let stream = TcpStream::connect((endpoint.host(), endpoint.port()))
+                .await
+                .map_err(|error| TransportError::Connect {
+                    endpoint: authority.clone(),
+                    message: error.to_string(),
+                })?;
+            stream
+                .set_nodelay(true)
+                .map_err(|error| TransportError::Configure {
+                    endpoint: authority,
+                    message: error.to_string(),
+                })?;
+            Ok(stream)
+        })
     }
 }

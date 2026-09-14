@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
-Runs the installed Testing client with opt-in CPU and/or sampled GPU diagnostics.
+Runs the installed Testing client with a shared F10 capture enabled from startup.
 .DESCRIPTION
-Uses the installed launcher's existing settings and timestamped log. Timing flags
-apply only to this process tree; the normal Testing launch remains unchanged.
+Uses the installed launcher's existing settings and timestamped log. Legacy Mode
+values all start the unified capture; F10 can stop or restart it. Timing flags
+apply only to this process tree; the normal Testing launch starts with capture off.
 #>
 [CmdletBinding()]
 param(

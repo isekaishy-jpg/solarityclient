@@ -96,6 +96,9 @@ impl VulkanRenderer {
     /// Consumes only last-owner events; a resource reacquired before collection
     /// remains resident. The fence is submitted before invalidating any handle.
     pub(in super::super) fn collect_released_resources(&mut self) -> Result<(), VulkanError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "rendering.device.vulkan_renderer.resource_lifetime.retirement.collect_released_resources"
+        );
         let mut released = Vec::new();
         while let Ok(key) = self.resource_lifetimes.receiver.try_recv() {
             if self

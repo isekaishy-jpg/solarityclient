@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+solarity-profiling.workspace = true
 flate2.workspace = true
 sha-1.workspace = true
 thiserror.workspace = true

@@ -88,8 +88,7 @@ impl LiquidGpuMaterialCache {
         renderer: &mut VulkanRenderer,
         batches: &[ResidentTerrainLiquidBatch],
     ) -> Result<Vec<LiquidGpuBatch>, RuntimeTerrainFrameError> {
-        let mut profile =
-            crate::application::frame_profile::RuntimeFrameProfile::new("Terrain liquid admission");
+        let mut profile = solarity_profiling::profile!("Terrain liquid admission");
         let materials = batches
             .iter()
             .map(|batch| self.prepare(renderer, &batch.material))

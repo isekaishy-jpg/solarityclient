@@ -203,6 +203,9 @@ impl M2BonePose {
         model_view: Mat4,
         overrides: M2BonePoseOverrides<'_>,
     ) -> Result<(), M2BonePoseError> {
+        let _profile_scope = solarity_profiling::detail_profile!(
+            "rendering.model.m2_animation.pose.compose.recompose_with_overrides"
+        );
         if !finite_matrix(model_view) {
             return Err(M2BonePoseError::InvalidModelView);
         }

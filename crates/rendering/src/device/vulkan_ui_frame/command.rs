@@ -22,6 +22,7 @@ pub(super) struct RecordContext<'a> {
     pub(super) device: &'a Device,
     pub(super) capture: Option<&'a FrameReadback>,
     pub(super) command_buffer: vk::CommandBuffer,
+    pub(super) timestamps: Option<vk::QueryPool>,
     pub(super) image: vk::Image,
     pub(super) image_view: vk::ImageView,
     pub(super) extent: (u32, u32),
@@ -75,6 +76,8 @@ impl UiCommandBindings {
 
 /// Records attachment transitions, shared state, and ordered indexed draws.
 pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError> {
+    let _profile_scope =
+        solarity_profiling::profile!("rendering.device.vulkan_ui_frame.command.record_draws");
     let begin =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     // SAFETY: The slot command pool was reset and this buffer is not pending.
@@ -84,6 +87,20 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
             .begin_command_buffer(context.command_buffer, &begin)
     }
     .map_err(|source| VulkanError::operation("begin UI frame command buffer", source))?;
+    if let Some(pool) = context.timestamps {
+        // SAFETY: The normal slot fence retired previous queries before this reset.
+        unsafe {
+            context
+                .device
+                .cmd_reset_query_pool(context.command_buffer, pool, 0, 2);
+            context.device.cmd_write_timestamp2(
+                context.command_buffer,
+                vk::PipelineStageFlags2::TOP_OF_PIPE,
+                pool,
+                0,
+            );
+        }
+    }
     record_mesh_updates(
         context.device,
         context.command_buffer,
@@ -173,6 +190,17 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
     // SAFETY: A matching dynamic-rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
     transition_to_present(&context);
+    if let Some(pool) = context.timestamps {
+        // SAFETY: This command buffer reset the live slot-owned two-query pool.
+        unsafe {
+            context.device.cmd_write_timestamp2(
+                context.command_buffer,
+                vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+                pool,
+                1,
+            );
+        }
+    }
     // SAFETY: Every referenced resource outlives fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end UI frame command buffer", source))
@@ -182,6 +210,9 @@ pub(super) fn record_draws(context: RecordContext<'_>) -> Result<(), VulkanError
 pub(in crate::device) fn record_loaded_overlay(
     context: UiOverlayRecordContext<'_>,
 ) -> Result<(), VulkanError> {
+    let _profile_scope = solarity_profiling::profile!(
+        "rendering.device.vulkan_ui_frame.command.record_loaded_overlay"
+    );
     if context.draws.is_empty() && context.overlay.is_empty() {
         return Ok(());
     }
@@ -277,6 +308,9 @@ fn record_mesh_updates(
     meshes: &UiMeshRegistry,
     draws: &[UiPreparedDraw],
 ) -> Result<(), VulkanError> {
+    let _profile_scope = solarity_profiling::profile!(
+        "rendering.device.vulkan_ui_frame.command.record_mesh_updates"
+    );
     let mut previous_mesh = None;
     for draw in draws {
         let mesh = draw.mesh();
@@ -595,7 +629,10 @@ pub(super) fn submit_and_present(
     slot: &mut UiFrameSlot,
     present_semaphore: vk::Semaphore,
     image_index: u32,
+    sampled: bool,
 ) -> Result<(), VulkanError> {
+    let _profile_scope =
+        solarity_profiling::profile!("rendering.device.vulkan_ui_frame.command.submit_and_present");
     let waits = [vk::SemaphoreSubmitInfo::default()
         .semaphore(slot.image_available())
         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
@@ -618,6 +655,8 @@ pub(super) fn submit_and_present(
         return Err(VulkanError::operation("submit UI frame", source));
     }
     let present_waits = [present_semaphore];
+    slot.timestamps.submitted(sampled);
+    let _present_profile = solarity_profiling::profile!("rendering.ui.queue_present");
     let swapchains = [context.swapchain];
     let indices = [image_index];
     let present = vk::PresentInfoKHR::default()

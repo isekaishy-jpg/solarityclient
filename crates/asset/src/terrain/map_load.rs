@@ -31,6 +31,7 @@ impl TerrainMap {
     /// Returns [`AssetError`] when resolution, WDT parsing, build-era layout,
     /// global-WMO structure, or map directory paths are invalid.
     pub fn load(store: &mut AssetStore, definition: &MapDefinition) -> Result<Self, AssetError> {
+        let _profile_scope = solarity_profiling::profile!("asset.terrain.map_load.load");
         let path = Self::wdt_path(definition)?;
         let read = store.read(&path)?;
         validate_chunk_stream(&path, read.bytes())?;
@@ -75,6 +76,7 @@ impl TerrainMap {
         store: &mut AssetStore,
         index: TerrainTileIndex,
     ) -> Result<DecodedTerrainTile, AssetError> {
+        let _profile_scope = solarity_profiling::profile!("asset.terrain.map_load.load_tile");
         let path = self.adt_path(index)?;
         if !self.tile(index).exists() {
             return Err(terrain_message(

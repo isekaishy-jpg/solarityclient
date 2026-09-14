@@ -4,6 +4,7 @@
 
 mod camera_profile;
 pub(super) mod glue_benchmark;
+mod instrumentation;
 mod session_lifecycle;
 pub(super) mod world_benchmark;
 mod world_camera;
@@ -56,7 +57,6 @@ use crate::application::cinematic_coordinator::{
 };
 use crate::application::developer_console::RuntimeDeveloperConsole;
 use crate::application::environment_coordinator::RuntimeWorldEnvironment;
-use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::game_object_coordinator::{
     RuntimeGameObjectPresentation, RuntimeTransportPoll,
 };
@@ -107,6 +107,7 @@ const STOCK_CHARACTER_BACKDROPS: [&str; 8] = [
 /// Concrete services owned exclusively by the application composition root.
 pub(crate) struct ClientServices {
     renderer: VulkanRenderer,
+    instrumentation: super::frame_profile::RuntimeInstrumentation,
     screenshots: super::screenshot::RuntimeScreenshots,
     recording: super::recording::RuntimeRecording,
     login_ui: Option<RuntimeUiFrame>,
@@ -201,6 +202,8 @@ impl ClientServices {
     pub(crate) fn start(
         configuration: &RuntimeConfiguration,
     ) -> Result<(Self, usize, usize), ApplicationError> {
+        let instrumentation = super::frame_profile::RuntimeInstrumentation::new(configuration);
+        let _profile = solarity_profiling::profile!("application.startup");
         let mut startup_profile = StartupProfile::load(configuration.profile_root())?;
         let initial_screen = if startup_profile.play_intro_movie() {
             GlueInitialScreen::Movie
@@ -500,6 +503,7 @@ impl ClientServices {
         let terrain_specular = glue.cvar_boolean("specular");
         Ok((
             Self {
+                instrumentation,
                 renderer,
                 screenshots: super::screenshot::RuntimeScreenshots::new(
                     configuration.profile_root(),
@@ -678,6 +682,15 @@ impl ClientServices {
         event: &PlatformEvent,
         timestamp_ms: u32,
     ) -> Result<(), ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.client_services.service_platform_event"
+        );
+        if self
+            .instrumentation
+            .service_event(event, self.platform.window_id())
+        {
+            return Ok(());
+        }
         if self.recording.service_event(
             event,
             self.platform.window_id(),
@@ -858,6 +871,9 @@ impl ClientServices {
         event: &PlatformEvent,
         timestamp_ms: u32,
     ) -> Result<(), ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.client_services.service_world_platform_event"
+        );
         let window_id = self.platform.window_id();
         let logical_extent = self.platform.logical_extent();
         let pointer_position = self.input.pointer_position();
@@ -1061,9 +1077,11 @@ impl ClientServices {
 
     /// Presents one Glue or resident-world frame under the active VSync policy.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        self.instrumentation.poll();
+        self.profile_scene_context();
         self.service_recording();
         self.service_screenshots()?;
-        let mut profile = RuntimeFrameProfile::new("application present");
+        let mut profile = solarity_profiling::profile!("application present");
         let update_time = std::time::Instant::now();
         self.sound.apply_focus_policy(
             self.world_ui.as_ref().map_or(
@@ -1597,7 +1615,7 @@ impl ClientServices {
     }
 
     fn present_glue_frame(&mut self) -> Result<(), ApplicationError> {
-        let mut profile = RuntimeFrameProfile::new("Glue present");
+        let mut profile = solarity_profiling::profile!("Glue present");
         self.synchronize_component_texture_level();
         let current_screen = self.glue.current_screen();
         let screen_transition =
@@ -1742,7 +1760,7 @@ impl ClientServices {
         self.world_camera_frame = None;
         self.unit_effects
             .service_sources(&self.cpu, &mut self.renderer)?;
-        let mut profile = RuntimeFrameProfile::new("session and world service");
+        let mut profile = solarity_profiling::profile!("session and world service");
         let Some(network) = self.network.as_ref() else {
             return Ok(());
         };
@@ -3092,6 +3110,7 @@ impl ClientServices {
 
     /// Shuts down task admission before consuming the async runtime.
     pub(crate) fn shutdown(&mut self) -> Result<(), ApplicationError> {
+        self.instrumentation.shutdown();
         self.recording.shutdown(&self.sound);
         let retired = self.disconnect_from_server();
         let sound_result = self.sound.shutdown().map_err(ApplicationError::from);
@@ -3107,6 +3126,9 @@ impl ClientServices {
     }
 
     fn persist_active_cvars(&mut self) -> Result<(), ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.client_services.persist_active_cvars"
+        );
         let mut changed = self.glue.take_changed_cvars();
         if let Some(world_ui) = self.world_ui.as_ref() {
             changed.extend(world_ui.take_changed_cvars());

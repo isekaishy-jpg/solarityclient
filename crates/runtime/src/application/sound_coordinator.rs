@@ -22,8 +22,6 @@ use thiserror::Error;
 use crate::random::BlizzardRand;
 use crate::time::RealmClock;
 
-use super::frame_profile::RuntimeFrameProfile;
-
 mod loader;
 mod model;
 mod movement;
@@ -361,24 +359,16 @@ impl RuntimeSoundCoordinator {
         random: &mut BlizzardRand,
         cpu: &CpuExecutor,
     ) -> Result<(), RuntimeSoundError> {
-        let mut profile = RuntimeFrameProfile::new("Glue audio service");
+        let mut profile = solarity_profiling::profile!("Glue audio service");
         let settings = SoundPolicy::read(glue)?.settings;
         profile.mark("read settings");
         self.engine
             .with_engine_mut(|engine| engine.set_settings(settings))?;
         profile.mark("apply settings");
         while let Some(action) = glue.take_media_action() {
-            let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS")
-                .map(|_| (std::time::Instant::now(), format!("{action:?}")));
+            let _action_profile = solarity_profiling::profile!("audio.glue.action");
             if let Err(error) = self.apply_glue_media_action(action, random, glue) {
                 tracing::warn!(%error, "Glue audio action was not played");
-            }
-            if let Some((started, action)) = timing {
-                tracing::info!(
-                    action,
-                    elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-                    "profiled Glue audio action"
-                );
             }
         }
         profile.mark("media actions");
@@ -390,6 +380,8 @@ impl RuntimeSoundCoordinator {
 
     /// Advances already selected audio on either side of the Glue/world boundary.
     pub(crate) fn poll_loads(&mut self, cpu: &CpuExecutor) -> Result<(), RuntimeSoundError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.sound_coordinator.poll_loads");
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_fade_update);
         self.last_fade_update = now;
@@ -717,6 +709,8 @@ impl RuntimeSoundCoordinator {
         player_position: Option<Vec3>,
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeSoundError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.sound_coordinator.update");
         let policy = SoundPolicy::read(glue)?;
         self.engine
             .with_engine_mut(|engine| engine.set_settings(policy.settings))?;
@@ -747,6 +741,9 @@ impl RuntimeSoundCoordinator {
         clock: &RealmClock,
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeSoundError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.sound_coordinator.update_suspended_world"
+        );
         let settings = SoundPolicy::read(cvars)?.settings;
         self.engine
             .with_engine_mut(|engine| engine.set_settings(settings))?;
@@ -763,6 +760,9 @@ impl RuntimeSoundCoordinator {
         listener: AdvancedSoundListener,
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeSoundError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.sound_coordinator.advance_world_sounds"
+        );
         self.update_zone(glue, clock, random)?;
         if let Some(emitters) = self.staged_emitters.take() {
             self.engine

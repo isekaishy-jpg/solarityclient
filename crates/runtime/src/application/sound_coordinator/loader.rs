@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use solarity_asset::{ArchiveCatalog, AssetStore};
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
@@ -142,17 +141,13 @@ impl RuntimeSoundLoader {
         let handle = request.handle();
         let assets = Arc::clone(&self.assets);
         match cpu.try_submit(move || {
-            let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_| Instant::now());
-            let result = assets.lock()
+            let _profile = solarity_profiling::profile!("audio.archive.worker");
+            assets
+                .lock()
                 .map_err(|_poisoned| RuntimeSoundError::LoaderUnavailable {
                     message: "sound archive owner is poisoned".to_owned(),
                 })?
-                .read(&request);
-            if let Some(start) = timing {
-                tracing::info!(path = %request.path(), elapsed_ms = start.elapsed().as_secs_f64() * 1_000.0,
-                    "read sound payload on worker");
-            }
-            result
+                .read(&request)
         }) {
             Ok(task) => {
                 self.queued.pop_front();

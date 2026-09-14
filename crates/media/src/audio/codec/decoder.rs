@@ -106,6 +106,7 @@ impl SoundDecoder {
         encoded: &EncodedSound,
         mode: SoundDecodeMode,
     ) -> Result<DecodedSoundHandle, SoundDecodeError> {
+        let _profile_scope = solarity_profiling::profile!("media.audio.codec.decoder.load");
         if let Some(handle) = self.retain_sample(encoded.path(), mode)? {
             return Ok(handle);
         }
@@ -188,6 +189,7 @@ impl SoundDecoder {
 
     /// Admits completed bytes, rechecking a sample another request could have loaded.
     fn admit(&mut self, prepared: PreparedSound) -> Result<DecodedSoundHandle, SoundDecodeError> {
+        let _profile_scope = solarity_profiling::profile!("media.audio.codec.decoder.admit");
         let mode = prepared.info.mode();
         if let Some(handle) = self.retain_sample(prepared.info.path(), mode)? {
             return Ok(handle);
@@ -256,6 +258,8 @@ impl SoundDecoder {
     ///
     /// Active samples remain resident even when they alone exceed the budget.
     pub fn trim_predecoded_cache(&mut self, maximum_bytes: usize) -> usize {
+        let _profile_scope =
+            solarity_profiling::profile!("media.audio.codec.decoder.trim_predecoded_cache");
         self.loader.collect_cancelled();
         let mut removed = 0;
         for slot in 0..self.resources.len() {

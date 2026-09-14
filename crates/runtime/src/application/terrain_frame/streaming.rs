@@ -5,7 +5,6 @@ use std::sync::Arc;
 use solarity_asset::TerrainTileIndex;
 use solarity_rendering::VulkanRenderer;
 
-use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::terrain_coordinator::ResidentTerrainTile;
 use crate::random::CrtRand;
 
@@ -97,7 +96,7 @@ impl TerrainFrame {
         }) {
             self.environment_shadows = None;
         }
-        let mut profile = RuntimeFrameProfile::new("Terrain publication");
+        let mut profile = solarity_profiling::profile!("Terrain publication");
         let mut added = Vec::new();
         for tile in tiles.clone() {
             if !self

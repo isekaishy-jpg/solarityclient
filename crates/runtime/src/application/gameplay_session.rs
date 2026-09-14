@@ -202,6 +202,9 @@ pub(in crate::application) fn apply_object_updates_with_units<E: From<GameplayUp
     ) -> Result<(), E>,
     notify_unit: &mut impl FnMut(&ActiveWorld, solarity_ecs::WorldObjectIdentity, UnitFieldNotification),
 ) -> Result<(), E> {
+    let _profile_scope = solarity_profiling::profile!(
+        "runtime.application.gameplay_session.apply_object_updates_with_units"
+    );
     let mut mirrors = GameObjectUpdateMirrors::default();
     let mut units = UnitFieldMirrors::default();
     for update in batch.updates() {

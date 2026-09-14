@@ -60,7 +60,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::model_playback::{M2Playback, M2PlaybackAdvance};
 use glam::Mat4;
 use solarity_asset::{

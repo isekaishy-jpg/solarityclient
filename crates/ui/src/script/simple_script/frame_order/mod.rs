@@ -13,7 +13,7 @@ use super::{
 
 /// Raises the stock top-level owner and preserves its descendants' level offsets.
 pub(super) fn raise(lua: &Lua, object: &Table) -> mlua::Result<()> {
-    let started = std::env::var_os("SOLARITY_UI_TIMINGS").map(|_| std::time::Instant::now());
+    let _profile = solarity_profiling::profile!("ui.frame.raise");
     let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
     let mut raised = object.clone();
     loop {
@@ -31,14 +31,7 @@ pub(super) fn raise(lua: &Lua, object: &Table) -> mlua::Result<()> {
 
     let strata = raised.raw_get::<String>(frame_strata_key())?;
     let top_level = index::next_level(lua, &strata)?;
-    let result = set_level(lua, &raised, top_level);
-    if let Some(started) = started {
-        tracing::info!(
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "profiled UI frame raise"
-        );
-    }
-    result
+    set_level(lua, &raised, top_level)
 }
 
 /// Applies stock's bounded level delta while retaining every child's offset.

@@ -274,7 +274,7 @@ impl VulkanRenderer {
         present_mode: VulkanPresentMode,
     ) -> Result<Self, VulkanError> {
         let selected = SelectedAdapter::select(&bootstrap, adapter_index, present_mode)?;
-        let gpu_profiler = crate::device::vulkan_world_frame::GpuFrameProfiler::from_environment(
+        let gpu_profiler = crate::device::vulkan_world_frame::GpuFrameProfiler::new_if_supported(
             &bootstrap.instance,
             selected.physical_device,
             selected.graphics_family,
@@ -332,7 +332,7 @@ impl VulkanRenderer {
             character_atlas_textures: CharacterAtlasTextureRegistry::default(),
             ui_pipelines: UiPipelineRegistry::default(),
             cinematic_frames: FrameRenderer::default(),
-            ui_frames: UiFrameRenderer::default(),
+            ui_frames: UiFrameRenderer::with_gpu_profiler(gpu_profiler),
             ui_meshes: UiMeshRegistry::default(),
             ui_samplers: UiSamplerRegistry::default(),
             ui_texture_sets: UiTextureSetRegistry::default(),

@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 use solarity_asset::{AssetPath, AssetStore};
 use solarity_cpu::CpuExecutor;
@@ -428,7 +427,7 @@ impl SoundEngine<'_> {
                 actual: encoded.path().clone(),
             });
         }
-        let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_| Instant::now());
+        let mut profile = solarity_profiling::profile!("audio.resource.admission");
         let decode_mode = pending
             .residency
             .decode_mode(encoded.path(), encoded.bytes().len());
@@ -437,14 +436,9 @@ impl SoundEngine<'_> {
         } else {
             self.decoder.load(encoded, decode_mode)?
         };
-        let decode_elapsed = timing.map(|start| start.elapsed());
+        profile.mark("decode completion");
         let playback = self.start_decoded_voice(pending, sound)?;
-        if let (Some(start), Some(decode_elapsed)) = (timing, decode_elapsed) {
-            tracing::info!(path = %encoded.path(), encoded_bytes = encoded.bytes().len(), ?decode_mode,
-                decode_ms = decode_elapsed.as_secs_f64() * 1_000.0,
-                backend_ms = (start.elapsed() - decode_elapsed).as_secs_f64() * 1_000.0,
-                "admitted sound resource");
-        }
+        profile.mark("backend voice start");
         Ok(playback)
     }
 
@@ -527,7 +521,7 @@ impl SoundEngine<'_> {
         store: &mut AssetStore,
         load: SoundLoadRequest,
     ) -> Result<SoundPlayback, SoundEngineError> {
-        let timing = std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_| Instant::now());
+        let mut profile = solarity_profiling::profile!("audio.payload.read");
         let encoded = match self.cache.load(store, load.path()) {
             Ok(encoded) => encoded,
             Err(error) => {
@@ -535,10 +529,7 @@ impl SoundEngine<'_> {
                 return Err(error.into());
             }
         };
-        if let Some(start) = timing {
-            tracing::info!(path = %load.path(), elapsed_ms = start.elapsed().as_secs_f64() * 1_000.0,
-                "read sound payload");
-        }
+        profile.mark("encoded cache load");
         self.complete_load(load.handle(), &encoded)
     }
 }

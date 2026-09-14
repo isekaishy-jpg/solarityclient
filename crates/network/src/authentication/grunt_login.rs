@@ -122,24 +122,29 @@ where
     ///
     /// Returns [`LoginError`] for transport, decode, or opcode-order failures.
     pub async fn request_realms(&mut self) -> Result<RealmDirectory, LoginError> {
-        CMD_REALM_LIST_Client::default()
-            .tokio_write(&mut self.stream)
-            .await
-            .map_err(|error| LoginError::Io {
-                stage: LoginStage::RealmList,
-                message: error.to_string(),
-            })?;
-        let message = read_server_message(&mut self.stream, LoginStage::RealmList).await?;
-        match message {
-            ServerOpcodeMessage::CMD_REALM_LIST(message) => {
-                Ok(RealmDirectory::from_protocol(message.realms))
+        solarity_profiling::profile_await!(
+            "network.authentication.grunt_login.request_realms",
+            async {
+                CMD_REALM_LIST_Client::default()
+                    .tokio_write(&mut self.stream)
+                    .await
+                    .map_err(|error| LoginError::Io {
+                        stage: LoginStage::RealmList,
+                        message: error.to_string(),
+                    })?;
+                let message = read_server_message(&mut self.stream, LoginStage::RealmList).await?;
+                match message {
+                    ServerOpcodeMessage::CMD_REALM_LIST(message) => {
+                        Ok(RealmDirectory::from_protocol(message.realms))
+                    }
+                    message => Err(unexpected(
+                        LoginStage::RealmList,
+                        "CMD_REALM_LIST_Server",
+                        message,
+                    )),
+                }
             }
-            message => Err(unexpected(
-                LoginStage::RealmList,
-                "CMD_REALM_LIST_Server",
-                message,
-            )),
-        }
+        )
     }
 }
 
@@ -164,142 +169,153 @@ impl GruntLogin {
         S: AsyncRead + AsyncWrite + Unpin + Send,
         I: GruntIntegrity + ?Sized,
     {
-        options
-            .write_challenge(&mut stream, credentials.username())
-            .await
-            .map_err(|error| LoginError::Io {
-                stage: LoginStage::Challenge,
-                message: error.to_string(),
-            })?;
-
-        let message = read_server_message(&mut stream, LoginStage::Challenge).await?;
-        let (crc_salt, generator, large_safe_prime, salt, security_flag, server_public_key) =
-            match message {
-                ServerOpcodeMessage::CMD_AUTH_LOGON_CHALLENGE(
-                    CMD_AUTH_LOGON_CHALLENGE_Server::Success {
-                        crc_salt,
-                        generator,
-                        large_safe_prime,
-                        salt,
-                        security_flag,
-                        server_public_key,
-                    },
-                ) => (
-                    crc_salt,
-                    generator,
-                    large_safe_prime,
-                    salt,
-                    security_flag,
-                    server_public_key,
-                ),
-                ServerOpcodeMessage::CMD_AUTH_LOGON_CHALLENGE(message) => {
-                    return Err(LoginError::Rejected {
+        solarity_profiling::profile_await!(
+            "network.authentication.grunt_login.authenticate",
+            async {
+                options
+                    .write_challenge(&mut stream, credentials.username())
+                    .await
+                    .map_err(|error| LoginError::Io {
                         stage: LoginStage::Challenge,
-                        failure: challenge_failure(message),
+                        message: error.to_string(),
+                    })?;
+
+                let message = read_server_message(&mut stream, LoginStage::Challenge).await?;
+                let (crc_salt, generator, large_safe_prime, salt, security_flag, server_public_key) =
+                    match message {
+                        ServerOpcodeMessage::CMD_AUTH_LOGON_CHALLENGE(
+                            CMD_AUTH_LOGON_CHALLENGE_Server::Success {
+                                crc_salt,
+                                generator,
+                                large_safe_prime,
+                                salt,
+                                security_flag,
+                                server_public_key,
+                            },
+                        ) => (
+                            crc_salt,
+                            generator,
+                            large_safe_prime,
+                            salt,
+                            security_flag,
+                            server_public_key,
+                        ),
+                        ServerOpcodeMessage::CMD_AUTH_LOGON_CHALLENGE(message) => {
+                            return Err(LoginError::Rejected {
+                                stage: LoginStage::Challenge,
+                                failure: challenge_failure(message),
+                            });
+                        }
+                        message => {
+                            return Err(unexpected(
+                                LoginStage::Challenge,
+                                "CMD_AUTH_LOGON_CHALLENGE_Server",
+                                message,
+                            ));
+                        }
+                    };
+
+                if security_flag.get_pin().is_some() {
+                    return Err(LoginError::UnsupportedSecurity { mechanism: "PIN" });
+                }
+                if security_flag.get_matrix_card().is_some() {
+                    return Err(LoginError::UnsupportedSecurity {
+                        mechanism: "matrix card",
                     });
                 }
-                message => {
-                    return Err(unexpected(
-                        LoginStage::Challenge,
-                        "CMD_AUTH_LOGON_CHALLENGE_Server",
-                        message,
-                    ));
+                if security_flag.get_authenticator().is_some() {
+                    return Err(LoginError::UnsupportedSecurity {
+                        mechanism: "authenticator",
+                    });
                 }
-            };
 
-        if security_flag.get_pin().is_some() {
-            return Err(LoginError::UnsupportedSecurity { mechanism: "PIN" });
-        }
-        if security_flag.get_matrix_card().is_some() {
-            return Err(LoginError::UnsupportedSecurity {
-                mechanism: "matrix card",
-            });
-        }
-        if security_flag.get_authenticator().is_some() {
-            return Err(LoginError::UnsupportedSecurity {
-                mechanism: "authenticator",
-            });
-        }
-
-        let generator = match generator.as_slice() {
-            [generator] if *generator == GENERATOR => *generator,
-            _ => {
-                return Err(LoginError::InvalidSrpParameters {
-                    message: "generator is not the stock single-byte value 7".to_owned(),
-                });
-            }
-        };
-        let large_safe_prime: [u8; 32] =
-            large_safe_prime.try_into().map_err(|prime: Vec<u8>| {
-                LoginError::InvalidSrpParameters {
-                    message: format!("large safe prime has {} bytes instead of 32", prime.len()),
+                let generator = match generator.as_slice() {
+                    [generator] if *generator == GENERATOR => *generator,
+                    _ => {
+                        return Err(LoginError::InvalidSrpParameters {
+                            message: "generator is not the stock single-byte value 7".to_owned(),
+                        });
+                    }
+                };
+                let large_safe_prime: [u8; 32] =
+                    large_safe_prime.try_into().map_err(|prime: Vec<u8>| {
+                        LoginError::InvalidSrpParameters {
+                            message: format!(
+                                "large safe prime has {} bytes instead of 32",
+                                prime.len()
+                            ),
+                        }
+                    })?;
+                if large_safe_prime != LARGE_SAFE_PRIME_LITTLE_ENDIAN {
+                    return Err(LoginError::InvalidSrpParameters {
+                        message: "large safe prime does not match the stock SRP group".to_owned(),
+                    });
                 }
-            })?;
-        if large_safe_prime != LARGE_SAFE_PRIME_LITTLE_ENDIAN {
-            return Err(LoginError::InvalidSrpParameters {
-                message: "large safe prime does not match the stock SRP group".to_owned(),
-            });
-        }
-        let server_public_key = PublicKey::from_le_bytes(server_public_key).map_err(|error| {
-            LoginError::InvalidSrpParameters {
-                message: format!("invalid server public key: {error}"),
-            }
-        })?;
-        let challenge = SrpClientChallenge::new(
-            credentials.username.clone(),
-            credentials.password,
-            generator,
-            large_safe_prime,
-            server_public_key,
-            salt,
-        );
-        let client_public_key = *challenge.client_public_key();
-        let integrity_hash = integrity.proof(crc_salt, client_public_key)?;
-        let proof = CMD_AUTH_LOGON_PROOF_Client {
-            client_public_key,
-            client_proof: *challenge.client_proof(),
-            crc_hash: integrity_hash,
-            telemetry_keys: Vec::new(),
-            security_flag: CMD_AUTH_LOGON_PROOF_Client_SecurityFlag::empty(),
-        };
-        proof
-            .tokio_write(&mut stream)
-            .await
-            .map_err(|error| LoginError::Io {
-                stage: LoginStage::Proof,
-                message: error.to_string(),
-            })?;
+                let server_public_key =
+                    PublicKey::from_le_bytes(server_public_key).map_err(|error| {
+                        LoginError::InvalidSrpParameters {
+                            message: format!("invalid server public key: {error}"),
+                        }
+                    })?;
+                let challenge = SrpClientChallenge::new(
+                    credentials.username.clone(),
+                    credentials.password,
+                    generator,
+                    large_safe_prime,
+                    server_public_key,
+                    salt,
+                );
+                let client_public_key = *challenge.client_public_key();
+                let integrity_hash = integrity.proof(crc_salt, client_public_key)?;
+                let proof = CMD_AUTH_LOGON_PROOF_Client {
+                    client_public_key,
+                    client_proof: *challenge.client_proof(),
+                    crc_hash: integrity_hash,
+                    telemetry_keys: Vec::new(),
+                    security_flag: CMD_AUTH_LOGON_PROOF_Client_SecurityFlag::empty(),
+                };
+                proof
+                    .tokio_write(&mut stream)
+                    .await
+                    .map_err(|error| LoginError::Io {
+                        stage: LoginStage::Proof,
+                        message: error.to_string(),
+                    })?;
 
-        let message = read_server_message(&mut stream, LoginStage::Proof).await?;
-        let (server_proof, tournament_access) = match message {
-            ServerOpcodeMessage::CMD_AUTH_LOGON_PROOF(CMD_AUTH_LOGON_PROOF_Server::Success {
-                account_flag,
-                server_proof,
-                ..
-            }) => (server_proof, account_flag.is_propass()),
-            ServerOpcodeMessage::CMD_AUTH_LOGON_PROOF(message) => {
-                return Err(LoginError::Rejected {
-                    stage: LoginStage::Proof,
-                    failure: proof_failure(message),
-                });
+                let message = read_server_message(&mut stream, LoginStage::Proof).await?;
+                let (server_proof, tournament_access) = match message {
+                    ServerOpcodeMessage::CMD_AUTH_LOGON_PROOF(
+                        CMD_AUTH_LOGON_PROOF_Server::Success {
+                            account_flag,
+                            server_proof,
+                            ..
+                        },
+                    ) => (server_proof, account_flag.is_propass()),
+                    ServerOpcodeMessage::CMD_AUTH_LOGON_PROOF(message) => {
+                        return Err(LoginError::Rejected {
+                            stage: LoginStage::Proof,
+                            failure: proof_failure(message),
+                        });
+                    }
+                    message => {
+                        return Err(unexpected(
+                            LoginStage::Proof,
+                            "CMD_AUTH_LOGON_PROOF_Server",
+                            message,
+                        ));
+                    }
+                };
+                let client = challenge
+                    .verify_server_proof(server_proof)
+                    .map_err(|_| LoginError::ServerProofMismatch)?;
+                Ok(AuthenticatedGrunt {
+                    stream,
+                    account_name: credentials.username,
+                    session_key: WorldSessionKey(*client.session_key()),
+                    tournament_access,
+                })
             }
-            message => {
-                return Err(unexpected(
-                    LoginStage::Proof,
-                    "CMD_AUTH_LOGON_PROOF_Server",
-                    message,
-                ));
-            }
-        };
-        let client = challenge
-            .verify_server_proof(server_proof)
-            .map_err(|_| LoginError::ServerProofMismatch)?;
-        Ok(AuthenticatedGrunt {
-            stream,
-            account_name: credentials.username,
-            session_key: WorldSessionKey(*client.session_key()),
-            tournament_access,
-        })
+        )
     }
 }
 
@@ -310,12 +326,17 @@ async fn read_server_message<S>(
 where
     S: AsyncRead + Unpin + Send,
 {
-    ServerOpcodeMessage::tokio_read(stream)
-        .await
-        .map_err(|error| LoginError::Decode {
-            stage,
-            message: error.to_string(),
-        })
+    solarity_profiling::profile_await!(
+        "network.authentication.grunt_login.read_server_message",
+        async {
+            ServerOpcodeMessage::tokio_read(stream)
+                .await
+                .map_err(|error| LoginError::Decode {
+                    stage,
+                    message: error.to_string(),
+                })
+        }
+    )
 }
 
 fn unexpected(

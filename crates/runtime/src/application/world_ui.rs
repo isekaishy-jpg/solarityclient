@@ -461,6 +461,7 @@ impl RuntimeWorldUi {
 
     /// Advances visible handlers and records whether GPU presentation changed.
     pub(super) fn update(&mut self, elapsed_seconds: f64) -> Result<(), ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!("runtime.application.world_ui.update");
         self.dirty |= self.manager.update(elapsed_seconds)?;
         Ok(())
     }
@@ -477,6 +478,8 @@ impl RuntimeWorldUi {
         terrain: &TerrainFrame,
         player: &ResidentPlayerFrameInput<'_>,
     ) -> Result<(), ApplicationError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.world_ui.synchronize_portrait");
         if self.dirty {
             self.player_portrait_requested = requests_player_portrait(&self.manager);
         }
@@ -513,6 +516,7 @@ impl RuntimeWorldUi {
         &mut self,
         renderer: &mut VulkanRenderer,
     ) -> Result<(), ApplicationError> {
+        let _profile_scope = solarity_profiling::profile!("runtime.application.world_ui.refresh");
         if self.dirty {
             self.frame.refresh_frame(
                 renderer,
@@ -533,6 +537,8 @@ impl RuntimeWorldUi {
         map: Option<&solarity_asset::TerrainMap>,
         player: Option<solarity_ecs::WorldTransform>,
     ) -> Result<(), ApplicationError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.world_ui.synchronize_minimap");
         self.minimap.synchronize(
             renderer,
             cpu,

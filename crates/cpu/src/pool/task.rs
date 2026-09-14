@@ -36,6 +36,7 @@ impl<T> CpuTask<T> {
     /// Returns [`CpuError::TaskPanicked`] when the task unwound or
     /// [`CpuError::CompletionLost`] if executor invariants were violated.
     pub fn join(self) -> Result<T, CpuError> {
+        let _profile_scope = solarity_profiling::profile!("cpu.pool.task.join");
         let outcome = self
             .receiver
             .recv()

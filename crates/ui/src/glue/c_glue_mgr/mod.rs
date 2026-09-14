@@ -276,17 +276,10 @@ impl GlueManager {
         if manifest_kind == UiManifestKind::Glue {
             environment.record_model_actions();
         }
-        let startup_started = std::time::Instant::now();
-        let mut phase_started = startup_started;
-        let report_phase = |name: &str, started: &mut std::time::Instant| {
-            if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-                eprintln!("UI startup {name}: {:.3}s", started.elapsed().as_secs_f64());
-            }
-            *started = std::time::Instant::now();
-        };
+        let mut ui_profile = solarity_profiling::profile!("ui.startup");
         let logical_extent = environment.logical_extent();
         let bundle = UiBundle::load(&mut assets.borrow_mut(), manifest_kind)?;
-        report_phase("bundle", &mut phase_started);
+        ui_profile.mark("bundle");
         let fonts = FontCatalog::from_bundle(&bundle)?;
         let catalog = UiObjectCatalog::from_bundle(&bundle, &fonts)?;
         let tree = UiObjectTree::from_catalog(&catalog, &fonts)?;
@@ -301,7 +294,7 @@ impl GlueManager {
         let backdrop_plan = UiBackdropPlan::from_tree(&tree)?;
         let backdrops = UiBackdropStatePlan::resolve(&tree, &backdrop_plan)?;
         let animations = UiAnimationPlan::from_tree(&tree)?;
-        report_phase("static plans", &mut phase_started);
+        ui_profile.mark("static plans");
         let media_intent = environment.media_intent();
         let network = environment.network();
         let process = environment.process();
@@ -316,7 +309,7 @@ impl GlueManager {
             &texture_states,
         );
         let mut runtime = UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?;
-        report_phase("Lua runtime", &mut phase_started);
+        ui_profile.mark("Lua runtime");
         runtime.execute_all(&bundle, &tree, &scripts)?;
         if manifest_kind == UiManifestKind::Frame {
             runtime.initialize_frame_scale(&bundle, &environment)?;
@@ -330,7 +323,7 @@ impl GlueManager {
             let _dispatch =
                 runtime.dispatch_glue_event(&bundle, "SET_GLUE_SCREEN", &initial_payload)?;
         }
-        report_phase("Lua execution", &mut phase_started);
+        ui_profile.mark("Lua execution");
 
         let mut live = runtime.snapshot_objects(&bundle)?;
         let geometry = UiRegionGeometryPlan::resolve(&live, ui_extent)?;
@@ -354,7 +347,7 @@ impl GlueManager {
             &scroll_frames,
             ui_extent,
         )?;
-        report_phase("live presentation", &mut phase_started);
+        ui_profile.mark("live presentation");
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let pointer = UiPointerPlan::from_live(&live);
         let report = GlueStartupReport::new(
@@ -371,12 +364,7 @@ impl GlueManager {
             runtime.executed_chunk_count(),
             runtime.executed_load_handler_count(),
         );
-        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-            eprintln!(
-                "UI startup total: {:.3}s",
-                startup_started.elapsed().as_secs_f64()
-            );
-        }
+
         Ok(Self {
             runtime,
             scripts,
@@ -829,28 +817,13 @@ impl GlueManager {
             crate::event::canonical_glue_event(name).ok_or_else(|| UiEventError::Unknown {
                 name: name.to_owned(),
             })?;
-        let started = std::time::Instant::now();
+        let mut ui_profile = solarity_profiling::profile!("ui.mod.dispatch_event");
         let dispatch = self
             .runtime
             .dispatch_glue_event(&self.bundle, event, payload)?;
-        let script_elapsed = started.elapsed();
+        ui_profile.mark("script");
         self.refresh_event_mutations(&dispatch)?;
-        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-            eprintln!(
-                "UI event {event}: script={:.3}ms publish={:.3}ms visual_objects={} dirty_objects={} fallback_mutations={} visual_targeted={} objects_targeted={}",
-                script_elapsed.as_secs_f64() * 1_000.0,
-                started
-                    .elapsed()
-                    .saturating_sub(script_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                dispatch.visual_objects.len(),
-                dispatch.dirty_objects.len(),
-                dispatch.fallback_mutations,
-                dispatch.targeted_visual,
-                dispatch.targeted_objects,
-            );
-        }
+
         Ok(UiEventDispatch::new(dispatch.subscriber_count))
     }
 
@@ -889,20 +862,13 @@ impl GlueManager {
         function: &mlua::Function,
         pressed: bool,
     ) -> Result<bool, UiEventError> {
-        let started = std::env::var_os("SOLARITY_UI_TIMINGS").map(|_| std::time::Instant::now());
+        let mut ui_profile = solarity_profiling::profile!("ui.mod.dispatch_binding");
         let (dispatch, result) =
             self.runtime
                 .dispatch_binding(&self.bundle, name, function, pressed)?;
-        let dispatched = started.map(|started| started.elapsed());
+        ui_profile.mark("dispatched");
         self.refresh_event_mutations(&dispatch)?;
-        if let (Some(started), Some(dispatched)) = (started, dispatched) {
-            tracing::info!(
-                binding = name,
-                dispatch_ms = dispatched.as_secs_f64() * 1000.0,
-                publish_ms = started.elapsed().saturating_sub(dispatched).as_secs_f64() * 1000.0,
-                "profiled UI binding phases"
-            );
-        }
+
         result?;
         Ok(dispatch.changed)
     }
@@ -919,6 +885,7 @@ impl GlueManager {
     /// handler failures are isolated and available through
     /// [`Self::take_callback_failure`].
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
+        let _profile_scope = solarity_profiling::profile!("ui.glue.c_glue_mgr.mod.update");
         let update = self
             .runtime
             .dispatch_updates(&self.bundle, &self.live, elapsed_seconds)?;
@@ -957,6 +924,11 @@ impl GlueManager {
         &mut self,
         dispatch: &crate::script::UiScriptEventDispatch,
     ) -> Result<(), UiEventError> {
+        solarity_profiling::profile_value!(
+            "ui.event.fallback_mutations",
+            dispatch.fallback_mutations
+        );
+        solarity_profiling::profile_value!("ui.event.dirty_objects", dispatch.dirty_objects.len());
         if !self.retained_object_topology_matches_runtime() {
             self.refresh_live_state()
         } else if dispatch.targeted_objects {
@@ -996,7 +968,7 @@ impl GlueManager {
         dirty_objects: &[(usize, u32)],
         visual_objects: &[usize],
     ) -> Result<(), UiEventError> {
-        let started = std::time::Instant::now();
+        let _ui_profile = solarity_profiling::profile!("ui.mod.refresh_texture_vertex_colors");
         self.deferred_scroll_refresh.clear();
         if !visual_objects.is_empty() {
             self.refresh_targeted_visual_objects(visual_objects)?;
@@ -1019,13 +991,7 @@ impl GlueManager {
                 .refresh_targeted_objects(dirty_objects, visual_objects)
                 .map(|_| ());
         }
-        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-            eprintln!(
-                "UI texture vertex patch: objects={} total={:.3}ms",
-                dirty_objects.len(),
-                started.elapsed().as_secs_f64() * 1_000.0,
-            );
-        }
+
         Ok(())
     }
 
@@ -1415,8 +1381,7 @@ impl GlueManager {
                 false
             }
         });
-        let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
-        let started = std::time::Instant::now();
+        let mut ui_profile = solarity_profiling::profile!("ui.mod.refresh_pointer_hover");
         let mut button_owners = update.buttons.into_iter().flatten().collect::<Vec<_>>();
         button_owners.sort_unstable();
         button_owners.dedup();
@@ -1425,14 +1390,14 @@ impl GlueManager {
             &mut self.live,
             button_owners.iter().copied(),
         )?;
-        let highlights = started.elapsed();
+        ui_profile.mark("highlights");
         let (button_text_layout_changes, button_text_color_changes) =
             self.runtime.refresh_button_texts(
                 &self.bundle,
                 &mut self.live,
                 update.font_buttons.into_iter().flatten(),
             )?;
-        let button_text = started.elapsed();
+        ui_profile.mark("button_text");
         if !update.dirty_objects.is_empty() {
             self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
         } else if !update.visual_objects.is_empty() && self.incremental_visual_updates {
@@ -1468,7 +1433,7 @@ impl GlueManager {
             // Visual-only mutations cannot change pointer ownership or input
             // metadata; hit testing reads their current geometry directly.
         }
-        let visuals = started.elapsed();
+        ui_profile.mark("visuals");
         let changed_opacities = self.presentation.refresh_button_state_opacities(
             &self.live,
             &self.geometry,
@@ -1476,7 +1441,7 @@ impl GlueManager {
         );
         self.render_plan
             .refresh_object_opacities(&self.presentation, &changed_opacities)?;
-        let opacities = started.elapsed();
+        ui_profile.mark("opacities");
         let mut rebuilt_text_topology = false;
         if !button_text_layout_changes.is_empty() {
             let retained_fonts = self.glyphs.supports_live_text_objects(
@@ -1484,7 +1449,7 @@ impl GlueManager {
                 self.glyph_logical_height,
                 button_text_layout_changes.iter().copied(),
             );
-            let text_support = started.elapsed();
+            ui_profile.mark("text_support");
             if retained_fonts {
                 self.glyphs.refresh_live_text_objects(
                     &self.live,
@@ -1492,7 +1457,7 @@ impl GlueManager {
                     self.glyph_logical_height,
                     &button_text_layout_changes,
                 )?;
-                let text_layout = started.elapsed();
+                ui_profile.mark("text_layout");
                 let retained_slots = self.render_plan.refresh_glyph_objects(
                     &self.glyphs,
                     &self.live,
@@ -1500,25 +1465,12 @@ impl GlueManager {
                     &self.scroll_frames,
                     &button_text_layout_changes,
                 )?;
-                if timings {
-                    eprintln!(
-                        "UI hover text objects: support={:.3}ms layout={:.3}ms vertices={:.3}ms",
-                        text_support.saturating_sub(opacities).as_secs_f64() * 1_000.0,
-                        text_layout.saturating_sub(text_support).as_secs_f64() * 1_000.0,
-                        started.elapsed().saturating_sub(text_layout).as_secs_f64() * 1_000.0,
-                    );
-                }
+
                 if !retained_slots {
-                    if timings {
-                        eprintln!("UI hover text fallback: retained glyph slot count changed");
-                    }
                     self.rebuild_live_text_topology()?;
                     rebuilt_text_topology = true;
                 }
             } else {
-                if timings {
-                    eprintln!("UI hover text fallback: inactive font atlas coverage missing");
-                }
                 self.rebuild_live_text_topology()?;
                 rebuilt_text_topology = true;
             }
@@ -1541,17 +1493,7 @@ impl GlueManager {
                 }
             }
         }
-        if timings {
-            eprintln!(
-                "UI retained hover patch: highlights={:.3}ms text={:.3}ms visuals={:.3}ms opacities={:.3}ms final_text={:.3}ms total={:.3}ms",
-                highlights.as_secs_f64() * 1_000.0,
-                button_text.saturating_sub(highlights).as_secs_f64() * 1_000.0,
-                visuals.saturating_sub(button_text).as_secs_f64() * 1_000.0,
-                opacities.saturating_sub(visuals).as_secs_f64() * 1_000.0,
-                started.elapsed().saturating_sub(opacities).as_secs_f64() * 1_000.0,
-                started.elapsed().as_secs_f64() * 1_000.0,
-            );
-        }
+
         Ok(())
     }
 
@@ -1568,27 +1510,26 @@ impl GlueManager {
             if !presented {
                 return true;
             }
-            let owns_quad = object.minimap.is_some() || object.texture.as_ref().is_some_and(|texture| {
-                texture.file.is_some() || texture.solid_color.is_some()
-            })
+            let owns_quad = object.minimap.is_some()
+                || object
+                    .texture
+                    .as_ref()
+                    .is_some_and(|texture| texture.file.is_some() || texture.solid_color.is_some())
                 || object
                     .text
                     .as_ref()
                     .is_some_and(|text| !text.content.is_empty())
                 || self.backdrops.state(object_index).is_some();
-            let resident = (!owns_quad || self.render_plan.mesh().contains_object(object_index))
-                && (object.model.is_none() || self.presentation.contains_model(object_index));
-            if !resident && std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-                eprintln!("UI missing visual slots: object={object_index} name={:?} kind={:?} owns_quad={owns_quad} model={}", object.name, object.kind, object.model.is_some());
-            }
-            resident
+            (!owns_quad || self.render_plan.mesh().contains_object(object_index))
+                && (object.model.is_none() || self.presentation.contains_model(object_index))
         })
     }
 
     /// Materializes a newly revealed subtree from the already patched live arena.
     /// Subsequent hide/show transitions retain and only toggle those slots.
     fn rebuild_visual_topology_from_live(&mut self) -> Result<(), UiEventError> {
-        let started = std::time::Instant::now();
+        let mut ui_profile =
+            solarity_profiling::profile!("ui.mod.rebuild_visual_topology_from_live");
         // The visual journal changes only visibility, alpha, and animation
         // transforms. Glyphs retain local bounds for hidden owners as well as
         // visible ones; mesh resolution applies their current presentation
@@ -1597,7 +1538,7 @@ impl GlueManager {
         // make the first reveal pay for unrelated legal and credits text.
         self.presentation =
             UiPresentationPlan::resolve(&self.live, &self.geometry, &self.backdrops);
-        let presentation_elapsed = started.elapsed();
+        ui_profile.mark("presentation");
         self.render_plan = UiRenderPlan::prepare_with_glyphs(
             &self.presentation,
             &self.glyphs,
@@ -1606,18 +1547,7 @@ impl GlueManager {
             self.geometry.ui_extent(),
         )?;
         self.pointer = UiPointerPlan::from_live(&self.live);
-        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-            eprintln!(
-                "UI revealed topology: presentation={:.3}ms mesh={:.3}ms total={:.3}ms",
-                presentation_elapsed.as_secs_f64() * 1_000.0,
-                started
-                    .elapsed()
-                    .saturating_sub(presentation_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                started.elapsed().as_secs_f64() * 1_000.0,
-            );
-        }
+
         Ok(())
     }
 
@@ -1754,11 +1684,10 @@ impl GlueManager {
     }
 
     fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
-        let timings = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
-        let started = std::time::Instant::now();
+        let mut ui_profile = solarity_profiling::profile!("ui.mod.refresh_live_state");
         self.deferred_scroll_refresh.clear();
         let mut live = self.runtime.snapshot_objects(&self.bundle)?;
-        let first_snapshot_elapsed = started.elapsed();
+        ui_profile.mark("first_snapshot");
         if live == self.live {
             return Ok(());
         }
@@ -1777,7 +1706,7 @@ impl GlueManager {
             return self.refresh_button_state(live);
         }
         let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
-        let first_geometry_elapsed = started.elapsed();
+        ui_profile.mark("first_geometry");
         let html_changed = self.runtime.refresh_simple_html_layout(
             &self.bundle,
             &live,
@@ -1792,22 +1721,14 @@ impl GlueManager {
         }
         self.runtime
             .publish_resolved_geometry(&self.bundle, &geometry)?;
-        let published_elapsed = started.elapsed();
+        ui_profile.mark("published");
         synchronize_resolved_dimensions(&mut live, &geometry);
         let scroll_frames = UiScrollFramePlan::from_live(&live);
-        let scroll_elapsed = started.elapsed();
+        ui_profile.mark("scroll");
         let text_changes = (!html_changed)
             .then(|| live.text_layout_changes_from(&self.live))
             .flatten();
-        if timings {
-            eprintln!(
-                "UI retained text changes: {}",
-                text_changes.as_ref().map_or_else(
-                    || "incompatible".to_owned(),
-                    |changes| changes.len().to_string()
-                )
-            );
-        }
+
         if let Some(text_changes) = text_changes.as_ref()
             && self.glyphs.supports_live_text_objects(
                 &live,
@@ -1838,9 +1759,9 @@ impl GlueManager {
                 self.glyph_logical_height,
             )?;
         }
-        let glyph_elapsed = started.elapsed();
+        ui_profile.mark("glyph");
         let presentation = UiPresentationPlan::resolve(&live, &geometry, &self.backdrops);
-        let presentation_elapsed = started.elapsed();
+        ui_profile.mark("presentation");
         let render_plan = UiRenderPlan::prepare_with_glyphs(
             &presentation,
             &self.glyphs,
@@ -1848,10 +1769,10 @@ impl GlueManager {
             &scroll_frames,
             geometry.ui_extent(),
         )?;
-        let render_elapsed = started.elapsed();
+        ui_profile.mark("render");
         let (objects, child_indices) = build_live_hierarchy(&live)?;
         let pointer = UiPointerPlan::from_live(&live);
-        let plans_elapsed = started.elapsed();
+        ui_profile.mark("plans");
         self.live = live;
         self.geometry = geometry;
         self.scroll_frames = scroll_frames;
@@ -1860,35 +1781,7 @@ impl GlueManager {
         self.objects = objects;
         self.child_indices = child_indices;
         self.pointer = pointer;
-        if timings {
-            eprintln!(
-                "UI full publish: snapshot={:.3}ms geometry={:.3}ms writeback={:.3}ms scroll={:.3}ms glyphs={:.3}ms presentation={:.3}ms mesh={:.3}ms hierarchy={:.3}ms total={:.3}ms",
-                first_snapshot_elapsed.as_secs_f64() * 1_000.0,
-                first_geometry_elapsed
-                    .saturating_sub(first_snapshot_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                published_elapsed
-                    .saturating_sub(first_geometry_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                scroll_elapsed
-                    .saturating_sub(published_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                glyph_elapsed.saturating_sub(scroll_elapsed).as_secs_f64() * 1_000.0,
-                presentation_elapsed
-                    .saturating_sub(glyph_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                render_elapsed
-                    .saturating_sub(presentation_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                plans_elapsed.saturating_sub(render_elapsed).as_secs_f64() * 1_000.0,
-                started.elapsed().as_secs_f64() * 1_000.0,
-            );
-        }
+
         Ok(())
     }
 

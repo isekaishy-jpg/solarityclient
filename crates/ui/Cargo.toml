@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+solarity-profiling.workspace = true
 freetype-rs.workspace = true
 glam.workspace = true
 mlua.workspace = true

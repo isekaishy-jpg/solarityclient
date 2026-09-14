@@ -1,6 +1,5 @@
-//! Opt-in application timing, reported once per scope every two seconds.
+//! Persistent F10 diagnostics shared by every subsystem and worker thread.
 
-mod aggregate;
-mod frame;
+mod control;
 
-pub(super) use frame::RuntimeFrameProfile;
+pub(super) use control::RuntimeInstrumentation;

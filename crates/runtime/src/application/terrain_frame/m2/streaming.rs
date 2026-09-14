@@ -6,7 +6,6 @@ use std::sync::Arc;
 use solarity_asset::AnimationDataCatalog;
 use solarity_rendering::{M2ModelOrientation, M2RibbonTrail, VulkanRenderer};
 
-use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Placement, ResidentM2Scene,
 };
@@ -170,7 +169,7 @@ impl M2Frame {
         scenes: impl Iterator<Item = &'a Arc<ResidentM2Scene>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let mut profile = RuntimeFrameProfile::new("M2 residency publication");
+        let mut profile = solarity_profiling::profile!("M2 residency publication");
         let update = self.static_residency.stage_scenes(scenes);
         profile.mark("scene reference changes");
         // Source reuse is confined to static owners: character texture
@@ -282,7 +281,7 @@ impl M2Frame {
     /// Drops unreferenced sources and remaps surviving static and dynamic slots.
     /// Empty geometry is still an occupied source when a placement references it.
     pub(super) fn compact_sources(&mut self) {
-        let mut profile = RuntimeFrameProfile::new("M2 source compaction");
+        let mut profile = solarity_profiling::profile!("M2 source compaction");
         let mut remap = vec![usize::MAX; self.sources.len()];
         if self.placement_topology_dirty {
             for placement in &self.placements {
@@ -300,7 +299,7 @@ impl M2Frame {
     /// Callers must mark every retained and newly added placement, including
     /// dynamic owners and sources whose geometry is intentionally empty.
     fn compact_referenced_sources(&mut self, mut remap: Vec<usize>) {
-        let mut profile = RuntimeFrameProfile::new("M2 referenced source compaction");
+        let mut profile = solarity_profiling::profile!("M2 referenced source compaction");
         // A residency change often leaves every shared source referenced. Its
         // mapping is then the identity: avoid writing every large live instance.
         if !remap.contains(&usize::MAX) {

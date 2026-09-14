@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+solarity-profiling.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

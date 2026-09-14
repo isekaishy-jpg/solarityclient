@@ -30,10 +30,15 @@ where
     ///
     /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
     pub async fn ready_for_account_data_times(&mut self) -> Result<(), WorldSessionError> {
-        self.send_character_screen_message(ClientOpcodeMessage::from(
-            CMSG_READY_FOR_ACCOUNT_DATA_TIMES {},
-        ))
-        .await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.ready_for_account_data_times",
+            async {
+                self.send_character_screen_message(ClientOpcodeMessage::from(
+                    CMSG_READY_FOR_ACCOUNT_DATA_TIMES {},
+                ))
+                .await
+            }
+        )
     }
 
     /// Sends `CMSG_CHAR_ENUM` through the authenticated encrypted header stream.
@@ -46,8 +51,13 @@ where
     /// Returns [`WorldSessionError`] when the encrypted header or packet body
     /// cannot be written.
     pub async fn request_character_directory(&mut self) -> Result<(), WorldSessionError> {
-        self.send_character_screen_message(ClientOpcodeMessage::CMSG_CHAR_ENUM)
-            .await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.request_character_directory",
+            async {
+                self.send_character_screen_message(ClientOpcodeMessage::CMSG_CHAR_ENUM)
+                    .await
+            }
+        )
     }
 
     /// Sends one validated `CMSG_CHAR_CREATE` request.
@@ -62,19 +72,21 @@ where
         &mut self,
         request: &CharacterCreation,
     ) -> Result<(), WorldSessionError> {
-        let [skin_color, face, hair_style, hair_color, facial_hair] = request.appearance();
-        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_CREATE {
-            name: request.name().to_owned(),
-            race: request.race(),
-            class: request.class(),
-            gender: request.gender(),
-            skin_color,
-            face,
-            hair_style,
-            hair_color,
-            facial_hair,
-        }))
-        .await
+        solarity_profiling::profile_await!("network.session.net_client.create_character", async {
+            let [skin_color, face, hair_style, hair_color, facial_hair] = request.appearance();
+            self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_CREATE {
+                name: request.name().to_owned(),
+                race: request.race(),
+                class: request.class(),
+                gender: request.gender(),
+                skin_color,
+                face,
+                hair_style,
+                hair_color,
+                facial_hair,
+            }))
+            .await
+        })
     }
 
     /// Sends one exact `CMSG_CHAR_DELETE` for an enumerated character GUID.
@@ -86,10 +98,12 @@ where
     ///
     /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
     pub async fn delete_character(&mut self, guid: u64) -> Result<(), WorldSessionError> {
-        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_DELETE {
-            guid: Guid::new(guid),
-        }))
-        .await
+        solarity_profiling::profile_await!("network.session.net_client.delete_character", async {
+            self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_DELETE {
+                guid: Guid::new(guid),
+            }))
+            .await
+        })
     }
 
     /// Sends one exact `CMSG_CHAR_RENAME` for an enumerated character GUID.
@@ -102,11 +116,13 @@ where
         guid: u64,
         request: &crate::CharacterRename,
     ) -> Result<(), WorldSessionError> {
-        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_RENAME {
-            character: Guid::new(guid),
-            new_name: request.name().to_owned(),
-        }))
-        .await
+        solarity_profiling::profile_await!("network.session.net_client.rename_character", async {
+            self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_CHAR_RENAME {
+                character: Guid::new(guid),
+                new_name: request.name().to_owned(),
+            }))
+            .await
+        })
     }
 
     /// Sends `CMSG_REALM_SPLIT` for the realm selected during authentication.
@@ -115,22 +131,34 @@ where
     ///
     /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
     pub async fn request_realm_split_info(&mut self) -> Result<(), WorldSessionError> {
-        let realm_id = u32::from(self.realm_id());
-        self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_REALM_SPLIT { realm_id }))
-            .await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.request_realm_split_info",
+            async {
+                let realm_id = u32::from(self.realm_id());
+                self.send_character_screen_message(ClientOpcodeMessage::from(CMSG_REALM_SPLIT {
+                    realm_id,
+                }))
+                .await
+            }
+        )
     }
 
     async fn send_character_screen_message(
         &mut self,
         message: ClientOpcodeMessage,
     ) -> Result<(), WorldSessionError> {
-        message
-            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-            .await
-            .map_err(|error| WorldSessionError::Io {
-                stage: WorldSessionStage::Send,
-                message: error.to_string(),
-            })
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_character_screen_message",
+            async {
+                message
+                    .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+                    .await
+                    .map_err(|error| WorldSessionError::Io {
+                        stage: WorldSessionStage::Send,
+                        message: error.to_string(),
+                    })
+            }
+        )
     }
 
     /// Selects one enumerated character and sends `CMSG_PLAYER_LOGIN`.
@@ -146,19 +174,21 @@ where
         mut self,
         character: &CharacterEntry,
     ) -> Result<CharacterLogin<S>, WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_PLAYER_LOGIN {
-            guid: Guid::new(character.guid()),
-        })
-        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Send,
-            message: error.to_string(),
-        })?;
-        Ok(CharacterLogin {
-            session: self,
-            character_guid: character.guid(),
-            character_name: character.name().to_owned(),
+        solarity_profiling::profile_await!("network.session.net_client.login_character", async {
+            ClientOpcodeMessage::from(CMSG_PLAYER_LOGIN {
+                guid: Guid::new(character.guid()),
+            })
+            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Send,
+                message: error.to_string(),
+            })?;
+            Ok(CharacterLogin {
+                session: self,
+                character_guid: character.guid(),
+                character_name: character.name().to_owned(),
+            })
         })
     }
 
@@ -169,7 +199,9 @@ where
     /// Returns [`WorldSessionError`] when the encrypted header or packet body
     /// cannot be read and decoded.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
-        receive_packet_from(&mut self.stream, &mut self.decrypter).await
+        solarity_profiling::profile_await!("network.session.net_client.receive_packet", async {
+            receive_packet_from(&mut self.stream, &mut self.decrypter).await
+        })
     }
 }
 
@@ -184,7 +216,9 @@ where
     /// Returns [`WorldSessionError`] when the encrypted header or packet body
     /// cannot be read and decoded.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
-        receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await
+        solarity_profiling::profile_await!("network.session.net_client.receive_packet", async {
+            receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await
+        })
     }
 
     /// Advances world entry by one encrypted server packet.
@@ -196,28 +230,30 @@ where
     ///
     /// Returns [`WorldSessionError`] when packet I/O or terminal-result decoding fails.
     pub async fn advance(mut self) -> Result<CharacterLoginProgress<S>, WorldSessionError> {
-        let packet =
-            receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await?;
-        if let Some(location) = packet.world_location().map_err(world_entry_decode_error)? {
-            return Ok(CharacterLoginProgress::Entered(InWorldSession {
-                session: self.session,
-                character_guid: self.character_guid,
-                character_name: self.character_name,
-                location,
-            }));
-        }
-        if let Some(rejection) = packet
-            .character_login_rejection()
-            .map_err(world_entry_decode_error)?
-        {
-            return Ok(CharacterLoginProgress::Rejected {
-                session: self.session,
-                rejection,
-            });
-        }
-        Ok(CharacterLoginProgress::Awaiting {
-            login: self,
-            packet,
+        solarity_profiling::profile_await!("network.session.net_client.advance", async {
+            let packet =
+                receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await?;
+            if let Some(location) = packet.world_location().map_err(world_entry_decode_error)? {
+                return Ok(CharacterLoginProgress::Entered(InWorldSession {
+                    session: self.session,
+                    character_guid: self.character_guid,
+                    character_name: self.character_name,
+                    location,
+                }));
+            }
+            if let Some(rejection) = packet
+                .character_login_rejection()
+                .map_err(world_entry_decode_error)?
+            {
+                return Ok(CharacterLoginProgress::Rejected {
+                    session: self.session,
+                    rejection,
+                });
+            }
+            Ok(CharacterLoginProgress::Awaiting {
+                login: self,
+                packet,
+            })
         })
     }
 }
@@ -232,7 +268,9 @@ where
     ///
     /// Returns [`WorldSessionError`] when the encrypted header or body cannot be read.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
-        receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await
+        solarity_profiling::profile_await!("network.session.net_client.receive_packet", async {
+            receive_packet_from(&mut self.session.stream, &mut self.session.decrypter).await
+        })
     }
 
     /// Sends stock's periodic encrypted latency probe.
@@ -245,15 +283,17 @@ where
         sequence_id: u32,
         round_time_in_ms: u32,
     ) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_PING {
-            sequence_id,
-            round_time_in_ms,
-        })
-        .tokio_write_encrypted_client(&mut self.session.stream, &mut self.session.encrypter)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Send,
-            message: error.to_string(),
+        solarity_profiling::profile_await!("network.session.net_client.send_ping", async {
+            ClientOpcodeMessage::from(CMSG_PING {
+                sequence_id,
+                round_time_in_ms,
+            })
+            .tokio_write_encrypted_client(&mut self.session.stream, &mut self.session.encrypter)
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Send,
+                message: error.to_string(),
+            })
         })
     }
 
@@ -267,16 +307,21 @@ where
         counter: u32,
         client_ticks: u32,
     ) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_TIME_SYNC_RESP {
-            time_sync: counter,
-            client_ticks,
-        })
-        .tokio_write_encrypted_client(&mut self.session.stream, &mut self.session.encrypter)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Send,
-            message: error.to_string(),
-        })
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_time_sync_response",
+            async {
+                ClientOpcodeMessage::from(CMSG_TIME_SYNC_RESP {
+                    time_sync: counter,
+                    client_ticks,
+                })
+                .tokio_write_encrypted_client(&mut self.session.stream, &mut self.session.encrypter)
+                .await
+                .map_err(|error| WorldSessionError::Io {
+                    stage: WorldSessionStage::Send,
+                    message: error.to_string(),
+                })
+            }
+        )
     }
 }
 
@@ -290,7 +335,9 @@ where
     ///
     /// Returns [`WorldSessionError`] when the header or body cannot be read.
     pub async fn receive_packet(&mut self) -> Result<WorldServerPacket, WorldSessionError> {
-        receive_packet_from(&mut self.stream, &mut self.decrypter).await
+        solarity_profiling::profile_await!("network.session.net_client.receive_packet", async {
+            receive_packet_from(&mut self.stream, &mut self.decrypter).await
+        })
     }
 }
 
@@ -306,16 +353,18 @@ where
         &mut self,
         request: crate::protocol::WorldLogoutRequest,
     ) -> Result<(), WorldSessionError> {
-        use crate::protocol::WorldLogoutRequest;
-        self.send_local_movement_auxiliary(
-            match request {
-                WorldLogoutRequest::Request => 0x4b,
-                WorldLogoutRequest::Cancel => 0x4e,
-                WorldLogoutRequest::Force => 0x4a,
-            },
-            &[],
-        )
-        .await
+        solarity_profiling::profile_await!("network.session.net_client.send_logout", async {
+            use crate::protocol::WorldLogoutRequest;
+            self.send_local_movement_auxiliary(
+                match request {
+                    WorldLogoutRequest::Request => 0x4b,
+                    WorldLogoutRequest::Cancel => 0x4e,
+                    WorldLogoutRequest::Force => 0x4a,
+                },
+                &[],
+            )
+            .await
+        })
     }
 
     /// Queries the native creature cache by entry and full requesting GUID.
@@ -327,16 +376,21 @@ where
         entry: u32,
         guid: u64,
     ) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_CREATURE_QUERY {
-            creature: entry,
-            guid: Guid::new(guid),
-        })
-        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Send,
-            message: error.to_string(),
-        })
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_creature_query",
+            async {
+                ClientOpcodeMessage::from(CMSG_CREATURE_QUERY {
+                    creature: entry,
+                    guid: Guid::new(guid),
+                })
+                .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+                .await
+                .map_err(|error| WorldSessionError::Io {
+                    stage: WorldSessionStage::Send,
+                    message: error.to_string(),
+                })
+            }
+        )
     }
 
     /// Queries one template using its entry and the requesting instance's full GUID.
@@ -348,16 +402,21 @@ where
         entry: u32,
         guid: u64,
     ) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_GAMEOBJECT_QUERY {
-            entry_id: entry,
-            guid: Guid::new(guid),
-        })
-        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Send,
-            message: error.to_string(),
-        })
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_game_object_query",
+            async {
+                ClientOpcodeMessage::from(CMSG_GAMEOBJECT_QUERY {
+                    entry_id: entry,
+                    guid: Guid::new(guid),
+                })
+                .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+                .await
+                .map_err(|error| WorldSessionError::Io {
+                    stage: WorldSessionStage::Send,
+                    message: error.to_string(),
+                })
+            }
+        )
     }
 
     /// Sends native `0x00717D90`'s packed mover and unsigned skipped interval.
@@ -369,18 +428,23 @@ where
         guid: u64,
         milliseconds: u32,
     ) -> Result<(), WorldSessionError> {
-        let mut body = [0_u8; 13];
-        let mut length = 1;
-        for (index, byte) in guid.to_le_bytes().into_iter().enumerate() {
-            if byte != 0 {
-                body[0] |= 1 << index;
-                body[length] = byte;
-                length += 1;
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_movement_time_skipped",
+            async {
+                let mut body = [0_u8; 13];
+                let mut length = 1;
+                for (index, byte) in guid.to_le_bytes().into_iter().enumerate() {
+                    if byte != 0 {
+                        body[0] |= 1 << index;
+                        body[length] = byte;
+                        length += 1;
+                    }
+                }
+                body[length..length + 4].copy_from_slice(&milliseconds.to_le_bytes());
+                self.send_local_movement_auxiliary(0x2ce, &body[..length + 4])
+                    .await
             }
-        }
-        body[length..length + 4].copy_from_slice(&milliseconds.to_le_bytes());
-        self.send_local_movement_auxiliary(0x2ce, &body[..length + 4])
-            .await
+        )
     }
 
     /// Sends 71F210's frozen MovementInfo followed by the completed path ID.
@@ -392,12 +456,14 @@ where
         movement: &WorldMovementMessage,
         path_id: u32,
     ) -> Result<(), WorldSessionError> {
-        let image = movement.body();
-        let mut body = [0_u8; 101];
-        body[..image.len()].copy_from_slice(image);
-        body[image.len()..image.len() + 4].copy_from_slice(&path_id.to_le_bytes());
-        self.send_local_movement_auxiliary(0x2c9, &body[..image.len() + 4])
-            .await
+        solarity_profiling::profile_await!("network.session.net_client.send_spline_done", async {
+            let image = movement.body();
+            let mut body = [0_u8; 101];
+            body[..image.len()].copy_from_slice(image);
+            body[image.len()..image.len() + 4].copy_from_slice(&path_id.to_le_bytes());
+            self.send_local_movement_auxiliary(0x2c9, &body[..image.len() + 4])
+                .await
+        })
     }
 
     /// Sends the local player's requested stand state (`CMSG_STANDSTATECHANGE`).
@@ -405,8 +471,10 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_stand_state(&mut self, state: u32) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x101, &state.to_le_bytes())
-            .await
+        solarity_profiling::profile_await!("network.session.net_client.send_stand_state", async {
+            self.send_local_movement_auxiliary(0x101, &state.to_le_bytes())
+                .await
+        })
     }
 
     /// Sends native 6D2950's release-spirit request with its automatic-entry flag.
@@ -414,8 +482,13 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_release_spirit(&mut self, automatic: bool) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x15a, &[u8::from(automatic)])
-            .await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_release_spirit",
+            async {
+                self.send_local_movement_auxiliary(0x15a, &[u8::from(automatic)])
+                    .await
+            }
+        )
     }
 
     /// Sends native 51ADD0's replicated self-resurrection spell request.
@@ -423,7 +496,10 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_self_resurrect(&mut self) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x2b3, &[]).await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_self_resurrect",
+            async { self.send_local_movement_auxiliary(0x2b3, &[]).await }
+        )
     }
 
     /// Answers the offer GUID admitted by the native resurrection Lua API.
@@ -435,9 +511,14 @@ where
         guid: u64,
         accept: bool,
     ) -> Result<(), WorldSessionError> {
-        let mut body = guid.to_le_bytes().to_vec();
-        body.push(u8::from(accept));
-        self.send_local_movement_auxiliary(0x15c, &body).await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_resurrection_response",
+            async {
+                let mut body = guid.to_le_bytes().to_vec();
+                body.push(u8::from(accept));
+                self.send_local_movement_auxiliary(0x15c, &body).await
+            }
+        )
     }
 
     /// Reclaims the corpse GUID captured by RetrieveCorpse.
@@ -445,8 +526,13 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_reclaim_corpse(&mut self, guid: u64) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x1d2, &guid.to_le_bytes())
-            .await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_reclaim_corpse",
+            async {
+                self.send_local_movement_auxiliary(0x1d2, &guid.to_le_bytes())
+                    .await
+            }
+        )
     }
 
     /// Requests a source name using 668CE0's full GUID body and opcode 50.
@@ -454,8 +540,13 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_player_name_query(&mut self, guid: u64) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x50, &guid.to_le_bytes())
-            .await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_player_name_query",
+            async {
+                self.send_local_movement_auxiliary(0x50, &guid.to_le_bytes())
+                    .await
+            }
+        )
     }
 
     /// Queries the corpse's original/display maps and position (524A30).
@@ -463,7 +554,9 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_corpse_query(&mut self) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x216, &[]).await
+        solarity_profiling::profile_await!("network.session.net_client.send_corpse_query", async {
+            self.send_local_movement_auxiliary(0x216, &[]).await
+        })
     }
 
     /// Queries an absent corpse transport's pose using its low counter.
@@ -474,8 +567,13 @@ where
         &mut self,
         counter: u32,
     ) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x4b6, &counter.to_le_bytes())
-            .await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_corpse_transport_query",
+            async {
+                self.send_local_movement_auxiliary(0x4b6, &counter.to_le_bytes())
+                    .await
+            }
+        )
     }
 
     /// Acknowledges one zero-based tutorial (`CMSG_TUTORIAL_FLAG`).
@@ -483,8 +581,10 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_tutorial_flag(&mut self, index: u32) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0xfe, &index.to_le_bytes())
-            .await
+        solarity_profiling::profile_await!("network.session.net_client.send_tutorial_flag", async {
+            self.send_local_movement_auxiliary(0xfe, &index.to_le_bytes())
+                .await
+        })
     }
 
     /// Completes all tutorial flags (`CMSG_TUTORIAL_CLEAR`).
@@ -492,7 +592,10 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_tutorial_clear(&mut self) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0xff, &[]).await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_tutorial_clear",
+            async { self.send_local_movement_auxiliary(0xff, &[]).await }
+        )
     }
 
     /// Resets tutorial flags (`CMSG_TUTORIAL_RESET`).
@@ -500,7 +603,10 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_tutorial_reset(&mut self) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x100, &[]).await
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_tutorial_reset",
+            async { self.send_local_movement_auxiliary(0x100, &[]).await }
+        )
     }
 
     /// Selects a client-owned mover using `0x026A`'s full, unpacked GUID.
@@ -508,8 +614,10 @@ where
     /// # Errors
     /// Returns an I/O error if the encrypted packet cannot be completed.
     pub async fn send_active_mover(&mut self, guid: u64) -> Result<(), WorldSessionError> {
-        self.send_local_movement_auxiliary(0x26a, &guid.to_le_bytes())
-            .await
+        solarity_profiling::profile_await!("network.session.net_client.send_active_mover", async {
+            self.send_local_movement_auxiliary(0x26a, &guid.to_le_bytes())
+                .await
+        })
     }
 
     async fn send_local_movement_auxiliary(
@@ -517,20 +625,25 @@ where
         opcode: u32,
         body: &[u8],
     ) -> Result<(), WorldSessionError> {
-        // MovementInfo (97), spline ID (4), and encrypted client header (6).
-        let mut packet = [0_u8; 107];
-        let header = self
-            .encrypter
-            .encrypt_client_header((body.len() + 4) as u16, opcode);
-        packet[..6].copy_from_slice(&header);
-        packet[6..6 + body.len()].copy_from_slice(body);
-        self.stream
-            .write_all(&packet[..6 + body.len()])
-            .await
-            .map_err(|error| WorldSessionError::Io {
-                stage: WorldSessionStage::Send,
-                message: error.to_string(),
-            })
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_local_movement_auxiliary",
+            async {
+                // MovementInfo (97), spline ID (4), and encrypted client header (6).
+                let mut packet = [0_u8; 107];
+                let header = self
+                    .encrypter
+                    .encrypt_client_header((body.len() + 4) as u16, opcode);
+                packet[..6].copy_from_slice(&header);
+                packet[6..6 + body.len()].copy_from_slice(body);
+                self.stream
+                    .write_all(&packet[..6 + body.len()])
+                    .await
+                    .map_err(|error| WorldSessionError::Io {
+                        stage: WorldSessionStage::Send,
+                        message: error.to_string(),
+                    })
+            }
+        )
     }
 
     /// Sends a validated event-time movement image through this cipher owner.
@@ -545,21 +658,23 @@ where
         &mut self,
         message: &WorldMovementMessage,
     ) -> Result<(), WorldSessionError> {
-        let body = message.body();
-        // Six header bytes plus the proven 97-byte maximum movement body.
-        let mut packet = [0_u8; 103];
-        let header = self
-            .encrypter
-            .encrypt_client_header((body.len() + 4) as u16, message.kind() as u32);
-        packet[..6].copy_from_slice(&header);
-        packet[6..6 + body.len()].copy_from_slice(body);
-        self.stream
-            .write_all(&packet[..6 + body.len()])
-            .await
-            .map_err(|error| WorldSessionError::Io {
-                stage: WorldSessionStage::Send,
-                message: error.to_string(),
-            })
+        solarity_profiling::profile_await!("network.session.net_client.send_movement", async {
+            let body = message.body();
+            // Six header bytes plus the proven 97-byte maximum movement body.
+            let mut packet = [0_u8; 103];
+            let header = self
+                .encrypter
+                .encrypt_client_header((body.len() + 4) as u16, message.kind() as u32);
+            packet[..6].copy_from_slice(&header);
+            packet[6..6 + body.len()].copy_from_slice(body);
+            self.stream
+                .write_all(&packet[..6 + body.len()])
+                .await
+                .map_err(|error| WorldSessionError::Io {
+                    stage: WorldSessionStage::Send,
+                    message: error.to_string(),
+                })
+        })
     }
 
     /// Notifies the server that the player entered an authored AreaTrigger volume.
@@ -568,13 +683,15 @@ where
     ///
     /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
     pub async fn send_area_trigger(&mut self, trigger_id: u32) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_AREATRIGGER { trigger_id })
-            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-            .await
-            .map_err(|error| WorldSessionError::Io {
-                stage: WorldSessionStage::Send,
-                message: error.to_string(),
-            })
+        solarity_profiling::profile_await!("network.session.net_client.send_area_trigger", async {
+            ClientOpcodeMessage::from(CMSG_AREATRIGGER { trigger_id })
+                .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+                .await
+                .map_err(|error| WorldSessionError::Io {
+                    stage: WorldSessionStage::Send,
+                    message: error.to_string(),
+                })
+        })
     }
 
     /// Acknowledges a loaded destination with stock's empty opcode `0x00DC`.
@@ -586,13 +703,18 @@ where
     ///
     /// Returns [`WorldSessionError`] when the encrypted packet cannot be written.
     pub async fn send_worldport_acknowledgement(&mut self) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(MSG_MOVE_WORLDPORT_ACK {})
-            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-            .await
-            .map_err(|error| WorldSessionError::Io {
-                stage: WorldSessionStage::Send,
-                message: error.to_string(),
-            })
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_worldport_acknowledgement",
+            async {
+                ClientOpcodeMessage::from(MSG_MOVE_WORLDPORT_ACK {})
+                    .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+                    .await
+                    .map_err(|error| WorldSessionError::Io {
+                        stage: WorldSessionStage::Send,
+                        message: error.to_string(),
+                    })
+            }
+        )
     }
 
     /// Sends stock's periodic encrypted latency probe.
@@ -605,15 +727,17 @@ where
         sequence_id: u32,
         round_time_in_ms: u32,
     ) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_PING {
-            sequence_id,
-            round_time_in_ms,
-        })
-        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Send,
-            message: error.to_string(),
+        solarity_profiling::profile_await!("network.session.net_client.send_ping", async {
+            ClientOpcodeMessage::from(CMSG_PING {
+                sequence_id,
+                round_time_in_ms,
+            })
+            .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Send,
+                message: error.to_string(),
+            })
         })
     }
 
@@ -627,16 +751,21 @@ where
         counter: u32,
         client_ticks: u32,
     ) -> Result<(), WorldSessionError> {
-        ClientOpcodeMessage::from(CMSG_TIME_SYNC_RESP {
-            time_sync: counter,
-            client_ticks,
-        })
-        .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Send,
-            message: error.to_string(),
-        })
+        solarity_profiling::profile_await!(
+            "network.session.net_client.send_time_sync_response",
+            async {
+                ClientOpcodeMessage::from(CMSG_TIME_SYNC_RESP {
+                    time_sync: counter,
+                    client_ticks,
+                })
+                .tokio_write_encrypted_client(&mut self.stream, &mut self.encrypter)
+                .await
+                .map_err(|error| WorldSessionError::Io {
+                    stage: WorldSessionStage::Send,
+                    message: error.to_string(),
+                })
+            }
+        )
     }
 }
 
@@ -654,49 +783,52 @@ async fn receive_packet_from<S>(
 where
     S: AsyncRead + Unpin + Send,
 {
-    let mut header_bytes = [0_u8; 4];
-    stream
-        .read_exact(&mut header_bytes)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Receive,
-            message: error.to_string(),
-        })?;
-    let header = match decrypter.attempt_decrypt_server_header(header_bytes) {
-        WrathServerAttempt::Header(header) => header,
-        WrathServerAttempt::AdditionalByteRequired => {
-            let additional = stream
-                .read_u8()
-                .await
-                .map_err(|error| WorldSessionError::Io {
-                    stage: WorldSessionStage::Receive,
-                    message: error.to_string(),
-                })?;
-            decrypter.decrypt_large_server_header(additional)
+    solarity_profiling::profile_await!("network.session.net_client.receive_packet_from", async {
+        let mut header_bytes = [0_u8; 4];
+        stream
+            .read_exact(&mut header_bytes)
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Receive,
+                message: error.to_string(),
+            })?;
+        let header = match decrypter.attempt_decrypt_server_header(header_bytes) {
+            WrathServerAttempt::Header(header) => header,
+            WrathServerAttempt::AdditionalByteRequired => {
+                let additional = stream
+                    .read_u8()
+                    .await
+                    .map_err(|error| WorldSessionError::Io {
+                        stage: WorldSessionStage::Receive,
+                        message: error.to_string(),
+                    })?;
+                decrypter.decrypt_large_server_header(additional)
+            }
+        };
+        let body_size = header
+            .size
+            .checked_sub(2)
+            .ok_or_else(|| WorldSessionError::Decode {
+                stage: WorldSessionStage::Receive,
+                message: "server header size is smaller than its opcode".to_owned(),
+            })?;
+        if body_size > MAX_SERVER_PACKET_BODY_BYTES {
+            return Err(WorldSessionError::Decode {
+                stage: WorldSessionStage::Receive,
+                message: format!(
+                    "server body has {body_size} bytes; protocol maximum is {MAX_SERVER_PACKET_BODY_BYTES}"
+                ),
+            });
         }
-    };
-    let body_size = header
-        .size
-        .checked_sub(2)
-        .ok_or_else(|| WorldSessionError::Decode {
-            stage: WorldSessionStage::Receive,
-            message: "server header size is smaller than its opcode".to_owned(),
-        })?;
-    if body_size > MAX_SERVER_PACKET_BODY_BYTES {
-        return Err(WorldSessionError::Decode {
-            stage: WorldSessionStage::Receive,
-            message: format!(
-                "server body has {body_size} bytes; protocol maximum is {MAX_SERVER_PACKET_BODY_BYTES}"
-            ),
-        });
-    }
-    let mut payload = vec![0_u8; body_size as usize];
-    stream
-        .read_exact(&mut payload)
-        .await
-        .map_err(|error| WorldSessionError::Io {
-            stage: WorldSessionStage::Receive,
-            message: error.to_string(),
-        })?;
-    Ok(WorldServerPacket::new(header.opcode, payload))
+        let mut payload = vec![0_u8; body_size as usize];
+        stream
+            .read_exact(&mut payload)
+            .await
+            .map_err(|error| WorldSessionError::Io {
+                stage: WorldSessionStage::Receive,
+                message: error.to_string(),
+            })?;
+        solarity_profiling::profile_value!("network.receive.body_bytes", payload.len());
+        Ok(WorldServerPacket::new(header.opcode, payload))
+    })
 }

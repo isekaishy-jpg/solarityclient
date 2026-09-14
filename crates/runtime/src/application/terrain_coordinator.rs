@@ -251,7 +251,7 @@ pub struct RuntimeTerrainCoordinator {
     ready_stream: Option<streaming::ReadyTerrainStream>,
     failed_stream: std::collections::HashSet<TerrainTileIndex>,
     specular_textures: bool,
-    camera_profile: Option<camera_profile::CameraProfile>,
+    camera_profile: camera_profile::CameraProfile,
     camera_geometry: movement::CameraGeometry,
 }
 
@@ -294,7 +294,7 @@ impl RuntimeTerrainCoordinator {
             ready_stream: None,
             failed_stream: std::collections::HashSet::new(),
             specular_textures: false,
-            camera_profile: camera_profile::CameraProfile::from_environment(),
+            camera_profile: camera_profile::CameraProfile,
             camera_geometry: movement::CameraGeometry::default(),
         }
     }

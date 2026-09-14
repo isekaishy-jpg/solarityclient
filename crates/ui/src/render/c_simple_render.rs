@@ -67,8 +67,7 @@ impl UiRenderPlan {
         scroll_frames: &UiScrollFramePlan,
         logical_extent: (f64, f64),
     ) -> Result<Self, UiRenderError> {
-        let profile = std::env::var_os("SOLARITY_UI_TIMINGS").is_some();
-        let started = std::time::Instant::now();
+        let mut ui_profile = solarity_profiling::profile!("ui.c_simple_render.prepare_with_glyphs");
         let mut texture_orders = Vec::new();
         let mut textures = Vec::new();
         for (sequence, texture) in presentation.members_in_draw_order().iter().enumerate() {
@@ -77,17 +76,17 @@ impl UiRenderPlan {
                 textures.push(quad);
             }
         }
-        let textures_elapsed = started.elapsed();
+        ui_profile.mark("textures");
         let texture_count = textures.len();
         let retained_glyphs = glyphs.retained_scroll_quads(geometry, scroll_frames);
         let glyph_count = retained_glyphs.len();
-        let glyphs_elapsed = started.elapsed();
+        ui_profile.mark("glyphs");
         let texture_keys = texture_orders
             .iter()
             .map(|order| (order.0, order.1, order.2, false))
             .collect::<Vec<_>>();
         let ordered = UiOrderedQuadSlots::new(texture_orders, &retained_glyphs);
-        let sort_elapsed = started.elapsed();
+        ui_profile.mark("sort");
         let mut quad_orders = Vec::with_capacity(texture_count + glyph_count);
         let mesh = UiMeshPlan::prepare(
             [logical_extent.0 as f32, logical_extent.1 as f32],
@@ -108,22 +107,9 @@ impl UiRenderPlan {
                 }
             }),
         )?;
-        let mesh_elapsed = started.elapsed();
+        ui_profile.mark("mesh");
         let texture_assets = UiTextureAssetPlan::prepare(&mesh)?;
-        if profile {
-            eprintln!(
-                "UI mesh prepare: textures={texture_count} glyphs={glyph_count} texture_resolve={:.3}ms glyph_resolve={:.3}ms sort={:.3}ms serialize={:.3}ms assets={:.3}ms total={:.3}ms",
-                textures_elapsed.as_secs_f64() * 1_000.0,
-                glyphs_elapsed
-                    .saturating_sub(textures_elapsed)
-                    .as_secs_f64()
-                    * 1_000.0,
-                sort_elapsed.saturating_sub(glyphs_elapsed).as_secs_f64() * 1_000.0,
-                mesh_elapsed.saturating_sub(sort_elapsed).as_secs_f64() * 1_000.0,
-                started.elapsed().saturating_sub(mesh_elapsed).as_secs_f64() * 1_000.0,
-                started.elapsed().as_secs_f64() * 1_000.0,
-            );
-        }
+
         Ok(Self {
             mesh,
             texture_assets,
@@ -342,6 +328,8 @@ impl UiRenderPlan {
         scroll_frames: &UiScrollFramePlan,
         object_indices: &[usize],
     ) -> Result<bool, UiRenderError> {
+        let _profile_scope =
+            solarity_profiling::profile!("ui.render.c_simple_render.refresh_glyph_objects");
         let quads = glyphs.retained_live_object_quads(object_indices, geometry, scroll_frames);
         let mut batches_changed = false;
         for &object_index in object_indices {
@@ -446,6 +434,8 @@ impl UiRenderPlan {
         scroll_frames: &UiScrollFramePlan,
         object_indices: &[usize],
     ) -> Result<bool, UiRenderError> {
+        let _profile_scope =
+            solarity_profiling::profile!("ui.render.c_simple_render.refresh_texture_objects");
         let mut material_changed = false;
         for &object_index in object_indices {
             let rendered = presentation
@@ -475,9 +465,6 @@ impl UiRenderPlan {
                     .sources_for_object(object_index)
                     .any(|source| !matches!(source, UiRenderSource::GlyphAtlas(_)))
                 {
-                    if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-                        eprintln!("UI texture slot rebuild: object={object_index} removed sources");
-                    }
                     return Ok(false);
                 }
                 continue;
@@ -566,12 +553,6 @@ impl UiRenderPlan {
                             &quads,
                         )?
                     {
-                        if std::env::var_os("SOLARITY_UI_TIMINGS").is_some() {
-                            eprintln!(
-                                "UI texture slot rebuild: object={object_index} old={previous_sources:?} new={source:?} quads={}",
-                                quads.len()
-                            );
-                        }
                         return Ok(false);
                     }
                     self.quad_orders
@@ -631,6 +612,8 @@ impl UiRenderPlan {
         geometry: &mut UiRegionGeometryPlan,
         presentation: &mut UiPresentationPlan,
     ) {
+        let _profile_scope =
+            solarity_profiling::profile!("ui.render.c_simple_render.refresh_scroll_transforms");
         for (object_index, (old, new)) in
             previous.objects().iter().zip(current.objects()).enumerate()
         {

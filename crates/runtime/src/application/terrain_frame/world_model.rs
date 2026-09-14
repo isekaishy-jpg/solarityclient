@@ -497,8 +497,7 @@ fn prepare_gpu_source(
     base_mip: WorldModelBaseMip,
     liquid_materials: &mut LiquidGpuMaterialCache,
 ) -> Result<WorldModelGpuSource, RuntimeTerrainFrameError> {
-    let mut profile =
-        crate::application::frame_profile::RuntimeFrameProfile::new("WMO source publication");
+    let mut profile = solarity_profiling::profile!("WMO source publication");
     let plan = Arc::clone(source.plan());
     profile.mark("mesh plan");
     let mesh = renderer.upload_world_model_mesh(&plan)?;

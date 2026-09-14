@@ -40,6 +40,8 @@ impl RuntimeSoundCoordinator {
         clock: &RealmClock,
         random: &mut BlizzardRand,
     ) -> Result<(), RuntimeSoundError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.sound_coordinator.zone.update_zone");
         let frame = ZoneSoundFrame {
             time: ZoneSoundTimeOfDay::from_day_milliseconds(clock.day_milliseconds()),
             now_ms: self.started.elapsed().as_millis() as u32,

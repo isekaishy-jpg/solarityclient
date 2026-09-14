@@ -17,6 +17,9 @@ impl CpuPublication<'_> {
         bone_pose: &dyn M2BoneTransforms,
         sample: CpuSample,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let _profile_scope = solarity_profiling::detail_profile!(
+            "runtime.application.terrain_frame.m2.preparation.publication.frame.publish"
+        );
         let CpuSample {
             clock,
             event_window,

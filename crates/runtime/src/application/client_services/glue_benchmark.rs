@@ -14,7 +14,6 @@ use thiserror::Error;
 
 use super::ClientServices;
 use crate::application::ApplicationError;
-use crate::application::frame_profile::RuntimeFrameProfile;
 use crate::application::login_model::RuntimeGlueModelPoll;
 use crate::application::run;
 
@@ -369,7 +368,7 @@ impl ClientServices {
         service_network: bool,
         capture_directory: Option<&Path>,
     ) -> Result<(), GlueBenchmarkError> {
-        let mut profile = RuntimeFrameProfile::new("benchmark frame");
+        let mut profile = solarity_profiling::profile!("benchmark frame");
         for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
             let Some(event) = self.poll_platform_event() else {
                 break;

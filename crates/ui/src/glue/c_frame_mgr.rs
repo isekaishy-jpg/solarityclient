@@ -327,6 +327,7 @@ impl FrameManager {
         name: &str,
         payload: &UiEventPayload,
     ) -> Result<UiEventDispatch, UiEventError> {
+        let _profile_scope = solarity_profiling::profile!("ui.glue.c_frame_mgr.dispatch_event");
         // 528010 holds the same bracket on every world-entry notification,
         // including entry after a transfer when FrameXML is already resident.
         let _sound_admission =
@@ -367,6 +368,7 @@ impl FrameManager {
     /// invalid. Individual authored handler failures are isolated and
     /// available through [`Self::take_callback_failure`].
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
+        let _profile_scope = solarity_profiling::profile!("ui.glue.c_frame_mgr.update");
         self.owner.update(elapsed_seconds)
     }
 

@@ -90,9 +90,7 @@ impl GroundDetailWorld {
         camera: WorldCameraFrame,
         frustum: Option<WorldFrustum>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let mut profile = crate::application::frame_profile::RuntimeFrameProfile::new(
-            "Ground detail preparation",
-        );
+        let mut profile = solarity_profiling::profile!("Ground detail preparation");
         self.draws.clear();
         self.retired.extend(self.tiles.extract_if(.., |cached| {
             !residents

@@ -4229,6 +4229,7 @@ name = "solarity-asset"
 version = "0.0.3-alpha"
 dependencies = [
  "glam",
+ "solarity-profiling",
  "thiserror 2.0.20",
  "tracing",
  "wow-adt",
@@ -4246,6 +4247,7 @@ name = "solarity-cpu"
 version = "0.0.3-alpha"
 dependencies = [
  "rayon",
+ "solarity-profiling",
  "thiserror 2.0.20",
  "tracing",
 ]
@@ -4256,6 +4258,7 @@ version = "0.0.3-alpha"
 dependencies = [
  "glam",
  "shipyard",
+ "solarity-profiling",
  "thiserror 2.0.20",
  "tracing",
 ]
@@ -4269,6 +4272,7 @@ dependencies = [
  "sdl3",
  "solarity-asset",
  "solarity-cpu",
+ "solarity-profiling",
  "solarity-rendering",
  "thiserror 2.0.20",
  "tracing",
@@ -4281,12 +4285,21 @@ version = "0.0.3-alpha"
 dependencies = [
  "flate2",
  "sha-1",
+ "solarity-profiling",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
  "wow_login_messages",
  "wow_srp",
  "wow_world_messages",
+]
+
+[[package]]
+name = "solarity-profiling"
+version = "0.0.3-alpha"
+dependencies = [
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4301,6 +4314,7 @@ dependencies = [
  "solarity-asset",
  "solarity-cpu",
  "solarity-ecs",
+ "solarity-profiling",
  "thiserror 2.0.20",
  "tracing",
  "vk-mem",
@@ -4327,6 +4341,7 @@ dependencies = [
  "solarity-ecs",
  "solarity-media",
  "solarity-network",
+ "solarity-profiling",
  "solarity-rendering",
  "solarity-systems",
  "solarity-ui",
@@ -4353,6 +4368,7 @@ dependencies = [
  "solarity-asset",
  "solarity-cpu",
  "solarity-ecs",
+ "solarity-profiling",
  "thiserror 2.0.20",
  "tracing",
  "wow-adt",
@@ -4371,6 +4387,7 @@ dependencies = [
  "quick-xml 0.42.0",
  "solarity-asset",
  "solarity-cpu",
+ "solarity-profiling",
  "solarity-rendering",
  "thiserror 2.0.20",
  "tracing",

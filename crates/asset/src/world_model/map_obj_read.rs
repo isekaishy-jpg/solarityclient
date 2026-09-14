@@ -30,6 +30,7 @@ impl DecodedWorldModel {
     /// Returns [`AssetError`] when the root/group kind, version, bounds,
     /// triangle tables, BSP references, or build-era layout is invalid.
     pub fn load(store: &mut AssetStore, path: &AssetPath) -> Result<Self, AssetError> {
+        let _profile_scope = solarity_profiling::profile!("asset.world_model.map_obj_read.load");
         let read = store.read(path)?;
         validate_root_chunk_layout(path, read.bytes())?;
         let parsed = parse_wmo(&mut Cursor::new(read.bytes()))

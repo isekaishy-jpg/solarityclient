@@ -32,6 +32,9 @@ impl M2BoneSamples {
         overrides: M2BonePoseOverrides<'_>,
         bones: &[usize],
     ) -> Result<(), M2BonePoseError> {
+        let _profile_scope = solarity_profiling::detail_profile!(
+            "rendering.model.m2_animation.pose.compose.samples.recompose"
+        );
         self.valid = false;
         self.required.resize(animations.bones().len(), false);
         self.required.fill(false);

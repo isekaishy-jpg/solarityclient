@@ -289,6 +289,9 @@ impl RuntimeWorldCoordinator {
         runtime: &Handle,
         requests: RuntimeCharacterScreenRequests,
     ) -> Result<(), RuntimeWorldError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.world_coordinator.request_character_screen_data"
+        );
         if requests.is_empty() {
             return Ok(());
         }
@@ -360,6 +363,8 @@ impl RuntimeWorldCoordinator {
         runtime: &Handle,
         request: CharacterCreation,
     ) -> Result<(), RuntimeWorldError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.world_coordinator.create_character");
         if self.active.is_some() {
             return Err(RuntimeWorldError::AlreadyActive);
         }
@@ -392,6 +397,8 @@ impl RuntimeWorldCoordinator {
         runtime: &Handle,
         guid: u64,
     ) -> Result<(), RuntimeWorldError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.world_coordinator.delete_character");
         if self.active.is_some() {
             return Err(RuntimeWorldError::AlreadyActive);
         }
@@ -429,6 +436,8 @@ impl RuntimeWorldCoordinator {
         guid: u64,
         request: CharacterRename,
     ) -> Result<(), RuntimeWorldError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.world_coordinator.rename_character");
         if self.active.is_some() {
             return Err(RuntimeWorldError::AlreadyActive);
         }
@@ -485,6 +494,8 @@ impl RuntimeWorldCoordinator {
     /// Returns a transport/authentication failure or a stable task-boundary
     /// error when the worker disappears without its owned result.
     pub fn poll(&mut self) -> Result<RuntimeWorldPoll, RuntimeWorldError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.world_coordinator.poll");
         let connection_closed = self.active.is_none()
             && match self.authenticated() {
                 Some(session) => session.connection_closed()?,
@@ -687,42 +698,52 @@ async fn create_character(
     mut selection: RuntimeCharacterSelection,
     request: CharacterCreation,
 ) -> Result<ActiveWorldResult, RuntimeWorldError> {
-    const MAX_SETUP_PACKETS: usize = 256;
+    solarity_profiling::profile_await!(
+        "runtime.application.world_coordinator.create_character",
+        async {
+            const MAX_SETUP_PACKETS: usize = 256;
 
-    selection.session.create_character(&request).await?;
-    loop {
-        let packet = selection.session.receive_packet().await?;
-        if let Some(result) = packet.character_creation_result()? {
-            return Ok(ActiveWorldResult::CharacterCreated { selection, result });
+            selection.session.create_character(&request).await?;
+            loop {
+                let packet = selection.session.receive_packet().await?;
+                if let Some(result) = packet.character_creation_result()? {
+                    return Ok(ActiveWorldResult::CharacterCreated { selection, result });
+                }
+                if selection.setup_packets.len() == MAX_SETUP_PACKETS {
+                    return Err(RuntimeWorldError::SetupPacketLimit {
+                        maximum: MAX_SETUP_PACKETS,
+                    });
+                }
+                selection.setup_packets.push(packet);
+            }
         }
-        if selection.setup_packets.len() == MAX_SETUP_PACKETS {
-            return Err(RuntimeWorldError::SetupPacketLimit {
-                maximum: MAX_SETUP_PACKETS,
-            });
-        }
-        selection.setup_packets.push(packet);
-    }
+    )
 }
 
 async fn delete_character(
     mut selection: RuntimeCharacterSelection,
     guid: u64,
 ) -> Result<ActiveWorldResult, RuntimeWorldError> {
-    const MAX_SETUP_PACKETS: usize = 256;
+    solarity_profiling::profile_await!(
+        "runtime.application.world_coordinator.delete_character",
+        async {
+            const MAX_SETUP_PACKETS: usize = 256;
 
-    selection.session.delete_character(guid).await?;
-    loop {
-        let packet = selection.session.receive_packet().await?;
-        if let Some(result) = packet.character_deletion_result()? {
-            return Ok(ActiveWorldResult::CharacterDeleted { selection, result });
+            selection.session.delete_character(guid).await?;
+            loop {
+                let packet = selection.session.receive_packet().await?;
+                if let Some(result) = packet.character_deletion_result()? {
+                    return Ok(ActiveWorldResult::CharacterDeleted { selection, result });
+                }
+                if selection.setup_packets.len() == MAX_SETUP_PACKETS {
+                    return Err(RuntimeWorldError::SetupPacketLimit {
+                        maximum: MAX_SETUP_PACKETS,
+                    });
+                }
+                selection.setup_packets.push(packet);
+            }
         }
-        if selection.setup_packets.len() == MAX_SETUP_PACKETS {
-            return Err(RuntimeWorldError::SetupPacketLimit {
-                maximum: MAX_SETUP_PACKETS,
-            });
-        }
-        selection.setup_packets.push(packet);
-    }
+    )
 }
 
 async fn rename_character(
@@ -730,21 +751,26 @@ async fn rename_character(
     guid: u64,
     request: CharacterRename,
 ) -> Result<ActiveWorldResult, RuntimeWorldError> {
-    const MAX_SETUP_PACKETS: usize = 256;
+    solarity_profiling::profile_await!(
+        "runtime.application.world_coordinator.rename_character",
+        async {
+            const MAX_SETUP_PACKETS: usize = 256;
 
-    selection.session.rename_character(guid, &request).await?;
-    loop {
-        let packet = selection.session.receive_packet().await?;
-        if let Some(result) = packet.character_rename_result()? {
-            return Ok(ActiveWorldResult::CharacterRenamed { selection, result });
+            selection.session.rename_character(guid, &request).await?;
+            loop {
+                let packet = selection.session.receive_packet().await?;
+                if let Some(result) = packet.character_rename_result()? {
+                    return Ok(ActiveWorldResult::CharacterRenamed { selection, result });
+                }
+                if selection.setup_packets.len() == MAX_SETUP_PACKETS {
+                    return Err(RuntimeWorldError::SetupPacketLimit {
+                        maximum: MAX_SETUP_PACKETS,
+                    });
+                }
+                selection.setup_packets.push(packet);
+            }
         }
-        if selection.setup_packets.len() == MAX_SETUP_PACKETS {
-            return Err(RuntimeWorldError::SetupPacketLimit {
-                maximum: MAX_SETUP_PACKETS,
-            });
-        }
-        selection.setup_packets.push(packet);
-    }
+    )
 }
 
 async fn authenticate_world(
@@ -752,20 +778,26 @@ async fn authenticate_world(
     realm: RealmEntry,
     addons: WorldAddonManifest,
 ) -> Result<ActiveWorldResult, RuntimeWorldError> {
-    let endpoint = TcpEndpoint::parse(realm.address())?;
-    let stream = TcpTransport::connect(&endpoint).await?;
-    let mut progress = WorldConnection::authenticate(stream, identity, &realm, addons).await?;
-    let session = loop {
-        progress = match progress {
-            WorldAuthProgress::Authenticated(session) => break session,
-            WorldAuthProgress::Queued(queue) => queue.advance().await?,
-        };
-    };
-    Ok(ActiveWorldResult::CharacterScreen(RuntimeCharacterScreen {
-        session,
-        addon_policy: None,
-        setup_packets: Vec::new(),
-    }))
+    solarity_profiling::profile_await!(
+        "runtime.application.world_coordinator.authenticate_world",
+        async {
+            let endpoint = TcpEndpoint::parse(realm.address())?;
+            let stream = TcpTransport::connect(&endpoint).await?;
+            let mut progress =
+                WorldConnection::authenticate(stream, identity, &realm, addons).await?;
+            let session = loop {
+                progress = match progress {
+                    WorldAuthProgress::Authenticated(session) => break session,
+                    WorldAuthProgress::Queued(queue) => queue.advance().await?,
+                };
+            };
+            Ok(ActiveWorldResult::CharacterScreen(RuntimeCharacterScreen {
+                session,
+                addon_policy: None,
+                setup_packets: Vec::new(),
+            }))
+        }
+    )
 }
 
 enum RetainedCharacterScreen {
@@ -777,120 +809,130 @@ async fn request_character_screen_data(
     state: RetainedCharacterScreen,
     requests: RuntimeCharacterScreenRequests,
 ) -> Result<ActiveWorldResult, RuntimeWorldError> {
-    let (mut session, directory, mut addon_policy, mut setup_packets) = match state {
-        RetainedCharacterScreen::AwaitingDirectory(screen) => (
-            screen.session,
-            None,
-            screen.addon_policy,
-            screen.setup_packets,
-        ),
-        RetainedCharacterScreen::Ready(selection) => (
-            selection.session,
-            Some(selection.directory),
-            selection.addon_policy,
-            selection.setup_packets,
-        ),
-    };
-    if requests.ready_for_account_data_times {
-        session.ready_for_account_data_times().await?;
-    }
-    if requests.refresh_character_directory {
-        session.request_character_directory().await?;
-    }
-    if requests.request_realm_split_info {
-        session.request_realm_split_info().await?;
-    }
-    if !requests.refresh_character_directory {
-        return match directory {
-            Some(directory) => Ok(ActiveWorldResult::CharacterSelection(
-                RuntimeCharacterSelection {
-                    session,
-                    directory,
-                    addon_policy,
-                    setup_packets,
-                },
-            )),
-            None => Ok(ActiveWorldResult::CharacterScreen(RuntimeCharacterScreen {
-                session,
-                addon_policy,
-                setup_packets,
-            })),
-        };
-    }
+    solarity_profiling::profile_await!(
+        "runtime.application.world_coordinator.request_character_screen_data",
+        async {
+            let (mut session, directory, mut addon_policy, mut setup_packets) = match state {
+                RetainedCharacterScreen::AwaitingDirectory(screen) => (
+                    screen.session,
+                    None,
+                    screen.addon_policy,
+                    screen.setup_packets,
+                ),
+                RetainedCharacterScreen::Ready(selection) => (
+                    selection.session,
+                    Some(selection.directory),
+                    selection.addon_policy,
+                    selection.setup_packets,
+                ),
+            };
+            if requests.ready_for_account_data_times {
+                session.ready_for_account_data_times().await?;
+            }
+            if requests.refresh_character_directory {
+                session.request_character_directory().await?;
+            }
+            if requests.request_realm_split_info {
+                session.request_realm_split_info().await?;
+            }
+            if !requests.refresh_character_directory {
+                return match directory {
+                    Some(directory) => Ok(ActiveWorldResult::CharacterSelection(
+                        RuntimeCharacterSelection {
+                            session,
+                            directory,
+                            addon_policy,
+                            setup_packets,
+                        },
+                    )),
+                    None => Ok(ActiveWorldResult::CharacterScreen(RuntimeCharacterScreen {
+                        session,
+                        addon_policy,
+                        setup_packets,
+                    })),
+                };
+            }
 
-    const MAX_SETUP_PACKETS: usize = 256;
-    loop {
-        let packet = session.receive_packet().await?;
-        if let Some(directory) = packet.character_directory()? {
-            return Ok(ActiveWorldResult::CharacterSelection(
-                RuntimeCharacterSelection {
-                    session,
-                    directory,
-                    addon_policy,
-                    setup_packets,
-                },
-            ));
-        }
-        if let Some(policy) = packet.addon_policy(session.addon_manifest())? {
-            addon_policy = Some(policy);
-            continue;
-        }
-        if setup_packets.len() == MAX_SETUP_PACKETS {
-            return Err(RuntimeWorldError::SetupPacketLimit {
-                maximum: MAX_SETUP_PACKETS,
-            });
-        }
-        setup_packets.push(packet);
-    }
-}
-
-async fn login_character(
-    selection: RuntimeCharacterSelection,
-    guid: u64,
-) -> Result<ActiveWorldResult, RuntimeWorldError> {
-    let RuntimeCharacterSelection {
-        session,
-        directory,
-        addon_policy,
-        mut setup_packets,
-    } = selection;
-    let character = directory
-        .by_guid(guid)
-        .cloned()
-        .ok_or(RuntimeWorldError::UnknownCharacter { guid })?;
-    let mut login = session.login_character(&character).await?;
-    const MAX_SETUP_PACKETS: usize = 256;
-    loop {
-        match login.advance().await? {
-            CharacterLoginProgress::Awaiting {
-                login: pending,
-                packet,
-            } => {
+            const MAX_SETUP_PACKETS: usize = 256;
+            loop {
+                let packet = session.receive_packet().await?;
+                if let Some(directory) = packet.character_directory()? {
+                    return Ok(ActiveWorldResult::CharacterSelection(
+                        RuntimeCharacterSelection {
+                            session,
+                            directory,
+                            addon_policy,
+                            setup_packets,
+                        },
+                    ));
+                }
+                if let Some(policy) = packet.addon_policy(session.addon_manifest())? {
+                    addon_policy = Some(policy);
+                    continue;
+                }
                 if setup_packets.len() == MAX_SETUP_PACKETS {
                     return Err(RuntimeWorldError::SetupPacketLimit {
                         maximum: MAX_SETUP_PACKETS,
                     });
                 }
                 setup_packets.push(packet);
-                login = pending;
-            }
-            CharacterLoginProgress::Entered(session) => {
-                return Ok(ActiveWorldResult::Entered(RuntimeWorldEntry {
-                    session,
-                    setup_packets,
-                }));
-            }
-            CharacterLoginProgress::Rejected { session, rejection } => {
-                return Ok(ActiveWorldResult::Rejected {
-                    selection: RuntimeCharacterSelection {
-                        session,
-                        directory,
-                        addon_policy,
-                        setup_packets,
-                    },
-                    rejection,
-                });
             }
         }
-    }
+    )
+}
+
+async fn login_character(
+    selection: RuntimeCharacterSelection,
+    guid: u64,
+) -> Result<ActiveWorldResult, RuntimeWorldError> {
+    solarity_profiling::profile_await!(
+        "runtime.application.world_coordinator.login_character",
+        async {
+            let RuntimeCharacterSelection {
+                session,
+                directory,
+                addon_policy,
+                mut setup_packets,
+            } = selection;
+            let character = directory
+                .by_guid(guid)
+                .cloned()
+                .ok_or(RuntimeWorldError::UnknownCharacter { guid })?;
+            let mut login = session.login_character(&character).await?;
+            const MAX_SETUP_PACKETS: usize = 256;
+            loop {
+                match login.advance().await? {
+                    CharacterLoginProgress::Awaiting {
+                        login: pending,
+                        packet,
+                    } => {
+                        if setup_packets.len() == MAX_SETUP_PACKETS {
+                            return Err(RuntimeWorldError::SetupPacketLimit {
+                                maximum: MAX_SETUP_PACKETS,
+                            });
+                        }
+                        setup_packets.push(packet);
+                        login = pending;
+                    }
+                    CharacterLoginProgress::Entered(session) => {
+                        return Ok(ActiveWorldResult::Entered(RuntimeWorldEntry {
+                            session,
+                            setup_packets,
+                        }));
+                    }
+                    CharacterLoginProgress::Rejected { session, rejection } => {
+                        return Ok(ActiveWorldResult::Rejected {
+                            selection: RuntimeCharacterSelection {
+                                session,
+                                directory,
+                                addon_policy,
+                                setup_packets,
+                            },
+                            rejection,
+                        });
+                    }
+                }
+            }
+        }
+    )
 }

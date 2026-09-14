@@ -33,10 +33,7 @@ impl RuntimeTerrainCoordinator {
         settings: PlayerCameraObstructionSettings,
         feedback: impl FnOnce(f32, f32, solarity_systems::PlayerCameraContacts),
     ) -> Result<PlayerCameraPose, RuntimeCameraError> {
-        let mut profile = self
-            .camera_profile
-            .as_ref()
-            .map(|_| [std::time::Duration::ZERO; 5]);
+        let mut profile = solarity_profiling::enabled().then_some([std::time::Duration::ZERO; 5]);
         let obstruction =
             resolve_player_camera_obstruction(pose, aspect_ratio, settings, |query| match query {
                 PlayerCameraSceneQuery::Segment { start, end, water } => {
@@ -115,8 +112,8 @@ impl RuntimeTerrainCoordinator {
                 })
             },
         )?;
-        if let (Some(profiler), Some(profile)) = (&mut self.camera_profile, profile) {
-            profiler.record(profile);
+        if let Some(profile) = profile {
+            self.camera_profile.record(profile);
         }
         Ok(pose.with_eye(eye)?)
     }

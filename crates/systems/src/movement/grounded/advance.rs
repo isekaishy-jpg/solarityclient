@@ -46,6 +46,8 @@ impl MovementGroundState {
         interval: MovementGroundInterval,
         geometry: &mut G,
     ) -> Result<MovementGroundAdvance<G::TriangleIdentity>, MovementGroundAdvanceError> {
+        let _profile_scope =
+            solarity_profiling::profile!("systems.movement.grounded.advance.advance_with_geometry");
         let mut query = GroundQuery {
             interval,
             geometry,

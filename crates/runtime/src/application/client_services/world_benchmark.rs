@@ -468,7 +468,7 @@ impl ClientServices {
             .count();
         let streaming = start.elapsed();
         let start = Instant::now();
-        let mut ui_profile = super::RuntimeFrameProfile::new("Benchmark world UI");
+        let mut ui_profile = solarity_profiling::profile!("Benchmark world UI");
         let ui = self
             .world_ui
             .as_mut()

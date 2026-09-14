@@ -318,8 +318,10 @@ impl ClientApplication {
         let mut frame_limiter = FrameLimiter::new();
         loop {
             // Includes live input and pacing, which the offline world replay omits.
-            let mut frame_profile =
-                super::frame_profile::RuntimeFrameProfile::new("live client frame");
+            let mut frame_profile = solarity_profiling::begin_frame();
+            let cycle_start = solarity_profiling::enabled()
+                .then(crate::platform::current_thread_cycles)
+                .flatten();
             let mut pending_mouse_motion: Option<(u32, MouseMotionEvent)> = None;
             for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
                 let Some(event) = self.services.poll_platform_event() else {
@@ -388,6 +390,14 @@ impl ClientApplication {
             frame_profile.mark("presentation");
             frame_limiter.wait();
             frame_profile.mark("frame limiter");
+            if let Some(start) = cycle_start
+                && let Some(end) = crate::platform::current_thread_cycles()
+            {
+                solarity_profiling::profile_value!(
+                    "frame.main_thread_cycles",
+                    end.saturating_sub(start)
+                );
+            }
         }
     }
 

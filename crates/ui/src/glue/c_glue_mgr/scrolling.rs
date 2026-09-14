@@ -22,6 +22,8 @@ impl GlueManager {
         &mut self,
         dirty: &[(usize, u32)],
     ) -> Result<(), UiEventError> {
+        let _profile_scope =
+            solarity_profiling::profile!("ui.glue.c_glue_mgr.scrolling.refresh_scroll_objects");
         let previous = self
             .runtime
             .refresh_scroll_objects(&self.bundle, &mut self.live, dirty)?;

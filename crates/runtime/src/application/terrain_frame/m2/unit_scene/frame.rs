@@ -14,6 +14,9 @@ impl M2Frame {
         random: &mut CrtRand,
         mut effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.terrain_frame.m2.unit_scene.frame.advance_unit_callbacks"
+        );
         for ordinal in 0..self.placement_visibility.dynamic_scene_indices().len() {
             let index = self.placement_visibility.dynamic_scene_indices()[ordinal];
             let placement = &self.placements[index];

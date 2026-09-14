@@ -160,6 +160,9 @@ impl AdvancedSoundService {
         listener: AdvancedSoundListener,
         next_random_word: &mut impl FnMut() -> u32,
     ) -> Result<AdvancedSoundUpdateReport, AdvancedSoundServiceError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "media.audio.engine.sound_interface2_advanced_kit_service.update"
+        );
         if elapsed_milliseconds < 0 {
             return Err(AdvancedSoundServiceError::NegativeElapsed {
                 elapsed_milliseconds,

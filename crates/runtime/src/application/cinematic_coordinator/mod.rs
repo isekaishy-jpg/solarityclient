@@ -55,6 +55,9 @@ impl RuntimeCinematicCoordinator {
         sound: &mut RuntimeSoundCoordinator,
         overlay: Option<([f32; 2], &[UiPreparedDraw])>,
     ) -> Result<RuntimeCinematicPoll, RuntimeCinematicError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.cinematic_coordinator.mod.synchronize"
+        );
         let Some(request) = request else {
             if let Some(active) = self.active.take() {
                 sound.stop_cinematic_audio()?;
@@ -177,6 +180,8 @@ impl ActiveCinematic {
         elapsed: Duration,
         sound: &mut RuntimeSoundCoordinator,
     ) -> Result<(), RuntimeCinematicError> {
+        let _profile_scope =
+            solarity_profiling::profile!("runtime.application.cinematic_coordinator.mod.advance");
         while self.pending.as_ref().is_some_and(|frame| {
             frame
                 .presentation_time()
@@ -210,6 +215,9 @@ impl ActiveCinematic {
     }
 
     fn feed_audio(&mut self, sound: &mut RuntimeSoundCoordinator) -> Result<(), RuntimeSoundError> {
+        let _profile_scope = solarity_profiling::profile!(
+            "runtime.application.cinematic_coordinator.mod.feed_audio"
+        );
         for frame in self.decoder.take_audio_frames() {
             if frame.samples().is_empty() {
                 continue;

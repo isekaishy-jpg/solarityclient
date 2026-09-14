@@ -27,6 +27,7 @@ impl BlpTextureSource {
     /// Returns an archive lookup/read error or [`AssetError::TextureDecode`]
     /// when the selected bytes do not form a supported stock BLP image.
     pub fn load(store: &mut AssetStore, path: &AssetPath) -> Result<Self, AssetError> {
+        let _profile_scope = solarity_profiling::profile!("asset.texture.texture_source.load");
         let read = store.read(path)?;
         let archive = read.source().clone();
         let mut bytes = read.into_bytes();

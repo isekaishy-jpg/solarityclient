@@ -12,7 +12,7 @@ pub(in crate::device) fn upload_mesh_batch_deferred(
     context: MeshUploadContext<'_>,
     payloads: &[(&[u8], &[u8])],
 ) -> Result<(Vec<GpuMeshBuffers>, DeferredMeshTransfer), VulkanError> {
-    let profile = std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_| std::time::Instant::now());
+    let mut profile = solarity_profiling::profile!("rendering.mesh.batch_upload");
     if payloads.is_empty()
         || payloads
             .iter()
@@ -156,16 +156,7 @@ pub(in crate::device) fn upload_mesh_batch_deferred(
     let transfer = transfer.submit_and_defer(command)?;
     // Leave the pre-submission cleanup guard before optional tracing can run.
     let buffers = std::mem::take(&mut guard.buffers);
-    if let Some(start) = profile {
-        tracing::info!(
-            target: "solarity_rendering::device::mesh_upload",
-            meshes = payloads.len(),
-            vertex_bytes = vertex_capacity,
-            index_bytes = index_capacity,
-            total_us = start.elapsed().as_secs_f64() * 1_000_000.0,
-            "profiled mesh batch admission"
-        );
-    }
+    profile.mark("completed");
     // Successful submission transfers both resource lifetimes to the caller.
     Ok((buffers, transfer))
 }

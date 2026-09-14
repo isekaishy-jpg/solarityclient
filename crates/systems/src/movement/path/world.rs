@@ -35,6 +35,8 @@ pub fn advance_world_movement_splines(
     world: &ActiveWorld,
     now_ms: u32,
 ) -> Result<(), MovementSplineError> {
+    let _profile_scope =
+        solarity_profiling::profile!("systems.movement.path.world.advance_world_movement_splines");
     advance_paths(world, now_ms, None)
 }
 

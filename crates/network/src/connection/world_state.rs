@@ -290,7 +290,9 @@ where
     ///
     /// Returns [`WorldAuthError`] for transport, decode, ordering, or rejection failures.
     pub async fn advance(self) -> Result<WorldAuthProgress<S>, WorldAuthError> {
-        self.handshake.advance().await
+        solarity_profiling::profile_await!("network.connection.world_state.advance", async {
+            self.handshake.advance().await
+        })
     }
 }
 

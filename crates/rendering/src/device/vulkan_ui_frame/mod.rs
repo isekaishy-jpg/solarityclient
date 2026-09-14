@@ -43,9 +43,20 @@ pub(in crate::device) struct UiFrameContext<'a> {
 #[derive(Default)]
 pub(in crate::device) struct UiFrameRenderer {
     resources: UiFrameResources,
+    profiler: Option<crate::device::vulkan_world_frame::GpuFrameProfiler>,
 }
 
 impl UiFrameRenderer {
+    /// Shares the queue capability while keeping query ownership in UI frame slots.
+    pub(in crate::device) fn with_gpu_profiler(
+        profiler: Option<crate::device::vulkan_world_frame::GpuFrameProfiler>,
+    ) -> Self {
+        Self {
+            profiler,
+            ..Self::default()
+        }
+    }
+
     /// Records two already ordered UI draw layers without joining their storage.
     pub(in crate::device) fn present_composite(
         &mut self,
@@ -76,6 +87,8 @@ impl UiFrameRenderer {
         draws: &[UiPreparedDraw],
         overlay: &[UiPreparedDraw],
     ) -> Result<UiFrameReport, VulkanError> {
+        let _profile_scope =
+            solarity_profiling::profile!("rendering.device.vulkan_ui_frame.mod.present_inner");
         if logical_extent
             .iter()
             .any(|extent| !extent.is_finite() || *extent <= 0.0)
@@ -88,9 +101,18 @@ impl UiFrameRenderer {
             context.swapchain_images.len(),
         )?;
         let slot_index = self.resources.next_slot_index()?;
+        let sampled = self.profiler.is_some() && solarity_profiling::detail_enabled();
+        let mut timestamps = None;
         let (image_index, _suboptimal) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
+            if let Some(profiler) = &self.profiler {
+                profiler.record_ui(slot.timestamps.collect(context.device)?);
+            }
+            if sampled {
+                timestamps = Some(slot.timestamps.ensure(context.device)?);
+            }
+            let _acquire_profile = solarity_profiling::profile!("rendering.ui.acquire_image");
             // SAFETY: The swapchain and acquire semaphore remain live until
             // this exact image is submitted and presented below.
             unsafe {
@@ -119,6 +141,7 @@ impl UiFrameRenderer {
             device: context.device,
             capture: context.capture,
             command_buffer: slot.command_buffer(),
+            timestamps,
             image,
             image_view,
             extent: context.extent,
@@ -129,7 +152,8 @@ impl UiFrameRenderer {
             draws,
             overlay,
         })?;
-        submit_and_present(&context, slot, present_semaphore, image_index)?;
+        submit_and_present(&context, slot, present_semaphore, image_index, sampled)?;
+        solarity_profiling::profile_value!("rendering.ui.draws", draws.len() + overlay.len());
         Ok(UiFrameReport::new(draws.len() + overlay.len()))
     }
 

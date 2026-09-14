@@ -52,8 +52,7 @@ impl WorldSceneAdmission {
         active: &mut ResidentTerrainMap,
         camera: WorldCameraFrame,
     ) -> Result<(), RuntimeMovementRegistrationError> {
-        let mut profile =
-            crate::application::frame_profile::RuntimeFrameProfile::new("World scene admission");
+        let mut profile = solarity_profiling::profile!("World scene admission");
         self.groups.clear();
         self.graphics.begin();
         self.outdoor_groups.clear();

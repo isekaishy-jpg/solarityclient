@@ -57,6 +57,8 @@ pub(super) struct FrameRenderer {
 impl FrameRenderer {
     /// Uploads a changed authored frame and presents it without CPU resampling.
     pub(super) fn present(&mut self, context: FrameContext<'_>) -> Result<bool, VulkanError> {
+        let _profile_scope =
+            solarity_profiling::profile!("rendering.device.vulkan_frame.mod.present");
         validate_pixels(context.source_extent, context.rgba8)?;
         let layout = FrameLayout::fit(context.frame_extent, context.source_extent)?;
         self.resources.ensure_slots(

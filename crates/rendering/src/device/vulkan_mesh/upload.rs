@@ -374,7 +374,7 @@ pub(in crate::device) fn upload_mesh_buffers_deferred(
     vertex_bytes: &[u8],
     index_bytes: &[u8],
 ) -> Result<(GpuMeshBuffers, DeferredMeshTransfer), VulkanError> {
-    let profile = std::env::var_os("SOLARITY_FRAME_TIMINGS").map(|_| std::time::Instant::now());
+    let mut profile = solarity_profiling::profile!("rendering.mesh.upload");
     let bytes = MeshUploadBytes::new(vertex_bytes, index_bytes)?;
     let vertex_device_size = u64::try_from(bytes.vertex_copy_size)
         .map_err(|source| VulkanError::operation("convert M2 vertex buffer size", source))?;
@@ -414,9 +414,9 @@ pub(in crate::device) fn upload_mesh_buffers_deferred(
             index_buffer,
         }),
     };
-    let allocated = profile.map(|start| start.elapsed());
+    profile.mark("allocated");
     let transfer = TransferResources::create(context, bytes)?;
-    let staged = profile.map(|start| start.elapsed());
+    profile.mark("staged");
     let command_buffer = transfer.command_buffer()?;
     let buffers = guard.buffers.as_ref().ok_or_else(|| {
         VulkanError::operation("record mesh upload", "mesh buffers are unavailable")
@@ -431,23 +431,10 @@ pub(in crate::device) fn upload_mesh_buffers_deferred(
         index_device_size,
     )?;
     let mut buffers = guard.finish()?;
-    let recorded = profile.map(|start| start.elapsed());
+    profile.mark("recorded");
     match transfer.submit_and_defer(command_buffer) {
         Ok(transfer) => {
-            if let (Some(start), Some(allocated), Some(staged), Some(recorded)) =
-                (profile, allocated, staged, recorded)
-            {
-                tracing::info!(
-                    target: "solarity_rendering::device::mesh_upload",
-                    vertex_bytes = vertex_bytes.len(),
-                    index_bytes = index_bytes.len(),
-                    allocation_us = allocated.as_secs_f64() * 1_000_000.0,
-                    staging_us = (staged - allocated).as_secs_f64() * 1_000_000.0,
-                    recording_us = (recorded - staged).as_secs_f64() * 1_000_000.0,
-                    submission_us = (start.elapsed() - recorded).as_secs_f64() * 1_000_000.0,
-                    "profiled mesh transfer admission"
-                );
-            }
+            profile.mark("completed");
             Ok((buffers, transfer))
         }
         Err(error) => {

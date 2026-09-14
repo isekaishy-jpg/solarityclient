@@ -122,6 +122,7 @@ impl CinematicDecoder {
     /// Returns [`CinematicError`] for FFmpeg initialization, container, stream,
     /// decoder, or scaler failures. No alternate codec or file is selected.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, CinematicError> {
+        let _profile_scope = solarity_profiling::profile!("media.cinematic.dependency.open");
         initialize_ffmpeg()?;
         let path = path.as_ref().to_path_buf();
         let input = ffmpeg::format::input(&path)
@@ -229,6 +230,8 @@ impl CinematicDecoder {
     /// Returns [`CinematicError`] when demux, decode, timestamp, conversion, or
     /// row-layout invariants fail. `None` means the decoder fully drained.
     pub fn next_video_frame(&mut self) -> Result<Option<CinematicVideoFrame>, CinematicError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.cinematic.dependency.next_video_frame");
         loop {
             let mut decoded = Video::empty();
             match self.video.receive_frame(&mut decoded) {
@@ -315,6 +318,8 @@ impl CinematicDecoder {
     }
 
     fn receive_audio_frames(&mut self) -> Result<(), CinematicError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.cinematic.dependency.receive_audio_frames");
         let Some(audio) = self.audio.as_mut() else {
             return Ok(());
         };
@@ -397,6 +402,8 @@ impl CinematicDecoder {
     }
 
     fn convert_frame(&mut self, decoded: &Video) -> Result<CinematicVideoFrame, CinematicError> {
+        let _profile_scope =
+            solarity_profiling::profile!("media.cinematic.dependency.convert_frame");
         let presentation_time = self.video_clock.resolve(&self.path, decoded.timestamp())?;
         let mut rgba = Video::empty();
         self.scaler
