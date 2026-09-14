@@ -123,3 +123,23 @@ and 1,389 passing tests with 29 explicitly ignored tests. The optimized benchmar
 was run separately. The remaining liquid/fog, receiver, particle and other frame costs
 are not eliminated by the pose batch; total FPS improvement needs a matched live
 test after installation.
+
+## Build 132 delivery
+
+- Product: `0.0.3a`, Build `000132`, profile `test-client`.
+- Source: `e5465b839d49eee3c9eaf5d8124c231526417c09`.
+- Build-time dirty state consists of the packaging script's reserved
+  `BUILD_NUMBER`; the implementation was committed before packaging.
+- Package and installed Testing executable SHA-256:
+  `5CD5CCC017E41CD6601829D7DFC0AE69C0CBBD03F98B85B5AE1E8765700F1CED`.
+- Installed at `2026-09-13T22:14:04-04:00` using `-SkipBuild`, with the existing
+  2560 x 1440 Testing launch configuration and normal profiling disabled.
+- Formatting, Clippy with warnings denied and the full workspace tests passed
+  before packaging (1,389 passed, 29 explicitly ignored). The optimized package
+  compiled successfully and reported the expected version and build identity.
+
+The client was not launched for a live scene measurement during delivery because
+this work was kept off the user's active desktop. Build 132 therefore has no
+matched stationary/moving whole-frame FPS result yet. The earlier downward FPS
+trend and the requested two- or threefold frame-rate increase remain unresolved
+measurement targets, not claims of this delivery.
