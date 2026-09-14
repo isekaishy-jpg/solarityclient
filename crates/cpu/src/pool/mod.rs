@@ -5,6 +5,7 @@
 //! async execution or detached background work.
 
 mod executor;
+mod frame;
 mod task;
 mod types;
 mod worker;

@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::time::Instant;
 
-use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::pool::task::TaskOutcome;
@@ -21,8 +20,11 @@ use crate::pool::{CpuError, CpuPoolConfig, CpuPoolSnapshot, CpuTask};
 /// producer can apply its own backpressure policy.
 pub struct CpuExecutor {
     pool: Option<ThreadPool>,
+    /// Synchronous frame work cannot steal archive jobs while joining children.
+    frame_pool: Option<ThreadPool>,
     state: Arc<SharedExecutorState>,
     worker_count: usize,
+    background_workers: usize,
 }
 
 impl CpuExecutor {
@@ -33,18 +35,34 @@ impl CpuExecutor {
     /// Returns [`CpuError::PoolBuild`] when worker creation fails.
     pub fn new(config: CpuPoolConfig) -> Result<Self, CpuError> {
         let worker_count = config.worker_count().get();
+        let background_workers = worker_count.div_ceil(2);
         let pool = ThreadPoolBuilder::new()
-            .num_threads(worker_count)
+            .num_threads(background_workers)
             .thread_name(|index| format!("solarity-cpu-{index}"))
             .build()
             .map_err(|source| CpuError::PoolBuild {
                 message: source.to_string(),
             })?;
+        let frame_pool = if worker_count > 1 {
+            Some(
+                ThreadPoolBuilder::new()
+                    .num_threads(worker_count - background_workers)
+                    .thread_name(|index| format!("solarity-frame-{index}"))
+                    .build()
+                    .map_err(|source| CpuError::PoolBuild {
+                        message: source.to_string(),
+                    })?,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
             pool: Some(pool),
+            frame_pool,
             state: SharedExecutorState::new(config.max_in_flight()),
             worker_count,
+            background_workers,
         })
     }
 
@@ -88,6 +106,37 @@ impl CpuExecutor {
         self.worker_count
     }
 
+    /// Returns archive/job workers within the configured total thread budget.
+    #[must_use]
+    pub const fn background_worker_count(&self) -> usize {
+        self.background_workers
+    }
+
+    /// Returns workers reserved exclusively for joined frame computation.
+    #[must_use]
+    pub const fn frame_worker_count(&self) -> usize {
+        self.worker_count - self.background_workers
+    }
+
+    /// Joins borrowed frame work without entering the background job scheduler.
+    /// A one-worker configuration executes on the caller, preserving the total
+    /// worker budget. No archive job can run while a frame worker joins a child.
+    /// The borrow prevents shutdown until every frame item has completed.
+    ///
+    /// # Errors
+    /// Returns [`CpuError::ShuttingDown`] after shutdown or
+    /// [`CpuError::TaskPanicked`] after all item borrows have ended on a panic.
+    pub fn for_each_frame<T, F>(&self, items: &mut [T], operation: F) -> Result<(), CpuError>
+    where
+        T: Send,
+        F: Fn(&mut T) + Send + Sync,
+    {
+        if self.pool.is_none() {
+            return Err(CpuError::ShuttingDown);
+        }
+        super::frame::execute(self.frame_pool.as_ref(), items, operation)
+    }
+
     /// Returns a lock-consistent executor lifecycle snapshot.
     ///
     /// # Errors
@@ -112,7 +161,7 @@ impl CpuExecutor {
     pub fn can_admit_speculative(&self) -> Result<bool, CpuError> {
         let snapshot = self.snapshot()?;
         let speculative_limit = self
-            .worker_count
+            .background_workers
             .saturating_sub(1)
             .max(1)
             .min(snapshot.max_in_flight().get());
@@ -129,6 +178,7 @@ impl CpuExecutor {
     /// observed consistently.
     pub fn shutdown(&mut self) -> Result<(), CpuError> {
         self.state.stop_and_wait()?;
+        drop(self.frame_pool.take());
         drop(self.pool.take());
         Ok(())
     }
@@ -142,43 +192,6 @@ pub struct CpuTaskPermit<'executor> {
 }
 
 impl CpuTaskPermit<'_> {
-    /// Executes a borrowed frame batch on the private pool and joins every item.
-    ///
-    /// One admitted batch shares the fixed worker count; it creates no detached
-    /// tasks or per-item completion channels. Callers retain result ordering in
-    /// the input slice and decide which individual results to publish.
-    ///
-    /// # Errors
-    /// Returns [`CpuError::TaskPanicked`] after all worker borrows have ended.
-    pub fn for_each<T, F>(self, items: &mut [T], operation: F) -> Result<(), CpuError>
-    where
-        T: Send,
-        F: Fn(&mut T) + Send + Sync,
-    {
-        let _profile_scope = solarity_profiling::profile_cycles!("cpu.pool.executor.for_each");
-        solarity_profiling::profile_value!("cpu.batch.items", items.len());
-        let Self { pool, lease } = self;
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            let queued = solarity_profiling::enabled().then(Instant::now);
-            let epoch = solarity_profiling::generation();
-            pool.install(|| {
-                if let Some(queued) = queued {
-                    static QUEUE: solarity_profiling::Site =
-                        solarity_profiling::Site::new("cpu.batch.dispatch_wait", false);
-                    QUEUE.cpu_duration(epoch, "", queued.elapsed());
-                }
-                let _execution = solarity_profiling::profile_cycles!("cpu.batch.execution");
-                items.par_iter_mut().for_each(|item| {
-                    let _item_profile =
-                        solarity_profiling::detail_profile!("cpu.batch.worker_item");
-                    operation(item);
-                })
-            });
-        }));
-        drop(lease);
-        outcome.map_err(|_| CpuError::TaskPanicked)
-    }
-
     /// Transfers the admitted operation to the executor's FIFO queue.
     /// Admission cannot fail after the caller relinquishes its inputs.
     pub fn submit<F, T>(self, operation: F) -> CpuTask<T>
@@ -217,6 +230,7 @@ impl Drop for CpuExecutor {
         // Destructors cannot report errors. Normal owners call `shutdown`; this
         // path still closes admission and drains all observable admitted work.
         let _shutdown_result = self.state.stop_and_wait();
+        drop(self.frame_pool.take());
         drop(self.pool.take());
     }
 }

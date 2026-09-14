@@ -96,7 +96,7 @@ fn worker_unit_poses_match_serial_during_camera_and_override_changes() -> Result
             job.sequences = vec![(0, M2AnimationClock::new(1, tick * 0.5, tick))];
             job.orientation = vec![frame % 2 == 0];
         }
-        cpu.try_reserve()?.for_each(&mut jobs, PoseJob::sample)?;
+        cpu.for_each_frame(&mut jobs, PoseJob::sample)?;
         for job in &mut jobs {
             serial.recompose_with_overrides(
                 model.animations(),
@@ -249,7 +249,7 @@ fn benchmark_moving_unit_pose_batch() -> Result<(), Box<dyn Error>> {
         for parallel in [frame % 2 == 0, frame % 2 != 0] {
             let start = Instant::now();
             if parallel {
-                cpu.try_reserve()?.for_each(&mut jobs, PoseJob::sample)?;
+                cpu.for_each_frame(&mut jobs, PoseJob::sample)?;
             } else {
                 for job in &jobs {
                     serial.recompose_with_overrides(

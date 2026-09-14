@@ -155,7 +155,7 @@ fn completion_can_be_observed_without_consuming_result() -> Result<(), Box<dyn E
 /// Speculative producers leave one multi-worker lane available for direct work.
 #[test]
 fn speculative_admission_reserves_an_interactive_worker_lane() -> Result<(), Box<dyn Error>> {
-    let mut executor = CpuExecutor::new(config(4, 32))?;
+    let mut executor = CpuExecutor::new(config(8, 32))?;
     let started = Arc::new(Barrier::new(4));
     let release = Arc::new(Barrier::new(4));
     let mut tasks = Vec::new();
@@ -188,14 +188,14 @@ fn borrowed_frame_batch_joins_private_workers_and_releases_admission() -> Result
     let mut executor = CpuExecutor::new(config(4, 1))?;
     let mut items = vec![(0_usize, String::new()); 64];
     let input = [3_usize, 5, 7];
-    executor.try_reserve()?.for_each(&mut items, |item| {
+    executor.for_each_frame(&mut items, |item| {
         item.0 = input.iter().sum();
         item.1 = std::thread::current().name().unwrap_or_default().to_owned();
     })?;
     assert!(
         items
             .iter()
-            .all(|(sum, name)| *sum == 15 && name.starts_with("solarity-cpu-"))
+            .all(|(sum, name)| *sum == 15 && name.starts_with("solarity-frame-"))
     );
     assert_eq!(executor.snapshot()?.in_flight(), 0);
     executor.shutdown()?;
@@ -211,14 +211,76 @@ fn panicked_frame_batch_releases_borrows_and_leaves_executor_usable() -> Result<
 {
     let executor = CpuExecutor::new(config(2, 1))?;
     let mut items = [1, 2, 3, 4];
-    let result = executor.try_reserve()?.for_each(&mut items, |item| {
+    let result = executor.for_each_frame(&mut items, |item| {
         assert_ne!(*item, 3, "synthetic batch failure");
     });
     assert!(matches!(result, Err(CpuError::TaskPanicked)));
     assert_eq!(executor.snapshot()?.in_flight(), 0);
-    executor
-        .try_reserve()?
-        .for_each(&mut items, |item| *item = 7)?;
+    executor.for_each_frame(&mut items, |item| *item = 7)?;
     assert_eq!(items, [7; 4]);
+    Ok(())
+}
+
+/// Occupied archive workers and exhausted job capacity cannot hold a frame join.
+#[test]
+fn frame_batch_completes_before_blocked_background_jobs_are_released() -> Result<(), Box<dyn Error>>
+{
+    let mut executor = CpuExecutor::new(config(4, 2))?;
+    assert_eq!(executor.background_worker_count(), 2);
+    assert_eq!(executor.frame_worker_count(), 2);
+    let started = Arc::new(Barrier::new(3));
+    let release = Arc::new(Barrier::new(3));
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let started = Arc::clone(&started);
+        let release = Arc::clone(&release);
+        tasks.push(executor.try_submit(move || {
+            started.wait();
+            release.wait();
+        })?);
+    }
+    started.wait();
+    assert!(matches!(
+        executor.try_reserve(),
+        Err(CpuError::AtCapacity { .. })
+    ));
+    let mut values = [0; 128];
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let completed_before_release = std::thread::scope(|scope| {
+        let frame = scope.spawn(|| {
+            let result = executor.for_each_frame(&mut values, |value| *value = 42);
+            let _received = sender.send(result);
+        });
+        // The timeout bounds a broken scheduler; it is not a performance threshold.
+        let completed = receiver.recv_timeout(std::time::Duration::from_secs(5));
+        release.wait();
+        assert!(frame.join().is_ok());
+        completed
+    });
+    for task in tasks {
+        task.join()?;
+    }
+    completed_before_release??;
+    assert_eq!(values, [42; 128]);
+    executor.shutdown()?;
+    assert!(matches!(
+        executor.for_each_frame(&mut values, |_| {}),
+        Err(CpuError::ShuttingDown)
+    ));
+    Ok(())
+}
+
+/// A one-worker budget never adds a hidden second pool or waits for archive jobs.
+#[test]
+fn single_worker_frame_batch_runs_on_its_caller() -> Result<(), Box<dyn Error>> {
+    let executor = CpuExecutor::new(config(1, 1))?;
+    let caller = std::thread::current().id();
+    let mut owners = [None; 8];
+    executor.for_each_frame(&mut owners, |owner| {
+        *owner = Some(std::thread::current().id())
+    })?;
+    assert_eq!(executor.background_worker_count(), 1);
+    assert_eq!(executor.frame_worker_count(), 0);
+    assert!(owners.iter().all(|owner| *owner == Some(caller)));
     Ok(())
 }

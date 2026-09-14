@@ -2,7 +2,7 @@
 
 use super::super::super::{M2Frame, RuntimeTerrainFrameError};
 use super::input::PoseJob;
-use solarity_cpu::{CpuError, CpuExecutor};
+use solarity_cpu::CpuExecutor;
 
 impl M2Frame {
     /// Unit callbacks have selected clocks and ground transforms. Sampling these
@@ -95,22 +95,14 @@ impl M2Frame {
         }
         // Removed owners release their model generation and palette immediately.
         batch.jobs.truncate(active);
-        // Small scenes avoid worker rendezvous. Do not queue the frame behind
-        // streaming work unless at least two worker lanes are available. This
-        // single-owner admission decision changes execution location only.
+        // Frame workers cannot steal background archive tasks while joining a
+        // palette. Small scenes retain direct execution to avoid rendezvous.
         if active >= 8
             && let Some(cpu) = cpu
-            && cpu.worker_count() > 1
-            && cpu.snapshot()?.in_flight().saturating_add(1) < cpu.worker_count()
+            && cpu.frame_worker_count() != 0
         {
-            match cpu.try_reserve() {
-                Ok(permit) => {
-                    permit.for_each(&mut batch.jobs, PoseJob::sample)?;
-                    return Ok(());
-                }
-                Err(CpuError::AtCapacity { .. }) => {}
-                Err(error) => return Err(error.into()),
-            }
+            cpu.for_each_frame(&mut batch.jobs, PoseJob::sample)?;
+            return Ok(());
         }
         for job in &mut batch.jobs {
             job.sample();
