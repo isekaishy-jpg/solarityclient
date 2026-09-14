@@ -24,6 +24,8 @@ pub struct ActiveWorld {
     local_player: EntityId,
     /// Sorted replicated unit membership changes only at create/remove boundaries.
     unit_guids: Vec<u64>,
+    /// GameObjects retain registry admission order without probing every unit.
+    game_objects: Vec<(u64, EntityId)>,
     world_state_values: super::WorldStateValues,
     local_corpse_guid: u64,
 }
@@ -62,6 +64,7 @@ impl ActiveWorld {
             objects,
             local_player,
             unit_guids: Vec::new(),
+            game_objects: Vec::new(),
             world_state_values: super::WorldStateValues::default(),
             local_corpse_guid: 0,
         }
@@ -197,17 +200,13 @@ impl ActiveWorld {
     /// Iterates visible GameObjects in admission order without allocating.
     /// Duplicate creates retain their position; removal/recreation enters at the end.
     pub fn visible_game_objects(&self) -> impl Iterator<Item = WorldObjectIdentity> + '_ {
-        self.objects.entries().filter_map(|(guid, entity)| {
-            self.storage
-                .get::<&ObjectKind>(entity)
-                .ok()
-                .filter(|kind| ***kind == ObjectKind::GameObject)
-                .map(|_| WorldObjectIdentity {
-                    world: self.identity,
-                    entity,
-                    guid,
-                })
-        })
+        self.game_objects
+            .iter()
+            .map(|&(guid, entity)| WorldObjectIdentity {
+                world: self.identity,
+                entity,
+                guid,
+            })
     }
 
     /// Returns the create-time object category for a loaded GUID.
@@ -324,7 +323,7 @@ impl ActiveWorld {
     }
 
     /// Updates sorted membership only when a replicated object's kind is admitted.
-    fn register_unit_kind(&mut self, guid: u64, kind: ObjectKind) {
+    fn register_object_kind(&mut self, guid: u64, entity: EntityId, kind: ObjectKind) {
         match (self.unit_guids.binary_search(&guid), kind) {
             (Err(index), ObjectKind::Unit | ObjectKind::Player) => {
                 self.unit_guids.insert(index, guid)
@@ -333,6 +332,16 @@ impl ActiveWorld {
             (Ok(index), _) => {
                 self.unit_guids.remove(index);
             }
+        }
+        if entity == self.local_player {
+            // The bootstrap player occupies the first registry position even
+            // when its authoritative create arrives after other objects.
+            self.game_objects.retain(|&(existing, _)| existing != guid);
+            if kind == ObjectKind::GameObject {
+                self.game_objects.insert(0, (guid, entity));
+            }
+        } else if kind == ObjectKind::GameObject {
+            self.game_objects.push((guid, entity));
         }
     }
 
@@ -516,7 +525,7 @@ impl ActiveWorld {
 
             if entity == self.local_player {
                 self.storage.add_component(entity, (kind,));
-                self.register_unit_kind(guid, kind);
+                self.register_object_kind(guid, entity, kind);
                 if let Some(transform) = transform {
                     self.storage.add_component(entity, (transform,));
                 }
@@ -532,7 +541,7 @@ impl ActiveWorld {
             self.storage.add_component(entity, (transform,));
         }
         self.objects.insert(guid, entity);
-        self.register_unit_kind(guid, kind);
+        self.register_object_kind(guid, entity, kind);
         if self.is_owned_recoverable_corpse(guid) {
             self.local_corpse_guid = guid;
         }
@@ -722,6 +731,7 @@ impl ActiveWorld {
             self.local_corpse_guid = 0;
         }
         self.objects.remove(guid);
+        self.game_objects.retain(|&(existing, _)| existing != guid);
         if let Ok(index) = self.unit_guids.binary_search(&guid) {
             self.unit_guids.remove(index);
         }
