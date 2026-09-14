@@ -1,5 +1,9 @@
 //! Measures installed World presentation with an explicitly offline player fixture.
 
+#[path = "benchmark_world/character.rs"]
+mod character;
+
+use character::CharacterFixture;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs::File;
@@ -10,10 +14,7 @@ use std::time::Duration;
 
 use glam::Vec3;
 use solarity_ecs::{
-    ActiveWorld, ObjectKind, ObjectPresentation, PlayerAppearance, PlayerEquipment, PlayerMoney,
-    PlayerProgression, PlayerViewState, UnitAnimationTier, UnitFlags, UnitIdentity,
-    UnitPresentation, UnitSheathState, UnitStats, UnitVitals, WorldBootstrap, WorldMapId,
-    WorldTransform,
+    ActiveWorld, ObjectKind, PlayerViewState, WorldBootstrap, WorldMapId, WorldTransform,
 };
 use solarity_network::WorldTimeSpeed;
 use solarity_runtime::{ClientApplication, RealmClock, RuntimeConfiguration};
@@ -30,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             ErrorKind::InvalidInput,
             format!(
                 "usage: benchmark_world <frames per phase> <output.csv> <map> <x> <y> <z> \
-                 [--travel-offset <dx> <dy> <dz>] [--camera-distance <yards>] \
+                 [--hidden] [--soap] [--travel-offset <dx> <dy> <dz>] [--camera-distance <yards>] \
                  [--camera-pitch <radians>] [--camera-yaw <radians>] [--realm-hour <0..23>] \
                  [--screen-effect <ScreenEffect.dbc ID>] \
                  [--npc <display> <main> <off> <ranged> <dx> <dy> <dz>] {}",
@@ -65,8 +66,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut screen_effect = None;
     let mut npcs = Vec::new();
     let mut runtime_args = Vec::new();
+    let mut hidden = false;
+    let mut character = CharacterFixture::Human;
     while let Some(argument) = args.next() {
         match argument.to_str() {
+            Some("--hidden") => hidden = true,
+            Some("--soap") => character = CharacterFixture::Soap,
             Some("--travel-offset") => {
                 travel_offset = Some(Vec3::new(
                     finite_argument(&mut args)?,
@@ -115,45 +120,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(usage().into());
     }
     let configuration = RuntimeConfiguration::from_arguments(runtime_args)?;
-    // A level-one human warrior with empty equipment and an explicit realm hour.
+    // The player fixture and realm hour are explicit; Soap matches the saved diagnostic appearance.
     // Any NPC population is explicitly authored below; no server session is used.
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(map),
         1,
-        "WorldBenchmark",
+        character.name(),
         Vec3::from_array(position),
         0.,
     ));
     world.set_local_player_view(PlayerViewState::new(distance, pitch, yaw, 2))?;
-    let player = world.local_player();
-    world.storage_mut().add_component(
-        player,
-        (
-            ObjectKind::Player,
-            ObjectPresentation::new(0, 1.),
-            UnitIdentity::new(1, 1, 0, 1, 1, 1),
-            UnitPresentation::new(
-                49,
-                49,
-                0,
-                0,
-                UnitAnimationTier::Ground,
-                UnitSheathState::Unarmed,
-            ),
-            UnitFlags::default(),
-            PlayerAppearance::default(),
-            PlayerEquipment::default(),
-        ),
-    );
-    world.storage_mut().add_component(
-        player,
-        (
-            PlayerMoney::new(0),
-            PlayerProgression::new(0, 400),
-            UnitVitals::new(100, 100, [0; 7], [100; 7]),
-            UnitStats::new([20; 5], [0; 5], [0; 5]),
-        ),
-    );
+    character.publish(&mut world, &configuration)?;
     for (index, ([display, main, off, ranged], offset)) in npcs.iter().copied().enumerate() {
         let guid = u64::try_from(index)? + 2;
         let fields = [
@@ -179,7 +156,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         solarity_systems::project_object_fields(&mut world, guid, fields)?;
     }
     let clock = RealmClock::new(WorldTimeSpeed::new(hour << 6, 0., 0)?);
-    let mut application = ClientApplication::start(configuration)?;
+    let mut application = if hidden {
+        ClientApplication::start_hidden(configuration)?
+    } else {
+        ClientApplication::start(configuration)?
+    };
+    if hidden {
+        println!("hidden diagnostic surface; timings do not establish desktop FPS");
+    }
     println!(
         "adapter={} extent={:?}; offline fixture with {} authored NPCs, real installed terrain/FrameXML/Vulkan; no network, movement solver, audio or overlays",
         application.vulkan_report().device_name(),
@@ -206,7 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut writer = BufWriter::new(File::create(output)?);
     writeln!(
         writer,
-        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z,ground_detail_draws,primary_shadow_draws,screen_effect,screen_glow,screen_blur,camera_liquid_type,screen_fade,special_desaturation,environment_shadow_near,environment_shadow_middle,environment_shadow_far,terrain_draws,low_detail_draws,world_model_draws"
+        "phase,frame,resident_tiles,total_ms,service_ms,streaming_ms,ui_ms,camera_ms,present_ms,admitted_tiles,evicted_tiles,x,y,z,ground_detail_draws,primary_shadow_draws,screen_effect,screen_glow,screen_blur,camera_liquid_type,screen_fade,special_desaturation,environment_shadow_near,environment_shadow_middle,environment_shadow_far,terrain_draws,low_detail_draws,world_model_draws,m2_draws,particle_vertices,bone_transforms"
     )?;
     for sample in &samples {
         use solarity_rendering::WorldFrameScreenEffect;
@@ -232,7 +216,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         writeln!(
             writer,
-            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{},{},{},{},{},{},{:.6},{:.6},{},{},{},{},{},{}",
+            "{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{},{},{},{},{},{},{:.6},{:.6},{},{},{},{},{},{},{},{},{}",
             sample.phase,
             sample.frame,
             sample.resident_tiles,
@@ -267,6 +251,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             sample.terrain_draws,
             sample.low_detail_draws,
             sample.world_model_draws,
+            sample.m2_draws,
+            sample.particle_vertices,
+            sample.bone_transforms,
         )?;
     }
     writer.flush()?;

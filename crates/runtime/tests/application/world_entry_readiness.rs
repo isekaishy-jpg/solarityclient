@@ -57,7 +57,10 @@ fn installed_world_entry_waits_for_camera_terrain_and_detail() -> Result<(), Box
         profile.profile_root().as_os_str().to_owned(),
     ]);
     let configuration = RuntimeConfiguration::from_arguments(arguments)?;
-    let (mut services, _, _) = ClientServices::start(&configuration)?;
+    let (mut services, _, _) = ClientServices::start(
+        &configuration,
+        crate::application::client_services::StartupVisibility::Hidden,
+    )?;
     assert!(!services.service_terrain_streaming()?);
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(1),

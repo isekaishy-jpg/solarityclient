@@ -50,7 +50,10 @@ fn terrain_publication_precedes_recoverable_unit_errors() -> Result<(), Box<dyn 
         fixture.profile_root().as_os_str().to_owned(),
     ]);
     let configuration = RuntimeConfiguration::from_arguments(arguments)?;
-    let (mut services, _, _) = ClientServices::start(&configuration)?;
+    let (mut services, _, _) = ClientServices::start(
+        &configuration,
+        crate::application::client_services::StartupVisibility::Hidden,
+    )?;
     services.gameplay = RuntimeGameplayCoordinator::with_test_world(world(1000., false)?);
     let deadline = Instant::now() + Duration::from_secs(10);
     while services.terrain_frame.is_none() {

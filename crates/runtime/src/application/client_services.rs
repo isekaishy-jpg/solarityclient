@@ -199,10 +199,18 @@ pub(crate) struct ClientServices {
     network_shutdown_timeout: std::time::Duration,
 }
 
+/// Diagnostics may retain the Vulkan surface without showing or focusing it.
+#[derive(Clone, Copy)]
+pub(super) enum StartupVisibility {
+    Visible,
+    Hidden,
+}
+
 impl ClientServices {
     /// Constructs services in dependency order after all configuration validates.
-    pub(crate) fn start(
+    pub(super) fn start(
         configuration: &RuntimeConfiguration,
+        visibility: StartupVisibility,
     ) -> Result<(Self, usize, usize), ApplicationError> {
         let instrumentation = super::frame_profile::RuntimeInstrumentation::new(configuration);
         let _profile = solarity_profiling::profile!("application.startup");
@@ -490,7 +498,9 @@ impl ClientServices {
         };
         let presented_glue_screen = login_ui.as_ref().map(|_| glue.current_screen());
         platform.set_text_input_active(glue.focused_edit_box().is_some());
-        platform.show()?;
+        if matches!(visibility, StartupVisibility::Visible) {
+            platform.show()?;
+        }
         let network = Builder::new_multi_thread()
             .worker_threads(configuration.network_workers().get())
             .thread_name("solarity-network")

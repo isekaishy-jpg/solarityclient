@@ -244,9 +244,34 @@ impl ClientApplication {
     /// Returns [`ApplicationError`] if archives, CPU workers, or network workers
     /// cannot be constructed.
     pub fn start(configuration: RuntimeConfiguration) -> Result<Self, ApplicationError> {
+        Self::start_with_visibility(
+            configuration,
+            super::client_services::StartupVisibility::Visible,
+        )
+    }
+
+    /// Starts an offline diagnostic on a hidden native Vulkan surface.
+    ///
+    /// The surface retains the requested extent and renderer; no window is shown
+    /// or focused. Hidden presentation timings are not visible desktop FPS.
+    ///
+    /// # Errors
+    /// Returns the same construction failures as [`Self::start`].
+    pub fn start_hidden(configuration: RuntimeConfiguration) -> Result<Self, ApplicationError> {
+        Self::start_with_visibility(
+            configuration,
+            super::client_services::StartupVisibility::Hidden,
+        )
+    }
+
+    fn start_with_visibility(
+        configuration: RuntimeConfiguration,
+        visibility: super::client_services::StartupVisibility,
+    ) -> Result<Self, ApplicationError> {
         let cpu_worker_count = configuration.cpu_pool().worker_count().get();
         let network_worker_count = configuration.network_workers().get();
-        let (services, archive_count, addon_count) = ClientServices::start(&configuration)?;
+        let (services, archive_count, addon_count) =
+            ClientServices::start(&configuration, visibility)?;
         let (window_id, logical_window_extent, pixel_window_extent) = services.window_facts();
         let (
             sound_sample_rate_hz,

@@ -52,6 +52,12 @@ pub struct WorldBenchmarkSample {
     pub low_detail_draws: usize,
     /// Visible physical WMO passes, retained when exterior terrain is closed.
     pub world_model_draws: usize,
+    /// Submitted M2 packets distinguish geometry growth from timing changes.
+    pub m2_draws: usize,
+    /// Emitted particle vertices for this exact measured frame.
+    pub particle_vertices: usize,
+    /// Complete M2 palette entries admitted for visible and shadow consumers.
+    pub bone_transforms: usize,
     /// Eligible unit and scenery packets submitted to the primary shadow map.
     pub primary_shadow_draws: usize,
     /// Actual near, middle, and far environment packets in this frame's updates.
@@ -259,6 +265,7 @@ impl ClientServices {
         for phase in phases {
             tracing::info!(phase, "started offline World benchmark phase");
             for index in 0..frames_per_phase.get() {
+                let _frame_profile = solarity_profiling::begin_frame();
                 let frame_start = Instant::now();
                 let elapsed = frame_start.duration_since(previous);
                 previous = frame_start;
@@ -632,6 +639,9 @@ impl ClientServices {
             terrain_draws: report.terrain_draw_count(),
             low_detail_draws: report.low_detail_draw_count(),
             world_model_draws: report.world_model_draw_count(),
+            m2_draws: report.m2_draw_count(),
+            particle_vertices: report.particle_vertex_count(),
+            bone_transforms: report.bone_transform_count(),
             primary_shadow_draws: report.primary_shadow_draw_count(),
             environment_shadow_draws: report.environment_shadow_draw_counts(),
             screen_effect,
