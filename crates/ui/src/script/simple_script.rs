@@ -3,6 +3,7 @@
 mod addons;
 mod buttons;
 mod cvars;
+mod events;
 mod frame_order;
 mod globals;
 mod messages;
@@ -1213,6 +1214,7 @@ impl UiScriptRuntime {
             .map_err(|error| execution_error("registry", error))?;
         frame_order::initialize(lua);
         scrolling::initialize(lua);
+        events::initialize(lua);
         lua.set_named_registry_value(
             OBJECT_CHILDREN_REGISTRY,
             lua.create_table()
@@ -1855,6 +1857,19 @@ impl UiScriptRuntime {
     ) -> Result<super::runtime_state::UiRuntimeObjectPlan, UiScriptError> {
         let mut ui_profile = solarity_profiling::profile!("ui.simple_script.snapshot_objects");
         self.snapshot_count.set(self.snapshot_count.get() + 1);
+        self.prepare_snapshot_layout(bundle)?;
+        ui_profile.mark("measurement");
+        let snapshot = super::runtime_state::snapshot_runtime_objects(
+            bundle.lua(),
+            self.registered_object_count(),
+        )?;
+
+        Ok(snapshot)
+    }
+
+    /// Preserves layout callbacks at an event boundary without copying the Lua arena.
+    /// Native ScrollRangeChanged handlers can affect later events in the batch.
+    pub(crate) fn prepare_snapshot_layout(&self, bundle: &UiBundle) -> Result<(), UiScriptError> {
         self.synchronize_auto_text_measurement(bundle.lua())?;
         status_bars::flush_pending(bundle.lua(), self.ui_extent)
             .map_err(|error| execution_error("status bar update", error))?;
@@ -1864,13 +1879,7 @@ impl UiScriptRuntime {
             self.ui_extent,
         )
         .map_err(|error| execution_error("ScrollFrame content extent", error))?;
-        ui_profile.mark("measurement");
-        let snapshot = super::runtime_state::snapshot_runtime_objects(
-            bundle.lua(),
-            self.registered_object_count(),
-        )?;
-
-        Ok(snapshot)
+        Ok(())
     }
 
     /// Returns the number of complete Lua-object arena copies performed.
@@ -4423,48 +4432,12 @@ fn dispatch_event_callbacks(
             arguments.get(index - 1).cloned().unwrap_or(Value::Nil),
         )?;
     }
-    let dispatch = dispatch_subscribers(lua, object_count, event, arguments);
+    let dispatch = events::dispatch_subscribers(lua, object_count, event, arguments);
     let restore = restore_event_globals(lua, previous_event, previous_arguments);
     match (dispatch, restore) {
         (Ok(count), Ok(())) => Ok(count),
         (Err(error), _) | (Ok(_), Err(error)) => Err(error),
     }
-}
-
-fn dispatch_subscribers(
-    lua: &Lua,
-    object_count: usize,
-    event: &str,
-    payload: &[Value],
-) -> mlua::Result<usize> {
-    let objects: Table = lua.named_registry_value(OBJECT_REGISTRY)?;
-    let mut dispatched = 0;
-    for index in 1..=object_count {
-        // Startup may have dynamic objects above still-unconstructed static
-        // slots. These slots are not event subscribers.
-        let Some(object) = objects.raw_get::<Option<Table>>(index)? else {
-            continue;
-        };
-        let all_events = object
-            .raw_get::<Option<bool>>(all_events_key())?
-            .unwrap_or(false);
-        let subscribed = if all_events {
-            true
-        } else if let Some(events) = object.raw_get::<Option<Table>>(events_key())? {
-            events.raw_get::<Option<bool>>(event)? == Some(true)
-        } else {
-            false
-        };
-        if !subscribed {
-            continue;
-        }
-        let Some(function) = object_script_function(lua, &object, UiScriptHandler::Event)? else {
-            continue;
-        };
-        call_event_handler(lua, &function, object, event, payload)?;
-        dispatched += 1;
-    }
-    Ok(dispatched)
 }
 
 fn call_event_handler(
@@ -4675,7 +4648,7 @@ fn create_object_metatable(
         text_measurement.clone(),
     )?;
     if is_frame_object(kind) {
-        register_frame_event_methods(lua, &methods, manifest_kind)?;
+        events::register_frame_event_methods(lua, &methods, manifest_kind)?;
         register_frame_backdrop_methods(lua, &methods)?;
         register_frame_visibility_methods(lua, &methods)?;
         register_frame_attribute_methods(lua, &methods)?;
@@ -8954,57 +8927,6 @@ const fn point_index(point: UiPoint) -> usize {
         UiPoint::Bottom => 8,
         UiPoint::BottomRight => 9,
     }
-}
-
-fn register_frame_event_methods(
-    lua: &Lua,
-    methods: &Table,
-    manifest_kind: UiManifestKind,
-) -> mlua::Result<()> {
-    methods.raw_set(
-        "RegisterEvent",
-        lua.create_function(move |_, (object, name): (Table, String)| {
-            let canonical = registered_event(manifest_kind, &name)?;
-            if let Some(canonical) = canonical {
-                event_table(&object)?.raw_set(canonical, true)?;
-            }
-            Ok(())
-        })?,
-    )?;
-    methods.raw_set(
-        "UnregisterEvent",
-        lua.create_function(move |_, (object, name): (Table, String)| {
-            let canonical = registered_event(manifest_kind, &name)?;
-            if let Some(canonical) = canonical {
-                event_table(&object)?.raw_set(canonical, Value::Nil)?;
-            }
-            Ok(())
-        })?,
-    )?;
-    methods.raw_set(
-        "RegisterAllEvents",
-        lua.create_function(|_, object: Table| object.raw_set(all_events_key(), true))?,
-    )?;
-    methods.raw_set(
-        "UnregisterAllEvents",
-        lua.create_function(|lua, object: Table| {
-            object.raw_set(events_key(), lua.create_table()?)?;
-            object.raw_set(all_events_key(), false)
-        })?,
-    )?;
-    methods.raw_set(
-        "IsEventRegistered",
-        lua.create_function(move |_, (object, name): (Table, String)| {
-            let Some(canonical) = registered_event(manifest_kind, &name)? else {
-                return Ok(None::<bool>);
-            };
-            if object.raw_get::<bool>(all_events_key())? {
-                return Ok(Some(true));
-            }
-            event_table(&object)?.raw_get::<Option<bool>>(canonical)
-        })?,
-    )?;
-    Ok(())
 }
 
 fn register_frame_backdrop_methods(lua: &Lua, methods: &Table) -> mlua::Result<()> {

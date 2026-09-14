@@ -321,23 +321,25 @@ impl RuntimeWorldUi {
             .set_corpse(player_ui.corpse_marker());
         let mut startup_errors = Vec::new();
         manager.with_suppressed_sound_entries(|manager| {
-            for event in [
-                "VARIABLES_LOADED",
-                // Chat settings are available before the world becomes visible.
-                // Stock applies colors and subscribes each tab on this event.
-                "UPDATE_CHAT_WINDOWS",
-                "PLAYER_LOGIN",
-                "UPDATE_BINDINGS",
-                "PLAYER_ENTERING_WORLD",
-            ] {
-                if let Err(error) = manager.dispatch_event(event, &UiEventPayload::empty()) {
-                    startup_errors.push(error.into());
+            manager.with_deferred_presentation(|manager| {
+                for event in [
+                    "VARIABLES_LOADED",
+                    // Chat settings are available before the world becomes visible.
+                    // Stock applies colors and subscribes each tab on this event.
+                    "UPDATE_CHAT_WINDOWS",
+                    "PLAYER_LOGIN",
+                    "UPDATE_BINDINGS",
+                    "PLAYER_ENTERING_WORLD",
+                ] {
+                    if let Err(error) = manager.dispatch_event(event, &UiEventPayload::empty()) {
+                        startup_errors.push(error.into());
+                    }
                 }
-            }
-            if let Err(error) = mirror_timer::dispatch_world_entry_life(manager, &world) {
-                startup_errors.push(error);
-            }
-        });
+                if let Err(error) = mirror_timer::dispatch_world_entry_life(manager, &world) {
+                    startup_errors.push(error);
+                }
+            })
+        })?;
         let mut texture_cache = BlpTextureCache::new();
         let mut texture_residency = RuntimeUiResidency::new();
         let frame = RuntimeUiFrame::prepare_frame(
@@ -424,15 +426,21 @@ impl RuntimeWorldUi {
         let previous = self.action_slots;
         self.action_bar.set_slots(*slots);
         self.action_slots = *slots;
-        for (index, (before, after)) in previous.iter().zip(slots).enumerate() {
-            if before == after {
-                continue;
+        // The server image is already authoritative for every callback. Keep
+        // the native slot-event order while publishing its final presentation
+        // once; no render or hit test occurs between these notifications.
+        self.manager.with_deferred_presentation(|manager| {
+            for (index, (before, after)) in previous.iter().zip(slots).enumerate() {
+                if before == after {
+                    continue;
+                }
+                manager.dispatch_event(
+                    "ACTIONBAR_SLOT_CHANGED",
+                    &UiEventPayload::new([UiEventArgument::Integer((index + 1) as i64)]),
+                )?;
             }
-            self.manager.dispatch_event(
-                "ACTIONBAR_SLOT_CHANGED",
-                &UiEventPayload::new([UiEventArgument::Integer((index + 1) as i64)]),
-            )?;
-        }
+            Ok::<_, solarity_ui::UiEventError>(())
+        })??;
         self.dirty = true;
         Ok(())
     }

@@ -2,6 +2,7 @@
 
 mod publication;
 mod scrolling;
+mod transaction;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -53,6 +54,7 @@ pub struct GlueManager {
     edit_box_pointer_anchor: Option<usize>,
     pointer_hover: Option<usize>,
     deferred_scroll_refresh: Vec<(usize, u32)>,
+    deferred_presentation: transaction::DeferredPresentation,
     visual_indices: Vec<usize>,
     visual_work: Vec<usize>,
     incremental_visual_updates: bool,
@@ -388,6 +390,7 @@ impl GlueManager {
             edit_box_pointer_anchor: None,
             pointer_hover: None,
             deferred_scroll_refresh: Vec::new(),
+            deferred_presentation: transaction::DeferredPresentation::default(),
             visual_indices: Vec::new(),
             visual_work: Vec::new(),
             incremental_visual_updates: std::env::var_os("SOLARITY_UI_FULL_VISUAL_REFRESH")
@@ -924,6 +927,10 @@ impl GlueManager {
         &mut self,
         dispatch: &crate::script::UiScriptEventDispatch,
     ) -> Result<(), UiEventError> {
+        if self.defer_event_presentation(dispatch)? {
+            return Ok(());
+        }
+        self.flush_deferred_presentation()?;
         solarity_profiling::profile_value!(
             "ui.event.fallback_mutations",
             dispatch.fallback_mutations

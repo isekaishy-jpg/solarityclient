@@ -342,6 +342,23 @@ impl FrameManager {
         publish(self)
     }
 
+    /// Runs ordered script events before publishing their combined presentation.
+    /// Script-visible geometry remains live; no drawing or hit testing may occur
+    /// inside the transaction. Nested scopes publish only at the outer boundary.
+    ///
+    /// # Errors
+    /// Returns an error when final native presentation cannot be resolved.
+    pub fn with_deferred_presentation<T>(
+        &mut self,
+        publish: impl FnOnce(&mut Self) -> T,
+    ) -> Result<T, UiEventError> {
+        let hold = self.owner.hold_presentation();
+        let result = publish(self);
+        drop(hold);
+        self.owner.flush_deferred_presentation()?;
+        Ok(result)
+    }
+
     /// Retains a resolved gameplay combat event and delivers filtered and
     /// unfiltered notifications using the same positional argument image.
     ///

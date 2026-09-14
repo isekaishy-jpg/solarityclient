@@ -3,6 +3,11 @@
 #[path = "stock_seed/support/mod.rs"]
 mod support;
 
+#[path = "stock_seed/presentation_transaction.rs"]
+mod presentation_transaction;
+
+#[path = "stock_seed/event_subscriptions.rs"]
+mod event_subscriptions;
 #[path = "stock_seed/sound_admission.rs"]
 mod sound_admission;
 #[path = "stock_seed/world_scale.rs"]

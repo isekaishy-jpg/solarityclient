@@ -15,9 +15,10 @@ use crate::{
 
 use super::super::templates::TEMPLATE_REGISTRY;
 use super::cvars::UiCVarRegistry;
+use super::events::dispatch_subscribers;
 use super::{
-    DynamicArenaState, UiScriptEnvironment, create_dynamic_frame, dispatch_subscribers,
-    object_type_name, register_font, restore_event_globals,
+    DynamicArenaState, UiScriptEnvironment, create_dynamic_frame, object_type_name, register_font,
+    restore_event_globals,
 };
 
 pub(super) fn install(
