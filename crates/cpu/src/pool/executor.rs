@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 
+use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::pool::task::TaskOutcome;
@@ -140,6 +141,27 @@ pub struct CpuTaskPermit<'executor> {
 }
 
 impl CpuTaskPermit<'_> {
+    /// Executes a borrowed frame batch on the private pool and joins every item.
+    ///
+    /// One admitted batch shares the fixed worker count; it creates no detached
+    /// tasks or per-item completion channels. Callers retain result ordering in
+    /// the input slice and decide which individual results to publish.
+    ///
+    /// # Errors
+    /// Returns [`CpuError::TaskPanicked`] after all worker borrows have ended.
+    pub fn for_each<T, F>(self, items: &mut [T], operation: F) -> Result<(), CpuError>
+    where
+        T: Send,
+        F: Fn(&mut T) + Send + Sync,
+    {
+        let Self { pool, lease } = self;
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            pool.install(|| items.par_iter_mut().for_each(operation));
+        }));
+        drop(lease);
+        outcome.map_err(|_| CpuError::TaskPanicked)
+    }
+
     /// Transfers the admitted operation to the executor's FIFO queue.
     /// Admission cannot fail after the caller relinquishes its inputs.
     pub fn submit<F, T>(self, operation: F) -> CpuTask<T>

@@ -508,6 +508,7 @@ pub(in crate::application) struct M2Frame {
     unit_scene_time_ms: f32,
     retirement: retirement::M2RetirementScene,
     bone_pose_scratch: M2BonePose,
+    pose_batch: preparation::poses::PoseBatch,
     /// Reused only between shadow and ordinary draws of the current placement.
     material_pose_scratch: Vec<Option<M2MaterialPose>>,
     bone_transforms: Vec<Mat4>,
@@ -633,6 +634,7 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            pose_batch: preparation::poses::PoseBatch::default(),
             material_pose_scratch: Vec::new(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -780,6 +782,7 @@ impl M2Frame {
             unit_scene_time_ms: 0.0,
             retirement: Default::default(),
             bone_pose_scratch: M2BonePose::default(),
+            pose_batch: preparation::poses::PoseBatch::default(),
             material_pose_scratch: Vec::new(),
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
@@ -1937,6 +1940,7 @@ impl M2Frame {
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         self.prepare_visible_draws_with_unit_effects(
             renderer,
+            None,
             frustum,
             camera,
             first_transparent_pass,

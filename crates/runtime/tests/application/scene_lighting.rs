@@ -290,6 +290,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
     for now in [1., 251., 751.] {
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
+            None,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,

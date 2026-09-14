@@ -129,6 +129,7 @@ fn mount_authored_effects_run_before_rider_callbacks_and_bind_body_attachments()
             };
             frame.prepare_visible_draws_with_unit_effects(
                 &renderer,
+                None,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 solarity_rendering::M2TransparentPass::One,

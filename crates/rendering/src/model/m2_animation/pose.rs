@@ -37,7 +37,6 @@ impl M2FingerPoseHands {
 pub struct M2BonePose {
     transforms: Vec<Mat4>,
     local: Vec<Mat4>,
-    states: Vec<u8>,
     sequence_clocks: Vec<Option<M2AnimationClock>>,
     identity_pose: bool,
 }
@@ -311,8 +310,6 @@ impl M2BonePose {
                 self.transforms.fill(Mat4::IDENTITY);
                 self.local.resize(count, Mat4::IDENTITY);
                 self.local.fill(Mat4::IDENTITY);
-                self.states.resize(count, 2);
-                self.states.fill(2);
             }
             self.identity_pose = true;
             return Ok(());
@@ -320,6 +317,22 @@ impl M2BonePose {
         self.identity_pose = false;
         self.local.resize(animations.bones().len(), Mat4::IDENTITY);
         for (index, bone) in animations.bones().iter().enumerate() {
+            let transform = bone_transforms
+                .iter()
+                .rev()
+                .find(|(key, _)| {
+                    animations
+                        .key_bone_lookup()
+                        .get(usize::from(*key))
+                        .copied()
+                        .flatten()
+                        .is_some_and(|bone| usize::from(bone) == index)
+                })
+                .map(|(_, transform)| *transform);
+            if transform.is_none() && animations.has_identity_bone_local(index) {
+                self.local[index] = Mat4::IDENTITY;
+                continue;
+            }
             let clock = self.sequence_clocks[index].unwrap_or(clock);
             let finger_pose =
                 finger_pose.filter(|pose| pose.hands.includes(finger_pose_hand(animations, index)));
@@ -341,15 +354,8 @@ impl M2BonePose {
                 Vec3::ONE,
             );
             let mut rotation_scale = quaternion_matrix(rotation) * Mat4::from_scale(scale);
-            if let Some((_, transform)) = bone_transforms.iter().rev().find(|(key, _)| {
-                animations
-                    .key_bone_lookup()
-                    .get(usize::from(*key))
-                    .copied()
-                    .flatten()
-                    .is_some_and(|bone| usize::from(bone) == index)
-            }) {
-                rotation_scale = *transform * rotation_scale;
+            if let Some(transform) = transform {
+                rotation_scale = transform * rotation_scale;
             }
             self.local[index] = Mat4::from_translation(bone.pivot())
                 * Mat4::from_translation(translation)
@@ -358,16 +364,12 @@ impl M2BonePose {
         }
 
         self.transforms.resize(self.local.len(), Mat4::IDENTITY);
-        self.transforms.fill(Mat4::IDENTITY);
-        self.states.resize(self.local.len(), 0);
-        self.states.fill(0);
-        for index in 0..self.local.len() {
+        for &index in animations.bone_parent_order() {
             compose_bone(
                 index,
                 animations,
                 &self.local,
                 &mut self.transforms,
-                &mut self.states,
                 model_view,
                 model_oriented_billboard_bones,
             );
@@ -479,32 +481,16 @@ fn finger_pose_hand(animations: &M2AnimationSet, index: usize) -> M2FingerPoseHa
     }
 }
 
-/// Resolves an arbitrarily ordered but cycle-free hierarchy once per bone.
+/// Composes one bone after its parent in the immutable admission order.
 fn compose_bone(
     index: usize,
     animations: &M2AnimationSet,
     local: &[Mat4],
     transforms: &mut [Mat4],
-    states: &mut [u8],
     model_view: Option<BillboardView>,
     model_oriented_billboard_bones: &[bool],
 ) {
-    if states[index] == 2 {
-        return;
-    }
-    states[index] = 1;
     if let Some(parent) = animations.bones()[index].parent().map(usize::from) {
-        if states[parent] == 0 {
-            compose_bone(
-                parent,
-                animations,
-                local,
-                transforms,
-                states,
-                model_view,
-                model_oriented_billboard_bones,
-            );
-        }
         transforms[index] =
             inherited_parent_transform(transforms[parent], animations.bones()[index].flags())
                 * local[index];
@@ -528,7 +514,6 @@ fn compose_bone(
             );
         }
     }
-    states[index] = 2;
 }
 
 /// Applies build-12340's spherical or axis-constrained view-space basis.

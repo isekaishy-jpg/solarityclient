@@ -352,6 +352,14 @@ impl M2AnimationSet {
         self.hierarchy.identity_pose
     }
 
+    /// Reports a bone with no authored keys in any local or global channel.
+    /// Its local transform is identity unless an instance supplies an override;
+    /// parent inheritance and billboarding still apply.
+    #[must_use]
+    pub fn has_identity_bone_local(&self, index: usize) -> bool {
+        self.hierarchy.identity_locals.get(index).copied() == Some(true)
+    }
+
     /// Returns global clock periods in exact table order.
     #[must_use]
     pub fn global_sequence_durations_ms(&self) -> &[u32] {

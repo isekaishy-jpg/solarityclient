@@ -189,6 +189,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
         );
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
+            None,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,

@@ -20,6 +20,7 @@ impl M2Frame {
     pub(in crate::application::terrain_frame) fn prepare_visible_draws_with_unit_effects(
         &mut self,
         renderer: &VulkanRenderer,
+        cpu: Option<&solarity_cpu::CpuExecutor>,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         first_transparent_pass: M2TransparentPass,
@@ -192,6 +193,8 @@ impl M2Frame {
                 .saturating_sub(self.glue_attachment_transforms.capacity()),
         );
         frame_profile.mark("dynamic models");
+        self.prepare_unit_poses(cpu, camera.view(), animation_time_ms as u32)?;
+        frame_profile.mark("unit pose batch");
         if let Some((terrain, ..)) = spatial_lighting.as_ref() {
             self.doodad_scene.prepare(
                 terrain,
@@ -674,17 +677,27 @@ impl M2Frame {
             let instance_identity = std::ptr::from_ref(&*placement).addr();
             let instance_distance =
                 inherited_model_distance.unwrap_or_else(|| m2_model_distance_key(model_view));
-            self.bone_pose_scratch.recompose_with_overrides(
-                source.model.animations(),
+            let overrides = M2BonePoseOverrides {
+                model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+                finger_pose,
+                bone_transforms,
+                bone_sequences: &bone_sequences,
+            };
+            if !self.pose_batch.take(
+                placement_index,
+                &source.model,
                 clock,
                 model_view,
-                M2BonePoseOverrides {
-                    model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
-                    finger_pose,
-                    bone_transforms,
-                    bone_sequences: &bone_sequences,
-                },
-            )?;
+                overrides,
+                &mut self.bone_pose_scratch,
+            )? {
+                self.bone_pose_scratch.recompose_with_overrides(
+                    source.model.animations(),
+                    clock,
+                    model_view,
+                    overrides,
+                )?;
+            }
             let bone_pose = &self.bone_pose_scratch;
             self.retirement
                 .publish_attachments(placement, &source.model, bone_pose, clock)?;

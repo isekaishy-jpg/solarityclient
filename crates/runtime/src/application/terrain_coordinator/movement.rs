@@ -214,6 +214,7 @@ struct WorldModelReference {
 #[derive(Default)]
 pub(super) struct ResidentMovementScene {
     lighting: lighting::LightingChanges,
+    unit_registrations: registration::UnitRegistrationCache,
     world_models: Vec<WorldModelReference>,
     dynamic: ResidentDynamicMovement,
     roots: Vec<MovementRootReference>,

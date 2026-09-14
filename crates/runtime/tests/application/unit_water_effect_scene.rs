@@ -117,6 +117,7 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
         };
         let draws = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
+            None,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,
@@ -135,6 +136,11 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
             draws.draws.len(),
             if now == 1. { 0 } else { 2 },
             "the offscreen units contribute no mesh; both CEffects retain their scene pass"
+        );
+        assert_eq!(
+            frame.pose_batch.consumption(),
+            (2, 2),
+            "both callback-selected poses are consumed without resampling"
         );
     }
     assert_eq!(order, [30, 31]);
@@ -348,6 +354,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
             };
             let draws = frame.prepare_visible_draws_with_unit_effects(
                 &renderer,
+                None,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 solarity_rendering::M2TransparentPass::One,

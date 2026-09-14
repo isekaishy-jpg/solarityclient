@@ -1,0 +1,104 @@
+//! Collects callback-selected unit inputs and joins bounded skeletal work.
+
+use super::super::super::{M2Frame, RuntimeTerrainFrameError};
+use super::input::PoseJob;
+use solarity_cpu::{CpuError, CpuExecutor};
+
+impl M2Frame {
+    /// Unit callbacks have selected clocks and ground transforms. Sampling these
+    /// immutable inputs consumes no RNG, callbacks, attachment state or GPU state.
+    pub(in crate::application::terrain_frame::m2) fn prepare_unit_poses(
+        &mut self,
+        cpu: Option<&CpuExecutor>,
+        view: glam::Mat4,
+        now: u32,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let batch = &mut self.pose_batch;
+        for job in &batch.jobs {
+            batch.indices[job.placement()] = None;
+        }
+        batch.indices.resize(self.placements.len(), None);
+        let mut active = 0;
+        for &index in self.placement_visibility.dynamic_indices() {
+            let placement = &self.placements[index];
+            let Some(animation) = &placement.unit_animation else {
+                continue;
+            };
+            let Some(clock) = animation.prepared_scene_clock() else {
+                continue;
+            };
+            let Some(source) = &self.sources[placement.source_index] else {
+                continue;
+            };
+            let Some(playback) = &placement.playback else {
+                continue;
+            };
+            let playback = playback.borrow();
+            let hands = placement
+                .retirement
+                .as_ref()
+                .and_then(|retired| retired.finger_hands)
+                .or_else(|| {
+                    super::super::super::held_item_finger_pose(
+                        &self.requested_items,
+                        placement.owner,
+                    )
+                });
+            let finger_pose = hands.and_then(|hands| {
+                source
+                    .model
+                    .animations()
+                    .sequence_for_variation(15, 0)
+                    .map(|sequence| {
+                        (
+                            solarity_rendering::M2AnimationClock::new_with_global_tick(
+                                sequence,
+                                0.,
+                                playback.global_tick(now),
+                            ),
+                            hands,
+                        )
+                    })
+            });
+            if active == batch.jobs.len() {
+                batch
+                    .jobs
+                    .push(PoseJob::new(std::sync::Arc::clone(&source.model)));
+            }
+            batch.jobs[active].prepare(
+                index,
+                source,
+                clock,
+                view * placement.transform,
+                finger_pose,
+                animation.body_pose().bone_transforms(),
+                playback.bone_sequence_clocks(&source.model, clock, now),
+            );
+            batch.indices[index] = Some(active);
+            active += 1;
+        }
+        // Removed owners release their model generation and palette immediately.
+        batch.jobs.truncate(active);
+        // Small scenes avoid worker rendezvous. Do not queue the frame behind
+        // streaming work unless at least two worker lanes are available. This
+        // single-owner admission decision changes execution location only.
+        if active >= 8
+            && let Some(cpu) = cpu
+            && cpu.worker_count() > 1
+            && cpu.snapshot()?.in_flight().saturating_add(1) < cpu.worker_count()
+        {
+            match cpu.try_reserve() {
+                Ok(permit) => {
+                    permit.for_each(&mut batch.jobs, PoseJob::sample)?;
+                    return Ok(());
+                }
+                Err(CpuError::AtCapacity { .. }) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        for job in &mut batch.jobs {
+            job.sample();
+        }
+        Ok(())
+    }
+}

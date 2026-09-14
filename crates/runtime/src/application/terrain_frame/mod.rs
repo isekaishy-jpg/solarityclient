@@ -773,6 +773,7 @@ impl TerrainFrame {
     pub(super) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
+        cpu: &solarity_cpu::CpuExecutor,
         plan: Option<TerrainTileIndex>,
         environment: RuntimeWorldEnvironmentFrame,
         terrain: &mut super::terrain_coordinator::RuntimeTerrainCoordinator,
@@ -922,6 +923,7 @@ impl TerrainFrame {
             .prepare_shadow_draws(renderer, shadow_admission.as_ref())?;
         let m2 = self.m2.prepare_visible_draws_with_unit_effects(
             renderer,
+            Some(cpu),
             frustum,
             camera,
             if camera_submerged {

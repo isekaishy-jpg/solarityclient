@@ -1419,6 +1419,7 @@ impl ClientServices {
         self.terrain_texture_animation.advance(developer_elapsed);
         frame.present(
             &mut self.renderer,
+            &self.cpu,
             plan,
             environment,
             &mut self.terrain,

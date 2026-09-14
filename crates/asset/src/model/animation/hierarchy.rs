@@ -8,6 +8,7 @@ pub(super) struct BoneHierarchy {
     pub(super) order: Vec<usize>,
     pub(super) fingers: Vec<Option<u16>>,
     pub(super) identity_pose: bool,
+    pub(super) identity_locals: Vec<bool>,
 }
 
 impl BoneHierarchy {
@@ -37,25 +38,31 @@ impl BoneHierarchy {
                 };
             }
         }
-        let identity_pose = bones.iter().all(|bone| {
-            bone.flags() & 0x78 == 0
-                && bone
-                    .translation()
+        let identity_locals: Vec<_> = bones
+            .iter()
+            .map(|bone| {
+                bone.translation()
                     .channels()
                     .iter()
                     .all(|channel| channel.timestamps_ms().is_empty())
-                && bone
-                    .rotation()
-                    .channels()
-                    .iter()
-                    .all(|channel| channel.timestamps_ms().is_empty())
-                && bone
-                    .scale()
-                    .channels()
-                    .iter()
-                    .all(|channel| channel.timestamps_ms().is_empty())
-        });
+                    && bone
+                        .rotation()
+                        .channels()
+                        .iter()
+                        .all(|channel| channel.timestamps_ms().is_empty())
+                    && bone
+                        .scale()
+                        .channels()
+                        .iter()
+                        .all(|channel| channel.timestamps_ms().is_empty())
+            })
+            .collect();
+        let identity_pose = bones
+            .iter()
+            .zip(&identity_locals)
+            .all(|(bone, identity)| *identity && bone.flags() & 0x78 == 0);
         Self {
+            identity_locals,
             order,
             fingers,
             identity_pose,

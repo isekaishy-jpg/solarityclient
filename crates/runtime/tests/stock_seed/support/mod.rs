@@ -4,6 +4,11 @@
 #[allow(dead_code)]
 pub(crate) mod game_object_models;
 
+// The same support module also serves external tests without this interior scene.
+#[allow(dead_code)]
+#[path = "../../application/registration_fixture.rs"]
+pub(crate) mod registration_fixture;
+
 #[path = "../../support/unit_models.rs"]
 #[allow(dead_code)]
 pub(crate) mod unit_models;

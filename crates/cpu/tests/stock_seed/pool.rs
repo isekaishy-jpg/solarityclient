@@ -181,3 +181,44 @@ fn speculative_admission_reserves_an_interactive_worker_lane() -> Result<(), Box
     executor.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn borrowed_frame_batch_joins_private_workers_and_releases_admission() -> Result<(), Box<dyn Error>>
+{
+    let mut executor = CpuExecutor::new(config(4, 1))?;
+    let mut items = vec![(0_usize, String::new()); 64];
+    let input = [3_usize, 5, 7];
+    executor.try_reserve()?.for_each(&mut items, |item| {
+        item.0 = input.iter().sum();
+        item.1 = std::thread::current().name().unwrap_or_default().to_owned();
+    })?;
+    assert!(
+        items
+            .iter()
+            .all(|(sum, name)| *sum == 15 && name.starts_with("solarity-cpu-"))
+    );
+    assert_eq!(executor.snapshot()?.in_flight(), 0);
+    executor.shutdown()?;
+    assert!(matches!(
+        executor.try_reserve(),
+        Err(CpuError::ShuttingDown)
+    ));
+    Ok(())
+}
+
+#[test]
+fn panicked_frame_batch_releases_borrows_and_leaves_executor_usable() -> Result<(), Box<dyn Error>>
+{
+    let executor = CpuExecutor::new(config(2, 1))?;
+    let mut items = [1, 2, 3, 4];
+    let result = executor.try_reserve()?.for_each(&mut items, |item| {
+        assert_ne!(*item, 3, "synthetic batch failure");
+    });
+    assert!(matches!(result, Err(CpuError::TaskPanicked)));
+    assert_eq!(executor.snapshot()?.in_flight(), 0);
+    executor
+        .try_reserve()?
+        .for_each(&mut items, |item| *item = 7)?;
+    assert_eq!(items, [7; 4]);
+    Ok(())
+}

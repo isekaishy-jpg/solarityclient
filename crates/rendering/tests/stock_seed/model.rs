@@ -2,6 +2,8 @@
 
 #[path = "model/body_pose.rs"]
 mod body_pose;
+#[path = "model/bone_work.rs"]
+mod bone_work;
 #[path = "model/effect_opacity.rs"]
 mod effect_opacity;
 #[path = "model/file_filtering.rs"]

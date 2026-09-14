@@ -518,6 +518,14 @@ impl UnitAnimationBehavior {
         Rc::clone(&self.playback)
     }
 
+    /// Borrows the already selected frame clock without consuming callbacks or RNG.
+    pub(in crate::application) fn prepared_scene_clock(&self) -> Option<M2AnimationClock> {
+        self.scene_sample
+            .borrow()
+            .as_ref()
+            .map(|sample| sample.advance.clock)
+    }
+
     pub fn take_scene_sample(&self) -> Option<UnitAnimationSceneSample> {
         self.scene_sample.borrow_mut().take()
     }

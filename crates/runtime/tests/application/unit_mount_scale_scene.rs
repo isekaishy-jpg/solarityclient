@@ -910,6 +910,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
         }
         let draws = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
+            None,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,

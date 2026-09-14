@@ -573,6 +573,7 @@ impl ClientServices {
         let report = frame
             .present(
                 &mut self.renderer,
+                &self.cpu,
                 self.terrain
                     .resident_mesh_plan()
                     .map(solarity_rendering::TerrainTileMeshPlan::tile),
