@@ -353,3 +353,16 @@ scopes at 131.80-147.52 ns and sampled owner/phase/output operations at
 495.60-593.65 ns; all three experiment captures had zero losses. Whole sampled
 frame times include observer work and must remain separate from ordinary frames.
 Neither hidden run is a matched before/after performance comparison.
+
+### Testing package
+
+Testing Build 137 was built with `scripts/build-client.ps1` and installed with
+`scripts/install-test-client.ps1`. Its embedded source revision is
+`6fd106284f31958863247178f9b28eef4715a2f8`; `dirty=true` records the package script's
+reserved `BUILD_NUMBER` change, which was the only pending source-tree change.
+Installed and Cargo artifact SHA-256 hashes both equal
+`18EF33257E662FC236F0DFD5C6FD2AF26E346F0F0292C25A4BBCE975707B1A9B`.
+The preceding diagnostic captures were compiled from the working changes before
+the numbered package and therefore carry the prior Build 136 identity. F10 and
+the existing Testing shortcut are unchanged; no visible client was launched for
+this validation.
