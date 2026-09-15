@@ -120,7 +120,7 @@ fn cross_budget_rejection_never_loses_values_or_their_source_charge() -> Result<
 #[test]
 fn frame_pressure_rejects_before_input_transfer_and_warm_storage_stays_charged()
 -> Result<(), Box<dyn Error>> {
-    let cpu = executor()?;
+    let mut cpu = executor()?;
     let baseline = cpu.storage().snapshot().used(Class::Frame);
     let remaining = cpu.storage().snapshot().limit(Class::Frame) - baseline;
     let pressure = cpu
@@ -143,14 +143,17 @@ fn frame_pressure_rejects_before_input_transfer_and_warm_storage_stays_charged()
     batch.reclaim(&mut inputs)?;
     assert_eq!(cpu.storage().snapshot().used(Class::Frame), warm);
     drop(batch);
+    // Reclaim returns inputs before the runner drops its final Core reference.
+    // Shutdown joins that epilogue; batch drop intentionally does not park a worker.
+    cpu.shutdown()?;
     assert_eq!(cpu.storage().snapshot().used(Class::Frame), baseline);
     Ok(())
 }
 
 #[test]
 fn reusing_a_batch_on_another_executor_moves_retained_capacity() -> Result<(), Box<dyn Error>> {
-    let first = executor()?;
-    let second = executor()?;
+    let mut first = executor()?;
+    let mut second = executor()?;
     let baseline = first.storage().snapshot().used(Class::Frame);
     let mut batch = FrameBatch::new(|_: &mut u64| {});
     let mut inputs = vec![1, 2, 3];
@@ -165,6 +168,9 @@ fn reusing_a_batch_on_another_executor_moves_retained_capacity() -> Result<(), B
         baseline + retained
     );
     drop(batch);
+    // Either executor can still hold the shared owner in its terminal epilogue.
+    first.shutdown()?;
+    second.shutdown()?;
     assert_eq!(second.storage().snapshot().used(Class::Frame), baseline);
     Ok(())
 }
