@@ -4,6 +4,7 @@
 //! evidence. This is the only module permitted to construct and connect all
 //! concrete workspace subsystems.
 
+mod archive_job;
 mod area_triggers;
 mod character_directory;
 mod cinematic_coordinator;

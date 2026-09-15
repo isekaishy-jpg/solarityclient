@@ -202,6 +202,25 @@ durable. Job-result notifications alone cannot cover empty phases or metadata
 that finishes after the last kernel. The notification runs outside scheduler
 locks and retains the existing native coalescing behavior.
 
+## Resumable archive and retirement work
+
+`CpuTaskPermit::submit_steps` owns one finite `FnMut` operation returning
+`ControlFlow`. A continuation returns to its current service queue with the same
+admission, task identity, result channel and captures. Promotion or withdrawal
+while executing affects its next enqueue. Shutdown drains accepted steps even
+when the result handle was discarded; each operation must terminate and cannot
+wait for another worker. Publication follows capture retirement on the worker,
+including failures. The flexible worker checks its queue again without waking
+protected sleepers after every continuation.
+
+`AssetStore::begin_mount` returns an asset-owned `AssetMount`; its consuming
+`advance` opens at most one archive and returns either the next continuation or
+the complete store. Runtime's `archive_job` adapter keeps a partial stack private,
+yields between opens and before domain preparation, and retains the existing
+first-error behavior. World UI and unit-effect source jobs use this adapter.
+Configured Glue texture preparation additionally yields between requested files.
+No dependency decoder, archive open or individual destructor is preempted.
+
 ## Validation
 
 External tests cover result ownership, bounded admission, reserved interactive

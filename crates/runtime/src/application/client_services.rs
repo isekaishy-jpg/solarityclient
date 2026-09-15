@@ -4,6 +4,7 @@
 
 mod camera_profile;
 pub(super) mod glue_benchmark;
+mod glue_texture_prewarm;
 mod instrumentation;
 mod session_lifecycle;
 pub(super) mod world_benchmark;
@@ -25,6 +26,7 @@ use std::sync::Arc;
 
 use tokio::runtime::{Builder, Runtime};
 
+use glue_texture_prewarm::{ConfiguredGlueTexturePrewarmJob, prepare_configured_glue_textures};
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, AssetStoreHandle,
     BlpTextureCache, CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
@@ -32,7 +34,7 @@ use solarity_asset::{
     HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
     LightCatalog, LoadingScreenCatalog, MapCatalog, ParticleColorCatalog, VehicleCatalog,
 };
-use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
+use solarity_cpu::{CpuError, CpuExecutor};
 use solarity_media::SoundOutputTarget;
 use solarity_network::{
     AccountExpansion, CharacterCreation, CharacterRename, CharacterRenameError, RealmEntry,
@@ -455,12 +457,13 @@ impl ClientServices {
         let pending_glue_texture_prewarm = if configured_texture_paths.is_empty() {
             None
         } else {
-            let worker_catalog = ui_texture_catalog.clone();
-            let worker_paths = configured_texture_paths.clone();
-            match cpu.try_submit_for(solarity_cpu::CpuService::Speculative, move || {
-                load_configured_glue_textures(worker_catalog, worker_paths)
-            }) {
-                Ok(task) => Some(ConfiguredGlueTexturePrewarmJob::Running(task)),
+            match cpu.try_reserve_for(solarity_cpu::CpuService::Speculative) {
+                Ok(permit) => Some(ConfiguredGlueTexturePrewarmJob::Running(
+                    permit.submit_steps(prepare_configured_glue_textures(
+                        ui_texture_catalog,
+                        configured_texture_paths,
+                    )),
+                )),
                 Err(CpuError::AtCapacity { limit }) => {
                     tracing::warn!(
                         max_in_flight = limit.get(),
@@ -1542,99 +1545,6 @@ impl ClientServices {
         if let Some(fps) = self.fps.as_mut() {
             fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
         }
-        Ok(())
-    }
-
-    /// Adopts a completed speculative Glue source cache without waiting.
-    fn poll_glue_texture_prewarm(&mut self) {
-        let Some(pending) = self.pending_glue_texture_prewarm.take() else {
-            return;
-        };
-        let pending = match pending {
-            ConfiguredGlueTexturePrewarmJob::Deferred { catalog, paths } => {
-                match self.cpu.can_admit_speculative() {
-                    Ok(false) => {
-                        self.pending_glue_texture_prewarm =
-                            Some(ConfiguredGlueTexturePrewarmJob::Deferred { catalog, paths });
-                        return;
-                    }
-                    Err(error) => {
-                        let message = error.to_string();
-                        tracing::warn!(error = %message, "could not inspect Glue texture prewarm capacity");
-                        self.developer_console.record_error(&message);
-                        return;
-                    }
-                    Ok(true) => {}
-                }
-                match self
-                    .cpu
-                    .try_submit_for(solarity_cpu::CpuService::Speculative, move || {
-                        load_configured_glue_textures(catalog, paths)
-                    }) {
-                    Ok(task) => {
-                        self.pending_glue_texture_prewarm =
-                            Some(ConfiguredGlueTexturePrewarmJob::Running(task));
-                        return;
-                    }
-                    Err(error) => {
-                        let message = error.to_string();
-                        tracing::warn!(error = %message, "could not submit deferred Glue texture prewarm");
-                        self.developer_console.record_error(&message);
-                        return;
-                    }
-                }
-            }
-            ConfiguredGlueTexturePrewarmJob::Running(task) if !task.is_finished() => {
-                self.pending_glue_texture_prewarm =
-                    Some(ConfiguredGlueTexturePrewarmJob::Running(task));
-                return;
-            }
-            ConfiguredGlueTexturePrewarmJob::Running(task) => task,
-        };
-        match pending.join() {
-            Ok(Ok(prepared)) => {
-                let admitted = self.ui_textures.merge(prepared.cache);
-                self.glue_gpu_texture_prewarm_pending |= admitted != 0;
-                tracing::info!(
-                    admitted_texture_count = admitted,
-                    resident_texture_count = self.ui_textures.len(),
-                    failed_texture_count = prepared.failures.len(),
-                    "adopted configured Glue texture prewarm"
-                );
-                for failure in prepared.failures {
-                    tracing::warn!(error = %failure, "configured Glue texture source failed to prewarm");
-                    self.developer_console.record_error(&failure);
-                }
-            }
-            Ok(Err(error)) => {
-                let message = error.to_string();
-                tracing::warn!(error = %message, "configured Glue texture prewarm failed");
-                self.developer_console.record_error(&message);
-            }
-            Err(error) => {
-                let message = error.to_string();
-                tracing::warn!(error = %message, "configured Glue texture worker failed");
-                self.developer_console.record_error(&message);
-            }
-        }
-    }
-
-    /// Publishes worker-decoded Glue images only while an authored cover is visible.
-    fn service_glue_gpu_texture_prewarm(&mut self) -> Result<(), ApplicationError> {
-        let covered =
-            self.authentication_prewarm_active || self.glue.media_intent().movie().is_some();
-        if !covered || !self.glue_gpu_texture_prewarm_pending {
-            return Ok(());
-        }
-        let namespace = self.assets.borrow().namespace();
-        let uploaded =
-            self.ui_texture_residency
-                .prewarm(&mut self.renderer, &self.ui_textures, namespace)?;
-        self.glue_gpu_texture_prewarm_pending = false;
-        tracing::info!(
-            uploaded_texture_count = uploaded,
-            "published configured Glue textures behind transition cover"
-        );
         Ok(())
     }
 
@@ -3520,34 +3430,6 @@ impl ClientServices {
         self.glue_ui_dirty = true;
         Ok(())
     }
-}
-
-fn load_configured_glue_textures(
-    catalog: ArchiveCatalog,
-    paths: Vec<AssetPath>,
-) -> Result<ConfiguredGlueTexturePrewarm, AssetError> {
-    let mut store = AssetStore::mount(catalog)?;
-    let mut cache = BlpTextureCache::new();
-    let mut failures = Vec::new();
-    for path in paths {
-        if let Err(error) = cache.load(&mut store, &path) {
-            failures.push(format!("failed to prewarm Glue texture {path}: {error}"));
-        }
-    }
-    Ok(ConfiguredGlueTexturePrewarm { cache, failures })
-}
-
-struct ConfiguredGlueTexturePrewarm {
-    cache: BlpTextureCache,
-    failures: Vec<String>,
-}
-
-enum ConfiguredGlueTexturePrewarmJob {
-    Deferred {
-        catalog: ArchiveCatalog,
-        paths: Vec<AssetPath>,
-    },
-    Running(CpuTask<Result<ConfiguredGlueTexturePrewarm, AssetError>>),
 }
 
 /// Selected realm facts retained while transport ownership moves to a worker.

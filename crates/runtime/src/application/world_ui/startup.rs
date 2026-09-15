@@ -4,11 +4,13 @@
 #[path = "../../../tests/application/world_ui_sources.rs"]
 mod source_preparation_tests;
 
+use std::ops::ControlFlow;
+
 use solarity_asset::{ArchiveCatalog, AssetStore, SpellNameCatalog};
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ui::{FrameUiSources, GlueError};
 
-use crate::application::ApplicationError;
+use crate::application::{ApplicationError, archive_job::prepare_archive};
 
 /// Read-only world UI inputs with no character, Lua or renderer ownership.
 /// A completed image is reusable after a cancelled entry because the mounted
@@ -59,10 +61,9 @@ impl WorldUiSourcePreparation {
             Err(error) => return Err(error.into()),
         };
         let catalog = catalog.clone();
-        self.task = Some(permit.submit(move || {
-            let mut store = AssetStore::mount(catalog)?;
-            WorldUiSourceImage::load(&mut store)
-        }));
+        self.task = Some(permit.submit_steps(prepare_archive(catalog, |store| {
+            ControlFlow::Break(WorldUiSourceImage::load(store))
+        })));
         Ok(())
     }
 

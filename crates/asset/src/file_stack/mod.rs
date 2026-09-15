@@ -15,6 +15,6 @@ mod namespace;
 pub use namespace::{AssetNamespaceId, AssetResourceKey};
 
 pub use filestack_localized_document::LocalizedDocument;
-pub use filestack_streaming::{AssetRead, AssetStore};
+pub use filestack_streaming::{AssetMount, AssetRead, AssetStore};
 pub use filestack_win32::ArchiveCatalog;
 pub use handle::AssetStoreHandle;

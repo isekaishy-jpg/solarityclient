@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fs;
+use std::ops::ControlFlow;
 use std::path::Path;
 
 use solarity_asset::{
@@ -357,5 +358,86 @@ fn corrupt_required_archive_fails_mount() -> Result<(), Box<dyn Error>> {
         AssetStore::mount(catalog),
         Err(AssetError::ArchiveOpen { path, .. }) if path.ends_with("common.MPQ")
     ));
+    Ok(())
+}
+
+/// Partial mounts preserve namespace/precedence but cannot expose an incomplete stack.
+#[test]
+fn staged_mount_matches_complete_mount_after_one_archive_per_advance() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "shared.txt",
+            bytes: b"base",
+        },
+        FixtureFile {
+            archive: "patch.MPQ",
+            path: "shared.txt",
+            bytes: b"patch",
+        },
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let count = catalog.descriptors().len();
+    let namespace = catalog.namespace();
+    let mut synchronous = AssetStore::mount(catalog.clone())?;
+    let mut pending = AssetStore::begin_mount(catalog)?;
+    let mut advances = 0;
+    let mut staged = loop {
+        advances += 1;
+        match pending.advance()? {
+            ControlFlow::Continue(next) => {
+                assert!(advances < count);
+                pending = next;
+            }
+            ControlFlow::Break(store) => break store,
+        }
+    };
+    assert_eq!(advances, count);
+    assert_eq!(staged.namespace(), namespace);
+    assert_ne!(staged.identity(), synchronous.identity());
+    assert_eq!(
+        staged
+            .archives()
+            .map(|d| d.relative_path())
+            .collect::<Vec<_>>(),
+        synchronous
+            .archives()
+            .map(|d| d.relative_path())
+            .collect::<Vec<_>>()
+    );
+    let path = AssetPath::new("shared.txt")?;
+    let expected = synchronous.read(&path)?;
+    let actual = staged.read(&path)?;
+    assert_eq!(actual.bytes(), expected.bytes());
+    assert_eq!(
+        actual.source().relative_path(),
+        expected.source().relative_path()
+    );
+    Ok(())
+}
+
+/// Preparation performs no eager open, and each advance stops at the first failing descriptor.
+#[test]
+fn staged_mount_opens_only_its_next_archive_and_keeps_first_error_order()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let second = catalog.descriptors()[1].path().to_path_buf();
+    let third = catalog.descriptors()[2].path().to_path_buf();
+    let pending = AssetStore::begin_mount(catalog.clone())?;
+    fs::write(&second, b"invalid MPQ")?;
+    fs::write(&third, b"another invalid MPQ")?;
+    let ControlFlow::Continue(pending) = pending.advance()? else {
+        return Err("a partial stack was published".into());
+    };
+    assert!(
+        matches!(pending.advance(), Err(AssetError::ArchiveOpen { path, .. }) if path == second)
+    );
+    assert!(
+        matches!(AssetStore::mount(catalog), Err(AssetError::ArchiveOpen { path, .. }) if path == second)
+    );
     Ok(())
 }

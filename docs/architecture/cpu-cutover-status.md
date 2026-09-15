@@ -153,13 +153,27 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   allocator free or third-party call remains indivisible; the count bound is not
   a calibrated wall-time guarantee.
 
+- Archive mounting now has an owned continuation that opens one descriptor per
+  advance in exact precedence order. Partial stacks cannot be used for reads;
+  the synchronous API consumes the same implementation. World UI sources,
+  unit-effect sources and configured Glue texture prewarming use the resumable
+  worker path, yielding between opens and before domain work. Glue prewarming
+  additionally reads/decodes one requested texture per turn and keeps namespace
+  alias reuse and ordered per-path diagnostics. Capacity refusal retains the
+  original request before any worker captures move.
+- The mounted-store implementation and Glue texture source/publication lifecycle
+  now have focused folder modules. Single MPQ opens, texture decodes, the full
+  FrameXML validation pass and unit-effect preparation remain indivisible calls;
+  this establishes explicit domain boundaries without claiming a time bound.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
 - Calibrated cost buckets, straggler reporting and measured step-size policy;
-  resumable asset/bulk stages beyond the connected CPU retirement path, and
+  resumable asset/bulk stages beyond retirement, the connected archive mounts and
+  Glue texture steps, and
   remaining domain demand transitions beyond terrain/Glue prewarm. External producers
   expose urgency, but those services must still consume it. Frame urgency is
   monotonic within an epoch; live cache-consumer priority withdrawal is not yet wired.
@@ -183,7 +197,51 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
+## Archive table investigation
+
+A read-only census of direct MPQ headers under the installed Data root and enUS
+found 20 candidate archives with 9,898,160 bytes of classic hash/block table
+payload per complete candidate set. This counts header entries times the pinned
+backend's 16-byte entry sizes; it is not a runtime owner census, allocation-capacity
+measurement or RSS result. The backend owns tables per Archive, and its optional
+parallel reader reopens an Archive per read rather than sharing those tables.
+Duplicate stacks therefore remain a reuse opportunity, but this payload alone
+does not establish the cause of the reported roughly 1.2 GB memory difference.
+The local census is recorded in ignored `target/archive-table-census.json`.
+No backend replacement or hidden parallel pool was introduced.
+
 ## Checkpoint validation
+
+### Archive service boundaries checkpoint
+
+The full workspace suite passed 1,481 tests with 33 ignored. Workspace Clippy
+with warnings denied and formatting passed. New coverage verifies one archive
+per advance, no partial-stack publication, unchanged first-error order, namespace
+and precedence preservation, domain steps after completed mounting, and ordered
+texture failures with canonical alias reuse. Existing world UI source ownership,
+M2 motion/visibility, population replacement and shutdown checks also passed.
+Logs: `target/archive-steps-tests.log` and `target/archive-steps-clippy.log`.
+
+A hidden installed-asset debug replay completed 336 frames: 48 each of streaming,
+stationary, orbit, pointer, outbound, return and settled phases. It used Soap's
+saved appearance, map 1 at (1515.34, -4417.27, 18.0499), travel offset (18, 0, 0),
+2560x1440, four CPU workers, farclip 1277, environmentDetail 1.5, extShadowQuality
+5 and an isolated profile with audio/VSync disabled. It exercised 46?330 M2
+packets and 3,532?11,208 particle vertices per frame, but stayed on one resident
+tile with zero tile admissions/evictions. It therefore checks primary-scene
+execution only, not neighbor loading, a server population, live sliced UI startup
+or the movement solver. Debug/hidden timings are not FPS evidence.
+
+The first launch omitted mandatory runtime options and stopped at validation.
+After fixing the invocation, the ordinary debug example overflowed its 1 MiB main
+stack before startup. An ignored copy of that same executable with only its PE
+stack reserve raised to 32 MiB completed the replay; this matches the existing
+large-stack diagnostic convention without changing client source or the installed
+Testing executable. The source of that debug stack requirement and optimized
+client execution remain unverified. Evidence: `target/cpu-cutover-archive-smoke.csv`,
+`target/cpu-cutover-archive-smoke-summary.json`,
+`target/cpu-cutover-archive-smoke-stack32.log` and the earlier
+`target/cpu-cutover-archive-smoke.log`. No new numbered Testing build is claimed.
 
 ### Resumable service checkpoint
 

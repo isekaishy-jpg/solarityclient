@@ -1,13 +1,12 @@
 //! Unit registration clocks and synchronous authored CEffect requests.
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
 use glam::{Mat4, Vec3};
-use solarity_asset::{
-    ArchiveCatalog, AssetStore, CreatureCatalog, DecodedM2Model, LiquidTypeCatalog,
-};
+use solarity_asset::{ArchiveCatalog, CreatureCatalog, DecodedM2Model, LiquidTypeCatalog};
 use solarity_cpu::{CpuExecutor, CpuTask};
 use solarity_ecs::{ActiveWorld, ObjectFields, ObjectKind, WorldObjectIdentity};
 use solarity_rendering::VulkanRenderer;
@@ -82,12 +81,14 @@ impl RuntimeUnitEffects {
                     match cpu.try_reserve() {
                         Ok(permit) => {
                             let environmental = Arc::clone(&self.environmental);
-                            Sources::Running(permit.submit(move || {
-                                ResidentUnitEffect::load(
-                                    &mut AssetStore::mount(catalog)?,
-                                    &environmental,
-                                )
-                            }))
+                            Sources::Running(permit.submit_steps(
+                                super::archive_job::prepare_archive(catalog, move |store| {
+                                    ControlFlow::Break(ResidentUnitEffect::load(
+                                        store,
+                                        &environmental,
+                                    ))
+                                }),
+                            ))
                         }
                         Err(solarity_cpu::CpuError::AtCapacity { .. }) => {
                             Sources::Deferred(catalog)
