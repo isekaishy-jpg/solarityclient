@@ -8,6 +8,8 @@ mod batch;
 mod dispatch;
 mod epochs;
 mod executor;
+mod permit;
+mod service;
 mod task;
 mod types;
 mod worker;
@@ -15,6 +17,8 @@ mod worker;
 pub use batch::{
     FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome,
 };
-pub use executor::{CpuExecutor, CpuTaskPermit};
+pub use executor::CpuExecutor;
+pub use permit::CpuTaskPermit;
+pub use service::CpuService;
 pub use task::CpuTask;
 pub use types::{CpuError, CpuPoolConfig, CpuPoolSnapshot};

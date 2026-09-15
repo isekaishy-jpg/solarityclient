@@ -8,7 +8,7 @@ use crate::storage::StorageDeque;
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, Condvar, Mutex};
 
-use super::CpuError;
+use super::{CpuError, CpuService};
 
 /// Reusable typed work is erased only at the queue boundary.
 pub(crate) trait ReadyWork: Send + Sync {
@@ -24,13 +24,13 @@ pub(crate) trait ReadyWork: Send + Sync {
 #[derive(Clone, Copy)]
 pub(crate) enum WorkClass {
     Frame,
-    Background,
+    Background(CpuService),
     Priority,
 }
 
 /// Cold background closures and retained frame operations share thread ownership.
 pub(crate) enum Work {
-    Once(Box<dyn FnOnce() + Send>),
+    Once(Arc<AtomicU8>, Box<dyn FnOnce() + Send>),
     Retained(Arc<dyn ReadyWork>),
     Priority(Arc<dyn ReadyWork>, u64),
 }
@@ -39,7 +39,7 @@ impl Work {
     /// Runs outside every scheduler lock.
     fn run(self, flexible: bool) {
         match self {
-            Self::Once(operation) => operation(),
+            Self::Once(_, operation) => operation(),
             Self::Retained(operation) => operation.run(flexible),
             Self::Priority(operation, epoch) => operation.propagate(epoch),
         }
@@ -55,7 +55,9 @@ struct Queues {
     frame: StorageDeque<Work>,
     urgent: StorageDeque<Work>,
     priority: StorageDeque<Work>,
-    background: StorageDeque<Work>,
+    required: StorageDeque<Work>,
+    retirement: StorageDeque<Work>,
+    speculative: StorageDeque<Work>,
     stopping: bool,
 }
 
@@ -64,4 +66,6 @@ pub(crate) struct Dispatch {
     queues: Mutex<Queues>,
     ready: Condvar,
     queued: AtomicU8,
+    // With no protected worker, service must alternate with frame kernels.
+    protected: bool,
 }

@@ -11,7 +11,7 @@ use std::time::Instant;
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, DecodedM2Model, M2ModelCache,
 };
-use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
+use solarity_cpu::{CpuError, CpuExecutor, CpuService, CpuTask};
 
 use crate::application::terrain_frame::m2::GlueM2Texture;
 
@@ -99,12 +99,27 @@ impl GlueBackdropLoader {
         path: &AssetPath,
         cpu: &CpuExecutor,
     ) -> Result<Option<Arc<GlueBackdropAssets>>, Arc<RuntimeGlueModelError>> {
+        self.poll_for(path, cpu, CpuService::Required)
+    }
+
+    /// Reuses one request while promoting selected demand or withdrawing it.
+    pub(super) fn poll_for(
+        &mut self,
+        path: &AssetPath,
+        cpu: &CpuExecutor,
+        service: CpuService,
+    ) -> Result<Option<Arc<GlueBackdropAssets>>, Arc<RuntimeGlueModelError>> {
         self.collect_finished();
         if let Some(result) = self.ready.get(path) {
             return result.clone().map(Some);
         }
+        if let Some(pending) = &self.pending {
+            // One archive owner serializes these requests. Even a different
+            // path is a prerequisite for freeing that owner for selected demand.
+            pending.task.set_service(service);
+        }
         if self.pending.is_none() {
-            match self.submit(path, cpu) {
+            match self.submit(path, cpu, service) {
                 Ok(()) => {}
                 Err(error)
                     if matches!(
@@ -125,7 +140,7 @@ impl GlueBackdropLoader {
                 return result.clone();
             }
             if self.pending.is_none() {
-                self.submit(path, cpu)?;
+                self.submit(path, cpu, CpuService::Required)?;
             }
             self.finish_active();
         }
@@ -152,12 +167,13 @@ impl GlueBackdropLoader {
         &mut self,
         path: &AssetPath,
         cpu: &CpuExecutor,
+        service: CpuService,
     ) -> Result<(), Arc<RuntimeGlueModelError>> {
         debug_assert!(self.pending.is_none());
         let assets = Arc::clone(&self.assets);
         let worker_path = path.clone();
         let task = cpu
-            .try_submit(move || {
+            .try_submit_for(service, move || {
                 let started = Instant::now();
                 let result = assets
                     .lock()

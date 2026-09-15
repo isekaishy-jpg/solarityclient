@@ -33,11 +33,16 @@ impl SharedExecutorState {
 
     /// Atomically admits one task against both capacity and shutdown state.
     pub(crate) fn reserve(self: &Arc<Self>) -> Result<WorkerLease, CpuError> {
+        self.reserve_below(self.max_in_flight.get())
+    }
+
+    /// Applies a stricter speculative ceiling in the same admission transaction.
+    pub(crate) fn reserve_below(self: &Arc<Self>, ceiling: usize) -> Result<WorkerLease, CpuError> {
         let mut lifecycle = self.lock()?;
         if !lifecycle.accepting {
             return Err(CpuError::ShuttingDown);
         }
-        if lifecycle.in_flight >= self.max_in_flight.get() {
+        if lifecycle.in_flight >= ceiling.min(self.max_in_flight.get()) {
             return Err(CpuError::AtCapacity {
                 limit: self.max_in_flight,
             });

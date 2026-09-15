@@ -1086,17 +1086,18 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     terrain.disconnect();
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
-        NonZeroUsize::new(2).ok_or("invalid admission bound")?,
+        NonZeroUsize::new(3).ok_or("invalid admission bound")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     let full_a = cpu.try_reserve()?;
     let full_b = cpu.try_reserve()?;
+    let full_c = cpu.try_reserve()?;
     assert!(!terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert_eq!(
         terrain.synchronize_async(Some(&world), &cpu)?,
         RuntimeTerrainPoll::Pending { map_id: 571 }
     );
-    drop((full_a, full_b));
+    drop((full_a, full_b, full_c));
     assert!(terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert!(!terrain.prewarm_location(571, player_position.x, player_position.y, &cpu)?);
     assert_eq!(
@@ -1150,8 +1151,14 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     terrain.disconnect();
     release.send(())?;
     blocker.join()??;
-    // The sole worker's FIFO marker proves the retired terrain job has ended.
-    cpu.try_submit(|| ())?.join()?;
+    // Observe a marker in the same speculative FIFO before joining it; join
+    // promotes demand and could otherwise overtake the retired prewarm.
+    let (marked, observed) = std::sync::mpsc::channel();
+    let marker = cpu.try_submit_for(solarity_cpu::CpuService::Speculative, move || {
+        marked.send(())
+    })?;
+    observed.recv_timeout(std::time::Duration::from_secs(5))?;
+    marker.join()??;
     assert_eq!(
         terrain.synchronize_async(Some(&world), &cpu)?,
         RuntimeTerrainPoll::Pending { map_id: 571 },

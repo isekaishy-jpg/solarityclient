@@ -612,11 +612,15 @@ impl RuntimeGlueModelScene {
         if !cpu.can_admit_speculative()? {
             return Ok(());
         }
-        let result = match self.backdrop_assets.poll(&path, cpu) {
-            Ok(None) => return Ok(()),
-            Ok(Some(loaded)) => Ok(loaded),
-            Err(source) => Err(source),
-        };
+        let result =
+            match self
+                .backdrop_assets
+                .poll_for(&path, cpu, solarity_cpu::CpuService::Speculative)
+            {
+                Ok(None) => return Ok(()),
+                Ok(Some(loaded)) => Ok(loaded),
+                Err(source) => Err(source),
+            };
         self.backdrop_paths.pop_front();
         match result {
             Ok(loaded) => {
@@ -683,7 +687,9 @@ impl RuntimeGlueModelScene {
         {
             let local_light_count = maximum_glue_light_count(&loaded.model, true);
             let task_model = Arc::clone(&loaded.model);
-            match cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count)) {
+            match cpu.try_submit_for(solarity_cpu::CpuService::Speculative, move || {
+                prepare_glue_cpu_task(&task_model, local_light_count)
+            }) {
                 Ok(task) => self.pending.push(PendingGlueModel {
                     generation: loaded.generation,
                     local_light_count,
@@ -922,6 +928,9 @@ impl RuntimeGlueModelScene {
             .iter()
             .position(|pending| pending.generation == generation)
         {
+            self.pending[pending_index]
+                .task
+                .set_service(solarity_cpu::CpuService::Required);
             if !self.pending[pending_index].task.is_finished() {
                 return Ok(RuntimeGlueModelPoll::Pending);
             }

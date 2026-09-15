@@ -1,18 +1,14 @@
 //! Ownership and lifecycle of the repository CPU executor.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::sync_channel;
-use std::time::Instant;
 
 use std::thread::JoinHandle;
 
-use super::dispatch::{Dispatch, Work, WorkClass};
+use super::dispatch::Dispatch;
+use super::permit::CpuTaskPermit;
 
-use crate::pool::task::TaskOutcome;
-use crate::pool::worker::{SharedExecutorState, WorkerLease};
-use crate::pool::{CpuError, CpuPoolConfig, CpuPoolSnapshot, CpuTask};
+use crate::pool::worker::SharedExecutorState;
+use crate::pool::{CpuError, CpuPoolConfig, CpuPoolSnapshot, CpuService, CpuTask};
 
 /// The application-owned pool for finite CPU-intensive work.
 ///
@@ -84,9 +80,9 @@ impl CpuExecutor {
 
     /// Attempts to admit finite CPU work without blocking on queue capacity.
     ///
-    /// External submissions use the flexible worker FIFO queue so older queued
-    /// work is not buried beneath newer submissions. Protected workers never
-    /// execute these potentially blocking operations.
+    /// This entry point submits required service, retaining FIFO ties. Use
+    /// `try_submit_for` for speculative work or retirement. Protected workers
+    /// never execute these potentially blocking operations.
     ///
     /// # Errors
     ///
@@ -108,12 +104,42 @@ impl CpuExecutor {
     /// # Errors
     /// Returns the same admission errors as [`Self::try_submit`].
     pub fn try_reserve(&self) -> Result<CpuTaskPermit<'_>, CpuError> {
-        let pool = &self.dispatch;
-        Ok(CpuTaskPermit {
-            pool,
-            lease: self.state.reserve()?,
-            notifier: self.notifier.clone(),
-        })
+        self.try_reserve_for(CpuService::Required)
+    }
+
+    /// Admits a classified service operation without transferring inputs on refusal.
+    /// Speculation leaves the final admission slot for required work when capacity
+    /// exceeds one. All classes share the configured total task bound.
+    /// # Errors
+    /// Returns the same lifecycle errors as [`Self::try_reserve`].
+    pub fn try_reserve_for(&self, service: CpuService) -> Result<CpuTaskPermit<'_>, CpuError> {
+        let lease = if service == CpuService::Speculative {
+            self.state
+                .reserve_below(self.frame_capacity.saturating_sub(1).max(1))?
+        } else {
+            self.state.reserve()?
+        };
+        Ok(CpuTaskPermit::new(
+            &self.dispatch,
+            lease,
+            self.notifier.clone(),
+            service,
+        ))
+    }
+
+    /// Submits required loading, retirement, or optional preparation explicitly.
+    /// # Errors
+    /// Returns the same admission errors as [`Self::try_reserve_for`].
+    pub fn try_submit_for<F, T>(
+        &self,
+        service: CpuService,
+        operation: F,
+    ) -> Result<CpuTask<T>, CpuError>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        Ok(self.try_reserve_for(service)?.submit(operation))
     }
 
     /// Returns the fixed number of private worker threads.
@@ -180,60 +206,6 @@ impl CpuExecutor {
             worker.join().map_err(|_| CpuError::TaskPanicked)?;
         }
         Ok(())
-    }
-}
-
-/// One reserved CPU task slot, borrowing the executor until submission.
-/// Its lease also counts toward the running-plus-queued capacity bound.
-pub struct CpuTaskPermit<'executor> {
-    pool: &'executor Dispatch,
-    lease: WorkerLease,
-    notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
-}
-
-impl CpuTaskPermit<'_> {
-    /// Transfers the admitted operation to the executor's FIFO queue.
-    /// Admission cannot fail after the caller relinquishes its inputs.
-    pub fn submit<F, T>(self, operation: F) -> CpuTask<T>
-    where
-        F: FnOnce() -> T + Send + 'static,
-        T: Send + 'static,
-    {
-        let Self {
-            pool,
-            lease,
-            notifier,
-        } = self;
-        let (sender, receiver) = sync_channel(1);
-        let finished = Arc::new(AtomicBool::new(false));
-        let finished_by_worker = Arc::clone(&finished);
-        let epoch = solarity_profiling::generation();
-        let queued = (epoch != 0).then(Instant::now);
-        let trace = solarity_profiling::TraceContext::capture().fork("cpu.job");
-        pool.push(
-            Work::Once(Box::new(move || {
-                let _trace = trace.enter();
-                let _profile = solarity_profiling::profile!("cpu.job.execute");
-                if let Some(queued) = queued {
-                    static QUEUE: solarity_profiling::Site =
-                        solarity_profiling::Site::new("cpu.job.queue_wait", false);
-                    QUEUE.cpu_duration(epoch, "", queued.elapsed());
-                }
-                let outcome = match catch_unwind(AssertUnwindSafe(operation)) {
-                    Ok(value) => TaskOutcome::Completed(value),
-                    Err(_panic_payload) => TaskOutcome::Panicked,
-                };
-                // Publish completion only after returning admission capacity.
-                drop(lease);
-                let _completion_observed = sender.send(outcome);
-                finished_by_worker.store(true, Ordering::Release);
-                if let Some(notifier) = notifier {
-                    notifier.notify();
-                }
-            })),
-            WorkClass::Background,
-        );
-        CpuTask::new(receiver, finished, trace)
     }
 }
 

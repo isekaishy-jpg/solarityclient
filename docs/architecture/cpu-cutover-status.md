@@ -3,7 +3,8 @@
 The user selected a direct cutover. The rollback tag is
 `rollback/pre-cpu-cutover`, at `3be425958fb641aff014e218121a2c0b2e86b802`.
 A later committed checkpoint is also preserved as `rollback/cpu-cutover-26cd4928`
-(`26cd4928545b1aefb3059d539bb30806c08b7bec`). Neither tag contains uncommitted work.
+(`26cd4928545b1aefb3059d539bb30806c08b7bec`). The latest preserved checkpoint is `rollback/cpu-cutover-b677ed91`
+(`b677ed912e15fd6dd2c88e71a14c81db5d3fa8a9`). These tags contain committed work only.
 The complete requirements remain in the [frame-job design](cpu-frame-job-design.md),
 [composition design](cpu-crate-composition-design.md), and
 [cache/residency design](resource-cache-residency-design.md).
@@ -76,7 +77,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   the urgent bucket, and ordinary runners yield at kernel boundaries. Promotion
   uses reserved metadata work rather than recursive calls and pins its epoch
   until propagation ends. Execution eligibility remains unchanged.
-- The flexible worker alternates queued background service and frame boundaries.
+- A single-worker pool alternates required background service and frame boundaries.
+  With protected workers available, the flexible worker serves required loading
+  and retirement until that backlog clears, alternating their finite turns.
+  Speculative work runs only when no service or frame work is ready.
   Protected workers still cannot execute the general background adapter. Ready
   queue capacity now covers the admitted phase/runner bounds at pool creation.
   Dispatch startup, queue policy and worker parking have separate folder modules.
@@ -114,13 +118,23 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   into the test tree. Particle presentation uses an in-place sort with explicit
   input-ordinal ties, retaining equal-depth ordering without stable-sort scratch.
 
+- Cold task admission now distinguishes required loading, retirement and
+  speculation. Speculative reservations leave the final task slot available
+  when capacity exceeds one. Queue storage is reserved at startup and demand
+  changes move the same queued operation; no resource is loaded twice to promote it.
+- Terrain character-location hints and Glue backdrop/texture prewarm are
+  speculative; authoritative terrain and selected Glue models promote pending
+  work. Detached CPU frees use retirement service. Existing required consumers
+  retain FIFO ties and protected-worker exclusion. A running archive/codec/free
+  remains indivisible; these are service turns, not measured time slices.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
-- Calibrated cost buckets and straggler reporting, plus required/speculative/
-  retirement priority in the concrete background services. External producers
+- Calibrated cost buckets and straggler reporting, resumable retirement slices,
+  and remaining domain demand transitions beyond terrain/Glue prewarm. External producers
   expose urgency, but those services must still consume it. Frame urgency is
   monotonic within an epoch; live cache-consumer priority withdrawal is not yet wired.
 - Connect reservations to allocations nested inside domain job state and the
@@ -143,6 +157,21 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Background demand checkpoint
+
+The full workspace suite passed 1,467 tests with 33 ignored. Workspace Clippy
+with warnings denied and formatting passed. The full test compile preceded a
+parentheses-only warning cleanup; Clippy checks that final source. New controlled
+CPU tests cover required/retirement alternation, speculative admission headroom,
+promotion and withdrawal without duplicate execution, and frames ahead of
+speculation. Existing single-worker alternation, protected-worker exclusion,
+moving M2 parity and terrain ownership/publication checks also passed.
+
+Logs are in ignored `target/cpu-service-workspace-tests.log` and
+`target/cpu-service-clippy.log`. These validate ordering and lifetime contracts;
+no new live FPS result or numbered Testing build is established. Concrete shared
+asset requests and bounded resumable bulk/retirement work remain required.
 
 ### Model output admission checkpoint
 

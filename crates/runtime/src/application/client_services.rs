@@ -457,9 +457,9 @@ impl ClientServices {
         } else {
             let worker_catalog = ui_texture_catalog.clone();
             let worker_paths = configured_texture_paths.clone();
-            match cpu
-                .try_submit(move || load_configured_glue_textures(worker_catalog, worker_paths))
-            {
+            match cpu.try_submit_for(solarity_cpu::CpuService::Speculative, move || {
+                load_configured_glue_textures(worker_catalog, worker_paths)
+            }) {
                 Ok(task) => Some(ConfiguredGlueTexturePrewarmJob::Running(task)),
                 Err(CpuError::AtCapacity { limit }) => {
                     tracing::warn!(
@@ -1568,8 +1568,9 @@ impl ClientServices {
                 }
                 match self
                     .cpu
-                    .try_submit(move || load_configured_glue_textures(catalog, paths))
-                {
+                    .try_submit_for(solarity_cpu::CpuService::Speculative, move || {
+                        load_configured_glue_textures(catalog, paths)
+                    }) {
                     Ok(task) => {
                         self.pending_glue_texture_prewarm =
                             Some(ConfiguredGlueTexturePrewarmJob::Running(task));

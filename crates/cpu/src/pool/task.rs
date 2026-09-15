@@ -1,8 +1,9 @@
 //! Typed CPU task completion boundary.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use super::{CpuService, dispatch::Dispatch};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Weak};
 
 use crate::pool::CpuError;
 
@@ -22,6 +23,8 @@ pub struct CpuTask<T> {
     receiver: Receiver<TaskOutcome<T>>,
     finished: Arc<AtomicBool>,
     trace: solarity_profiling::TraceContext,
+    dispatch: Weak<Dispatch>,
+    service: Arc<AtomicU8>,
 }
 
 impl<T> CpuTask<T> {
@@ -30,11 +33,26 @@ impl<T> CpuTask<T> {
         receiver: Receiver<TaskOutcome<T>>,
         finished: Arc<AtomicBool>,
         trace: solarity_profiling::TraceContext,
+        dispatch: Weak<Dispatch>,
+        service: Arc<AtomicU8>,
     ) -> Self {
         Self {
             receiver,
             finished,
             trace,
+            dispatch,
+            service,
+        }
+    }
+
+    /// Changes queued demand without repeating work or touching domain state.
+    /// De-escalation is explicit when a selected consumer no longer needs a
+    /// prewarm. A running operation remains indivisible and retains ownership.
+    pub fn set_service(&self, service: CpuService) {
+        if self.service.load(Ordering::Acquire) != service as u8
+            && let Some(dispatch) = self.dispatch.upgrade()
+        {
+            dispatch.reclassify(&self.service, service);
         }
     }
 
@@ -48,6 +66,7 @@ impl<T> CpuTask<T> {
         if crate::environment::is_worker() && !self.is_finished() {
             return Err(CpuError::WorkerWait);
         }
+        self.set_service(CpuService::Required);
         let _profile_scope = solarity_profiling::profile!("cpu.pool.task.join");
         self.trace.link("cpu.job.join");
         let outcome = self

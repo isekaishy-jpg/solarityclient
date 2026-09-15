@@ -20,7 +20,9 @@ impl Dispatch {
         let mut frame = StorageDeque::default();
         let mut urgent = StorageDeque::default();
         let mut priority = StorageDeque::default();
-        let mut background = StorageDeque::default();
+        let mut required = StorageDeque::default();
+        let mut retirement = StorageDeque::default();
+        let mut speculative = StorageDeque::default();
         frame.reserve(
             budget,
             CpuStorageClass::Frame,
@@ -39,22 +41,29 @@ impl Dispatch {
             CpuStorageKind::Metadata,
             capacity,
         )?;
-        background.reserve(
-            budget,
-            CpuStorageClass::Required,
-            CpuStorageKind::Metadata,
-            capacity,
-        )?;
+        // Each bucket can receive all admitted records after a demand change.
+        // Queue infrastructure is required metadata even when speculation is off.
+        for queue in [&mut required, &mut retirement, &mut speculative] {
+            queue.reserve(
+                budget,
+                CpuStorageClass::Required,
+                CpuStorageKind::Metadata,
+                capacity,
+            )?;
+        }
         let shared = Arc::new(Self {
             queues: Mutex::new(Queues {
                 frame,
                 urgent,
                 priority,
-                background,
+                required,
+                retirement,
+                speculative,
                 stopping: false,
             }),
             ready: Condvar::new(),
             queued: AtomicU8::new(0),
+            protected: count > 1,
         });
         let environment = WorkerEnvironment::capture();
         let mut handles = Vec::with_capacity(count);

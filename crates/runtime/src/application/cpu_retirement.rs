@@ -25,7 +25,7 @@ impl<T: Send + 'static> CpuRetirementQueue<T> {
         if self.pending.is_empty() {
             return Ok(());
         }
-        let permit = match cpu.try_reserve() {
+        let permit = match cpu.try_reserve_for(solarity_cpu::CpuService::Retirement) {
             Ok(permit) => permit,
             Err(CpuError::AtCapacity { .. }) => return Ok(()),
             Err(error) => return Err(error),

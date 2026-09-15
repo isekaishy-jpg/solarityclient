@@ -365,7 +365,7 @@ impl RuntimeTerrainCoordinator {
             .map(map_id)
             .cloned()
             .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
-        let permit = match cpu.try_reserve() {
+        let permit = match cpu.try_reserve_for(solarity_cpu::CpuService::Speculative) {
             Ok(permit) => permit,
             Err(CpuError::AtCapacity { .. }) => return Ok(false),
             Err(error) => return Err(error.into()),
@@ -490,6 +490,11 @@ impl RuntimeTerrainCoordinator {
             }
         }
 
+        if let Some(pending) = &self.pending {
+            // The selected generation needs this worker-owned archive, even if
+            // a previous hint must finish before the current request can start.
+            pending.task.set_service(solarity_cpu::CpuService::Required);
+        }
         if let Some(pending) = self.pending.as_ref()
             && pending.request == request
             && !pending.task.is_finished()
