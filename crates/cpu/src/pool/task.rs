@@ -15,6 +15,30 @@ pub(crate) enum TaskOutcome<T> {
     Panicked,
 }
 
+/// Scheduling control can be shared without sharing consumption of the task result.
+#[derive(Clone)]
+pub struct CpuServiceControl {
+    dispatch: Weak<Dispatch>,
+    service: Arc<AtomicU8>,
+}
+
+impl CpuServiceControl {
+    /// Changes queued service metadata; no domain callback or worker wait is involved.
+    pub fn set_service(&self, service: CpuService) {
+        if self.service.load(Ordering::Acquire) != service as u8
+            && let Some(dispatch) = self.dispatch.upgrade()
+        {
+            dispatch.reclassify(&self.service, service);
+        }
+    }
+
+    /// Reports the current scheduling class of this task identity.
+    #[must_use]
+    pub fn service(&self) -> CpuService {
+        CpuService::from_raw(self.service.load(Ordering::Acquire))
+    }
+}
+
 /// The single-owner completion handle for one admitted CPU task.
 ///
 /// Dropping this handle discards the result but does not detach executor
@@ -53,6 +77,15 @@ impl<T> CpuTask<T> {
             && let Some(dispatch) = self.dispatch.upgrade()
         {
             dispatch.reclassify(&self.service, service);
+        }
+    }
+
+    /// Exposes scheduling metadata without transferring or cloning result ownership.
+    #[must_use]
+    pub fn service_control(&self) -> CpuServiceControl {
+        CpuServiceControl {
+            dispatch: self.dispatch.clone(),
+            service: Arc::clone(&self.service),
         }
     }
 

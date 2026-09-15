@@ -12,14 +12,15 @@ use std::{
 
 /// Registry ownership prevents an expired cache's final payload drop on the frame thread.
 #[derive(Default)]
-struct Registry {
+pub(super) struct Registry {
     owners: Mutex<Vec<Arc<ModelCacheCore>>>,
     changed: Arc<AtomicBool>,
+    pub(super) requests: Mutex<super::requests::RequestIndex>,
 }
 
 /// Shared by catalog clones; no worker, timer or thread is created by this service.
 #[derive(Clone, Default)]
-pub struct M2CacheService(Arc<Registry>);
+pub struct M2CacheService(pub(super) Arc<Registry>);
 
 impl fmt::Debug for M2CacheService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

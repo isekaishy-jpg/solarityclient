@@ -124,6 +124,7 @@ fn game_object_task_panics_only_fail_the_owning_world() -> Result<(), Box<dyn Er
     for retired in [false, true] {
         let task = cpu.try_submit(|| panic!("injected GameObject worker failure"))?;
         owner.pending = Some(PendingGeneration {
+            model_demand: None,
             request: ResourceRequest {
                 kind: RuntimeGameObjectResourceKind::M2,
                 path: AssetPath::new("World\\Failed.m2")?,
@@ -156,6 +157,104 @@ fn game_object_task_panics_only_fail_the_owning_world() -> Result<(), Box<dyn Er
         }
         assert!(owner.pending.is_none());
     }
+    cpu.shutdown()?;
+    Ok(())
+}
+
+/// Shared source readiness precedes worker dispatch and never admits an object by itself.
+#[test]
+fn game_object_source_wait_survives_world_withdrawal_without_blocking_a_worker()
+-> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::with_common_files(&[
+        (
+            "World/GameObject.m2",
+            &crate::test_support::game_object_models::model_with_animations(&[0])?,
+        ),
+        (
+            "World/GameObject00.skin",
+            &crate::test_support::game_object_models::skin()?,
+        ),
+        (
+            "DBFilesClient/GameObjectDisplayInfo.dbc",
+            &crate::test_support::game_object_models::displays(),
+        ),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
+    let displays = GameObjectDisplayCatalog::load(&mut store)?;
+    let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
+    let mut owner =
+        RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations)
+            .with_worker_catalog(catalog.clone());
+    let key = solarity_asset::AssetResourceKey::new(
+        catalog.namespace(),
+        AssetPath::new("World/GameObject.m2")?,
+    );
+    let solarity_asset::M2Load::Producer(producer) = catalog.model_cache_service().request(&key)?
+    else {
+        return Err("missing producer".into());
+    };
+    let mut world = solarity_ecs::ActiveWorld::enter(solarity_ecs::WorldBootstrap::new(
+        solarity_ecs::WorldMapId::new(0),
+        7,
+        "Local",
+        glam::Vec3::ZERO,
+        0.,
+    ));
+    world.create_object(
+        20,
+        solarity_ecs::ObjectKind::GameObject,
+        Some(solarity_ecs::WorldTransform::new(glam::Vec3::ZERO, 0.)),
+        [],
+    )?;
+    solarity_systems::project_object_fields(
+        &mut world,
+        20,
+        [
+            (4, 1),
+            (5, 1_f32.to_bits()),
+            (8, 42),
+            (14, 0),
+            (17, 31 << 8 | 1),
+        ],
+    )?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(2).ok_or("positive capacity required")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
+    let occupied_a = cpu.try_reserve()?;
+    let occupied_b = cpu.try_reserve()?;
+    owner.synchronize_async(Some(&world), &cpu)?;
+    assert!(owner.pending.is_none());
+    assert!(owner.model_wait.is_some());
+    assert!(owner.instances[0].resource.is_none());
+    owner.synchronize_async(None, &cpu)?;
+    assert!(owner.model_wait.is_none());
+    owner.synchronize_async(Some(&world), &cpu)?;
+    assert!(owner.model_wait.is_some());
+    drop((occupied_a, occupied_b));
+    let mut reader = AssetStore::mount(catalog)?;
+    let produced = cpu
+        .try_submit(move || producer.load(&mut reader))?
+        .join()??;
+    owner.synchronize_async(Some(&world), &cpu)?;
+    // One worker's FIFO marker follows the useful texture/mesh preparation job.
+    cpu.try_submit(|| ())?.join()?;
+    owner.synchronize_async(Some(&world), &cpu)?;
+    let resource = owner.instances[0]
+        .resource
+        .as_ref()
+        .ok_or("model was not published")?;
+    let super::GameObjectResource::M2(source) = resource.as_ref() else {
+        return Err("wrong source kind".into());
+    };
+    assert!(solarity_asset::ResourceLease::ptr_eq(
+        &produced,
+        source.model()
+    ));
+    assert!(owner.model_wait.is_none());
     cpu.shutdown()?;
     Ok(())
 }

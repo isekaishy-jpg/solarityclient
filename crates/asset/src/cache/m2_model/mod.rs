@@ -2,8 +2,10 @@
 
 mod maintenance;
 mod owner;
+mod requests;
 
 pub use maintenance::{M2CacheCollection, M2CacheService};
+pub use requests::{M2Load, M2LoadError, M2LoadProducer, M2LoadRequest};
 
 use super::resource::ResourceCache;
 use crate::{AssetNamespaceId, AssetResourceKey, DecodedM2Model};

@@ -20,8 +20,8 @@ pub use archive::{
     ClientDataRoot, Locale,
 };
 pub use cache::{
-    BlpTextureCache, M2CacheCollection, M2CacheService, M2ModelCache, ResourceCacheClock,
-    ResourceLease, ResourceWeak, WmoModelCache,
+    BlpTextureCache, M2CacheCollection, M2CacheService, M2Load, M2LoadError, M2LoadProducer,
+    M2LoadRequest, M2ModelCache, ResourceCacheClock, ResourceLease, ResourceWeak, WmoModelCache,
 };
 pub use database::{
     AdvancedSoundEntry, AdvancedSoundEntryCatalog, AnimationDataCatalog, AnimationDataDefinition,

@@ -54,6 +54,6 @@ impl WorkerEnvironment {
 }
 
 /// Detects forbidden synchronous worker waits without consulting shared state.
-pub(crate) fn is_worker() -> bool {
+pub fn is_worker() -> bool {
     WORKER.get()
 }

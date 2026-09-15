@@ -1,6 +1,7 @@
 //! Shared visible-GameObject generations and loading-card transport readiness.
 
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
+mod model_request;
 mod passenger;
 mod publication;
 mod transport;
@@ -46,7 +47,8 @@ use crate::application::terrain_frame::RuntimeTerrainFrameError;
 use crate::random::CrtRand;
 use transport::GameObjectTransportBehavior;
 use worker::{
-    GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState, prepare_on_worker,
+    GameObjectM2Input, GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState,
+    prepare_on_worker,
 };
 pub(in crate::application) use world_model::{
     GameObjectWorldModelSource, GameObjectWorldModelState,
@@ -88,6 +90,9 @@ pub enum RuntimeGameObjectError {
     /// M2, WMO, or authored texture residency failed strict decoding.
     #[error(transparent)]
     Resource(#[from] RuntimeTerrainError),
+    /// Shared source decoding or its archive prerequisite failed.
+    #[error(transparent)]
+    SharedModel(#[from] solarity_asset::M2LoadError),
     /// Production synchronization lacks its independently mounted archive stack.
     #[error("GameObject CPU worker archive catalog is unavailable")]
     MissingWorkerCatalog,
@@ -313,6 +318,7 @@ pub struct RuntimeGameObjectPresentation {
     worker_catalog: Option<ArchiveCatalog>,
     worker: Option<Box<GameObjectWorkerState>>,
     pending: Option<PendingGeneration>,
+    model_wait: Option<(ResourceRequest, solarity_asset::M2LoadRequest)>,
     behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectBehavior>>,
     transport_behaviors: HashMap<WorldObjectIdentity, Rc<GameObjectTransportBehavior>>,
     transport_catalog: Option<TransportCatalog>,
@@ -362,6 +368,7 @@ impl RuntimeGameObjectPresentation {
             worker_catalog: None,
             worker: None,
             pending: None,
+            model_wait: None,
             behaviors: HashMap::new(),
             transport_behaviors: HashMap::new(),
             transport_catalog: None,
@@ -401,9 +408,15 @@ impl RuntimeGameObjectPresentation {
         profile.mark("owner projection");
         self.finish_pending()?;
         profile.mark("resource completion");
-        if self.pending.is_none()
-            && let Some(request) = self.next_request()
-        {
+        if self.pending.is_none() {
+            let Some(request) = self.next_request() else {
+                self.model_wait = None;
+                return Ok(self.poll_transport());
+            };
+            if let Err(error) = self.observe_model_request(&request) {
+                self.publish(&request, Err(error))?;
+                return Ok(self.poll_transport());
+            }
             let transport_request = self
                 .transport_identity
                 .and_then(|identity| self.indices.get(&identity))
@@ -416,6 +429,19 @@ impl RuntimeGameObjectPresentation {
                 Err(solarity_cpu::CpuError::AtCapacity { .. }) => return Ok(self.poll_transport()),
                 Err(error) => return Err(error.into()),
             };
+            let model = if request.kind == RuntimeGameObjectResourceKind::M2 {
+                match self.request_model(&request) {
+                    Ok(Some(model)) => Some(model),
+                    Ok(None) => return Ok(self.poll_transport()),
+                    Err(error) => {
+                        self.publish(&request, Err(error))?;
+                        return Ok(self.poll_transport());
+                    }
+                }
+            } else {
+                self.model_wait = None;
+                None
+            };
             let source = if let Some(worker) = self.worker.take() {
                 GameObjectWorkerSource::Ready(worker)
             } else {
@@ -426,12 +452,23 @@ impl RuntimeGameObjectPresentation {
                         .clone(),
                 )
             };
+            let model_demand = match &model {
+                Some(GameObjectM2Input::Producer(producer)) => Some(producer.subscribe()),
+                _ => None,
+            };
             let task_request = request.clone();
-            let task = permit.submit(move || prepare_on_worker(source, &task_request));
+            let task = permit.submit(move || prepare_on_worker(source, &task_request, model));
+            if let Some(demand) = &model_demand {
+                assert!(
+                    demand.bind_service(task.service_control()),
+                    "one producer binds each source task"
+                );
+            }
             self.pending = Some(PendingGeneration {
                 request,
                 eligible: true,
                 task,
+                model_demand,
             });
         }
         Ok(self.poll_transport())
@@ -1149,6 +1186,7 @@ impl RuntimeGameObjectPresentation {
         if !self.instances.is_empty() {
             self.scene_revision = self.scene_revision.wrapping_add(1);
         }
+        self.model_wait = None;
         self.instances.clear();
         self.behaviors.clear();
         self.transport_behaviors.clear();
@@ -1164,6 +1202,9 @@ impl RuntimeGameObjectPresentation {
         self.last_transport = None;
         if let Some(pending) = &mut self.pending {
             pending.eligible = false;
+            if let Some(demand) = &pending.model_demand {
+                demand.set_service(solarity_cpu::CpuService::Retirement);
+            }
         }
         self.readiness = true;
         self.collect_unused();
@@ -1179,6 +1220,7 @@ struct PendingGeneration {
     request: ResourceRequest,
     eligible: bool,
     task: CpuTask<GameObjectWorkerCompletion>,
+    model_demand: Option<solarity_asset::M2LoadRequest>,
 }
 struct TransportAdmission {
     identity: WorldObjectIdentity,

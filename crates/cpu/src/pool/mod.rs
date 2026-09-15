@@ -5,6 +5,7 @@
 //! async execution or detached background work.
 
 mod batch;
+mod demand;
 mod dispatch;
 mod epochs;
 mod executor;
@@ -17,8 +18,9 @@ mod worker;
 pub use batch::{
     FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome,
 };
+pub use demand::{CpuServiceDemand, CpuServiceInterest};
 pub use executor::CpuExecutor;
 pub use permit::CpuTaskPermit;
 pub use service::CpuService;
-pub use task::CpuTask;
+pub use task::{CpuServiceControl, CpuTask};
 pub use types::{CpuError, CpuPoolConfig, CpuPoolSnapshot};

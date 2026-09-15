@@ -83,9 +83,13 @@ Current useful foundations and gaps:
 - [M2AnimationSet loading](../../crates/asset/src/model/animation/mod.rs)
   reads every available external sequence and decodes its tracks. The temporary
   encoded payloads are dropped; do not count them as permanently retained.
-- Several runtime services construct their own M2 caches. This provides an
-  opportunity to share requests across owners, but is not proof that every
-  model currently has duplicate live allocations. Count identities first.
+- Glue loading and asynchronous top-level GameObject M2s now join namespace-wide
+  primary-source requests. Each consumer keeps its own scene/publication owner;
+  texture and draw preparation follows source readiness. Pending joins register
+  demand before CPU admission, so a full queue cannot prevent promotion of an
+  existing producer. Terrain, population/appearance, nested WMO doodads, effects
+  and sky paths still need conversion from their local decode caches. Do not
+  infer duplicate live allocations solely from those remaining owner counts.
 - [BLP sources](../../crates/asset/src/cache/blp_texture.rs) already retain
   compressed authored payloads; [texture residency](blp-texture-residency.md)
   describes format, atlas and GPU identity boundaries. Preserve them.

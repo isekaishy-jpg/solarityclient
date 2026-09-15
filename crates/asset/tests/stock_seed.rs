@@ -42,6 +42,8 @@ mod liquid_light;
 mod loading_screen;
 #[path = "stock_seed/model.rs"]
 mod model;
+#[path = "stock_seed/model_requests.rs"]
+mod model_requests;
 #[path = "stock_seed/realm.rs"]
 mod realm;
 #[path = "stock_seed/shader.rs"]

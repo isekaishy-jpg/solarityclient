@@ -11,6 +11,9 @@ mod m2_model;
 mod wmo_model;
 
 pub use blp_texture::BlpTextureCache;
-pub use m2_model::{M2CacheCollection, M2CacheService, M2ModelCache};
+pub use m2_model::{
+    M2CacheCollection, M2CacheService, M2Load, M2LoadError, M2LoadProducer, M2LoadRequest,
+    M2ModelCache,
+};
 pub use resource::{ResourceCacheClock, ResourceLease, ResourceWeak};
 pub use wmo_model::WmoModelCache;

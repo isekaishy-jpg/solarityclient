@@ -5,10 +5,19 @@ use super::{
     GameObjectResource, ResourceRequest, RuntimeGameObjectError, RuntimeGameObjectResourceKind,
 };
 use crate::application::liquid::LiquidAssetCache;
-use crate::application::terrain_coordinator::RuntimeTerrainError;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
-use solarity_asset::{ArchiveCatalog, AssetStore, BlpTextureCache, M2ModelCache};
+use solarity_asset::{
+    ArchiveCatalog, AssetError, AssetStore, BlpTextureCache, DecodedM2Model, M2LoadError,
+    M2LoadProducer, M2ModelCache, ResourceLease,
+};
+use std::sync::Arc;
+
+/// A worker receives useful producer work or an already published immutable model.
+pub(super) enum GameObjectM2Input {
+    Ready(ResourceLease<DecodedM2Model>),
+    Producer(M2LoadProducer),
+}
 
 pub(super) enum GameObjectWorkerSource {
     Catalog(ArchiveCatalog),
@@ -24,9 +33,9 @@ pub(super) struct GameObjectWorkerState {
 }
 
 impl GameObjectWorkerState {
-    fn mount(catalog: ArchiveCatalog) -> Result<Self, RuntimeGameObjectError> {
+    fn mount(catalog: ArchiveCatalog) -> Result<Self, Arc<AssetError>> {
         Ok(Self {
-            assets: AssetStore::mount(catalog).map_err(RuntimeTerrainError::from)?,
+            assets: AssetStore::mount(catalog).map_err(Arc::new)?,
             textures: BlpTextureCache::new(),
             models: M2ModelCache::new(),
             world_models: ResidentWorldModelCache::new(),
@@ -37,15 +46,24 @@ impl GameObjectWorkerState {
     fn prepare(
         &mut self,
         request: &ResourceRequest,
+        model: Option<GameObjectM2Input>,
     ) -> Result<GameObjectResource, RuntimeGameObjectError> {
         match request.kind {
             RuntimeGameObjectResourceKind::M2 => {
-                Ok(GameObjectResource::M2(ResidentM2Source::load(
-                    &request.path,
-                    &mut self.models,
-                    &mut self.textures,
-                    &mut self.assets,
-                )?))
+                let model = match model
+                    .unwrap_or_else(|| unreachable!("M2 dispatch carries source work"))
+                {
+                    GameObjectM2Input::Ready(model) => model,
+                    GameObjectM2Input::Producer(producer) => producer.load(&mut self.assets)?,
+                };
+                Ok(GameObjectResource::M2(
+                    ResidentM2Source::from_model_with_lights(
+                        model,
+                        &mut self.textures,
+                        &mut self.assets,
+                        solarity_rendering::M2LocalLightCount::Four,
+                    )?,
+                ))
             }
             RuntimeGameObjectResourceKind::WorldModel => Ok(GameObjectResource::WorldModel(
                 GameObjectWorldModelSource::load(
@@ -74,20 +92,25 @@ pub(super) struct GameObjectWorkerCompletion {
 pub(super) fn prepare_on_worker(
     source: GameObjectWorkerSource,
     request: &ResourceRequest,
+    model: Option<GameObjectM2Input>,
 ) -> GameObjectWorkerCompletion {
     let mut worker = match source {
         GameObjectWorkerSource::Catalog(catalog) => match GameObjectWorkerState::mount(catalog) {
             Ok(worker) => Box::new(worker),
             Err(source) => {
+                let error = M2LoadError::Asset(source);
+                if let Some(GameObjectM2Input::Producer(producer)) = model {
+                    producer.fail(error.clone());
+                }
                 return GameObjectWorkerCompletion {
                     worker: None,
-                    result: Err(source),
+                    result: Err(error.into()),
                 };
             }
         },
         GameObjectWorkerSource::Ready(worker) => worker,
     };
-    let result = worker.prepare(request);
+    let result = worker.prepare(request, model);
     worker.collect_unused();
     GameObjectWorkerCompletion {
         worker: Some(worker),

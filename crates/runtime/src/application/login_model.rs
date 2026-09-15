@@ -13,7 +13,7 @@ use std::sync::Arc;
 use glam::{Vec3, Vec4};
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, BlpTextureCache,
-    M2HardcodedTextureSource, M2LightKind, M2ModelCache, M2TextureKind, WorldLightSampleError,
+    M2HardcodedTextureSource, M2LightKind, M2TextureKind, WorldLightSampleError,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_rendering::{
@@ -53,12 +53,15 @@ pub enum RuntimeGlueModelError {
         path: AssetPath,
         source: Arc<RuntimeGlueModelError>,
     },
-    /// An earlier worker panic poisoned the private archive owner.
+    /// An earlier worker panic lost the uniquely owned archive state.
     #[error("Glue backdrop archive worker state is unavailable")]
     BackdropWorkerUnavailable,
     /// Archive-backed M2, SKIN, or BLP data failed validation.
     #[error(transparent)]
     Asset(#[from] AssetError),
+    /// Shared primary-model requests retain their source or producer failure.
+    #[error(transparent)]
+    SharedModel(#[from] solarity_asset::M2LoadError),
     /// Immutable model resources or live effects failed preparation.
     #[error(transparent)]
     Frame(#[from] RuntimeTerrainFrameError),
@@ -237,12 +240,11 @@ fn prepare_glue_cpu_task(
     })
 }
 
-/// Loads one environment M2 and resolves its complete hardcoded texture set.
+/// Resolves the complete hardcoded texture set for an already published primary model.
 fn load_glue_model_generation(
-    models: &mut M2ModelCache,
+    model: ResourceLease<solarity_asset::DecodedM2Model>,
     textures: &mut BlpTextureCache,
     store: &mut AssetStore,
-    path: &AssetPath,
 ) -> Result<
     (
         ResourceLease<solarity_asset::DecodedM2Model>,
@@ -251,7 +253,6 @@ fn load_glue_model_generation(
     RuntimeGlueModelError,
 > {
     let asset_started = std::time::Instant::now();
-    let model = models.load(store, path)?;
     let mut texture_sources = Vec::with_capacity(model.textures().len());
     for (texture_index, texture) in model.textures().iter().enumerate() {
         if texture.kind() != M2TextureKind::Hardcoded {
@@ -308,8 +309,8 @@ fn load_glue_model_generation(
         texture_count = texture_sources.len(),
         authored_directional_lights,
         authored_point_lights,
-        asset_ms = asset_started.elapsed().as_secs_f64() * 1_000.0,
-        "loaded Glue model archive generation"
+        texture_ms = asset_started.elapsed().as_secs_f64() * 1_000.0,
+        "prepared Glue model texture generation"
     );
     Ok((model, texture_sources))
 }

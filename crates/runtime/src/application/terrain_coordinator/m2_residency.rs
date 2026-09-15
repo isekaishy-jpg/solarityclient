@@ -68,6 +68,16 @@ impl ResidentM2Source {
         local_light_count: M2LocalLightCount,
     ) -> Result<Self, RuntimeTerrainError> {
         let model = cache.load(store, path)?;
+        Self::from_model_with_lights(model, texture_cache, store, local_light_count)
+    }
+
+    /// Builds consumer-specific texture and draw inputs after shared primary-source publication.
+    pub(in crate::application) fn from_model_with_lights(
+        model: ResourceLease<DecodedM2Model>,
+        texture_cache: &mut BlpTextureCache,
+        store: &mut AssetStore,
+        local_light_count: M2LocalLightCount,
+    ) -> Result<Self, RuntimeTerrainError> {
         let textures = prepare_textures(&model, texture_cache, store)?;
         let cpu_source = prepare_m2_cpu_source(&model, local_light_count)?;
         Ok(Self {

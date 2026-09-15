@@ -88,3 +88,11 @@ Particle sorting uses an in-place sort with presentation-index tie-breaking to
 retain the previous equal-depth order without a temporary stable-sort allocation.
 Other allocation sources inside the job (including simulation growth) still need
 integration; fixed output does not imply an allocation-free entire M2 kernel.
+
+Shared M2 request tables and the new `CpuServiceDemand`/`CpuServiceInterest`
+registrations currently use ordinary owned map/Arc storage. These request and
+consumer metadata allocations are not included in the reported byte ledger.
+They still require resource-request budget admission and accounting along with
+source payloads; the shared scheduling-control handle does not imply that their
+memory has been accounted for. CPU owns only the service counters/control here,
+while assets own request keys, decoded payloads, outcomes and retention policy.

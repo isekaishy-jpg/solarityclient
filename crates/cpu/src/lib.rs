@@ -17,9 +17,11 @@ pub use storage::{
 
 pub use capabilities::CpuCapabilities;
 pub use completion::{CompletionPort, CompletionProducer, CoordinatorNotifier, ReadyToken};
+pub use environment::is_worker as is_worker_thread;
 pub use pool::{
-    CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService, CpuTask, CpuTaskPermit,
-    FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome,
+    CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService, CpuServiceControl,
+    CpuServiceDemand, CpuServiceInterest, CpuTask, CpuTaskPermit, FrameBatch, FrameBatchPlan,
+    FrameGraphTemplate, FrameJob, FramePriority, JobOutcome,
 };
 pub use random::BlizzardRand;
 pub use reciprocal::reciprocal_sqrt_estimate;

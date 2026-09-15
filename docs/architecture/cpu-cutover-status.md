@@ -8,8 +8,10 @@ A later committed checkpoint is also preserved as `rollback/cpu-cutover-26cd4928
 A further checkpoint is preserved as `rollback/cpu-cutover-b49ab5ae`
 (`b49ab5ae2d1c63e3272b584990e0a8ecdbc1d05a`).
 Further checkpoints are `rollback/cpu-cutover-c007aaf8`
-(`c007aaf814c4df21b6e655e1ffc0cdd131e5950e`) and the latest requested
+(`c007aaf814c4df21b6e655e1ffc0cdd131e5950e`) and
 `rollback/cpu-cutover-0cfa2a2a` (`0cfa2a2a57854c3a5fac61a6bd4a7f26184135ec`).
+The latest requested checkpoint is `rollback/cpu-cutover-9127ce4a`
+(`9127ce4a788c44278a991e8cfa28dfdeba2e0dbe`), pushed before resuming the cutover.
 These tags contain committed work only.
 The complete requirements remain in the [frame-job design](cpu-frame-job-design.md),
 [composition design](cpu-crate-composition-design.md), and
@@ -211,6 +213,27 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   BLP/other cache adoption, request sharing and resource byte admission remain
   required; this retention rule is not a global cache or GPU eviction policy.
 
+- Added namespace-wide pending primary-M2 requests with one producer, independently
+  registered consumers and one shared source/error result. Successful publication
+  enters the qualified source cache; failed/abandoned producers publish a terminal
+  outcome without a persistent negative-cache TTL. Decoder and archive work run
+  outside request/source locks. An unfinished request rejects CPU-worker waits.
+- Connected Glue model loading and asynchronous top-level M2 GameObjects to that
+  request authority. Existing pending requests can be joined before CPU admission,
+  including a full queue. Dependent texture/draw preparation receives either useful
+  producer work or a published model, never a worker-side waiter. World withdrawal
+  drops the matching consumer; publication still uses current scene owners.
+  Backdrop archive state now moves into and back out of its job, without a mutex
+  around archive/cache work. Request, producer, backdrop dispatch and publication
+  responsibilities have focused folder modules.
+- CPU service demand now supports independently registered consumers and a shared
+  scheduling-control handle that does not share task-result consumption. Required
+  joins promote the original producer immediately; withdrawal restores remaining
+  speculative/retirement demand. Clones share one consumer registration. Demand
+  metadata serializes queue reclassification, invokes no domain callbacks, and
+  holds only weak dispatcher ownership. Asset request policy uses this CPU facade;
+  the CPU crate still has no asset, rendering or gameplay dependency.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
@@ -221,7 +244,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Glue texture steps, and
   remaining domain demand transitions beyond terrain/Glue prewarm. External producers
   expose urgency, but those services must still consume it. Frame urgency is
-  monotonic within an epoch; live cache-consumer priority withdrawal is not yet wired.
+  monotonic within an epoch. Shared M2 primary-request consumers now support live
+  priority withdrawal; remaining source domains still need that connection.
 - Connect reservations to allocations nested inside domain job state and the
   complete required phase working set. Executor-wide scheduler metadata and typed
   result-page accounting now exist; model output and override buffers now adopt it. Live simulation/pose storage,
@@ -231,10 +255,12 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
   ordered receiver lighting and end-of-frame state reclamation still have barriers.
-- Extend pending-request authority beyond the connected runtime audio loader,
-  including cross-resource I/O dependencies and domain-wide shared result leases.
-  M2/WMO sources now have explicit external leases and coalesced final-release
-  delivery; their loading is not yet joined through shared request authority.
+- Extend pending-request authority beyond runtime audio, Glue primary M2s and
+  asynchronous top-level GameObject M2s. Terrain, population/appearance, nested WMO
+  doodads, effects and sky sources still use their existing local decode caches.
+  WMO and other source domains need shared pending authority, cross-resource I/O
+  dependencies and the remaining domain-wide shared result leases. M2/WMO sources
+  already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
   Request metadata and encoded payload budgets still need admission/accounting.
   Stock-evidenced animation demand and
@@ -285,6 +311,29 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Shared M2 requests and consumer priority checkpoint
+
+On 2026-09-15, final formatting, workspace Clippy and the complete workspace
+suite passed: 1,509 tests, zero failures, 33 ignored. New real archive/model
+fixtures verify one published source across independent consumers and legacy
+path aliases, shared original errors, namespace rejection, abandoned producer
+completion and rejection of unfinished CPU-worker waits.
+
+Controlled CPU tests verify promotion of the original queued producer and
+priority withdrawal when the last required consumer leaves. Their speculative
+producer admission preserves the reserved required-work slot. Runtime coverage
+joins pending sources with every CPU slot occupied, then checks independent
+backdrop publication and GameObject withdrawal/re-entry against exact shared
+source identity. Existing stock animation, rendering, visibility, movement and
+collision fixtures passed in the full run.
+
+Final logs are in ignored `target/shared-m2-final-tests.log`,
+`target/shared-m2-final-clippy.log` and `target/shared-m2-final-fmt.log`.
+Superseded generated debug symbols were removed to restore validation disk
+space. This checkpoint connects Glue backdrops and asynchronous top-level M2
+GameObjects; the source domains listed above still require cutover. It does not
+establish live FPS gains, whole-frame memory coverage or a numbered Testing build.
 
 ### Qualified M2 retention and CPU maintenance checkpoint
 

@@ -1,6 +1,6 @@
 //! Regression tests for worker-owned backdrop residency and admission.
 
-use solarity_asset::ResourceLease;
+use solarity_asset::{M2LoadError, ResourceLease};
 use std::error::Error;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
@@ -49,13 +49,13 @@ fn full_pool_defers_archive_mount_and_preserves_request() -> Result<(), Box<dyn 
     assert!(
         loader
             .assets
-            .lock()
-            .map_err(|_| "poisoned owner")?
+            .as_ref()
+            .ok_or("missing owner")?
             .state
             .is_none()
     );
     assert!(matches!(loader.load_blocking(&path, &cpu), Err(source)
-        if matches!(source.as_ref(), RuntimeGlueModelError::Asset(AssetError::AssetNotFound { path: missing }) if *missing == path)));
+        if matches!(source.as_ref(), RuntimeGlueModelError::SharedModel(M2LoadError::Asset(error)) if matches!(error.as_ref(), AssetError::AssetNotFound { path: missing } if *missing == path))));
     Ok(())
 }
 
@@ -73,7 +73,7 @@ fn changed_selection_retains_original_exact_failure_without_retry() -> Result<()
         Ok(_) => return Err("missing first model unexpectedly loaded".into()),
     };
     assert!(
-        matches!(original.as_ref(), RuntimeGlueModelError::Asset(AssetError::AssetNotFound { path }) if *path == first)
+        matches!(original.as_ref(), RuntimeGlueModelError::SharedModel(M2LoadError::Asset(error)) if matches!(error.as_ref(), AssetError::AssetNotFound { path } if *path == first))
     );
     let repeated = match loader.poll(&first, &cpu) {
         Err(error) => error,
@@ -173,5 +173,53 @@ fn demand_reuses_worker_model_after_selection_changes() -> Result<(), Box<dyn Er
     };
     assert!(Arc::ptr_eq(original_texture, reused_texture));
     assert!(!loader.has_pending());
+    Ok(())
+}
+
+/// Independent presentation loaders wait off-pool and publish one shared model generation.
+#[test]
+fn separate_backdrops_join_one_model_without_occupying_waiting_workers()
+-> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::with_common_files(&[
+        (
+            "World/Shared.m2",
+            &support::game_object_models::model_with_animations(&[0])?,
+        ),
+        ("World/Shared00.skin", &support::game_object_models::skin()?),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let path = AssetPath::new("World/Shared.m2")?;
+    let key = solarity_asset::AssetResourceKey::new(catalog.namespace(), path.clone());
+    let solarity_asset::M2Load::Producer(producer) = catalog.model_cache_service().request(&key)?
+    else {
+        return Err("missing initial producer".into());
+    };
+    let mut first = GlueBackdropLoader::new(catalog.clone());
+    let mut second = GlueBackdropLoader::new(catalog.clone());
+    let cpu = cpu()?;
+    let occupied = cpu.try_reserve()?;
+    assert!(first.poll(&path, &cpu)?.is_none());
+    assert!(second.poll(&path, &cpu)?.is_none());
+    assert!(first.pending.is_none() && second.pending.is_none());
+    assert!(first.waiting.is_some() && second.waiting.is_some());
+    assert!(
+        first
+            .assets
+            .as_ref()
+            .ok_or("missing owner")?
+            .state
+            .is_none()
+    );
+    // The sole CPU slot remains available: neither consumer submitted a polling/waiting job.
+    drop(occupied);
+    let mut store = solarity_asset::AssetStore::mount(catalog)?;
+    let produced = cpu
+        .try_submit(move || producer.load(&mut store))?
+        .join()??;
+    let first = first.load_blocking(&path, &cpu)?;
+    let second = second.load_blocking(&path, &cpu)?;
+    assert!(ResourceLease::ptr_eq(&produced, &first.model));
+    assert!(ResourceLease::ptr_eq(&produced, &second.model));
     Ok(())
 }
