@@ -1,6 +1,7 @@
 //! Native exterior-window entry into decoded WMO group graphs.
 
-use std::{error::Error, sync::Arc};
+use solarity_asset::ResourceLease;
+use std::error::Error;
 
 use glam::{Mat4, Vec3};
 use solarity_systems::{
@@ -18,7 +19,7 @@ fn repeated_scene_queries_preserve_independent_projection_and_visits() -> Result
 {
     let mut retained = WorldModelCameraSceneQuery::default();
     for portal_height in [0., 2., 0.] {
-        let model = Arc::new(visibility_model(
+        let model = ResourceLease::new(visibility_model(
             &[0, 8, 8],
             &[0, 8, 8],
             &[[0, 1], [0, 2]],
@@ -93,7 +94,7 @@ fn scene_projection_matches_eager_portals_through_recursive_groups() -> Result<(
     use solarity_systems::{
         WorldModelPortalProjector, WorldModelSceneFog, WorldModelSceneVisibilityEvent,
     };
-    let model = Arc::new(visibility_model(
+    let model = ResourceLease::new(visibility_model(
         &[8, 0, 0, 8],
         &[8, 0, 0, 8],
         &[[0, 1], [1, 2], [2, 3], [0, 2]],
@@ -105,7 +106,7 @@ fn scene_projection_matches_eager_portals_through_recursive_groups() -> Result<(
         ],
     )?);
     let mut root =
-        PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), Mat4::IDENTITY)?;
+        PlacedWorldModelCollision::prepare_transform(ResourceLease::clone(&model), Mat4::IDENTITY)?;
     let mut lazy = WorldModelCameraSceneQuery::default();
     let mut eager = WorldModelVisibilityQuery::default();
     let mut projector = WorldModelPortalProjector::default();
@@ -316,7 +317,7 @@ fn exterior_group_entry_combines_flags_bounds_and_portal_visibility() -> Result<
         (0, 0x10000, vec![0]),
         (8, 0x10008, vec![0]),
     ] {
-        let model = Arc::new(visibility_model(
+        let model = ResourceLease::new(visibility_model(
             &[loaded, 0],
             &[info, 0],
             &[[0, 1]],
@@ -409,7 +410,7 @@ fn exterior_group_entry_combines_flags_bounds_and_portal_visibility() -> Result<
 fn camera_root_merges_all_true_exterior_windows_and_resets_between_roots()
 -> Result<(), Box<dyn Error>> {
     use solarity_systems::WorldModelPortalProjector;
-    let model = Arc::new(visibility_model(
+    let model = ResourceLease::new(visibility_model(
         &[0, 8, 8],
         &[0, 8, 8],
         &[[0, 1], [0, 2]],

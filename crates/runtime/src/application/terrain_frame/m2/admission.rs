@@ -3,12 +3,12 @@
 use super::{M2Frame, M2GluePipelineWarmup, M2GpuSource, RuntimeTerrainFrameError, prepare_source};
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use solarity_asset::DecodedM2Model;
+use solarity_asset::ResourceLease;
 use solarity_rendering::{M2ModelOrientation, VulkanRenderer};
-use std::sync::Arc;
 
 /// Retains uploaded resources until the exact tile generation commits membership.
 pub(super) struct PreparedStaticM2 {
-    pub(super) model: Arc<DecodedM2Model>,
+    pub(super) model: ResourceLease<DecodedM2Model>,
     pub(super) source: Option<M2GpuSource>,
 }
 
@@ -29,7 +29,7 @@ impl M2Frame {
             || self
                 .prepared_static
                 .iter()
-                .any(|gpu| Arc::ptr_eq(&gpu.model, source.model()))
+                .any(|gpu| ResourceLease::ptr_eq(&gpu.model, source.model()))
     }
 
     /// Advances one cold source while leaving random consumption and visible owners untouched.
@@ -54,7 +54,7 @@ impl M2Frame {
             }
             M2SourceAdmission::Upload => {
                 self.prepared_static.push(PreparedStaticM2 {
-                    model: Arc::clone(source.model()),
+                    model: ResourceLease::clone(source.model()),
                     source: prepare_source(renderer, source)?,
                 });
                 *admission = None;

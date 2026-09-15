@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::application::player_coordinator::{ResidentMountFrameInput, ResidentPlayerAttachment};
+use solarity_asset::ResourceLease;
 use solarity_ecs::{PlayerEquipmentSlot, VisibleEquipmentItem};
 
 #[derive(Clone, Copy)]
@@ -431,7 +432,7 @@ pub(super) fn prepare_character_gpu(
 /// Body and equipment inputs shared by Player_C and ordinary Unit_C models.
 pub(super) struct UnitEquipmentGpuInput<'a> {
     pub(super) guid: u64,
-    pub(super) model: &'a Arc<DecodedM2Model>,
+    pub(super) model: &'a ResourceLease<DecodedM2Model>,
     pub(super) attachments: &'a [ResidentPlayerAttachment],
     pub(super) animation: Option<&'a Rc<UnitAnimationBehavior>>,
     pub(super) body_owner: M2GpuPlacementOwner,

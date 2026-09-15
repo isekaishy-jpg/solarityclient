@@ -1,6 +1,7 @@
 //! Original-executable evidence for resident movement triangle collection.
 
-use std::{error::Error, io::Cursor, str::SplitWhitespace, sync::Arc};
+use solarity_asset::ResourceLease;
+use std::{error::Error, io::Cursor, str::SplitWhitespace};
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{
@@ -177,29 +178,30 @@ fn movement_collection_matches_original_world_queries() -> Result<(), Box<dyn Er
         })
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("World\\Collection.m2")?,
     )?);
-    let world_model = Arc::new(DecodedWorldModel::load(
+    let world_model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Collection.wmo")?,
     )?);
-    let selection_model = Arc::new(DecodedWorldModel::load(
+    let selection_model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Selection.wmo")?,
     )?);
     let cache_models = cache_paths
         .iter()
         .map(|(path, _)| -> Result<_, Box<dyn Error>> {
-            Ok(Arc::new(DecodedWorldModel::load(
+            Ok(ResourceLease::new(DecodedWorldModel::load(
                 &mut store,
                 &AssetPath::new(path)?,
             )?))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut output = Vec::new();
-    let mut placed_m2 = PlacedM2Collision::prepare_transform(Arc::clone(&model), Mat4::IDENTITY)?;
+    let mut placed_m2 =
+        PlacedM2Collision::prepare_transform(ResourceLease::clone(&model), Mat4::IDENTITY)?;
     let mut count = 0;
     for line in include_str!("../fixtures/movement-collection-native.txt")
         .lines()
@@ -242,7 +244,7 @@ fn movement_collection_matches_original_world_queries() -> Result<(), Box<dyn Er
         } else if kind == "G" {
             let bounds = read_bounds(&mut words)?;
             PlacedWorldModelCollision::prepare_transforms(
-                Arc::clone(&selection_model),
+                ResourceLease::clone(&selection_model),
                 Mat4::IDENTITY,
                 Mat4::IDENTITY,
             )?
@@ -251,7 +253,7 @@ fn movement_collection_matches_original_world_queries() -> Result<(), Box<dyn Er
             let variant = words.next().ok_or("cache variant")?.parse::<usize>()?;
             let bounds = read_bounds(&mut words)?;
             PlacedWorldModelCollision::prepare_transforms(
-                Arc::clone(&cache_models[variant]),
+                ResourceLease::clone(&cache_models[variant]),
                 Mat4::IDENTITY,
                 Mat4::IDENTITY,
             )?
@@ -276,7 +278,7 @@ fn movement_collection_matches_original_world_queries() -> Result<(), Box<dyn Er
                 placed_m2.append_movement(bounds, &mut output)?;
             } else {
                 PlacedWorldModelCollision::prepare_transforms(
-                    Arc::clone(&world_model),
+                    ResourceLease::clone(&world_model),
                     transform,
                     inverse,
                 )?

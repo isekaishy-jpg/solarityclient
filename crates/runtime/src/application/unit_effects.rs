@@ -1,9 +1,10 @@
 //! Unit registration clocks and synchronous authored CEffect requests.
 
+use solarity_asset::{ResourceLease, ResourceWeak};
 use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::rc::Rc;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{ArchiveCatalog, CreatureCatalog, DecodedM2Model, LiquidTypeCatalog};
@@ -37,7 +38,7 @@ enum Sources {
 #[derive(Default)]
 struct UnitState {
     lifetime: Rc<()>,
-    model: Weak<DecodedM2Model>,
+    model: ResourceWeak<DecodedM2Model>,
     sample: Option<UnitWaterSample>,
     position: Vec3,
     surface: Option<f32>,
@@ -181,7 +182,7 @@ impl RuntimeUnitEffects {
             if let Some(owner) = player.unit_effect_owner(identity) {
                 owner.set_model_color(state.tint.sample(now, u32::MAX));
             }
-            if !std::ptr::eq(state.model.as_ptr(), Arc::as_ptr(model)) {
+            if !std::ptr::eq(state.model.as_ptr(), ResourceLease::as_ptr(model)) {
                 if state.sample.is_none()
                     && let Some(transform) = world.object_transform(identity.guid())
                 {
@@ -190,7 +191,7 @@ impl RuntimeUnitEffects {
                         .unit_submerged_liquid(state.position, liquids)?
                         .map(|liquid| liquid.surface_height);
                 }
-                state.model = Arc::downgrade(model);
+                state.model = ResourceLease::downgrade(model);
                 refresh(state, model, identity, world, terrain, metadata, now)?;
             }
         }

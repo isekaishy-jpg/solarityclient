@@ -29,6 +29,7 @@ mod shadow;
 pub(in crate::application) mod sky;
 pub(in crate::application) mod sound;
 mod source;
+use solarity_asset::ResourceLease;
 use source::{
     prepare_gpu_source, prepare_gpu_source_from_cpu, prepare_source, prepare_source_with_lights,
 };
@@ -123,7 +124,7 @@ const PARTICLE_IGNORE_DISTANCE_LOD: u32 = 0x0040_0000;
 #[derive(Clone)]
 struct M2GpuSourceData {
     _resource_leases: Vec<solarity_rendering::GpuResourceLease>,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     plan: Arc<M2MeshPlan>,
     /// Character-eye billboard bones retained in model orientation.
     model_oriented_billboard_bones: Vec<bool>,
@@ -695,7 +696,7 @@ impl M2Frame {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare_glue_gpu_source(
         renderer: &mut VulkanRenderer,
-        model: Arc<DecodedM2Model>,
+        model: ResourceLease<DecodedM2Model>,
         textures: &[GlueM2Texture],
         cpu_source: &M2CpuSource,
         local_light_count: M2LocalLightCount,
@@ -746,7 +747,7 @@ impl M2Frame {
             glam::Vec3::ZERO,
         );
         let M2GlueGpuSource { source, .. } = gpu_source;
-        let model = Arc::clone(&source.model);
+        let model = ResourceLease::clone(&source.model);
         let particles = glue_particle_simulations(&model)?;
         let ribbons = model
             .animations()
@@ -2122,7 +2123,7 @@ fn stock_glue_character_local_transform(facing_radians: f32) -> Mat4 {
 #[allow(clippy::too_many_arguments)]
 fn prepare_glue_character_gpu_source(
     renderer: &mut VulkanRenderer,
-    model: &Arc<DecodedM2Model>,
+    model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,

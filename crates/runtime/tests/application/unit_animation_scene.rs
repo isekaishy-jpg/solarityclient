@@ -34,6 +34,7 @@ use super::super::{M2PlaybackStorage, m2_gpu_placement};
 use super::*;
 use crate::application::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};
 use glam::Mat4;
+use solarity_asset::ResourceLease;
 use solarity_ecs::UnitAnimationTier;
 use solarity_rendering::{M2CameraEffectScale, WorldCamera, WorldFrustum, WorldScreenWindow};
 use std::rc::Rc;
@@ -677,7 +678,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
     let archive =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(archive)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("World\\GameObject.m2")?,
     )?);
@@ -715,7 +716,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
     )?;
     let owner = Rc::new(UnitAnimationBehavior::new(
         world.object_identity(7).ok_or("local identity")?,
-        Arc::clone(&model),
+        ResourceLease::clone(&model),
         animations,
         UnitAnimationInput::new(1, UnitAnimationTier::Ground, false, None),
         0,

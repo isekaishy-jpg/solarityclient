@@ -1,6 +1,7 @@
 //! Native WMO factory selection through decoded root, group and DBC records.
 
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
+use solarity_asset::ResourceLease;
 use std::error::Error;
 
 use solarity_asset::{AssetPath, BlpTextureCache};
@@ -33,7 +34,7 @@ fn world_model_worker_mesh_shares_and_retires_with_its_generation() -> Result<()
         ResidentWorldModelSource::load(&path, &mut cache, &mut textures, &mut liquids, &mut store)?;
     let second =
         ResidentWorldModelSource::load(&path, &mut cache, &mut textures, &mut liquids, &mut store)?;
-    assert!(Arc::ptr_eq(first.model(), second.model()));
+    assert!(ResourceLease::ptr_eq(first.model(), second.model()));
     assert!(Arc::ptr_eq(first.plan(), second.plan()));
     let eager = solarity_rendering::WorldModelMeshPlan::prepare(first.model())?;
     assert_eq!(first.plan().vertex_bytes(), eager.vertex_bytes());

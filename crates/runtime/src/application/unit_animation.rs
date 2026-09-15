@@ -6,6 +6,7 @@ pub(super) mod passenger;
 mod vehicle;
 
 use ground::UnitGroundPose;
+use solarity_asset::ResourceLease;
 
 #[cfg(test)]
 #[path = "../../tests/application/unit_animation.rs"]
@@ -244,7 +245,7 @@ impl UnitAnimationScene {
     pub fn bind(
         &mut self,
         identity: WorldObjectIdentity,
-        model: &Arc<DecodedM2Model>,
+        model: &ResourceLease<DecodedM2Model>,
         animations: &Arc<AnimationDataCatalog>,
         input: UnitAnimationInput,
     ) {
@@ -255,7 +256,7 @@ impl UnitAnimationScene {
         } else {
             let mut replacement = UnitAnimationBehavior::new(
                 identity,
-                Arc::clone(model),
+                ResourceLease::clone(model),
                 Arc::clone(animations),
                 input,
                 self.scene_time_ms,
@@ -341,7 +342,7 @@ impl From<u16> for UnitSequenceRequest {
 /// The unit owns playback across GPU and equipment/texture replacements.
 pub(super) struct UnitAnimationBehavior {
     identity: WorldObjectIdentity,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     animations: Arc<AnimationDataCatalog>,
     input: Cell<UnitAnimationInput>,
     processed_stand: Cell<u8>,
@@ -406,7 +407,7 @@ fn body_rotation(angle: f32) -> Mat4 {
 impl UnitAnimationBehavior {
     pub fn new(
         identity: WorldObjectIdentity,
-        model: Arc<DecodedM2Model>,
+        model: ResourceLease<DecodedM2Model>,
         animations: Arc<AnimationDataCatalog>,
         input: UnitAnimationInput,
         scene_time_ms: u32,

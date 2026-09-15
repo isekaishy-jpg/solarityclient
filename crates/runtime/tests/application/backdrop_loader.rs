@@ -1,5 +1,6 @@
 //! Regression tests for worker-owned backdrop residency and admission.
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
@@ -155,7 +156,7 @@ fn demand_reuses_worker_model_after_selection_changes() -> Result<(), Box<dyn Er
         .poll(&path, &cpu)?
         .ok_or("ready model was deferred")?;
     assert!(Arc::ptr_eq(&loaded, &reused));
-    assert!(Arc::ptr_eq(&loaded.model, &reused.model));
+    assert!(ResourceLease::ptr_eq(&loaded.model, &reused.model));
     assert_eq!(loaded.model.path(), &path);
     assert!(matches!(
         &loaded.textures[..],

@@ -1,7 +1,6 @@
 //! Shared lifetime and path lookup for decoded build-12340 M2 models.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use super::resource::{ResourceCache, ResourceLease};
 
 use crate::model::canonical_model_path;
 use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedM2Model};
@@ -9,11 +8,11 @@ use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedM2Model}
 /// Process-local shared cache of immutable decoded M2 and SKIN data.
 ///
 /// The owner remains single-threaded and explicit. Individual model values use
-/// [`Arc`] because scene instances and render preparation legitimately retain
+/// [`ResourceLease`] because scene instances and render preparation legitimately retain
 /// the same large immutable model concurrently, including HD replacements.
 #[derive(Default)]
 pub struct M2ModelCache {
-    models: HashMap<AssetResourceKey, Arc<DecodedM2Model>>,
+    models: ResourceCache<AssetResourceKey, DecodedM2Model>,
 }
 
 impl M2ModelCache {
@@ -64,30 +63,23 @@ impl M2ModelCache {
         &mut self,
         store: &mut AssetStore,
         path: &AssetPath,
-    ) -> Result<Arc<DecodedM2Model>, AssetError> {
+    ) -> Result<ResourceLease<DecodedM2Model>, AssetError> {
         let canonical_path = Self::canonical_path(path)?;
         let key = AssetResourceKey::new(store.namespace(), canonical_path.clone());
         if let Some(model) = self.models.get(&key) {
-            return Ok(Arc::clone(model));
+            return Ok(model);
         }
 
-        let model = Arc::new(DecodedM2Model::load_primary_profile(
-            store,
-            &canonical_path,
-        )?);
-        self.models.insert(key, Arc::clone(&model));
-        Ok(model)
+        let model = DecodedM2Model::load_primary_profile(store, &canonical_path)?;
+        self.models.insert(key, model)
     }
 
-    /// Releases entries held only by the cache and returns the removal count.
+    /// Visits final-release notifications and returns the number of collected entries.
     ///
-    /// This mirrors stock's explicit M2 cache garbage-collection boundary.
-    /// Models retained by a scene instance survive without locks or a guessed
-    /// age/capacity eviction policy.
+    /// This preserves the existing explicit collection boundary. Live scene
+    /// leases retain the same immutable payload; only release metadata is locked.
+    /// Stock-qualified timed retention remains a separate policy contract.
     pub fn collect_unused(&mut self) -> usize {
-        let before = self.models.len();
-        self.models
-            .retain(|_path, model| Arc::strong_count(model) > 1);
-        before - self.models.len()
+        self.models.collect_unused()
     }
 }

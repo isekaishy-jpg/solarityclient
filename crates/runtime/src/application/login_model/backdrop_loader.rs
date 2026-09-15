@@ -4,6 +4,7 @@
 #[path = "../../../tests/application/backdrop_loader.rs"]
 mod tests;
 
+use solarity_asset::ResourceLease;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -19,7 +20,7 @@ use super::{RuntimeGlueModelError, load_glue_model_generation};
 
 /// Immutable archive results shared by prewarm and selected-scene preparation.
 pub(super) struct GlueBackdropAssets {
-    pub(super) model: Arc<DecodedM2Model>,
+    pub(super) model: ResourceLease<DecodedM2Model>,
     pub(super) textures: Vec<GlueM2Texture>,
 }
 

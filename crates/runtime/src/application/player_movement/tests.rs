@@ -1,4 +1,5 @@
 use super::*;
+use solarity_asset::ResourceLease;
 use solarity_systems::{MovementCollisionTriangle, MovementCollisionVolume, MovementGeometry};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -29,7 +30,7 @@ fn blood_elf_twirl_survives_live_movement_and_pose_sampling() -> TestResult {
         let path = AssetPath::new(format!(
             "Character\\BloodElf\\{gender}\\BloodElf{gender}.m2"
         ))?;
-        let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+        let model = ResourceLease::new(DecodedM2Model::load(&mut store, &path)?);
         let (world, mut mover) = owner()?;
         let mut scene = UnitAnimationScene::default();
         let initial = UnitAnimationInput::new(

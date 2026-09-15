@@ -1,6 +1,6 @@
 //! Point sampling over placed build-12340 WMO liquid surfaces.
 
-use std::sync::Arc;
+use solarity_asset::ResourceLease;
 
 use glam::{Mat4, Vec2, Vec3};
 use solarity_asset::{DecodedWorldModel, DecodedWorldModelGroup};
@@ -58,7 +58,7 @@ pub enum WorldModelLiquidError {
 
 /// One shared WMO generation's liquid surfaces under an owning transform.
 pub struct PlacedWorldModelLiquid {
-    model: Arc<DecodedWorldModel>,
+    model: ResourceLease<DecodedWorldModel>,
     draws: Vec<WorldModelLiquidDraw>,
 }
 
@@ -70,7 +70,7 @@ impl PlacedWorldModelLiquid {
     /// Returns [`WorldModelLiquidError`] when the placement or transformed
     /// authored geometry is invalid.
     pub fn prepare(
-        model: Arc<DecodedWorldModel>,
+        model: ResourceLease<DecodedWorldModel>,
         position: Vec3,
         rotation_degrees: Vec3,
         scale: f32,
@@ -138,7 +138,7 @@ impl PlacedWorldModelLiquid {
 
     /// Returns the canonical shared WMO root generation.
     #[must_use]
-    pub fn model(&self) -> &Arc<DecodedWorldModel> {
+    pub fn model(&self) -> &ResourceLease<DecodedWorldModel> {
         &self.model
     }
 }

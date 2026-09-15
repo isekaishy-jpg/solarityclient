@@ -1,5 +1,6 @@
 //! Native transport behavior ownership, admission clocks, and pose publication.
 
+use solarity_asset::ResourceLease;
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
@@ -204,7 +205,7 @@ impl GameObjectTransportBehavior {
     pub(super) fn attach_model(
         &self,
         display_id: u32,
-        model: &Arc<DecodedM2Model>,
+        model: &ResourceLease<DecodedM2Model>,
         scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {

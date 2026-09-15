@@ -1,6 +1,7 @@
 //! Registered units and attached effects use owner fog through portal transitions.
 
 use super::*;
+use solarity_asset::ResourceLease;
 
 #[test]
 fn registered_owner_fog_reaches_meshes_particles_and_attachments() -> Result<(), Box<dyn Error>> {
@@ -33,7 +34,7 @@ fn verify(moving: bool) -> Result<(), Box<dyn Error>> {
     let liquids = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
     let displays = GameObjectDisplayCatalog::load(&mut store)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Receiver.m2")?,
     )?);

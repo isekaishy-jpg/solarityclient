@@ -1,6 +1,7 @@
 //! Original liquid candidate selection and complete native collision planes.
 
-use std::{error::Error, io::Cursor, sync::Arc};
+use solarity_asset::ResourceLease;
+use std::{error::Error, io::Cursor};
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{
@@ -241,7 +242,7 @@ fn world_model(
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let model = Arc::new(DecodedWorldModel::load(
+    let model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Liquid.wmo")?,
     )?);

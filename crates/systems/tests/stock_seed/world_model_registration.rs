@@ -1,6 +1,7 @@
 //! Original-executable WMO spatial registration probes over decoded MPQ fixtures.
 
-use std::{error::Error, sync::Arc};
+use solarity_asset::ResourceLease;
+use std::error::Error;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{
@@ -41,7 +42,7 @@ fn group_membership_matches_original_interior_exterior_bounds_and_order()
             .collect::<Result<Vec<_>, _>>()?;
         let flags = [fields[1], fields[2], fields[3], fields[4]];
         let model = if let Some(model) = models.get(&flags) {
-            Arc::clone(model)
+            ResourceLease::clone(model)
         } else {
             let (root, group) = membership_fixture(flags.map(|v| v as u32));
             let fixture = Fixture::new(&[
@@ -70,11 +71,11 @@ fn group_membership_matches_original_interior_exterior_bounds_and_order()
                 ClientDataRoot::new(fixture.data_root())?,
                 Locale::EnUs,
             )?)?;
-            let model = Arc::new(DecodedWorldModel::load(
+            let model = ResourceLease::new(DecodedWorldModel::load(
                 &mut store,
                 &AssetPath::new("World\\Members.wmo")?,
             )?);
-            models.insert(flags, Arc::clone(&model));
+            models.insert(flags, ResourceLease::clone(&model));
             model
         };
         let inverse = transforms[fields[0] as usize];
@@ -170,7 +171,7 @@ fn scene_registration_matches_original_banks_fallbacks_ties_and_terrain()
                 ClientDataRoot::new(fixture.data_root())?,
                 Locale::EnUs,
             )?)?;
-            let model = Arc::new(DecodedWorldModel::load(
+            let model = ResourceLease::new(DecodedWorldModel::load(
                 &mut store,
                 &AssetPath::new("World\\Scene.wmo")?,
             )?);
@@ -331,13 +332,15 @@ fn placed_floor_light_uses_decoded_colors_face_fallback_and_current_transform()
             ClientDataRoot::new(fixture.data_root())?,
             Locale::EnUs,
         )?)?;
-        let model = Arc::new(DecodedWorldModel::load(
+        let model = ResourceLease::new(DecodedWorldModel::load(
             &mut store,
             &AssetPath::new("World\\FloorLight.wmo")?,
         )?);
         for transform in transforms {
-            let placement =
-                PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), transform)?;
+            let placement = PlacedWorldModelCollision::prepare_transform(
+                ResourceLease::clone(&model),
+                transform,
+            )?;
             for point in 0..8 {
                 for fallback in 0..2 {
                     let record = records[point * 12 + usize::from(flags != 0) * 6 + 2 + fallback];
@@ -401,7 +404,7 @@ fn floor_probe_rejects_selected_cycles_invalid_axes_and_negative_children()
             ClientDataRoot::new(fixture.data_root())?,
             Locale::EnUs,
         )?)?;
-        let model = Arc::new(DecodedWorldModel::load(
+        let model = ResourceLease::new(DecodedWorldModel::load(
             &mut store,
             &AssetPath::new("World\\Portals.wmo")?,
         )?);
@@ -490,7 +493,7 @@ fn root_registration_matches_original_group_flags_containment_and_portal_precede
             ClientDataRoot::new(fixture.data_root())?,
             Locale::EnUs,
         )?)?;
-        let model = Arc::new(DecodedWorldModel::load(
+        let model = ResourceLease::new(DecodedWorldModel::load(
             &mut store,
             &AssetPath::new("World\\Portals.wmo")?,
         )?);
@@ -580,7 +583,7 @@ fn floor_probe_matches_original_primary_fallback_cache_and_bsp_order() -> Result
             ClientDataRoot::new(fixture.data_root())?,
             Locale::EnUs,
         )?)?;
-        let model = Arc::new(DecodedWorldModel::load(
+        let model = ResourceLease::new(DecodedWorldModel::load(
             &mut store,
             &AssetPath::new("World\\Portals.wmo")?,
         )?);
@@ -667,7 +670,7 @@ fn scene_camera_bsp_matches_native_face_masks_and_endpoint_rounding() -> Result<
                 ClientDataRoot::new(fixture.data_root())?,
                 Locale::EnUs,
             )?)?;
-            let model = Arc::new(DecodedWorldModel::load(
+            let model = ResourceLease::new(DecodedWorldModel::load(
                 &mut store,
                 &AssetPath::new("World\\Portals.wmo")?,
             )?);

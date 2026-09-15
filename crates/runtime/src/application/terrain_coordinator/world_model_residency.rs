@@ -1,5 +1,6 @@
 //! Deduplicated WMO presentation residency joined to placed collision.
 
+use solarity_asset::{ResourceLease, ResourceWeak};
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
@@ -26,7 +27,7 @@ use super::m2_residency::ResidentM2SceneBuilder;
 #[derive(Default)]
 pub(in crate::application) struct ResidentWorldModelCache {
     models: WmoModelCache,
-    plans: HashMap<AssetPath, (Weak<DecodedWorldModel>, Weak<WorldModelMeshPlan>)>,
+    plans: HashMap<AssetPath, (ResourceWeak<DecodedWorldModel>, Weak<WorldModelMeshPlan>)>,
 }
 
 impl ResidentWorldModelCache {
@@ -38,9 +39,10 @@ impl ResidentWorldModelCache {
         &mut self,
         store: &mut AssetStore,
         path: &AssetPath,
-    ) -> Result<(Arc<DecodedWorldModel>, Arc<WorldModelMeshPlan>), RuntimeTerrainError> {
+    ) -> Result<(ResourceLease<DecodedWorldModel>, Arc<WorldModelMeshPlan>), RuntimeTerrainError>
+    {
         let model = self.models.load(store, path)?;
-        let generation = Arc::downgrade(&model);
+        let generation = ResourceLease::downgrade(&model);
         let retained = self.plans.get(path).and_then(|(previous, plan)| {
             previous
                 .ptr_eq(&generation)
@@ -61,7 +63,7 @@ impl ResidentWorldModelCache {
     pub(in crate::application) fn collect_unused(&mut self) -> usize {
         let removed = self.models.collect_unused();
         self.plans
-            .retain(|_, (model, plan)| model.strong_count() > 0 && plan.strong_count() > 0);
+            .retain(|_, (model, plan)| model.is_alive() && plan.strong_count() > 0);
         removed
     }
 }
@@ -85,7 +87,7 @@ pub(in crate::application) enum ResidentWorldModelMaterialTextures {
 
 /// One decoded root/group generation and its exact MOMT texture bindings.
 pub(in crate::application) struct ResidentWorldModelSource {
-    model: Arc<DecodedWorldModel>,
+    model: ResourceLease<DecodedWorldModel>,
     plan: Arc<WorldModelMeshPlan>,
     materials: Vec<ResidentWorldModelMaterialTextures>,
     liquids: Vec<ResidentWorldModelLiquidBatch>,
@@ -117,7 +119,7 @@ impl ResidentWorldModelSource {
     }
 
     /// Returns the immutable root/group generation selected by MPQ priority.
-    pub(in crate::application) const fn model(&self) -> &Arc<DecodedWorldModel> {
+    pub(in crate::application) const fn model(&self) -> &ResourceLease<DecodedWorldModel> {
         &self.model
     }
 
@@ -308,13 +310,13 @@ fn prepare_world_model_placements<'placement>(
         let position = Vec3::from_array(placement.position());
         let rotation_degrees = Vec3::from_array(placement.rotation());
         collision.add(PlacedWorldModelCollision::prepare(
-            Arc::clone(source.model()),
+            ResourceLease::clone(source.model()),
             position,
             rotation_degrees,
             1.0,
         )?);
         liquids.add(PlacedWorldModelLiquid::prepare(
-            Arc::clone(source.model()),
+            ResourceLease::clone(source.model()),
             position,
             rotation_degrees,
             1.0,

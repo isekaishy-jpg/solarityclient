@@ -1,7 +1,6 @@
 //! Shared lifetime and path lookup for decoded build-12340 WMO generations.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use super::resource::{ResourceCache, ResourceLease};
 
 use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedWorldModel};
 
@@ -9,10 +8,10 @@ use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedWorldMod
 ///
 /// One cache entry owns the root selected for a virtual path plus every
 /// independently resolved numbered group. Scene placements retain that same
-/// generation through [`Arc`] instead of decoding it once per ADT reference.
+/// generation through [`ResourceLease`] instead of decoding it once per ADT reference.
 #[derive(Default)]
 pub struct WmoModelCache {
-    models: HashMap<AssetResourceKey, Arc<DecodedWorldModel>>,
+    models: ResourceCache<AssetResourceKey, DecodedWorldModel>,
 }
 
 impl WmoModelCache {
@@ -48,25 +47,21 @@ impl WmoModelCache {
         &mut self,
         store: &mut AssetStore,
         path: &AssetPath,
-    ) -> Result<Arc<DecodedWorldModel>, AssetError> {
+    ) -> Result<ResourceLease<DecodedWorldModel>, AssetError> {
         let key = AssetResourceKey::new(store.namespace(), path.clone());
         if let Some(model) = self.models.get(&key) {
-            return Ok(Arc::clone(model));
+            return Ok(model);
         }
 
-        let model = Arc::new(DecodedWorldModel::load(store, path)?);
-        self.models.insert(key, Arc::clone(&model));
-        Ok(model)
+        let model = DecodedWorldModel::load(store, path)?;
+        self.models.insert(key, model)
     }
 
-    /// Releases entries held only by the cache and returns the removal count.
+    /// Visits final-release notifications and returns the number of collected entries.
     ///
     /// Generations retained by resident placements survive collection. No
     /// guessed age, capacity, or HD-specific eviction policy is introduced.
     pub fn collect_unused(&mut self) -> usize {
-        let before = self.models.len();
-        self.models
-            .retain(|_path, model| Arc::strong_count(model) > 1);
-        before - self.models.len()
+        self.models.collect_unused()
     }
 }

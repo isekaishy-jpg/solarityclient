@@ -7,6 +7,7 @@ mod interval;
 
 use super::*;
 use solarity_asset::GameObjectDisplayCatalog;
+use solarity_asset::ResourceLease;
 use solarity_ecs::{
     GameObjectMovement, GameObjectPresentation, GameObjectTransport, ObjectKind, ObjectPresentation,
 };
@@ -18,7 +19,7 @@ use std::sync::Arc;
 
 struct Scene {
     _fixture: ClientFixture,
-    model: Arc<solarity_asset::DecodedM2Model>,
+    model: ResourceLease<solarity_asset::DecodedM2Model>,
     terrain: RuntimeTerrainCoordinator,
     objects: RuntimeGameObjectPresentation,
     world: ActiveWorld,
@@ -94,7 +95,7 @@ impl Scene {
         let maps = MapCatalog::load(&mut store)?;
         let displays = GameObjectDisplayCatalog::load(&mut store)?;
         let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-        let model = Arc::new(solarity_asset::DecodedM2Model::load(
+        let model = ResourceLease::new(solarity_asset::DecodedM2Model::load(
             &mut store,
             &solarity_asset::AssetPath::new("World\\Fixture\\Collision.m2")?,
         )?);
@@ -454,12 +455,12 @@ fn retained_wmo_matrix_updates_match_fresh_placements_and_fail_transactionally()
         ClientDataRoot::new(scene._fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let model = Arc::new(solarity_asset::DecodedWorldModel::load(
+    let model = ResourceLease::new(solarity_asset::DecodedWorldModel::load(
         &mut store,
         &solarity_asset::AssetPath::new("World\\Wmo\\Fixture.wmo")?,
     )?);
     let mut placed =
-        PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), Mat4::IDENTITY)?;
+        PlacedWorldModelCollision::prepare_transform(ResourceLease::clone(&model), Mat4::IDENTITY)?;
     let bounds = MovementCollisionBounds::new(Vec3::splat(-40.), Vec3::splat(40.))?;
     let mut actual = Vec::new();
     let mut expected = Vec::new();
@@ -477,8 +478,10 @@ fn retained_wmo_matrix_updates_match_fresh_placements_and_fail_transactionally()
             Mat4::from_translation(Vec3::new(-8., 4., -2.)),
         ] {
             placed.set_transform(transform)?;
-            let mut fresh =
-                PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), transform)?;
+            let mut fresh = PlacedWorldModelCollision::prepare_transform(
+                ResourceLease::clone(&model),
+                transform,
+            )?;
             actual.clear();
             expected.clear();
             placed.append_movement(bounds, cache, &mut actual)?;
@@ -547,7 +550,7 @@ fn replicated_wmo_roots_collect_doodads_and_register_nearby_props_after_motion()
     ));
     // Registration must select the replicated transformed-root bank.
     let mut store = scene.objects.object_placement(10).ok_or("prop placement")?;
-    let model = Arc::clone(&scene.model);
+    let model = ResourceLease::clone(&scene.model);
     let mut placed = PlacedM2Collision::prepare_transform(model, store.matrix())?;
     let mut registration = RuntimeMovementRegistrationQuery::new();
     scene.terrain.register_game_object_movement(

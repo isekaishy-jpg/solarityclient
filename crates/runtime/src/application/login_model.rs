@@ -5,6 +5,7 @@ mod script_models;
 
 use backdrop_loader::GlueBackdropLoader;
 use script_models::GlueScriptModelInstance;
+use solarity_asset::ResourceLease;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -121,7 +122,7 @@ struct ActiveGlueModel {
     key: GlueModelKey,
     environment: GlueModelEnvironment,
     local_light_count: M2LocalLightCount,
-    model: Arc<solarity_asset::DecodedM2Model>,
+    model: ResourceLease<solarity_asset::DecodedM2Model>,
     frame: M2Frame,
 }
 
@@ -154,7 +155,7 @@ struct GlueModelGenerationKey {
 struct PendingGlueModel {
     generation: GlueModelGenerationKey,
     local_light_count: M2LocalLightCount,
-    model: Arc<solarity_asset::DecodedM2Model>,
+    model: ResourceLease<solarity_asset::DecodedM2Model>,
     textures: Vec<GlueM2Texture>,
     submitted_at: std::time::Instant,
     task: CpuTask<Result<PreparedGlueCpuSource, RuntimeTerrainFrameError>>,
@@ -163,7 +164,7 @@ struct PendingGlueModel {
 /// Archive-decoded backdrop state waiting for its immutable render plan.
 struct LoadedGlueBackdrop {
     generation: GlueModelGenerationKey,
-    model: Arc<solarity_asset::DecodedM2Model>,
+    model: ResourceLease<solarity_asset::DecodedM2Model>,
     textures: Vec<GlueM2Texture>,
 }
 
@@ -193,17 +194,18 @@ fn glue_character_cpu_models(
     pet_light_count: M2LocalLightCount,
 ) -> Vec<(
     M2GlueCpuSourceKey,
-    Arc<solarity_asset::DecodedM2Model>,
+    ResourceLease<solarity_asset::DecodedM2Model>,
     M2ModelOrientation,
 )> {
     let mut seen = HashSet::new();
     let mut models = Vec::new();
-    let mut push = |model: &Arc<solarity_asset::DecodedM2Model>, light_count, orientation| {
-        let key = M2GlueCpuSourceKey::new(model.path().clone(), light_count);
-        if seen.insert((key.clone(), orientation)) {
-            models.push((key, Arc::clone(model), orientation));
-        }
-    };
+    let mut push =
+        |model: &ResourceLease<solarity_asset::DecodedM2Model>, light_count, orientation| {
+            let key = M2GlueCpuSourceKey::new(model.path().clone(), light_count);
+            if seen.insert((key.clone(), orientation)) {
+                models.push((key, ResourceLease::clone(model), orientation));
+            }
+        };
     push(
         input.model(),
         character_light_count,
@@ -224,7 +226,7 @@ fn glue_character_cpu_models(
 
 /// Measures the worker-owned immutable preparation stage without main-thread wait time.
 fn prepare_glue_cpu_task(
-    model: &Arc<solarity_asset::DecodedM2Model>,
+    model: &ResourceLease<solarity_asset::DecodedM2Model>,
     local_light_count: M2LocalLightCount,
 ) -> Result<PreparedGlueCpuSource, RuntimeTerrainFrameError> {
     let started = std::time::Instant::now();
@@ -241,7 +243,13 @@ fn load_glue_model_generation(
     textures: &mut BlpTextureCache,
     store: &mut AssetStore,
     path: &AssetPath,
-) -> Result<(Arc<solarity_asset::DecodedM2Model>, Vec<GlueM2Texture>), RuntimeGlueModelError> {
+) -> Result<
+    (
+        ResourceLease<solarity_asset::DecodedM2Model>,
+        Vec<GlueM2Texture>,
+    ),
+    RuntimeGlueModelError,
+> {
     let asset_started = std::time::Instant::now();
     let model = models.load(store, path)?;
     let mut texture_sources = Vec::with_capacity(model.textures().len());
@@ -309,7 +317,7 @@ fn load_glue_model_generation(
 /// Immutable Vulkan resources retained across Glue backdrop switches.
 struct PreparedGlueModel {
     local_light_count: M2LocalLightCount,
-    model: Arc<solarity_asset::DecodedM2Model>,
+    model: ResourceLease<solarity_asset::DecodedM2Model>,
     source: crate::application::terrain_frame::m2::M2GlueGpuSource,
 }
 
@@ -547,10 +555,10 @@ impl RuntimeGlueModelScene {
             .backdrop_assets
             .load_blocking(&path, cpu)
             .map_err(|source| RuntimeGlueModelError::BackdropLoad { path, source })?;
-        let model = Arc::clone(&loaded.model);
+        let model = ResourceLease::clone(&loaded.model);
         let textures = loaded.textures.clone();
         let local_light_count = maximum_glue_light_count(&model, external_directional_light);
-        let task_model = Arc::clone(&model);
+        let task_model = ResourceLease::clone(&model);
         let task = cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))?;
         self.pending.push(PendingGlueModel {
             generation,
@@ -640,7 +648,7 @@ impl RuntimeGlueModelScene {
                 {
                     self.loaded_backdrops.push_back(LoadedGlueBackdrop {
                         generation,
-                        model: Arc::clone(&loaded.model),
+                        model: ResourceLease::clone(&loaded.model),
                         textures: loaded.textures.clone(),
                     });
                 }
@@ -686,7 +694,7 @@ impl RuntimeGlueModelScene {
             && let Some(loaded) = self.loaded_backdrops.pop_front()
         {
             let local_light_count = maximum_glue_light_count(&loaded.model, true);
-            let task_model = Arc::clone(&loaded.model);
+            let task_model = ResourceLease::clone(&loaded.model);
             match cpu.try_submit_for(solarity_cpu::CpuService::Speculative, move || {
                 prepare_glue_cpu_task(&task_model, local_light_count)
             }) {
@@ -807,17 +815,17 @@ impl RuntimeGlueModelScene {
             .active
             .as_ref()
             .filter(|active| active.key.path == key.path)
-            .map(|active| Arc::clone(&active.model))
+            .map(|active| ResourceLease::clone(&active.model))
             .or_else(|| {
                 self.prepared
                     .get(&generation)
-                    .map(|prepared| Arc::clone(&prepared.model))
+                    .map(|prepared| ResourceLease::clone(&prepared.model))
             })
             .or_else(|| {
                 self.pending
                     .iter()
                     .find(|pending| pending.generation == generation)
-                    .map(|pending| Arc::clone(&pending.model))
+                    .map(|pending| ResourceLease::clone(&pending.model))
             });
         let mut newly_loaded_generation = None;
         let lighting_model = match known_model {
@@ -833,7 +841,7 @@ impl RuntimeGlueModelScene {
                 else {
                     return Ok(RuntimeGlueModelPoll::Pending);
                 };
-                let model = Arc::clone(&loaded.model);
+                let model = ResourceLease::clone(&loaded.model);
                 newly_loaded_generation = Some(loaded);
                 model
             }
@@ -969,9 +977,9 @@ impl RuntimeGlueModelScene {
         let Some(loaded) = loaded else {
             return Ok(RuntimeGlueModelPoll::Pending);
         };
-        let model = Arc::clone(&loaded.model);
+        let model = ResourceLease::clone(&loaded.model);
         let environment_light_count = maximum_glue_light_count(&model, external_directional_light);
-        let task_model = Arc::clone(&model);
+        let task_model = ResourceLease::clone(&model);
         let task = match cpu
             .try_submit(move || prepare_glue_cpu_task(&task_model, environment_light_count))
         {
@@ -1019,7 +1027,7 @@ impl RuntimeGlueModelScene {
                     continue;
                 }
                 let local_light_count = key.local_light_count();
-                let task_model = Arc::clone(model);
+                let task_model = ResourceLease::clone(model);
                 let task = match cpu
                     .try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))
                 {
@@ -1127,7 +1135,7 @@ impl RuntimeGlueModelScene {
         let gpu_started = std::time::Instant::now();
         let source = M2Frame::prepare_glue_gpu_source(
             renderer,
-            Arc::clone(&pending.model),
+            ResourceLease::clone(&pending.model),
             &pending.textures,
             &cpu_source.source,
             pending.local_light_count,
@@ -1170,7 +1178,7 @@ impl RuntimeGlueModelScene {
             .prepared
             .get(&generation)
             .ok_or(RuntimeGlueModelError::PendingState)?;
-        let model = Arc::clone(&prepared.model);
+        let model = ResourceLease::clone(&prepared.model);
         let local_light_count = prepared.local_light_count;
         let source = prepared.source.instantiate();
         let mut frame = M2Frame::activate_glue_gpu_source(

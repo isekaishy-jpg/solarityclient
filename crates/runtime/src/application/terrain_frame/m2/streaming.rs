@@ -1,5 +1,6 @@
 //! Static M2 placement ownership across overlapping resident ADTs.
 
+use solarity_asset::ResourceLease;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -41,12 +42,12 @@ impl StaticM2Residency {
     pub(super) fn contains_source(
         &self,
         sources: &[Option<M2GpuSource>],
-        model: &Arc<solarity_asset::DecodedM2Model>,
+        model: &ResourceLease<solarity_asset::DecodedM2Model>,
     ) -> bool {
         self.source_indices.iter().any(|&index| {
             sources[index]
                 .as_ref()
-                .is_some_and(|source| Arc::ptr_eq(&source.model, model))
+                .is_some_and(|source| ResourceLease::ptr_eq(&source.model, model))
         })
     }
 
@@ -177,7 +178,7 @@ impl M2Frame {
         let mut sources = HashMap::with_capacity(self.static_residency.source_indices.len());
         for &source_index in &self.static_residency.source_indices {
             if let Some(source) = self.sources[source_index].as_ref() {
-                sources.insert(Arc::as_ptr(&source.model), source_index);
+                sources.insert(ResourceLease::as_ptr(&source.model), source_index);
             }
         }
         let mut added = Vec::new();
@@ -197,19 +198,18 @@ impl M2Frame {
                         source_count: scene.sources().len(),
                     },
                 )?;
-                let identity = Arc::as_ptr(source.model());
+                let identity = ResourceLease::as_ptr(source.model());
                 let source_index = if let Some(&index) = sources.get(&identity) {
                     index
                 } else {
-                    let gpu = if let Some(index) = self
-                        .prepared_static
-                        .iter()
-                        .position(|prepared| Arc::ptr_eq(&prepared.model, source.model()))
-                    {
-                        self.prepared_static.swap_remove(index).source
-                    } else {
-                        prepare_source(renderer, source)?
-                    };
+                    let gpu =
+                        if let Some(index) = self.prepared_static.iter().position(|prepared| {
+                            ResourceLease::ptr_eq(&prepared.model, source.model())
+                        }) {
+                            self.prepared_static.swap_remove(index).source
+                        } else {
+                            prepare_source(renderer, source)?
+                        };
                     let index = self.sources.len();
                     self.sources.push(gpu);
                     self.static_residency.source_indices.push(index);

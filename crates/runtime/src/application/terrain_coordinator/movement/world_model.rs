@@ -1,7 +1,7 @@
 //! Replicated WMO roots share native append order with authored MODF owners.
 
+use solarity_asset::ResourceLease;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use glam::Mat4;
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
@@ -83,8 +83,10 @@ impl GameObjectRoot {
         transform: Mat4,
         display_id: u32,
     ) -> Result<Self, RuntimeMovementRegistrationError> {
-        let collision =
-            PlacedWorldModelCollision::prepare_transform(Arc::clone(source.model()), transform)?;
+        let collision = PlacedWorldModelCollision::prepare_transform(
+            ResourceLease::clone(source.model()),
+            transform,
+        )?;
         let doodads = source
             .doodads()
             .iter()
@@ -93,7 +95,7 @@ impl GameObjectRoot {
                     index: doodad.index,
                     local_transform: doodad.local_transform,
                     collision: PlacedM2Collision::prepare_transform(
-                        Arc::clone(doodad.source.model()),
+                        ResourceLease::clone(doodad.source.model()),
                         transform * doodad.local_transform,
                     )?,
                 })
@@ -177,7 +179,7 @@ impl ResidentGameObjectWorldModels {
             .roots
             .get_mut(&identity)
             .ok_or(RuntimeStaticMovementError::InvalidReference)?;
-        if !Arc::ptr_eq(root.collision.model(), source.model())
+        if !ResourceLease::ptr_eq(root.collision.model(), source.model())
             || root.transform != placement.matrix()
         {
             return Err(RuntimeStaticMovementError::InvalidReference);
@@ -294,7 +296,7 @@ impl ResidentMovementScene {
             let transform = placement.matrix();
             if let Some(root) = models.roots.get_mut(&identity)
                 && root.display_id == instance.display_id()
-                && Arc::ptr_eq(root.collision.model(), source.model())
+                && ResourceLease::ptr_eq(root.collision.model(), source.model())
             {
                 if root.transform != transform {
                     let previous = root.collision.root_bounds();

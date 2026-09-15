@@ -1,6 +1,7 @@
 //! Shared immutable mesh preparation and incremental driver pipeline admission.
 
 use super::super::{RuntimeTerrainFrameError, STOCK_HIGH_CAPABILITY_PROFILE};
+use solarity_asset::ResourceLease;
 use solarity_asset::{AssetPath, DecodedM2Model};
 use solarity_rendering::{
     M2LocalLightCount, M2MaterialState, M2MeshPlan, M2ModelOrientation, M2ParticleSpirvCompiler,
@@ -13,7 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// CPU-only M2 generation prepared away from the presentation thread.
 pub(in crate::application) struct M2CpuSource {
-    _model: Arc<DecodedM2Model>,
+    _model: ResourceLease<DecodedM2Model>,
     pub(in crate::application) plan: Arc<M2MeshPlan>,
     pub(super) mesh_programs: HashMap<M2SpirvKey, M2SpirvProgram>,
     pub(super) particle_programs: HashMap<M2MaterialState, M2ParticleSpirvProgram>,
@@ -170,10 +171,10 @@ static M2_SOURCES: OnceLock<Mutex<M2SourceCache>> = OnceLock::new();
 
 /// Builds or shares the immutable mesh plan and required prebuilt shader selections.
 pub(in crate::application) fn prepare_m2_cpu_source(
-    model: &Arc<DecodedM2Model>,
+    model: &ResourceLease<DecodedM2Model>,
     local_light_count: M2LocalLightCount,
 ) -> Result<Arc<M2CpuSource>, RuntimeTerrainFrameError> {
-    let key = (Arc::as_ptr(model) as usize, local_light_count);
+    let key = (ResourceLease::as_ptr(model) as usize, local_light_count);
     let sources = M2_SOURCES.get_or_init(|| Mutex::new(HashMap::new()));
     {
         let mut sources = sources
@@ -312,7 +313,7 @@ pub(in crate::application) fn prepare_m2_cpu_source(
         }
     }
     let source = Arc::new(M2CpuSource {
-        _model: Arc::clone(model),
+        _model: ResourceLease::clone(model),
         plan,
         mesh_programs,
         particle_programs,

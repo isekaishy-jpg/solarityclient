@@ -1,5 +1,6 @@
 //! Static publication retains native placement lifetimes across source compaction.
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -57,7 +58,7 @@ fn exercise_dynamic_publications(measure: bool) -> Result<(), Box<dyn Error>> {
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
-    let model = Arc::clone(&frame.sources[0].as_ref().ok_or("source")?.model);
+    let model = ResourceLease::clone(&frame.sources[0].as_ref().ok_or("source")?.model);
     let placement = |owner, source, x| {
         let mut placement = super::m2_gpu_placement(
             source,

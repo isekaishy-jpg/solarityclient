@@ -3,6 +3,7 @@
 use super::*;
 use crate::test_support::{ClientFixture, game_object_models as models};
 use glam::Vec3;
+use solarity_asset::ResourceLease;
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ecs::{ObjectKind, WorldBootstrap, WorldMapId};
 use solarity_systems::project_object_fields;
@@ -37,7 +38,7 @@ fn fields(world: &mut ActiveWorld, fields: &[(u16, u32)]) -> Result<(), Box<dyn 
 fn owner(
     world: &ActiveWorld,
     boneless: bool,
-) -> Result<(GameObjectBehavior, Arc<DecodedM2Model>), Box<dyn Error>> {
+) -> Result<(GameObjectBehavior, ResourceLease<DecodedM2Model>), Box<dyn Error>> {
     owner_with_bounds(world, boneless, None)
 }
 
@@ -45,7 +46,7 @@ fn owner_with_bounds(
     world: &ActiveWorld,
     boneless: bool,
     collision_bounds: Option<[f32; 6]>,
-) -> Result<(GameObjectBehavior, Arc<DecodedM2Model>), Box<dyn Error>> {
+) -> Result<(GameObjectBehavior, ResourceLease<DecodedM2Model>), Box<dyn Error>> {
     let ids = [145, 146, 147, 148, 149, 150, 151, 152];
     let mut bytes = models::model_with_animations(&ids)?;
     if let Some(bounds) = collision_bounds {
@@ -69,7 +70,7 @@ fn owner_with_bounds(
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(catalog)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("World\\GameObject.m2")?,
     )?);

@@ -3,6 +3,7 @@
 use super::support::{Fixture, FixtureFile};
 use super::world_model_registration::{chunk_data_mut, floor_fixture, portal_fixture};
 use glam::{Mat4, Vec3};
+use solarity_asset::ResourceLease;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale, MapCatalog, TerrainMap};
 use solarity_asset::{AssetPath, DecodedWorldModel, LiquidTypeCatalog};
 use solarity_systems::PlacedWorldModelCollision;
@@ -64,7 +65,7 @@ fn camera_water_registration_matches_original_root_and_portal_queries() -> Resul
             ClientDataRoot::new(fixture.data_root())?,
             Locale::EnUs,
         )?)?;
-        let model = Arc::new(DecodedWorldModel::load(
+        let model = ResourceLease::new(DecodedWorldModel::load(
             &mut store,
             &AssetPath::new("World\\Camera.wmo")?,
         )?);
@@ -140,7 +141,6 @@ fn camera_water_registration_matches_original_root_and_portal_queries() -> Resul
 }
 use solarity_systems::TerrainRegistrationPoint;
 use std::error::Error;
-use std::sync::Arc;
 
 /// All arithmetic, tile admission and float outputs come from original code.
 #[test]
@@ -203,12 +203,12 @@ fn submerged_world_model_matches_original_instruction_fixtures() -> Result<(), B
     )?)?;
     let liquids = LiquidTypeCatalog::load(&mut store)?;
     for (index, words) in cases.iter().enumerate() {
-        let model = Arc::new(DecodedWorldModel::load(
+        let model = ResourceLease::new(DecodedWorldModel::load(
             &mut store,
             &AssetPath::new(format!("World\\Wmo\\Liquid{index}.wmo"))?,
         )?);
         let translated = PlacedWorldModelCollision::prepare_transform(
-            Arc::clone(&model),
+            ResourceLease::clone(&model),
             Mat4::from_translation(Vec3::new(0., 0., 32.)),
         )?;
         let placement = PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;

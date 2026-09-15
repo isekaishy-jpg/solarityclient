@@ -1,5 +1,6 @@
 //! Primary CM2Model timer owned by a transport's separate map-object handle.
 
+use solarity_asset::ResourceLease;
 use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ pub(in crate::application) struct TransportMapModel {
 /// One CPU resource lifetime and the timer borrowed by its GPU placement.
 struct ModelState {
     display_id: u32,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     playback: Rc<RefCell<M2Playback>>,
     collision: Option<PlacedM2Collision>,
 }
@@ -45,18 +46,18 @@ impl TransportMapModel {
     pub(super) fn attach(
         &self,
         display_id: u32,
-        model: &Arc<DecodedM2Model>,
+        model: &ResourceLease<DecodedM2Model>,
         phase: Option<u32>,
         scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut current = self.model.borrow_mut();
         if current.as_ref().is_none_or(|current| {
-            current.display_id != display_id || !Arc::ptr_eq(&current.model, model)
+            current.display_id != display_id || !ResourceLease::ptr_eq(&current.model, model)
         }) {
             *current = Some(ModelState {
                 display_id,
-                model: Arc::clone(model),
+                model: ResourceLease::clone(model),
                 collision: None,
                 playback: Rc::new(RefCell::new(M2Playback::default_sequence(
                     model,
@@ -111,7 +112,7 @@ impl TransportMapModel {
             collision.set_transform(placement.matrix())?;
         } else {
             current.collision = Some(PlacedM2Collision::prepare_transform(
-                Arc::clone(&current.model),
+                ResourceLease::clone(&current.model),
                 placement.matrix(),
             )?);
         }

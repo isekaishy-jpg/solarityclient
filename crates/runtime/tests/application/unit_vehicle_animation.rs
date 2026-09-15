@@ -1,6 +1,7 @@
 //! Vehicle-owned model clips use the original owner lifetime and completion phase.
 
 use super::*;
+use solarity_asset::ResourceLease;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -79,7 +80,7 @@ fn vehicle_owner() -> Result<UnitAnimationBehavior, Box<dyn Error>> {
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Character/Human/Male/HumanMale.m2")?,
     )?);

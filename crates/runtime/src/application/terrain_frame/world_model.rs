@@ -12,6 +12,7 @@ mod liquid_tests;
 #[path = "../../../tests/application/world_model_surface_frame.rs"]
 mod surface_tests;
 
+use solarity_asset::ResourceLease;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -54,7 +55,7 @@ struct LogicalDrawResource {
 
 /// One shared root/group WMO generation in renderer-local storage.
 struct WorldModelGpuSource {
-    model: Arc<solarity_asset::DecodedWorldModel>,
+    model: ResourceLease<solarity_asset::DecodedWorldModel>,
     plan: Arc<WorldModelMeshPlan>,
     mesh: WorldModelMeshHandle,
     draws: Vec<LogicalDrawResource>,
@@ -302,7 +303,7 @@ impl WorldModelFrame {
                         sources.get(placement.source_index).and_then(Option::as_ref),
                     ) {
                         (Some(GameObjectResource::WorldModel(cpu)), Some(gpu)) => {
-                            Arc::ptr_eq(cpu.model(), &gpu.model)
+                            ResourceLease::ptr_eq(cpu.model(), &gpu.model)
                         }
                         _ => false,
                     }
@@ -326,7 +327,7 @@ impl WorldModelFrame {
             .filter_map(|(index, source)| {
                 source
                     .as_ref()
-                    .map(|source| (Arc::as_ptr(&source.model), index))
+                    .map(|source| (ResourceLease::as_ptr(&source.model), index))
             })
             .collect::<HashMap<_, _>>();
         for instance in game_objects.instances() {
@@ -338,7 +339,8 @@ impl WorldModelFrame {
             else {
                 continue;
             };
-            let source_index = if let Some(index) = sources.get(&Arc::as_ptr(cpu.model())) {
+            let source_index = if let Some(index) = sources.get(&ResourceLease::as_ptr(cpu.model()))
+            {
                 *index
             } else {
                 let gpu = prepare_gpu_source(
@@ -349,7 +351,7 @@ impl WorldModelFrame {
                     &mut self.liquid_materials,
                 )?;
                 let index = self.sources.len();
-                sources.insert(Arc::as_ptr(&gpu.model), index);
+                sources.insert(ResourceLease::as_ptr(&gpu.model), index);
                 self.sources.push(Some(gpu));
                 index
             };
@@ -581,7 +583,7 @@ fn prepare_gpu_source(
     }
     profile.mark("liquids");
     Ok(WorldModelGpuSource {
-        model: Arc::clone(source.model()),
+        model: ResourceLease::clone(source.model()),
         plan,
         mesh,
         draws,

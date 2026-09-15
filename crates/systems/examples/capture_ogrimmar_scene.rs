@@ -3,7 +3,8 @@
 //! The paired native oracle reads the copied local assets and exact input floats.
 //! No installed archive data is checked into the repository.
 
-use std::{error::Error, fmt::Write, io, path::PathBuf, sync::Arc};
+use solarity_asset::ResourceLease;
+use std::{error::Error, fmt::Write, io, path::PathBuf};
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{
@@ -31,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Locale::EnUs,
     )?)?;
     let path = AssetPath::new("World/Wmo/Kalimdor/Ogrimmar/Ogrimmar.wmo")?;
-    let model = Arc::new(DecodedWorldModel::load(&mut store, &path)?);
+    let model = ResourceLease::new(DecodedWorldModel::load(&mut store, &path)?);
     // Preserve archive selection through AssetStore, including any local patches.
     std::fs::write(output.join("ogrimmar.wmo"), store.read(&path)?.bytes())?;
     for group in model.groups() {
@@ -59,7 +60,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         30.661757,
         1.,
     ]);
-    let root = PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), transform)?;
+    let root =
+        PlacedWorldModelCollision::prepare_transform(ResourceLease::clone(&model), transform)?;
     let eye = Vec3::new(1075.3798, -4500., 156.24147);
     let target = Vec3::new(1076.3646, -4500., 156.06783);
     let forward = Vec3::new(0.9848077, 0., -0.17364818);

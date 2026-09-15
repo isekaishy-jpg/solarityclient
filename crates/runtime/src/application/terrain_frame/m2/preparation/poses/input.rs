@@ -3,16 +3,16 @@
 use super::super::super::{M2GpuSource, RuntimeTerrainFrameError};
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
+use solarity_asset::ResourceLease;
 use solarity_rendering::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2BonePoseOverrides, M2FingerPoseHands,
 };
-use std::sync::Arc;
 
 /// Reusable current-frame sampling inputs and a single-consumer palette.
 pub(super) struct PoseJob {
     placement: usize,
     trace: solarity_profiling::TraceContext,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     orientation: Vec<bool>,
     clock: M2AnimationClock,
     view: Mat4,
@@ -30,7 +30,7 @@ impl PoseJob {
     }
 
     /// Pins the decoded generation while retaining scratch storage for later frames.
-    pub(super) fn new(model: Arc<DecodedM2Model>) -> Self {
+    pub(super) fn new(model: ResourceLease<DecodedM2Model>) -> Self {
         Self {
             placement: 0,
             trace: solarity_profiling::TraceContext::default(),
@@ -64,8 +64,8 @@ impl PoseJob {
     ) {
         self.placement = placement;
         self.trace = solarity_profiling::TraceContext::capture().fork("m2.pose.request");
-        if !Arc::ptr_eq(&self.model, &source.model) {
-            self.model = Arc::clone(&source.model);
+        if !ResourceLease::ptr_eq(&self.model, &source.model) {
+            self.model = ResourceLease::clone(&source.model);
         }
         self.orientation
             .clone_from(&source.model_oriented_billboard_bones);
@@ -102,7 +102,7 @@ impl PoseJob {
     /// Publishes a matching palette or leaves the ordinary consumer responsible.
     pub(super) fn take(
         &mut self,
-        model: &Arc<DecodedM2Model>,
+        model: &ResourceLease<DecodedM2Model>,
         clock: M2AnimationClock,
         view: Mat4,
         overrides: M2BonePoseOverrides<'_>,
@@ -111,7 +111,7 @@ impl PoseJob {
         // Attachments or later owner changes can alter a preselected input.
         // Exact validity includes the camera and every semantic override; a
         // stale palette is never published merely because its owner is unchanged.
-        if !Arc::ptr_eq(&self.model, model)
+        if !ResourceLease::ptr_eq(&self.model, model)
             || self.clock != clock
             || self.view != view
             || self.fingers != overrides.finger_pose

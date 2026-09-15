@@ -187,6 +187,18 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Request lifecycle, loading commands and runtime archive/voice scheduling now
   have focused folder modules.
 
+- M2 and WMO decoded-source consumers now hold typed immutable resource leases
+  throughout runtime residency, animation/pose preparation, rendering sources and
+  systems collision. Cache payload ownership is separate from consumer pins;
+  callers cannot extract an untracked owning Arc. Existing live lease clones
+  share one pin, and release/reacquire preserves the payload's pointer identity.
+- Their source caches collect registered final-release notifications rather than
+  scanning every cached model's Arc count. Each entry reserves one reusable
+  intrusive notification slot; churn coalesces, stale generations are rejected,
+  and payload destruction happens outside the release metadata lock. Existing
+  explicit collection boundaries remain; the stock-qualified timed retention
+  policy, BLP/other cache adoption and resource byte admission are still required.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
@@ -209,6 +221,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   ordered receiver lighting and end-of-frame state reclamation still have barriers.
 - Extend pending-request authority beyond the connected runtime audio loader,
   including cross-resource I/O dependencies and domain-wide shared result leases.
+  M2/WMO sources now have explicit external leases and coalesced final-release
+  delivery; their loading is not yet joined through shared request authority.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
   Request metadata and encoded payload budgets still need admission/accounting.
   Stock-evidenced animation demand and
@@ -234,7 +248,48 @@ does not establish the cause of the reported roughly 1.2 GB memory difference.
 The local census is recorded in ignored `target/archive-table-census.json`.
 No backend replacement or hidden parallel pool was introduced.
 
+## M2 retention qualification follow-up
+
+The fingerprinted stock exports identify `+0x144` as the resource's hash-table
+backlink. `0081C698` through `0081C6CA` inserts a newly constructed resource unless
+lookup flag `0x8` is set; it also repairs the successor's backlink. `0083D5B0`
+unlinks those exact fields. `0083DC90` requires both a cache owner at `+4` and
+that backlink before timestamping a final release. A lookup hit occurs before
+the insertion gate, so flag `0x8` alone does not make an existing cached hit
+unqualified. The late-readiness/animation and all caller-flag paths remain open.
+
+The expanded `tools/ghidra/model_cache_lifetime_oracle.py` ran 112 cases against
+the pinned executable on 2026-09-15. It executes the original insertion block
+with empty/nonempty buckets, flags `0`, `8`, `0x40`, `0x48`, then original release,
+reacquisition and collection. It also covers absent cache ownership and confirms
+that collection uses signed 32-bit elapsed subtraction, including the sign-bit
+boundary and forced collection. Clock, destruction and allocator free remain
+controlled boundaries; this does not emulate complete construction or gameplay.
+Results are in ignored `target/model-cache-qualification.json`. This evidence
+supports implementing qualified retention; the current M2 source cache still
+uses its existing explicit immediate collection policy.
+
 ## Checkpoint validation
+
+### Model resource leases checkpoint
+
+On 2026-09-15, formatting and workspace Clippy passed. The complete workspace
+suite passed 1,495 tests with 33 ignored, including model cache identity and
+collection, movement/collision, M2 animation/geometry and renderer stock fixtures.
+Six focused lifetime tests passed separately. They cover stale notification
+generations, release/reacquire identity, consumer survival after cache teardown,
+and destruction outside the release metadata lock.
+
+Allocation instrumentation observed zero allocations for 1,000 warm lease-clone
+and cache-hit cycles followed by final release/collection. A separate worker
+final-release window also observed zero allocations. Initial cache registration,
+decoding and reacquisition after every consumer has left remain cold allocation
+boundaries; these tests do not establish whole-frame allocation or FPS results.
+The native retention follow-up above separately passed 112 original-instruction
+cases. No numbered Testing package was produced. Logs remain in ignored
+`target/resource-leases-focused.log`, `target/resource-leases-clippy.log`,
+`target/resource-leases-workspace-tests.log` and
+`target/model-cache-qualification.json`.
 
 ### Shared pending requests and audio checkpoint
 

@@ -1,6 +1,7 @@
 //! The mounted adapter is compared with original 7385C0 submissions.
 
 use super::*;
+use solarity_asset::ResourceLease;
 
 fn add_upper_bone(bytes: &mut Vec<u8>) {
     let old = u32::from_le_bytes([bytes[0x30], bytes[0x31], bytes[0x32], bytes[0x33]]) as usize;
@@ -40,7 +41,7 @@ fn mount_and_rider_slots_match_native_ordinary_request_dispatch() -> Result<(), 
         }
         let owner = UnitAnimationBehavior::new(
             fixture.identity,
-            Arc::clone(&fixture.model),
+            ResourceLease::clone(&fixture.model),
             Arc::clone(&fixture.animations),
             mounted,
             100,

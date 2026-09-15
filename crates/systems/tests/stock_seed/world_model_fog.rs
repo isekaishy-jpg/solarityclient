@@ -2,11 +2,12 @@
 
 use super::support::{Fixture, FixtureFile};
 use glam::{Mat4, Vec3};
+use solarity_asset::ResourceLease;
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
 };
 use solarity_systems::PlacedWorldModelCollision;
-use std::{error::Error, sync::Arc};
+use std::error::Error;
 
 #[test]
 fn world_model_fog_portals_match_original_depth_flags_and_placement() -> Result<(), Box<dyn Error>>
@@ -53,14 +54,17 @@ fn world_model_fog_portals_match_original_depth_flags_and_placement() -> Result<
                 ClientDataRoot::new(fixture.data_root())?,
                 Locale::EnUs,
             )?)?;
-            let model = Arc::new(DecodedWorldModel::load(
+            let model = ResourceLease::new(DecodedWorldModel::load(
                 &mut store,
                 &AssetPath::new("World\\Fog.wmo")?,
             )?);
             placements = transforms
                 .into_iter()
                 .map(|transform| {
-                    PlacedWorldModelCollision::prepare_transform(Arc::clone(&model), transform)
+                    PlacedWorldModelCollision::prepare_transform(
+                        ResourceLease::clone(&model),
+                        transform,
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
         } else {

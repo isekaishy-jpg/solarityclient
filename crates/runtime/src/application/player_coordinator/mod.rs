@@ -9,6 +9,7 @@ mod remote;
 mod replicated_animation;
 
 use appearance_inputs::{CreatureAppearanceInputs, PlayerAppearanceInputs};
+use solarity_asset::ResourceLease;
 
 use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput, UnitAnimationScene};
 use std::rc::Rc;
@@ -1130,13 +1131,13 @@ impl RuntimePlayerPresentation {
 
     /// Returns the archive-selected player body M2 when resident.
     #[must_use]
-    pub fn resident_model(&self) -> Option<&Arc<DecodedM2Model>> {
+    pub fn resident_model(&self) -> Option<&ResourceLease<DecodedM2Model>> {
         self.resident.as_ref().map(|resident| &resident.model)
     }
 
     /// Returns the archive-selected active mount M2 when the server supplies one.
     #[must_use]
-    pub fn resident_mount_model(&self) -> Option<&Arc<DecodedM2Model>> {
+    pub fn resident_mount_model(&self) -> Option<&ResourceLease<DecodedM2Model>> {
         self.resident
             .as_ref()
             .and_then(|resident| resident.mount.as_ref())
@@ -1671,7 +1672,7 @@ impl ResidentGlueCharacterKey {
 
 struct ResidentGlueCharacterModel {
     key: ResidentGlueCharacterKey,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     textures: Vec<ResidentPlayerTexture>,
     atlas: CharacterAtlasTexture,
     texture_plan: CharacterTexturePlan,
@@ -1705,7 +1706,7 @@ struct GlueCharacterWorkerFailure {
 }
 
 struct ResidentGluePetModel {
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
     geosets: Option<ResidentCreatureGeosets>,
     model_scale: f32,
@@ -1715,7 +1716,7 @@ struct ResidentGluePetModel {
 
 /// Borrowed character body passed into the Glue selection and creation compositor.
 pub(super) struct ResidentGlueCharacterFrameInput<'a> {
-    model: &'a Arc<DecodedM2Model>,
+    model: &'a ResourceLease<DecodedM2Model>,
     textures: &'a [ResidentPlayerTexture],
     atlas: &'a CharacterAtlasTexture,
     geosets: &'a CharacterGeosetPlan,
@@ -1729,7 +1730,7 @@ pub(super) struct ResidentGlueCharacterFrameInput<'a> {
 
 #[derive(Clone, Copy)]
 pub(super) struct ResidentGluePetFrameInput<'a> {
-    model: &'a Arc<DecodedM2Model>,
+    model: &'a ResourceLease<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
     geosets: Option<&'a ResidentCreatureGeosets>,
     model_scale: f32,
@@ -1760,7 +1761,7 @@ impl<'a> ResidentGlueCharacterFrameInput<'a> {
         }
     }
 
-    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+    pub(super) const fn model(&self) -> &ResourceLease<DecodedM2Model> {
         self.model
     }
 
@@ -1803,7 +1804,7 @@ impl<'a> ResidentGlueCharacterFrameInput<'a> {
 }
 
 impl<'a> ResidentGluePetFrameInput<'a> {
-    pub(super) const fn model(self) -> &'a Arc<DecodedM2Model> {
+    pub(super) const fn model(self) -> &'a ResourceLease<DecodedM2Model> {
         self.model
     }
 
@@ -1843,7 +1844,7 @@ impl UnitPresentationGeneration {
 
     /// Pins exact immutable CPU sources until all placements release this generation.
     fn prepare(
-        body: &Arc<DecodedM2Model>,
+        body: &ResourceLease<DecodedM2Model>,
         attachments: &[ResidentPlayerAttachment],
         mount: Option<&ResidentMountModel>,
     ) -> Result<Self, RuntimePlayerError> {
@@ -1894,7 +1895,7 @@ struct ResidentPlayerModel {
     camera_height_state: PlayerCameraHeightState,
     camera_time_ms: f32,
     camera_pose: Option<PlayerCameraPose>,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     mount_key: Option<MountModelKey>,
     mount: Option<ResidentMountModel>,
 }
@@ -1942,7 +1943,7 @@ impl MountModelKey {
 /// Archive-selected mount model and its independently animated presentation.
 struct ResidentMountModel {
     key: MountModelKey,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
     object_scale: f32,
     rider_scale: f32,
@@ -1978,7 +1979,7 @@ struct ResidentCreatureModel {
     inputs: Option<CreatureAppearanceInputs>,
     generation: UnitPresentationGeneration,
     key: CreatureModelKey,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     textures: Vec<ResidentCreatureTexture>,
     geosets: Option<ResidentCreatureGeosets>,
     attachments: Vec<ResidentPlayerAttachment>,
@@ -2039,7 +2040,7 @@ pub(super) enum ResidentPlayerTexture {
 pub(super) struct ResidentPlayerAttachment {
     slot: Option<PlayerEquipmentSlot>,
     point: CharacterAttachmentPoint,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     textures: Vec<ResidentPlayerTexture>,
     visual_effects: Vec<ResidentPlayerItemVisualEffect>,
     particle_colors: Option<M2ParticleColorReplacement>,
@@ -2054,7 +2055,7 @@ impl ResidentPlayerAttachment {
         self.point
     }
 
-    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+    pub(super) const fn model(&self) -> &ResourceLease<DecodedM2Model> {
         &self.model
     }
 
@@ -2074,7 +2075,7 @@ impl ResidentPlayerAttachment {
 /// One effect model driven by an equipped item model's animated pose.
 pub(super) struct ResidentPlayerItemVisualEffect {
     point: u32,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     textures: Vec<ResidentPlayerTexture>,
 }
 
@@ -2083,7 +2084,7 @@ impl ResidentPlayerItemVisualEffect {
         self.point
     }
 
-    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+    pub(super) const fn model(&self) -> &ResourceLease<DecodedM2Model> {
         &self.model
     }
 
@@ -2096,7 +2097,7 @@ impl ResidentPlayerItemVisualEffect {
 pub(super) struct ResidentPlayerFrameInput<'a> {
     generation: &'a UnitPresentationGeneration,
     guid: u64,
-    model: &'a Arc<DecodedM2Model>,
+    model: &'a ResourceLease<DecodedM2Model>,
     textures: &'a [ResidentPlayerTexture],
     atlas: &'a CharacterAtlasTexture,
     geosets: &'a CharacterGeosetPlan,
@@ -2152,7 +2153,7 @@ impl<'a> ResidentPlayerFrameInput<'a> {
         self.unit_animation
     }
 
-    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+    pub(super) const fn model(&self) -> &ResourceLease<DecodedM2Model> {
         self.model
     }
 
@@ -2197,7 +2198,7 @@ impl<'a> ResidentPlayerFrameInput<'a> {
 #[derive(Clone, Copy)]
 pub(super) struct ResidentMountFrameInput<'a> {
     key: &'a MountModelKey,
-    model: &'a Arc<DecodedM2Model>,
+    model: &'a ResourceLease<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
     object_scale: f32,
     rider_scale: f32,
@@ -2218,7 +2219,7 @@ impl<'a> ResidentMountFrameInput<'a> {
         }
     }
 
-    pub(super) const fn model(self) -> &'a Arc<DecodedM2Model> {
+    pub(super) const fn model(self) -> &'a ResourceLease<DecodedM2Model> {
         self.model
     }
 
@@ -2252,7 +2253,7 @@ impl<'a> ResidentMountFrameInput<'a> {
 pub(super) struct ResidentCreatureFrameInput<'a> {
     generation: &'a UnitPresentationGeneration,
     guid: u64,
-    model: &'a Arc<DecodedM2Model>,
+    model: &'a ResourceLease<DecodedM2Model>,
     textures: &'a [ResidentCreatureTexture],
     geosets: Option<&'a ResidentCreatureGeosets>,
     attachments: &'a [ResidentPlayerAttachment],
@@ -2326,7 +2327,7 @@ impl<'a> ResidentCreatureFrameInput<'a> {
         self.unit_animation
     }
 
-    pub(super) const fn model(&self) -> &Arc<DecodedM2Model> {
+    pub(super) const fn model(&self) -> &ResourceLease<DecodedM2Model> {
         self.model
     }
 

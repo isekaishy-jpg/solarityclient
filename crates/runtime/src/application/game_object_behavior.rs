@@ -4,6 +4,7 @@
 #[path = "../../tests/application/game_object_behavior.rs"]
 mod tests;
 
+use solarity_asset::ResourceLease;
 use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -49,7 +50,7 @@ pub(in crate::application) struct GameObjectSceneSample {
 
 struct GameObjectModel {
     display_id: u32,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     playback: Rc<RefCell<M2Playback>>,
     collision: Option<PlacedM2Collision>,
     collision_initialized: bool,
@@ -108,13 +109,13 @@ impl GameObjectBehavior {
         &self,
         world: &ActiveWorld,
         display_id: u32,
-        model: &Arc<DecodedM2Model>,
+        model: &ResourceLease<DecodedM2Model>,
         placement: Option<GameObjectPlacement>,
         scene_time_ms: u32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
         if self.model.borrow().as_ref().is_some_and(|current| {
-            current.display_id == display_id && Arc::ptr_eq(&current.model, model)
+            current.display_id == display_id && ResourceLease::ptr_eq(&current.model, model)
         }) {
             return self.synchronize_collision(placement);
         }
@@ -130,7 +131,7 @@ impl GameObjectBehavior {
         )?;
         *self.model.borrow_mut() = Some(GameObjectModel {
             display_id,
-            model: Arc::clone(model),
+            model: ResourceLease::clone(model),
             playback: Rc::new(RefCell::new(playback)),
             collision: None,
             collision_initialized: false,
@@ -154,7 +155,7 @@ impl GameObjectBehavior {
             collision.set_transform(placement.matrix())?;
         } else {
             model.collision = Some(PlacedM2Collision::prepare_transform(
-                Arc::clone(&model.model),
+                ResourceLease::clone(&model.model),
                 placement.matrix(),
             )?);
         }

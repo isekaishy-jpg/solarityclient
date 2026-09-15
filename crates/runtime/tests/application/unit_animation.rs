@@ -3,6 +3,7 @@
 use super::*;
 use crate::test_support::{ClientFixture, game_object_models as models};
 use glam::Vec3;
+use solarity_asset::ResourceLease;
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
 use std::error::Error;
@@ -32,7 +33,7 @@ fn entry_opacity_survives_model_replacement_but_not_guid_reuse() -> Result<(), B
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let replacement = Arc::new(DecodedM2Model::load(
+    let replacement = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Solarity\\Replacement.m2")?,
     )?);
@@ -226,7 +227,7 @@ fn ground_placement_retains_smoothing_across_model_replacement_and_duplicate_dra
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let replacement = Arc::new(DecodedM2Model::load(
+    let replacement = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Solarity\\Replacement.m2")?,
     )?);
@@ -338,11 +339,11 @@ fn stock_drowning_kit_and_health_death_complete_and_return_to_current_movement()
     ] {
         for gender in ["Male", "Female"] {
             let path = AssetPath::new(format!("Character/{race}/{gender}/{race}{gender}.m2"))?;
-            let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+            let model = ResourceLease::new(DecodedM2Model::load(&mut store, &path)?);
             for flags in [0, 0x200000] {
                 let owner = UnitAnimationBehavior::new(
                     identity,
-                    Arc::clone(&model),
+                    ResourceLease::clone(&model),
                     Arc::clone(&animations),
                     input(0).with_movement(movement(flags, None)),
                     0,
@@ -477,7 +478,7 @@ fn stock_repeated_jumps_sample_authored_variations() -> Result<(), Box<dyn Error
     ] {
         for gender in ["Male", "Female"] {
             let path = AssetPath::new(format!("Character\\{race}\\{gender}\\{race}{gender}.m2"))?;
-            let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+            let model = ResourceLease::new(DecodedM2Model::load(&mut store, &path)?);
             let owner =
                 UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0), 0);
             let mut random = CrtRand::new();
@@ -848,7 +849,7 @@ fn owner_with_model_metadata(
     ));
     Ok(UnitAnimationBehavior::new(
         world.object_identity(7).ok_or("local lifetime")?,
-        Arc::new(DecodedM2Model::load(
+        ResourceLease::new(DecodedM2Model::load(
             &mut store,
             &AssetPath::new("Solarity\\Postures.m2")?,
         )?),
@@ -1131,7 +1132,7 @@ fn stock_character_movement_sequences_complete() -> Result<(), Box<dyn Error>> {
     ] {
         for gender in ["Male", "Female"] {
             let path = AssetPath::new(format!("Character\\{race}\\{gender}\\{race}{gender}.m2"))?;
-            let model = Arc::new(DecodedM2Model::load(&mut store, &path)?);
+            let model = ResourceLease::new(DecodedM2Model::load(&mut store, &path)?);
             let owner =
                 UnitAnimationBehavior::new(identity, model, Arc::clone(&animations), input(0), 0);
             let mut random = CrtRand::new();

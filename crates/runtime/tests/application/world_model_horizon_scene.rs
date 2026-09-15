@@ -1,5 +1,6 @@
 //! True-exterior admission controls both terrain projections independently of sky.
 
+use solarity_asset::ResourceLease;
 use std::{error::Error, path::PathBuf, sync::Arc};
 
 use glam::{Mat4, Vec3};
@@ -55,7 +56,7 @@ fn installed_orgrimmar_sky_only_groups_do_not_publish_horizon() -> Result<(), Bo
         ClientDataRoot::new(PathBuf::from(data))?,
         Locale::EnUs,
     )?)?;
-    let model = Arc::new(DecodedWorldModel::load(
+    let model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World/Wmo/Kalimdor/Ogrimmar/Ogrimmar.wmo")?,
     )?);

@@ -2,6 +2,7 @@
 
 use super::super::super::{M2Frame, RuntimeTerrainFrameError};
 use super::input::PoseJob;
+use solarity_asset::ResourceLease;
 use solarity_cpu::CpuExecutor;
 
 impl M2Frame {
@@ -80,7 +81,7 @@ impl M2Frame {
             if active == batch.jobs.len() {
                 batch
                     .jobs
-                    .push(PoseJob::new(std::sync::Arc::clone(&source.model)));
+                    .push(PoseJob::new(ResourceLease::clone(&source.model)));
             }
             batch.jobs[active].prepare(
                 index,

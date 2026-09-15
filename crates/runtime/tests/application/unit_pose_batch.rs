@@ -3,6 +3,7 @@
 use super::*;
 use crate::test_support::{ClientFixture, game_object_models};
 use glam::Vec3;
+use solarity_asset::ResourceLease;
 use solarity_asset::{ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale};
 use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use std::error::Error;
@@ -27,7 +28,7 @@ fn executor() -> Result<CpuExecutor, Box<dyn Error>> {
     ))?)
 }
 
-fn model() -> Result<Arc<DecodedM2Model>, Box<dyn Error>> {
+fn model() -> Result<ResourceLease<DecodedM2Model>, Box<dyn Error>> {
     let mut bytes = game_object_models::model_with_animations(&[0, 15])?;
     let bone = u32::from_le_bytes(bytes[0x30..0x34].try_into()?) as usize;
     bytes[bone + 4..bone + 8].copy_from_slice(&0x208_u32.to_le_bytes());
@@ -64,7 +65,7 @@ fn model() -> Result<Arc<DecodedM2Model>, Box<dyn Error>> {
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    Ok(Arc::new(DecodedM2Model::load(
+    Ok(ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Pose.m2")?,
     )?))
@@ -84,7 +85,9 @@ fn worker_unit_poses_match_serial_during_camera_and_override_changes() -> Result
 {
     let model = model()?;
     let cpu = executor()?;
-    let mut jobs: Vec<_> = (0..16).map(|_| PoseJob::new(Arc::clone(&model))).collect();
+    let mut jobs: Vec<_> = (0..16)
+        .map(|_| PoseJob::new(ResourceLease::clone(&model)))
+        .collect();
     let mut serial = M2BonePose::default();
     let mut output = M2BonePose::default();
     for frame in 0..12 {
@@ -130,7 +133,7 @@ fn worker_unit_poses_match_serial_during_camera_and_override_changes() -> Result
 #[test]
 fn prepared_unit_pose_rejects_every_changed_dependency() -> Result<(), Box<dyn Error>> {
     let model = model()?;
-    let mut job = PoseJob::new(Arc::clone(&model));
+    let mut job = PoseJob::new(ResourceLease::clone(&model));
     job.sample();
     let mut output = M2BonePose::default();
     let clock = job.clock;
@@ -227,13 +230,13 @@ fn benchmark_moving_unit_pose_batch() -> Result<(), Box<dyn Error>> {
         "Character/Troll/Male/TrollMale.m2",
         "Character/Human/Male/HumanMale.m2",
     ] {
-        models.push(Arc::new(DecodedM2Model::load(
+        models.push(ResourceLease::new(DecodedM2Model::load(
             &mut store,
             &AssetPath::new(path)?,
         )?));
     }
     let mut jobs: Vec<_> = (0..120)
-        .map(|index| PoseJob::new(Arc::clone(&models[index % models.len()])))
+        .map(|index| PoseJob::new(ResourceLease::clone(&models[index % models.len()])))
         .collect();
     let cpu = executor()?;
     let mut totals = [std::time::Duration::ZERO; 2];

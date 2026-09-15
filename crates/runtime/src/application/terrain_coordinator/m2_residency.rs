@@ -1,5 +1,6 @@
 //! Shared placed-M2 residency for ADT MDDF and WMO MODD owners.
 
+use solarity_asset::ResourceLease;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -42,7 +43,7 @@ pub(in crate::application) enum ResidentM2Texture {
 
 /// One archive-selected M2 generation shared by every resident owner.
 pub(in crate::application) struct ResidentM2Source {
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     textures: Vec<ResidentM2Texture>,
     cpu_source: Arc<M2CpuSource>,
 }
@@ -77,7 +78,7 @@ impl ResidentM2Source {
     }
 
     /// Returns the immutable M2/SKIN generation selected by MPQ precedence.
-    pub(in crate::application) const fn model(&self) -> &Arc<DecodedM2Model> {
+    pub(in crate::application) const fn model(&self) -> &ResourceLease<DecodedM2Model> {
         &self.model
     }
 
@@ -277,7 +278,7 @@ impl ResidentM2SceneBuilder {
             self.source_indices.insert(model.path().clone(), index);
             index
         };
-        let model = Arc::clone(self.scene.sources[source_index].model());
+        let model = ResourceLease::clone(self.scene.sources[source_index].model());
         let bounds = model.bounds();
         let spatial = crate::application::m2_spatial::StaticM2Spatial::new(
             bounds.minimum(),

@@ -1,6 +1,7 @@
 //! Complete default-set WMO resources owned by replicated GameObjects.
 
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
+use solarity_asset::ResourceLease;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -73,7 +74,7 @@ impl GameObjectWorldModelSource {
         &self.root
     }
 
-    pub(in crate::application) fn model(&self) -> &Arc<DecodedWorldModel> {
+    pub(in crate::application) fn model(&self) -> &ResourceLease<DecodedWorldModel> {
         self.root.model()
     }
 
@@ -85,7 +86,7 @@ impl GameObjectWorldModelSource {
 /// One replicated root's independently started MODD timers, separate from GPU lifetime.
 pub(in crate::application) struct GameObjectWorldModelState {
     display_id: u32,
-    model: Arc<DecodedWorldModel>,
+    model: ResourceLease<DecodedWorldModel>,
     playback: HashMap<usize, Option<Rc<RefCell<M2Playback>>>>,
 }
 
@@ -111,13 +112,13 @@ impl GameObjectWorldModelState {
         }
         Ok(Self {
             display_id,
-            model: Arc::clone(source.model()),
+            model: ResourceLease::clone(source.model()),
             playback,
         })
     }
 
     pub(super) fn matches(&self, source: &GameObjectWorldModelSource, display_id: u32) -> bool {
-        self.display_id == display_id && Arc::ptr_eq(&self.model, source.model())
+        self.display_id == display_id && ResourceLease::ptr_eq(&self.model, source.model())
     }
 
     pub(in crate::application) fn playback(&self, index: usize) -> Option<Rc<RefCell<M2Playback>>> {

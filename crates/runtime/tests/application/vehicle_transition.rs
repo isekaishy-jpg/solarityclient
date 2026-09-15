@@ -3,6 +3,7 @@
 use super::super::UnitAnimationInput;
 use super::*;
 use crate::random::CrtRand;
+use solarity_asset::ResourceLease;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, Locale,
 };
@@ -24,11 +25,11 @@ fn seated_body_and_upper_timers_complete_independently_and_survive_model_replace
     )?)?;
     let vehicles = Arc::new(VehicleCatalog::load(&mut store)?);
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Character/Human/Male/HumanMale.m2")?,
     )?);
-    let replacement = Arc::new(DecodedM2Model::load(
+    let replacement = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Creature/Alternate.m2")?,
     )?);
@@ -205,11 +206,11 @@ fn entry_and_exit_keep_the_unit_controller_across_model_replacement() -> TestRes
     )?)?;
     let vehicles = Arc::new(VehicleCatalog::load(&mut store)?);
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Character/Human/Male/HumanMale.m2")?,
     )?);
-    let replacement = Arc::new(DecodedM2Model::load(
+    let replacement = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Creature/Alternate.m2")?,
     )?);

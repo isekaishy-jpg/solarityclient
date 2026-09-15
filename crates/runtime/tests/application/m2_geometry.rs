@@ -5,6 +5,7 @@
 use super::super::super::*;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models, unit_models};
 use glam::Vec3;
+use solarity_asset::ResourceLease;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_cpu::{CpuExecutor, CpuPoolConfig};
 use solarity_rendering::{
@@ -45,7 +46,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         Locale::EnUs,
     )?)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Batch.m2")?,
     )?);

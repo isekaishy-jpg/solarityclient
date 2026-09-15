@@ -1,10 +1,11 @@
 //! Unit-owned mount requests and the separate 73BFF0 completion path.
 
 use super::*;
+use solarity_asset::ResourceLease;
 
 #[derive(Clone)]
 pub(super) struct UnitMountModel {
-    pub model: Arc<DecodedM2Model>,
+    pub model: ResourceLease<DecodedM2Model>,
     pub playback: Rc<RefCell<M2Playback>>,
 }
 
@@ -31,9 +32,13 @@ impl UnitAnimationBehavior {
         }
     }
 
-    pub fn bind_mount(&self, model: &Arc<DecodedM2Model>, playback: Rc<RefCell<M2Playback>>) {
+    pub fn bind_mount(
+        &self,
+        model: &ResourceLease<DecodedM2Model>,
+        playback: Rc<RefCell<M2Playback>>,
+    ) {
         *self.mount_model.borrow_mut() = Some(UnitMountModel {
-            model: Arc::clone(model),
+            model: ResourceLease::clone(model),
             playback,
         });
         // Model readiness re-evaluates the current unit request even when no

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models};
+use solarity_asset::ResourceLease;
 
 #[path = "interior_scene_lighting.rs"]
 mod interior;
@@ -204,11 +205,11 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
         Locale::EnUs,
     )?)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let receiver = Arc::new(DecodedM2Model::load(
+    let receiver = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Receiver.m2")?,
     )?);
-    let light = Arc::new(DecodedM2Model::load(
+    let light = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Light.m2")?,
     )?);

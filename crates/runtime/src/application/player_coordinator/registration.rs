@@ -2,6 +2,7 @@
 
 use glam::{Mat4, Vec3};
 use solarity_asset::DecodedM2Model;
+use solarity_asset::ResourceLease;
 use solarity_ecs::{WorldObjectIdentity, WorldTransform};
 use solarity_systems::{MovementCollectionError, MovementCollisionBounds};
 
@@ -19,7 +20,7 @@ impl RuntimePlayerPresentation {
     /// Borrows each CPU-resident body without tying unit effects to GPU uploads.
     pub(in crate::application) fn unit_effect_models(
         &self,
-    ) -> impl Iterator<Item = (WorldObjectIdentity, &std::sync::Arc<DecodedM2Model>)> {
+    ) -> impl Iterator<Item = (WorldObjectIdentity, &ResourceLease<DecodedM2Model>)> {
         self.resident
             .iter()
             .chain(&self.remote_players)

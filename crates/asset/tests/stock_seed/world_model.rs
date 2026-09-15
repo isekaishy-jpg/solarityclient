@@ -1,7 +1,7 @@
 //! External stock-compatibility tests for WMO root and group decoding.
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
-use std::sync::Arc;
 
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
@@ -286,11 +286,11 @@ fn world_model_cache_shares_and_collects_generations() -> Result<(), Box<dyn Err
 
     let first = cache.load(&mut store, &path)?;
     let second = cache.load(&mut store, &path)?;
-    assert!(Arc::ptr_eq(&first, &second));
+    assert!(ResourceLease::ptr_eq(&first, &second));
     let shared = cache.load(&mut shared_store, &path)?;
     let other = cache.load(&mut other_store, &path)?;
-    assert!(Arc::ptr_eq(&first, &shared));
-    assert!(!Arc::ptr_eq(&first, &other));
+    assert!(ResourceLease::ptr_eq(&first, &shared));
+    assert!(!ResourceLease::ptr_eq(&first, &other));
     assert_eq!(cache.len(), 2);
     drop(shared);
     drop(other);

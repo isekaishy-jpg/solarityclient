@@ -1,7 +1,7 @@
 //! Transport map-model references in native CM2MapObject tail order.
 
+use solarity_asset::ResourceLease;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
@@ -19,7 +19,7 @@ use super::{
 /// Publication snapshot rejects geometry changed after spatial registration.
 struct RegisteredModel {
     display_id: u32,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     transform: Mat4,
     placement_revision: u64,
     references: Vec<RuntimeMovementReference>,
@@ -73,7 +73,7 @@ impl ResidentMapModels {
             self.live.insert(identity);
             let changed = self.owners.get(&identity).is_none_or(|registered| {
                 registered.display_id != instance.display_id()
-                    || !Arc::ptr_eq(&registered.model, model.model())
+                    || !ResourceLease::ptr_eq(&registered.model, model.model())
                     || registered.transform != model.transform()
                     || registered.placement_revision != transport.placement_revision()
             });
@@ -107,7 +107,7 @@ impl ResidentMapModels {
                 identity,
                 RegisteredModel {
                     display_id: instance.display_id(),
-                    model: Arc::clone(model.model()),
+                    model: ResourceLease::clone(model.model()),
                     transform: model.transform(),
                     placement_revision: transport.placement_revision(),
                     references,
@@ -180,7 +180,7 @@ impl ResidentMapModels {
                 .get(&identity)
                 .ok_or(RuntimeStaticMovementError::InvalidReference)?;
             if registered.display_id != instance.display_id()
-                || !Arc::ptr_eq(&registered.model, model.model())
+                || !ResourceLease::ptr_eq(&registered.model, model.model())
                 || registered.transform != model.transform()
                 || registered.placement_revision != transport.placement_revision()
             {

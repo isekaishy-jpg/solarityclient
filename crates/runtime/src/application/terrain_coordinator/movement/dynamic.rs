@@ -1,7 +1,7 @@
 //! Retained generic GameObject lists and the native first-visit callback.
 
+use solarity_asset::ResourceLease;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
 
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
@@ -133,7 +133,7 @@ impl RuntimeMovementQuery {
 
 struct DynamicOwner {
     display_id: u32,
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     transform: Mat4,
     references: Vec<RuntimeMovementReference>,
     residency: RuntimeStaticMovementResidency,
@@ -209,7 +209,7 @@ impl ResidentDynamicMovement {
             let new_owner = !self.owners.contains_key(&identity);
             let unchanged = self.owners.get(&identity).is_some_and(|owner| {
                 owner.display_id == instance.display_id()
-                    && Arc::ptr_eq(&owner.model, model.model())
+                    && ResourceLease::ptr_eq(&owner.model, model.model())
                     && owner.transform == model.transform()
                     && owner.residency == RuntimeStaticMovementResidency::Ready
             });
@@ -266,7 +266,7 @@ impl ResidentDynamicMovement {
                 identity,
                 DynamicOwner {
                     display_id: instance.display_id(),
-                    model: Arc::clone(model.model()),
+                    model: ResourceLease::clone(model.model()),
                     transform: model.transform(),
                     references,
                     residency,
@@ -365,7 +365,9 @@ impl ResidentDynamicMovement {
             let Some(model) = behavior.collision() else {
                 continue;
             };
-            if !Arc::ptr_eq(&owner.model, model.model()) || owner.transform != model.transform() {
+            if !ResourceLease::ptr_eq(&owner.model, model.model())
+                || owner.transform != model.transform()
+            {
                 return Err(RuntimeStaticMovementError::InvalidReference);
             }
             if model.movement_intersects(bounds) {

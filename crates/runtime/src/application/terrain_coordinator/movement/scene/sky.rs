@@ -1,15 +1,15 @@
 //! Sky bank and MOSB ownership across the ordered camera-root traversal.
 
 use solarity_asset::DecodedWorldModel;
+use solarity_asset::ResourceLease;
 use solarity_rendering::{WorldCameraError, WorldScreenWindow, WorldSkyWindow};
 use solarity_systems::{WorldModelCameraSceneQuery, WorldModelExteriorPortalWindow};
-use std::sync::Arc;
 
 /// Retains the selected root so its MOSB name survives until frame consumption.
 #[derive(Default)]
 pub(super) struct WorldSceneSky {
     window: Option<WorldModelExteriorPortalWindow>,
-    root: Option<Arc<DecodedWorldModel>>,
+    root: Option<ResourceLease<DecodedWorldModel>>,
 }
 
 impl WorldSceneSky {
@@ -42,11 +42,11 @@ impl WorldSceneSky {
     /// 7AC060 publishes MOSB even when it is null, replacing earlier selection.
     pub(super) fn record_root(
         &mut self,
-        root: &Arc<DecodedWorldModel>,
+        root: &ResourceLease<DecodedWorldModel>,
         query: &WorldModelCameraSceneQuery,
     ) {
         if query.has_skybox_request() {
-            self.root = root.skybox().map(|_| Arc::clone(root));
+            self.root = root.skybox().map(|_| ResourceLease::clone(root));
         }
     }
 

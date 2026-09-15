@@ -1,5 +1,6 @@
 //! Camera immersion reaches authored global/local banks and liquid overrides.
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
 
 use glam::Vec3;
@@ -112,7 +113,7 @@ fn environment_uses_camera_liquid_bank_depth_and_parameter_override() -> Result<
         &solarity_asset::AssetPath::new("World\\Fog.wmo")?,
     )?;
     let fog_placement = solarity_systems::PlacedWorldModelCollision::prepare_transform(
-        std::sync::Arc::new(fog_model),
+        ResourceLease::new(fog_model),
         glam::Mat4::IDENTITY,
     )?;
     let indoor_fog = fog_placement.fog_environment(0, None, Vec3::ZERO)?;

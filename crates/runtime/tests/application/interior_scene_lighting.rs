@@ -3,6 +3,7 @@ use super::*;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 use crate::test_support::registration_fixture::fixture_files;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models};
+use solarity_asset::ResourceLease;
 use solarity_asset::{AssetStoreHandle, MapCatalog};
 use solarity_ecs::{ActiveWorld, WorldBootstrap, WorldMapId};
 
@@ -64,7 +65,7 @@ fn authored_terrain_shadow_reaches_retained_entity_lighting() -> Result<(), Box<
         Locale::EnUs,
     )?)?;
     let maps = MapCatalog::load(&mut store)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Receiver.m2")?,
     )?);
@@ -163,7 +164,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
     let maps = MapCatalog::load(&mut store)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
     let liquid_types = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Receiver.m2")?,
     )?);

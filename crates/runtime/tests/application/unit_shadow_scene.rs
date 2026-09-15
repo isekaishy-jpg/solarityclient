@@ -6,6 +6,7 @@ use super::*;
 use crate::application::terrain_frame::shadow::{SceneryShadowQueries, WorldShadowAdmission};
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models};
 use glam::Vec3;
+use solarity_asset::ResourceLease;
 use solarity_asset::{ArchiveCatalog, AssetStore, ClientDataRoot, Locale};
 use solarity_rendering::{
     VulkanBootstrap, WorldCamera, WorldEnvironmentShadowFrame, WorldEnvironmentShadowState,
@@ -25,7 +26,7 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
         Locale::EnUs,
     )?)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Caster.m2")?,
     )?);
@@ -253,7 +254,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
     let models =
         ["Static.m2", "Animated.m2", "EmptyBounds.m2"].map(|path| -> Result<_, Box<dyn Error>> {
-            Ok(Arc::new(DecodedM2Model::load(
+            Ok(ResourceLease::new(DecodedM2Model::load(
                 &mut store,
                 &AssetPath::new(path)?,
             )?))

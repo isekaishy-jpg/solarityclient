@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::application::player_coordinator::RuntimePlayerPresentation;
+use solarity_asset::ResourceLease;
 use solarity_rendering::{
     CharacterAttachmentPoint, CharacterComponentTextureLevel, WorldCameraFrame,
 };
@@ -36,7 +37,7 @@ fn local_appearance_reuse_preserves_motion_and_equipment_changes() -> Result<(),
         .ok_or("moved local frame")?;
     assert_eq!(current.world_transform(), transform);
     assert!(current.generation().matches(&original));
-    assert!(Arc::ptr_eq(
+    assert!(ResourceLease::ptr_eq(
         presentation.resident_model().ok_or("retained model")?,
         &model
     ));

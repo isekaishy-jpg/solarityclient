@@ -63,9 +63,13 @@ is part of the contract.
 | `004B5FE0`, `006AFFD0` | Texture format and mip handling remain operation-specific. Do not silently reduce quality or expand every compressed texture to RGBA. |
 | `0087EE60`, `00879AE0`, `00877850` | Sound resource ownership and live voice admission are different responsibilities. A cached payload is not a playing voice. Exact global cache eviction policy is unresolved. |
 
-The existing native lifetime oracle verifies 36 focused M2 release/reacquire/
-collection cases, including the ten-second boundary and ordinary clock wrap.
-It does not verify all resource qualification paths or every forced collector
+The native lifetime oracle now verifies 112 focused M2 lookup-insertion,
+release/reacquire and collection cases, including the ten-second boundary,
+ordinary clock wrap and signed subtraction boundaries. The recovered new-resource
+insertion block at `0081C698` skips hash insertion when lookup flag `0x8` is set;
+`+0x144` is the hash backlink tested by final release, not a loaded boolean.
+An existing lookup hit precedes that insertion decision. The probes do not
+establish flags selected by every gameplay caller or every forced collector
 caller. Normal collection must use the proven cache clock semantics, not pose
 time, movement distance or frame count.
 

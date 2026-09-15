@@ -1,8 +1,8 @@
 //! External stock-compatibility tests for stock scene collision.
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
 use std::io::Cursor;
-use std::sync::Arc;
 
 use glam::Vec3;
 use solarity_asset::{
@@ -47,7 +47,7 @@ fn placed_world_model_uses_stock_camera_collision_faces() -> Result<(), Box<dyn 
     ])?;
     let data_root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
-    let model = Arc::new(DecodedWorldModel::load(
+    let model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Wmo\\Collision.wmo")?,
     )?);
@@ -62,7 +62,7 @@ fn placed_world_model_uses_stock_camera_collision_faces() -> Result<(), Box<dyn 
     let end = Vec3::new(10.5, 20.5, 29.0);
     assert_eq!(scene.trace_camera(start, end, 1.0)?, Some(0.5));
 
-    let no_camera = Arc::new(DecodedWorldModel::load(
+    let no_camera = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Wmo\\NoCamera.wmo")?,
     )?);
@@ -95,7 +95,7 @@ fn placed_world_model_samples_stock_liquid_tiles() -> Result<(), Box<dyn Error>>
     ])?;
     let data_root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
-    let model = Arc::new(DecodedWorldModel::load(
+    let model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Wmo\\Liquid.wmo")?,
     )?);
@@ -134,7 +134,7 @@ fn placed_m2_uses_dedicated_stock_collision_mesh() -> Result<(), Box<dyn Error>>
     ])?;
     let data_root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("World\\Fixture\\Collision.m2")?,
     )?);
@@ -187,7 +187,7 @@ fn m2_camera_scene_bounds_follow_incremental_placement_admission() -> Result<(),
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("World\\Fixture\\Collision.m2")?,
     )?);
@@ -210,7 +210,7 @@ fn m2_camera_scene_bounds_follow_incremental_placement_admission() -> Result<(),
         let end = center - Vec3::Z * 4.;
         assert!(scene.trace_camera(start, end, 1.)?.is_none());
         scene.add(PlacedM2Collision::prepare_transform(
-            Arc::clone(&model),
+            ResourceLease::clone(&model),
             transform,
         )?);
         assert_eq!(scene.trace_camera(start, end, 1.)?, Some(0.5));
@@ -249,7 +249,7 @@ fn wmo_camera_bounds_follow_groups_and_retained_transform_updates() -> Result<()
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let model = Arc::new(DecodedWorldModel::load(
+    let model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Fixture\\Collision.wmo")?,
     )?);
@@ -307,7 +307,7 @@ fn inverted_render_bounds_keep_m2_collision_and_follow_placement_updates()
     ])?;
     let data_root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(data_root, Locale::EnUs)?)?;
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("World\\Fixture\\Collision.m2")?,
     )?);

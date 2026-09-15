@@ -1,5 +1,6 @@
 //! External stock-compatibility tests for decoded asset cache lifetime.
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -50,13 +51,13 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
     let first = cache.load(&mut store, &path)?;
     let second = cache.load(&mut store, &path)?;
 
-    assert!(Arc::ptr_eq(&first, &second));
+    assert!(ResourceLease::ptr_eq(&first, &second));
     assert_eq!(first.name(), Some("HdModel"));
     assert_eq!(first.skins()[0].bone_count_max(), 512);
     assert_eq!(cache.len(), 1);
     assert_eq!(cache.collect_unused(), 0);
 
-    let weak = Arc::downgrade(&first);
+    let weak = ResourceLease::downgrade(&first);
     drop(first);
     drop(second);
     assert_eq!(cache.collect_unused(), 1);
@@ -209,13 +210,13 @@ fn model_cache_qualifies_aliases_by_namespace_and_reuses_shared_mount_plans()
     let mut cache = M2ModelCache::new();
     let one = cache.load(&mut a, &path)?;
     let shared = cache.load(&mut alias, &AssetPath::new("creature/test.mdx")?)?;
-    assert!(Arc::ptr_eq(&one, &shared));
+    assert!(ResourceLease::ptr_eq(&one, &shared));
     let other = cache.load(&mut b, &path)?;
     assert_eq!(other.name(), Some("Beta"));
     assert_eq!(one.name(), Some("Alpha"));
-    assert!(!Arc::ptr_eq(&one, &other));
+    assert!(!ResourceLease::ptr_eq(&one, &other));
     let new_generation = cache.load(&mut rediscovered, &path)?;
-    assert!(!Arc::ptr_eq(&one, &new_generation));
+    assert!(!ResourceLease::ptr_eq(&one, &new_generation));
     let missing = Fixture::new(&[])?;
     let mut missing = AssetStore::mount(ArchiveCatalog::discover(
         ClientDataRoot::new(missing.data_root())?,

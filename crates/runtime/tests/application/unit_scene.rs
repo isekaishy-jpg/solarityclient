@@ -9,7 +9,8 @@ mod sky;
 #[path = "world_model_horizon_scene.rs"]
 mod horizon;
 
-use std::{error::Error, sync::Arc};
+use solarity_asset::ResourceLease;
+use std::error::Error;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{
@@ -498,7 +499,7 @@ fn scene_root_with_skybox(
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let model = Arc::new(DecodedWorldModel::load(
+    let model = ResourceLease::new(DecodedWorldModel::load(
         &mut store,
         &AssetPath::new("World\\Scene.wmo")?,
     )?);

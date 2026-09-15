@@ -8,6 +8,7 @@ pub(in crate::application::terrain_frame::m2) use admission::PoseAdmission;
 
 use super::super::{M2BonePose, RuntimeTerrainFrameError};
 use input::PoseJob;
+use solarity_asset::ResourceLease;
 
 /// Only current dynamic owners retain palettes; scenery residency is not a job list.
 pub(in crate::application::terrain_frame::m2) struct PoseBatch {
@@ -56,7 +57,7 @@ impl PoseBatch {
     pub(in crate::application::terrain_frame::m2) fn take(
         &mut self,
         index: usize,
-        model: &std::sync::Arc<solarity_asset::DecodedM2Model>,
+        model: &ResourceLease<solarity_asset::DecodedM2Model>,
         clock: solarity_rendering::M2AnimationClock,
         view: glam::Mat4,
         overrides: solarity_rendering::M2BonePoseOverrides<'_>,

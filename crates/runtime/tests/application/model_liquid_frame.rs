@@ -1,6 +1,7 @@
 //! Registered WMO liquid reaches model pass order and actual clipped GPU pixels.
 
 use super::*;
+use solarity_asset::ResourceLease;
 use solarity_rendering::{TerrainSceneUniform, WorldFrameScene, WorldModelSceneUniform};
 
 #[test]
@@ -57,7 +58,7 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
     let maps = MapCatalog::load(&mut store)?;
     let liquids = solarity_asset::LiquidTypeCatalog::load(&mut store)?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
-    let model = Arc::new(DecodedM2Model::load(
+    let model = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Receiver.m2")?,
     )?);

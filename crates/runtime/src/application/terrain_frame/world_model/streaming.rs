@@ -1,5 +1,6 @@
 //! Shared MODF ownership as neighboring ADTs enter and leave the world.
 
+use solarity_asset::ResourceLease;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -30,7 +31,7 @@ impl WorldModelFrame {
             if let WorldModelGpuPlacementOwner::Static { unique_id } = placement.owner {
                 retained.insert(unique_id);
                 if let Some(source) = self.sources[placement.source_index].as_ref() {
-                    sources.insert(Arc::as_ptr(&source.model), placement.source_index);
+                    sources.insert(ResourceLease::as_ptr(&source.model), placement.source_index);
                 }
             }
         }
@@ -46,25 +47,24 @@ impl WorldModelFrame {
                         source_count: scene.sources().len(),
                     },
                 )?;
-                let identity = Arc::as_ptr(source.model());
+                let identity = ResourceLease::as_ptr(source.model());
                 let source_index = if let Some(&index) = sources.get(&identity) {
                     index
                 } else {
-                    let gpu = if let Some(index) = self
-                        .prepared_static
-                        .iter()
-                        .position(|prepared| Arc::ptr_eq(&prepared.model, source.model()))
-                    {
-                        self.prepared_static.swap_remove(index)
-                    } else {
-                        prepare_gpu_source(
-                            renderer,
-                            source,
-                            self.filtering,
-                            self.base_mip,
-                            &mut self.liquid_materials,
-                        )?
-                    };
+                    let gpu =
+                        if let Some(index) = self.prepared_static.iter().position(|prepared| {
+                            ResourceLease::ptr_eq(&prepared.model, source.model())
+                        }) {
+                            self.prepared_static.swap_remove(index)
+                        } else {
+                            prepare_gpu_source(
+                                renderer,
+                                source,
+                                self.filtering,
+                                self.base_mip,
+                                &mut self.liquid_materials,
+                            )?
+                        };
                     let index = self.sources.len();
                     self.sources.push(Some(gpu));
                     sources.insert(identity, index);

@@ -1,5 +1,6 @@
 //! External stock-compatibility tests for the build-12340 M2 boundary.
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
 use std::io::Cursor;
 
@@ -1576,7 +1577,7 @@ fn legacy_model_extensions_use_one_canonical_m2_cache_key() -> Result<(), Box<dy
 
     assert_eq!(cache.len(), 1);
     assert_eq!(legacy_model.path().as_str(), modern_path.as_str());
-    assert!(std::sync::Arc::ptr_eq(&legacy_model, &modern_model));
+    assert!(ResourceLease::ptr_eq(&legacy_model, &modern_model));
     Ok(())
 }
 

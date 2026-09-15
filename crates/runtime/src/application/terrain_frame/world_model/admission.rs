@@ -4,8 +4,8 @@ use super::{
     RuntimeTerrainFrameError, WorldModelFrame, WorldModelGpuPlacementOwner, prepare_gpu_source,
 };
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelSource;
+use solarity_asset::ResourceLease;
 use solarity_rendering::VulkanRenderer;
-use std::sync::Arc;
 
 impl WorldModelFrame {
     /// Shared root/group generations already uploaded need no admission slot.
@@ -20,7 +20,7 @@ impl WorldModelFrame {
             })
             .filter_map(|placement| self.sources[placement.source_index].as_ref())
             .chain(&self.prepared_static)
-            .any(|gpu| Arc::ptr_eq(&gpu.model, source.model()))
+            .any(|gpu| ResourceLease::ptr_eq(&gpu.model, source.model()))
     }
 
     /// Prepares one source without creating any MODF placement or collision owner.

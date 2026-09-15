@@ -7,6 +7,7 @@ use crate::application::terrain_coordinator::{
     RuntimeMovementRegistrationQuery, RuntimeTerrainCoordinator, RuntimeWorldModelMovementOwner,
 };
 use glam::Mat4;
+use solarity_asset::ResourceLease;
 use solarity_systems::{WorldEntityLightEnvironment, WorldEntityLightState, WorldModelFloorLight};
 
 /// Ordinary terrain doodads never need an individual floor-light callback. Keep
@@ -46,7 +47,7 @@ impl EntityLighting {
     pub(super) fn scene_state(
         &mut self,
         owner: M2GpuPlacementOwner,
-        model: &std::sync::Arc<solarity_asset::DecodedM2Model>,
+        model: &ResourceLease<solarity_asset::DecodedM2Model>,
         transform: Mat4,
         registration: Option<UnitSceneRegistration>,
         terrain: &mut RuntimeTerrainCoordinator,
@@ -71,7 +72,7 @@ impl EntityLighting {
             let collision = matches!(owner, M2GpuPlacementOwner::GameObject { .. })
                 .then(|| {
                     solarity_systems::PlacedM2Collision::prepare_transform(
-                        std::sync::Arc::clone(model),
+                        ResourceLease::clone(model),
                         transform,
                     )
                 })
@@ -142,7 +143,7 @@ impl EntityLighting {
     pub fn sample(
         &mut self,
         owner: M2GpuPlacementOwner,
-        model: &std::sync::Arc<solarity_asset::DecodedM2Model>,
+        model: &ResourceLease<solarity_asset::DecodedM2Model>,
         transform: Mat4,
         color: [u8; 4],
         time_ms: f32,
@@ -202,7 +203,7 @@ impl EntityLighting {
             }) {
                 let collision = if matches!(owner, M2GpuPlacementOwner::GameObject { .. }) {
                     Some(solarity_systems::PlacedM2Collision::prepare_transform(
-                        std::sync::Arc::clone(model),
+                        ResourceLease::clone(model),
                         transform,
                     )?)
                 } else {

@@ -3,6 +3,7 @@
 #[path = "terrain/dynamic_movement.rs"]
 mod dynamic_movement;
 
+use solarity_asset::ResourceLease;
 use std::error::Error;
 use std::io::Cursor;
 use std::num::NonZeroUsize;
@@ -79,7 +80,7 @@ fn game_object_registration_links_resident_destinations_and_skips_missing_tiles(
         Locale::EnUs,
     )?)?;
     let maps = MapCatalog::load(&mut store)?;
-    let model = std::sync::Arc::new(solarity_asset::DecodedM2Model::load(
+    let model = ResourceLease::new(solarity_asset::DecodedM2Model::load(
         &mut store,
         &solarity_asset::AssetPath::new("World\\Fixture\\Collision.m2")?,
     )?);
@@ -1528,7 +1529,7 @@ fn global_world_model_residency_completes_the_scene() -> Result<(), Box<dyn Erro
     let root = ClientDataRoot::new(fixture.data_root())?;
     let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
     let maps = MapCatalog::load(&mut store)?;
-    let registration_model = std::sync::Arc::new(solarity_asset::DecodedM2Model::load(
+    let registration_model = ResourceLease::new(solarity_asset::DecodedM2Model::load(
         &mut store,
         &solarity_asset::AssetPath::new("World\\Fixture\\Collision.m2")?,
     )?);

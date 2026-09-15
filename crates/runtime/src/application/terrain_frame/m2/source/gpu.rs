@@ -8,6 +8,7 @@ use super::super::{
     M2SpirvKey, M2TextureImageHandle, M2TextureSet, ResidentM2Source, ResidentM2Texture,
     RuntimeTerrainFrameError, VulkanRenderer, prepare_m2_cpu_source,
 };
+use solarity_asset::ResourceLease;
 
 /// Publishes a source only when every selected draw has concrete BLP stages.
 pub(in super::super) fn prepare_source(
@@ -109,7 +110,7 @@ pub(in super::super) fn prepare_source_with_lights(
 /// Publishes immutable model resources using one owner's resolved texture table.
 pub(in super::super) fn prepare_gpu_source(
     renderer: &mut VulkanRenderer,
-    model: &Arc<DecodedM2Model>,
+    model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
@@ -131,7 +132,7 @@ pub(in super::super) fn prepare_gpu_source(
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn prepare_gpu_source_from_cpu(
     renderer: &mut VulkanRenderer,
-    model: &Arc<DecodedM2Model>,
+    model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
@@ -154,7 +155,7 @@ pub(in super::super) fn prepare_gpu_source_from_cpu(
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn prepare_gpu_source_with_plan(
     renderer: &mut VulkanRenderer,
-    model: &Arc<DecodedM2Model>,
+    model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
     local_light_count: M2LocalLightCount,
@@ -446,7 +447,7 @@ pub(in super::super) fn prepare_gpu_source_with_plan(
     profile.mark("effects");
     Ok(Arc::new(super::super::M2GpuSourceData {
         _resource_leases: resource_leases,
-        model: Arc::clone(model),
+        model: ResourceLease::clone(model),
         plan,
         model_oriented_billboard_bones,
         animated_shadow_caster: model

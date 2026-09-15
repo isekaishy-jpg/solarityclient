@@ -2,6 +2,7 @@
 
 use super::support::{Fixture, FixtureFile};
 use glam::Vec3;
+use solarity_asset::ResourceLease;
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedWorldModel, Locale,
 };
@@ -694,10 +695,10 @@ fn complete_camera_root_pipeline_opens_only_visible_exterior_links() -> Result<(
     use solarity_systems::{
         PlacedWorldModelCollision, WorldModelCameraSceneQuery, WorldSceneCameraFrame,
     };
-    use std::sync::Arc;
+
     let mut query = WorldModelCameraSceneQuery::default();
     for adjacent_flags in [8, 0x40, 0x100, 0x40000, 0x10000, 0] {
-        let model = Arc::new(visibility_model(
+        let model = ResourceLease::new(visibility_model(
             &[0, adjacent_flags],
             &[0, adjacent_flags],
             &[[0, 1]],
@@ -768,7 +769,7 @@ fn camera_skybox_request_uses_recursive_loaded_flags() -> Result<(), Box<dyn Err
     use solarity_systems::{
         PlacedWorldModelCollision, WorldModelCameraSceneQuery, WorldSceneCameraFrame,
     };
-    use std::sync::Arc;
+
     let camera = WorldSceneCameraFrame::perspective(
         Vec3::ZERO,
         Vec3::X,
@@ -786,7 +787,7 @@ fn camera_skybox_request_uses_recursive_loaded_flags() -> Result<(), Box<dyn Err
         (0x40000, 0x10000, true),
         (0x40008, 8, true),
     ] {
-        let model = Arc::new(visibility_model(&[loaded_flags], &[info_flags], &[], &[])?);
+        let model = ResourceLease::new(visibility_model(&[loaded_flags], &[info_flags], &[], &[])?);
         let root = PlacedWorldModelCollision::prepare_transform(model, Mat4::IDENTITY)?;
         query.query_camera_root(&root, camera, &[0])?;
         assert_eq!(query.has_skybox_request(), expected);
@@ -810,8 +811,8 @@ fn camera_root_direct_groups_follow_authored_flags_and_transformed_bounds()
     use solarity_systems::{
         PlacedWorldModelCollision, WorldModelCameraSceneQuery, WorldSceneCameraFrame,
     };
-    use std::sync::Arc;
-    let model = Arc::new(visibility_model(
+
+    let model = ResourceLease::new(visibility_model(
         &[0, 0x10000, 0],
         &[0x10000, 0, 0],
         &[],

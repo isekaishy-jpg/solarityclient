@@ -1,6 +1,7 @@
 //! Mounted requests share Unit_C ordering while retaining independent clocks.
 
 use super::*;
+use solarity_asset::ResourceLease;
 
 #[path = "unit_mount_routing.rs"]
 mod routing;
@@ -221,7 +222,7 @@ fn mount_pending_jump_and_clock_survive_body_model_replacement() -> Result<(), B
         ClientDataRoot::new(fixture.data_root())?,
         Locale::EnUs,
     )?)?;
-    let replacement = Arc::new(DecodedM2Model::load(
+    let replacement = ResourceLease::new(DecodedM2Model::load(
         &mut store,
         &AssetPath::new("Solarity\\Replacement.m2")?,
     )?);

@@ -1,6 +1,6 @@
 //! Camera rays and movement faces from placed build-12340 M2 collision meshes.
 
-use std::sync::Arc;
+use solarity_asset::ResourceLease;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::DecodedM2Model;
@@ -27,7 +27,7 @@ pub enum M2CollisionError {
 
 /// One shared M2 generation transformed by an MDDF, MODD, or GameObject owner.
 pub struct PlacedM2Collision {
-    model: Arc<DecodedM2Model>,
+    model: ResourceLease<DecodedM2Model>,
     transform: Mat4,
     inverse_transform: Mat4,
     collision_bounds: MovementCollisionBounds,
@@ -45,7 +45,7 @@ impl PlacedM2Collision {
     /// Returns [`M2CollisionError::InvalidPlacement`] when transform inputs are
     /// non-finite, scale is not positive, or inversion fails.
     pub fn prepare(
-        model: Arc<DecodedM2Model>,
+        model: ResourceLease<DecodedM2Model>,
         position: Vec3,
         rotation_degrees: Vec3,
         scale: f32,
@@ -66,7 +66,7 @@ impl PlacedM2Collision {
     /// Returns [`M2CollisionError::InvalidPlacement`] when the matrix is
     /// non-finite, singular, or otherwise cannot produce finite bounds.
     pub fn prepare_transform(
-        model: Arc<DecodedM2Model>,
+        model: ResourceLease<DecodedM2Model>,
         transform: Mat4,
     ) -> Result<Self, M2CollisionError> {
         let determinant = transform.determinant();
@@ -138,7 +138,7 @@ impl PlacedM2Collision {
 
     /// Returns the shared decoded M2 generation.
     #[must_use]
-    pub fn model(&self) -> &Arc<DecodedM2Model> {
+    pub fn model(&self) -> &ResourceLease<DecodedM2Model> {
         &self.model
     }
 

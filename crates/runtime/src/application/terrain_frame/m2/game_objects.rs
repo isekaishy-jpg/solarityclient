@@ -1,8 +1,8 @@
 //! GPU instances borrow CPU-admitted object and attached-doodad animation owners.
 
+use solarity_asset::ResourceLease;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
 use crate::random::CrtRand;
@@ -47,7 +47,9 @@ impl M2Frame {
                 return false;
             };
             match (instance.resource(), doodad_index) {
-                (Some(GameObjectResource::M2(cpu)), None) => Arc::ptr_eq(cpu.model(), &gpu.model),
+                (Some(GameObjectResource::M2(cpu)), None) => {
+                    ResourceLease::ptr_eq(cpu.model(), &gpu.model)
+                }
                 (Some(GameObjectResource::WorldModel(cpu)), Some(index)) => {
                     placement
                         .world_model_state
@@ -58,7 +60,8 @@ impl M2Frame {
                                 .is_some_and(|current| Rc::ptr_eq(previous, &current))
                         })
                         && cpu.doodads().iter().any(|doodad| {
-                            doodad.index == index && Arc::ptr_eq(doodad.source.model(), &gpu.model)
+                            doodad.index == index
+                                && ResourceLease::ptr_eq(doodad.source.model(), &gpu.model)
                         })
                 }
                 _ => false,
@@ -99,7 +102,7 @@ impl M2Frame {
                 )
             });
             if authored && let Some(source) = self.sources[placement.source_index].as_ref() {
-                sources.insert(Arc::as_ptr(&source.model), placement.source_index);
+                sources.insert(ResourceLease::as_ptr(&source.model), placement.source_index);
             }
         }
         let scene_time_ms = self.animation_time_ms();
@@ -113,17 +116,18 @@ impl M2Frame {
                     if retained.contains(&(instance.identity(), instance.display_id(), None)) {
                         continue;
                     }
-                    let source_index = if let Some(index) = sources.get(&Arc::as_ptr(cpu.model())) {
-                        *index
-                    } else {
-                        let Some(gpu) = prepare_source(renderer, cpu)? else {
-                            continue;
+                    let source_index =
+                        if let Some(index) = sources.get(&ResourceLease::as_ptr(cpu.model())) {
+                            *index
+                        } else {
+                            let Some(gpu) = prepare_source(renderer, cpu)? else {
+                                continue;
+                            };
+                            let index = self.sources.len();
+                            sources.insert(ResourceLease::as_ptr(&gpu.model), index);
+                            self.sources.push(Some(gpu));
+                            index
                         };
-                        let index = self.sources.len();
-                        sources.insert(Arc::as_ptr(&gpu.model), index);
-                        self.sources.push(Some(gpu));
-                        index
-                    };
                     let playback = if let Some(behavior) = instance.behavior() {
                         let Some(playback) = behavior.playback() else {
                             continue;
@@ -174,17 +178,18 @@ impl M2Frame {
                             continue;
                         }
                         let model = doodad.source.model();
-                        let source_index = if let Some(index) = sources.get(&Arc::as_ptr(model)) {
-                            *index
-                        } else {
-                            let Some(gpu) = prepare_source(renderer, &doodad.source)? else {
-                                continue;
+                        let source_index =
+                            if let Some(index) = sources.get(&ResourceLease::as_ptr(model)) {
+                                *index
+                            } else {
+                                let Some(gpu) = prepare_source(renderer, &doodad.source)? else {
+                                    continue;
+                                };
+                                let index = self.sources.len();
+                                sources.insert(ResourceLease::as_ptr(&gpu.model), index);
+                                self.sources.push(Some(gpu));
+                                index
                             };
-                            let index = self.sources.len();
-                            sources.insert(Arc::as_ptr(&gpu.model), index);
-                            self.sources.push(Some(gpu));
-                            index
-                        };
                         let mut placement = m2_gpu_placement(
                             source_index,
                             resolved.matrix() * doodad.local_transform,

@@ -1,7 +1,7 @@
 //! Per-widget sequence ownership across asynchronous model loading and GPU activation.
 
+use solarity_asset::ResourceLease;
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::time::Instant;
 
 use solarity_asset::{AssetPath, DecodedM2Model};
@@ -17,7 +17,7 @@ use super::{GlueModelKey, RuntimeGlueModelError, RuntimeGlueModelScene};
 pub(super) struct GlueScriptModelInstance {
     identity: UiModelInstance,
     path: AssetPath,
-    model: Option<Arc<DecodedM2Model>>,
+    model: Option<ResourceLease<DecodedM2Model>>,
     /// `None` after activation means that the active GPU frame owns playback.
     playback: Option<M2Playback>,
     started_at: Instant,
@@ -114,7 +114,7 @@ impl RuntimeGlueModelScene {
                 0,
                 random,
             )?);
-            entry.model = Some(Arc::clone(&loaded.model));
+            entry.model = Some(ResourceLease::clone(&loaded.model));
             entry.started_at = Instant::now();
         }
         while let Some((animation_id, time_offset_ms)) = entry.requests.pop_front() {

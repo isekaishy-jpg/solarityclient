@@ -1,6 +1,6 @@
 //! Placed build-12340 WMO generations shared by camera and movement queries.
 
-use std::sync::Arc;
+use solarity_asset::ResourceLease;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{DecodedWorldModel, DecodedWorldModelGroup};
@@ -36,7 +36,7 @@ pub enum WorldModelCollisionError {
 
 /// One shared WMO generation transformed by an owning MODF or game object.
 pub struct PlacedWorldModelCollision {
-    pub(super) model: Arc<DecodedWorldModel>,
+    pub(super) model: ResourceLease<DecodedWorldModel>,
     pub(super) transform: Mat4,
     pub(super) inverse_transform: Mat4,
     pub(super) root_bounds: [Vec3; 2],
@@ -102,7 +102,7 @@ impl PlacedWorldModelCollision {
     /// Returns [`WorldModelCollisionError::InvalidPlacement`] when transform
     /// inputs are non-finite, scale is not positive, or inversion fails.
     pub fn prepare(
-        model: Arc<DecodedWorldModel>,
+        model: ResourceLease<DecodedWorldModel>,
         position: Vec3,
         rotation_degrees: Vec3,
         scale: f32,
@@ -124,7 +124,7 @@ impl PlacedWorldModelCollision {
     /// Returns [`WorldModelCollisionError::InvalidPlacement`] for non-finite,
     /// singular transforms or non-finite transformed group bounds.
     pub fn prepare_transform(
-        model: Arc<DecodedWorldModel>,
+        model: ResourceLease<DecodedWorldModel>,
         transform: Mat4,
     ) -> Result<Self, WorldModelCollisionError> {
         if !transform.is_finite() || transform.determinant().abs() <= f32::EPSILON {
@@ -143,7 +143,7 @@ impl PlacedWorldModelCollision {
     /// Returns [`WorldModelCollisionError::InvalidPlacement`] for non-finite
     /// or singular matrices or non-finite transformed group bounds.
     pub fn prepare_transforms(
-        model: Arc<DecodedWorldModel>,
+        model: ResourceLease<DecodedWorldModel>,
         transform: Mat4,
         inverse_transform: Mat4,
     ) -> Result<Self, WorldModelCollisionError> {
@@ -253,7 +253,7 @@ impl PlacedWorldModelCollision {
 
     /// Returns the canonical shared WMO root path.
     #[must_use]
-    pub fn model(&self) -> &Arc<DecodedWorldModel> {
+    pub fn model(&self) -> &ResourceLease<DecodedWorldModel> {
         &self.model
     }
 
