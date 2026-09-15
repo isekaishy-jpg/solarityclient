@@ -624,12 +624,19 @@ owns orchestration, and rendering owns GPU safety and resource lifetimes.
 The composition design linked above expands the CPU portion with the supporting
 modules; this abbreviated frame-integration map is not the complete crate tree.
 
-## Migration and review gates
+## Direct cutover and review gates
 
-Deliver vertical slices with representative consumers, not a replacement
-scheduler left unused. Keep each source checkpoint buildable and reviewable.
-Do not retain two permanent frame schedulers or introduce an automatic runtime
-fallback to the old batch path. Comparisons use explicit development builds.
+On 2026-09-15 the user selected a direct cutover instead of a staged migration.
+The pre-cutover rollback point is commit
+`3be425958fb641aff014e218121a2c0b2e86b802`, preserved by the annotated Git tag
+`rollback/pre-cpu-cutover`. This captures the completed designs and unchanged
+runtime before implementation.
+
+Replace the existing paths and connect their consumers in the cutover. The steps
+below are an implementation and verification checklist, not separate rollout
+stages. Do not retain parallel old/new schedulers or an automatic runtime
+fallback. Stock parity, ownership, bounded resource use and validation gates
+still apply. Compare against the tagged revision in a separate checkout.
 
 | Step | Deliverable | Exit evidence |
 | --- | --- | --- |

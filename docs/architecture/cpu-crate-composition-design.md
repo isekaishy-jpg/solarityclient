@@ -408,11 +408,11 @@ continuations and external producers have drained.
 
 ## Integration and acceptance gates
 
-Implement these contracts within the first vertical scheduler slice, using real
+Implement these contracts in the [direct cutover](cpu-frame-job-design.md#direct-cutover-and-review-gates), using real
 M2 pose/geometry job state. Do not build disconnected generic storage or wakeup
 libraries first and leave the existing synchronous frame calls unchanged.
 
-| Contract | Required evidence before the slice is accepted |
+| Contract | Required evidence before the cutover is accepted |
 | --- | --- |
 | Capabilities/environment | Explicit and unknown topology cases; unsupported instruction path; partial worker initialization rollback; approved numeric fixtures on main and every worker; foreign-state boundary test |
 | Storage | Stable-graph allocation counts after warmup; no per-frame boxed task construction; stale generation and handle-reuse tests; fan-out lifetimes, panic and cancellation lease return; scratch cannot escape; bounded growth/infeasible transaction handling |

@@ -464,7 +464,11 @@ demand queued behind speculation, and retired bytes that never drain. A normal
 cold miss is not a warning. A high hit rate without a shorter critical path is
 not sufficient evidence of improvement.
 
-## Module boundaries and migration
+## Module boundaries and cutover
+
+Follow the [direct cutover decision and rollback point](cpu-frame-job-design.md#direct-cutover-and-review-gates).
+The steps below are the implementation checklist for that cutover, not separate
+rollout stages; their behavioral and validation requirements still apply.
 
 ```text
 crates/asset/src/cache/
