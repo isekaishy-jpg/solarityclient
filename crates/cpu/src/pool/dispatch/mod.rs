@@ -5,7 +5,7 @@ mod startup;
 mod worker;
 
 use crate::storage::StorageDeque;
-use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use super::{CpuError, CpuService};
@@ -24,25 +24,55 @@ pub(crate) trait ReadyWork: Send + Sync {
 #[derive(Clone, Copy)]
 pub(crate) enum WorkClass {
     Frame,
-    Background(CpuService),
+    Background,
     Priority,
+}
+
+/// One owned finite service operation with resumable domain-defined boundaries.
+/// Implementations stay private to the pool; no domain callback runs under queues.
+pub(crate) trait ServiceStep: Send {
+    /// Returns true only when the same owned operation needs another ready turn.
+    fn step(&mut self) -> bool;
 }
 
 /// Cold background closures and retained frame operations share thread ownership.
 pub(crate) enum Work {
     Once(Arc<AtomicU8>, Box<dyn FnOnce() + Send>),
+    Sliced(Arc<AtomicU8>, Box<dyn ServiceStep>),
     Retained(Arc<dyn ReadyWork>),
     Priority(Arc<dyn ReadyWork>, u64),
 }
 
 impl Work {
     /// Runs outside every scheduler lock.
-    fn run(self, flexible: bool) {
+    fn run(self, flexible: bool) -> Option<Self> {
         match self {
             Self::Once(_, operation) => operation(),
+            Self::Sliced(identity, mut operation) => {
+                if operation.step() {
+                    return Some(Self::Sliced(identity, operation));
+                }
+            }
             Self::Retained(operation) => operation.run(flexible),
             Self::Priority(operation, epoch) => operation.propagate(epoch),
         }
+        None
+    }
+
+    /// Reads the private service identity without invoking a kernel or trait method.
+    fn service_identity(&self) -> Option<&Arc<AtomicU8>> {
+        match self {
+            Self::Once(identity, _) | Self::Sliced(identity, _) => Some(identity),
+            Self::Retained(_) | Self::Priority(_, _) => None,
+        }
+    }
+
+    /// Called while queue metadata is locked so reclassification cannot race enqueue.
+    fn service(&self) -> CpuService {
+        let identity = self
+            .service_identity()
+            .unwrap_or_else(|| unreachable!("background dispatch owns a service identity"));
+        CpuService::from_raw(identity.load(Ordering::Acquire))
     }
     /// Queue classification may read only atomic urgency, never an epoch lock.
     fn urgent(&self) -> bool {

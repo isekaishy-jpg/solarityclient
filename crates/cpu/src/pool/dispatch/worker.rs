@@ -57,7 +57,10 @@ impl Dispatch {
                         .unwrap_or_else(|_| unreachable!("scheduler queue mutations cannot panic"));
                 }
             };
-            work.run(flexible);
+            if let Some(work) = work.run(flexible) {
+                // The same box, identity and admission lease survive the yield.
+                self.resume_service(work);
+            }
         }
     }
 }

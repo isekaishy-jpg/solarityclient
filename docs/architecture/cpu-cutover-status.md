@@ -3,8 +3,10 @@
 The user selected a direct cutover. The rollback tag is
 `rollback/pre-cpu-cutover`, at `3be425958fb641aff014e218121a2c0b2e86b802`.
 A later committed checkpoint is also preserved as `rollback/cpu-cutover-26cd4928`
-(`26cd4928545b1aefb3059d539bb30806c08b7bec`). The latest preserved checkpoint is `rollback/cpu-cutover-b677ed91`
-(`b677ed912e15fd6dd2c88e71a14c81db5d3fa8a9`). These tags contain committed work only.
+(`26cd4928545b1aefb3059d539bb30806c08b7bec`), along with
+`rollback/cpu-cutover-b677ed91` (`b677ed912e15fd6dd2c88e71a14c81db5d3fa8a9`).
+The latest preserved checkpoint is `rollback/cpu-cutover-b49ab5ae`
+(`b49ab5ae2d1c63e3272b584990e0a8ecdbc1d05a`). These tags contain committed work only.
 The complete requirements remain in the [frame-job design](cpu-frame-job-design.md),
 [composition design](cpu-crate-composition-design.md), and
 [cache/residency design](resource-cache-residency-design.md).
@@ -140,13 +142,25 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   a different plan still invalidates the provider's faces. These changes do not
   establish a shared pending-request authority or merge independent model caches.
 
+- General background operations can now keep one owned continuation and yield
+  between explicit finite steps. Task identity, admission, captures and the result
+  channel survive every yield. Priority changes during execution apply at the next
+  enqueue under the queue lock; no per-step task allocation or re-admission occurs.
+- CPU retirement transfers its backlog once and releases at most 16 independent
+  owners per service turn, in forward order, including during shutdown. Other
+  required service can run between turns. The active flexible worker resumes
+  without waking protected sleepers for every chunk. One object's destructor,
+  allocator free or third-party call remains indivisible; the count bound is not
+  a calibrated wall-time guarantee.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
-- Calibrated cost buckets and straggler reporting, resumable retirement slices,
-  and remaining domain demand transitions beyond terrain/Glue prewarm. External producers
+- Calibrated cost buckets, straggler reporting and measured step-size policy;
+  resumable asset/bulk stages beyond the connected CPU retirement path, and
+  remaining domain demand transitions beyond terrain/Glue prewarm. External producers
   expose urgency, but those services must still consume it. Frame urgency is
   monotonic within an epoch; live cache-consumer priority withdrawal is not yet wired.
 - Connect reservations to allocations nested inside domain job state and the
@@ -170,6 +184,23 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Resumable service checkpoint
+
+The full workspace suite passed 1,476 tests with 33 ignored. Workspace Clippy
+with warnings denied and formatting passed. Controlled tests cover priority
+promotion/withdrawal during a running step, required loading between retirement
+turns, forward exactly-once destruction, panic publication after capture retirement,
+and shutdown drain after the consumer discards its handle. A separate allocation
+fixture observes zero allocation calls across 1,000 warmed resumptions.
+
+The first full test compile ran out of disk while linking. After the failed
+process terminated, only generated incremental caches were removed; the complete
+retry passed with incremental compilation disabled and two build jobs. Logs are
+in ignored `target/cpu-steps-workspace-tests-initial.log`,
+`target/cpu-steps-workspace-tests.log` and `target/cpu-steps-clippy.log`.
+This connects finite cleanup steps, not calibrated time slicing or resumable
+archive/codec work. No live performance gain or Testing build is claimed.
 
 ### Archive namespace checkpoint
 

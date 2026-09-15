@@ -13,13 +13,25 @@ impl Dispatch {
         match class {
             WorkClass::Frame if work.urgent() => queues.urgent.push_back(work),
             WorkClass::Frame => queues.frame.push_back(work),
-            WorkClass::Background(service) => queues.service(service).push_back(work),
+            WorkClass::Background => queues.service(work.service()).push_back(work),
             WorkClass::Priority => queues.priority.push_back(work),
         }
         self.publish_queued(&queues);
         drop(queues);
         // A single notify could wake a protected worker for background work.
         self.ready.notify_all();
+    }
+
+    /// Returns a yielded operation to the currently executing flexible worker.
+    /// That worker will inspect this durable queue on its next loop; waking the
+    /// protected sleepers for every cleanup chunk would provide no useful work.
+    pub(super) fn resume_service(&self, work: Work) {
+        let mut queues = self
+            .queues
+            .lock()
+            .unwrap_or_else(|_| unreachable!("scheduler queue mutations cannot panic"));
+        queues.service(work.service()).push_back(work);
+        self.publish_queued(&queues);
     }
 
     /// Moves this phase's already queued runners, retaining FIFO ties. The scan
@@ -101,19 +113,17 @@ impl Dispatch {
         if previous == service as u8 {
             return;
         }
-        let previous = match previous {
-            0 => CpuService::Required,
-            1 => CpuService::Retirement,
-            2 => CpuService::Speculative,
-            _ => unreachable!("service identity contains a CpuService discriminant"),
-        };
+        let previous = CpuService::from_raw(previous);
         let source = queues.service(previous);
         let mut moved = None;
         for _ in 0..source.len() {
             let work = source
                 .pop_front()
                 .unwrap_or_else(|| unreachable!("queue scan retains its length"));
-            if matches!(&work, Work::Once(candidate, _) if Arc::ptr_eq(candidate, identity)) {
+            if work
+                .service_identity()
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, identity))
+            {
                 moved = Some(work);
             } else {
                 source.push_back(work);

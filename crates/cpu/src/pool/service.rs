@@ -15,3 +15,15 @@ pub enum CpuService {
     /// Prepare optional future demand only from otherwise idle capacity.
     Speculative,
 }
+
+impl CpuService {
+    /// Decodes only values stored by the typed task service boundary.
+    pub(super) fn from_raw(value: u8) -> Self {
+        match value {
+            0 => Self::Required,
+            1 => Self::Retirement,
+            2 => Self::Speculative,
+            _ => unreachable!("service identity contains a CpuService discriminant"),
+        }
+    }
+}
