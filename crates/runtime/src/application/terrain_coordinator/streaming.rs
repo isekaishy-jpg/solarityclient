@@ -126,16 +126,16 @@ impl RuntimeTerrainCoordinator {
         cpu: &CpuExecutor,
         mut admit: impl FnMut(&ResidentTerrainTile) -> Result<bool, RuntimeTerrainError>,
     ) -> Result<RuntimeTerrainStreamPoll, RuntimeTerrainError> {
-        self.poll_stream_completion()?;
-        self.publish_ready_stream(&mut admit)?;
         let Some(active) = self
             .active
             .as_mut()
             .filter(|active| active.map_id() == map_id)
         else {
+            self.poll_stream_completion()?;
             return Ok(RuntimeTerrainStreamPoll::Idle);
         };
         if active.global_world_model.is_some() {
+            self.poll_stream_completion()?;
             return Ok(RuntimeTerrainStreamPoll::Current);
         }
         if self
@@ -185,6 +185,15 @@ impl RuntimeTerrainCoordinator {
                 tiles,
             });
         }
+        // 7831A0/780860 installs current camera demand before 7B6B00 services
+        // loading. A completion belongs to that new window before GPU admission
+        // or collision membership; yesterday's demand cannot authorize uploads.
+        self.poll_stream_completion()?;
+        self.publish_ready_stream(&mut admit)?;
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(RuntimeTerrainError::UnknownMap { map_id })?;
         let demand = self
             .streaming
             .as_ref()

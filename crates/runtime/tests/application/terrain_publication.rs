@@ -247,3 +247,59 @@ fn neighbor_terrain_waits_for_exact_gpu_admission_before_cpu_publication()
     cpu.shutdown()?;
     Ok(())
 }
+
+/// Current camera demand must win both completed-worker and already-staged races.
+#[test]
+fn moving_window_rejects_old_completion_before_gpu_admission() -> Result<(), Box<dyn Error>> {
+    for stage_before_move in [false, true] {
+        let fixture = fixture()?;
+        let catalog = solarity_asset::ArchiveCatalog::discover(
+            solarity_asset::ClientDataRoot::new(fixture.data_root())?,
+            solarity_asset::Locale::EnUs,
+        )?;
+        let mut store = solarity_asset::AssetStore::mount(catalog.clone())?;
+        let maps = solarity_asset::MapCatalog::load(&mut store)?;
+        let mut terrain = crate::application::RuntimeTerrainCoordinator::new(
+            solarity_asset::AssetStoreHandle::new(store),
+            maps,
+        )
+        .with_worker_catalog(catalog);
+        terrain.synchronize(Some(&world(1000., false)?))?;
+        let origin = Vec3::new(1000., 5800., 10.);
+        let moved = Vec3::new(5000., 5800., 10.);
+        let distance = solarity_systems::resolve_world_view_distance(
+            solarity_systems::WorldViewDistanceRequest::new(
+                777.,
+                WorldMapId::new(571),
+                0x8000_0000,
+            ),
+        )?;
+        let window =
+            solarity_systems::TerrainStreamingWindow::new(origin, distance, Vec3::X * 777.)?;
+        let moved_window =
+            solarity_systems::TerrainStreamingWindow::new(moved, distance, Vec3::X * 777.)?;
+        let neighbor = solarity_asset::TerrainTileIndex::new(21, 31).ok_or("neighbor")?;
+        assert!(window.contains(neighbor));
+        assert!(!moved_window.contains(neighbor));
+        let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
+            std::num::NonZeroUsize::MIN,
+            std::num::NonZeroUsize::new(2).ok_or("capacity")?,
+        ))?;
+        terrain.synchronize_streaming_with_admission(571, origin, window, &cpu, |_| Ok(false))?;
+        cpu.try_submit(|| ())?.join()?;
+        if stage_before_move {
+            terrain
+                .synchronize_streaming_with_admission(571, origin, window, &cpu, |_| Ok(false))?;
+        }
+        let mut offered = 0;
+        terrain.synchronize_streaming_with_admission(571, moved, moved_window, &cpu, |_| {
+            offered += 1;
+            Ok(true)
+        })?;
+        assert_eq!(offered, 0, "old-window work must never reach GPU admission");
+        assert!(terrain.resident_tile_at(neighbor).is_none());
+        assert_eq!(terrain.resident_tile_count(), 1);
+        cpu.shutdown()?;
+    }
+    Ok(())
+}
