@@ -10,7 +10,7 @@ use crate::environment::WorkerEnvironment;
 /// Reusable typed work is erased only at the queue boundary.
 pub(crate) trait ReadyWork: Send + Sync {
     /// Executes an admitted portion without waiting for another worker job.
-    fn run(&self);
+    fn run(self: Arc<Self>);
 }
 
 /// Eligibility keeps blocking service off the protected frame workers.

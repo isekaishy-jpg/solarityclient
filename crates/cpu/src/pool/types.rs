@@ -82,6 +82,30 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// A handle belongs to another batch or a reclaimed generation.
+    #[error("CPU frame job identity is stale")]
+    StaleJob,
+    /// Reuse cannot wrap into an old valid handle.
+    #[error("CPU frame epoch generation is exhausted")]
+    EpochExhausted,
+    /// A producer appended after closing its phase.
+    #[error("CPU frame batch admission is closed")]
+    BatchClosed,
+    /// A phase exceeded its reserved node or edge count.
+    #[error("CPU frame batch exhausted its reserved node or edge capacity")]
+    BatchCapacity,
+    /// Metadata could not be allocated before ownership transfer.
+    #[error("CPU frame batch storage could not be reserved")]
+    BatchStorage,
+    /// The owned job retains a domain failure for its consumer.
+    #[error("CPU frame job reported failure")]
+    JobFailed,
+    /// The owner cancelled this node without discarding its input.
+    #[error("CPU frame job was cancelled")]
+    JobCancelled,
+    /// A prerequisite failed or was cancelled.
+    #[error("CPU frame job prerequisite did not succeed")]
+    DependencyFailed,
     /// Worker joins would turn a dependency into a deadlock or steal unrelated work.
     #[error("CPU worker attempted a blocking result wait")]
     WorkerWait,

@@ -13,6 +13,7 @@ use input::PoseJob;
 pub(in crate::application::terrain_frame::m2) struct PoseBatch {
     jobs: Vec<PoseJob>,
     indices: Vec<Option<usize>>,
+    handles: Vec<solarity_cpu::FrameJob<PoseJob>>,
     pending: solarity_cpu::FrameBatch<PoseJob>,
     submitted: bool,
 }
@@ -22,6 +23,7 @@ impl Default for PoseBatch {
         Self {
             jobs: Vec::new(),
             indices: Vec::new(),
+            handles: Vec::new(),
             pending: solarity_cpu::FrameBatch::new(PoseJob::sample),
             submitted: false,
         }
@@ -64,9 +66,9 @@ impl PoseBatch {
             return Ok(false);
         };
         if self.submitted {
-            return self
-                .pending
-                .with_result(job, |job| job.take(model, clock, view, overrides, output))?;
+            return self.pending.with_result(&self.handles[job], |job| {
+                job.take(model, clock, view, overrides, output)
+            })?;
         }
         self.jobs[job].take(model, clock, view, overrides, output)
     }

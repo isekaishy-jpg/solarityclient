@@ -43,8 +43,10 @@ parallel work units.
 - Frame batches have separate bounded admission and reusable typed state.
   Pose outputs are independently consumed; geometry inputs are published while
   ordered traversal continues. The old synchronous frame API is removed.
-  Batch admission currently bounds epochs, not node counts or total bytes;
-  the outstanding storage contract is recorded in the cutover status.
+  Incremental phases declare node/edge maxima before dispatch; known independent
+  phases reserve their exact node count. Excess work is rejected before ownership
+  transfer. Aggregate bytes and nested domain allocations remain an outstanding
+  storage contract recorded in the cutover status.
 - Every admitted operation returns a single-owner completion handle. Dropping
   the handle discards only the result; executor shutdown still owns and drains
   the work.
@@ -68,6 +70,36 @@ parallel work units.
 The shared lifecycle mutex is touched only for admission, snapshot, completion,
 and shutdown. Task bodies and result transport do not hold it, so expensive HD
 asset work cannot serialize on the accounting boundary.
+
+## Frame dependencies and consumption
+
+`FrameBatch<T>` registers its kernel once. `begin` reserves a `FrameBatchPlan`;
+`push_after` accepts only earlier handles from the same batch and generation.
+Flat edge records and a reserved propagation queue avoid per-node allocations
+and recursive failure walks. Completing workers release successors directly,
+including parallel fan-out; main does not discover readiness by polling parents.
+Registration and terminal-parent observation use the same synchronization boundary.
+Nodes with a failed/cancelled predecessor retain their state without executing.
+
+`FrameJob<T>` is a non-owning typed slot/generation handle. Its weak owner prevents
+allocation-identity reuse from admitting a foreign batch; checked epoch advance
+rejects old-frame reuse. `outcome` and `try_with_result` do not wait. `with_result`
+waits for only its own node and rejects unfinished worker-side waits. Consumption
+leases state outside the scheduler lock and returns it even if the consumer
+unwinds. Domain error payloads remain in T and are recovered through reclamation.
+
+`close` ends incremental admission; `reclaim` returns every input in admission
+order before reporting terminal failure. An open producer must close or reclaim
+its phase before asking the executor to shut down. Running cancellation is
+acknowledged after the finite kernel returns; it never steals mutable state from
+a running worker. This is not cooperative preemption inside domain kernels.
+
+M2 pose and geometry consumers use these checked identities. Geometry publication
+consumes the ordered completed prefix before final reclamation, so stream copies
+can overlap later kernels. Receiver-light callbacks still follow actual emitted
+packet demand; their ordering is not inferred from broad visibility. Cross-batch
+dependencies, external readiness and main-only continuation dispatch remain
+required work, as do reusable dependency templates and global byte budgets.
 
 ## Validation
 

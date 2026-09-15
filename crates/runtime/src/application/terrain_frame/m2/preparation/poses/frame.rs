@@ -100,6 +100,10 @@ impl M2Frame {
         // traversal; a palette consumer waits for only its own model result.
         if let Some(cpu) = cpu {
             batch.pending.start(cpu, &mut batch.jobs)?;
+            batch.handles.clear();
+            for index in 0..active {
+                batch.handles.push(batch.pending.job(index)?);
+            }
             batch.submitted = true;
         } else {
             for job in &mut batch.jobs {

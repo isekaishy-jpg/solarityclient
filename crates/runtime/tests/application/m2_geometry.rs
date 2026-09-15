@@ -147,6 +147,26 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         let [reference_random, candidate_random] = randoms.as_mut_slice() else {
             return Err("two streams".into());
         };
+        // Alternate scene-light publication so packet-dependent receiver demand
+        // and remapped scene indices are checked alongside the geometry streams.
+        let lighting = (step % 2 != 0).then_some((
+            solarity_rendering::M2SceneUniform::new(
+                camera.projection(),
+                camera.view(),
+                camera.camera().position(),
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::Z,
+                glam::Vec4::ZERO,
+                Vec3::ZERO,
+                [solarity_rendering::M2LocalLightState::disabled(); 4],
+            ),
+            solarity_rendering::M2DirectionalLight::new(
+                -Vec3::Z,
+                Vec3::splat(0.8),
+                Vec3::splat(0.9),
+            ),
+        ));
         let started = std::time::Instant::now();
         let a = reference.prepare_visible_draws_reference(
             &renderer,
@@ -160,7 +180,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             reference_random,
             None,
             None,
-            None,
+            lighting,
             None,
             Some(shadow),
             None,
@@ -179,7 +199,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             candidate_random,
             None,
             None,
-            None,
+            lighting,
             None,
             Some(shadow),
             None,
@@ -190,6 +210,14 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             measured += 1;
         }
         assert_eq!(a.draws, b.draws, "mesh step {step}");
+        assert_eq!(
+            a.instance_scenes, b.instance_scenes,
+            "receiver scenes step {step}"
+        );
+        assert_eq!(
+            a.scene_directionals, b.scene_directionals,
+            "light sources step {step}"
+        );
         assert_eq!(a.shadow_draws, b.shadow_draws, "shadow step {step}");
         assert_eq!(a.bone_transforms, b.bone_transforms);
         assert_eq!(a.particle_vertices, b.particle_vertices);

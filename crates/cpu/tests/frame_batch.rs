@@ -46,10 +46,15 @@ fn independent_output_is_consumable_before_another_job_finishes() -> Result<(), 
     let mut batch = FrameBatch::new(run);
     batch.start(&cpu, &mut jobs)?;
     assert!(jobs.is_empty());
+    let handle = batch.job(1)?;
     let (ready, observed) = mpsc::sync_channel(1);
     let result = std::thread::scope(|scope| {
         scope.spawn(|| {
-            assert!(ready.send(batch.with_result(1, |job| job.value)).is_ok());
+            assert!(
+                ready
+                    .send(batch.with_result(&handle, |job| job.value))
+                    .is_ok()
+            );
         });
         let result = observed.recv_timeout(Duration::from_secs(5));
         assert!(release.send(()).is_ok());
@@ -106,7 +111,10 @@ fn admission_failure_preserves_inputs_and_reuse_preserves_outputs() -> Result<()
     first.reclaim(&mut first_jobs)?;
     for expected in 1..=100 {
         second.start(&cpu, &mut jobs)?;
-        assert_eq!(second.with_result(0, |job| job.value)?, expected);
+        assert_eq!(
+            second.with_result(&second.job(0)?, |job| job.value)?,
+            expected
+        );
         second.reclaim(&mut jobs)?;
         assert_eq!(jobs[0].value, expected);
     }
@@ -122,8 +130,9 @@ fn consumer_unwind_returns_state_and_shutdown_drains_live_batch() -> Result<(), 
         value: 12,
     }];
     batch.start(&cpu, &mut jobs)?;
+    let handle = batch.job(0)?;
     let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        batch.with_result(0, |job| {
+        batch.with_result(&handle, |job| {
             job.value = 99;
             panic!("fixture consumer failure");
         })
@@ -144,15 +153,15 @@ fn incremental_producer_can_resume_after_workers_have_drained() -> Result<(), Bo
     let cpu = executor()?;
     let mut batch = FrameBatch::new(run);
     let mut jobs = Vec::new();
-    batch.begin(&cpu)?;
+    batch.begin(&cpu, solarity_cpu::FrameBatchPlan::new(64, 0))?;
     for index in 0..64 {
         let mut job = Some(Job {
             wait: None,
             value: index,
         });
-        assert_eq!(batch.push(&mut job)?, index);
+        let handle = batch.push(&mut job)?;
         assert!(job.is_none());
-        assert_eq!(batch.with_result(index, |job| job.value)?, index + 1);
+        assert_eq!(batch.with_result(&handle, |job| job.value)?, index + 1);
     }
     batch.reclaim(&mut jobs)?;
     assert_eq!(jobs.len(), 64);

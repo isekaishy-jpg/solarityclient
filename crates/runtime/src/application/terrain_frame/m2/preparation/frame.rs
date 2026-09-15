@@ -1040,12 +1040,13 @@ impl M2Frame {
             }
             Ok(())
         })();
+        // Ordered packet relocation can consume the ready prefix while later
+        // kernels run. Receiver demand still follows actual emitted packets.
+        let publication_result = traversal_result.and_then(|()| self.publish_geometry(&mut work));
         let geometry_result = self.finish_geometry();
         self.restore_geometry_states();
-        traversal_result?;
+        let (particle_vertex_capacity, particle_index_capacity) = publication_result?;
         geometry_result?;
-        let (particle_vertex_capacity, particle_index_capacity) =
-            self.publish_geometry(&mut work)?;
         self.pose_batch.finish()?;
         self.pose_batch.report_consumption();
         frame_profile.mark("instance traversal");

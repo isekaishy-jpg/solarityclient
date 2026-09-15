@@ -225,6 +225,11 @@ pub(super) struct M2UnitEffectScene {
 }
 
 impl M2UnitEffectScene {
+    /// Bounds the effect tail already produced by this frame's ordered callbacks.
+    pub(super) fn pending_placement_count(&self) -> usize {
+        self.pending.len()
+    }
+
     /// Retires completed effects only after their particles drain, keeping all
     /// surviving placements in order. The prefix before `first_effect` must
     /// contain no effects; callers pass zero while topology metadata is dirty.

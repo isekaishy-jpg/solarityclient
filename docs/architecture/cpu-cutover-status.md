@@ -31,18 +31,32 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 - Terrain streaming now installs the current camera window before offering a
   decoded tile for GPU admission. Regression coverage rejects both an unpolled
   completion and an already-staged old-window tile after movement.
+- Replaced bare frame-result indices with typed, owner-checked epoch handles.
+  Frame batches reserve their node/edge metadata before input transfer and can
+  append backward-only dependencies. Completing workers directly release ready
+  successors; domain failure, panic and cancellation suppress dependent kernels
+  while retaining all owned inputs. Nonblocking outcome/consumption is available.
+- M2 geometry publishes each completed result in traversal order while later
+  kernels can still run. Effect-state reclamation follows publication on success
+  and every error path. Packet-dependent receiver callbacks retain their ordered
+  barrier; broad visibility alone does not authorize a receiver query.
+- Geometry metadata reservation uses selected frame work plus the already-queued
+  effect tail. It does not allocate job cells for all distant resident models.
+  Dependency execution and output relocation now have focused folder modules.
 
 ## Still required for the complete cutover
 
-- General dependency templates, typed/generational outputs and external ready
-  tokens; cancellation, priority propagation and main-only continuations.
-- Node/result/scratch byte reservations and accounting. Current admission limits
-  count background tasks and frame batches separately; they do not bound a
-  batch's job count or total retained bytes.
+- Reusable dependency templates, cross-batch/heterogeneous result dependencies,
+  external ready tokens, priority propagation and main-only continuations.
+  Current dependencies are within one reusable typed batch; M2 consumers use
+  checked handles and independent roots, not yet cross-domain dependency graphs.
+- Aggregate node/result/scratch byte reservations and accounting. Node/edge
+  counts are now bounded per declared frame phase; executor-wide bytes and
+  allocations nested inside domain job state are not yet budgeted.
 - Extend the native bridge to loading/GPU-slot waits and main-ready continuations.
   Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
-  ordered receiver lighting and final geometry reclamation still have barriers.
+  ordered receiver lighting and end-of-frame state reclamation still have barriers.
 - Shared asset request identity/lifecycle, stock-evidenced animation demand and
   retention, derived cache invalidation, byte-budgeted residency and GPU retirement
   from the resource design.
@@ -54,6 +68,17 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+The bounded-dependency/ordered-publication checkpoint passed the full workspace
+suite with 1,432 tests and 33 ignored on 2026-09-15. The moving M2 parity fixture
+was then extended to alternate scene lighting and compare receiver uniforms and
+light-source order; its focused rerun passed. Existing coverage also checks
+particle/ribbon recovery after a geometry error. Logs are in ignored
+`target/cpu-dependency-workspace-tests.log`,
+`target/cpu-dependency-lighting-parity.log` and `target/cpu-dependency-clippy.log`.
+These are correctness checks, not a measured frame-time improvement.
+
+### Native-wakeup checkpoint
 
 The native-wakeup/current-window checkpoint passed formatting, workspace Clippy
 and all 1,427 tests, with 33 ignored, on 2026-09-15. Coverage adds native arm and

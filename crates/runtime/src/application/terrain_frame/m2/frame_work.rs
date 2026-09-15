@@ -215,6 +215,12 @@ pub(super) struct M2FrameWork {
 }
 
 impl M2FrameWork {
+    /// Upper bound before exact camera/portal admission, excluding distant
+    /// residents. Newly queued effects have a separate ordered-tail reservation.
+    pub(super) fn remaining_count(&self) -> usize {
+        self.indices.len() - self.cursor
+    }
+
     pub(super) fn next_index(&self) -> Option<usize> {
         self.indices.get(self.cursor).copied()
     }

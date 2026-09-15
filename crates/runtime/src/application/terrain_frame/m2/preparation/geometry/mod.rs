@@ -1,5 +1,6 @@
 //! Owned visible work joins after ordered animation, attachment and shadow publication.
 
+mod output;
 mod palette;
 mod prepare;
 mod publication;
@@ -73,6 +74,7 @@ pub(in super::super::super) struct GeometryBatch {
     jobs: Vec<GeometryJob>,
     active: usize,
     pending: solarity_cpu::FrameBatch<GeometryJob>,
+    handles: Vec<solarity_cpu::FrameJob<GeometryJob>>,
     submitted: bool,
 }
 
@@ -90,6 +92,7 @@ impl Default for GeometryBatch {
             jobs: Vec::new(),
             active: 0,
             pending: solarity_cpu::FrameBatch::new(GeometryJob::execute),
+            handles: Vec::new(),
             submitted: false,
         }
     }

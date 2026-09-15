@@ -13,6 +13,7 @@ pub use capabilities::CpuCapabilities;
 pub use completion::CoordinatorNotifier;
 pub use pool::{
     CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuTask, CpuTaskPermit, FrameBatch,
+    FrameBatchPlan, FrameJob, JobOutcome,
 };
 pub use random::BlizzardRand;
 pub use reciprocal::reciprocal_sqrt_estimate;
