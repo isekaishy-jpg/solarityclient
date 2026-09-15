@@ -234,6 +234,19 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   holds only weak dispatcher ownership. Asset request policy uses this CPU facade;
   the CPU crate still has no asset, rendering or gameplay dependency.
 
+- Glue character and population workers now transfer their complete archive/cache
+  bank after CPU admission and return it with ordinary success or failure. Cache
+  ownership is restored before stale-result rejection or GPU warmup. The worker
+  wrapper shares only selected request metadata instead of a mutex-protected
+  archive/cache bank. Model caches retain their existing metadata synchronization.
+- Coalesced Glue character preparation returns to the CPU service queue after each
+  obsolete appearance attempt. It re-reads current demand on the next turn instead
+  of looping through replacements inside one indivisible task. Current failures
+  retain their selected key; withdrawal ends the continuation. Worker ownership,
+  source preparation and coalescing policy now have focused folder modules.
+  One complete appearance attempt remains indivisible; nested model dependencies
+  and shared source adoption for these consumers remain required.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
@@ -271,7 +284,13 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-No numbered Testing build has been produced from this in-progress cutover.
+Build 139 was packaged and installed on 2026-09-15 at the user's request to stop
+further cutover work and provide a Testing client. It includes the current owned
+character/population cache handoff and finite Glue coalescing steps on top of
+`5e7d0b7b`. Optimized package compilation and installed executable identity/hash
+verification passed. The latest worker edits subsequently passed full workspace validation,
+recorded in the Build 139 checkpoint below. This package does not complete the cutover
+or establish a measured FPS gain.
 
 ## Archive table investigation
 
@@ -311,6 +330,28 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Owned appearance workers and Build 139 checkpoint
+
+On 2026-09-15, final formatting, workspace Clippy and the full workspace suite
+passed: 1,512 tests, zero failures, 33 ignored. New controlled worker tests verify
+that selected appearance churn yields to queued service, skips superseded input,
+preserves current failure identity and stops on request withdrawal. Existing
+population admission, equipment, animation, movement and stock rendering checks
+also passed after the cache bank moved to explicit task/completion ownership.
+
+Build 139 was compiled with the optimized `test-client` profile and installed
+through the existing Testing shortcut at 2560x1440. Its recorded source identity
+is `5e7d0b7b` with uncommitted changes, captured by this checkpoint; installation
+did not relabel the artifact. Installed SHA-256:
+`30F13F896B406C46D60159529A41A35030997782D45B4295BBAEDE1A5A772E31`.
+Build 138 was reserved by an aborted packaging invocation; the sequence retains
+that gap as required. The user reported no visible FPS improvement in Build 139.
+Validation compilation overlapped that run, so it was not a controlled comparison.
+No measured performance gain is established and the complete cutover remains open.
+
+Final validation logs are in ignored `target/build139-final-tests.log`,
+`target/build139-final-clippy.log` and `target/build139-final-fmt.log`.
 
 ### Shared M2 requests and consumer priority checkpoint
 

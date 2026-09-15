@@ -1,0 +1,74 @@
+//! Finite jobs exclusively own their archive and model/texture cache bank.
+
+use super::super::{RuntimePlayerError, RuntimePlayerPresentation, RuntimePlayerSharedCatalogs};
+use super::GlueCharacterWorkerCache;
+use crate::application::player_coordinator::population_worker;
+use crate::application::unit_animation::UnitAnimationScene;
+use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle};
+use solarity_rendering::CharacterComponentTextureLevel;
+use std::sync::{Arc, Mutex};
+
+/// Worker-local caches retain expensive decode results across finite jobs.
+pub(in crate::application::player_coordinator) fn with_worker_presentation<T>(
+    catalog: ArchiveCatalog,
+    catalogs: RuntimePlayerSharedCatalogs,
+    component_texture_level: CharacterComponentTextureLevel,
+    worker_cache: &mut GlueCharacterWorkerCache,
+    prepare: impl FnOnce(&mut RuntimePlayerPresentation) -> Result<T, RuntimePlayerError>,
+) -> Result<T, RuntimePlayerError> {
+    let store = worker_cache.store.take();
+    let models = std::mem::take(&mut worker_cache.models);
+    let textures = std::mem::take(&mut worker_cache.textures);
+    let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
+    let mut presentation = RuntimePlayerPresentation {
+        passenger_frames: crate::application::unit_passenger::UnitPassengerFrames::new(Arc::clone(
+            &catalogs.vehicles,
+        )),
+        vehicles: catalogs.vehicles,
+        unit_animations: UnitAnimationScene::default(),
+        camera_opacity_subject: Default::default(),
+        arena_map: false,
+        animation_mouse_turning: false,
+        assets: AssetStoreHandle::new(store),
+        animations: catalogs.animations,
+        creatures: catalogs.creatures,
+        creature_families: catalogs.creature_families,
+        characters: catalogs.characters,
+        races: catalogs.races,
+        helmet_visibility: catalogs.helmet_visibility,
+        start_outfits: catalogs.start_outfits,
+        item_definitions: catalogs.item_definitions,
+        item_displays: catalogs.item_displays,
+        item_visuals: catalogs.item_visuals,
+        particle_colors: catalogs.particle_colors,
+        models,
+        textures,
+        component_texture_level,
+        resident: None,
+        creatures_resident: Vec::new(),
+        remote_players: Vec::new(),
+        creature_worker: population_worker::PopulationWorker::new(),
+        remote_worker: population_worker::PopulationWorker::new(),
+        glue_character: None,
+        requested_glue_character: None,
+        glue_worker_catalog: None,
+        glue_worker_cache: Some(GlueCharacterWorkerCache::default()),
+        glue_worker_request: Arc::new(Mutex::new(None)),
+        pending_glue_character: None,
+        failed_glue_character: None,
+    };
+    let result = prepare(&mut presentation);
+
+    presentation.textures.collect_unused();
+    let assets = presentation.assets;
+    let models = std::mem::take(&mut presentation.models);
+    let textures = std::mem::take(&mut presentation.textures);
+    let store = assets.try_into_store();
+    worker_cache.models = models;
+    worker_cache.textures = textures;
+    match store {
+        Ok(store) => worker_cache.store = Some(store),
+        Err(_assets) => return Err(RuntimePlayerError::SharedGlueWorkerAssetStore),
+    }
+    result
+}

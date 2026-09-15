@@ -7,21 +7,25 @@ mod population_worker;
 mod registration;
 mod remote;
 mod replicated_animation;
+mod worker_presentation;
 
 use appearance_inputs::{CreatureAppearanceInputs, PlayerAppearanceInputs};
 use solarity_asset::ResourceLease;
+use worker_presentation::{
+    GlueCharacterWorkerCache, GlueWorkerCompletion, glue_steps, with_worker_presentation,
+};
 
 use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput, UnitAnimationScene};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use solarity_asset::{
-    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, AssetStoreHandle,
-    BlpTextureCache, BlpTextureSource, CharacterAppearanceCatalog, CharacterCustomization,
-    CharacterRaceCatalog, CharacterStartOutfitCatalog, CreatureCatalog, CreatureFamilyCatalog,
-    CreatureModelAppearance, DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType,
-    ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog, M2HardcodedTextureSource,
-    M2ModelCache, M2Texture, M2TextureKind, ParticleColorCatalog, VehicleCatalog,
+    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStoreHandle, BlpTextureCache,
+    BlpTextureSource, CharacterAppearanceCatalog, CharacterCustomization, CharacterRaceCatalog,
+    CharacterStartOutfitCatalog, CreatureCatalog, CreatureFamilyCatalog, CreatureModelAppearance,
+    DecodedM2Model, HelmetGeosetVisibilityCatalog, InventoryType, ItemDefinitionCatalog,
+    ItemDisplayCatalog, ItemVisualCatalog, M2HardcodedTextureSource, M2ModelCache, M2Texture,
+    M2TextureKind, ParticleColorCatalog, VehicleCatalog,
 };
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{
@@ -419,7 +423,7 @@ pub struct RuntimePlayerPresentation {
     glue_character: Option<ResidentGlueCharacterModel>,
     requested_glue_character: Option<ResidentGlueCharacterKey>,
     glue_worker_catalog: Option<ArchiveCatalog>,
-    glue_worker_cache: Arc<Mutex<GlueCharacterWorkerCache>>,
+    glue_worker_cache: Option<GlueCharacterWorkerCache>,
     glue_worker_request: Arc<Mutex<Option<GlueCharacterWorkerRequest>>>,
     pending_glue_character: Option<PendingGlueCharacter>,
     failed_glue_character: Option<ResidentGlueCharacterKey>,
@@ -466,7 +470,7 @@ impl RuntimePlayerPresentation {
             glue_character: None,
             requested_glue_character: None,
             glue_worker_catalog: None,
-            glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
+            glue_worker_cache: Some(GlueCharacterWorkerCache::default()),
             glue_worker_request: Arc::new(Mutex::new(None)),
             pending_glue_character: None,
             failed_glue_character: None,
@@ -557,7 +561,9 @@ impl RuntimePlayerPresentation {
                 .pending_glue_character
                 .take()
                 .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
-            match pending.task.join()? {
+            let completion = pending.task.join()?;
+            self.glue_worker_cache = Some(completion.cache);
+            match completion.result {
                 Ok(Some(mut resident)) => {
                     if let Some(current) = requested.as_ref()
                         && resident.key.same_residency(current)
@@ -615,20 +621,17 @@ impl RuntimePlayerPresentation {
             .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?
             .clone();
         let catalogs = self.shared_catalogs();
-        let worker_cache = Arc::clone(&self.glue_worker_cache);
-        let worker_request = Arc::clone(&self.glue_worker_request);
-        let task = match cpu.try_submit(move || {
-            prepare_latest_glue_character_on_worker(
-                catalog,
-                catalogs,
-                &worker_request,
-                &worker_cache,
-            )
-        }) {
-            Ok(task) => task,
+        let permit = match cpu.try_reserve() {
+            Ok(permit) => permit,
             Err(CpuError::AtCapacity { .. }) => return Ok(request_changed),
             Err(source) => return Err(source.into()),
         };
+        let worker_cache = self
+            .glue_worker_cache
+            .take()
+            .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
+        let worker_request = Arc::clone(&self.glue_worker_request);
+        let task = permit.submit_steps(glue_steps(catalog, catalogs, worker_request, worker_cache));
         self.pending_glue_character = Some(PendingGlueCharacter {
             submitted_at: std::time::Instant::now(),
             task,
@@ -1434,167 +1437,6 @@ impl RuntimePlayerPresentation {
     }
 }
 
-/// Completes a Glue character on the same private asset owner used by population jobs.
-fn prepare_glue_character_on_worker(
-    catalog: ArchiveCatalog,
-    catalogs: RuntimePlayerSharedCatalogs,
-    component_texture_level: CharacterComponentTextureLevel,
-    key: ResidentGlueCharacterKey,
-    worker_cache: &Mutex<GlueCharacterWorkerCache>,
-) -> Result<ResidentGlueCharacterModel, RuntimePlayerError> {
-    with_worker_presentation(
-        catalog,
-        catalogs,
-        component_texture_level,
-        worker_cache,
-        |presentation| {
-            presentation.requested_glue_character = Some(key.clone());
-            match &key {
-                ResidentGlueCharacterKey::Creation(preview) => {
-                    presentation.synchronize_character_creation(Some(preview))?;
-                }
-                ResidentGlueCharacterKey::Selection(preview) => {
-                    presentation.synchronize_character_selection(Some(preview))?;
-                }
-            }
-            presentation
-                .glue_character
-                .take()
-                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)
-        },
-    )
-}
-
-/// Worker-local caches retain expensive decode results across finite jobs.
-fn with_worker_presentation<T>(
-    catalog: ArchiveCatalog,
-    catalogs: RuntimePlayerSharedCatalogs,
-    component_texture_level: CharacterComponentTextureLevel,
-    worker_cache: &Mutex<GlueCharacterWorkerCache>,
-    prepare: impl FnOnce(&mut RuntimePlayerPresentation) -> Result<T, RuntimePlayerError>,
-) -> Result<T, RuntimePlayerError> {
-    let (store, models, textures) = {
-        let mut cache = worker_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (
-            cache.store.take(),
-            std::mem::take(&mut cache.models),
-            std::mem::take(&mut cache.textures),
-        )
-    };
-    let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
-    let mut presentation = RuntimePlayerPresentation {
-        passenger_frames: super::unit_passenger::UnitPassengerFrames::new(Arc::clone(
-            &catalogs.vehicles,
-        )),
-        vehicles: catalogs.vehicles,
-        unit_animations: UnitAnimationScene::default(),
-        camera_opacity_subject: Default::default(),
-        arena_map: false,
-        animation_mouse_turning: false,
-        assets: AssetStoreHandle::new(store),
-        animations: catalogs.animations,
-        creatures: catalogs.creatures,
-        creature_families: catalogs.creature_families,
-        characters: catalogs.characters,
-        races: catalogs.races,
-        helmet_visibility: catalogs.helmet_visibility,
-        start_outfits: catalogs.start_outfits,
-        item_definitions: catalogs.item_definitions,
-        item_displays: catalogs.item_displays,
-        item_visuals: catalogs.item_visuals,
-        particle_colors: catalogs.particle_colors,
-        models,
-        textures,
-        component_texture_level,
-        resident: None,
-        creatures_resident: Vec::new(),
-        remote_players: Vec::new(),
-        creature_worker: population_worker::PopulationWorker::new(),
-        remote_worker: population_worker::PopulationWorker::new(),
-        glue_character: None,
-        requested_glue_character: None,
-        glue_worker_catalog: None,
-        glue_worker_cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
-        glue_worker_request: Arc::new(Mutex::new(None)),
-        pending_glue_character: None,
-        failed_glue_character: None,
-    };
-    let result = prepare(&mut presentation);
-
-    presentation.textures.collect_unused();
-    let assets = presentation.assets;
-    let models = std::mem::take(&mut presentation.models);
-    let textures = std::mem::take(&mut presentation.textures);
-    let store = assets.try_into_store();
-    let mut cache = worker_cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    cache.models = models;
-    cache.textures = textures;
-    match store {
-        Ok(store) => cache.store = Some(store),
-        Err(_assets) => {
-            drop(cache);
-            return Err(RuntimePlayerError::SharedGlueWorkerAssetStore);
-        }
-    }
-    drop(cache);
-    result
-}
-
-fn prepare_latest_glue_character_on_worker(
-    catalog: ArchiveCatalog,
-    catalogs: RuntimePlayerSharedCatalogs,
-    request: &Mutex<Option<GlueCharacterWorkerRequest>>,
-    worker_cache: &Mutex<GlueCharacterWorkerCache>,
-) -> Result<Option<ResidentGlueCharacterModel>, GlueCharacterWorkerFailure> {
-    // A single finite worker owns the expensive archive/cache pipeline. While
-    // it runs, UI changes replace this shared slot instead of appending stale
-    // FIFO jobs. The worker discards an obsolete result and immediately folds
-    // the newest generation into its warm caches before returning.
-    loop {
-        let Some(work) = request
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-        else {
-            return Ok(None);
-        };
-        let result = prepare_glue_character_on_worker(
-            catalog.clone(),
-            catalogs.clone(),
-            work.component_texture_level,
-            work.key.clone(),
-            worker_cache,
-        );
-        let current = request
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        match current {
-            Some(current) if current.same_residency(&work) => {
-                let mut resident = result.map_err(|source| GlueCharacterWorkerFailure {
-                    key: work.key,
-                    source,
-                })?;
-                resident.apply_transform_key(current.key);
-                return Ok(Some(resident));
-            }
-            Some(_) => continue,
-            None => return Ok(None),
-        }
-    }
-}
-
-#[derive(Default)]
-struct GlueCharacterWorkerCache {
-    store: Option<AssetStore>,
-    models: M2ModelCache,
-    textures: BlpTextureCache,
-}
-
 #[derive(Clone)]
 struct GlueCharacterWorkerRequest {
     key: ResidentGlueCharacterKey,
@@ -1695,7 +1537,7 @@ impl ResidentGlueCharacterModel {
 
 struct PendingGlueCharacter {
     submitted_at: std::time::Instant,
-    task: CpuTask<Result<Option<ResidentGlueCharacterModel>, GlueCharacterWorkerFailure>>,
+    task: CpuTask<GlueWorkerCompletion>,
 }
 
 /// One failed worker generation tagged before the shared request can advance.

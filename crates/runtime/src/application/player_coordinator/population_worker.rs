@@ -1,13 +1,13 @@
 //! Finite population asset jobs with exact object and appearance ownership.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 
 use solarity_asset::ArchiveCatalog;
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_rendering::{CharacterComponentTextureLevel, M2ModelOrientation, VulkanRenderer};
 
+use super::worker_presentation::PopulationWorkerCompletion;
 use super::{
     GlueCharacterWorkerCache, ResidentCreatureModel, ResidentPlayerModel, RuntimePlayerError,
     RuntimePlayerPresentation, RuntimePlayerSharedCatalogs, UnitPresentationGeneration,
@@ -19,7 +19,7 @@ use crate::application::terrain_frame::m2::M2GluePipelineWarmup;
 /// A population owns one archive/cache worker; no per-object task backlog exists.
 pub(super) struct PopulationWorker<K, T> {
     pending: Option<PendingPopulation<K, T>>,
-    cache: Arc<Mutex<GlueCharacterWorkerCache>>,
+    cache: Option<GlueCharacterWorkerCache>,
     retired: CpuRetirementQueue<T>,
 }
 
@@ -40,7 +40,7 @@ pub(super) struct PopulationRequest<K> {
 
 /// CPU completion precedes incremental driver admission and atomic placement publication.
 enum PopulationStage<T> {
-    Preparing(CpuTask<Result<T, RuntimePlayerError>>),
+    Preparing(CpuTask<PopulationWorkerCompletion<T>>),
     Warming {
         resident: T,
         pipelines: VecDeque<M2GluePipelineWarmup>,
@@ -56,9 +56,16 @@ impl<T> PopulationStage<T> {
     }
 
     /// Used only after completion, including when an obsolete owner must retire.
-    fn into_result(self) -> Result<Result<T, RuntimePlayerError>, CpuError> {
+    fn into_result(
+        self,
+        cache: &mut Option<GlueCharacterWorkerCache>,
+    ) -> Result<Result<T, RuntimePlayerError>, CpuError> {
         match self {
-            Self::Preparing(task) => task.join(),
+            Self::Preparing(task) => {
+                let completion = task.join()?;
+                *cache = Some(completion.cache);
+                Ok(completion.result)
+            }
             Self::Warming { resident, .. } => Ok(Ok(resident)),
         }
     }
@@ -100,7 +107,7 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
     pub(super) fn new() -> Self {
         Self {
             pending: None,
-            cache: Arc::new(Mutex::new(GlueCharacterWorkerCache::default())),
+            cache: Some(GlueCharacterWorkerCache::default()),
             retired: CpuRetirementQueue::new(),
         }
     }
@@ -122,7 +129,7 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
             .as_ref()
             .is_some_and(|pending| pending.identity == identity && pending.stage.is_finished())
             && let Some(pending) = self.pending.take()
-            && let Ok(resident) = pending.stage.into_result()?
+            && let Ok(resident) = pending.stage.into_result(&mut self.cache)?
         {
             self.retired.extend([resident]);
         }
@@ -146,7 +153,7 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
                     world.object_identity(pending.identity.guid()) != Some(pending.identity)
                 })
         }) && let Some(pending) = self.pending.take()
-            && let Ok(resident) = pending.stage.into_result()?
+            && let Ok(resident) = pending.stage.into_result(&mut self.cache)?
         {
             self.retired.extend([resident]);
         }
@@ -172,14 +179,16 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
             return Ok(None);
         };
         if pending.key != *key || pending.level != level {
-            if let Ok(resident) = pending.stage.into_result()? {
+            if let Ok(resident) = pending.stage.into_result(&mut self.cache)? {
                 self.retired.extend([resident]);
             }
             return Ok(None);
         }
         let (resident, mut pipelines) = match pending.stage {
             PopulationStage::Preparing(task) => {
-                let resident = task.join()??;
+                let completion = task.join()?;
+                self.cache = Some(completion.cache);
+                let resident = completion.result?;
                 let pipelines = resident
                     .generation()
                     .0
@@ -236,7 +245,10 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
             Err(CpuError::AtCapacity { .. }) => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        let cache = Arc::clone(&self.cache);
+        let mut cache = self
+            .cache
+            .take()
+            .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
         let PopulationRequest {
             identity,
             key,
@@ -247,7 +259,9 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
             key,
             level,
             stage: PopulationStage::Preparing(permit.submit(move || {
-                with_worker_presentation(catalog, catalogs, level, &cache, prepare)
+                let result =
+                    with_worker_presentation(catalog, catalogs, level, &mut cache, prepare);
+                PopulationWorkerCompletion { cache, result }
             })),
         });
         Ok(())
