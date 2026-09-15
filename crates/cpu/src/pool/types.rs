@@ -93,6 +93,14 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// A domain writer exceeded its preadmitted element count.
+    #[error("cpu output needs {requested} elements with {available} available")]
+    OutputCapacity {
+        /// Additional elements requested by the producer.
+        requested: usize,
+        /// Remaining elements in the preallocated destination.
+        available: usize,
+    },
     /// Byte saturation preserves the caller's pending work and prior reservation.
     #[error("cpu storage needs {requested} bytes with {available} available in {class:?}")]
     StorageAtCapacity {

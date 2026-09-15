@@ -2559,6 +2559,85 @@ fn m2_particle_mesh_sorts_authored_depth() -> Result<(), Box<dyn Error>> {
         .distance(Vec3::from_array(mesh.vertices()[1].position()));
     assert!((first_height - appearance.scale().y * far_twinkle * 2.0).abs() < 0.0001);
     assert_eq!(particles, [near, far]);
+    // Equal depths preserve the prior presentation ordinal without a stable-sort
+    // allocation. The same producer writes only preadmitted domain buffers.
+    let particles = [near, far, far];
+    let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 100.0).frame(1.0)?;
+    let budget =
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(1 << 20, 0, 0));
+    let mut sort = solarity_cpu::CpuBuffer::<usize>::default();
+    let mut vertices = solarity_cpu::CpuBuffer::default();
+    let mut indices = solarity_cpu::CpuBuffer::default();
+    let (vertex_count, index_count) =
+        M2ParticleMeshPlan::buffer_capacity(emitter, particles.len())?;
+    sort.reserve(
+        &budget,
+        solarity_cpu::CpuStorageClass::Frame,
+        solarity_cpu::CpuStorageKind::Scratch,
+        particles.len(),
+    )?;
+    vertices.reserve(
+        &budget,
+        solarity_cpu::CpuStorageClass::Frame,
+        solarity_cpu::CpuStorageKind::Result,
+        vertex_count,
+    )?;
+    indices.reserve(
+        &budget,
+        solarity_cpu::CpuStorageClass::Frame,
+        solarity_cpu::CpuStorageKind::Result,
+        index_count,
+    )?;
+    let admitted = budget.snapshot();
+    M2ParticleMeshPlan::append_transformed_with_particle_color(
+        emitter,
+        pose,
+        &particles,
+        camera,
+        Mat4::IDENTITY,
+        1.0,
+        1.0,
+        &table,
+        None,
+        &mut sort.writer(),
+        &mut vertices.writer(),
+        &mut indices.writer(),
+    )?;
+    assert_eq!(&*sort, &[1, 2, 0]);
+    assert_eq!(budget.snapshot(), admitted);
+    let expected = M2ParticleMeshPlan::prepare_transformed_with_particle_color(
+        emitter,
+        pose,
+        &particles,
+        camera,
+        Mat4::IDENTITY,
+        1.0,
+        1.0,
+        &table,
+        None,
+    )?;
+    assert_eq!(&*vertices, expected.vertices());
+    assert_eq!(&*indices, expected.indices());
+    // A full destination is an explicit error, with its old stream intact.
+    assert!(
+        M2ParticleMeshPlan::append_transformed_with_particle_color(
+            emitter,
+            pose,
+            &particles,
+            camera,
+            Mat4::IDENTITY,
+            1.0,
+            1.0,
+            &table,
+            None,
+            &mut sort.writer(),
+            &mut vertices.writer(),
+            &mut indices.writer()
+        )
+        .is_err()
+    );
+    assert_eq!(&*vertices, expected.vertices());
+    assert_eq!(&*indices, expected.indices());
     Ok(())
 }
 

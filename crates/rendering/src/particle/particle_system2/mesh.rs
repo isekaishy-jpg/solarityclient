@@ -324,9 +324,9 @@ impl M2ParticleMeshPlan {
         alpha_multiplier: f32,
         twinkle_table: &M2ParticleTwinkleTable,
         replacement: Option<&M2ParticleColorReplacement>,
-        sort_indices: &mut Vec<usize>,
-        vertices: &mut Vec<M2ParticleRenderVertex>,
-        indices: &mut Vec<u32>,
+        sort_indices: &mut impl solarity_cpu::OutputBuffer<usize>,
+        vertices: &mut impl solarity_cpu::OutputBuffer<M2ParticleRenderVertex>,
+        indices: &mut impl solarity_cpu::OutputBuffer<u32>,
     ) -> Result<(usize, usize), M2ParticleMeshPlanError> {
         let first_vertex = vertices.len();
         let first_index = indices.len();
@@ -398,9 +398,9 @@ impl M2ParticleMeshPlan {
         alpha_multiplier: f32,
         twinkle_table: Option<&M2ParticleTwinkleTable>,
         replacement: Option<&M2ParticleColorReplacement>,
-        sort_indices: &mut Vec<usize>,
-        vertices: &mut Vec<M2ParticleRenderVertex>,
-        indices: &mut Vec<u32>,
+        sort_indices: &mut impl solarity_cpu::OutputBuffer<usize>,
+        vertices: &mut impl solarity_cpu::OutputBuffer<M2ParticleRenderVertex>,
+        indices: &mut impl solarity_cpu::OutputBuffer<u32>,
     ) -> Result<(usize, usize), M2ParticleMeshPlanError> {
         if !alpha_multiplier.is_finite() {
             return Err(M2ParticleMeshPlanError::AlphaMultiplier);
@@ -494,8 +494,17 @@ impl M2ParticleMeshPlan {
             // list; simulation slots and their address-derived twinkle phases
             // must remain untouched.
             sort_indices.clear();
-            sort_indices.extend(0..particles.len());
-            sort_indices.sort_by(|left, right| {
+            sort_indices
+                .try_reserve_exact(particles.len())
+                .map_err(|_| M2ParticleMeshPlanError::IndexCount)?;
+            for index in 0..particles.len() {
+                sort_indices
+                    .push(index)
+                    .map_err(|_| M2ParticleMeshPlanError::IndexCount)?;
+            }
+            // The input ordinal preserves stable ties while the in-place sort
+            // avoids a hidden per-emitter temporary allocation.
+            sort_indices.as_mut().sort_unstable_by(|left, right| {
                 let distance = |particle: &M2ParticleState| {
                     particle_to_world
                         .transform_point3(particle.position())
@@ -504,8 +513,9 @@ impl M2ParticleMeshPlan {
                 distance(&particles[*right])
                     .partial_cmp(&distance(&particles[*left]))
                     .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.cmp(right))
             });
-            Some(&*sort_indices)
+            Some(sort_indices.as_ref())
         } else {
             None
         };
@@ -757,8 +767,8 @@ fn velocity_aligned_billboard_positions(
 /// Appends one stock-ordered quad without relying on Rust struct layout.
 #[allow(clippy::too_many_arguments)]
 fn push_quad(
-    vertices: &mut Vec<M2ParticleRenderVertex>,
-    indices: &mut Vec<u32>,
+    vertices: &mut impl solarity_cpu::OutputBuffer<M2ParticleRenderVertex>,
+    indices: &mut impl solarity_cpu::OutputBuffer<u32>,
     first_vertex: usize,
     positions: [Vec3; 4],
     normal: Vec3,
@@ -772,21 +782,25 @@ fn push_quad(
         .map_err(|_source| M2ParticleMeshPlanError::VertexCount)?;
     let color_bgra = pack_bgra(color.to_array());
     for (position, coordinate) in positions.into_iter().zip(CELL_COORDINATES) {
-        vertices.push(M2ParticleRenderVertex {
-            position: position.to_array(),
-            normal: normal.to_array(),
-            color_bgra,
-            texture_coordinates: (cell_origin + coordinate * cell_size).to_array(),
-        });
+        vertices
+            .push(M2ParticleRenderVertex {
+                position: position.to_array(),
+                normal: normal.to_array(),
+                color_bgra,
+                texture_coordinates: (cell_origin + coordinate * cell_size).to_array(),
+            })
+            .map_err(|_| M2ParticleMeshPlanError::VertexCount)?;
     }
-    indices.extend_from_slice(&[
-        base_vertex,
-        base_vertex + 1,
-        base_vertex + 2,
-        base_vertex + 2,
-        base_vertex + 1,
-        base_vertex + 3,
-    ]);
+    indices
+        .extend_from_slice(&[
+            base_vertex,
+            base_vertex + 1,
+            base_vertex + 2,
+            base_vertex + 2,
+            base_vertex + 1,
+            base_vertex + 3,
+        ])
+        .map_err(|_| M2ParticleMeshPlanError::IndexCount)?;
     Ok(())
 }
 

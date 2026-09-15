@@ -609,6 +609,7 @@ fn mounted_ground_pose_reaches_local_and_remote_rider_attachments() -> Result<()
         previous_time = time;
         frame.prepare_visible_draws(
             &renderer,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,
@@ -749,6 +750,7 @@ fn native_mount_scales_reach_local_and_remote_rider_matrices() -> Result<(), Box
         frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
         frame.prepare_visible_draws(
             &renderer,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,
@@ -910,7 +912,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
         }
         let draws = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,

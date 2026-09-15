@@ -267,7 +267,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
         }
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,

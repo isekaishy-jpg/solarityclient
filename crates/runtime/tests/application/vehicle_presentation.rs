@@ -589,7 +589,7 @@ fn nested_vehicle_scene(mounted: bool) -> Result<(), Box<dyn Error>> {
         )?;
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,

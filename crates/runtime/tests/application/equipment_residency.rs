@@ -1119,6 +1119,7 @@ pub(super) fn advance(
 ) -> Result<(), Box<dyn Error>> {
     frame.prepare_visible_draws(
         renderer,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,

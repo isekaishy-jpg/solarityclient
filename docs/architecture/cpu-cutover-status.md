@@ -97,6 +97,23 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   one ledger sample only on marked detail frames. See the
   [storage contracts](cpu-storage-contracts.md) for exact scope and configuration.
 
+- Connected retained model-local mesh/particle/ribbon packet and vertex/index
+  buffers, particle sort indices and copied palette overrides to the execution
+  ledger. Each model reserves output before transferring placement simulation
+  state. Workers receive fixed-capacity writers; pressure returns an error without
+  implicitly allocating a larger destination. Charges follow the buffers through
+  worker ownership, ordered publication, reuse and retirement.
+- Cached immutable authored particle-capacity bounds with each shared GPU source,
+  using the existing native-evidenced rate/lifetime headroom calculation. This
+  covers a new simulation whose current pool is still zero. It reserves output
+  capacity only; live simulation growth, emission and final GPU stream-capacity
+  reporting continue to use their existing stock rules. Capacity rules now have a
+  separate module under the particle simulation folder.
+- Removed the production inline geometry path. World and glue/login M2 presentation
+  both receive the application executor. Reference-only scene evaluation moved
+  into the test tree. Particle presentation uses an in-place sort with explicit
+  input-ordinal ties, retaining equal-depth ordering without stable-sort scratch.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
@@ -108,8 +125,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   monotonic within an epoch; live cache-consumer priority withdrawal is not yet wired.
 - Connect reservations to allocations nested inside domain job state and the
   complete required phase working set. Executor-wide scheduler metadata and typed
-  result-page accounting now exist; ordinary model/asset vectors and caches still
-  require adoption, explicit trimming and maintenance policy.
+  result-page accounting now exist; model output and override buffers now adopt it. Live simulation/pose storage,
+  final frame streams, ordinary asset buffers and caches still require adoption,
+  connected working-set admission, explicit trimming and maintenance policy.
 - Extend the native bridge to loading/GPU-slot waits and main-ready continuations.
   Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
@@ -125,6 +143,22 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Model output admission checkpoint
+
+The full workspace suite passed 1,464 tests with 33 ignored. Workspace Clippy
+and formatting checks passed. The motion fixture compares meshes, particle/ribbon
+streams and simulation state, lighting, shadows and ordering with the frozen
+serial path, and verifies cleanup after an intentional resource mismatch. It now
+also observes real output charges during successful frames and their release on
+retirement/disposal. The particle fixture checks fixed-writer parity, equal-depth
+presentation order, unchanged admission usage and full-destination rejection.
+The new CPU buffer test covers non-growing writes and charged capacity after drain.
+
+Logs are in ignored `target/cpu-domain-workspace-tests.log` and
+`target/cpu-domain-clippy.log`. No new numbered package or live performance result
+is established. Stock simulation pools and final frame streams are not yet charged
+by this model-output integration.
 
 ### Retained execution storage checkpoint
 

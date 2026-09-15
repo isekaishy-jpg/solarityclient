@@ -93,7 +93,7 @@ impl GeometryOutput<'_> {
             .map_err(|_| VulkanError::M2ParticleDrawIndexRange)?;
         let ribbon_vertices = u32::try_from(self.ribbon_vertices.len())
             .map_err(|_| VulkanError::M2RibbonDrawVertexRange)?;
-        for draw in job.visible_draws.drain(..) {
+        for draw in job.visible_draws.drain() {
             self.visible_draws.push(if draw.scene_order() == u32::MAX {
                 draw
             } else {
@@ -104,15 +104,15 @@ impl GeometryOutput<'_> {
                 )
             });
         }
-        for draw in job.particle_draws.drain(..) {
+        for draw in job.particle_draws.drain() {
             self.particle_draws
                 .push(draw.relocate(vertices, indices, scene, effects)?);
         }
-        for draw in job.ribbon_draws.drain(..) {
+        for draw in job.ribbon_draws.drain() {
             self.ribbon_draws
                 .push(draw.relocate(ribbon_vertices, scene, effects)?);
         }
-        for mut element in job.transparent_elements.drain(..) {
+        for mut element in job.transparent_elements.drain() {
             element.key = element
                 .key
                 .relocate_producer(effects)

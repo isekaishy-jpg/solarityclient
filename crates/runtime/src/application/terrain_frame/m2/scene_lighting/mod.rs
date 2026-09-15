@@ -137,16 +137,6 @@ impl SceneLighting {
         Ok(index)
     }
 
-    /// Serial compatibility path used by reference/parity callers.
-    pub fn finish(
-        &mut self,
-        base: M2SceneUniform,
-        exterior: M2DirectionalLight,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        self.begin_finish(None, None, base, exterior)?;
-        self.finish_pending()
-    }
-
     /// Preserves linked-list source order on the existing Rc owner thread.
     fn prepare_directionals(&mut self, exterior: M2DirectionalLight) {
         // Scene linked lists precede the entity callback's exterior contribution.

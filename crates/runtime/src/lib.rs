@@ -19,6 +19,10 @@ mod security;
 mod telemetry;
 mod time;
 
+#[cfg(test)]
+#[path = "../tests/application/cpu_support.rs"]
+pub(crate) mod frame_cpu_support;
+
 // Shared archive fixtures for crate-internal tests; production never includes them.
 #[cfg(test)]
 #[allow(dead_code)]

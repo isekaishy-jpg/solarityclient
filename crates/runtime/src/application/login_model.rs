@@ -1199,6 +1199,7 @@ impl RuntimeGlueModelScene {
     pub(crate) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
+        cpu: &solarity_cpu::CpuExecutor,
         glue: &GlueManager,
         ui: &RuntimeUiFrame,
         random: &mut CrtRand,
@@ -1230,6 +1231,7 @@ impl RuntimeGlueModelScene {
         let mut profile = solarity_profiling::profile!("glue.model.frame");
         let visible = active.frame.prepare_visible_draws(
             renderer,
+            cpu,
             frustum,
             camera,
             solarity_rendering::M2TransparentPass::One,

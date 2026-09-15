@@ -290,7 +290,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
     for now in [1., 251., 751.] {
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -377,4 +377,16 @@ fn track(
     array(bytes, channels + 8, values.len() / stride, data);
     array(bytes, at + 4, 1, channels);
     array(bytes, at + 12, 1, channels + 8);
+}
+
+impl scene_lighting::SceneLighting {
+    /// Reference-only evaluation for the frozen serial/parity fixtures.
+    pub fn finish(
+        &mut self,
+        base: M2SceneUniform,
+        exterior: M2DirectionalLight,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.begin_finish(None, None, base, exterior)?;
+        self.finish_pending()
+    }
 }

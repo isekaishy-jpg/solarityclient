@@ -96,7 +96,7 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
         )?;
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -154,7 +154,7 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
     )?;
     let hidden = frame.prepare_visible_draws_with_unit_effects(
         &renderer,
-        None,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(hidden_camera, WorldScreenWindow::FULL)?,
         hidden_camera,
         M2TransparentPass::One,
@@ -197,7 +197,7 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
     for (time, expected) in [(521., 1), (1021., 0)] {
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -391,7 +391,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
             let admission = WorldShadowAdmission::new(primary, environment, camera, -Vec3::Z)?;
             let visible = frame.prepare_visible_draws_with_unit_effects(
                 &renderer,
-                None,
+                &crate::frame_cpu_support::executor()?,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 M2TransparentPass::One,

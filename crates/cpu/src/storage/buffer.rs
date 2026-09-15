@@ -63,6 +63,10 @@ impl<T> StorageVec<T> {
         self.memory = Some(memory);
         Ok(())
     }
+    /// Borrows a fixed-capacity writer without exposing the growable Vec.
+    pub(crate) fn writer(&mut self) -> super::FixedWriter<'_, T> {
+        super::FixedWriter::new(&mut self.values)
+    }
     pub(crate) fn capacity(&self) -> usize {
         self.values.capacity()
     }

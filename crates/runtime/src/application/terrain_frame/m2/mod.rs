@@ -168,6 +168,8 @@ struct M2GpuDraw {
 /// Shared renderer objects for one ordinary particle declaration.
 #[derive(Clone)]
 struct M2GpuParticle {
+    /// Cached authored output bound; it does not change the live simulation pool.
+    maximum_particles: usize,
     template: solarity_rendering::M2ParticleDrawTemplate,
     fade_template: solarity_rendering::M2ParticleDrawTemplate,
 }
@@ -1980,6 +1982,7 @@ impl M2Frame {
     pub(in crate::application) fn prepare_visible_draws(
         &mut self,
         renderer: &VulkanRenderer,
+        cpu: &solarity_cpu::CpuExecutor,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         first_transparent_pass: M2TransparentPass,
@@ -1991,7 +1994,7 @@ impl M2Frame {
     ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
         self.prepare_visible_draws_with_unit_effects(
             renderer,
-            None,
+            cpu,
             frustum,
             camera,
             first_transparent_pass,

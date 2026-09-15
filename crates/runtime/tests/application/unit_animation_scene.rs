@@ -101,6 +101,7 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
     .frame(1.)?;
     let draws = frame.prepare_visible_draws(
         &renderer,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -193,6 +194,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     .frame(1.0)?;
     frame.prepare_visible_draws(
         &renderer,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -280,6 +282,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     assert_eq!(creature.playback().borrow().animation_id, 101);
     frame.prepare_visible_draws(
         &renderer,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -398,6 +401,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     for time in [100.0, 300.0] {
         frame.prepare_visible_draws(
             &renderer,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,
@@ -457,6 +461,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     }
     frame.prepare_visible_draws(
         &renderer,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -755,6 +760,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
         frame.placements.push(placement);
         let draws = frame.prepare_visible_draws(
             &renderer,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,

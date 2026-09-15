@@ -142,14 +142,6 @@ impl GeometryJob {
                 .particle_index_capacity
                 .checked_add(emitter_index_capacity)
                 .ok_or(M2ParticleMeshPlanError::IndexCount)?;
-            self.particle_vertices.reserve(
-                self.particle_vertex_capacity
-                    .saturating_sub(self.particle_vertices.len()),
-            );
-            self.particle_indices.reserve(
-                self.particle_index_capacity
-                    .saturating_sub(self.particle_indices.len()),
-            );
             if simulation.particles().is_empty() {
                 continue;
             }
@@ -178,9 +170,9 @@ impl GeometryJob {
                     instance_color.w,
                     twinkle,
                     input.particle_colors.as_ref(),
-                    &mut self.particle_sort_indices,
-                    &mut self.particle_vertices,
-                    &mut self.particle_indices,
+                    &mut self.particle_sort_indices.writer(),
+                    &mut self.particle_vertices.writer(),
+                    &mut self.particle_indices.writer(),
                 )?;
             let effect_order = u32::try_from(self.transparent_elements.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
@@ -218,7 +210,7 @@ impl GeometryJob {
                 )
             } else {
                 prepared
-            });
+            })?;
             if !opaque {
                 self.transparent_elements.push(M2TransparentElement {
                     pass: M2TransparentPass::for_particle_liquid(
@@ -235,7 +227,7 @@ impl GeometryJob {
                     )
                     .with_scene_element(4, effect_order),
                     draw: M2TransparentDrawIndex::Particle(prepared_index),
-                });
+                })?;
             }
             tracing::trace!(
                 model = %source.model.path(),
@@ -335,12 +327,12 @@ impl GeometryJob {
                         }
                         let prepared_index = self.visible_draws.len();
                         self.visible_draws
-                            .push(prepared.with_liquid_clip_plane(model_liquid.clip_plane(pass)));
+                            .push(prepared.with_liquid_clip_plane(model_liquid.clip_plane(pass)))?;
                         self.transparent_elements.push(M2TransparentElement {
                             pass,
                             key,
                             draw: M2TransparentDrawIndex::Mesh(prepared_index),
-                        });
+                        })?;
                     }
                 } else {
                     let scene_order = u32::try_from(scene_element_count(
@@ -350,7 +342,7 @@ impl GeometryJob {
                     )?)
                     .map_err(|_source| solarity_rendering::VulkanError::M2DrawIndexRange)?;
                     self.visible_draws
-                        .push(prepared.with_scene_order(scene_order));
+                        .push(prepared.with_scene_order(scene_order))?;
                 }
             }
         } else {
@@ -379,7 +371,8 @@ impl GeometryJob {
             }
             let first_vertex = u32::try_from(self.ribbon_vertices.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
-            let vertex_count = M2RibbonMeshPlan::append(emitter, trail, &mut self.ribbon_vertices)?;
+            let vertex_count =
+                M2RibbonMeshPlan::append(emitter, trail, &mut self.ribbon_vertices.writer())?;
             let ribbon_alpha = M2RibbonPose::sample(source.model.animations(), emitter, clock)?
                 .color()
                 .w
@@ -416,7 +409,7 @@ impl GeometryJob {
                     )
                 } else {
                     prepared
-                });
+                })?;
             }
             if !opaque {
                 self.transparent_elements.push(M2TransparentElement {
@@ -434,7 +427,7 @@ impl GeometryJob {
                         first: first_draw,
                         count: passes.len(),
                     },
-                });
+                })?;
             }
             tracing::trace!(
                 model = %source.model.path(),

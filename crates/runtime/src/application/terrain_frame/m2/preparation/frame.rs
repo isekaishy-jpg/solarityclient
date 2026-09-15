@@ -15,7 +15,7 @@ impl M2Frame {
     pub(in crate::application::terrain_frame) fn prepare_visible_draws_with_unit_effects(
         &mut self,
         renderer: &VulkanRenderer,
-        cpu: Option<&solarity_cpu::CpuExecutor>,
+        cpu: &solarity_cpu::CpuExecutor,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         first_transparent_pass: M2TransparentPass,
@@ -190,7 +190,7 @@ impl M2Frame {
         );
         frame_profile.mark("dynamic models");
         self.prepare_unit_poses(
-            cpu,
+            Some(cpu),
             super::poses::PoseAdmission::new(
                 camera,
                 frustum,
@@ -1066,12 +1066,10 @@ impl M2Frame {
             )?;
         }
         frame_profile.mark("visible receiver queries");
-        if let Some((base, exterior)) = world_lighting
-            && cpu.is_some()
-        {
+        if let Some((base, exterior)) = world_lighting {
             let dependency = self.geometry_completion();
             self.scene_lighting
-                .begin_finish(cpu, dependency.as_ref(), base, exterior)?;
+                .begin_finish(Some(cpu), dependency.as_ref(), base, exterior)?;
         }
         let transparent_result = (|| -> Result<u32, RuntimeTerrainFrameError> {
             self.transparent_elements.sort_unstable_by(|left, right| {
@@ -1131,7 +1129,6 @@ impl M2Frame {
         })();
         frame_profile.mark("transparent order");
         let lighting_result = match world_lighting {
-            Some((base, exterior)) if cpu.is_none() => self.scene_lighting.finish(base, exterior),
             Some(_) => self.scene_lighting.finish_pending(),
             None => Ok(()),
         };

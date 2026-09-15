@@ -491,7 +491,7 @@ impl ClientServices {
                 &[]
             };
             let model_presented =
-                glue_model.present(&mut renderer, &glue, &frame, &mut crt_rand, overlay)?;
+                glue_model.present(&mut renderer, &cpu, &glue, &frame, &mut crt_rand, overlay)?;
             if !model_presented {
                 frame.present_with_overlay(&mut renderer, overlay)?;
             }
@@ -1753,6 +1753,7 @@ impl ClientServices {
             })?;
         let model_presented = self.glue_model.present(
             &mut self.renderer,
+            &self.cpu,
             &self.glue,
             frame,
             &mut self.crt_rand,

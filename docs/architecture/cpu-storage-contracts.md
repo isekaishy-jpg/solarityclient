@@ -37,7 +37,8 @@ reserve before allocating/transferring mandatory inputs, account actual capacity
 and free storage before reducing or dropping a charge. Nested allocations in a
 job or result need their own reservation; `size_of::<T>()` covers only the element
 slots. The wrappers enforce capacity ownership for their own buffers, not an
-arbitrary domain object graph. Remaining M2/asset/cache adoption is required work.
+arbitrary domain object graph. M2 model-local output and copied overrides now use this boundary. Live simulation
+and pose allocations, final frame streams, assets and caches remain required work.
 
 `CpuResultPage<T>` owns writable contiguous output, with explicit fallible growth
 and nonallocating append. `freeze` publishes an immutable `CpuResultLease<T>`;
@@ -59,3 +60,31 @@ The existing F10 detail path samples the ledger once and publishes class totals,
 category bytes, peaks and limits as `cpu.storage.*`. Ordinary frame execution does
 not sample it. These counters must not be compared directly to process RSS or
 reported as a complete domain memory census.
+
+`CpuBuffer<T>` provides an exclusively owned domain buffer whose charge survives
+worker transfer and draining. Its `FixedWriter` can append, roll back and borrow
+initialized slices, but cannot grow the allocation. The `OutputBuffer` contract
+lets the particle/ribbon builders share their existing generation logic between
+ordinary owned mesh construction and fixed frame output. Ordinary Vec destinations
+reserve explicitly; admitted frame destinations reject an insufficient range.
+
+World and login M2 presentation now use the application executor. Each geometry
+job reserves mesh records (including both liquid passes), particle/ribbon records,
+vertex/index streams, particle sort indices and copied bone overrides before
+placement simulation state moves into that job. This is incremental per-model
+admission; it does not yet reserve all domain storage of the connected frame as
+one transaction. A later failure drains earlier admitted jobs through the existing
+ordered cleanup path.
+
+A shared model source caches the existing authored particle rate/lifetime bound
+once. Reserving against the larger of that bound and a placement's current pool
+covers first update and animated growth without scanning animation tracks in each
+frame. This may retain more CPU output capacity than the current live particle
+count; it is charged against the explicit frame allowance. It does not pre-grow
+or otherwise modify world simulation pools, twinkle identities or RNG state, and
+the final GPU capacity report remains based on actual stock simulation capacity.
+
+Particle sorting uses an in-place sort with presentation-index tie-breaking to
+retain the previous equal-depth order without a temporary stable-sort allocation.
+Other allocation sources inside the job (including simulation growth) still need
+integration; fixed output does not imply an allocation-free entire M2 kernel.

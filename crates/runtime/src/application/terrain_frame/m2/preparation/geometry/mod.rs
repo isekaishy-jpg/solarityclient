@@ -5,6 +5,7 @@ mod palette;
 mod prepare;
 mod publication;
 mod ribbons;
+mod storage;
 
 pub(in super::super) use ribbons::advance_ribbons;
 
@@ -55,14 +56,14 @@ struct GeometryJob {
     material_poses: Vec<Option<M2MaterialPose>>,
     particles: Vec<M2ParticlePlacement>,
     ribbons: Vec<M2RibbonTrail>,
-    visible_draws: Vec<M2PreparedDraw>,
-    transparent_elements: Vec<M2TransparentElement>,
-    particle_vertices: Vec<M2ParticleRenderVertex>,
-    particle_indices: Vec<u32>,
-    particle_sort_indices: Vec<usize>,
-    particle_draws: Vec<M2ParticlePreparedDraw>,
-    ribbon_vertices: Vec<M2RibbonRenderVertex>,
-    ribbon_draws: Vec<M2RibbonPreparedDraw>,
+    visible_draws: solarity_cpu::CpuBuffer<M2PreparedDraw>,
+    transparent_elements: solarity_cpu::CpuBuffer<M2TransparentElement>,
+    particle_vertices: solarity_cpu::CpuBuffer<M2ParticleRenderVertex>,
+    particle_indices: solarity_cpu::CpuBuffer<u32>,
+    particle_sort_indices: solarity_cpu::CpuBuffer<usize>,
+    particle_draws: solarity_cpu::CpuBuffer<M2ParticlePreparedDraw>,
+    ribbon_vertices: solarity_cpu::CpuBuffer<M2RibbonRenderVertex>,
+    ribbon_draws: solarity_cpu::CpuBuffer<M2RibbonPreparedDraw>,
     particle_vertex_capacity: usize,
     particle_index_capacity: usize,
     recoverable_errors: Vec<String>,
@@ -77,6 +78,7 @@ pub(in super::super::super) struct GeometryBatch {
     handles: Vec<solarity_cpu::FrameJob<GeometryJob>>,
     submitted: bool,
     completion: Option<solarity_cpu::ReadyToken>,
+    storage: Option<solarity_cpu::CpuStorageBudget>,
 }
 
 /// Immutable generation and camera inputs own every worker dependency.
@@ -96,6 +98,7 @@ impl Default for GeometryBatch {
             handles: Vec::new(),
             submitted: false,
             completion: None,
+            storage: None,
         }
     }
 }

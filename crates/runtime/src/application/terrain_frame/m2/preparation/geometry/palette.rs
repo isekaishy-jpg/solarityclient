@@ -8,21 +8,42 @@ use solarity_rendering::{M2AnimationClock, M2BonePoseOverrides, M2FingerPoseHand
 pub(super) struct PaletteInput {
     pub(super) pending: bool,
     fingers: Option<(M2AnimationClock, M2FingerPoseHands)>,
-    transforms: Vec<(u16, Mat4)>,
-    sequences: Vec<(u16, M2AnimationClock)>,
+    transforms: solarity_cpu::CpuBuffer<(u16, Mat4)>,
+    sequences: solarity_cpu::CpuBuffer<(u16, M2AnimationClock)>,
 }
 
 impl PaletteInput {
-    pub(super) fn prepare(&mut self, input: Option<M2BonePoseOverrides<'_>>) {
+    /// Reserves copied overrides before the placement transfers any simulation state.
+    pub(super) fn prepare(
+        &mut self,
+        input: Option<M2BonePoseOverrides<'_>>,
+        budget: &solarity_cpu::CpuStorageBudget,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        let (transforms, sequences) = input.as_ref().map_or((0, 0), |input| {
+            (input.bone_transforms.len(), input.bone_sequences.len())
+        });
+        self.transforms.reserve(
+            budget,
+            solarity_cpu::CpuStorageClass::Frame,
+            solarity_cpu::CpuStorageKind::Scratch,
+            transforms,
+        )?;
+        self.sequences.reserve(
+            budget,
+            solarity_cpu::CpuStorageClass::Frame,
+            solarity_cpu::CpuStorageKind::Scratch,
+            sequences,
+        )?;
         self.pending = input.is_some();
         self.transforms.clear();
         self.sequences.clear();
         self.fingers = None;
         if let Some(input) = input {
             self.fingers = input.finger_pose;
-            self.transforms.extend_from_slice(input.bone_transforms);
-            self.sequences.extend_from_slice(input.bone_sequences);
+            self.transforms.extend_from_slice(input.bone_transforms)?;
+            self.sequences.extend_from_slice(input.bone_sequences)?;
         }
+        Ok(())
     }
 
     pub(super) fn overrides<'a>(&'a self, orientation: &'a [bool]) -> M2BonePoseOverrides<'a> {

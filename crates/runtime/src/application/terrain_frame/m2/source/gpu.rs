@@ -380,16 +380,22 @@ pub(in super::super) fn prepare_gpu_source_with_plan(
     let particles = particle_pipelines
         .into_iter()
         .zip(particle_texture_sets)
-        .map(|((pipeline, runtime_fade_pipeline), texture_set)| {
-            Ok::<_, solarity_rendering::VulkanError>(M2GpuParticle {
-                template: renderer
-                    .m2_effect_draw_catalog()
-                    .particle_template(pipeline, texture_set)?,
-                fade_template: renderer
-                    .m2_effect_draw_catalog()
-                    .particle_template(runtime_fade_pipeline, texture_set)?,
-            })
-        })
+        .zip(model.animations().particles())
+        .map(
+            |(((pipeline, runtime_fade_pipeline), texture_set), emitter)| {
+                Ok::<_, RuntimeTerrainFrameError>(M2GpuParticle {
+                    maximum_particles: solarity_rendering::M2ParticleSimulation::authored_capacity(
+                        emitter,
+                    )?,
+                    template: renderer
+                        .m2_effect_draw_catalog()
+                        .particle_template(pipeline, texture_set)?,
+                    fade_template: renderer
+                        .m2_effect_draw_catalog()
+                        .particle_template(runtime_fade_pipeline, texture_set)?,
+                })
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
     let mut ribbons = Vec::with_capacity(model.animations().ribbons().len());
     for emitter in model.animations().ribbons() {

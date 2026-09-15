@@ -201,7 +201,7 @@ fn verify(moving: bool) -> Result<(), Box<dyn Error>> {
         for tick in 0..2 {
             let visible = frame.prepare_visible_draws_with_unit_effects(
                 &renderer,
-                None,
+                &crate::frame_cpu_support::executor()?,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 M2TransparentPass::One,

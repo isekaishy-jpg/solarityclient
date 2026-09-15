@@ -1,13 +1,10 @@
 //! Bounded placement-local emission and lifecycle ownership.
 
 use glam::{Mat4, Vec3};
-use solarity_asset::{M2ParticleEmitter, M2Track};
+use solarity_asset::M2ParticleEmitter;
 use thiserror::Error;
 
-use super::{M2ParticlePose, M2ParticleRandom, M2ParticleState, M2ParticleStateError};
-
-/// Executable constant at `0x009F23CC` used to overprovision emitter storage.
-const STOCK_CAPACITY_HEADROOM: f64 = f32::from_bits(0x3F93_3333) as f64;
+use super::super::{M2ParticlePose, M2ParticleRandom, M2ParticleState, M2ParticleStateError};
 
 /// `CM2ParticleEmitter::Update` consumes at most 100 ms per simulation step.
 const STOCK_MAXIMUM_STEP_SECONDS: f32 = 0.1;
@@ -54,11 +51,14 @@ const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800;
 /// Placement-local stock particle storage, emission remainder, and PRNG.
 #[derive(Clone, Debug)]
 pub struct M2ParticleSimulation {
-    particles: Vec<M2ParticleState>,
-    active_pool_slots: Vec<usize>,
+    /// Capacity growth relocates this array and preserves address-derived phases.
+    pub(super) particles: Vec<M2ParticleState>,
+    /// Parallel active-slot storage is reserved by the same capacity owner.
+    pub(super) active_pool_slots: Vec<usize>,
     free_pool_slots: Vec<usize>,
     next_pool_slot: usize,
-    capacity: usize,
+    /// Grow-only stock limit; authored output reservation does not change it.
+    pub(super) capacity: usize,
     emission_remainder: f32,
     emission_enabled: bool,
     seed: u32,
@@ -163,30 +163,6 @@ impl M2ParticleSimulation {
     /// Resetting discontinuous simulation history does not change this switch.
     pub fn set_emission_enabled(&mut self, enabled: bool) {
         self.emission_enabled = enabled;
-    }
-
-    /// Reserves the largest pool implied by an emitter's authored rate and
-    /// lifetime keys before its first visible update.
-    ///
-    /// Stock grows to the same estimate as animated values are encountered.
-    /// Glue scenes are a finite, persistent presentation set, so reserving the
-    /// maximum up front preserves emission while preventing repeated unified
-    /// GPU-buffer replacement as the login animation ramps its rates.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`M2ParticleSimulationError::Capacity`] for non-finite or
-    /// unrepresentable authored bounds, or `Allocation` when reservation fails.
-    pub fn reserve_authored_capacity(
-        &mut self,
-        emitter: &M2ParticleEmitter,
-    ) -> Result<(), M2ParticleSimulationError> {
-        let maximum_rate = maximum_authored_value(emitter.emission_rate())
-            + f64::from(emitter.emission_rate_variation());
-        let maximum_lifetime =
-            maximum_authored_value(emitter.lifespan()) + f64::from(emitter.lifespan_variation());
-        let estimate = maximum_rate * maximum_lifetime * STOCK_CAPACITY_HEADROOM;
-        self.reserve_capacity_upper_bound(estimate)
     }
 
     /// Emits planar particles, advances all live particles, and removes deaths.
@@ -618,90 +594,6 @@ impl M2ParticleSimulation {
     pub const fn emission_remainder(&self) -> f32 {
         self.emission_remainder
     }
-
-    /// Grows the particle pool using build 12340's current-rate estimate.
-    ///
-    /// `0x0097EDF0` evaluates the float inputs in x87 extended precision,
-    /// sets the control word's RC bits to truncate before FISTP, and only
-    /// reallocates when the estimate grows.
-    fn grow_stock_capacity(
-        &mut self,
-        emitter: &M2ParticleEmitter,
-        pose: M2ParticlePose,
-    ) -> Result<(), M2ParticleSimulationError> {
-        let rate = f64::from(pose.emission_rate()) + f64::from(emitter.emission_rate_variation());
-        let lifetime = f64::from(pose.lifespan()) + f64::from(emitter.lifespan_variation());
-        let estimate = rate * lifetime * STOCK_CAPACITY_HEADROOM;
-        self.reserve_capacity_estimate(estimate)
-    }
-
-    /// Applies one stock-format estimate without shrinking retained storage.
-    fn reserve_capacity_estimate(
-        &mut self,
-        estimate: f64,
-    ) -> Result<(), M2ParticleSimulationError> {
-        if !estimate.is_finite() || estimate < 0.0 || estimate > usize::MAX as f64 {
-            return Err(M2ParticleSimulationError::Capacity);
-        }
-        let required = estimate.trunc() as usize;
-        if required > self.capacity {
-            self.reserve_particle_storage(required)?;
-        }
-        Ok(())
-    }
-
-    /// Reserves a conservative prewarm bound without changing stock's live
-    /// truncating growth rule.
-    fn reserve_capacity_upper_bound(
-        &mut self,
-        estimate: f64,
-    ) -> Result<(), M2ParticleSimulationError> {
-        if !estimate.is_finite() || estimate < 0.0 || estimate > usize::MAX as f64 {
-            return Err(M2ParticleSimulationError::Capacity);
-        }
-        let required = estimate.ceil() as usize;
-        if required > self.capacity {
-            self.reserve_particle_storage(required)?;
-        }
-        Ok(())
-    }
-
-    /// Grows the fixed-slot storage and shifts every retained address phase if
-    /// its base allocation moves. The active list has separate ownership.
-    fn reserve_particle_storage(
-        &mut self,
-        required: usize,
-    ) -> Result<(), M2ParticleSimulationError> {
-        let old_base_phase = (!self.particles.is_empty())
-            .then(|| ((self.particles.as_ptr().addr() >> 5) & 0x7f) as u8);
-        self.particles
-            .try_reserve_exact(required.saturating_sub(self.particles.len()))
-            .map_err(|_| M2ParticleSimulationError::Allocation)?;
-        self.active_pool_slots
-            .try_reserve_exact(required.saturating_sub(self.active_pool_slots.len()))
-            .map_err(|_| M2ParticleSimulationError::Allocation)?;
-        if let Some(old_base_phase) = old_base_phase {
-            let new_base_phase = ((self.particles.as_ptr().addr() >> 5) & 0x7f) as u8;
-            let delta = new_base_phase.wrapping_sub(old_base_phase) & 0x7f;
-            for particle in &mut self.particles {
-                particle.shift_pool_address_phase(delta);
-            }
-        }
-        self.capacity = required;
-        Ok(())
-    }
-}
-
-/// Ordinary float tracks use step or linear sampling (`0x0082B340`),
-/// so their largest stored value bounds every emission-rate/lifespan sample.
-fn maximum_authored_value(track: &M2Track<f32>) -> f64 {
-    track
-        .channels()
-        .iter()
-        .flat_map(|channel| channel.values())
-        .copied()
-        .map(f64::from)
-        .fold(0.0, f64::max)
 }
 
 /// Generator selector retained separately from raw authored bytes.

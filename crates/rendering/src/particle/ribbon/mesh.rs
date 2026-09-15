@@ -97,7 +97,7 @@ impl M2RibbonMeshPlan {
     pub fn append(
         emitter: &M2RibbonEmitter,
         trail: &M2RibbonTrail,
-        vertices: &mut Vec<M2RibbonRenderVertex>,
+        vertices: &mut impl solarity_cpu::OutputBuffer<M2RibbonRenderVertex>,
     ) -> Result<usize, M2RibbonMeshPlanError> {
         let first_vertex = vertices.len();
         match Self::append_internal(emitter, trail, vertices) {
@@ -112,7 +112,7 @@ impl M2RibbonMeshPlan {
     fn append_internal(
         emitter: &M2RibbonEmitter,
         trail: &M2RibbonTrail,
-        vertices: &mut Vec<M2RibbonRenderVertex>,
+        vertices: &mut impl solarity_cpu::OutputBuffer<M2RibbonRenderVertex>,
     ) -> Result<usize, M2RibbonMeshPlanError> {
         let rows = emitter.texture_rows();
         let columns = emitter.texture_columns();
@@ -137,16 +137,20 @@ impl M2RibbonMeshPlan {
         for section in trail.sections() {
             let u = cell_u + section.age_seconds() / trail.edge_lifetime_seconds() / columns;
             let color_bgra = pack_bgra(section.color().to_array());
-            vertices.push(M2RibbonRenderVertex {
-                position: section.above().to_array(),
-                color_bgra,
-                texture_coordinates: [u, cell_v],
-            });
-            vertices.push(M2RibbonRenderVertex {
-                position: section.below().to_array(),
-                color_bgra,
-                texture_coordinates: [u, next_v],
-            });
+            vertices
+                .push(M2RibbonRenderVertex {
+                    position: section.above().to_array(),
+                    color_bgra,
+                    texture_coordinates: [u, cell_v],
+                })
+                .map_err(|_| M2RibbonMeshPlanError::VertexCount)?;
+            vertices
+                .push(M2RibbonRenderVertex {
+                    position: section.below().to_array(),
+                    color_bgra,
+                    texture_coordinates: [u, next_v],
+                })
+                .map_err(|_| M2RibbonMeshPlanError::VertexCount)?;
         }
         Ok(vertex_count)
     }

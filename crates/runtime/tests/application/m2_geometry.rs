@@ -107,6 +107,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         NonZeroUsize::new(8).ok_or("capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
+    let mut charged_output = false;
     let mut saw_particles = false;
     let mut saw_ribbons = false;
     let mut reference_time = std::time::Duration::ZERO;
@@ -190,7 +191,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         let started = std::time::Instant::now();
         let b = candidate.prepare_visible_draws_with_unit_effects(
             &renderer,
-            Some(&cpu),
+            &cpu,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -246,6 +247,10 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             assert_eq!(moved.first_vertex(), draw.first_vertex() + 8);
             assert_eq!(moved.effect_order(), draw.effect_order() + 3);
         }
+        charged_output |= cpu.storage().snapshot().bytes(
+            solarity_cpu::CpuStorageClass::Frame,
+            solarity_cpu::CpuStorageKind::Result,
+        ) > 0;
         saw_particles |= !b.particle_vertices.is_empty();
         saw_ribbons |= !b.ribbon_vertices.is_empty();
         assert!(
@@ -290,7 +295,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         .frame(1.)?;
         let result = candidate.prepare_visible_draws_with_unit_effects(
             &renderer,
-            Some(&cpu),
+            &cpu,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -330,6 +335,23 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             candidate_time.as_secs_f64() * 1000. / f64::from(measured)
         );
     }
+    // Successful frames retained charged output; failure can retire it sooner.
+    assert!(charged_output);
+    drop(frames);
+    assert_eq!(
+        cpu.storage().snapshot().bytes(
+            solarity_cpu::CpuStorageClass::Frame,
+            solarity_cpu::CpuStorageKind::Result
+        ),
+        0
+    );
+    assert_eq!(
+        cpu.storage().snapshot().bytes(
+            solarity_cpu::CpuStorageClass::Frame,
+            solarity_cpu::CpuStorageKind::Scratch
+        ),
+        0
+    );
     cpu.shutdown()?;
     renderer.shutdown()?;
     Ok(())

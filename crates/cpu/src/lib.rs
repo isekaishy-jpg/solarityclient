@@ -11,8 +11,8 @@ mod storage;
 mod synchronization;
 
 pub use storage::{
-    ByteReservation, CpuResultLease, CpuResultPage, CpuStorageBudget, CpuStorageClass,
-    CpuStorageKind, CpuStoragePlan, CpuStorageSnapshot,
+    ByteReservation, CpuBuffer, CpuResultLease, CpuResultPage, CpuStorageBudget, CpuStorageClass,
+    CpuStorageKind, CpuStoragePlan, CpuStorageSnapshot, FixedWriter, OutputBuffer,
 };
 
 pub use capabilities::CpuCapabilities;

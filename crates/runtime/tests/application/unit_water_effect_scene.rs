@@ -135,7 +135,7 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
         };
         let draws = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,
@@ -377,7 +377,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
             };
             let draws = frame.prepare_visible_draws_with_unit_effects(
                 &renderer,
-                None,
+                &crate::frame_cpu_support::executor()?,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 solarity_rendering::M2TransparentPass::One,
@@ -461,6 +461,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
         for now in (222..6500).step_by(100) {
             let draws = frame.prepare_visible_draws(
                 &renderer,
+                &crate::frame_cpu_support::executor()?,
                 WorldFrustum::new(away, WorldScreenWindow::FULL)?,
                 away,
                 solarity_rendering::M2TransparentPass::One,
@@ -519,6 +520,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
         delayed.set_unit_effect_sources(bank);
         delayed.prepare_visible_draws(
             &renderer,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,

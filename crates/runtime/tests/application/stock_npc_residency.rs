@@ -176,6 +176,7 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
         let draws = frame
             .prepare_visible_draws(
                 &renderer,
+                &crate::frame_cpu_support::executor()?,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 solarity_rendering::M2TransparentPass::One,

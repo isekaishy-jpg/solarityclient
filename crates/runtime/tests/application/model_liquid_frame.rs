@@ -163,7 +163,7 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
         };
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             first_pass,
@@ -357,7 +357,7 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
         .frame(1.)?;
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            None,
+            &crate::frame_cpu_support::executor()?,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::Two,

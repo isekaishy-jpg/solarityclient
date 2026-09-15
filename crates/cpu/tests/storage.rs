@@ -201,3 +201,32 @@ fn startup_byte_rejection_happens_before_workers_are_created() {
         Err(CpuError::StorageAtCapacity { .. })
     ));
 }
+
+#[test]
+fn domain_writers_cannot_grow_and_draining_retains_their_charge() -> Result<(), Box<dyn Error>> {
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(16, 0, 0));
+    let mut buffer = solarity_cpu::CpuBuffer::<u64>::default();
+    buffer.reserve(&budget, Class::Frame, Kind::Result, 2)?;
+    buffer.extend_from_slice(&[5, 7])?;
+    assert!(matches!(
+        buffer.writer().push(9),
+        Err(CpuError::OutputCapacity {
+            requested: 1,
+            available: 0
+        })
+    ));
+    assert!(matches!(
+        buffer.writer().require(1),
+        Err(CpuError::OutputCapacity { .. })
+    ));
+    assert_eq!(&*buffer, &[5, 7]);
+    assert_eq!(budget.snapshot().used(Class::Frame), 16);
+    assert_eq!(buffer.drain().collect::<Vec<_>>(), [5, 7]);
+    assert_eq!(budget.snapshot().used(Class::Frame), 16);
+    buffer.push(11)?;
+    buffer.clear();
+    assert_eq!(budget.snapshot().used(Class::Frame), 16);
+    drop(buffer);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}

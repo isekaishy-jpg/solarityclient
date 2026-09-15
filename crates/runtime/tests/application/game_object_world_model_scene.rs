@@ -218,6 +218,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     );
     let hidden = frame.prepare_visible_draws(
         &renderer,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -341,6 +342,7 @@ fn capture(
 ) -> Result<solarity_rendering::CapturedFrame, Box<dyn Error>> {
     let visible = frame.prepare_visible_draws(
         renderer,
+        &crate::frame_cpu_support::executor()?,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
