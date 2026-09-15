@@ -6,6 +6,7 @@ mod camera_profile;
 pub(super) mod glue_benchmark;
 mod glue_texture_prewarm;
 mod instrumentation;
+mod model_cache_maintenance;
 mod session_lifecycle;
 pub(super) mod world_benchmark;
 mod world_camera;
@@ -147,6 +148,7 @@ pub(crate) struct ClientServices {
     startup_profile: StartupProfile,
     character_profile: Option<crate::configuration::CharacterProfile>,
     cpu: CpuExecutor,
+    model_cache_maintenance: model_cache_maintenance::RuntimeModelCacheMaintenance,
     network: Option<Runtime>,
     login: RuntimeLoginCoordinator,
     world: RuntimeWorldCoordinator,
@@ -224,6 +226,9 @@ impl ClientServices {
         };
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
+        let model_cache_maintenance = model_cache_maintenance::RuntimeModelCacheMaintenance::new(
+            catalog.model_cache_service(),
+        );
         let archive_count = catalog.descriptors().len();
         let sound_catalog = catalog.clone();
         let backdrop_catalog = catalog.clone();
@@ -557,6 +562,7 @@ impl ClientServices {
                 startup_profile,
                 character_profile: None,
                 cpu,
+                model_cache_maintenance,
                 network: Some(network),
                 login,
                 world,
@@ -1692,6 +1698,7 @@ impl ClientServices {
 
     /// Applies ordered Glue actions and polls one asynchronous login result.
     pub(crate) fn service_login(&mut self) -> Result<(), ApplicationError> {
+        self.model_cache_maintenance.service(&self.cpu)?;
         self.world_camera_frame = None;
         let mut profile = solarity_profiling::profile!("session and world service");
         let _cycles = solarity_profiling::profile_cycles!("world.service_cpu");
@@ -3109,6 +3116,10 @@ impl ClientServices {
         let sound_result = self.sound.shutdown().map_err(ApplicationError::from);
         let renderer_result = self.renderer.shutdown().map_err(ApplicationError::from);
         let ui_sources_result = self.world_ui_sources.finish();
+        let model_cache_result = self
+            .model_cache_maintenance
+            .finish()
+            .map_err(ApplicationError::from);
         let cpu_result = self.cpu.shutdown().map_err(ApplicationError::from);
         if let Some(network) = self.network.take() {
             network.shutdown_timeout(self.network_shutdown_timeout);
@@ -3117,6 +3128,7 @@ impl ClientServices {
             .and(sound_result)
             .and(renderer_result)
             .and(ui_sources_result)
+            .and(model_cache_result)
             .and(cpu_result)
     }
 

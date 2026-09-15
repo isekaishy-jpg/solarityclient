@@ -7,8 +7,10 @@ A later committed checkpoint is also preserved as `rollback/cpu-cutover-26cd4928
 `rollback/cpu-cutover-b677ed91` (`b677ed912e15fd6dd2c88e71a14c81db5d3fa8a9`).
 A further checkpoint is preserved as `rollback/cpu-cutover-b49ab5ae`
 (`b49ab5ae2d1c63e3272b584990e0a8ecdbc1d05a`).
-The latest preserved checkpoint is `rollback/cpu-cutover-c007aaf8`
-(`c007aaf814c4df21b6e655e1ffc0cdd131e5950e`). These tags contain committed work only.
+Further checkpoints are `rollback/cpu-cutover-c007aaf8`
+(`c007aaf814c4df21b6e655e1ffc0cdd131e5950e`) and the latest requested
+`rollback/cpu-cutover-0cfa2a2a` (`0cfa2a2a57854c3a5fac61a6bd4a7f26184135ec`).
+These tags contain committed work only.
 The complete requirements remain in the [frame-job design](cpu-frame-job-design.md),
 [composition design](cpu-crate-composition-design.md), and
 [cache/residency design](resource-cache-residency-design.md).
@@ -196,8 +198,18 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   scanning every cached model's Arc count. Each entry reserves one reusable
   intrusive notification slot; churn coalesces, stale generations are rejected,
   and payload destruction happens outside the release metadata lock. Existing
-  explicit collection boundaries remain; the stock-qualified timed retention
-  policy, BLP/other cache adoption and resource byte admission are still required.
+  WMO collection boundaries remain. Qualified M2 sources now use stock's signed
+  10,000 ms release age. Reacquisition renews release identity, preventing a late
+  old-pin destructor from starting the next consumer generation's grace period.
+- Catalog clones and their mounted stores share a typed M2 maintenance service.
+  Runtime schedules finite retirement steps on the existing CPU pool when a
+  release deadline or cache-owner closure requires it, including idle/loading
+  frames and offline replay. Cache indices detach entries under metadata locks;
+  workers dispose of payloads after unlocking. Pool saturation preserves pending
+  ownership, and shutdown observes accepted task results. Ordinary frames check
+  a dirty bit, task completion and cached deadline, without scanning models.
+  BLP/other cache adoption, request sharing and resource byte admission remain
+  required; this retention rule is not a global cache or GPU eviction policy.
 
 ## Still required for the complete cutover
 
@@ -266,10 +278,34 @@ that collection uses signed 32-bit elapsed subtraction, including the sign-bit
 boundary and forced collection. Clock, destruction and allocator free remain
 controlled boundaries; this does not emulate complete construction or gameplay.
 Results are in ignored `target/model-cache-qualification.json`. This evidence
-supports implementing qualified retention; the current M2 source cache still
-uses its existing explicit immediate collection policy.
+now underpins qualified M2 retention: final consumer release starts a 10,000 ms
+cache-clock grace period; reacquisition withdraws it and renews the release ticket.
+Standalone leases and WMO caches keep their own existing lifetime policy. This
+does not authorize guessed lookup flags, forced pressure eviction, or animation
+readiness behavior.
 
 ## Checkpoint validation
+
+### Qualified M2 retention and CPU maintenance checkpoint
+
+On 2026-09-15, final formatting, workspace Clippy and the full workspace suite
+passed: 1,501 tests, zero failures, 33 ignored. New coverage checks the native
+10,000 ms boundary, unsigned wrap with signed comparison, a delayed old-pin
+release after reacquisition, ordered expiry after middle-entry reacquisition,
+and idle retirement after pool saturation clears. Real archive/model fixtures
+also verify shared catalog registration, independent rediscovery namespaces,
+closed cache cleanup and preservation of live consumers.
+
+The timed final-release path, including its durable maintenance signal, records
+zero allocator calls. The earlier warm lease/cache-hit allocation checks still
+pass. This is not a measurement of whole-frame overhead or live FPS. CPU service
+steps detach at most sixteen expired sources or one closed cache owner per turn;
+a single source/cache destructor remains indivisible. Complete resource byte
+accounting and pending-load sharing remain required.
+
+Final logs are in ignored `target/m2-retention-tests-final.log`,
+`target/m2-retention-clippy-final.log` and `target/m2-retention-fmt-final.log`.
+No new numbered Testing package or live performance improvement is established.
 
 ### Model resource leases checkpoint
 

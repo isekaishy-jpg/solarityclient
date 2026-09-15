@@ -48,7 +48,6 @@ impl RuntimePlayerPresentation {
         let Some(world) = world else {
             self.remote_players.clear();
             self.unit_animations.clear();
-            self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimeRemotePlayerPoll::Idle);
         };
@@ -173,7 +172,6 @@ impl RuntimePlayerPresentation {
         }
         self.synchronize_replicated_animations(world, solarity_ecs::ObjectKind::Player);
         if changed {
-            self.models.collect_unused();
             self.textures.collect_unused();
             Ok(RuntimeRemotePlayerPoll::ModelsChanged)
         } else {

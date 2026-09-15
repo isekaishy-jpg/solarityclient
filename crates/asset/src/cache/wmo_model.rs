@@ -49,7 +49,7 @@ impl WmoModelCache {
         path: &AssetPath,
     ) -> Result<ResourceLease<DecodedWorldModel>, AssetError> {
         let key = AssetResourceKey::new(store.namespace(), path.clone());
-        if let Some(model) = self.models.get(&key) {
+        if let Some(model) = self.models.get(&key)? {
             return Ok(model);
         }
 

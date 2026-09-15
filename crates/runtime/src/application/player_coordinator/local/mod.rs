@@ -38,7 +38,6 @@ impl RuntimePlayerPresentation {
         let Some(world) = world else {
             self.resident = None;
             self.unit_animations.clear();
-            self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::Idle);
         };
@@ -267,7 +266,6 @@ impl RuntimePlayerPresentation {
                 "transferred character-selection representation into active world"
             );
             self.synchronize_local_animation(world)?;
-            self.models.collect_unused();
             self.textures.collect_unused();
             return Ok(RuntimePlayerPoll::ModelLoaded);
         }
@@ -376,7 +374,6 @@ impl RuntimePlayerPresentation {
             mount_key,
             mount,
         });
-        self.models.collect_unused();
         self.textures.collect_unused();
         self.synchronize_local_animation(world)?;
         Ok(RuntimePlayerPoll::ModelLoaded)

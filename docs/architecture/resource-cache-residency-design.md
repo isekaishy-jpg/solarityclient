@@ -75,9 +75,11 @@ time, movement distance or frame count.
 
 Current useful foundations and gaps:
 
-- [M2ModelCache](../../crates/asset/src/cache/m2_model.rs) shares immutable
-  decoded models by canonical path within one mounted store, but removes
-  cache-only entries immediately during collection.
+- [M2ModelCache](../../crates/asset/src/cache/m2_model/mod.rs) shares immutable
+  decoded models by namespace and canonical path. The cutover now retains qualified
+  cache-only sources for stock's signed 10,000 ms release age and schedules
+  namespace maintenance on the CPU pool. Sharing pending loads across independent
+  cache owners and accounting the complete payload graph remain required.
 - [M2AnimationSet loading](../../crates/asset/src/model/animation/mod.rs)
   reads every available external sequence and decodes its tracks. The temporary
   encoded payloads are dropped; do not count them as permanently retained.

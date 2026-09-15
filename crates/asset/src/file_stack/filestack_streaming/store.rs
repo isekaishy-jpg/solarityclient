@@ -37,6 +37,7 @@ impl AssetRead {
 /// asset thread without changing the public archive model.
 pub struct AssetStore {
     pub(super) identity: u64,
+    pub(super) model_cache_service: crate::M2CacheService,
     pub(super) namespace: crate::file_stack::AssetNamespaceId,
     pub(in crate::file_stack) data_root: crate::archive::ClientDataRoot,
     pub(super) locale: Locale,
@@ -45,6 +46,11 @@ pub struct AssetStore {
 }
 
 impl AssetStore {
+    /// Joins maintenance without sharing mutable archive-reader state.
+    pub(crate) fn model_cache_service(&self) -> &crate::M2CacheService {
+        &self.model_cache_service
+    }
+
     /// Identifies this immutable mounted provider lifetime for retained caches.
     /// Remounting the same paths creates a new identity, including changed files.
     #[must_use]

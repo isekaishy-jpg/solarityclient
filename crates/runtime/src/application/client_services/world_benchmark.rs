@@ -267,6 +267,10 @@ impl ClientServices {
             for index in 0..frames_per_phase.get() {
                 let _frame_profile = solarity_profiling::begin_frame();
                 let frame_start = Instant::now();
+                self.model_cache_maintenance
+                    .service(&self.cpu)
+                    .map_err(ApplicationError::from)?;
+
                 let elapsed = frame_start.duration_since(previous);
                 previous = frame_start;
                 for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
@@ -366,6 +370,9 @@ impl ClientServices {
         )?);
         let deadline = Instant::now() + Duration::from_secs(180);
         loop {
+            self.model_cache_maintenance
+                .service(&self.cpu)
+                .map_err(ApplicationError::from)?;
             for _ in 0..run::MAX_PLATFORM_EVENTS_PER_FRAME {
                 let Some(event) = self.poll_platform_event() else {
                     break;

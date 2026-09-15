@@ -979,7 +979,6 @@ impl RuntimeGameObjectPresentation {
         self.resources
             .retain(|_, resource| Arc::strong_count(resource) > 1);
         self.textures.collect_unused();
-        self.models.collect_unused();
         self.world_models.collect_unused();
     }
 

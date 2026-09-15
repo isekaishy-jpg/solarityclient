@@ -49,6 +49,7 @@ const CONSOLIDATED_ARCHIVES: [(&str, u16, ArchiveKind); 10] = [
 #[derive(Clone, Debug)]
 pub struct ArchiveCatalog {
     namespace: super::AssetNamespaceId,
+    model_cache_service: crate::M2CacheService,
     data_root: ClientDataRoot,
     locale: Locale,
     existing_locales: Vec<Locale>,
@@ -81,6 +82,7 @@ impl ArchiveCatalog {
 
         Ok(Self {
             namespace: super::AssetNamespaceId::issue()?,
+            model_cache_service: crate::M2CacheService::default(),
             data_root,
             locale,
             existing_locales,
@@ -94,6 +96,12 @@ impl ArchiveCatalog {
     #[must_use]
     pub const fn namespace(&self) -> super::AssetNamespaceId {
         self.namespace
+    }
+
+    /// Shared maintenance authority for caches used through this immutable namespace.
+    #[must_use]
+    pub fn model_cache_service(&self) -> crate::M2CacheService {
+        self.model_cache_service.clone()
     }
 
     /// Returns the validated client data root.

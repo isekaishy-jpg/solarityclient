@@ -598,7 +598,6 @@ impl RuntimeTerrainCoordinator {
 
     fn collect_main_thread_caches(&mut self) {
         self.textures.collect_unused();
-        self.models.collect_unused();
         self.world_models.collect_unused();
     }
 
@@ -682,7 +681,6 @@ impl RuntimeTerrainCoordinator {
             self.active = None;
             self.retire_streaming();
             self.textures.collect_unused();
-            self.models.collect_unused();
             self.world_models.collect_unused();
             return Ok(RuntimeTerrainPoll::Idle);
         };
@@ -707,7 +705,6 @@ impl RuntimeTerrainCoordinator {
             // A map replacement releases its tile before collecting cache-only
             // texture sources. Shared sources remain available without reload.
             self.textures.collect_unused();
-            self.models.collect_unused();
             self.world_models.collect_unused();
         }
         let position = world.local_player_transform()?.position();
@@ -737,7 +734,6 @@ impl RuntimeTerrainCoordinator {
             )?);
             active.synchronize_movement_owners();
             self.textures.collect_unused();
-            self.models.collect_unused();
             self.world_models.collect_unused();
             return Ok(RuntimeTerrainPoll::GlobalWorldModelLoaded { map_id });
         }
@@ -781,7 +777,6 @@ impl RuntimeTerrainCoordinator {
         }
         active.synchronize_movement_owners();
         self.textures.collect_unused();
-        self.models.collect_unused();
         self.world_models.collect_unused();
         Ok(RuntimeTerrainPoll::TileLoaded {
             map_id,
@@ -1218,7 +1213,6 @@ impl RuntimeTerrainCoordinator {
         }
         self.failed_request = None;
         self.textures.collect_unused();
-        self.models.collect_unused();
         self.world_models.collect_unused();
     }
 }
@@ -1360,7 +1354,6 @@ impl TerrainWorkerState {
 
     fn collect_unused(&mut self) {
         self.textures.collect_unused();
-        self.models.collect_unused();
         self.world_models.collect_unused();
     }
 }

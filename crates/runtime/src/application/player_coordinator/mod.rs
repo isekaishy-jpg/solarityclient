@@ -1430,7 +1430,6 @@ impl RuntimePlayerPresentation {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.creatures_resident.clear();
         self.remote_players.clear();
-        self.models.collect_unused();
         self.textures.collect_unused();
     }
 }
@@ -1523,7 +1522,7 @@ fn with_worker_presentation<T>(
         failed_glue_character: None,
     };
     let result = prepare(&mut presentation);
-    presentation.models.collect_unused();
+
     presentation.textures.collect_unused();
     let assets = presentation.assets;
     let models = std::mem::take(&mut presentation.models);

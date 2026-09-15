@@ -2,11 +2,14 @@
 
 use solarity_asset::ResourceLease;
 use std::error::Error;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 
 use solarity_asset::{
     ArchiveCatalog, AssetPath, AssetStore, BlpTextureCache, ClientDataRoot, DecodedM2Model, Locale,
-    M2ModelCache,
+    M2ModelCache, ResourceCacheClock,
 };
 
 use crate::model::{m2_bytes, skin_bytes};
@@ -46,7 +49,9 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let mut store = AssetStore::mount(catalog)?;
     let path = AssetPath::new("Creature/Solarity/Cached.m2")?;
-    let mut cache = M2ModelCache::new();
+    let clock = Arc::new(AtomicU32::new(0));
+    let mut cache =
+        M2ModelCache::with_clock(ResourceCacheClock::from_milliseconds(Arc::clone(&clock)));
 
     let first = cache.load(&mut store, &path)?;
     let second = cache.load(&mut store, &path)?;
@@ -60,6 +65,10 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
     let weak = ResourceLease::downgrade(&first);
     drop(first);
     drop(second);
+    clock.store(9_999, Ordering::Release);
+    assert_eq!(cache.collect_unused(), 0);
+    assert!(weak.is_alive());
+    clock.store(10_000, Ordering::Release);
     assert_eq!(cache.collect_unused(), 1);
     assert!(cache.is_empty());
     assert!(weak.upgrade().is_none());
