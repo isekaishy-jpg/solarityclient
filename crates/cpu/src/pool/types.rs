@@ -24,7 +24,7 @@ impl CpuPoolConfig {
         }
     }
 
-    /// Returns the exact number of Rayon workers to create.
+    /// Returns the exact number of worker threads to create.
     #[must_use]
     pub const fn worker_count(self) -> NonZeroUsize {
         self.worker_count
@@ -79,10 +79,22 @@ impl CpuPoolSnapshot {
     }
 }
 
-/// A stable CPU-executor failure independent of Rayon internals.
+/// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
-    /// Rayon could not construct the requested private pool.
+    /// Worker joins would turn a dependency into a deadlock or steal unrelated work.
+    #[error("CPU worker attempted a blocking result wait")]
+    WorkerWait,
+    /// A reusable batch still owns its preceding epoch.
+    #[error("CPU frame batch is already active")]
+    BatchActive,
+    /// A result was requested without an admitted epoch.
+    #[error("CPU frame batch is inactive")]
+    BatchInactive,
+    /// A result index does not belong to this batch.
+    #[error("CPU frame job index is invalid")]
+    InvalidJob,
+    /// The requested worker threads could not be created.
     #[error("failed to create CPU worker pool: {message}")]
     PoolBuild {
         /// Dependency context without exposing its concrete error type.

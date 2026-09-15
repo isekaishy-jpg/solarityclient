@@ -1,11 +1,10 @@
 # CPU executor ownership
 
-This document records the existing executor and its initial ownership contract.
-The [CPU frame-job design](cpu-frame-job-design.md) specifies its planned
-dependency scheduler, worker policy, ordered publication and stall attribution
-for the 1,200 FPS goal. That design is not implemented by this documentation change.
-The [CPU crate composition design](cpu-crate-composition-design.md) defines the
-complete proposed facade and its capability, storage and wakeup contracts.
+The direct cutover replaces the Rayon pools with one persistent worker set.
+[Cutover status](cpu-cutover-status.md) separates connected implementation from
+remaining requirements of the [frame-job design](cpu-frame-job-design.md),
+[CPU composition design](cpu-crate-composition-design.md), and
+[cache/residency design](resource-cache-residency-design.md).
 
 The CPU executor is the second implementation boundary after deterministic
 asset resolution. It owns finite CPU-intensive work such as archive decoding,
@@ -25,7 +24,7 @@ in three recovered functions:
 
 This evidence establishes explicit creation, identity, and completion
 ownership. It does not establish that stock used a work-stealing task pool.
-Solarity adapts the ownership requirement to a private Rayon pool because its
+Solarity adapts the ownership requirement to persistent owned workers because its
 64-bit architecture decomposes expensive loaders and systems into smaller
 parallel work units.
 
@@ -36,22 +35,30 @@ parallel work units.
 - The in-flight bound covers running and queued work. Submission returns an
   immediate typed capacity error instead of blocking the interactive producer
   or growing an unbounded queue.
-- Speculative callers query a stricter advisory admission boundary that keeps
-  one worker lane available on multi-worker pools. Interactive submission still
-  uses the configured hard bound, so background Glue residency cannot occupy
-  every FIFO position ahead of the character the user just selected.
+- One configured worker is flexible: it services admitted background work,
+  then helps frame work. The remaining workers are protected from background
+  operations. The single-worker plan uses its sole flexible worker.
+- Speculative admission stops while any background work is in flight. Required
+  background submission retains the configured hard admission bound.
+- Frame batches have separate bounded admission and reusable typed state.
+  Pose outputs are independently consumed; geometry inputs are published while
+  ordered traversal continues. The old synchronous frame API is removed.
+  Batch admission currently bounds epochs, not node counts or total bytes;
+  the outstanding storage contract is recorded in the cutover status.
 - Every admitted operation returns a single-owner completion handle. Dropping
   the handle discards only the result; executor shutdown still owns and drains
   the work.
 - Task panics are converted into a typed completion failure and release their
   admission slot. They do not destroy the remaining private pool.
 - Shutdown closes admission transactionally, waits for every admitted task,
-  then drops the Rayon pool. `Drop` performs the same drain as a final safety
+  then joins every worker handle. `Drop` performs the same drain as a final safety
   boundary, while normal composition code must call `shutdown` so errors remain
   observable.
-- Callers must submit finite structured operations. A task must not start
-  detached Rayon work of its own; nested parallel iterators are acceptable
-  only when they complete before the submitted operation returns.
+- Callers must submit finite structured operations. A worker cannot join an
+  unfinished `CpuTask`; dependencies must return control to the scheduler.
+- Startup waits for each worker's initialization handshake. On x86-64 it
+  matches the coordinator's MXCSR controls, preserving the existing numeric
+  kernels and the unrefined stock reciprocal estimate.
 
 The shared lifecycle mutex is touched only for admission, snapshot, completion,
 and shutdown. Task bodies and result transport do not hold it, so expensive HD

@@ -10,13 +10,35 @@ use super::super::{M2BonePose, RuntimeTerrainFrameError};
 use input::PoseJob;
 
 /// Only current dynamic owners retain palettes; scenery residency is not a job list.
-#[derive(Default)]
 pub(in crate::application::terrain_frame::m2) struct PoseBatch {
     jobs: Vec<PoseJob>,
     indices: Vec<Option<usize>>,
+    pending: solarity_cpu::FrameBatch<PoseJob>,
+    submitted: bool,
+}
+
+impl Default for PoseBatch {
+    fn default() -> Self {
+        Self {
+            jobs: Vec::new(),
+            indices: Vec::new(),
+            pending: solarity_cpu::FrameBatch::new(PoseJob::sample),
+            submitted: false,
+        }
+    }
 }
 
 impl PoseBatch {
+    /// Recovers owned inputs on normal publication and when a prior frame failed.
+    pub(in crate::application::terrain_frame::m2) fn finish(
+        &mut self,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let result = self.pending.reclaim(&mut self.jobs);
+        self.submitted = false;
+        result?;
+        Ok(())
+    }
+
     /// Reports results actually left unconsumed, rather than assuming every job helped.
     pub(in crate::application::terrain_frame::m2) fn report_consumption(&self) {
         if solarity_profiling::detail_enabled() {
@@ -41,6 +63,11 @@ impl PoseBatch {
         let Some(job) = self.indices.get(index).copied().flatten() else {
             return Ok(false);
         };
+        if self.submitted {
+            return self
+                .pending
+                .with_result(job, |job| job.take(model, clock, view, overrides, output))?;
+        }
         self.jobs[job].take(model, clock, view, overrides, output)
     }
 }

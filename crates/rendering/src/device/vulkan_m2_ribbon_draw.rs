@@ -147,6 +147,76 @@ impl M2RibbonPreparedDraw {
     }
 }
 
+/// Immutable resource compatibility retained by a source's GPU resource lease.
+#[derive(Clone, Copy)]
+pub struct M2RibbonDrawTemplate {
+    pipeline: M2RibbonPipelineHandle,
+    texture_set: M2TextureSetHandle,
+    material: M2MaterialState,
+}
+
+impl M2RibbonDrawTemplate {
+    /// Validates resource identity once while the renderer owns its registries.
+    pub(in crate::device) fn new(
+        pipelines: &M2RibbonPipelineRegistry,
+        textures: &M2TextureSetRegistry,
+        pipeline: M2RibbonPipelineHandle,
+        texture_set: M2TextureSetHandle,
+    ) -> Result<Self, VulkanError> {
+        let material = pipelines
+            .info(pipeline)
+            .ok_or(VulkanError::UnknownM2RibbonPipelineHandle)?
+            .material();
+        let texture = textures
+            .info(texture_set)
+            .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
+        if texture.stage_count() != 1 {
+            return Err(VulkanError::M2RibbonDrawTextureSetMismatch);
+        }
+        Ok(Self {
+            pipeline,
+            texture_set,
+            material,
+        })
+    }
+
+    /// Builds dynamic ranges without borrowing or rescanning renderer registries.
+    /// # Errors
+    /// Preserves material mismatch and range overflow validation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare(
+        &self,
+        material: M2Material,
+        order: M2EffectOrder,
+        first_vertex: u32,
+        vertex_count: usize,
+    ) -> Result<M2RibbonPreparedDraw, VulkanError> {
+        let expected = M2MaterialState::from_material(material);
+        if self.material != expected {
+            return Err(VulkanError::M2RibbonDrawPipelineMismatch);
+        }
+        let pipeline = self.pipeline;
+        let texture_set = self.texture_set;
+        let vertex_count =
+            u32::try_from(vertex_count).map_err(|_source| VulkanError::M2RibbonDrawVertexRange)?;
+        first_vertex
+            .checked_add(vertex_count)
+            .ok_or(VulkanError::M2RibbonDrawVertexRange)?;
+        Ok(M2RibbonPreparedDraw {
+            pipeline,
+            texture_set,
+            first_vertex,
+            vertex_count,
+            light_bank: M2SceneLightBank::Environment,
+            scene_index: None,
+            order,
+            blend_order: material.blend_mode() as u8,
+            scene_order: u32::MAX,
+            first_material_pass: true,
+        })
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::device) fn prepare_draw(
     pipelines: &M2RibbonPipelineRegistry,
@@ -158,33 +228,10 @@ pub(in crate::device) fn prepare_draw(
     first_vertex: u32,
     vertex_count: usize,
 ) -> Result<M2RibbonPreparedDraw, VulkanError> {
-    let pipeline_info = pipelines
-        .info(pipeline)
-        .ok_or(VulkanError::UnknownM2RibbonPipelineHandle)?;
-    if pipeline_info.material() != M2MaterialState::from_material(material) {
-        return Err(VulkanError::M2RibbonDrawPipelineMismatch);
-    }
-    let texture_info = texture_sets
-        .info(texture_set)
-        .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    if texture_info.stage_count() != 1 {
-        return Err(VulkanError::M2RibbonDrawTextureSetMismatch);
-    }
-    let vertex_count =
-        u32::try_from(vertex_count).map_err(|_source| VulkanError::M2RibbonDrawVertexRange)?;
-    first_vertex
-        .checked_add(vertex_count)
-        .ok_or(VulkanError::M2RibbonDrawVertexRange)?;
-    Ok(M2RibbonPreparedDraw {
-        pipeline,
-        texture_set,
+    M2RibbonDrawTemplate::new(pipelines, texture_sets, pipeline, texture_set)?.prepare(
+        material,
+        order,
         first_vertex,
         vertex_count,
-        light_bank: M2SceneLightBank::Environment,
-        scene_index: None,
-        order,
-        blend_order: material.blend_mode() as u8,
-        scene_order: u32::MAX,
-        first_material_pass: true,
-    })
+    )
 }

@@ -222,7 +222,7 @@ impl M2Frame {
         self.environment_shadow_admission
             .resize(self.placements.len(), 0);
         frame_profile.mark("frame work selection");
-        self.begin_geometry();
+        self.begin_geometry(cpu)?;
         let traversal_result = (|| -> Result<(), RuntimeTerrainFrameError> {
             let effect_start = self.placement_visibility.effect_start();
             let mut effects_published = false;
@@ -1032,14 +1032,21 @@ impl M2Frame {
                     &mut self.bone_pose_scratch,
                     &mut self.material_pose_scratch,
                     deferred_palette.then_some(overrides),
-                );
+                    source,
+                    camera,
+                    effect_scale,
+                    &self.particle_twinkle,
+                )?;
             }
-            self.execute_geometry(renderer, cpu, camera, effect_scale)
+            Ok(())
         })();
+        let geometry_result = self.finish_geometry();
         self.restore_geometry_states();
         traversal_result?;
+        geometry_result?;
         let (particle_vertex_capacity, particle_index_capacity) =
             self.publish_geometry(&mut work)?;
+        self.pose_batch.finish()?;
         self.pose_batch.report_consumption();
         frame_profile.mark("instance traversal");
         solarity_profiling::profile_value!("m2.resident_placements", self.placements.len());

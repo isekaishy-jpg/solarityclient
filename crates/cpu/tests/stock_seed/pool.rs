@@ -152,72 +152,17 @@ fn completion_can_be_observed_without_consuming_result() -> Result<(), Box<dyn E
     Ok(())
 }
 
-/// Speculative producers leave one multi-worker lane available for direct work.
+/// Speculative admission never fills a queue behind the flexible worker.
 #[test]
-fn speculative_admission_reserves_an_interactive_worker_lane() -> Result<(), Box<dyn Error>> {
+fn speculative_admission_stops_while_flexible_service_is_occupied() -> Result<(), Box<dyn Error>> {
     let mut executor = CpuExecutor::new(config(8, 32))?;
-    let started = Arc::new(Barrier::new(4));
-    let release = Arc::new(Barrier::new(4));
-    let mut tasks = Vec::new();
-    for _ in 0..3 {
-        let started = Arc::clone(&started);
-        let release = Arc::clone(&release);
-        tasks.push(executor.try_submit(move || {
-            started.wait();
-            release.wait();
-        })?);
-    }
-    started.wait();
-
+    let (release_sender, release_receiver) = mpsc::sync_channel(1);
+    let task = executor.try_submit(move || release_receiver.recv())?;
     assert!(!executor.can_admit_speculative()?);
-    let interactive = executor.try_submit(|| 42)?;
-    assert_eq!(interactive.join()?, 42);
-
-    release.wait();
-    for task in tasks {
-        task.join()?;
-    }
+    release_sender.send(())?;
+    task.join()??;
     assert!(executor.can_admit_speculative()?);
     executor.shutdown()?;
-    Ok(())
-}
-
-#[test]
-fn borrowed_frame_batch_joins_private_workers_and_releases_admission() -> Result<(), Box<dyn Error>>
-{
-    let mut executor = CpuExecutor::new(config(4, 1))?;
-    let mut items = vec![(0_usize, String::new()); 64];
-    let input = [3_usize, 5, 7];
-    executor.for_each_frame(&mut items, |item| {
-        item.0 = input.iter().sum();
-        item.1 = std::thread::current().name().unwrap_or_default().to_owned();
-    })?;
-    assert!(
-        items
-            .iter()
-            .all(|(sum, name)| *sum == 15 && name.starts_with("solarity-frame-"))
-    );
-    assert_eq!(executor.snapshot()?.in_flight(), 0);
-    executor.shutdown()?;
-    assert!(matches!(
-        executor.try_reserve(),
-        Err(CpuError::ShuttingDown)
-    ));
-    Ok(())
-}
-
-#[test]
-fn panicked_frame_batch_releases_borrows_and_leaves_executor_usable() -> Result<(), Box<dyn Error>>
-{
-    let executor = CpuExecutor::new(config(2, 1))?;
-    let mut items = [1, 2, 3, 4];
-    let result = executor.for_each_frame(&mut items, |item| {
-        assert_ne!(*item, 3, "synthetic batch failure");
-    });
-    assert!(matches!(result, Err(CpuError::TaskPanicked)));
-    assert_eq!(executor.snapshot()?.in_flight(), 0);
-    executor.for_each_frame(&mut items, |item| *item = 7)?;
-    assert_eq!(items, [7; 4]);
     Ok(())
 }
 
@@ -225,13 +170,13 @@ fn panicked_frame_batch_releases_borrows_and_leaves_executor_usable() -> Result<
 #[test]
 fn frame_batch_completes_before_blocked_background_jobs_are_released() -> Result<(), Box<dyn Error>>
 {
-    let mut executor = CpuExecutor::new(config(4, 2))?;
-    assert_eq!(executor.background_worker_count(), 2);
-    assert_eq!(executor.frame_worker_count(), 2);
-    let started = Arc::new(Barrier::new(3));
-    let release = Arc::new(Barrier::new(3));
+    let mut executor = CpuExecutor::new(config(4, 1))?;
+    assert_eq!(executor.background_worker_count(), 1);
+    assert_eq!(executor.frame_worker_count(), 3);
+    let started = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
     let mut tasks = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..1 {
         let started = Arc::clone(&started);
         let release = Arc::clone(&release);
         tasks.push(executor.try_submit(move || {
@@ -244,11 +189,14 @@ fn frame_batch_completes_before_blocked_background_jobs_are_released() -> Result
         executor.try_reserve(),
         Err(CpuError::AtCapacity { .. })
     ));
-    let mut values = [0; 128];
+    let mut values = vec![0; 128];
     let (sender, receiver) = mpsc::sync_channel(1);
     let completed_before_release = std::thread::scope(|scope| {
         let frame = scope.spawn(|| {
-            let result = executor.for_each_frame(&mut values, |value| *value = 42);
+            let mut batch = solarity_cpu::FrameBatch::new(|value| *value = 42);
+            let result = batch
+                .start(&executor, &mut values)
+                .and_then(|()| batch.reclaim(&mut values));
             let _received = sender.send(result);
         });
         // The timeout bounds a broken scheduler; it is not a performance threshold.
@@ -264,7 +212,7 @@ fn frame_batch_completes_before_blocked_background_jobs_are_released() -> Result
     assert_eq!(values, [42; 128]);
     executor.shutdown()?;
     assert!(matches!(
-        executor.for_each_frame(&mut values, |_| {}),
+        solarity_cpu::FrameBatch::new(|_: &mut i32| {}).start(&executor, &mut values),
         Err(CpuError::ShuttingDown)
     ));
     Ok(())
@@ -272,15 +220,20 @@ fn frame_batch_completes_before_blocked_background_jobs_are_released() -> Result
 
 /// A one-worker budget never adds a hidden second pool or waits for archive jobs.
 #[test]
-fn single_worker_frame_batch_runs_on_its_caller() -> Result<(), Box<dyn Error>> {
+fn single_worker_frame_batch_uses_its_only_worker() -> Result<(), Box<dyn Error>> {
     let executor = CpuExecutor::new(config(1, 1))?;
     let caller = std::thread::current().id();
-    let mut owners = [None; 8];
-    executor.for_each_frame(&mut owners, |owner| {
-        *owner = Some(std::thread::current().id())
-    })?;
+    let mut owners = vec![None; 8];
+    let mut batch =
+        solarity_cpu::FrameBatch::new(|owner| *owner = Some(std::thread::current().id()));
+    batch.start(&executor, &mut owners)?;
+    batch.reclaim(&mut owners)?;
     assert_eq!(executor.background_worker_count(), 1);
     assert_eq!(executor.frame_worker_count(), 0);
-    assert!(owners.iter().all(|owner| *owner == Some(caller)));
+    assert!(
+        owners
+            .iter()
+            .all(|owner| owner.is_some_and(|id| id != caller))
+    );
     Ok(())
 }

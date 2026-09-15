@@ -4246,7 +4246,6 @@ dependencies = [
 name = "solarity-cpu"
 version = "0.0.3-alpha"
 dependencies = [
- "rayon",
  "solarity-profiling",
  "thiserror 2.0.20",
  "tracing",

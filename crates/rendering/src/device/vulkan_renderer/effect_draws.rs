@@ -31,6 +31,28 @@ impl VulkanRenderer {
 }
 
 impl M2EffectDrawCatalog<'_> {
+    /// Validates a particle resource pair for retained worker preparation.
+    /// # Errors
+    /// Returns the same unknown-resource and texture-stage errors as draw creation.
+    pub fn particle_template(
+        &self,
+        pipeline: M2ParticlePipelineHandle,
+        texture: M2TextureSetHandle,
+    ) -> Result<crate::M2ParticleDrawTemplate, VulkanError> {
+        crate::M2ParticleDrawTemplate::new(self.particles, self.textures, pipeline, texture)
+    }
+
+    /// Validates a ribbon resource pair for retained worker preparation.
+    /// # Errors
+    /// Returns the same unknown-resource and texture-stage errors as draw creation.
+    pub fn ribbon_template(
+        &self,
+        pipeline: M2RibbonPipelineHandle,
+        texture: M2TextureSetHandle,
+    ) -> Result<crate::M2RibbonDrawTemplate, VulkanError> {
+        crate::M2RibbonDrawTemplate::new(self.ribbons, self.textures, pipeline, texture)
+    }
+
     /// Validates one dynamic emitter range against the retained resource image.
     /// # Errors
     /// Returns the ordinary particle resource, material and range errors.

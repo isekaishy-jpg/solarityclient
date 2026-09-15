@@ -9,16 +9,13 @@ use super::super::super::{
 };
 use super::{GeometryInput, GeometryJob};
 use glam::Mat4;
-use solarity_rendering::{
-    M2CameraEffectScale, M2EffectDrawCatalog, M2ParticleTwinkleTable, WorldCameraFrame,
-};
+use solarity_rendering::{M2CameraEffectScale, M2ParticleTwinkleTable, WorldCameraFrame};
 
 impl GeometryJob {
     /// Samples only owned simulation and immutable scene/resource inputs.
     pub(super) fn prepare(
         &mut self,
         source: &M2GpuSource,
-        renderer: M2EffectDrawCatalog<'_>,
         camera: WorldCameraFrame,
         effect_scale: M2CameraEffectScale,
         twinkle: &M2ParticleTwinkleTable,
@@ -187,14 +184,13 @@ impl GeometryJob {
                 )?;
             let effect_order = u32::try_from(self.transparent_elements.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
-            let prepared = renderer
-                .prepare_m2_particle_draw_range(
-                    if instance_color.w < 0.999_99 {
-                        resources.runtime_fade_pipeline
-                    } else {
-                        resources.pipeline
-                    },
-                    resources.texture_set,
+            let template = if instance_color.w < 0.999_99 {
+                resources.fade_template
+            } else {
+                resources.template
+            };
+            let prepared = template
+                .prepare(
                     emitter.blending_type(),
                     emitter.flags(),
                     instance_color.w,
@@ -402,10 +398,9 @@ impl GeometryJob {
                 first_draw,
             )?;
             for (pass_index, pass) in passes.iter().enumerate() {
-                let prepared = renderer
-                    .prepare_m2_ribbon_draw_range(
-                        pass.pipeline,
-                        pass.texture_set,
+                let prepared = pass
+                    .template
+                    .prepare(
                         pass.material,
                         M2EffectOrder::new(emitter.priority_plane(), effect_order),
                         first_vertex,

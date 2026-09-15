@@ -13,6 +13,7 @@ impl M2Frame {
         admission: super::PoseAdmission<'_>,
         now: u32,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.pose_batch.finish()?;
         let batch = &mut self.pose_batch;
         for job in &batch.jobs {
             batch.indices[job.placement()] = None;
@@ -95,17 +96,15 @@ impl M2Frame {
         }
         // Removed owners release their model generation and palette immediately.
         batch.jobs.truncate(active);
-        // Frame workers cannot steal background archive tasks while joining a
-        // palette. Small scenes retain direct execution to avoid rendezvous.
-        if active >= 8
-            && let Some(cpu) = cpu
-            && cpu.frame_worker_count() != 0
-        {
-            cpu.for_each_frame(&mut batch.jobs, PoseJob::sample)?;
-            return Ok(());
-        }
-        for job in &mut batch.jobs {
-            job.sample();
+        // Sampling owns its inputs. Main can continue WMO admission and ordered
+        // traversal; a palette consumer waits for only its own model result.
+        if let Some(cpu) = cpu {
+            batch.pending.start(cpu, &mut batch.jobs)?;
+            batch.submitted = true;
+        } else {
+            for job in &mut batch.jobs {
+                job.sample();
+            }
         }
         Ok(())
     }

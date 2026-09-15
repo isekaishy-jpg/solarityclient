@@ -47,6 +47,7 @@ pub(in super::super) struct GeometryInput {
 #[derive(Default)]
 struct GeometryJob {
     input: Option<GeometryInput>,
+    context: Option<GeometryContext>,
     owns_effects: bool,
     pose: M2BonePose,
     palette: palette::PaletteInput,
@@ -68,13 +69,49 @@ struct GeometryJob {
 }
 
 /// Retains only the current admitted job count, never historical model generations.
-#[derive(Default)]
 pub(in super::super::super) struct GeometryBatch {
     jobs: Vec<GeometryJob>,
     active: usize,
+    pending: solarity_cpu::FrameBatch<GeometryJob>,
+    submitted: bool,
+}
+
+/// Immutable generation and camera inputs own every worker dependency.
+struct GeometryContext {
+    source: super::super::M2GpuSource,
+    camera: solarity_rendering::WorldCameraFrame,
+    effect_scale: solarity_rendering::M2CameraEffectScale,
+    twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
+}
+
+impl Default for GeometryBatch {
+    fn default() -> Self {
+        Self {
+            jobs: Vec::new(),
+            active: 0,
+            pending: solarity_cpu::FrameBatch::new(GeometryJob::execute),
+            submitted: false,
+        }
+    }
 }
 
 impl GeometryJob {
+    /// Executes after this model's ancestry, clock and effect state are owned.
+    fn execute(&mut self) {
+        let context = self
+            .context
+            .take()
+            .unwrap_or_else(|| unreachable!("admitted geometry owns its context"));
+        self.result = Some(self.prepare(
+            &context.source,
+            context.camera,
+            context.effect_scale,
+            &context.twinkle,
+        ));
+        // Resource pins need only survive preparation; placement/source and
+        // published GPU-frame leases own their later lifetimes.
+    }
+
     /// Clears output lengths while retaining storage for the next visible model.
     fn reset(&mut self) {
         self.visible_draws.clear();

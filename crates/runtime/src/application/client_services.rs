@@ -394,6 +394,12 @@ impl ClientServices {
         let second = u32::from(crt_rand.next_u15());
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
         let cpu = CpuExecutor::new(configuration.cpu_pool())?;
+        tracing::info!(
+            protected_workers = cpu.frame_worker_count(),
+            flexible_workers = cpu.background_worker_count(),
+            available_concurrency = ?solarity_cpu::CpuCapabilities::discover().available_workers(),
+            "CPU execution plan initialized"
+        );
         // The stock default ghost callback samples LightParams row 3 at time
         // zero, independent of the active world, camera, and Glue animation.
         let ghost_sunlight = lights

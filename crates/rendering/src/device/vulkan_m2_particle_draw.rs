@@ -157,6 +157,92 @@ impl M2ParticlePreparedDraw {
     }
 }
 
+/// Immutable resource compatibility retained by a source's GPU resource lease.
+#[derive(Clone, Copy)]
+pub struct M2ParticleDrawTemplate {
+    pipeline: M2ParticlePipelineHandle,
+    texture_set: M2TextureSetHandle,
+    material: M2MaterialState,
+}
+
+impl M2ParticleDrawTemplate {
+    /// Validates resource identity once while the renderer owns its registries.
+    pub(in crate::device) fn new(
+        pipelines: &M2ParticlePipelineRegistry,
+        textures: &M2TextureSetRegistry,
+        pipeline: M2ParticlePipelineHandle,
+        texture_set: M2TextureSetHandle,
+    ) -> Result<Self, VulkanError> {
+        let material = pipelines
+            .info(pipeline)
+            .ok_or(VulkanError::UnknownM2ParticlePipelineHandle)?
+            .material();
+        let texture = textures
+            .info(texture_set)
+            .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
+        if texture.stage_count() != 1 {
+            return Err(VulkanError::M2ParticleDrawTextureSetMismatch);
+        }
+        Ok(Self {
+            pipeline,
+            texture_set,
+            material,
+        })
+    }
+
+    /// Builds dynamic ranges without borrowing or rescanning renderer registries.
+    /// # Errors
+    /// Preserves material mismatch and range overflow validation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare(
+        &self,
+        blending_type: u8,
+        particle_flags: u32,
+        element_alpha: f32,
+        order: M2EffectOrder,
+        first_vertex: u32,
+        first_index: u32,
+        vertex_count: usize,
+        index_count: usize,
+    ) -> Result<M2ParticlePreparedDraw, VulkanError> {
+        let mut material = M2MaterialState::from_particle(blending_type, particle_flags);
+        if !material.blend_enabled() && element_alpha < 0.999_99 {
+            material = material.with_runtime_alpha_fade();
+        }
+        if self.material != material {
+            return Err(VulkanError::M2ParticleDrawPipelineMismatch);
+        }
+        let pipeline = self.pipeline;
+        let texture_set = self.texture_set;
+        let vertex_count = u32::try_from(vertex_count)
+            .map_err(|_source| VulkanError::M2ParticleDrawVertexRange)?;
+        first_vertex
+            .checked_add(vertex_count)
+            .ok_or(VulkanError::M2ParticleDrawVertexRange)?;
+        let vertex_offset = i32::try_from(first_vertex)
+            .map_err(|_source| VulkanError::M2ParticleDrawVertexRange)?;
+        let index_count =
+            u32::try_from(index_count).map_err(|_source| VulkanError::M2ParticleDrawIndexRange)?;
+        first_index
+            .checked_add(index_count)
+            .ok_or(VulkanError::M2ParticleDrawIndexRange)?;
+        Ok(M2ParticlePreparedDraw {
+            pipeline,
+            texture_set,
+            vertex_offset,
+            vertex_count,
+            first_index,
+            index_count,
+            light_bank: M2SceneLightBank::Environment,
+            scene_index: None,
+            order,
+            blend_order: blending_type,
+            scene_order: u32::MAX,
+            alpha_reference_bits: material.alpha_reference(element_alpha).to_bits(),
+        })
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::device) fn prepare_draw(
     pipelines: &M2ParticlePipelineRegistry,
@@ -172,46 +258,14 @@ pub(in crate::device) fn prepare_draw(
     vertex_count: usize,
     index_count: usize,
 ) -> Result<M2ParticlePreparedDraw, VulkanError> {
-    let pipeline_info = pipelines
-        .info(pipeline)
-        .ok_or(VulkanError::UnknownM2ParticlePipelineHandle)?;
-    let mut material = M2MaterialState::from_particle(blending_type, particle_flags);
-    if !material.blend_enabled() && element_alpha < 0.999_99 {
-        material = material.with_runtime_alpha_fade();
-    }
-    if pipeline_info.material() != material {
-        return Err(VulkanError::M2ParticleDrawPipelineMismatch);
-    }
-    let texture_info = texture_sets
-        .info(texture_set)
-        .ok_or(VulkanError::UnknownM2TextureSetHandle)?;
-    if texture_info.stage_count() != 1 {
-        return Err(VulkanError::M2ParticleDrawTextureSetMismatch);
-    }
-    let vertex_count =
-        u32::try_from(vertex_count).map_err(|_source| VulkanError::M2ParticleDrawVertexRange)?;
-    first_vertex
-        .checked_add(vertex_count)
-        .ok_or(VulkanError::M2ParticleDrawVertexRange)?;
-    let vertex_offset =
-        i32::try_from(first_vertex).map_err(|_source| VulkanError::M2ParticleDrawVertexRange)?;
-    let index_count =
-        u32::try_from(index_count).map_err(|_source| VulkanError::M2ParticleDrawIndexRange)?;
-    first_index
-        .checked_add(index_count)
-        .ok_or(VulkanError::M2ParticleDrawIndexRange)?;
-    Ok(M2ParticlePreparedDraw {
-        pipeline,
-        texture_set,
-        vertex_offset,
-        vertex_count,
-        first_index,
-        index_count,
-        light_bank: M2SceneLightBank::Environment,
-        scene_index: None,
+    M2ParticleDrawTemplate::new(pipelines, texture_sets, pipeline, texture_set)?.prepare(
+        blending_type,
+        particle_flags,
+        element_alpha,
         order,
-        blend_order: blending_type,
-        scene_order: u32::MAX,
-        alpha_reference_bits: material.alpha_reference(element_alpha).to_bits(),
-    })
+        first_vertex,
+        first_index,
+        vertex_count,
+        index_count,
+    )
 }

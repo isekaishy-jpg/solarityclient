@@ -78,12 +78,12 @@ use solarity_rendering::{
     M2ParticleColorReplacement, M2ParticleMeshPlan, M2ParticleMeshPlanError,
     M2ParticlePipelineHandle, M2ParticlePose, M2ParticlePreparedDraw, M2ParticleRenderVertex,
     M2ParticleSimulation, M2ParticleTwinkleTable, M2PipelineHandle, M2PreparedDraw,
-    M2RibbonMeshPlan, M2RibbonPipelineHandle, M2RibbonPose, M2RibbonPreparedDraw,
-    M2RibbonRenderVertex, M2RibbonTrail, M2SampledTexture, M2SceneLightBank, M2ShaderPermutation,
-    M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation, M2SpirvKey, M2TextureImageHandle,
-    M2TextureSet, M2TextureSetHandle, M2TransparentPass, M2TransparentSortKey, VulkanRenderer,
-    WorldCameraFrame, WorldFrustum, compare_m2_transparent, m2_model_distance_key,
-    m2_section_distance_key, sample_m2_lights_into, triggered_m2_event_indices,
+    M2RibbonMeshPlan, M2RibbonPose, M2RibbonPreparedDraw, M2RibbonRenderVertex, M2RibbonTrail,
+    M2SampledTexture, M2SceneLightBank, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering,
+    M2ShadowPermutation, M2SpirvKey, M2TextureImageHandle, M2TextureSet, M2TextureSetHandle,
+    M2TransparentPass, M2TransparentSortKey, VulkanRenderer, WorldCameraFrame, WorldFrustum,
+    compare_m2_transparent, m2_model_distance_key, m2_section_distance_key, sample_m2_lights_into,
+    triggered_m2_event_indices,
 };
 
 use crate::application::game_object_coordinator::{
@@ -121,7 +121,7 @@ const PARTICLE_IGNORE_DISTANCE_LOD: u32 = 0x0040_0000;
 
 /// One selected M2/SKIN generation uploaded once for all of its placements.
 #[derive(Clone)]
-struct M2GpuSource {
+struct M2GpuSourceData {
     _resource_leases: Vec<solarity_rendering::GpuResourceLease>,
     model: Arc<DecodedM2Model>,
     plan: Arc<M2MeshPlan>,
@@ -134,6 +134,9 @@ struct M2GpuSource {
     particles: Vec<M2GpuParticle>,
     ribbons: Vec<Vec<M2GpuRibbonPass>>,
 }
+
+/// One immutable generation pins templates and GPU resources for worker consumers.
+type M2GpuSource = Arc<M2GpuSourceData>;
 
 /// Immutable renderer resources for one Glue model prepared before activation.
 ///
@@ -165,16 +168,14 @@ struct M2GpuDraw {
 /// Shared renderer objects for one ordinary particle declaration.
 #[derive(Clone)]
 struct M2GpuParticle {
-    pipeline: M2ParticlePipelineHandle,
-    runtime_fade_pipeline: M2ParticlePipelineHandle,
-    texture_set: M2TextureSetHandle,
+    template: solarity_rendering::M2ParticleDrawTemplate,
+    fade_template: solarity_rendering::M2ParticleDrawTemplate,
 }
 
 /// One stock ribbon pass pairing parallel material and texture entries.
 #[derive(Clone)]
 struct M2GpuRibbonPass {
-    pipeline: M2RibbonPipelineHandle,
-    texture_set: M2TextureSetHandle,
+    template: solarity_rendering::M2RibbonDrawTemplate,
     material: solarity_asset::M2Material,
 }
 

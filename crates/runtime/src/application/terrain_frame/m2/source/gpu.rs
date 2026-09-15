@@ -380,14 +380,17 @@ pub(in super::super) fn prepare_gpu_source_with_plan(
     let particles = particle_pipelines
         .into_iter()
         .zip(particle_texture_sets)
-        .map(
-            |((pipeline, runtime_fade_pipeline), texture_set)| M2GpuParticle {
-                pipeline,
-                runtime_fade_pipeline,
-                texture_set,
-            },
-        )
-        .collect();
+        .map(|((pipeline, runtime_fade_pipeline), texture_set)| {
+            Ok::<_, solarity_rendering::VulkanError>(M2GpuParticle {
+                template: renderer
+                    .m2_effect_draw_catalog()
+                    .particle_template(pipeline, texture_set)?,
+                fade_template: renderer
+                    .m2_effect_draw_catalog()
+                    .particle_template(runtime_fade_pipeline, texture_set)?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut ribbons = Vec::with_capacity(model.animations().ribbons().len());
     for emitter in model.animations().ribbons() {
         let mut pass_pipelines = Vec::with_capacity(emitter.material_indices().len());
@@ -423,16 +426,19 @@ pub(in super::super) fn prepare_gpu_source_with_plan(
             pass_pipelines
                 .into_iter()
                 .zip(texture_sets)
-                .map(|((pipeline, material), texture_set)| M2GpuRibbonPass {
-                    pipeline,
-                    texture_set,
-                    material,
+                .map(|((pipeline, material), texture_set)| {
+                    Ok::<_, solarity_rendering::VulkanError>(M2GpuRibbonPass {
+                        template: renderer
+                            .m2_effect_draw_catalog()
+                            .ribbon_template(pipeline, texture_set)?,
+                        material,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, _>>()?,
         );
     }
     profile.mark("effects");
-    Ok(M2GpuSource {
+    Ok(Arc::new(super::super::M2GpuSourceData {
         _resource_leases: resource_leases,
         model: Arc::clone(model),
         plan,
@@ -446,7 +452,7 @@ pub(in super::super) fn prepare_gpu_source_with_plan(
         draws,
         particles,
         ribbons,
-    })
+    }))
 }
 
 /// Rejects selected holes before any renderer registry mutates.

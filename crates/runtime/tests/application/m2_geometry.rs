@@ -248,7 +248,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     if !measure {
         let candidate = &mut frames[1];
         let source = candidate.sources[0].as_mut().ok_or("source")?;
-        source.particles.clear();
+        std::sync::Arc::make_mut(source).particles.clear();
         let camera = WorldCamera::orthographic(
             Vec3::new(12., 0., 3.),
             Vec3::new(0., 2., 1.),

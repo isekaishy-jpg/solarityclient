@@ -45,6 +45,9 @@ impl<T> CpuTask<T> {
     /// Returns [`CpuError::TaskPanicked`] when the task unwound or
     /// [`CpuError::CompletionLost`] if executor invariants were violated.
     pub fn join(self) -> Result<T, CpuError> {
+        if crate::environment::is_worker() && !self.is_finished() {
+            return Err(CpuError::WorkerWait);
+        }
         let _profile_scope = solarity_profiling::profile!("cpu.pool.task.join");
         self.trace.link("cpu.job.join");
         let outcome = self
