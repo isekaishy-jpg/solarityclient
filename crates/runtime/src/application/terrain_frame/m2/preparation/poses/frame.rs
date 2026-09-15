@@ -99,7 +99,13 @@ impl M2Frame {
         // Sampling owns its inputs. Main can continue WMO admission and ordered
         // traversal; a palette consumer waits for only its own model result.
         if let Some(cpu) = cpu {
-            batch.pending.start(cpu, &mut batch.jobs)?;
+            batch.pending.start_graph(
+                cpu,
+                &solarity_cpu::FrameGraphTemplate::independent(active)
+                    .with_priority(solarity_cpu::FramePriority::Prerequisite),
+                &mut batch.jobs,
+                &[],
+            )?;
             batch.handles.clear();
             for index in 0..active {
                 batch.handles.push(batch.pending.job(index)?);

@@ -3,7 +3,8 @@
 #![allow(unsafe_code)]
 
 use solarity_cpu::{
-    CompletionPort, CpuExecutor, CpuPoolConfig, FrameBatch, FrameGraphTemplate, JobOutcome,
+    CompletionPort, CpuExecutor, CpuPoolConfig, FrameBatch, FrameGraphTemplate, FramePriority,
+    JobOutcome,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::error::Error;
@@ -65,7 +66,8 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
     ))?;
     let mut first = CompletionPort::new(1)?;
     let mut second = CompletionPort::new(1)?;
-    let template = FrameGraphTemplate::with_dependencies(&[&[], &[0], &[0], &[1, 2]])?;
+    let template = FrameGraphTemplate::with_dependencies(&[&[], &[0], &[0], &[1, 2]])?
+        .with_priority(FramePriority::Prerequisite);
     let mut batch = FrameBatch::new(|value: &mut usize| *value += 1);
     let mut jobs = vec![0; 4];
     let mut window = None;

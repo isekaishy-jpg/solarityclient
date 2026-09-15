@@ -53,6 +53,14 @@ impl<T: Send + 'static> FrameBatch<T> {
         let mut state = self.core.lock();
         self.validate(&state, handle)?;
         let index = handle.index;
+        if wait && !matches!(state.nodes[index].status, Status::Terminal(_)) {
+            if crate::environment::is_worker() {
+                return Err(CpuError::WorkerWait);
+            }
+            drop(state);
+            self.require_urgent()?;
+            state = self.core.lock();
+        }
         let _wait = solarity_profiling::profile!("cpu.frame.result_wait");
         let outcome = loop {
             if let Status::Terminal(outcome) = state.nodes[index].status {
@@ -118,6 +126,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         if crate::environment::is_worker() && self.core.lock().lease.is_some() {
             return Err(CpuError::WorkerWait);
         }
+        self.require_urgent()?;
         self.close();
         let mut state = self.core.lock();
         let _wait = solarity_profiling::profile!("cpu.frame.reclaim_wait");

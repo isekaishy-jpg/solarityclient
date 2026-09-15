@@ -3,17 +3,40 @@
 use super::state::Core;
 use std::sync::{Arc, Weak};
 
+/// Scheduling urgency never changes execution eligibility or logical output order.
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
+pub enum FramePriority {
+    /// Ordinary frame work with no current blocking consumer.
+    #[default]
+    Pass,
+    /// A prerequisite of main-thread consumption or a known critical phase.
+    Prerequisite,
+}
+
 /// Complete node/edge maxima, including successors needed to release predecessors.
 #[derive(Clone, Copy, Default)]
 pub struct FrameBatchPlan {
     pub(super) jobs: usize,
     pub(super) edges: usize,
+    pub(super) priority: FramePriority,
 }
 impl FrameBatchPlan {
     /// Declares a connected phase before any owned input enters the scheduler.
     #[must_use]
     pub const fn new(jobs: usize, edges: usize) -> Self {
-        Self { jobs, edges }
+        Self {
+            jobs,
+            edges,
+            priority: FramePriority::Pass,
+        }
+    }
+
+    /// Declares urgency before admission; this does not admit background I/O to
+    /// protected workers or preempt a currently executing kernel.
+    #[must_use]
+    pub const fn with_priority(mut self, priority: FramePriority) -> Self {
+        self.priority = priority;
+        self
     }
 }
 

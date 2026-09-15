@@ -34,6 +34,7 @@ fn background_and_frame_outputs_notify_after_completing_and_survive_shutdown()
     assert_eq!(batch.with_result(&batch.job(1)?, |value| *value)?, 3);
     batch.reclaim(&mut jobs)?;
     assert_eq!(jobs, [2, 3]);
-    assert_eq!(notifier.0.load(Ordering::Acquire), 3);
+    // Two job results, the phase's later durable readiness, and the background result.
+    assert_eq!(notifier.0.load(Ordering::Acquire), 4);
     Ok(())
 }

@@ -68,12 +68,28 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   phases and flat backward-only dependency edges. Binding reserves the whole
   phase before input transfer and retains typed, generation-checked results.
   Existing owned pose batches and the retained scene-light phase use this path.
+- Added prerequisite urgency and propagation through unresolved phase/resource
+  readiness. Blocking result consumers and phase reclamation raise urgency;
+  pose and scene-light phases declare it at admission. Queued runners move to
+  the urgent bucket, and ordinary runners yield at kernel boundaries. Promotion
+  uses reserved metadata work rather than recursive calls and pins its epoch
+  until propagation ends. Execution eligibility remains unchanged.
+- The flexible worker alternates queued background service and frame boundaries.
+  Protected workers still cannot execute the general background adapter. Ready
+  queue capacity now covers the admitted phase/runner bounds at pool creation.
+  Dispatch startup, queue policy and worker parking have separate folder modules.
+- Phase readiness emits its own coordinator notification after durable terminal
+  publication, including empty phases whose last work is priority metadata.
 
 ## Still required for the complete cutover
 
-- Typed shared-result leases across domains, priority propagation and main-only
-  continuations. Templates and heterogeneous phase fan-in now exist; resource
+- Typed shared-result leases across domains and main-only continuations.
+  Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
+- Calibrated cost buckets and straggler reporting, plus required/speculative/
+  retirement priority in the concrete background services. External producers
+  expose urgency, but those services must still consume it. Frame urgency is
+  monotonic within an epoch; live cache-consumer priority withdrawal is not yet wired.
 - Aggregate node/result/scratch byte reservations and accounting. Node/edge
   counts are now bounded per declared frame phase; executor-wide bytes and
   allocations nested inside domain job state are not yet budgeted.
@@ -92,6 +108,25 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Frame priority and service checkpoint
+
+On 2026-09-15, 1,453 workspace tests passed with 33 ignored, including M2
+motion/visibility/receiver-light parity under the changed scheduler. A subsequent
+review added notification after terminal phase publication. Final formatting,
+workspace Clippy and all 46 CPU tests passed after that correction. The new
+empty-phase fixture checks notification after priority metadata finishes. The
+allocation fixture now enables prerequisite priority on every activation and
+still observes zero allocator calls for 1,000 warmed bindings.
+
+Controlled queue tests prove inherited priority ahead of older ordinary work,
+yielding after a running kernel, propagation through a pending phase chain,
+reset on epoch reuse and alternating single-worker background/frame service.
+Logs are in ignored `target/cpu-priority-workspace-tests.log`,
+`target/cpu-priority-final-tests.log` and `target/cpu-priority-clippy-final.log`.
+The full workspace run preceded the final notification correction; its focused
+CPU coverage and final Clippy are recorded separately. No live frame-time gain
+or numbered Testing build is established by this checkpoint.
 
 ### Reusable graph and fan-in checkpoint
 

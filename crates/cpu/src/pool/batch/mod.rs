@@ -2,6 +2,7 @@
 
 mod admission;
 mod execution;
+mod priority;
 mod readiness;
 mod results;
 mod state;
@@ -9,7 +10,7 @@ mod template;
 mod types;
 pub use template::FrameGraphTemplate;
 
-pub use types::{FrameBatchPlan, FrameJob, JobOutcome};
+pub use types::{FrameBatchPlan, FrameJob, FramePriority, JobOutcome};
 
 use super::dispatch::{Work, WorkClass};
 use super::{CpuError, CpuExecutor};
@@ -41,6 +42,7 @@ impl<T: Send + 'static> FrameBatch<T> {
     fn create(kernel: Kernel<T>) -> Self {
         Self {
             core: Arc::new(Core {
+                urgent: std::sync::atomic::AtomicBool::new(false),
                 state: Mutex::new(State::new(kernel)),
                 ready: Condvar::new(),
                 completion_port: crate::CompletionPort::empty(),

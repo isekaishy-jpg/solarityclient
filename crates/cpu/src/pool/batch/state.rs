@@ -6,6 +6,7 @@ use crate::pool::dispatch::Dispatch;
 use crate::pool::worker::WorkerLease;
 use crate::{CompletionPort, CoordinatorNotifier, CpuError, ReadyToken};
 use std::collections::VecDeque;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 /// Registered adapters introduce no per-activation boxed closure.
@@ -75,6 +76,8 @@ pub(super) struct State<T> {
     pub open: bool,
     pub gate: Gate,
     pub subscriptions: Vec<Option<Subscription>>,
+    pub dependencies: Vec<ReadyToken>,
+    pub priority_pending: bool,
     pub completion: Option<ReadyToken>,
     pub finishing: bool,
     pub kernel: Kernel<T>,
@@ -100,6 +103,8 @@ impl<T> State<T> {
             open: false,
             gate: Gate::Ready,
             subscriptions: Vec::new(),
+            dependencies: Vec::new(),
+            priority_pending: false,
             completion: None,
             finishing: false,
             kernel,
@@ -213,6 +218,7 @@ impl<T> State<T> {
             && !matches!(self.gate, Gate::Pending(_))
             && self.lease.is_some()
             && !self.finishing
+            && !self.priority_pending
     }
     /// No kernel can have started behind a pending gate. Cancellation suppresses
     /// every waiting input and removes its subscription independently of others.
@@ -228,6 +234,7 @@ impl<T> State<T> {
     }
     /// Clears activation lengths while retaining metadata for later frames.
     pub fn clear(&mut self) {
+        self.dependencies.clear();
         self.nodes.clear();
         self.edges.clear();
         self.edge_count = 0;
@@ -238,6 +245,7 @@ impl<T> State<T> {
 }
 /// Shared only with this epoch's workers, never mutable world state.
 pub(super) struct Core<T> {
+    pub urgent: AtomicBool,
     pub state: Mutex<State<T>>,
     pub ready: Condvar,
     pub completion_port: CompletionPort,

@@ -101,7 +101,7 @@ consumes the ordered completed prefix before final reclamation, so stream copies
 can overlap later kernels. Receiver-light callbacks still follow actual emitted
 packet demand; their ordering is not inferred from broad visibility. Cross-batch
 dependencies now include phase completion ports and multi-producer fan-in.
-Main-only continuation dispatch, priority propagation and global byte budgets
+Main-only continuation dispatch, background service priority and global byte budgets
 remain required work.
 
 ## External readiness and phase edges
@@ -167,8 +167,40 @@ nodes use the registered typed kernel. `start` uses the same independent-templat
 path, and M2 lighting retains its template across frames.
 
 These APIs do not yet reserve a multi-phase application's aggregate byte working
-set, publish domain-owned shared product leases, or propagate priority. Those
+set or publish domain-owned shared product leases. Those
 remain explicit cutover requirements rather than implicit properties of a DAG.
+
+## Urgency and service boundaries
+
+`FramePriority::Prerequisite` marks a known critical phase. Blocking result
+consumption and reclamation also call `require_urgent`; a phase's urgency rises
+at most once during its epoch. The scheduler moves already queued runners into
+the urgent FIFO bucket. Queue push reads atomic urgency while holding the queue
+lock, so a racing launch cannot strand an urgent runner in the ordinary bucket.
+Running kernels are not preempted. Their runner yields between kernels when
+priority metadata, more urgent frame work, or flexible-lane background service
+needs progress. Logical result/publication order remains domain-owned.
+
+Promotion traverses unresolved readiness dependencies using one queued metadata
+record per promoted phase. It holds admission until propagation completes,
+validates producer generations and calls other owners outside phase/port locks.
+Long chains therefore consume queue entries, not recursive stack frames. Queue
+capacity is reserved from the admitted phase count and worker count at startup.
+Background closures never become eligible on protected workers through urgency.
+The flexible worker alternates queued background service and frame boundaries;
+an executing bulk call still runs to its existing finite completion boundary.
+
+`CompletionProducer::is_urgent` exposes demand to an external resource owner.
+Its concrete required/speculative/retirement queues still need integration;
+this flag alone is not a background priority policy. Urgency is monotonic for a
+frame epoch and resets on reuse. Cache consumer withdrawal and calibrated cost
+buckets remain required work. Pose and scene lighting now declare their known
+prerequisite urgency; other frame phases can be promoted by actual consumption.
+
+Terminal phase publication sends a coordinator notification after readiness is
+durable. Job-result notifications alone cannot cover empty phases or metadata
+that finishes after the last kernel. The notification runs outside scheduler
+locks and retains the existing native coalescing behavior.
 
 ## Validation
 

@@ -36,7 +36,8 @@ impl CpuExecutor {
     ///
     /// # Errors
     ///
-    /// Returns [`CpuError::PoolBuild`] when worker creation fails.
+    /// Returns [`CpuError::PoolBuild`] when worker creation fails or
+    /// [`CpuError::BatchStorage`] when configured queue counts overflow.
     pub fn new(config: CpuPoolConfig) -> Result<Self, CpuError> {
         Self::build(config, None)
     }

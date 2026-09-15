@@ -1,7 +1,8 @@
 //! Transactional phase admission and multi-producer prerequisite subscription.
 
 use super::state::Gate;
-use super::{FrameBatch, FrameBatchPlan};
+use super::{FrameBatch, FrameBatchPlan, FramePriority};
+use crate::completion::PrioritySink;
 use crate::{CpuError, CpuExecutor, ReadyToken};
 use std::sync::Arc;
 
@@ -34,6 +35,10 @@ impl<T: Send + 'static> FrameBatch<T> {
             .ok_or(CpuError::EpochExhausted)?;
         state.reserve(plan)?;
         state
+            .dependencies
+            .try_reserve(dependencies.len())
+            .map_err(|_| CpuError::BatchStorage)?;
+        state
             .subscriptions
             .try_reserve(dependencies.len())
             .map_err(|_| CpuError::BatchStorage)?;
@@ -54,6 +59,14 @@ impl<T: Send + 'static> FrameBatch<T> {
             }
         };
         state.generation = generation;
+        state.dependencies.extend_from_slice(dependencies);
+        self.core
+            .urgent
+            .store(false, std::sync::atomic::Ordering::Release);
+        let priority_owner: Arc<dyn PrioritySink> = self.core.clone();
+        self.core
+            .completion_port
+            .priority_owner(Arc::downgrade(&priority_owner), generation);
         state.plan = plan;
         state.open = true;
         state.gate = if dependencies.is_empty() {
@@ -89,6 +102,9 @@ impl<T: Send + 'static> FrameBatch<T> {
             if let Some(binder) = binder {
                 binder.bind(Arc::downgrade(&sink), generation, input);
             }
+        }
+        if plan.priority == FramePriority::Prerequisite {
+            self.core.clone().require_urgent(generation);
         }
         Ok(())
     }

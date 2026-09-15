@@ -14,6 +14,12 @@ pub struct FrameGraphTemplate {
 }
 
 impl FrameGraphTemplate {
+    /// Selects initial urgency while preserving the validated topology.
+    #[must_use]
+    pub fn with_priority(mut self, priority: super::FramePriority) -> Self {
+        self.plan = self.plan.with_priority(priority);
+        self
+    }
     /// Describes independent active inputs without allocating or scanning residents.
     #[must_use]
     pub const fn independent(jobs: usize) -> Self {

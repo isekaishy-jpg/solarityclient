@@ -95,7 +95,11 @@ impl<T: Send + 'static> Core<T> {
         let mut state = self.lock();
         state.finishing = false;
         state.lease = None;
+        let notifier = state.notifier.clone();
         drop(state);
         self.ready.notify_all();
+        if let Some(notifier) = notifier {
+            notifier.notify();
+        }
     }
 }

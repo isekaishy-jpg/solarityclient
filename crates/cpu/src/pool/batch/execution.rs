@@ -5,9 +5,23 @@ use super::state::{Core, Status};
 use crate::pool::dispatch::ReadyWork;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 impl<T: Send + 'static> ReadyWork for Core<T> {
-    fn run(self: Arc<Self>) {
+    fn urgent(&self) -> bool {
+        self.urgent.load(Ordering::Acquire)
+    }
+
+    fn propagate(&self, epoch: u64) {
+        self.propagate_priority(epoch);
+    }
+
+    fn run(self: Arc<Self>, flexible: bool) {
+        let dispatch = self
+            .lock()
+            .dispatch
+            .clone()
+            .unwrap_or_else(|| unreachable!("admitted runner owns dispatch"));
         loop {
             let (index, mut job, kernel, trace) = {
                 let mut state = self.lock();
@@ -55,6 +69,15 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
             self.ready.notify_all();
             if let Some(notifier) = notifier {
                 notifier.notify();
+            }
+            if dispatch.should_yield(self.urgent(), flexible) {
+                // Keep this runner reservation live while handing its lane back.
+                // No borrowed input or user operation crosses the queue boundary.
+                dispatch.push(
+                    crate::pool::dispatch::Work::Retained(self),
+                    crate::pool::dispatch::WorkClass::Frame,
+                );
+                return;
             }
         }
     }

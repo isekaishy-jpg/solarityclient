@@ -137,7 +137,8 @@ impl Default for LightingBatch {
     fn default() -> Self {
         Self {
             pending: solarity_cpu::FrameBatch::with_outcome(LightingWork::execute),
-            template: solarity_cpu::FrameGraphTemplate::independent(1),
+            template: solarity_cpu::FrameGraphTemplate::independent(1)
+                .with_priority(solarity_cpu::FramePriority::Prerequisite),
             jobs: Vec::new(),
             submitted: false,
         }

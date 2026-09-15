@@ -9,6 +9,17 @@ pub(crate) trait ReadySink: Send + Sync {
     fn signal(self: Arc<Self>, epoch: u64, input: usize, outcome: JobOutcome);
 }
 
+/// Metadata-only promotion of a checked producer epoch; propagation is queued.
+pub(crate) trait PrioritySink: Send + Sync {
+    fn require_urgent(self: Arc<Self>, epoch: u64);
+}
+
+/// A port never owns the producer or extends its epoch lifetime by itself.
+struct PriorityOwner {
+    sink: Weak<dyn PrioritySink>,
+    epoch: u64,
+}
+
 /// A reserved consumer identifies one epoch of an existing scheduler owner.
 struct Target {
     sink: Weak<dyn ReadySink>,
@@ -30,6 +41,8 @@ struct State {
     subscribers: usize,
     publishing: bool,
     producer_issued: bool,
+    urgent: bool,
+    priority_owner: Option<PriorityOwner>,
 }
 /// Domain callbacks are never invoked while holding readiness metadata.
 struct Core {
@@ -101,6 +114,8 @@ impl CompletionPort {
                     subscribers: 0,
                     publishing: false,
                     producer_issued: false,
+                    urgent: false,
+                    priority_owner: None,
                 }),
             }),
         }
@@ -140,6 +155,8 @@ impl CompletionPort {
         state.generation = generation;
         state.outcome = None;
         state.producer_issued = false;
+        state.urgent = false;
+        state.priority_owner = None;
         Ok(ReadyToken {
             core: Arc::downgrade(&self.core),
             generation,
@@ -175,6 +192,11 @@ impl CompletionPort {
     pub(crate) fn complete(&self, token: &ReadyToken, outcome: JobOutcome) {
         let _published = self.core.complete(token.generation, outcome);
     }
+
+    /// Installs a weak producer link before its readiness token becomes public.
+    pub(crate) fn priority_owner(&self, sink: Weak<dyn PrioritySink>, epoch: u64) {
+        self.core.lock().priority_owner = Some(PriorityOwner { sink, epoch });
+    }
 }
 impl Drop for CompletionPort {
     fn drop(&mut self) {
@@ -190,6 +212,26 @@ pub struct ReadyToken {
     generation: u64,
 }
 impl ReadyToken {
+    /// Latches consumer urgency and notifies the producer outside the port lock.
+    /// Completion/reuse races need no promotion and cannot affect a new epoch.
+    pub(crate) fn require_urgent(&self) {
+        let Some(core) = self.core.upgrade() else {
+            return;
+        };
+        let mut state = core.lock();
+        if state.generation != self.generation || state.outcome.is_some() || state.urgent {
+            return;
+        }
+        state.urgent = true;
+        let owner = state
+            .priority_owner
+            .as_ref()
+            .and_then(|owner| owner.sink.upgrade().map(|sink| (sink, owner.epoch)));
+        drop(state);
+        if let Some((sink, epoch)) = owner {
+            sink.require_urgent(epoch);
+        }
+    }
     /// Identity comparison does not acquire resource metadata or retain its payload.
     pub(crate) fn same_generation(&self, other: &Self) -> bool {
         self.generation == other.generation && self.core.ptr_eq(&other.core)
@@ -238,6 +280,18 @@ pub struct CompletionProducer {
     finished: bool,
 }
 impl CompletionProducer {
+    /// Reports latched consumer urgency without changing the producer's execution
+    /// class. External services retain their own admission and scheduling policy.
+    /// # Errors
+    /// A retired or recycled generation cannot report another producer's demand.
+    pub fn is_urgent(&self) -> Result<bool, CpuError> {
+        let core = self.token.core.upgrade().ok_or(CpuError::StaleReadiness)?;
+        let state = core.lock();
+        if state.generation != self.token.generation {
+            return Err(CpuError::StaleReadiness);
+        }
+        Ok(state.urgent)
+    }
     /// Publishes once. Repeating the same outcome is idempotent; conflicting or
     /// stale completion is an explicit error and cannot complete a new occupant.
     /// # Errors
