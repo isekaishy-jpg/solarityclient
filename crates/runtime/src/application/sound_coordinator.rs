@@ -75,6 +75,9 @@ impl SoundCvarSource for super::world_ui::RuntimeWorldUi {
 /// Failure while applying stock audio policy at the composition root.
 #[derive(Debug, Error)]
 pub enum RuntimeSoundError {
+    /// One producer failure shared by independently admitted sound consumers.
+    #[error(transparent)]
+    SharedSource(std::sync::Arc<RuntimeSoundError>),
     /// A resolved device could not be published to the stock sound menu.
     #[error(transparent)]
     Ui(#[from] solarity_ui::UiScriptError),

@@ -1,76 +1,24 @@
 //! Ordered sound selection separated from nonblocking archive reads and decoding.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use solarity_asset::{AssetPath, AssetStore};
 use solarity_cpu::CpuExecutor;
 
 use crate::audio::backend::SoundVoicePriority;
 use crate::audio::cache::EncodedSound;
-use crate::audio::codec::{DecodedSoundHandle, SoundDecodeAdmission, SoundDecodeTicket};
-use crate::audio::engine::{AdvancedSoundInstanceId, SoundLoopMode, SoundResidencyPolicy};
+use crate::audio::codec::{DecodedSoundHandle, SoundDecodeAdmission};
+use crate::audio::engine::SoundLoopMode;
 use crate::audio::selection::SoundVariationSelector;
 
-use super::positioning::PositionedSoundSource;
-use super::{
+use super::super::positioning::PositionedSoundSource;
+use super::super::{
     ActiveVoice, SoundChannel, SoundEngine, SoundEngineError, SoundPlayRequest, SoundPlayback,
 };
 use crate::audio::engine::AdvancedSoundListener;
 use glam::Vec3;
 
-/// Process-unique identity for a selected sound awaiting resource admission.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SoundLoadHandle(u64);
-
-/// Exact selected path that a worker may read without access to sound or RNG state.
-#[derive(Clone, Debug)]
-pub struct SoundLoadRequest {
-    handle: SoundLoadHandle,
-    path: AssetPath,
-}
-
-impl SoundLoadRequest {
-    /// Allocates a non-reusable identity so foreign and late completions cannot play.
-    fn new(path: AssetPath) -> Result<Self, SoundEngineError> {
-        static NEXT_LOAD_ID: AtomicU64 = AtomicU64::new(1);
-        let id = NEXT_LOAD_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_exhausted| SoundEngineError::LoadCapacity)?;
-        Ok(Self {
-            handle: SoundLoadHandle(id),
-            path,
-        })
-    }
-
-    /// Returns the identity used for completion and cancellation.
-    #[must_use]
-    pub const fn handle(&self) -> SoundLoadHandle {
-        self.handle
-    }
-
-    /// Returns the one selected archive path; workers must not choose another variation.
-    #[must_use]
-    pub const fn path(&self) -> &AssetPath {
-        &self.path
-    }
-}
-
-/// Admission policy retained while bytes are read, before an SDL track exists.
-pub(super) struct PendingVoice {
-    load: SoundLoadRequest,
-    pub(super) entry_id: Option<u32>,
-    pub(super) channel: SoundChannel,
-    source_gain: f32,
-    frequency_ratio: f32,
-    spatial_source: Option<(PositionedSoundSource, AdvancedSoundListener)>,
-    fade: super::SoundFade,
-    looping: bool,
-    priority: SoundVoicePriority,
-    duck_source: Option<AdvancedSoundInstanceId>,
-    residency: SoundResidencyPolicy,
-    pub(super) decode: Option<SoundDecodeTicket>,
-}
+use super::{PendingVoice, SoundLoadHandle, SoundLoadRequest};
 
 impl SoundEngine<'_> {
     /// Selects and reserves a sound without reading or decoding its payload.
@@ -163,20 +111,22 @@ impl SoundEngine<'_> {
             })?
             .path()
             .clone();
-        let parameters = super::parameters::select_parameters(
+        let parameters = super::super::parameters::select_parameters(
             entry.volume(),
             request.gain_multiplier(),
             entry.flags(),
             next_random_word,
         );
+        let (load, lifetime) = SoundLoadRequest::new(asset_path)?;
         let pending = PendingVoice {
-            load: SoundLoadRequest::new(asset_path)?,
+            load,
+            _lifetime: lifetime,
             entry_id: Some(entry.id()),
             channel,
             source_gain: parameters.gain,
             frequency_ratio: parameters.frequency_ratio,
             spatial_source: None,
-            fade: super::SoundFade::default(),
+            fade: super::super::SoundFade::default(),
             looping: request.loop_mode().is_looping(entry.flags()),
             priority: request.priority(),
             duck_source: request.advanced_source(),
@@ -221,15 +171,16 @@ impl SoundEngine<'_> {
                 maximum,
             });
         }
-        let load = SoundLoadRequest::new(path.clone())?;
+        let (load, lifetime) = SoundLoadRequest::new(path.clone())?;
         self.pending_voices.push(PendingVoice {
             load: load.clone(),
+            _lifetime: lifetime,
             entry_id: None,
             channel,
             source_gain: 1.0,
             frequency_ratio: 1.0,
             spatial_source: None,
-            fade: super::SoundFade::default(),
+            fade: super::super::SoundFade::default(),
             looping: loop_mode.is_looping(0),
             priority: SoundVoicePriority::DEFAULT,
             duck_source: None,
@@ -295,7 +246,11 @@ impl SoundEngine<'_> {
     /// Sets the envelope before resource admission, avoiding a full-volume sample
     /// between starting the backend track and the owner's completion callback.
     /// Returns false for a cancelled, completed, or foreign load generation.
-    pub fn set_load_fade(&mut self, handle: SoundLoadHandle, fade: super::SoundFade) -> bool {
+    pub fn set_load_fade(
+        &mut self,
+        handle: SoundLoadHandle,
+        fade: super::super::SoundFade,
+    ) -> bool {
         let Some(pending) = self
             .pending_voices
             .iter_mut()
@@ -516,7 +471,7 @@ impl SoundEngine<'_> {
     }
 
     /// Completes the synchronous API through the same reservation and cleanup rules.
-    pub(super) fn load_immediate(
+    pub(in crate::audio::engine::sound_engine) fn load_immediate(
         &mut self,
         store: &mut AssetStore,
         load: SoundLoadRequest,

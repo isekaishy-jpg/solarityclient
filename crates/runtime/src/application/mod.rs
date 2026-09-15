@@ -32,6 +32,7 @@ mod player_coordinator;
 mod player_movement;
 mod realm_directory;
 mod recording;
+mod resource_requests;
 mod run;
 mod screenshot;
 mod sky_resources;

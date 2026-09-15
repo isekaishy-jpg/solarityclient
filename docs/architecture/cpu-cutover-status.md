@@ -5,8 +5,10 @@ The user selected a direct cutover. The rollback tag is
 A later committed checkpoint is also preserved as `rollback/cpu-cutover-26cd4928`
 (`26cd4928545b1aefb3059d539bb30806c08b7bec`), along with
 `rollback/cpu-cutover-b677ed91` (`b677ed912e15fd6dd2c88e71a14c81db5d3fa8a9`).
-The latest preserved checkpoint is `rollback/cpu-cutover-b49ab5ae`
-(`b49ab5ae2d1c63e3272b584990e0a8ecdbc1d05a`). These tags contain committed work only.
+A further checkpoint is preserved as `rollback/cpu-cutover-b49ab5ae`
+(`b49ab5ae2d1c63e3272b584990e0a8ecdbc1d05a`).
+The latest preserved checkpoint is `rollback/cpu-cutover-c007aaf8`
+(`c007aaf814c4df21b6e655e1ffc0cdd131e5950e`). These tags contain committed work only.
 The complete requirements remain in the [frame-job design](cpu-frame-job-design.md),
 [composition design](cpu-crate-composition-design.md), and
 [cache/residency design](resource-cache-residency-design.md).
@@ -166,6 +168,25 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   FrameXML validation pass and unit-effect preparation remain indivisible calls;
   this establishes explicit domain boundaries without claiming a time bound.
 
+- Added a single-owner typed pending-request index with independent consumer
+  generations, strongest direct live demand and one CPU producer per key. CPU
+  capacity is reserved before the producer factory can transfer domain inputs.
+  F10 request provenance links joins, producer dispatch, consumption and release
+  across frames using the existing disabled-path clock/TLS suppression.
+  Cancelled producers remain owned until completion/explicit drain; completed
+  failures fan out only to current consumers and leave no new negative-cache entry.
+- The runtime sound loader now shares exact namespace/path reads across its
+  queued voice requests, including nonadjacent A/B/A demand. Decode and voice
+  completion retain FIFO order and the existing sample/stream, gain and RNG rules.
+  Read pins survive through decoder admission; one cancelled voice cannot cancel
+  another consumer. Retired encoded sources use bounded CPU cleanup during frames.
+- Sound requests expose a monotonic reservation-lifetime signal. A unique engine
+  owner invalidates all observer clones on completion, cancellation or disposal;
+  loader pruning checks those signals instead of nesting a pending-voice scan
+  for each request. The engine still validates the exact handle before playback.
+  Request lifecycle, loading commands and runtime archive/voice scheduling now
+  have focused folder modules.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
@@ -186,8 +207,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
   ordered receiver lighting and end-of-frame state reclamation still have barriers.
-- Shared pending-request authority and consumer lifecycle beyond the implemented
-  archive namespace/source keys, stock-evidenced animation demand and
+- Extend pending-request authority beyond the connected runtime audio loader,
+  including cross-resource I/O dependencies and domain-wide shared result leases.
+  Ready request pins are not the complete retained-cache/external-lease lifecycle.
+  Request metadata and encoded payload budgets still need admission/accounting.
+  Stock-evidenced animation demand and
   retention, derived cache invalidation, byte-budgeted residency and GPU retirement
   from the resource design.
 - Full causal wait/queue attribution, overhead/scaling checks, and matched
@@ -211,6 +235,24 @@ The local census is recorded in ignored `target/archive-table-census.json`.
 No backend replacement or hidden parallel pool was introduced.
 
 ## Checkpoint validation
+
+### Shared pending requests and audio checkpoint
+
+On 2026-09-15, formatting and full workspace Clippy passed. The full workspace
+suite passed 1,489 tests with 33 ignored. Eight new tests cover one producer per
+key, identical shared payload/error ownership, late joining, direct demand
+promotion/withdrawal, capacity refusal before input transfer, abandoned producer
+drain, worker panic recovery, nonadjacent A/B/A audio completion order, independent
+voice cancellation and the engine-owned pending signal. The focused request and
+runtime audio suites also passed before the final full validation.
+
+The final suite includes the F10 request/join/consume/release provenance links.
+These checks establish request ownership and ordered audio behavior; they do not
+establish full cache byte accounting, cross-resource dependency integration,
+profiling overhead or a live FPS improvement. No numbered Testing package was
+created. Logs remain in ignored `target/shared-requests-clippy-final.log`,
+`target/shared-requests-workspace-tests.log`, `target/shared-requests-focused.log`
+and `target/shared-sound-focused-final.log`.
 
 ### Archive service boundaries checkpoint
 

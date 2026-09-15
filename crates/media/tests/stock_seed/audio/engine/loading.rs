@@ -322,3 +322,34 @@ fn request(channel: SoundChannel, mode: SoundConcurrencyMode) -> SoundPlayReques
         mode,
     )
 }
+
+/// Observer clones never own admission; cancellation and engine disposal end the signal.
+#[test]
+fn pending_request_signal_tracks_the_engine_owner_instead_of_request_clones()
+-> Result<(), Box<dyn Error>> {
+    let (_fixture, mut store) = assets()?;
+    let _sdl = sdl_test_lock();
+    let mut engine = engine(&mut store)?;
+    let path = AssetPath::new("Sound/Test/Tone.wav")?;
+    let first = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&path, SoundChannel::SFX, SoundLoopMode::Loop)
+    })?)?;
+    let observer = first.clone();
+    drop(first);
+    assert!(
+        observer.is_pending(),
+        "dropping a request clone must not cancel admission"
+    );
+    engine.with_engine_mut(|engine| engine.cancel_load(observer.handle()));
+    assert!(!observer.is_pending());
+    let second = required(engine.with_engine_mut(|engine| {
+        engine.begin_file_load(&path, SoundChannel::SFX, SoundLoopMode::Loop)
+    })?)?;
+    assert!(second.is_pending());
+    drop(engine);
+    assert!(
+        !second.is_pending(),
+        "engine teardown must release its pending reservation"
+    );
+    Ok(())
+}
