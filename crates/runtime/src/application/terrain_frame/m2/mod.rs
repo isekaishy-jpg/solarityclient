@@ -559,6 +559,7 @@ pub(in crate::application) struct M2Frame {
 
 /// Borrowed dynamic streams assembled for one unified world submission.
 pub(in crate::application) struct M2VisibleFrame<'frame> {
+    pub(in crate::application) trace: solarity_profiling::TraceContext,
     pub(in crate::application) instance_scenes: &'frame [solarity_rendering::M2SceneUniform],
     pub(in crate::application) scene_points: &'frame solarity_rendering::ScenePointLights,
     pub(in crate::application) scene_directionals:

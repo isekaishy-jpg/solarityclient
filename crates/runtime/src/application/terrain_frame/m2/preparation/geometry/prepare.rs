@@ -42,7 +42,13 @@ impl GeometryJob {
             instance_identity,
             ..
         } = input;
+        input.trace.link("m2.geometry.execute");
+        let _trace = input.trace.enter();
         let mut placement_profile = solarity_profiling::detail_profile!("m2.geometry");
+        placement_profile.trace_owner(
+            input.placement_index as u64 + 1,
+            input.source_index as u64 + 1,
+        );
         if self.palette.pending {
             self.pose.recompose_with_overrides(
                 source.model.animations(),

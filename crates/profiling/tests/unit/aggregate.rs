@@ -15,12 +15,17 @@ fn busy_writer_and_full_event_buffer_report_losses() -> std::io::Result<()> {
         .map_err(|_| std::io::Error::other("registry unavailable"))?
         .shards[0]
         .clone();
+    while !crate::detail_enabled() {
+        drop(crate::begin_frame());
+    }
+    let trace = crate::TraceContext::capture();
     {
         let data = shard
             .data
             .lock()
             .map_err(|_| std::io::Error::other("shard unavailable"))?;
         SITE.value(2);
+        trace.value("fixture.trace.locked", 0, 0, 1);
         assert_eq!(shard.dropped.load(std::sync::atomic::Ordering::Relaxed), 1);
         drop(data);
     }
@@ -30,14 +35,32 @@ fn busy_writer_and_full_event_buffer_report_losses() -> std::io::Result<()> {
         let _registry = crate::recorder::registry()
             .lock()
             .map_err(|_| std::io::Error::other("registry unavailable"))?;
-        for _ in 0..crate::recorder::EVENT_CAPACITY + 1 {
-            SITE.cpu_duration(crate::generation(), "", std::time::Duration::from_millis(3));
+        let retained = shard
+            .data
+            .lock()
+            .map_err(|_| std::io::Error::other("shard unavailable"))?
+            .traces
+            .len();
+        for _ in retained..crate::trace::TRACE_CAPACITY + 1 {
+            trace.value("fixture.trace.full", 0, 0, 1);
+        }
+        let retained_events = shard
+            .data
+            .lock()
+            .map_err(|_| std::io::Error::other("shard unavailable"))?
+            .events
+            .len();
+        for _ in retained_events..crate::recorder::EVENT_CAPACITY + 1 {
+            // Delayed aggregate durations fill only the event buffer; CPU timings
+            // additionally emit trace rows and would conflate the two bounds.
+            SITE.duration(crate::generation(), "", std::time::Duration::from_millis(3));
         }
     }
     capture.shutdown()?;
     let metadata = std::fs::read_to_string(path.with_extension("txt"))?;
     assert!(metadata.contains("dropped_samples=1\n"));
     assert!(metadata.contains("dropped_event_rows=1\n"));
+    assert!(metadata.contains("dropped_trace_rows=2\n"));
     std::fs::remove_dir_all(root)
 }
 

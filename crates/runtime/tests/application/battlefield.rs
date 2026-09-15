@@ -118,6 +118,7 @@ fn battlefield_packets_update_arena_context_across_world_transfers()
             server.exchange(vec![(0x2d4, body)], 0).await?.await??;
             sender.try_send(Ok(GameplayNetworkEvent::Packet(
                 network.receive_packet().await?,
+                solarity_profiling::TraceContext::default(),
             )))?;
             assert_eq!(gameplay.service()?, 1);
             assert_eq!(gameplay.player_ui.arena, expected);
@@ -141,6 +142,7 @@ fn battlefield_packets_update_arena_context_across_world_transfers()
             server.exchange(vec![(0x2d4, body)], 0).await?.await??;
             sender.try_send(Ok(GameplayNetworkEvent::Packet(
                 network.receive_packet().await?,
+                solarity_profiling::TraceContext::default(),
             )))?;
             assert_eq!(gameplay.service()?, 1);
             assert_eq!(gameplay.player_ui.arena, queue == 0);

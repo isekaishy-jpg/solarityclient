@@ -11,6 +11,7 @@ mod tests;
 #[derive(Default)]
 pub(super) struct Work {
     epoch: u64,
+    sources: std::collections::HashSet<u64>,
     visited: u64,
     visible: u64,
     primary_shadow: u64,
@@ -33,6 +34,7 @@ impl Work {
     /// Latches selection once; inner counters require no clocks or atomic loads.
     pub(super) fn new() -> Self {
         Self {
+            sources: std::collections::HashSet::new(),
             epoch: if solarity_profiling::detail_enabled() {
                 solarity_profiling::generation()
             } else {

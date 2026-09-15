@@ -46,14 +46,20 @@ fn packet_callback_refill_waits_for_the_next_service() -> Result<(), TestError> 
             commands,
             task: runtime.spawn(std::future::pending()),
         });
-        sender.try_send(Ok(GameplayNetworkEvent::Packet(first)))?;
+        sender.try_send(Ok(GameplayNetworkEvent::Packet(
+            first,
+            solarity_profiling::TraceContext::default(),
+        )))?;
         let mut refill = Some(refill);
         assert_eq!(
             gameplay.service_with_game_objects(&mut |_, _, _, _| {
                 if let Some(packet) = refill.take() {
                     assert!(
                         sender
-                            .try_send(Ok(GameplayNetworkEvent::Packet(packet)))
+                            .try_send(Ok(GameplayNetworkEvent::Packet(
+                                packet,
+                                solarity_profiling::TraceContext::default()
+                            )))
                             .is_ok()
                     );
                 }

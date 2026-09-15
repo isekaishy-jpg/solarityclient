@@ -29,14 +29,18 @@ where
         };
         let epoch = solarity_profiling::generation();
         let queued = (epoch != 0).then(Instant::now);
+        let trace = solarity_profiling::TraceContext::capture();
         pool.install(|| {
+            let _trace = trace.enter();
             if let Some(queued) = queued {
                 static QUEUE: solarity_profiling::Site =
                     solarity_profiling::Site::new("cpu.batch.dispatch_wait", false);
                 QUEUE.cpu_duration(epoch, "", queued.elapsed());
             }
             let _execution = solarity_profiling::profile_cycles!("cpu.batch.execution");
+            let item_trace = solarity_profiling::TraceContext::capture();
             items.par_iter_mut().for_each(|item| {
+                let _trace = item_trace.enter();
                 let _item = solarity_profiling::detail_profile!("cpu.batch.worker_item");
                 operation(item);
             });

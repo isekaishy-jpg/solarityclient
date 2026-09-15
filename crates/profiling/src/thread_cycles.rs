@@ -11,6 +11,7 @@ pub struct ThreadCycles {
     cycles: &'static Site,
     available: &'static Site,
     epoch: u64,
+    trace: crate::TraceSpan,
     start: Option<(Instant, Option<u64>)>,
     /// Charged cycles are meaningful only on the thread that began this span.
     _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
@@ -20,12 +21,20 @@ impl ThreadCycles {
     /// Disabled spans do not call the OS or read a clock. No handle is opened.
     pub fn new(wall: &'static Site, cycles: &'static Site, available: &'static Site) -> Self {
         let epoch = generation();
+        let start = (epoch != 0).then(|| (Instant::now(), current_cycles()));
+        let trace = crate::TraceSpan::start(
+            wall.label,
+            crate::TraceContext::capture(),
+            start.map(|(clock, _)| clock),
+            [0; 3],
+        );
         Self {
+            trace,
             wall,
             cycles,
             available,
             epoch,
-            start: (epoch != 0).then(|| (Instant::now(), current_cycles())),
+            start,
             _thread_bound: std::marker::PhantomData,
         }
     }
@@ -40,7 +49,8 @@ impl Drop for ThreadCycles {
             return;
         }
         let end = current_cycles();
-        let elapsed = start.elapsed();
+        let now = Instant::now();
+        let elapsed = now.duration_since(start);
         self.wall.cpu_duration(self.epoch, "", elapsed);
         let charged = initial
             .zip(end)
@@ -54,6 +64,8 @@ impl Drop for ThreadCycles {
                 self.cycles.value_for_generation(self.epoch, charged);
             }
         }
+        self.trace.slow(start, now);
+        self.trace.finish(now);
     }
 }
 

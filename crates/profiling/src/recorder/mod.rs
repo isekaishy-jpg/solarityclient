@@ -5,7 +5,8 @@ mod registry;
 
 pub(crate) use aggregate::Aggregate;
 pub(crate) use registry::{
-    EVENT_CAPACITY, Metric, Sample, Shard, overflow, overflows, record, register, registry,
+    EVENT_CAPACITY, Metric, Sample, Shard, overflow, overflows, record, record_trace, register,
+    registry,
 };
 
 pub(crate) const METRIC_CAPACITY: usize = 1024;

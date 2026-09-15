@@ -6,6 +6,7 @@ use super::Work;
 fn rejected_shadow_only_and_empty_palette_transactions_remain_distinct() {
     // A non-live generation enables local accounting without starting a global capture.
     let mut work = Work {
+        sources: std::collections::HashSet::new(),
         epoch: u64::MAX,
         ..Work::default()
     };
@@ -58,6 +59,7 @@ fn benchmark_placement_accounting() {
     for epoch in [0, u64::MAX] {
         let start = Instant::now();
         let mut work = Work {
+            sources: std::collections::HashSet::new(),
             epoch: black_box(epoch),
             ..Work::default()
         };

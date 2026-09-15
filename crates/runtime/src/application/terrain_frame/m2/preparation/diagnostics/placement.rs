@@ -44,11 +44,33 @@ impl<'a> Placement<'a> {
     }
 }
 
+impl Placement<'_> {
+    /// Publishes one source dictionary entry per sampled frame, never per placement.
+    pub(in super::super) fn source(&mut self, index: u64, path: &str) {
+        if self.work.epoch != 0 && self.work.sources.insert(index) {
+            solarity_profiling::TraceContext::capture().asset(index, path);
+        }
+    }
+}
+
 impl Drop for Placement<'_> {
     fn drop(&mut self) {
         if self.work.epoch == 0 {
             return;
         }
+        let reasons = u64::from(self.admitted)
+            | (u64::from(self.visible) << 1)
+            | (u64::from(self.primary_shadow) << 2)
+            | (u64::from(self.environment_shadow) << 3)
+            | (u64::from(self.light_owner) << 4)
+            | (u64::from(self.callback_owner) << 5)
+            | (u64::from(self.particle_owner) << 6)
+            | (u64::from(self.palette) << 7)
+            | (u64::from(self.batch_hit) << 8)
+            | (u64::from(self.shadow_output) << 9)
+            | (u64::from(self.cpu_output) << 10)
+            | (u64::from(self.geometry_pending) << 11);
+        solarity_profiling::TraceContext::capture().value("m2.requirements", 0, reasons, 1);
         self.work.visited += 1;
         self.work.early_rejected += u64::from(!self.admitted);
         self.work.visible += u64::from(self.visible);

@@ -520,7 +520,14 @@ impl ActiveWorld {
                     .storage
                     .get::<&mut ObjectFields>(entity)
                     .map_err(|_| WorldStateError::MissingObjectFields { guid })?;
-                object_fields.apply(fields);
+                let trace = solarity_profiling::TraceContext::capture();
+                if trace.is_sampled() {
+                    object_fields.apply(fields.into_iter().inspect(|(index, _)| {
+                        trace.value("ecs.received_field", guid, u64::from(*index), 1);
+                    }));
+                } else {
+                    object_fields.apply(fields);
+                }
             }
 
             if entity == self.local_player {
@@ -533,7 +540,14 @@ impl ActiveWorld {
             return Ok(entity);
         }
         let mut object_fields = ObjectFields::default();
-        object_fields.apply(fields);
+        let trace = solarity_profiling::TraceContext::capture();
+        if trace.is_sampled() {
+            object_fields.apply(fields.into_iter().inspect(|(index, _)| {
+                trace.value("ecs.received_field", guid, u64::from(*index), 1);
+            }));
+        } else {
+            object_fields.apply(fields);
+        }
         let entity = self
             .storage
             .add_entity((ObjectGuid::new(guid), kind, object_fields));
@@ -606,13 +620,22 @@ impl ActiveWorld {
         I: IntoIterator<Item = (u16, u32)>,
     {
         let _profile_scope = solarity_profiling::detail_profile!("ecs.world.state.update_fields");
+        let mut _profile_scope = _profile_scope;
+        _profile_scope.trace_owner(guid, 0);
         let entity = self.require_entity(guid)?;
         let fields = fields.into_iter();
         let mut object_fields = self
             .storage
             .get::<&mut ObjectFields>(entity)
             .map_err(|_| WorldStateError::MissingObjectFields { guid })?;
-        object_fields.apply(fields);
+        let trace = solarity_profiling::TraceContext::capture();
+        if trace.is_sampled() {
+            object_fields.apply(fields.inspect(|(index, _)| {
+                trace.value("ecs.received_field", guid, u64::from(*index), 1);
+            }));
+        } else {
+            object_fields.apply(fields);
+        }
         Ok(())
     }
 
@@ -672,6 +695,8 @@ impl ActiveWorld {
     ) -> Result<(), WorldStateError> {
         let _profile_scope =
             solarity_profiling::detail_profile!("ecs.world.state.update_transform");
+        let mut _profile_scope = _profile_scope;
+        _profile_scope.trace_owner(guid, 0);
         let entity = self.require_entity(guid)?;
         self.storage.add_component(entity, (transform,));
         Ok(())
@@ -688,6 +713,8 @@ impl ActiveWorld {
         movement: WorldMovementState,
     ) -> Result<(), WorldStateError> {
         let _profile_scope = solarity_profiling::detail_profile!("ecs.world.state.update_movement");
+        let mut _profile_scope = _profile_scope;
+        _profile_scope.trace_owner(guid, 0);
         let entity = self.require_entity(guid)?;
         self.storage.add_component(entity, (movement,));
         Ok(())
@@ -708,6 +735,9 @@ impl ActiveWorld {
                 guid: identity.guid(),
             });
         }
+        let mut _profile_scope =
+            solarity_profiling::detail_profile!("ecs.world.state.local_movement");
+        _profile_scope.trace_owner(identity.guid(), 0);
         let entity = self.require_entity(identity.guid())?;
         self.storage.add_component(entity, (transform, movement));
         Ok(())
@@ -721,6 +751,8 @@ impl ActiveWorld {
     /// the controlled player through an out-of-range update.
     pub fn remove_object(&mut self, guid: u64) -> Result<(), WorldStateError> {
         let _profile_scope = solarity_profiling::detail_profile!("ecs.world.state.remove_object");
+        let mut _profile_scope = _profile_scope;
+        _profile_scope.trace_owner(guid, 0);
         let entity = self.require_entity(guid)?;
         if entity == self.local_player {
             return Err(WorldStateError::LocalPlayerOutOfRange { guid });

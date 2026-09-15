@@ -21,12 +21,21 @@ pub(crate) enum TaskOutcome<T> {
 pub struct CpuTask<T> {
     receiver: Receiver<TaskOutcome<T>>,
     finished: Arc<AtomicBool>,
+    trace: solarity_profiling::TraceContext,
 }
 
 impl<T> CpuTask<T> {
     /// Creates a completion handle for the executor's one-result channel.
-    pub(crate) fn new(receiver: Receiver<TaskOutcome<T>>, finished: Arc<AtomicBool>) -> Self {
-        Self { receiver, finished }
+    pub(crate) fn new(
+        receiver: Receiver<TaskOutcome<T>>,
+        finished: Arc<AtomicBool>,
+        trace: solarity_profiling::TraceContext,
+    ) -> Self {
+        Self {
+            receiver,
+            finished,
+            trace,
+        }
     }
 
     /// Waits for the task and transfers ownership of its result.
@@ -37,10 +46,12 @@ impl<T> CpuTask<T> {
     /// [`CpuError::CompletionLost`] if executor invariants were violated.
     pub fn join(self) -> Result<T, CpuError> {
         let _profile_scope = solarity_profiling::profile!("cpu.pool.task.join");
+        self.trace.link("cpu.job.join");
         let outcome = self
             .receiver
             .recv()
             .map_err(|_disconnected| CpuError::CompletionLost)?;
+        self.trace.link("cpu.job.consume");
         decode_outcome(outcome)
     }
 

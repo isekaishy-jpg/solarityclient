@@ -46,6 +46,14 @@ fn f10_consumes_repeat_and_release_without_retoggling() -> io::Result<()> {
     assert!(profiler.service_event(&PlatformEvent::Key(key), window));
     assert!(!solarity_profiling::enabled());
     profiler.capture.shutdown()?;
-    assert_eq!(std::fs::read_dir(root.join("Profiles"))?.count(), 5);
+    let files = std::fs::read_dir(root.join("Profiles"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<io::Result<Vec<_>>>()?;
+    assert_eq!(files.len(), 6);
+    let trace = files
+        .iter()
+        .find(|path| path.to_string_lossy().ends_with(".trace.csv"))
+        .ok_or_else(|| io::Error::other("F10 capture did not write its causal trace"))?;
+    assert!(std::fs::read_to_string(trace)?.starts_with("thread,span_id,parent_id,related_id,"));
     std::fs::remove_dir_all(root)
 }

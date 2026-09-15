@@ -6,7 +6,7 @@ use super::super::{
     M2VisibleFrame, Mat4, RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum,
     append_triggered_events, compare_m2_transparent, held_item_finger_pose, m2_model_distance_key,
     placement_bounding_sphere, placement_color, placement_light_bank, placement_mesh_color,
-    scene_element_count, shadow, unit_effects,
+    placement_owner_guid, scene_element_count, shadow, unit_effects,
 };
 
 impl M2Frame {
@@ -254,6 +254,10 @@ impl M2Frame {
                     break;
                 };
                 let mut placement_profile = solarity_profiling::detail_profile!("m2.placement");
+                placement_profile.trace_owner(
+                    placement_index as u64 + 1,
+                    self.placements[placement_index].source_index as u64 + 1,
+                );
                 let mut observed = work.placement();
                 // Moving-parent transforms have already been resolved. Forward
                 // attachments query that same root; earlier roots reuse admission.
@@ -506,6 +510,20 @@ impl M2Frame {
                     continue;
                 };
                 let owner = placement.owner;
+                if solarity_profiling::TraceContext::capture().is_sampled()
+                    && let Some(guid) = placement_owner_guid(placement.owner)
+                {
+                    solarity_profiling::TraceContext::capture().value(
+                        "m2.owner.guid",
+                        placement_index as u64 + 1,
+                        0,
+                        guid,
+                    );
+                }
+                observed.source(
+                    placement.source_index as u64 + 1,
+                    source.model.path().as_str(),
+                );
                 observed.callback_owner = placement.unit_animation.is_some()
                     || placement.unit_effect.is_some()
                     || matches!(owner, M2GpuPlacementOwner::GameObject { .. });
@@ -744,6 +762,14 @@ impl M2Frame {
                     needs_palette && visible && !batch_hit && self.bone_demand.bones().is_empty();
                 let unrequested =
                     super::demand::UnrequestedBones(source.model.animations().bones().len());
+                if solarity_profiling::TraceContext::capture().is_sampled() {
+                    solarity_profiling::TraceContext::capture().value(
+                        "m2.cpu_bone_demand",
+                        placement_index as u64 + 1,
+                        u64::from(deferred_palette),
+                        self.bone_demand.bones().len() as u64,
+                    );
+                }
                 let bone_pose: &dyn solarity_rendering::M2BoneTransforms = if deferred_palette {
                     &unrequested
                 } else if needs_palette {
@@ -977,6 +1003,7 @@ impl M2Frame {
                 }
                 let input = super::geometry::GeometryInput {
                     placement_index,
+                    trace: solarity_profiling::TraceContext::capture(),
                     source_index: placement.source_index,
                     clock,
                     effect_delta_seconds,
@@ -1090,6 +1117,7 @@ impl M2Frame {
         }
         frame_profile.mark("scene lights");
         Ok(M2VisibleFrame {
+            trace: solarity_profiling::TraceContext::capture(),
             instance_scenes: &self.scene_lighting.scenes,
             scene_points: &self.scene_lighting.points,
             scene_directionals: self.scene_lighting.directionals(),

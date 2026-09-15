@@ -71,6 +71,9 @@ impl FontSystemState {
         };
         let key = (pixel_height, rasterization, character);
         if let Some(glyph) = cached.glyphs.get(&key) {
+            if solarity_profiling::detail_enabled() {
+                solarity_profiling::profile_value!("ui.glyph.cache_hit", 1);
+            }
             return Ok(glyph.clone());
         }
         let face = &cached.face;
@@ -118,6 +121,10 @@ impl FontSystemState {
             })?;
 
         let glyph = glyph_from_slot(path, face)?;
+        if solarity_profiling::detail_enabled() {
+            solarity_profiling::profile_value!("ui.glyph.cache_miss", 1);
+            solarity_profiling::profile_value!("ui.glyph.rasterized_bytes", glyph.coverage().len());
+        }
         cached.glyphs.insert(key, glyph.clone());
         Ok(glyph)
     }

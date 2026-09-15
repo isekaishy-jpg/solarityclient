@@ -20,6 +20,8 @@ pub(crate) struct Data {
     pub(crate) epoch: u64,
     pub(crate) rows: Vec<Aggregate>,
     pub(crate) events: Vec<Sample>,
+    pub(crate) traces: Vec<crate::trace::TraceRecord>,
+    pub(crate) dropped_traces_start: u64,
     pub(crate) dropped_start: u64,
     pub(crate) dropped_events_start: u64,
 }
@@ -40,6 +42,7 @@ pub(crate) struct Shard {
     pub(crate) data: Mutex<Data>,
     pub(crate) dropped: AtomicU64,
     pub(crate) dropped_events: AtomicU64,
+    pub(crate) dropped_traces: AtomicU64,
 }
 
 /// Bounded process metadata, shared only during cold registration and snapshots.
@@ -109,11 +112,14 @@ fn local_shard() -> Option<Arc<Shard>> {
             epoch: 0,
             rows: vec![Aggregate::default(); ROW_CAPACITY],
             events: Vec::with_capacity(EVENT_CAPACITY),
+            traces: Vec::with_capacity(crate::trace::TRACE_CAPACITY),
+            dropped_traces_start: 0,
             dropped_start: 0,
             dropped_events_start: 0,
         }),
         dropped: AtomicU64::new(0),
         dropped_events: AtomicU64::new(0),
+        dropped_traces: AtomicU64::new(0),
     });
     let Ok(mut registry) = registry().lock() else {
         overflow();
@@ -152,6 +158,8 @@ pub(crate) fn record(
             data.dropped_events_start = shard.dropped_events.load(Ordering::Relaxed);
             data.rows.fill(Aggregate::default());
             data.events.clear();
+            data.traces.clear();
+            data.dropped_traces_start = shard.dropped_traces.load(Ordering::Relaxed);
             data.epoch = epoch;
         }
         data.rows[metric * 2 + usize::from(detailed_frame)].record(value);
@@ -166,6 +174,37 @@ pub(crate) fn record(
             } else {
                 shard.dropped_events.fetch_add(1, Ordering::Relaxed);
             }
+        }
+    });
+}
+
+/// Trace exhaustion or a concurrent writer never blocks a measured producer.
+pub(crate) fn record_trace(epoch: u64, trace: crate::trace::TraceRecord) {
+    LOCAL.with(|local| {
+        let Some(shard) = local.get_or_init(local_shard) else {
+            overflow();
+            return;
+        };
+        let Ok(mut data) = shard.data.try_lock() else {
+            shard.dropped_traces.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        if crate::generation() != epoch {
+            return;
+        }
+        if data.epoch != epoch {
+            data.dropped_start = shard.dropped.load(Ordering::Relaxed);
+            data.dropped_events_start = shard.dropped_events.load(Ordering::Relaxed);
+            data.dropped_traces_start = shard.dropped_traces.load(Ordering::Relaxed);
+            data.rows.fill(Aggregate::default());
+            data.events.clear();
+            data.traces.clear();
+            data.epoch = epoch;
+        }
+        if data.traces.len() < crate::trace::TRACE_CAPACITY {
+            data.traces.push(trace);
+        } else {
+            shard.dropped_traces.fetch_add(1, Ordering::Relaxed);
         }
     });
 }

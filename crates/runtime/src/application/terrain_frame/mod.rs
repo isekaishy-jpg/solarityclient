@@ -1119,6 +1119,8 @@ impl TerrainFrame {
             scene = scene.with_underwater_particles(underwater_particles);
         }
         scene = scene.with_screen_effect(screen_effect);
+        let _submission_trace = solarity_profiling::TraceSpan::new("world.render.consume", 0, 0);
+        m2.trace.link("m2.frame.consume");
         let report = renderer.present_world_frame_with_ui_layers(
             scene,
             m2.bone_transforms,

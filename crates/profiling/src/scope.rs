@@ -48,7 +48,7 @@ pub fn begin_frame() -> Profile {
 
 /// One static call site and its bounded set of named phase metrics.
 pub struct Site {
-    label: &'static str,
+    pub(crate) label: &'static str,
     detail: bool,
     unit: &'static str,
     total: OnceLock<Option<usize>>,
@@ -98,12 +98,22 @@ impl Site {
 
     /// Adds a workload observation to the current capture.
     pub fn value(&'static self, value: u64) {
-        self.record(generation(), "", value, DETAIL.load(Ordering::Relaxed));
+        self.record(
+            generation(),
+            "",
+            value,
+            crate::TraceContext::capture().is_sampled(),
+        );
     }
 
     /// Publishes a delayed synchronous observation only to its original capture.
     pub fn value_for_generation(&'static self, epoch: u64, value: u64) {
-        self.record(epoch, "", value, DETAIL.load(Ordering::Relaxed));
+        self.record(
+            epoch,
+            "",
+            value,
+            crate::TraceContext::capture().is_sampled(),
+        );
     }
 
     /// Retains an infrequent causal value in the event stream on ordinary frames too.
@@ -113,7 +123,14 @@ impl Site {
             && generation() == epoch
             && let Some(metric) = self.metric("")
         {
-            recorder::record(epoch, metric, DETAIL.load(Ordering::Relaxed), value, true);
+            crate::TraceContext::capture().value(self.label, 0, 0, value);
+            recorder::record(
+                epoch,
+                metric,
+                crate::TraceContext::capture().is_sampled(),
+                value,
+                true,
+            );
         }
     }
 
@@ -130,18 +147,21 @@ impl Site {
 
     /// Records an existing synchronous CPU timer with this frame's sampling lane.
     pub fn cpu_duration(&'static self, epoch: u64, phase: &'static str, duration: Duration) {
-        self.record(
-            epoch,
-            phase,
-            nanos(duration),
-            DETAIL.load(Ordering::Relaxed),
-        );
+        if epoch == 0 || generation() != epoch {
+            return;
+        }
+        let context = crate::TraceContext::capture();
+        context.timing(if phase.is_empty() { self.label } else { phase }, duration);
+        self.record(epoch, phase, nanos(duration), context.is_sampled());
     }
 
     /// Resolves static identity outside the recorder's per-thread critical section.
     fn record(&'static self, epoch: u64, phase: &'static str, value: u64, lane: bool) {
         if epoch == 0 || generation() != epoch {
             return;
+        }
+        if self.unit == "value" && lane {
+            crate::TraceContext::capture().value(self.label, 0, 0, value);
         }
         if let Some(metric) = self.metric(phase) {
             let keep_event = (self.unit == "value" && lane)
@@ -160,6 +180,7 @@ pub struct Profile {
     previous: Option<Instant>,
     lane: bool,
     marked: bool,
+    trace: crate::TraceSpan,
 }
 
 impl Profile {
@@ -167,7 +188,12 @@ impl Profile {
     #[inline]
     pub fn new(site: &'static Site) -> Self {
         let epoch = generation();
-        let lane = epoch != 0 && DETAIL.load(Ordering::Relaxed);
+        let context = if epoch == 0 {
+            crate::TraceContext::default()
+        } else {
+            crate::TraceContext::capture()
+        };
+        let lane = epoch != 0 && context.is_sampled();
         let started = (epoch != 0 && (!site.detail || lane)).then(Instant::now);
         Self {
             site,
@@ -176,6 +202,31 @@ impl Profile {
             previous: started,
             lane,
             marked: false,
+            trace: crate::TraceSpan::start(
+                site.label,
+                context,
+                if site.detail { None } else { started },
+                [0; 3],
+            ),
+        }
+    }
+
+    /// Promotes one sampled inner operation to an owner trace using its existing timer.
+    /// Owner IDs are interpreted within the originating frame, not as persistent GUIDs.
+    pub fn trace_owner(&mut self, owner: u64, reason: u64) {
+        if self.started.is_none() {
+            return;
+        }
+        if self.trace.annotate(owner, reason) {
+            return;
+        }
+        if self.started.is_some() && crate::TraceContext::capture().is_sampled() {
+            self.trace = crate::TraceSpan::start(
+                self.site.label,
+                crate::TraceContext::capture(),
+                self.started,
+                [owner, reason, 0],
+            );
         }
     }
 
@@ -185,6 +236,7 @@ impl Profile {
             return;
         };
         let now = Instant::now();
+        self.trace.phase(phase, previous, now);
         self.site.record(
             self.epoch,
             phase,
@@ -211,6 +263,10 @@ impl Drop for Profile {
                 self.lane,
             );
         }
+        if !self.lane {
+            self.trace.slow(started, now);
+        }
+        self.trace.finish(now);
         self.site.record(
             self.epoch,
             "",

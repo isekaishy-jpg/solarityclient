@@ -16,6 +16,8 @@ struct ThreadRows {
     scratch: Vec<Aggregate>,
     totals: Vec<Aggregate>,
     events: Vec<Sample>,
+    traces: Vec<crate::trace::TraceRecord>,
+    dropped_traces_at_start: u64,
     dropped_at_start: u64,
     dropped_events_at_start: u64,
 }
@@ -37,6 +39,8 @@ pub(super) fn run(
         "elapsed_seconds,completion_frame,thread,scope,phase,frame_lane,unit,value"
     )?;
     header(&mut output)?;
+    let mut traces = BufWriter::new(File::create(path.with_extension("trace.csv"))?);
+    super::trace_output::header(&mut traces)?;
     let mut threads: Vec<ThreadRows> = Vec::new();
     let mut metrics = Vec::new();
     let mut resources = BufWriter::new(File::create(path.with_extension("resources.csv"))?);
@@ -68,6 +72,8 @@ pub(super) fn run(
                 scratch: vec![Aggregate::default(); ROW_CAPACITY],
                 totals: vec![Aggregate::default(); ROW_CAPACITY],
                 events: Vec::with_capacity(EVENT_CAPACITY),
+                traces: Vec::with_capacity(crate::trace::TRACE_CAPACITY),
+                dropped_traces_at_start: 0,
             });
         }
         let seconds = started.elapsed().as_secs_f64();
@@ -81,10 +87,12 @@ pub(super) fn run(
                 if data.epoch != epoch {
                     continue;
                 }
+                thread.dropped_traces_at_start = data.dropped_traces_start;
                 thread.dropped_at_start = data.dropped_start;
                 thread.dropped_events_at_start = data.dropped_events_start;
                 std::mem::swap(&mut data.rows, &mut thread.scratch);
                 std::mem::swap(&mut data.events, &mut thread.events);
+                std::mem::swap(&mut data.traces, &mut thread.traces);
             }
             // A producer may register a phase after the registry snapshot but
             // before this buffer swap. Its definition exists before its sample.
@@ -113,6 +121,9 @@ pub(super) fn run(
                     thread.totals[index].merge(row);
                 }
                 *row = Aggregate::default();
+            }
+            for row in thread.traces.drain(..) {
+                super::trace_output::row(&mut traces, &thread.shard.name, row)?;
             }
             for sample in thread.events.drain(..) {
                 if let Some(metric) = metrics.get(sample.metric) {
@@ -145,6 +156,7 @@ pub(super) fn run(
         )?;
         output.flush()?;
         events.flush()?;
+        traces.flush()?;
         resources.flush()?;
         snapshot_ns += snapshot_started.elapsed().as_nanos();
         snapshots += 1;
@@ -195,6 +207,17 @@ pub(super) fn run(
                 .saturating_sub(thread.dropped_events_at_start)
         })
         .sum();
+    let dropped_traces: u64 = threads
+        .iter()
+        .map(|thread| {
+            thread
+                .shard
+                .dropped_traces
+                .load(Ordering::Relaxed)
+                .saturating_sub(thread.dropped_traces_at_start)
+        })
+        .sum();
+    writeln!(metadata, "dropped_trace_rows={dropped_traces}")?;
     writeln!(metadata, "dropped_event_rows={dropped_events}")?;
     writeln!(
         metadata,

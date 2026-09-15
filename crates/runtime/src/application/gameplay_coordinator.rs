@@ -478,7 +478,10 @@ impl RuntimeGameplayCoordinator {
                     self.logged_out_session = Some(*session);
                     break;
                 }
-                Ok(Ok(GameplayNetworkEvent::Packet(packet))) => {
+                Ok(Ok(GameplayNetworkEvent::Packet(packet, trace))) => {
+                    trace.link("network.packet.apply");
+                    let _trace = trace.enter();
+                    let _packet_profile = solarity_profiling::profile!("world.packet.apply");
                     let logout = match packet.logout() {
                         Ok(logout) => logout,
                         Err(error) => {
@@ -1109,7 +1112,7 @@ struct ActiveGameplayNetwork {
 
 /// Ordered packets and terminal transport ownership share one FIFO channel.
 enum GameplayNetworkEvent {
-    Packet(WorldServerPacket),
+    Packet(WorldServerPacket, solarity_profiling::TraceContext),
     LoggedOut(Box<WorldSession<TcpStream>>),
 }
 
@@ -1198,8 +1201,11 @@ where
                     }
                     continue;
                 }
+                let trace =
+                    solarity_profiling::TraceContext::capture().fork("network.packet.received");
+                trace.value("network.packet.opcode", 0, u64::from(packet.opcode()), 1);
                 if sender
-                    .send(Ok(GameplayNetworkEvent::Packet(packet)))
+                    .send(Ok(GameplayNetworkEvent::Packet(packet, trace)))
                     .await
                     .is_err()
                 {

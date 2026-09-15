@@ -11,6 +11,7 @@ use std::sync::Arc;
 /// Reusable current-frame sampling inputs and a single-consumer palette.
 pub(super) struct PoseJob {
     placement: usize,
+    trace: solarity_profiling::TraceContext,
     model: Arc<DecodedM2Model>,
     orientation: Vec<bool>,
     clock: M2AnimationClock,
@@ -32,6 +33,7 @@ impl PoseJob {
     pub(super) fn new(model: Arc<DecodedM2Model>) -> Self {
         Self {
             placement: 0,
+            trace: solarity_profiling::TraceContext::default(),
             model,
             orientation: Vec::new(),
             clock: M2AnimationClock::new(0, 0., 0.),
@@ -61,6 +63,7 @@ impl PoseJob {
         sequences: Vec<(u16, M2AnimationClock)>,
     ) {
         self.placement = placement;
+        self.trace = solarity_profiling::TraceContext::capture().fork("m2.pose.request");
         if !Arc::ptr_eq(&self.model, &source.model) {
             self.model = Arc::clone(&source.model);
         }
@@ -77,9 +80,12 @@ impl PoseJob {
 
     /// Computes pure skeletal work without publishing errors or scene state.
     pub(super) fn sample(&mut self) {
-        let _profile_scope = solarity_profiling::detail_profile!(
+        self.trace.link("m2.pose.execute");
+        let _trace = self.trace.enter();
+        let mut _profile_scope = solarity_profiling::detail_profile!(
             "runtime.application.terrain_frame.m2.preparation.poses.input.sample"
         );
+        _profile_scope.trace_owner(self.placement as u64 + 1, 0);
         self.result = Some(self.pose.recompose_with_overrides(
             self.model.animations(),
             self.clock,
@@ -119,6 +125,7 @@ impl PoseJob {
             return Ok(false);
         };
         result?;
+        self.trace.link("m2.pose.consume");
         std::mem::swap(&mut self.pose, output);
         Ok(true)
     }

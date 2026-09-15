@@ -5,6 +5,7 @@ mod host;
 mod recorder;
 mod scope;
 mod thread_cycles;
+mod trace;
 
 #[cfg(test)]
 #[path = "../tests/unit/aggregate.rs"]
@@ -13,6 +14,7 @@ mod tests;
 pub use capture::Capture;
 pub use scope::{Profile, Site, begin_frame, detail_enabled, enabled, generation};
 pub use thread_cycles::ThreadCycles;
+pub use trace::{TraceContext, TraceGuard, TraceSpan};
 
 /// Records an infrequent cause or workload change, including its completion frame.
 #[macro_export]

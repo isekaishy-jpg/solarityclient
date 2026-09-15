@@ -2076,7 +2076,8 @@ impl UiScriptRuntime {
             else {
                 continue;
             };
-            let handler_profile = solarity_profiling::detail_profile!("ui.update.handler");
+            let mut handler_profile = solarity_profiling::detail_profile!("ui.update.handler");
+            handler_profile.trace_owner(index as u64, 0);
             let result = call_number_object_handler(lua, &function, object, elapsed_seconds);
             drop(handler_profile);
             if let Err(error) = result {

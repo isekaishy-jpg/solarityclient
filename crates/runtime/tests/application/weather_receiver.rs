@@ -45,6 +45,7 @@ fn weather_receiver_preserves_packet_order_and_resets_on_world_replacement() -> 
             server.exchange(vec![(0x2f4, body)], 0).await?.await??;
             sender.try_send(Ok(GameplayNetworkEvent::Packet(
                 network.receive_packet().await?,
+                solarity_profiling::TraceContext::default(),
             )))?;
         }
         assert_eq!(gameplay.service()?, 2);

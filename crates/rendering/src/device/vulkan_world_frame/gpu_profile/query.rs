@@ -17,6 +17,7 @@ pub(in crate::device) enum GpuTimestampRead<const COUNT: usize = QUERY_COUNT> {
     Ready {
         generation: u64,
         timestamps: [u64; COUNT],
+        trace: solarity_profiling::TraceContext,
     },
 }
 
@@ -25,6 +26,7 @@ pub(in crate::device) enum GpuTimestampRead<const COUNT: usize = QUERY_COUNT> {
 pub(in crate::device) struct GpuTimestampSlot<const COUNT: usize = QUERY_COUNT> {
     pool: vk::QueryPool,
     pending: u64,
+    trace: solarity_profiling::TraceContext,
 }
 
 impl<const COUNT: usize> GpuTimestampSlot<COUNT> {
@@ -50,6 +52,7 @@ impl<const COUNT: usize> GpuTimestampSlot<COUNT> {
         device: &Device,
     ) -> Result<GpuTimestampRead<COUNT>, VulkanError> {
         let generation = std::mem::take(&mut self.pending);
+        let trace = std::mem::take(&mut self.trace);
         if generation == 0 {
             return Ok(GpuTimestampRead::Idle);
         }
@@ -62,6 +65,7 @@ impl<const COUNT: usize> GpuTimestampSlot<COUNT> {
             Ok(()) => Ok(GpuTimestampRead::Ready {
                 generation,
                 timestamps: values,
+                trace,
             }),
             Err(vk::Result::NOT_READY) => Ok(GpuTimestampRead::Unavailable { generation }),
             Err(source) => Err(VulkanError::operation("read GPU timestamps", source)),
@@ -70,6 +74,11 @@ impl<const COUNT: usize> GpuTimestampSlot<COUNT> {
 
     /// Called immediately after successful queue submission, before presentation.
     pub(in crate::device) fn submitted(&mut self, sampled: bool) {
+        self.trace = if sampled {
+            solarity_profiling::TraceContext::capture().fork("gpu.submit")
+        } else {
+            solarity_profiling::TraceContext::default()
+        };
         self.pending = if sampled {
             solarity_profiling::generation()
         } else {
@@ -85,5 +94,6 @@ impl<const COUNT: usize> GpuTimestampSlot<COUNT> {
             self.pool = vk::QueryPool::null();
         }
         self.pending = 0;
+        self.trace = solarity_profiling::TraceContext::default();
     }
 }

@@ -83,6 +83,34 @@ impl M2Frame {
             let Some(input) = job.input else {
                 unreachable!("joined geometry has an input");
             };
+            input.trace.link("m2.geometry.publish");
+            if input.trace.is_sampled() {
+                let owner = input.placement_index as u64 + 1;
+                input.trace.value(
+                    "m2.output.mesh_draws",
+                    owner,
+                    0,
+                    job.visible_draws.len() as u64,
+                );
+                input.trace.value(
+                    "m2.output.particle_vertices",
+                    owner,
+                    0,
+                    job.particle_vertices.len() as u64,
+                );
+                input.trace.value(
+                    "m2.output.ribbon_vertices",
+                    owner,
+                    0,
+                    job.ribbon_vertices.len() as u64,
+                );
+                input.trace.value(
+                    "m2.output.palette_bones",
+                    owner,
+                    u64::from(job.palette.pending),
+                    job.pose.transforms().len() as u64,
+                );
+            }
             if job.palette.pending {
                 let start = input.bone_offset as usize;
                 let end = start

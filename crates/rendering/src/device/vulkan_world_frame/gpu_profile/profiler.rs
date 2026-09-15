@@ -53,9 +53,16 @@ impl GpuFrameProfiler {
             GpuTimestampRead::Ready {
                 generation,
                 timestamps,
+                trace,
             } => {
                 static UI: solarity_profiling::Site =
                     solarity_profiling::Site::new("rendering.gpu.ui_only", true);
+                trace.gpu_duration(
+                    "UI",
+                    Duration::from_secs_f64(
+                        self.clock.elapsed_ms(timestamps[0], timestamps[1]) / 1000.,
+                    ),
+                );
                 UI.duration(
                     generation,
                     "",
@@ -121,6 +128,7 @@ impl GpuFrameProfiler {
             GpuTimestampRead::Ready {
                 generation,
                 timestamps,
+                trace,
             } => {
                 static GPU: solarity_profiling::Site =
                     solarity_profiling::Site::new("rendering.gpu", true);
@@ -128,6 +136,7 @@ impl GpuFrameProfiler {
                     let milliseconds = self
                         .clock
                         .elapsed_ms(timestamps[index], timestamps[index + 1]);
+                    trace.gpu_duration(phase, Duration::from_secs_f64(milliseconds / 1000.));
                     GPU.duration(
                         generation,
                         phase,

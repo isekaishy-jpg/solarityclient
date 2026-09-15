@@ -205,7 +205,9 @@ impl CpuTaskPermit<'_> {
         let finished_by_worker = Arc::clone(&finished);
         let epoch = solarity_profiling::generation();
         let queued = (epoch != 0).then(Instant::now);
+        let trace = solarity_profiling::TraceContext::capture().fork("cpu.job");
         pool.spawn_fifo(move || {
+            let _trace = trace.enter();
             let _profile = solarity_profiling::profile!("cpu.job.execute");
             if let Some(queued) = queued {
                 static QUEUE: solarity_profiling::Site =
@@ -221,7 +223,7 @@ impl CpuTaskPermit<'_> {
             finished_by_worker.store(true, Ordering::Release);
             let _completion_observed = sender.send(outcome);
         });
-        CpuTask::new(receiver, finished)
+        CpuTask::new(receiver, finished, trace)
     }
 }
 

@@ -94,5 +94,75 @@ fn records_bounded_scopes_and_restarts_without_stale_samples() -> io::Result<()>
     assert!(!summary.contains("stale."));
     assert!(summary.contains("fresh.scope"));
     assert!(!enabled());
+    exercise_causal_provenance(&root)?;
     std::fs::remove_dir_all(root)
+}
+
+/// Cross-frame worker, GPU and consumer edges preserve the requesting sample.
+fn exercise_causal_provenance(root: &std::path::Path) -> io::Result<()> {
+    let mut capture = Capture::new(root, "chain=true".to_owned());
+    let (_, first) = capture.toggle()?;
+    while !solarity_profiling::detail_enabled() {
+        drop(begin_frame());
+    }
+    let owner = solarity_profiling::profile!("chain.owner");
+    let request = solarity_profiling::TraceContext::capture().fork("chain.request");
+    request.asset(7, "MODEL\\FIXTURE.M2");
+    drop(owner);
+    for _ in 0..3 {
+        drop(begin_frame());
+    }
+    assert!(!solarity_profiling::detail_enabled());
+    std::thread::spawn(move || {
+        let _context = request.enter();
+        let mut work = solarity_profiling::profile!("chain.worker");
+        work.trace_owner(77, 3);
+        work.mark("prepared");
+        static PHASE: Site = Site::new("chain.phases", false);
+        PHASE.cpu_duration(generation(), "recorded wait", Duration::from_millis(1));
+        solarity_profiling::profile_value!("chain.output", 9);
+    })
+    .join()
+    .map_err(|_| io::Error::other("chain worker panicked"))?;
+    request.link("chain.consume");
+    request.gpu_duration("fixture GPU", Duration::from_millis(2));
+    capture.shutdown()?;
+    let summary = std::fs::read_to_string(first.with_extension("summary.csv"))?;
+    assert!(summary.contains("\"chain.output\",\"\",value,coarse,detail,1,"));
+    let trace = std::fs::read_to_string(first.with_extension("trace.csv"))?;
+    let rows: Vec<Vec<&str>> = trace
+        .lines()
+        .skip(1)
+        .map(|row| row.split(',').collect())
+        .collect();
+    let named = |name: &str| {
+        rows.iter()
+            .find(|row| row[9].trim_matches('"') == name)
+            .ok_or_else(|| io::Error::other(format!("missing fixture trace operation {name}")))
+    };
+    let owner = named("chain.owner")?;
+    let request_row = named("chain.request")?;
+    let worker = named("chain.worker")?;
+    assert_eq!(request_row[2], owner[1]);
+    assert_eq!(worker[2], request_row[1]);
+    assert_eq!(worker[4], request_row[4]);
+    assert_ne!(worker[4], worker[5]);
+    assert_eq!(worker[10], "77");
+    assert_eq!(worker[11], "3");
+    let timing = named("recorded wait")?;
+    assert_eq!(timing[2], worker[1]);
+    assert_eq!(timing[7], "1000000");
+    assert_eq!(timing[8], "timing");
+    assert_eq!(named("chain.consume")?[3], request_row[1]);
+    assert_eq!(named("fixture GPU")?[2], request_row[1]);
+    assert!(trace.contains("MODEL\\FIXTURE.M2"));
+    let (_, second) = capture.toggle()?;
+    {
+        let _old = request.enter();
+        drop(solarity_profiling::profile!("chain.stale"));
+    }
+    request.link("chain.stale.consume");
+    capture.shutdown()?;
+    assert!(!std::fs::read_to_string(second.with_extension("trace.csv"))?.contains("chain.stale"));
+    Ok(())
 }

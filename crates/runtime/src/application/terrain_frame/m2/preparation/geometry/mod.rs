@@ -22,6 +22,7 @@ use solarity_rendering::{
 #[derive(Clone, Copy)]
 pub(in super::super) struct GeometryInput {
     pub placement_index: usize,
+    pub trace: solarity_profiling::TraceContext,
     pub source_index: usize,
     pub clock: M2AnimationClock,
     pub effect_delta_seconds: f32,

@@ -182,8 +182,15 @@ impl SoundDecoder {
                 .references
                 .checked_add(1)
                 .ok_or(SoundDecodeError::Capacity)?;
+            solarity_profiling::TraceContext::capture().value("audio.sample.cache_hit", 0, 0, 1);
             return Ok(Some(handle));
         }
+        solarity_profiling::TraceContext::capture().value(
+            "audio.sample.cache_miss",
+            0,
+            u64::from(mode == SoundDecodeMode::Predecoded),
+            1,
+        );
         Ok(None)
     }
 

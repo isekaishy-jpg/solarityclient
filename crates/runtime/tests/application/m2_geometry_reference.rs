@@ -1424,6 +1424,7 @@ impl M2Frame {
         }
         frame_profile.mark("scene lights");
         Ok(M2VisibleFrame {
+            trace: solarity_profiling::TraceContext::capture(),
             instance_scenes: &self.scene_lighting.scenes,
             scene_points: &self.scene_lighting.points,
             scene_directionals: self.scene_lighting.directionals(),

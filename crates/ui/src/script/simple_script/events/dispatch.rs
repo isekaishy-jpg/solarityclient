@@ -23,6 +23,8 @@ pub(in super::super) fn dispatch_subscribers(
         let Some(function) = object_script_function(lua, &object, UiScriptHandler::Event)? else {
             continue;
         };
+        let mut handler_profile = solarity_profiling::profile!("ui.event.handler");
+        handler_profile.trace_owner(index as u64, 0);
         call_event_handler(lua, &function, object, event, payload)?;
         dispatched += 1;
     }
