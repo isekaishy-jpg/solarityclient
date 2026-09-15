@@ -1,6 +1,6 @@
 //! Flat reserved dependency metadata; no user operation runs under this lock.
 
-use super::{FrameBatchPlan, FrameJob, JobOutcome};
+use super::{FrameBatchPlan, JobOutcome};
 use crate::completion::Subscription;
 use crate::pool::dispatch::Dispatch;
 use crate::pool::worker::WorkerLease;
@@ -45,11 +45,11 @@ pub(super) enum Status {
     Running,
     Terminal(JobOutcome),
 }
-/// A phase has one explicit external/resource or other-batch prerequisite.
+/// A phase waits for all declared resource/other-batch prerequisites.
 #[derive(Clone, Copy)]
 pub(super) enum Gate {
     Ready,
-    Pending,
+    Pending(usize),
     Failed,
 }
 /// One admitted node and its dependency propagation state.
@@ -74,7 +74,7 @@ pub(super) struct State<T> {
     pub workers: usize,
     pub open: bool,
     pub gate: Gate,
-    pub subscription: Option<Subscription>,
+    pub subscriptions: Vec<Option<Subscription>>,
     pub completion: Option<ReadyToken>,
     pub finishing: bool,
     pub kernel: Kernel<T>,
@@ -99,7 +99,7 @@ impl<T> State<T> {
             workers: 0,
             open: false,
             gate: Gate::Ready,
-            subscription: None,
+            subscriptions: Vec::new(),
             completion: None,
             finishing: false,
             kernel,
@@ -130,7 +130,7 @@ impl<T> State<T> {
         Ok(())
     }
     /// Registers validated parents and atomically observes any terminal outcome.
-    pub fn append(&mut self, job: Option<T>, parents: &[FrameJob<T>]) {
+    pub fn append(&mut self, job: Option<T>, parents: impl ExactSizeIterator<Item = usize>) {
         let index = self.jobs.len();
         let mut node = Node {
             status: Status::Waiting,
@@ -141,12 +141,12 @@ impl<T> State<T> {
         };
         self.edge_count += parents.len();
         for parent in parents {
-            match self.nodes[parent.index].status {
+            match self.nodes[parent].status {
                 Status::Terminal(outcome) => node.failed_parent |= outcome != JobOutcome::Succeeded,
                 _ => {
                     node.remaining += 1;
-                    let next = self.nodes[parent.index].first_edge;
-                    self.nodes[parent.index].first_edge = Some(self.edges.len());
+                    let next = self.nodes[parent].first_edge;
+                    self.nodes[parent].first_edge = Some(self.edges.len());
                     self.edges.push(Edge { child: index, next });
                 }
             }
@@ -195,7 +195,7 @@ impl<T> State<T> {
     }
     /// Reserves dispatch entries before unlocking completion/admission metadata.
     pub fn runners_to_launch(&mut self) -> usize {
-        if matches!(self.gate, Gate::Pending) {
+        if matches!(self.gate, Gate::Pending(_)) {
             return 0;
         }
         let launch = self
@@ -210,7 +210,7 @@ impl<T> State<T> {
         !self.open
             && self.runners == 0
             && self.ready.is_empty()
-            && !matches!(self.gate, Gate::Pending)
+            && !matches!(self.gate, Gate::Pending(_))
             && self.lease.is_some()
             && !self.finishing
     }
@@ -218,7 +218,7 @@ impl<T> State<T> {
     /// every waiting input and removes its subscription independently of others.
     pub fn fail_gate(&mut self) {
         self.gate = Gate::Failed;
-        self.subscription = None;
+        self.subscriptions.clear();
         for index in 0..self.nodes.len() {
             if !matches!(self.nodes[index].status, Status::Terminal(_)) {
                 self.complete(index, JobOutcome::DependencyFailed);
@@ -233,7 +233,7 @@ impl<T> State<T> {
         self.edge_count = 0;
         self.ready.clear();
         self.dispatch = None;
-        self.subscription = None;
+        self.subscriptions.clear();
     }
 }
 /// Shared only with this epoch's workers, never mutable world state.

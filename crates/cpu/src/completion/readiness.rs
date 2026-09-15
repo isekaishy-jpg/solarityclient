@@ -6,13 +6,14 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 /// Internal metadata delivery only. Implementations enqueue work and never run
 /// a domain kernel inline or publish another readiness port recursively.
 pub(crate) trait ReadySink: Send + Sync {
-    fn signal(self: Arc<Self>, epoch: u64, outcome: JobOutcome);
+    fn signal(self: Arc<Self>, epoch: u64, input: usize, outcome: JobOutcome);
 }
 
 /// A reserved consumer identifies one epoch of an existing scheduler owner.
 struct Target {
     sink: Weak<dyn ReadySink>,
     epoch: u64,
+    input: usize,
 }
 /// Slot identity also changes on cancellation/reuse inside one port generation.
 struct Slot {
@@ -63,7 +64,7 @@ impl Core {
             if let Some(target) = target
                 && let Some(sink) = target.sink.upgrade()
             {
-                sink.signal(target.epoch, outcome);
+                sink.signal(target.epoch, target.input, outcome);
             }
         }
         bound.clear();
@@ -189,6 +190,10 @@ pub struct ReadyToken {
     generation: u64,
 }
 impl ReadyToken {
+    /// Identity comparison does not acquire resource metadata or retain its payload.
+    pub(crate) fn same_generation(&self, other: &Self) -> bool {
+        self.generation == other.generation && self.core.ptr_eq(&other.core)
+    }
     /// Observes durable readiness; it does not consume a resource payload.
     /// # Errors
     /// Retired owners and old generations are rejected.
@@ -286,7 +291,7 @@ pub(crate) struct Binding {
 impl Binding {
     /// Binds after input admission. Publication that raced reservation is delivered
     /// immediately outside the lock, without losing or double-counting readiness.
-    pub(crate) fn bind(self, sink: Weak<dyn ReadySink>, epoch: u64) {
+    pub(crate) fn bind(self, sink: Weak<dyn ReadySink>, epoch: u64, input: usize) {
         let mut state = self.core.lock();
         if state.generation != self.generation {
             return;
@@ -299,10 +304,10 @@ impl Binding {
         if let Some(outcome) = outcome {
             drop(state);
             if let Some(sink) = sink.upgrade() {
-                sink.signal(epoch, outcome);
+                sink.signal(epoch, input, outcome);
             }
         } else {
-            slot.target = Some(Target { sink, epoch });
+            slot.target = Some(Target { sink, epoch, input });
             state.bound.push(self.index);
         }
     }

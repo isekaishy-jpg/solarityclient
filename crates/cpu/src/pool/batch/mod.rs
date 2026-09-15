@@ -1,16 +1,19 @@
 //! Bounded owned epochs, prerequisite readiness and typed result consumption.
 
+mod admission;
 mod execution;
 mod readiness;
 mod results;
 mod state;
+mod template;
 mod types;
+pub use template::FrameGraphTemplate;
 
 pub use types::{FrameBatchPlan, FrameJob, JobOutcome};
 
 use super::dispatch::{Work, WorkClass};
 use super::{CpuError, CpuExecutor};
-use state::{Core, Gate, Kernel, State};
+use state::{Core, Kernel, State};
 use std::sync::{Arc, Condvar, Mutex};
 
 /// Reusable typed state with append-only dependencies inside a checked epoch.
@@ -50,17 +53,7 @@ impl<T: Send + 'static> FrameBatch<T> {
     /// # Errors
     /// Admission, epoch exhaustion and storage errors preserve `jobs`.
     pub fn start(&mut self, cpu: &CpuExecutor, jobs: &mut Vec<T>) -> Result<(), CpuError> {
-        self.begin(cpu, FrameBatchPlan::new(jobs.len(), 0))?;
-        let mut state = self.core.lock();
-        for job in jobs.drain(..) {
-            state.append(Some(job), &[]);
-        }
-        state.open = false;
-        let launch = state.runners_to_launch();
-        drop(state);
-        self.core.launch(launch);
-        self.core.finish_if_terminal();
-        Ok(())
+        self.start_graph(cpu, &FrameGraphTemplate::independent(jobs.len()), jobs, &[])
     }
 
     /// Reserves node/edge metadata before an incremental producer starts.
@@ -68,7 +61,7 @@ impl<T: Send + 'static> FrameBatch<T> {
     /// Returns admission, epoch exhaustion or allocation errors without opening
     /// an epoch. The preceding epoch must first be reclaimed.
     pub fn begin(&mut self, cpu: &CpuExecutor, plan: FrameBatchPlan) -> Result<(), CpuError> {
-        self.begin_dependency(cpu, plan, None)
+        self.begin_dependencies(cpu, plan, &[])
     }
 
     /// Opens a phase behind an external/resource or heterogeneous batch result.
@@ -81,61 +74,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         plan: FrameBatchPlan,
         dependency: &crate::ReadyToken,
     ) -> Result<(), CpuError> {
-        self.begin_dependency(cpu, plan, Some(dependency))
-    }
-
-    /// Both root and dependent phases share ownership and shutdown registration.
-    fn begin_dependency(
-        &mut self,
-        cpu: &CpuExecutor,
-        plan: FrameBatchPlan,
-        dependency: Option<&crate::ReadyToken>,
-    ) -> Result<(), CpuError> {
-        if self.active {
-            return Err(CpuError::BatchActive);
-        }
-        let subscription = dependency.map(crate::ReadyToken::reserve).transpose()?;
-        let binder = subscription
-            .as_ref()
-            .map(crate::completion::Subscription::binder);
-        let lease = cpu.frame_state.reserve()?;
-        let mut state = self.core.lock();
-        let generation = state
-            .generation
-            .checked_add(1)
-            .ok_or(CpuError::EpochExhausted)?;
-        state.reserve(plan)?;
-        let completion = self.core.completion_port.begin(cpu.frame_capacity)?;
-        state.generation = generation;
-        state.plan = plan;
-        state.open = true;
-        state.gate = if dependency.is_some() {
-            Gate::Pending
-        } else {
-            Gate::Ready
-        };
-        state.subscription = subscription;
-        state.completion = Some(completion);
-        state.workers = cpu.worker_count();
-        state.dispatch = Some(Arc::clone(&cpu.dispatch));
-        state.notifier = cpu.notifier.clone();
-        state.trace = solarity_profiling::TraceContext::capture().fork("cpu.frame.request");
-        state.lease = Some(lease);
-        self.active = true;
-        drop(state);
-        let owner: Arc<dyn super::epochs::EpochOwner> = self.core.clone();
-        if let Err(error) = cpu.epochs.register(Arc::downgrade(&owner), generation) {
-            owner.stop(generation);
-            self.core.finish_if_terminal();
-            self.core.lock().clear();
-            self.active = false;
-            return Err(error);
-        }
-        if let Some(binder) = binder {
-            let sink: Arc<dyn crate::completion::ReadySink> = self.core.clone();
-            binder.bind(Arc::downgrade(&sink), generation);
-        }
-        Ok(())
+        self.begin_dependencies(cpu, plan, std::slice::from_ref(dependency))
     }
 
     /// Publishes an independent job under the epoch's reserved limits.
@@ -180,7 +119,7 @@ impl<T: Send + 'static> FrameBatch<T> {
             }
         }
         let index = state.jobs.len();
-        state.append(job.take(), parents);
+        state.append(job.take(), parents.iter().map(|parent| parent.index));
         let handle = FrameJob::new(&self.core, state.generation, index);
         let launch = state.runners_to_launch();
         drop(state);

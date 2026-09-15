@@ -100,8 +100,9 @@ M2 pose and geometry consumers use these checked identities. Geometry publicatio
 consumes the ordered completed prefix before final reclamation, so stream copies
 can overlap later kernels. Receiver-light callbacks still follow actual emitted
 packet demand; their ordering is not inferred from broad visibility. Cross-batch
-dependencies now include a phase completion port. Main-only continuation dispatch,
-reusable dependency templates and global byte budgets remain required work.
+dependencies now include phase completion ports and multi-producer fan-in.
+Main-only continuation dispatch, priority propagation and global byte budgets
+remain required work.
 
 ## External readiness and phase edges
 
@@ -113,7 +114,12 @@ Reset requires terminal publication, finished delivery and released subscription
 The domain still owns the decoded asset, typed shared product or GPU lease; a
 notification never substitutes for that payload or for GPU completion.
 
-`FrameBatch::begin_when` reserves one subscriber before admitting any owned input.
+`FrameBatch::begin_after` reserves the complete supplied prerequisite list before
+admitting any owned input. `begin_when` uses the same path with one prerequisite.
+Duplicate resource generations are rejected. Partial reservation failure releases
+all earlier subscriptions, and input failure cancels only this phase's remaining
+edges. Each callback carries its epoch and input slot, so late/duplicate delivery
+cannot decrement a new phase's readiness count.
 The whole phase remains parked in metadata while its worker lanes serve other
 work. Completion racing subscription binding is delivered exactly once. The
 producer releases the port lock before delivery; the sole nested lock order is
@@ -138,8 +144,31 @@ vectors on a worker while main sorts transparent packets. The token is normally
 already complete at that point; the useful overlap is light evaluation versus
 transparent ordering, not a claim that receiver callbacks run before geometry.
 The existing ordered light-source owner remains on main, and every vector returns
-before the renderer accesses the resulting scene bank. Arbitrary multi-domain
-fan-in, resource-cache consumers and I/O producers are still integration work.
+before the renderer accesses the resulting scene bank. Resource-cache consumers
+and I/O producers are still integration work.
+
+## Reusable graph structure
+
+`FrameGraphTemplate` holds immutable, validated topology. Registered operations
+remain on `FrameBatch<T>`, which also owns reusable activation/result storage.
+This separates the design's graph template and binding lifetimes without erasing
+payload types or allocating a closure per activation. `with_dependencies`
+validates backward-only, nonduplicate edges once; `independent` describes a root
+phase without allocating a record for every model. Admission still reserves the
+exact current input count, not all resident scene owners.
+
+`start_graph` binds all inputs and optional external prerequisites transactionally.
+Wrong input counts and admission failure preserve the caller's vector. The
+complete connected phase is installed before its ready nodes are dispatched.
+Activation visits only those nodes/edges; template storage may then be reused or
+discarded because dependency counters and result handles belong to the binding.
+Different operation types compose as phases through readiness ports, while local
+nodes use the registered typed kernel. `start` uses the same independent-template
+path, and M2 lighting retains its template across frames.
+
+These APIs do not yet reserve a multi-phase application's aggregate byte working
+set, publish domain-owned shared product leases, or propagate priority. Those
+remain explicit cutover requirements rather than implicit properties of a DAG.
 
 ## Validation
 

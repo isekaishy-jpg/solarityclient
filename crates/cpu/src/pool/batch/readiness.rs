@@ -7,14 +7,23 @@ use crate::pool::epochs::EpochOwner;
 use std::sync::Arc;
 
 impl<T: Send + 'static> ReadySink for Core<T> {
-    fn signal(self: Arc<Self>, epoch: u64, outcome: JobOutcome) {
+    fn signal(self: Arc<Self>, epoch: u64, input: usize, outcome: JobOutcome) {
         let mut state = self.lock();
-        if state.generation != epoch || !matches!(state.gate, Gate::Pending) {
+        if state.generation != epoch || !matches!(state.gate, Gate::Pending(_)) {
             return;
         }
+        let Some(subscription) = state.subscriptions.get_mut(input).and_then(Option::take) else {
+            return;
+        };
+        drop(subscription);
         if outcome == JobOutcome::Succeeded {
-            state.gate = Gate::Ready;
-            state.subscription = None;
+            if let Gate::Pending(remaining) = state.gate {
+                state.gate = if remaining == 1 {
+                    Gate::Ready
+                } else {
+                    Gate::Pending(remaining - 1)
+                };
+            }
         } else {
             state.fail_gate();
         }
@@ -46,7 +55,7 @@ impl<T: Send + 'static> EpochOwner for Core<T> {
             return;
         }
         state.open = false;
-        if matches!(state.gate, Gate::Pending) {
+        if matches!(state.gate, Gate::Pending(_)) {
             state.fail_gate();
         }
         let launch = state.runners_to_launch();

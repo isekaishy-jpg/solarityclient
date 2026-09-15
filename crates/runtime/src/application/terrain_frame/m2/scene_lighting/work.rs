@@ -129,6 +129,7 @@ impl LightingWork {
 /// One retained typed phase; the vectors, not the Rc ownership graph, cross workers.
 pub(super) struct LightingBatch {
     pending: solarity_cpu::FrameBatch<LightingWork>,
+    template: solarity_cpu::FrameGraphTemplate,
     jobs: Vec<LightingWork>,
     submitted: bool,
 }
@@ -136,6 +137,7 @@ impl Default for LightingBatch {
     fn default() -> Self {
         Self {
             pending: solarity_cpu::FrameBatch::with_outcome(LightingWork::execute),
+            template: solarity_cpu::FrameGraphTemplate::independent(1),
             jobs: Vec::new(),
             submitted: false,
         }
@@ -152,35 +154,43 @@ impl SceneLighting {
         base: M2SceneUniform,
         exterior: M2DirectionalLight,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        if let Some(cpu) = cpu {
-            self.batch.pending.begin_when(
-                cpu,
-                solarity_cpu::FrameBatchPlan::new(1, 0),
-                dependency.ok_or(solarity_cpu::CpuError::BatchInactive)?,
-            )?;
-            self.batch.submitted = true;
-        }
+        // Validate the external identity before changing the retained light bank.
+        let dependencies = match cpu {
+            Some(_) => {
+                std::slice::from_ref(dependency.ok_or(solarity_cpu::CpuError::BatchInactive)?)
+            }
+            None => &[],
+        };
         self.prepare_directionals(exterior);
         let mut job = self.batch.jobs.pop().unwrap_or_default();
         job.swap(self);
         job.base = Some(base);
         job.exterior = Some(exterior);
         job.result = None;
-        if self.batch.submitted {
-            let mut owned = Some(job);
-            if let Err(error) = self.batch.pending.push(&mut owned) {
-                let mut job =
-                    owned.unwrap_or_else(|| unreachable!("rejected lighting retains state"));
+        self.batch.jobs.push(job);
+        if let Some(cpu) = cpu {
+            if let Err(error) = self.batch.pending.start_graph(
+                cpu,
+                &self.batch.template,
+                &mut self.batch.jobs,
+                dependencies,
+            ) {
+                let mut job = self
+                    .batch
+                    .jobs
+                    .pop()
+                    .unwrap_or_else(|| unreachable!("rejected lighting retains state"));
                 job.swap(self);
-                self.batch.pending.reclaim(&mut self.batch.jobs)?;
-                self.batch.submitted = false;
                 self.batch.jobs.push(job);
                 return Err(error.into());
             }
-            self.batch.pending.close();
+            self.batch.submitted = true;
         } else {
-            job.execute();
-            self.batch.jobs.push(job);
+            self.batch
+                .jobs
+                .last_mut()
+                .unwrap_or_else(|| unreachable!("inline lighting owns input"))
+                .execute();
         }
         Ok(())
     }

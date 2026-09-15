@@ -12,7 +12,7 @@ mod task;
 mod types;
 mod worker;
 
-pub use batch::{FrameBatch, FrameBatchPlan, FrameJob, JobOutcome};
+pub use batch::{FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, JobOutcome};
 pub use executor::{CpuExecutor, CpuTaskPermit};
 pub use task::CpuTask;
 pub use types::{CpuError, CpuPoolConfig, CpuPoolSnapshot};

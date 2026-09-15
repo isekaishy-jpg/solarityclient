@@ -60,13 +60,20 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   and transfers its vectors without cloning the spatial bank. Ordered Rc light
   ownership and callback selection stay on main; all vectors return before errors
   propagate or the renderer borrows them.
+- Frame phases now reserve all external prerequisites transactionally and run
+  only after every producer succeeds. A failed input releases the phase's other
+  subscriptions; a rejected reservation releases every earlier edge. Different
+  typed producer phases compose through their existing readiness identities.
+- Added reusable validated frame graph templates, with compact independent
+  phases and flat backward-only dependency edges. Binding reserves the whole
+  phase before input transfer and retains typed, generation-checked results.
+  Existing owned pose batches and the retained scene-light phase use this path.
 
 ## Still required for the complete cutover
 
-- Reusable dependency templates, typed shared-result leases across domains,
-  priority propagation and main-only continuations. Cross-batch readiness now
-  exists at phase boundaries; arbitrary heterogeneous node fan-in and resource
-  cache/I/O integration still require their complete dependency graphs.
+- Typed shared-result leases across domains, priority propagation and main-only
+  continuations. Templates and heterogeneous phase fan-in now exist; resource
+  cache/I/O integration still requires its complete concrete dependency graphs.
 - Aggregate node/result/scratch byte reservations and accounting. Node/edge
   counts are now bounded per declared frame phase; executor-wide bytes and
   allocations nested inside domain job state are not yet budgeted.
@@ -85,6 +92,22 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Reusable graph and fan-in checkpoint
+
+On 2026-09-15, the full workspace suite passed 1,447 tests with 33 ignored,
+including the existing moving M2 and receiver-light parity checks. Final
+formatting and workspace Clippy passed. All 40 CPU tests passed after adding a
+separate allocation-counting fixture: 1,000 warmed diamond-graph activations with
+two external prerequisites made zero allocator calls on the coordinator/workers.
+That fixture measures fixed scheduler metadata reuse, not nested domain buffers
+or the whole client's allocation rate. It was added after the full workspace run;
+production source was unchanged during the final focused validation.
+
+Logs are in ignored `target/cpu-graph-workspace-tests.log`,
+`target/cpu-graph-final-tests.log` and `target/cpu-graph-clippy-final.log`.
+Coverage also checks multi-input failure/capacity rollback, different typed
+producer phases, template validation, repeated epoch binding and stale handles.
 
 ### Phase-readiness and lifecycle checkpoint
 

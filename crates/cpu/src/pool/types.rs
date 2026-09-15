@@ -82,6 +82,15 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// A phase lists the same resource generation more than once.
+    #[error("readiness prerequisite is duplicated")]
+    DuplicateReadiness,
+    /// A template edge is duplicated, cyclic or outside its earlier-node prefix.
+    #[error("frame graph dependency is invalid")]
+    InvalidGraph,
+    /// A binding must supply every input in its declared template.
+    #[error("frame graph input count does not match its template")]
+    GraphInputCount,
     /// A removed producer or recycled readiness generation was referenced.
     #[error("readiness generation is stale")]
     StaleReadiness,
