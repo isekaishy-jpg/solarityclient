@@ -5,6 +5,11 @@ this document. The user requested a modern CPU architecture grounded in stock
 behavior and directed toward 1,200 completed frames per second. This is the
 implementation contract proposed for that work, not a measured performance claim.
 
+The companion [resource cache and residency design](resource-cache-residency-design.md)
+defines shared pending resources, typed cache validity, memory budgets and
+stock-compatible retention/prefetch. CPU jobs execute that work; its domain
+policy remains outside the CPU scheduler.
+
 ## Objective and limits
 
 The steady-frame target is **0.833 ms per completed frame**. Shorten the CPU

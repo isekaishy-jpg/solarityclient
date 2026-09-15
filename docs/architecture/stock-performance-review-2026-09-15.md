@@ -321,6 +321,10 @@ behavioral boundaries to a proposed modern dependency scheduler, ordered
 publication and automatic stall attribution. It preserves the distinction
 between a researched behavior, a design decision and a measured speedup.
 
+The [resource cache and residency design](resource-cache-residency-design.md)
+further specifies shared demand, immutable reuse, stock-qualified lifetime and
+budgeted prefetch while keeping live gameplay state separate from cached assets.
+
 The clearest newly established gaps are **eager all-animation loading** and
 **shared-resource release policy**. The broad movement concern also has a stock
 reference: current-window admission and persistent local spatial ownership,
