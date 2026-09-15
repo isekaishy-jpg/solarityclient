@@ -76,10 +76,17 @@ impl<T: Send + 'static> FrameBatch<T> {
         state.notifier = cpu.notifier.clone();
         state.trace = solarity_profiling::TraceContext::capture().fork("cpu.frame.request");
         state.lease = Some(lease);
+        self.core
+            .live_epoch
+            .store(generation, std::sync::atomic::Ordering::Release);
         self.active = true;
         drop(state);
         let owner: Arc<dyn crate::pool::epochs::EpochOwner> = self.core.clone();
-        if let Err(error) = cpu.epochs.register(Arc::downgrade(&owner), generation) {
+        if let Err(error) = cpu.epochs.register(
+            Arc::downgrade(&owner),
+            Arc::downgrade(&self.core.live_epoch),
+            generation,
+        ) {
             owner.stop(generation);
             self.core.finish_if_terminal();
             self.core.lock().clear();

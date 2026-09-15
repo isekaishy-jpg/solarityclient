@@ -45,10 +45,6 @@ impl<T: Send + 'static> ReadySink for Core<T> {
 }
 
 impl<T: Send + 'static> EpochOwner for Core<T> {
-    fn live(&self, epoch: u64) -> bool {
-        let state = self.lock();
-        state.generation == epoch && state.lease.is_some()
-    }
     fn stop(self: Arc<Self>, epoch: u64) {
         let mut state = self.lock();
         if state.generation != epoch {
@@ -94,6 +90,8 @@ impl<T: Send + 'static> Core<T> {
         self.completion_port.complete(&completion, outcome);
         let mut state = self.lock();
         state.finishing = false;
+        self.live_epoch
+            .store(0, std::sync::atomic::Ordering::Release);
         state.lease = None;
         let notifier = state.notifier.clone();
         drop(state);

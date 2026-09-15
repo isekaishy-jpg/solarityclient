@@ -2,16 +2,20 @@
 
 use crate::storage::StorageVec;
 use crate::{CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{
+    Arc, Mutex, Weak,
+    atomic::{AtomicU64, Ordering},
+};
 
 /// Metadata-only shutdown boundary; finite running kernels retain their ownership.
 pub(crate) trait EpochOwner: Send + Sync {
-    fn live(&self, epoch: u64) -> bool;
     fn stop(self: Arc<Self>, epoch: u64);
 }
 /// Weak epoch identity cannot keep a removed batch alive or stop its next binding.
 struct Entry {
     owner: Weak<dyn EpochOwner>,
+    // This separate allocation contains only identity metadata, never domain inputs.
+    live: Weak<AtomicU64>,
     epoch: u64,
 }
 /// Admission bounds the registry, including open producers with no running jobs.
@@ -34,22 +38,28 @@ impl Epochs {
             limit,
         })
     }
-    /// Registration holds no epoch lock while consulting other admitted owners.
-    pub fn register(&self, owner: Weak<dyn EpochOwner>, epoch: u64) -> Result<(), CpuError> {
+    /// Pruning reads identity metadata without acquiring a batch lock or pinning
+    /// an owner whose last release could destroy domain inputs under this lock.
+    pub fn register(
+        &self,
+        owner: Weak<dyn EpochOwner>,
+        live: Weak<AtomicU64>,
+        epoch: u64,
+    ) -> Result<(), CpuError> {
         let mut entries = self
             .entries
             .lock()
             .map_err(|_| CpuError::StateUnavailable)?;
         entries.retain(|entry| {
             entry
-                .owner
+                .live
                 .upgrade()
-                .is_some_and(|owner| owner.live(entry.epoch))
+                .is_some_and(|live| live.load(Ordering::Acquire) == entry.epoch)
         });
         if entries.len() == self.limit {
             return Err(CpuError::BatchCapacity);
         }
-        entries.push(Entry { owner, epoch });
+        entries.push(Entry { owner, live, epoch });
         Ok(())
     }
     /// Releases the registry lock before callbacks can acquire epoch/readiness locks.

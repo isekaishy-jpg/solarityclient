@@ -104,3 +104,10 @@ or allocate a replacement continuation per resource. Its surface/query inputs,
 placement cursor metadata and decoded payloads remain ordinary domain allocations,
 not newly covered byte-ledger storage. Partially prepared tiles stay owned by the
 task until failure or complete publication through the existing coordinator gate.
+
+The epoch registry's bounded entry storage includes its weak liveness identities.
+Each batch creates one separate atomic identity cell alongside its cold
+synchronization owner and reuses it across activations. Registry pruning can
+release only that metadata under its lock, never a domain-bearing batch owner.
+As with other cold synchronization owners, the cell is outside the logical
+buffer-capacity ledger; this change does not expand the ledger into a heap census.

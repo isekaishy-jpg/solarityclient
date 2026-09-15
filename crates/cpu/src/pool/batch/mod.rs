@@ -8,6 +8,10 @@ mod results;
 mod state;
 mod template;
 mod types;
+
+#[cfg(test)]
+#[path = "../../../tests/internal/epoch_registration.rs"]
+mod registration_tests;
 pub use template::FrameGraphTemplate;
 
 pub use types::{FrameBatchPlan, FrameJob, FramePriority, JobOutcome};
@@ -43,6 +47,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         Self {
             core: Arc::new(Core {
                 urgent: std::sync::atomic::AtomicBool::new(false),
+                live_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 state: Mutex::new(State::new(kernel)),
                 ready: Condvar::new(),
                 completion_port: crate::CompletionPort::empty(),

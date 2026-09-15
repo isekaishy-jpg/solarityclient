@@ -248,6 +248,9 @@ impl<T> State<T> {
 /// Shared only with this epoch's workers, never mutable world state.
 pub(super) struct Core<T> {
     pub urgent: AtomicBool,
+    // Zero is inactive. The registry observes this independent metadata owner so
+    // pruning cannot retain/drop this Core or lock its domain-bearing state.
+    pub live_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub state: Mutex<State<T>>,
     pub ready: Condvar,
     pub completion_port: CompletionPort,

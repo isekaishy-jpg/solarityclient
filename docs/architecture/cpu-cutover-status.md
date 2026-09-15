@@ -257,6 +257,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Individual decoding operations, ground-detail preparation, liquid assets,
   nested WMO preparation and terminal cache cleanup remain indivisible. This is
   not a bounded maximum service duration or shared terrain source-request graph.
+- Epoch registration now prunes inactive entries using a separate atomic identity
+  cell. It no longer locks other batch states or temporarily retains their domain
+  owners under the registry lock. Admission publishes the live generation;
+  terminal completion clears it before releasing admission. Shutdown still visits
+  owners outside the registry lock, and the identity cell is reused across epochs.
 
 ## Still required for the complete cutover
 
@@ -341,6 +346,21 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Epoch registration ownership checkpoint
+
+Formatting, workspace Clippy and the full workspace suite pass: 1,515 tests,
+zero failures and 33 ignored. All 66 CPU tests pass. A controlled regression holds
+one real batch's metadata lock while another thread admits an independent epoch;
+the new admission completes before the held lock is released. Existing shutdown,
+readiness, priority, storage and reclamation checks pass. The allocator fixture
+still observes zero allocator calls across 1,000 warmed graph activations.
+
+Logs are in ignored `target/epoch-registration-cpu-tests.log`,
+`target/epoch-registration-clippy.log` and
+`target/epoch-registration-workspace-tests.log`. This removes a cross-batch lock
+dependency and an owner-disposal hazard; it does not establish a live FPS gain.
+Build 139 remains installed, and the full architecture cutover remains open.
 
 ### Resumable terrain service checkpoint
 
