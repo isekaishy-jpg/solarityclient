@@ -16,13 +16,14 @@ fn cpu() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(8).ok_or(CpuError::InvalidJob)?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))
 }
 
 #[test]
 fn external_completion_releases_typed_phases_without_worker_waits() -> Result<(), Box<dyn Error>> {
     let mut cpu = cpu()?;
-    let mut port = CompletionPort::new(2)?;
+    let mut port = CompletionPort::new(2, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let token = port.readiness();
     let mut producer = port.producer()?;
     let shared = Arc::new(AtomicUsize::new(0));
@@ -51,7 +52,7 @@ fn external_completion_releases_typed_phases_without_worker_waits() -> Result<()
     assert_eq!(second.with_result(&result, |value| value.1)?, 8);
     first.reclaim(&mut Vec::new())?;
     second.reclaim(&mut Vec::new())?;
-    port.restart(2)?;
+    port.restart(2, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     assert!(matches!(token.outcome(), Err(CpuError::StaleReadiness)));
     assert!(matches!(
         producer.complete(JobOutcome::Succeeded),
@@ -65,7 +66,7 @@ fn external_completion_releases_typed_phases_without_worker_waits() -> Result<()
 fn removing_one_consumer_releases_its_slot_without_cancelling_the_shared_resource()
 -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let port = CompletionPort::new(1)?;
+    let port = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let token = port.readiness();
     let mut producer = port.producer()?;
     let mut first = FrameBatch::new(|value| *value += 1);
@@ -89,7 +90,7 @@ fn removing_one_consumer_releases_its_slot_without_cancelling_the_shared_resourc
 #[test]
 fn abandoned_producer_fails_dependents_and_returns_owned_inputs() -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let port = CompletionPort::new(1)?;
+    let port = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let producer = port.producer()?;
     let mut batch = FrameBatch::new(|value| *value += 1);
     batch.begin_when(&cpu, FrameBatchPlan::new(1, 0), &port.readiness())?;
@@ -129,7 +130,7 @@ enum Shutdown {
 /// The producer remains alive until shutdown finishes; cleanup bounds regressions.
 fn check_shutdown(mode: Shutdown) -> Result<(), Box<dyn Error>> {
     let mut cpu = cpu()?;
-    let port = CompletionPort::new(1)?;
+    let port = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let mut blocked = FrameBatch::new(|value| *value += 1);
     blocked.begin_when(&cpu, FrameBatchPlan::new(1, 0), &port.readiness())?;
     blocked.push(&mut Some(20))?;
@@ -166,7 +167,7 @@ fn check_shutdown(mode: Shutdown) -> Result<(), Box<dyn Error>> {
 #[test]
 fn already_completed_readiness_can_be_registered_and_reused() -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let mut port = CompletionPort::new(1)?;
+    let mut port = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let mut batch = FrameBatch::new(|value| *value += 1);
     for _ in 0..100 {
         port.producer()?.complete(JobOutcome::Succeeded)?;
@@ -175,7 +176,7 @@ fn already_completed_readiness_can_be_registered_and_reused() -> Result<(), Box<
         let mut output = Vec::new();
         batch.reclaim(&mut output)?;
         assert_eq!(output, [8]);
-        port.restart(1)?;
+        port.restart(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     }
     Ok(())
 }

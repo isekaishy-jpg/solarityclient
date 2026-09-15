@@ -21,7 +21,11 @@ fn background_and_frame_outputs_notify_after_completing_and_survive_shutdown()
 -> Result<(), Box<dyn Error>> {
     let notifier = Arc::new(Notifier::default());
     let mut cpu = CpuExecutor::with_notifier(
-        CpuPoolConfig::new(NonZeroUsize::new(2).ok_or("workers")?, NonZeroUsize::MIN),
+        CpuPoolConfig::new(
+            NonZeroUsize::new(2).ok_or("workers")?,
+            NonZeroUsize::MIN,
+            solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+        ),
         notifier.clone(),
     )?;
     let background = cpu.try_submit(|| 42)?;

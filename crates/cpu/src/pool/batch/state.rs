@@ -4,8 +4,9 @@ use super::{FrameBatchPlan, JobOutcome};
 use crate::completion::Subscription;
 use crate::pool::dispatch::Dispatch;
 use crate::pool::worker::WorkerLease;
+use crate::storage::{StorageDeque, StorageVec};
 use crate::{CompletionPort, CoordinatorNotifier, CpuError, ReadyToken};
-use std::collections::VecDeque;
+use crate::{CpuStorageBudget, CpuStorageClass, CpuStorageKind};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
@@ -63,20 +64,20 @@ pub(super) struct Node {
 }
 /// Reusable activation storage; capacity is checked before ownership transfer.
 pub(super) struct State<T> {
-    pub jobs: Vec<Option<T>>,
-    pub nodes: Vec<Node>,
-    edges: Vec<Edge>,
+    pub jobs: StorageVec<Option<T>>,
+    pub nodes: StorageVec<Node>,
+    edges: StorageVec<Edge>,
     pub edge_count: usize,
-    pub ready: VecDeque<usize>,
-    propagation: VecDeque<usize>,
+    pub ready: StorageDeque<usize>,
+    propagation: StorageDeque<usize>,
     pub generation: u64,
     pub plan: FrameBatchPlan,
     pub runners: usize,
     pub workers: usize,
     pub open: bool,
     pub gate: Gate,
-    pub subscriptions: Vec<Option<Subscription>>,
-    pub dependencies: Vec<ReadyToken>,
+    pub subscriptions: StorageVec<Option<Subscription>>,
+    pub dependencies: StorageVec<ReadyToken>,
     pub priority_pending: bool,
     pub completion: Option<ReadyToken>,
     pub finishing: bool,
@@ -90,20 +91,20 @@ impl<T> State<T> {
     /// Defers scene-sized storage until a phase declares its bounds.
     pub fn new(kernel: Kernel<T>) -> Self {
         Self {
-            jobs: Vec::new(),
-            nodes: Vec::new(),
-            edges: Vec::new(),
+            jobs: StorageVec::default(),
+            nodes: StorageVec::default(),
+            edges: StorageVec::default(),
             edge_count: 0,
-            ready: VecDeque::new(),
-            propagation: VecDeque::new(),
+            ready: StorageDeque::default(),
+            propagation: StorageDeque::default(),
             generation: 0,
             plan: FrameBatchPlan::default(),
             runners: 0,
             workers: 0,
             open: false,
             gate: Gate::Ready,
-            subscriptions: Vec::new(),
-            dependencies: Vec::new(),
+            subscriptions: StorageVec::default(),
+            dependencies: StorageVec::default(),
             priority_pending: false,
             completion: None,
             finishing: false,
@@ -116,22 +117,23 @@ impl<T> State<T> {
     }
     /// Reserves all metadata and propagation storage. Nested T allocations remain
     /// domain-owned; this reservation makes no claim about their byte budget.
-    pub fn reserve(&mut self, plan: FrameBatchPlan) -> Result<(), CpuError> {
-        self.jobs
-            .try_reserve(plan.jobs)
-            .map_err(|_| CpuError::BatchStorage)?;
-        self.nodes
-            .try_reserve(plan.jobs)
-            .map_err(|_| CpuError::BatchStorage)?;
-        self.edges
-            .try_reserve(plan.edges)
-            .map_err(|_| CpuError::BatchStorage)?;
-        self.ready
-            .try_reserve(plan.jobs)
-            .map_err(|_| CpuError::BatchStorage)?;
-        self.propagation
-            .try_reserve(plan.jobs)
-            .map_err(|_| CpuError::BatchStorage)?;
+    pub fn reserve(
+        &mut self,
+        plan: FrameBatchPlan,
+        dependencies: usize,
+        budget: &CpuStorageBudget,
+    ) -> Result<(), CpuError> {
+        let class = CpuStorageClass::Frame;
+        let kind = CpuStorageKind::Metadata;
+        self.jobs.reserve(budget, class, kind, plan.jobs)?;
+        self.nodes.reserve(budget, class, kind, plan.jobs)?;
+        self.edges.reserve(budget, class, kind, plan.edges)?;
+        self.ready.reserve(budget, class, kind, plan.jobs)?;
+        self.propagation.reserve(budget, class, kind, plan.jobs)?;
+        self.dependencies
+            .reserve(budget, class, kind, dependencies)?;
+        self.subscriptions
+            .reserve(budget, class, kind, dependencies)?;
         Ok(())
     }
     /// Registers validated parents and atomically observes any terminal outcome.

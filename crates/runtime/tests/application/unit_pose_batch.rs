@@ -23,6 +23,7 @@ fn executor() -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::new(4).ok_or("worker count")?,
         NonZeroUsize::new(8).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)
 }
 

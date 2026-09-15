@@ -16,6 +16,7 @@ fn cpu() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(16).ok_or(CpuError::InvalidJob)?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))
 }
 
@@ -23,8 +24,8 @@ fn cpu() -> Result<CpuExecutor, CpuError> {
 fn every_external_input_must_succeed_before_a_phase_uses_the_worker() -> Result<(), Box<dyn Error>>
 {
     let cpu = cpu()?;
-    let first = CompletionPort::new(1)?;
-    let second = CompletionPort::new(1)?;
+    let first = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+    let second = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let mut first_producer = first.producer()?;
     let mut second_producer = second.producer()?;
     let mut batch = FrameBatch::new(|value| *value += 1);
@@ -48,8 +49,8 @@ fn every_external_input_must_succeed_before_a_phase_uses_the_worker() -> Result<
 fn failed_fan_in_releases_other_subscriptions_and_preserves_unstarted_inputs()
 -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let failed = CompletionPort::new(1)?;
-    let pending = CompletionPort::new(1)?;
+    let failed = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+    let pending = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     failed.producer()?.complete(JobOutcome::Failed)?;
     let mut batch = FrameBatch::new(|value| *value += 1);
     // Failure is delivered while binding the first edge, before the next binder.
@@ -74,8 +75,8 @@ fn failed_fan_in_releases_other_subscriptions_and_preserves_unstarted_inputs()
 #[test]
 fn fan_in_reservation_failure_rolls_back_all_earlier_subscriptions() -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let first = CompletionPort::new(1)?;
-    let full = CompletionPort::new(0)?;
+    let first = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+    let full = CompletionPort::new(0, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let mut batch = FrameBatch::<usize>::new(|_| {});
     assert!(matches!(
         batch.begin_after(
@@ -101,7 +102,7 @@ fn fan_in_reservation_failure_rolls_back_all_earlier_subscriptions() -> Result<(
 #[test]
 fn a_join_template_consumes_different_typed_producer_phases() -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let gate = CompletionPort::new(1)?;
+    let gate = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let mut producer = gate.producer()?;
     let first_value = Arc::new(AtomicUsize::new(0));
     let second_value = Arc::new(AtomicUsize::new(0));
@@ -158,7 +159,8 @@ fn compute(work: &mut Work) {
 fn diamond_template_rebinds_generations_without_revalidating_structure()
 -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let template = FrameGraphTemplate::with_dependencies(&[&[], &[0], &[0], &[1, 2]])?;
+    let template =
+        FrameGraphTemplate::with_dependencies(cpu.storage(), &[&[], &[0], &[0], &[1, 2]])?;
     let mut batch = FrameBatch::new(compute);
     let products = Arc::new(std::array::from_fn(|_| AtomicUsize::new(0)));
     let mut jobs: Vec<_> = (0..4)
@@ -191,6 +193,7 @@ fn diamond_template_rebinds_generations_without_revalidating_structure()
 
 #[test]
 fn template_validation_and_binding_rejection_do_not_consume_inputs() -> Result<(), Box<dyn Error>> {
+    let cpu = cpu()?;
     for invalid in [
         &[&[0][..]][..],
         &[&[][..], &[1]],
@@ -198,11 +201,10 @@ fn template_validation_and_binding_rejection_do_not_consume_inputs() -> Result<(
         &[&[4][..]],
     ] {
         assert!(matches!(
-            FrameGraphTemplate::with_dependencies(invalid),
+            FrameGraphTemplate::with_dependencies(cpu.storage(), invalid),
             Err(CpuError::InvalidGraph)
         ));
     }
-    let cpu = cpu()?;
     let mut batch = FrameBatch::new(|value| *value += 1);
     let template = FrameGraphTemplate::independent(2);
     let mut jobs = vec![1];
@@ -222,7 +224,8 @@ fn template_validation_and_binding_rejection_do_not_consume_inputs() -> Result<(
 #[test]
 fn a_template_failure_suppresses_only_its_descendants() -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let template = FrameGraphTemplate::with_dependencies(&[&[], &[0], &[], &[1, 2]])?;
+    let template =
+        FrameGraphTemplate::with_dependencies(cpu.storage(), &[&[], &[0], &[], &[1, 2]])?;
     let mut batch = FrameBatch::with_outcome(|value| {
         if *value == 0 {
             JobOutcome::Failed

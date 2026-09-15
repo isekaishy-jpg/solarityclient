@@ -25,6 +25,9 @@ by the implemented services:
 --locale <locale>
 --cpu-workers <count>
 --cpu-capacity <count>
+[--cpu-frame-bytes <bytes>]
+[--cpu-required-bytes <bytes>]
+[--cpu-speculative-bytes <bytes>]
 --network-workers <count>
 --network-shutdown-ms <milliseconds>
 --login-endpoint <host:port>
@@ -127,3 +130,11 @@ The native top-left performance display uses the archive-backed
 presentations in quarter-second windows, replaces one stable device mesh when
 the displayed one-decimal value changes, and shares the same overlay path on
 Glue, loading, and world frames.
+
+Execution memory policy is supplied by the runtime: 128 MiB for frame work,
+256 MiB for required loading/service and 64 MiB for speculative work unless the
+corresponding byte option overrides it. Zero disables byte admission in a class;
+zero frame/required storage can reject pool startup because scheduler queues need
+capacity. These are logical execution-buffer allowances, not an RSS cap or a
+claim that all domain allocations are already tracked. See
+[CPU storage contracts](cpu-storage-contracts.md).

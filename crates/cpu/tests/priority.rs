@@ -15,6 +15,7 @@ fn cpu() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(16).ok_or(CpuError::InvalidJob)?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))
 }
 
@@ -125,7 +126,7 @@ fn a_running_pass_yields_between_kernels_for_new_urgent_work() -> Result<(), Box
 #[test]
 fn priority_reaches_an_external_producer_through_pending_phases() -> Result<(), Box<dyn Error>> {
     let cpu = cpu()?;
-    let port = CompletionPort::new(1)?;
+    let port = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let producer = port.producer()?;
     let mut token = port.readiness();
     let mut phases = Vec::new();

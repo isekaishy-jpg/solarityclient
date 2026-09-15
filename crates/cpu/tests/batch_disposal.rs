@@ -22,6 +22,7 @@ fn disposing_a_batch_on_a_worker_never_waits_for_another_kernel() -> Result<(), 
     let cpu = Arc::new(CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::new(2).ok_or("worker count")?,
         NonZeroUsize::new(4).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?);
     let finished = Arc::new(AtomicBool::new(false));
     let (started, started_rx) = mpsc::sync_channel(1);

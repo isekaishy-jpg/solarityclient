@@ -61,7 +61,11 @@ fn reused_guid_retires_warming_generation_on_cpu_even_when_initially_saturated()
     let replacement = world.object_identity(9).ok_or("missing replacement")?;
     assert_ne!(identity, replacement);
     assert!(!worker.accepts(replacement));
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let occupied = cpu.try_reserve()?;
     worker.service(Some(&world), &cpu)?;
     assert!(worker.accepts(replacement));

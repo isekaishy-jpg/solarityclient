@@ -1,7 +1,8 @@
 //! Validated reusable dependency structure; epoch inputs and results stay typed.
 
 use super::{FrameBatch, FrameBatchPlan};
-use crate::{CpuError, CpuExecutor, ReadyToken};
+use crate::storage::StorageVec;
+use crate::{CpuError, CpuExecutor, CpuStorageBudget, CpuStorageClass, CpuStorageKind, ReadyToken};
 use std::ops::Range;
 
 /// A stable dependency topology independent of any live input/result generation.
@@ -9,8 +10,8 @@ use std::ops::Range;
 /// per-node template allocation; dependent templates retain flat validated edges.
 pub struct FrameGraphTemplate {
     plan: FrameBatchPlan,
-    ranges: Vec<Range<usize>>,
-    parents: Vec<usize>,
+    ranges: StorageVec<Range<usize>>,
+    parents: StorageVec<usize>,
 }
 
 impl FrameGraphTemplate {
@@ -25,8 +26,8 @@ impl FrameGraphTemplate {
     pub const fn independent(jobs: usize) -> Self {
         Self {
             plan: FrameBatchPlan::new(jobs, 0),
-            ranges: Vec::new(),
-            parents: Vec::new(),
+            ranges: StorageVec::new(),
+            parents: StorageVec::new(),
         }
     }
 
@@ -34,7 +35,10 @@ impl FrameGraphTemplate {
     /// identity; it never acts as an asynchronous result handle.
     /// # Errors
     /// Rejects duplicate, self, forward or out-of-range edges, and storage overflow.
-    pub fn with_dependencies(prerequisites: &[&[usize]]) -> Result<Self, CpuError> {
+    pub fn with_dependencies(
+        budget: &CpuStorageBudget,
+        prerequisites: &[&[usize]],
+    ) -> Result<Self, CpuError> {
         let edges = prerequisites.iter().try_fold(0usize, |sum, parents| {
             sum.checked_add(parents.len()).ok_or(CpuError::BatchStorage)
         })?;
@@ -50,14 +54,18 @@ impl FrameGraphTemplate {
             return Ok(template);
         }
         template.plan.edges = edges;
-        template
-            .ranges
-            .try_reserve(prerequisites.len())
-            .map_err(|_| CpuError::BatchStorage)?;
-        template
-            .parents
-            .try_reserve(edges)
-            .map_err(|_| CpuError::BatchStorage)?;
+        template.ranges.reserve(
+            budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Metadata,
+            prerequisites.len(),
+        )?;
+        template.parents.reserve(
+            budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Metadata,
+            edges,
+        )?;
         for parents in prerequisites {
             let start = template.parents.len();
             template.parents.extend_from_slice(parents);

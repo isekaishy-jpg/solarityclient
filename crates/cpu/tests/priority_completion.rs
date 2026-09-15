@@ -38,7 +38,11 @@ impl CoordinatorNotifier for Notifier {
 fn an_empty_promoted_phase_notifies_after_metadata_finishes() -> Result<(), Box<dyn Error>> {
     let notifier = Arc::new(Notifier::default());
     let mut cpu = CpuExecutor::with_notifier(
-        CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::new(4).ok_or("capacity")?),
+        CpuPoolConfig::new(
+            NonZeroUsize::MIN,
+            NonZeroUsize::new(4).ok_or("capacity")?,
+            solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+        ),
         notifier.clone(),
     )?;
     let (started, observed) = mpsc::sync_channel(1);

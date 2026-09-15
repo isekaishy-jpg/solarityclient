@@ -223,6 +223,7 @@ fn neighbor_terrain_waits_for_exact_gpu_admission_before_cpu_publication()
     let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
         std::num::NonZeroUsize::MIN,
         std::num::NonZeroUsize::new(2).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     terrain.synchronize_streaming_with_admission(571, origin, window, &cpu, |_| Ok(false))?;
     cpu.try_submit(|| ())?.join()?;
@@ -284,6 +285,7 @@ fn moving_window_rejects_old_completion_before_gpu_admission() -> Result<(), Box
         let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
             std::num::NonZeroUsize::MIN,
             std::num::NonZeroUsize::new(2).ok_or("capacity")?,
+            solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ))?;
         terrain.synchronize_streaming_with_admission(571, origin, window, &cpu, |_| Ok(false))?;
         cpu.try_submit(|| ())?.join()?;

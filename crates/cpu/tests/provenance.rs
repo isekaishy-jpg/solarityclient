@@ -14,7 +14,11 @@ fn result_consumption_follows_worker_output_and_keeps_request_identity()
     let root = std::env::temp_dir().join(format!("solarity-job-trace-{}", std::process::id()));
     let mut capture = Capture::new(&root, "fixture=cpu-provenance".to_owned());
     let (_, path) = capture.toggle()?;
-    let mut executor = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut executor = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let (started_sender, started_receiver) = mpsc::sync_channel(1);
     let (release_sender, release_receiver) = mpsc::sync_channel(1);
     let frame = begin_frame();

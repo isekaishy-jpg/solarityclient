@@ -105,6 +105,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::new(4).ok_or("workers")?,
         NonZeroUsize::new(8).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     let mut saw_particles = false;
     let mut saw_ribbons = false;

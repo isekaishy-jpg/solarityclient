@@ -64,7 +64,11 @@ fn screenshot_saves_the_completed_gpu_frame_and_reports_io_failure() -> Result<(
             })
         })
         .collect::<Vec<_>>();
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let mut screenshots = RuntimeScreenshots::new(fixture.profile_root());
     for format in ["TGA", "jpeg"] {
         let request = ScreenshotRequest::new(true, format, "3");

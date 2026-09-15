@@ -9,6 +9,7 @@ use thiserror::Error;
 pub struct CpuPoolConfig {
     worker_count: NonZeroUsize,
     max_in_flight: NonZeroUsize,
+    storage: crate::CpuStoragePlan,
 }
 
 impl CpuPoolConfig {
@@ -17,10 +18,15 @@ impl CpuPoolConfig {
     /// The runtime composition layer is responsible for deriving these values
     /// from configuration and platform capabilities.
     #[must_use]
-    pub const fn new(worker_count: NonZeroUsize, max_in_flight: NonZeroUsize) -> Self {
+    pub const fn new(
+        worker_count: NonZeroUsize,
+        max_in_flight: NonZeroUsize,
+        storage: crate::CpuStoragePlan,
+    ) -> Self {
         Self {
             worker_count,
             max_in_flight,
+            storage,
         }
     }
 
@@ -34,6 +40,11 @@ impl CpuPoolConfig {
     #[must_use]
     pub const fn max_in_flight(self) -> NonZeroUsize {
         self.max_in_flight
+    }
+    /// Explicit byte admission policy, independent of the task-count bound.
+    #[must_use]
+    pub const fn storage(self) -> crate::CpuStoragePlan {
+        self.storage
     }
 }
 
@@ -82,6 +93,22 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// Byte saturation preserves the caller's pending work and prior reservation.
+    #[error("cpu storage needs {requested} bytes with {available} available in {class:?}")]
+    StorageAtCapacity {
+        /// Admission allowance that cannot satisfy the reservation.
+        class: crate::CpuStorageClass,
+        /// Additional logical capacity requested, in bytes.
+        requested: usize,
+        /// Unreserved bytes remaining in that class.
+        available: usize,
+    },
+    /// Element counts cannot be represented as byte capacity.
+    #[error("cpu storage byte size overflow")]
+    StorageSizeOverflow,
+    /// Allocation failed after byte admission; the reservation is returned.
+    #[error("cpu storage allocation failed")]
+    StorageAllocation,
     /// A phase lists the same resource generation more than once.
     #[error("readiness prerequisite is duplicated")]
     DuplicateReadiness,

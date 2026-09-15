@@ -116,7 +116,11 @@ fn game_object_task_panics_only_fail_the_owning_world() -> Result<(), Box<dyn Er
     let animations = Arc::new(AnimationDataCatalog::load(&mut store)?);
     let mut owner =
         RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations);
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     for retired in [false, true] {
         let task = cpu.try_submit(|| panic!("injected GameObject worker failure"))?;
         owner.pending = Some(PendingGeneration {

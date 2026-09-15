@@ -20,7 +20,11 @@ fn world_ui_sources_wait_for_capacity_and_retain_one_completed_image() -> Result
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let (release, wait) = mpsc::channel();
     let blocker = cpu.try_submit(move || wait.recv())?;
     let mut preparation = WorldUiSourcePreparation::default();
@@ -54,7 +58,11 @@ fn world_ui_source_retirement_observes_worker_failure_once() -> Result<(), Box<d
     let fixture = ClientFixture::new()?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let mut preparation = WorldUiSourcePreparation::default();
     preparation.request(&cpu, &catalog)?;
     assert!(preparation.finish().is_err(), "missing FrameXML must fail");

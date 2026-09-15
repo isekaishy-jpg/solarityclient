@@ -4,7 +4,7 @@ mod queues;
 mod startup;
 mod worker;
 
-use std::collections::VecDeque;
+use crate::storage::StorageDeque;
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -52,10 +52,10 @@ impl Work {
 
 /// Both queue predicates and shutdown are changed under the same mutex.
 struct Queues {
-    frame: VecDeque<Work>,
-    urgent: VecDeque<Work>,
-    priority: VecDeque<Work>,
-    background: VecDeque<Work>,
+    frame: StorageDeque<Work>,
+    urgent: StorageDeque<Work>,
+    priority: StorageDeque<Work>,
+    background: StorageDeque<Work>,
     stopping: bool,
 }
 

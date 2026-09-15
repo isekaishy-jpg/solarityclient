@@ -10,8 +10,9 @@ fn a_failed_external_phase_propagates_through_chained_ready_gates() -> Result<()
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(64).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
-    let port = CompletionPort::new(1)?;
+    let port = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let mut producer = port.producer()?;
     let mut token = port.readiness();
     let mut batches = Vec::new();

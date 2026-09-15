@@ -1,6 +1,7 @@
 //! Executor-owned shutdown of admitted frame producers and external dependencies.
 
-use crate::CpuError;
+use crate::storage::StorageVec;
+use crate::{CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind};
 use std::sync::{Arc, Mutex, Weak};
 
 /// Metadata-only shutdown boundary; finite running kernels retain their ownership.
@@ -15,16 +16,23 @@ struct Entry {
 }
 /// Admission bounds the registry, including open producers with no running jobs.
 pub(super) struct Epochs {
-    entries: Mutex<Vec<Entry>>,
+    entries: Mutex<StorageVec<Entry>>,
     limit: usize,
 }
 impl Epochs {
     /// Reserves registry capacity once from the executor's admission bound.
-    pub fn new(limit: usize) -> Self {
-        Self {
-            entries: Mutex::new(Vec::with_capacity(limit)),
+    pub fn new(limit: usize, budget: &CpuStorageBudget) -> Result<Self, CpuError> {
+        let mut entries = StorageVec::default();
+        entries.reserve(
+            budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Metadata,
             limit,
-        }
+        )?;
+        Ok(Self {
+            entries: Mutex::new(entries),
+            limit,
+        })
     }
     /// Registration holds no epoch lock while consulting other admitted owners.
     pub fn register(&self, owner: Weak<dyn EpochOwner>, epoch: u64) -> Result<(), CpuError> {

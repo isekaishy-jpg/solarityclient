@@ -1,6 +1,7 @@
 //! Bounded readiness subscriptions; payload ownership stays with the domain.
 
-use crate::{CpuError, JobOutcome};
+use crate::storage::StorageVec;
+use crate::{CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind, JobOutcome};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 /// Internal metadata delivery only. Implementations enqueue work and never run
@@ -36,8 +37,8 @@ struct Slot {
 struct State {
     generation: u64,
     outcome: Option<JobOutcome>,
-    slots: Vec<Slot>,
-    bound: Vec<usize>,
+    slots: StorageVec<Slot>,
+    bound: StorageVec<usize>,
     subscribers: usize,
     publishing: bool,
     producer_issued: bool,
@@ -72,7 +73,7 @@ impl Core {
         state.publishing = true;
         let mut bound = std::mem::take(&mut state.bound);
         drop(state);
-        for &index in &bound {
+        for &index in bound.iter() {
             let target = self.lock().slots[index].target.take();
             if let Some(target) = target
                 && let Some(sink) = target.sink.upgrade()
@@ -97,9 +98,13 @@ impl CompletionPort {
     /// Creates an active generation with an explicit maximum subscriber count.
     /// # Errors
     /// Reports metadata allocation failure before opening the generation.
-    pub fn new(subscribers: usize) -> Result<Self, CpuError> {
+    pub fn new(
+        subscribers: usize,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+    ) -> Result<Self, CpuError> {
         let port = Self::empty();
-        port.begin(subscribers)?;
+        port.begin(subscribers, budget, class)?;
         Ok(port)
     }
     /// Batch registration allocates its port once, before any scene activation.
@@ -109,8 +114,8 @@ impl CompletionPort {
                 state: Mutex::new(State {
                     generation: 0,
                     outcome: None,
-                    slots: Vec::new(),
-                    bound: Vec::new(),
+                    slots: StorageVec::default(),
+                    bound: StorageVec::default(),
                     subscribers: 0,
                     publishing: false,
                     producer_issued: false,
@@ -123,11 +128,21 @@ impl CompletionPort {
     /// Rebinds only after terminal publication and all subscriptions have left.
     /// # Errors
     /// Reports active subscriptions, generation exhaustion or storage failure.
-    pub fn restart(&mut self, subscribers: usize) -> Result<ReadyToken, CpuError> {
-        self.begin(subscribers)
+    pub fn restart(
+        &mut self,
+        subscribers: usize,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+    ) -> Result<ReadyToken, CpuError> {
+        self.begin(subscribers, budget, class)
     }
     /// Internal owners serialize activation with their own epoch admission.
-    pub(crate) fn begin(&self, subscribers: usize) -> Result<ReadyToken, CpuError> {
+    pub(crate) fn begin(
+        &self,
+        subscribers: usize,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+    ) -> Result<ReadyToken, CpuError> {
         let mut state = self.core.lock();
         if state.generation != 0
             && (state.outcome.is_none() || state.publishing || state.subscribers != 0)
@@ -138,15 +153,12 @@ impl CompletionPort {
             .generation
             .checked_add(1)
             .ok_or(CpuError::EpochExhausted)?;
-        let additional = subscribers.saturating_sub(state.slots.len());
         state
             .slots
-            .try_reserve(additional)
-            .map_err(|_| CpuError::BatchStorage)?;
+            .reserve(budget, class, CpuStorageKind::Metadata, subscribers)?;
         state
             .bound
-            .try_reserve(subscribers)
-            .map_err(|_| CpuError::BatchStorage)?;
+            .reserve(budget, class, CpuStorageKind::Metadata, subscribers)?;
         state.slots.resize_with(subscribers, || Slot {
             serial: 0,
             reserved: false,

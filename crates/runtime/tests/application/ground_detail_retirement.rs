@@ -18,7 +18,11 @@ impl Drop for DropProbe {
 #[test]
 fn detail_retirement_retries_saturation_and_shutdown_waits_for_worker_drops()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let occupied = cpu.try_reserve()?;
     let (sender, receiver) = channel();
     let mut queue = CpuRetirementQueue::new();
@@ -49,7 +53,11 @@ fn detail_retirement_retries_saturation_and_shutdown_waits_for_worker_drops()
 #[test]
 fn detail_retirement_keeps_unsubmitted_ownership_when_admission_is_closed()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     cpu.shutdown()?;
     let (sender, receiver) = channel();
     let mut queue = CpuRetirementQueue::new();

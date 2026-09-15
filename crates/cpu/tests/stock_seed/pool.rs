@@ -18,7 +18,11 @@ fn config(worker_count: usize, max_in_flight: usize) -> CpuPoolConfig {
         Some(value) => value,
         None => unreachable!("test task bound is a nonzero literal"),
     };
-    CpuPoolConfig::new(worker_count, max_in_flight)
+    CpuPoolConfig::new(
+        worker_count,
+        max_in_flight,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    )
 }
 
 /// Submitted work produces one typed result and releases its admission slot.

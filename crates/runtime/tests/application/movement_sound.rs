@@ -138,7 +138,11 @@ fn stock_movement_callbacks_produce_audio_and_obey_live_admission() -> Result<()
         movement_loads: Vec::new(),
         movement_voices: Vec::new(),
     };
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let display = creatures
         .display(display_id)
         .ok_or("Blood Elf male display")?;

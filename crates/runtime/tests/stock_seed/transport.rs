@@ -38,7 +38,11 @@ fn ordinary_game_objects_share_preparation_across_lifetimes() -> Result<(), Box<
     let mut presentation =
         RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations)
             .with_worker_catalog(catalog);
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(0),
         7,
@@ -162,6 +166,7 @@ fn retired_jobs_cannot_publish_or_fail_a_replacement_world() -> Result<(), Box<d
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(2).ok_or("bad capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     let (release, wait) = std::sync::mpsc::channel();
     let gate = cpu.try_submit(move || wait.recv())?;
@@ -270,7 +275,11 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
     let mut presentation =
         RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), catalog, animations)
             .with_worker_catalog(archive_catalog);
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
 
     let player_guid = 0x0000_0000_0000_0042;
     let transport_guid = 0xF110_0000_0000_002A;

@@ -263,6 +263,7 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(3).ok_or("bad capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     let (release, wait) = std::sync::mpsc::channel();
     let blocker = cpu.try_submit(move || wait.recv())?;
@@ -504,6 +505,7 @@ fn terrain_streaming_validates_shared_placement_identities() -> Result<(), Box<d
         let cpu = CpuExecutor::new(CpuPoolConfig::new(
             one,
             NonZeroUsize::new(2).ok_or("bad worker capacity")?,
+            solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ))?;
         assert_eq!(
             terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
@@ -615,6 +617,7 @@ fn static_movement_retains_reference_order_and_placement_owners() -> Result<(), 
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(2).ok_or("bad capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     terrain.synchronize_streaming_async(571, origin, window, &cpu)?;
     cpu.try_submit(|| ())?.join()?;
@@ -1084,6 +1087,7 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(2).ok_or("invalid admission bound")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     let full_a = cpu.try_reserve()?;
     let full_b = cpu.try_reserve()?;

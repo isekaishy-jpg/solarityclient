@@ -12,6 +12,7 @@ fn executor() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::new(3).ok_or(CpuError::InvalidJob)?,
         NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))
 }
 
@@ -187,6 +188,7 @@ fn worker_cannot_deadlock_its_lane_by_joining_a_queued_task() -> Result<(), Box<
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(2).ok_or(CpuError::InvalidJob)?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     let (send, receive) = mpsc::sync_channel::<solarity_cpu::CpuTask<usize>>(1);
     let first = cpu.try_submit(move || receive.recv().map(|task| task.join()))?;

@@ -28,6 +28,7 @@ pub struct CpuExecutor {
     pub(super) epochs: super::epochs::Epochs,
     pub(super) frame_capacity: usize,
     worker_count: usize,
+    storage: crate::CpuStorageBudget,
     pub(super) notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
 }
 
@@ -58,17 +59,27 @@ impl CpuExecutor {
         notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
     ) -> Result<Self, CpuError> {
         let worker_count = config.worker_count().get();
-        let (dispatch, workers) = Dispatch::start(worker_count, config.max_in_flight().get())?;
+        let storage = crate::CpuStorageBudget::new(config.storage());
+        let epochs = super::epochs::Epochs::new(config.max_in_flight().get(), &storage)?;
+        let (dispatch, workers) =
+            Dispatch::start(worker_count, config.max_in_flight().get(), &storage)?;
         Ok(Self {
             dispatch,
             workers,
             state: SharedExecutorState::new(config.max_in_flight()),
             frame_state: SharedExecutorState::new(config.max_in_flight()),
-            epochs: super::epochs::Epochs::new(config.max_in_flight().get()),
+            epochs,
+            storage,
             frame_capacity: config.max_in_flight().get(),
             worker_count,
             notifier,
         })
+    }
+
+    /// Shared capacity accounting remains alive while retained buffers are pinned.
+    #[must_use]
+    pub fn storage(&self) -> &crate::CpuStorageBudget {
+        &self.storage
     }
 
     /// Attempts to admit finite CPU work without blocking on queue capacity.

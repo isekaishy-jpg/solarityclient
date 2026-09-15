@@ -33,15 +33,7 @@ impl<T: Send + 'static> FrameBatch<T> {
             .generation
             .checked_add(1)
             .ok_or(CpuError::EpochExhausted)?;
-        state.reserve(plan)?;
-        state
-            .dependencies
-            .try_reserve(dependencies.len())
-            .map_err(|_| CpuError::BatchStorage)?;
-        state
-            .subscriptions
-            .try_reserve(dependencies.len())
-            .map_err(|_| CpuError::BatchStorage)?;
+        state.reserve(plan, dependencies.len(), cpu.storage())?;
         for dependency in dependencies {
             match dependency.reserve() {
                 Ok(subscription) => state.subscriptions.push(Some(subscription)),
@@ -51,7 +43,11 @@ impl<T: Send + 'static> FrameBatch<T> {
                 }
             }
         }
-        let completion = match self.core.completion_port.begin(cpu.frame_capacity) {
+        let completion = match self.core.completion_port.begin(
+            cpu.frame_capacity,
+            cpu.storage(),
+            crate::CpuStorageClass::Frame,
+        ) {
             Ok(completion) => completion,
             Err(error) => {
                 state.subscriptions.clear();

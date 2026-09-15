@@ -63,11 +63,13 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::new(2).ok_or("workers")?,
         NonZeroUsize::new(8).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
-    let mut first = CompletionPort::new(1)?;
-    let mut second = CompletionPort::new(1)?;
-    let template = FrameGraphTemplate::with_dependencies(&[&[], &[0], &[0], &[1, 2]])?
-        .with_priority(FramePriority::Prerequisite);
+    let mut first = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+    let mut second = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+    let template =
+        FrameGraphTemplate::with_dependencies(cpu.storage(), &[&[], &[0], &[0], &[1, 2]])?
+            .with_priority(FramePriority::Prerequisite);
     let mut batch = FrameBatch::new(|value: &mut usize| *value += 1);
     let mut jobs = vec![0; 4];
     let mut window = None;
@@ -87,8 +89,8 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
         )?;
         producer.complete(JobOutcome::Succeeded)?;
         batch.reclaim(&mut jobs)?;
-        first.restart(1)?;
-        second.restart(1)?;
+        first.restart(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+        second.restart(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     }
     drop(window);
     assert_eq!(jobs, [1064; 4]);

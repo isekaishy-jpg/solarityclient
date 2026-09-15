@@ -21,6 +21,9 @@ const PROFILE_ROOT_OPTION: &str = "--profile-root";
 const LOCALE_OPTION: &str = "--locale";
 const CPU_WORKERS_OPTION: &str = "--cpu-workers";
 const CPU_CAPACITY_OPTION: &str = "--cpu-capacity";
+const CPU_FRAME_BYTES_OPTION: &str = "--cpu-frame-bytes";
+const CPU_REQUIRED_BYTES_OPTION: &str = "--cpu-required-bytes";
+const CPU_SPECULATIVE_BYTES_OPTION: &str = "--cpu-speculative-bytes";
 const NETWORK_WORKERS_OPTION: &str = "--network-workers";
 const NETWORK_SHUTDOWN_OPTION: &str = "--network-shutdown-ms";
 const LOGIN_ENDPOINT_OPTION: &str = "--login-endpoint";
@@ -48,7 +51,8 @@ pub struct RuntimeConfiguration {
 }
 
 impl RuntimeConfiguration {
-    /// Parses required options without environment or guessed-default fallbacks.
+    /// Parses explicit client policy and optional execution-memory overrides.
+    /// Memory defaults are application policy; missing stock client inputs remain errors.
     ///
     /// The iterator must exclude the executable name.
     ///
@@ -88,6 +92,26 @@ impl RuntimeConfiguration {
                 CPU_WORKERS_OPTION => {
                     let value = next_value(&mut arguments, CPU_WORKERS_OPTION)?;
                     set_once(&mut values.cpu_workers, value, CPU_WORKERS_OPTION)?;
+                }
+                CPU_FRAME_BYTES_OPTION => {
+                    let value = next_value(&mut arguments, CPU_FRAME_BYTES_OPTION)?;
+                    set_once(&mut values.cpu_frame_bytes, value, CPU_FRAME_BYTES_OPTION)?;
+                }
+                CPU_REQUIRED_BYTES_OPTION => {
+                    let value = next_value(&mut arguments, CPU_REQUIRED_BYTES_OPTION)?;
+                    set_once(
+                        &mut values.cpu_required_bytes,
+                        value,
+                        CPU_REQUIRED_BYTES_OPTION,
+                    )?;
+                }
+                CPU_SPECULATIVE_BYTES_OPTION => {
+                    let value = next_value(&mut arguments, CPU_SPECULATIVE_BYTES_OPTION)?;
+                    set_once(
+                        &mut values.cpu_speculative_bytes,
+                        value,
+                        CPU_SPECULATIVE_BYTES_OPTION,
+                    )?;
                 }
                 CPU_CAPACITY_OPTION => {
                     let value = next_value(&mut arguments, CPU_CAPACITY_OPTION)?;
@@ -154,7 +178,9 @@ impl RuntimeConfiguration {
          --login-client-ip <IPv4> \
          --window-width <pixels> --window-height <pixels> \
          --window-mode <windowed|fullscreen-windowed> \
-         --gpu-index <zero-based-index> [--record-video]"
+         --gpu-index <zero-based-index> [--record-video] \
+         [--cpu-frame-bytes <bytes>] [--cpu-required-bytes <bytes>] \
+         [--cpu-speculative-bytes <bytes>]"
     }
 
     /// Returns the validated client `Data` directory.
@@ -230,6 +256,24 @@ impl RuntimeConfiguration {
             required(values.cpu_capacity, CPU_CAPACITY_OPTION)?,
             CPU_CAPACITY_OPTION,
         )?;
+        // Modern application admission policy, independent of stock gameplay data.
+        let cpu_storage = solarity_cpu::CpuStoragePlan::new(
+            values
+                .cpu_frame_bytes
+                .map(|value| nonnegative_integer(value, CPU_FRAME_BYTES_OPTION))
+                .transpose()?
+                .unwrap_or(128 << 20),
+            values
+                .cpu_required_bytes
+                .map(|value| nonnegative_integer(value, CPU_REQUIRED_BYTES_OPTION))
+                .transpose()?
+                .unwrap_or(256 << 20),
+            values
+                .cpu_speculative_bytes
+                .map(|value| nonnegative_integer(value, CPU_SPECULATIVE_BYTES_OPTION))
+                .transpose()?
+                .unwrap_or(64 << 20),
+        );
         let network_workers = positive_integer(
             required(values.network_workers, NETWORK_WORKERS_OPTION)?,
             NETWORK_WORKERS_OPTION,
@@ -307,7 +351,7 @@ impl RuntimeConfiguration {
             data_root,
             profile_root,
             locale,
-            cpu_pool: CpuPoolConfig::new(cpu_workers, cpu_capacity),
+            cpu_pool: CpuPoolConfig::new(cpu_workers, cpu_capacity, cpu_storage),
             network_workers,
             network_shutdown_timeout: Duration::from_millis(shutdown_milliseconds),
             login,
@@ -326,6 +370,9 @@ struct ParsedValues {
     locale: Option<OsString>,
     cpu_workers: Option<OsString>,
     cpu_capacity: Option<OsString>,
+    cpu_frame_bytes: Option<OsString>,
+    cpu_required_bytes: Option<OsString>,
+    cpu_speculative_bytes: Option<OsString>,
     network_workers: Option<OsString>,
     network_shutdown_ms: Option<OsString>,
     login_endpoint: Option<OsString>,

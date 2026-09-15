@@ -2,6 +2,8 @@
 
 The user selected a direct cutover. The rollback tag is
 `rollback/pre-cpu-cutover`, at `3be425958fb641aff014e218121a2c0b2e86b802`.
+A later committed checkpoint is also preserved as `rollback/cpu-cutover-26cd4928`
+(`26cd4928545b1aefb3059d539bb30806c08b7bec`). Neither tag contains uncommitted work.
 The complete requirements remain in the [frame-job design](cpu-frame-job-design.md),
 [composition design](cpu-crate-composition-design.md), and
 [cache/residency design](resource-cache-residency-design.md).
@@ -81,6 +83,20 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 - Phase readiness emits its own coordinator notification after durable terminal
   publication, including empty phases whose last work is priority metadata.
 
+- Added executor-wide byte admission for retained frame job cells, dependency
+  metadata, graph topology, ready/priority queues, shutdown registry and readiness
+  subscribers. Growth reserves old plus replacement capacity before input moves;
+  clearing/reclaiming keeps retained capacity charged. Rebinding to another
+  executor transfers charges and preserves allocation identity until actual growth.
+- Added typed result pages and immutable shared leases with one charge per
+  allocation. Exclusive reclaim, failed transfer and final-consumer disposal have
+  pressure/lifetime coverage. Domains must account for allocations nested in a
+  result separately; sharing a page does not recursively discover its heap graph.
+- Runtime config supplies separate frame/required/speculative byte allowances.
+  F10 detail snapshots report usage, ownership categories, peaks and limits with
+  one ledger sample only on marked detail frames. See the
+  [storage contracts](cpu-storage-contracts.md) for exact scope and configuration.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
@@ -90,9 +106,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   retirement priority in the concrete background services. External producers
   expose urgency, but those services must still consume it. Frame urgency is
   monotonic within an epoch; live cache-consumer priority withdrawal is not yet wired.
-- Aggregate node/result/scratch byte reservations and accounting. Node/edge
-  counts are now bounded per declared frame phase; executor-wide bytes and
-  allocations nested inside domain job state are not yet budgeted.
+- Connect reservations to allocations nested inside domain job state and the
+  complete required phase working set. Executor-wide scheduler metadata and typed
+  result-page accounting now exist; ordinary model/asset vectors and caches still
+  require adoption, explicit trimming and maintenance policy.
 - Extend the native bridge to loading/GPU-slot waits and main-ready continuations.
   Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
@@ -108,6 +125,21 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Retained execution storage checkpoint
+
+The full workspace suite passed 1,463 tests with 33 ignored. Workspace Clippy
+and formatting checks passed. The 54 CPU tests include new pressure, old-plus-new
+growth, exclusive/shared ownership, cross-executor transfer and shutdown lifetime
+coverage. The warmed graph/fan-in fixture still records zero allocator calls for
+1,000 activations with prerequisite promotion enabled. Runtime configuration
+coverage checks defaults, per-class overrides, zero speculative byte allowance,
+malformed counts and duplicate options.
+
+Logs are in ignored `target/cpu-storage-workspace-tests.log` and
+`target/cpu-storage-clippy.log`. These establish correctness and warmed scheduler
+allocation behavior, not domain-wide byte coverage, live frame-time improvement
+or a new numbered Testing package.
 
 ### Frame priority and service checkpoint
 

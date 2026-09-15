@@ -350,3 +350,48 @@ fn replace_option_value(
     arguments[option_index + 1] = OsString::from(value);
     Ok(())
 }
+
+/// Explicit memory policy permits disabling speculative byte admission.
+#[test]
+fn cpu_storage_overrides_are_typed_and_reject_invalid_or_repeated_options()
+-> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    let base = arguments(&fixture, &["--cpu-workers", "2", "--cpu-capacity", "8"]);
+    let defaults = RuntimeConfiguration::from_arguments(base.clone())?;
+    assert_eq!(
+        defaults.cpu_pool().storage(),
+        solarity_cpu::CpuStoragePlan::new(128 << 20, 256 << 20, 64 << 20)
+    );
+    let mut custom = base.clone();
+    custom.extend(
+        [
+            "--cpu-frame-bytes",
+            "8192",
+            "--cpu-required-bytes",
+            "4096",
+            "--cpu-speculative-bytes",
+            "0",
+        ]
+        .map(OsString::from),
+    );
+    assert_eq!(
+        RuntimeConfiguration::from_arguments(custom.clone())?
+            .cpu_pool()
+            .storage(),
+        solarity_cpu::CpuStoragePlan::new(8192, 4096, 0)
+    );
+    custom.extend(["--cpu-frame-bytes", "16384"].map(OsString::from));
+    assert!(matches!(
+        RuntimeConfiguration::from_arguments(custom),
+        Err(ConfigurationError::DuplicateOption { .. })
+    ));
+    for invalid in ["-1", "bytes", "184467440737095516160"] {
+        let mut values = base.clone();
+        values.extend(["--cpu-frame-bytes", invalid].map(OsString::from));
+        assert!(matches!(
+            RuntimeConfiguration::from_arguments(values),
+            Err(ConfigurationError::InvalidNonnegativeInteger { .. })
+        ));
+    }
+    Ok(())
+}

@@ -176,7 +176,11 @@ fn stock_model_loops_obey_callback_and_model_lifetimes() -> Result<(), Box<dyn E
         started: Instant::now(),
         last_fade_update: Instant::now(),
     };
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let camera = WorldCamera::stock(Vec3::new(-5., 0., 2.), Vec3::Z, Vec3::Z, 100.).frame(1.)?;
     let mut random = BlizzardRand::new(1);
     for kind in [M2SoundKind::Doodad, M2SoundKind::GameObject] {

@@ -53,6 +53,7 @@ fn cpu(workers: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::new(workers).ok_or("workers")?,
         NonZeroUsize::new(2).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)
 }
 
@@ -142,7 +143,7 @@ fn capacity_and_failed_reservation_preserve_inputs_and_admission() -> Result<(),
     let mut graph = FrameBatch::new(|value| *value += 1usize);
     assert!(matches!(
         graph.begin(&cpu, FrameBatchPlan::new(usize::MAX, 0)),
-        Err(CpuError::BatchStorage)
+        Err(CpuError::StorageSizeOverflow)
     ));
     graph.begin(&cpu, FrameBatchPlan::new(3, 1))?;
     let parent = graph.push(&mut Some(0))?;

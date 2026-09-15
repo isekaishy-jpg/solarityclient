@@ -55,7 +55,11 @@ fn saturated_population_admission_preserves_active_generations_until_replacement
     }
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(NonZeroUsize::MIN, NonZeroUsize::MIN))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::MIN,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     let occupied = cpu.try_reserve()?;
     for _ in 0..3 {
         assert_eq!(
@@ -131,7 +135,11 @@ fn prepared_population_workers_publish_complete_mounts_with_current_motion()
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
     let slots = NonZeroUsize::new(2).ok_or("two worker slots")?;
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(slots, slots))?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        slots,
+        slots,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
     presentation.synchronize_creatures_async(Some(&world), |_| None, &cpu, &mut renderer)?;
     presentation.synchronize_remote_players_async(Some(&world), &cpu, &mut renderer)?;
     // Executor shutdown joins the finite CPU jobs without a timing-dependent poll.

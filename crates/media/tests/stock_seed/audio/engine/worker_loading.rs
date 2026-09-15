@@ -272,6 +272,7 @@ fn pool(capacity: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::new(1).ok_or("invalid worker count")?,
         NonZeroUsize::new(capacity).ok_or("invalid admission capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)
 }
 

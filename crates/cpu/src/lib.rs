@@ -7,7 +7,13 @@ mod job;
 mod pool;
 mod random;
 mod reciprocal;
+mod storage;
 mod synchronization;
+
+pub use storage::{
+    ByteReservation, CpuResultLease, CpuResultPage, CpuStorageBudget, CpuStorageClass,
+    CpuStorageKind, CpuStoragePlan, CpuStorageSnapshot,
+};
 
 pub use capabilities::CpuCapabilities;
 pub use completion::{CompletionPort, CompletionProducer, CoordinatorNotifier, ReadyToken};

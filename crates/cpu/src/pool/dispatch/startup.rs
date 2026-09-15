@@ -2,8 +2,9 @@
 
 use super::{CpuError, Dispatch, Queues};
 use crate::environment::WorkerEnvironment;
+use crate::storage::StorageDeque;
+use crate::{CpuStorageBudget, CpuStorageClass, CpuStorageKind};
 use std::{
-    collections::VecDeque,
     sync::{Arc, Condvar, Mutex, atomic::AtomicU8},
     thread::{self, JoinHandle},
 };
@@ -13,14 +14,43 @@ impl Dispatch {
     pub(crate) fn start(
         count: usize,
         capacity: usize,
+        budget: &CpuStorageBudget,
     ) -> Result<(Arc<Self>, Vec<JoinHandle<()>>), CpuError> {
         let frame_capacity = count.checked_mul(capacity).ok_or(CpuError::BatchStorage)?;
+        let mut frame = StorageDeque::default();
+        let mut urgent = StorageDeque::default();
+        let mut priority = StorageDeque::default();
+        let mut background = StorageDeque::default();
+        frame.reserve(
+            budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Metadata,
+            frame_capacity,
+        )?;
+        urgent.reserve(
+            budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Metadata,
+            frame_capacity,
+        )?;
+        priority.reserve(
+            budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Metadata,
+            capacity,
+        )?;
+        background.reserve(
+            budget,
+            CpuStorageClass::Required,
+            CpuStorageKind::Metadata,
+            capacity,
+        )?;
         let shared = Arc::new(Self {
             queues: Mutex::new(Queues {
-                frame: VecDeque::with_capacity(frame_capacity),
-                urgent: VecDeque::with_capacity(frame_capacity),
-                priority: VecDeque::with_capacity(capacity),
-                background: VecDeque::with_capacity(capacity),
+                frame,
+                urgent,
+                priority,
+                background,
                 stopping: false,
             }),
             ready: Condvar::new(),
