@@ -1,5 +1,10 @@
 # Interactive frame performance
 
+The current [CPU frame-job design](cpu-frame-job-design.md) targets 1,200 FPS
+and defines the proposed scheduling and publication architecture. The budgets
+and measurements below describe earlier work; they are not proof of that target
+or a reduction of its scope.
+
 Solarity treats frame time as an ownership contract rather than a collection
 of scene-specific exceptions. Idle Glue, loading, and World frames target a
 3.33 ms complete-frame budget for 300 FPS. A 0.83 ms stretch budget identifies
