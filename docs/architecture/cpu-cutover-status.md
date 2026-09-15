@@ -246,6 +246,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   source preparation and coalescing policy now have focused folder modules.
   One complete appearance attempt remains indivisible; nested model dependencies
   and shared source adoption for these consumers remain required.
+- Terrain prewarm, authoritative entry and neighbor streaming now use the same
+  owned CPU continuation. Archive mounting yields between MPQs, followed by
+  separate WDT/WDL, ADT, mesh, surface/query and placement stages. MTEX resolution
+  yields after each texture and MDDF preparation after each referenced placement.
+  The synchronous tile path drives the same implementation. Source order,
+  duplicate validation, cache return on domain failure and whole-generation
+  publication remain intact. Worker scheduling and tile preparation have focused
+  children under the folder-backed terrain coordinator.
+  Individual decoding operations, ground-detail preparation, liquid assets,
+  nested WMO preparation and terminal cache cleanup remain indivisible. This is
+  not a bounded maximum service duration or shared terrain source-request graph.
 
 ## Still required for the complete cutover
 
@@ -253,8 +264,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
 - Calibrated cost buckets, straggler reporting and measured step-size policy;
-  resumable asset/bulk stages beyond retirement, the connected archive mounts and
-  Glue texture steps, and
+  resumable asset/bulk stages beyond retirement, the connected archive mounts,
+  terrain stages and Glue texture steps, and
   remaining domain demand transitions beyond terrain/Glue prewarm. External producers
   expose urgency, but those services must still consume it. Frame urgency is
   monotonic within an epoch. Shared M2 primary-request consumers now support live
@@ -330,6 +341,28 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Resumable terrain service checkpoint
+
+The full workspace suite passed 1,514 tests, with zero failures and 33 ignored.
+The focused runtime terrain run passed 135 tests with 12 ignored. New coverage
+checks service interleaving before complete generation publication and reuse of
+the same archive bank after a texture failure. Existing terrain/camera-window,
+GPU-admission, duplicate-placement and movement-reference checks also pass.
+
+Six terrain test sites previously treated an empty queued job as a fence for
+an entire preceding load. Their isolated service fixture now waits for outstanding
+admission to drain before fencing terminal publication. This preserves the exact
+completed-versus-staged races under the resumable scheduler. Separately, two CPU
+storage assertions now join terminal worker epilogues before checking final
+release: input reclamation does not guarantee the runner's last shared reference
+has already been dropped. Production disposal remains nonblocking.
+
+Logs are in ignored `target/terrain-steps-workspace-tests-verified.log`,
+`target/terrain-steps-terrain-tests.log`, `target/terrain-steps-storage-tests.log`
+and `target/terrain-steps-clippy-final.log`. Formatting and workspace Clippy pass.
+Build 139 remains the installed Testing artifact; this checkpoint creates no new
+numbered package and establishes no live FPS improvement.
 
 ### Owned appearance workers and Build 139 checkpoint
 

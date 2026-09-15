@@ -1,5 +1,9 @@
 //! Generated client archive layout for runtime integration tests.
 
+#[path = "../../support/cpu_completion.rs"]
+#[allow(dead_code)]
+pub(crate) mod cpu_completion;
+
 #[path = "../../support/game_object_models.rs"]
 #[allow(dead_code)]
 pub(crate) mod game_object_models;

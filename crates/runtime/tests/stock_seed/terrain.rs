@@ -46,7 +46,9 @@ use wow_wdt::chunks::{ModfChunk, ModfEntry, MphdFlags, MwmoChunk};
 use wow_wdt::version::WowVersion;
 use wow_wdt::{WdtFile, WdtWriter};
 
-use crate::support::{ClientFixture, bootstrap_texture_blp};
+use crate::support::{
+    ClientFixture, bootstrap_texture_blp, cpu_completion::wait_for_background_service,
+};
 
 #[test]
 fn game_object_registration_links_resident_destinations_and_skips_missing_tiles()
@@ -293,7 +295,7 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
     terrain.synchronize(Some(&world))?;
     release.send(())?;
     blocker.join()??;
-    cpu.try_submit(|| ())?.join()?;
+    wait_for_background_service(&cpu)?;
     // The completed old-world job must be discarded, then prepared under the
     // replacement world even though its map and tile identifiers are identical.
     assert_eq!(
@@ -301,7 +303,7 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
         RuntimeTerrainStreamPoll::Pending { remaining_tiles: 1 }
     );
     assert!(terrain.resident_tile_at(second).is_none());
-    cpu.try_submit(|| ())?.join()?;
+    wait_for_background_service(&cpu)?;
     assert_eq!(
         terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
         RuntimeTerrainStreamPoll::Current
@@ -512,7 +514,7 @@ fn terrain_streaming_validates_shared_placement_identities() -> Result<(), Box<d
             terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
             RuntimeTerrainStreamPoll::Pending { remaining_tiles: 1 }
         );
-        cpu.try_submit(|| ())?.join()?;
+        wait_for_background_service(&cpu)?;
         let result = terrain.synchronize_streaming_async(571, origin, window, &cpu);
         match conflict {
             0 => {
@@ -621,7 +623,7 @@ fn static_movement_retains_reference_order_and_placement_owners() -> Result<(), 
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     terrain.synchronize_streaming_async(571, origin, window, &cpu)?;
-    cpu.try_submit(|| ())?.join()?;
+    wait_for_background_service(&cpu)?;
     assert_eq!(
         terrain.synchronize_streaming_async(571, origin, window, &cpu)?,
         RuntimeTerrainStreamPoll::Current

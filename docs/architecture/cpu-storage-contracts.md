@@ -96,3 +96,11 @@ They still require resource-request budget admission and accounting along with
 source payloads; the shared scheduling-control handle does not imply that their
 memory has been accounted for. CPU owns only the service counters/control here,
 while assets own request keys, decoded payloads, outcomes and retention policy.
+
+Terrain continuations retain one admitted task and private archive/cache bank
+across their service turns. Tile preparation keeps the same boxed continuation
+through per-texture and per-doodad yields; it does not reserve another CPU job
+or allocate a replacement continuation per resource. Its surface/query inputs,
+placement cursor metadata and decoded payloads remain ordinary domain allocations,
+not newly covered byte-ledger storage. Partially prepared tiles stay owned by the
+task until failure or complete publication through the existing coordinator gate.

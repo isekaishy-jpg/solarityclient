@@ -1,7 +1,10 @@
 //! Recoverable unit errors cannot strand an accepted CPU terrain generation.
 
 use super::*;
-use crate::test_support::{ClientFixture, SDL_TEST_LOCK, bootstrap_texture_blp};
+use crate::test_support::{
+    ClientFixture, SDL_TEST_LOCK, bootstrap_texture_blp,
+    cpu_completion::wait_for_background_service,
+};
 use glam::Vec3;
 use solarity_ecs::{ActiveWorld, ObjectKind, WorldBootstrap, WorldMapId, WorldTransform};
 use std::{
@@ -226,7 +229,7 @@ fn neighbor_terrain_waits_for_exact_gpu_admission_before_cpu_publication()
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     terrain.synchronize_streaming_with_admission(571, origin, window, &cpu, |_| Ok(false))?;
-    cpu.try_submit(|| ())?.join()?;
+    wait_for_background_service(&cpu)?;
     let neighbor = solarity_asset::TerrainTileIndex::new(21, 31).ok_or("neighbor")?;
     let mut offered = 0;
     for _ in 0..3 {
@@ -288,7 +291,7 @@ fn moving_window_rejects_old_completion_before_gpu_admission() -> Result<(), Box
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ))?;
         terrain.synchronize_streaming_with_admission(571, origin, window, &cpu, |_| Ok(false))?;
-        cpu.try_submit(|| ())?.join()?;
+        wait_for_background_service(&cpu)?;
         if stage_before_move {
             terrain
                 .synchronize_streaming_with_admission(571, origin, window, &cpu, |_| Ok(false))?;

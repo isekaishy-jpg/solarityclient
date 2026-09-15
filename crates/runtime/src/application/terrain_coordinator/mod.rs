@@ -1,5 +1,15 @@
 //! Worker-prepared terrain residency and main-thread scene queries.
 
+mod camera;
+mod camera_profile;
+mod ground_detail;
+pub(in crate::application) mod m2_residency;
+mod movement;
+mod streaming;
+mod tile_preparation;
+mod worker;
+pub(in crate::application) mod world_model_residency;
+
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetStore, AssetStoreHandle, BlpTextureCache, BlpTextureSource,
@@ -19,21 +29,12 @@ use solarity_systems::{
     WorldModelCollisionError, WorldModelCollisionScene, WorldModelLiquidError,
     WorldModelLiquidSample, WorldModelLiquidScene,
 };
-use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
 use crate::application::liquid::{
-    LiquidAssetCache, ResidentTerrainLiquidBatch, RuntimeLiquidAssetError, prepare_terrain_liquids,
+    LiquidAssetCache, ResidentTerrainLiquidBatch, RuntimeLiquidAssetError,
 };
-
-mod camera;
-mod camera_profile;
-mod ground_detail;
-pub(in crate::application) mod m2_residency;
-mod movement;
-mod streaming;
-pub(in crate::application) mod world_model_residency;
 
 use ground_detail::GroundDetailAssetCache;
 pub(in crate::application) use ground_detail::ResidentGroundDetailTile;
@@ -49,9 +50,8 @@ pub use movement::{
 };
 pub use streaming::RuntimeTerrainStreamPoll;
 use streaming::TerrainStreamingDemand;
-use world_model_residency::{
-    ResidentWorldModelScene, prepare_global_world_model, prepare_world_models,
-};
+use worker::{TerrainWorkerCompletion, TerrainWorkerSource, TerrainWorkerState, terrain_steps};
+use world_model_residency::{ResidentWorldModelScene, prepare_global_world_model};
 
 /// Failure while synchronizing authored terrain with authoritative world state.
 #[derive(Debug, Error)]
@@ -372,9 +372,12 @@ impl RuntimeTerrainCoordinator {
         };
         let source = self.take_worker_source()?;
         let specular_textures = self.specular_textures;
-        let task = permit.submit(move || {
-            prepare_terrain_on_worker(source, definition, request, specular_textures)
-        });
+        let task = permit.submit_steps(terrain_steps(
+            source,
+            definition,
+            request,
+            specular_textures,
+        ));
         self.pending = Some(PendingTerrainGeneration {
             request,
             submitted_at: std::time::Instant::now(),
@@ -562,9 +565,12 @@ impl RuntimeTerrainCoordinator {
         };
         let source = self.take_worker_source()?;
         let specular_textures = self.specular_textures;
-        let task = permit.submit(move || {
-            prepare_terrain_on_worker(source, definition, request, specular_textures)
-        });
+        let task = permit.submit_steps(terrain_steps(
+            source,
+            definition,
+            request,
+            specular_textures,
+        ));
         self.pending = Some(PendingTerrainGeneration {
             request,
             submitted_at: std::time::Instant::now(),
@@ -1247,12 +1253,6 @@ struct PrefetchedTerrainGeneration {
     resident: ResidentTerrainMap,
 }
 
-/// Moves one retained cache bank between jobs without enlarging catalog-only requests.
-enum TerrainWorkerSource {
-    Catalog(ArchiveCatalog),
-    Ready(Box<TerrainWorkerState>),
-}
-
 /// Decodes native WDL data once at the terrain asset boundary.
 fn load_low_detail(
     assets: &mut AssetStore,
@@ -1262,131 +1262,6 @@ fn load_low_detail(
         TerrainLowDetail::load(assets, terrain)?
             .map(|map| Arc::new(TerrainLowDetailMap::new(&map))),
     )
-}
-
-struct TerrainWorkerState {
-    // One map is retained across tile jobs; None inside the pair caches absent WDLs.
-    low_detail: Option<(u32, Option<Arc<TerrainLowDetailMap>>)>,
-    assets: AssetStore,
-    textures: BlpTextureCache,
-    models: M2ModelCache,
-    world_models: ResidentWorldModelCache,
-    liquid_assets: LiquidAssetCache,
-    ground_detail_assets: GroundDetailAssetCache,
-}
-
-impl TerrainWorkerState {
-    fn mount(catalog: ArchiveCatalog) -> Result<Self, RuntimeTerrainError> {
-        Ok(Self {
-            assets: AssetStore::mount(catalog)?,
-            low_detail: None,
-            textures: BlpTextureCache::new(),
-            models: M2ModelCache::new(),
-            world_models: ResidentWorldModelCache::new(),
-            liquid_assets: LiquidAssetCache::default(),
-            ground_detail_assets: GroundDetailAssetCache::default(),
-        })
-    }
-
-    fn prepare(
-        &mut self,
-        definition: &MapDefinition,
-        request: TerrainRequest,
-        specular_textures: bool,
-    ) -> Result<ResidentTerrainMap, RuntimeTerrainError> {
-        let terrain = TerrainMap::load(&mut self.assets, definition)?;
-        if self
-            .low_detail
-            .as_ref()
-            .is_none_or(|(map_id, _)| *map_id != request.map_id)
-        {
-            self.low_detail = Some((request.map_id, load_low_detail(&mut self.assets, &terrain)?));
-        }
-        // The immutable bank is shared by the worker, active map and frame fences.
-        let low_detail = self.low_detail.as_ref().and_then(|(_, map)| map.clone());
-        if let Some(placement) = terrain.global_world_model() {
-            let global_world_model = Some(ResidentGlobalWorldModel::prepare(
-                placement,
-                &mut self.textures,
-                &mut self.models,
-                &mut self.world_models,
-                &mut self.liquid_assets,
-                &mut self.assets,
-            )?);
-            return Ok(ResidentTerrainMap {
-                terrain,
-                low_detail,
-                tile: None,
-                global_world_model,
-                nearby: Vec::new(),
-                nearby_lookup: streaming::ResidentTileLookup::default(),
-                movement: ResidentMovementScene::default(),
-            });
-        }
-        if !terrain.tile(request.tile).exists() {
-            return Err(RuntimeTerrainError::MissingPlayerTile {
-                map_id: request.map_id,
-                tile_x: request.tile.x(),
-                tile_y: request.tile.y(),
-            });
-        }
-        let decoded = terrain.load_tile(&mut self.assets, request.tile)?;
-        let tile = Some(ResidentTerrainTile::prepare(
-            decoded,
-            specular_textures,
-            &mut self.ground_detail_assets,
-            &mut self.liquid_assets,
-            &mut self.textures,
-            &mut self.models,
-            &mut self.world_models,
-            &mut self.assets,
-        )?);
-        Ok(ResidentTerrainMap {
-            terrain,
-            low_detail,
-            tile,
-            global_world_model: None,
-            nearby: Vec::new(),
-            nearby_lookup: streaming::ResidentTileLookup::default(),
-            movement: ResidentMovementScene::default(),
-        })
-    }
-
-    fn collect_unused(&mut self) {
-        self.textures.collect_unused();
-        self.world_models.collect_unused();
-    }
-}
-
-struct TerrainWorkerCompletion {
-    worker: Option<Box<TerrainWorkerState>>,
-    result: Result<ResidentTerrainMap, RuntimeTerrainError>,
-}
-
-fn prepare_terrain_on_worker(
-    source: TerrainWorkerSource,
-    definition: MapDefinition,
-    request: TerrainRequest,
-    specular_textures: bool,
-) -> TerrainWorkerCompletion {
-    let mut worker = match source {
-        TerrainWorkerSource::Catalog(catalog) => match TerrainWorkerState::mount(catalog) {
-            Ok(worker) => Box::new(worker),
-            Err(source) => {
-                return TerrainWorkerCompletion {
-                    worker: None,
-                    result: Err(source),
-                };
-            }
-        },
-        TerrainWorkerSource::Ready(worker) => worker,
-    };
-    let result = worker.prepare(&definition, request, specular_textures);
-    worker.collect_unused();
-    TerrainWorkerCompletion {
-        worker: Some(worker),
-        result,
-    }
 }
 
 struct ResidentTerrainMap {
@@ -1479,92 +1354,25 @@ impl ResidentTerrainTile {
         world_model_cache: &mut ResidentWorldModelCache,
         store: &mut AssetStore,
     ) -> Result<Self, RuntimeTerrainError> {
-        // Resolve each MTEX entry exactly once before accepting the tile. This
-        // preserves authored layer indices while avoiding partial residency.
-        let mesh = Arc::new(TerrainTileMeshPlan::prepare_with_specular(
-            &decoded,
-            specular_textures,
-        )?);
-        let textures = mesh
-            .textures()
-            .iter()
-            .map(|path| texture_cache.load(store, path))
-            .collect::<Result<Vec<_>, _>>()?;
-        let ground_detail =
-            ground_detail_assets.prepare(&decoded, model_cache, texture_cache, store)?;
-        let collision = TerrainCollisionMesh::prepare(&decoded)?;
-        let liquid = TerrainLiquidMesh::prepare(&decoded)?;
-        let liquid_batches =
-            prepare_terrain_liquids(&decoded, liquid_assets, texture_cache, store)?;
-        let mut m2_builder = ResidentM2SceneBuilder::new();
-        prepare_doodads(&decoded, &mut m2_builder, model_cache, texture_cache, store)?;
-        let (world_models, world_model_collision, world_model_liquid) = prepare_world_models(
-            &decoded,
-            world_model_cache,
-            model_cache,
-            texture_cache,
-            &mut m2_builder,
-            liquid_assets,
-            store,
-        )?;
-        let (m2_scene, m2_collision) = m2_builder.finish();
-        let movement_references =
-            ResidentMovementReferences::prepare(Some(&decoded), &m2_scene, &world_models);
-        Ok(Self {
-            movement_references,
-            ground_detail: Arc::new(ground_detail),
-            decoded: Arc::new(decoded),
-            textures,
-            mesh,
-            collision,
-            liquid,
-            liquid_batches,
-            m2_scene: Arc::new(m2_scene),
-            m2_collision,
-            world_model_collision,
-            world_model_liquid,
-            world_models,
-        })
+        let mut pending = tile_preparation::TilePreparation::new(decoded, specular_textures);
+        loop {
+            match pending.advance(
+                ground_detail_assets,
+                liquid_assets,
+                texture_cache,
+                model_cache,
+                world_model_cache,
+                store,
+            )? {
+                std::ops::ControlFlow::Continue(next) => pending = next,
+                std::ops::ControlFlow::Break(tile) => return Ok(tile),
+            }
+        }
     }
 
     fn index(&self) -> TerrainTileIndex {
         self.decoded.index()
     }
-}
-
-fn prepare_doodads(
-    tile: &DecodedTerrainTile,
-    builder: &mut ResidentM2SceneBuilder,
-    cache: &mut M2ModelCache,
-    texture_cache: &mut BlpTextureCache,
-    store: &mut AssetStore,
-) -> Result<(), RuntimeTerrainError> {
-    let mut referenced = vec![false; tile.doodads().len()];
-    for reference in tile
-        .chunks()
-        .iter()
-        .flat_map(|chunk| chunk.doodad_references())
-    {
-        // Strict ADT decoding has already proven every MCRF index is in range.
-        referenced[*reference as usize] = true;
-    }
-
-    let mut placements = HashMap::<u32, usize>::new();
-    for (index, placement) in tile.doodads().iter().enumerate() {
-        if !referenced[index] {
-            continue;
-        }
-        if let Some(previous_index) = placements.insert(placement.unique_id(), index) {
-            if !same_doodad_placement(&tile.doodads()[previous_index], placement) {
-                return Err(RuntimeTerrainError::ConflictingDoodadPlacement {
-                    unique_id: placement.unique_id(),
-                });
-            }
-            continue;
-        }
-        builder.add_terrain_doodad(placement, cache, texture_cache, store)?;
-    }
-    Ok(())
 }
 
 fn same_doodad_placement(left: &TerrainDoodadPlacement, right: &TerrainDoodadPlacement) -> bool {
