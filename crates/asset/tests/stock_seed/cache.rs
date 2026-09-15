@@ -159,3 +159,126 @@ fn blp_cache_shares_selected_hd_source_and_collects_it() -> Result<(), Box<dyn E
     assert!(cache.is_empty());
     Ok(())
 }
+
+/// Mount handles share only an explicitly cloned immutable plan; rediscovery is new content authority.
+#[test]
+fn model_cache_qualifies_aliases_by_namespace_and_reuses_shared_mount_plans()
+-> Result<(), Box<dyn Error>> {
+    let alpha = m2_bytes("Alpha", 1)?;
+    let beta = m2_bytes("Beta", 1)?;
+    let skin = skin_bytes(32, &[0, 1, 2])?;
+    let first = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature/Test.m2",
+            bytes: &alpha,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature/Test00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let second = Fixture::new(&[
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature/Test.m2",
+            bytes: &beta,
+        },
+        FixtureFile {
+            archive: "common.MPQ",
+            path: "Creature/Test00.skin",
+            bytes: &skin,
+        },
+    ])?;
+    let catalog = ArchiveCatalog::discover(ClientDataRoot::new(first.data_root())?, Locale::EnUs)?;
+    let mut a = AssetStore::mount(catalog.clone())?;
+    let mut alias = AssetStore::mount(catalog)?;
+    let mut rediscovered = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(first.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let mut b = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(second.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    assert_ne!(a.identity(), alias.identity());
+    assert_eq!(a.namespace(), alias.namespace());
+    assert_ne!(a.namespace(), rediscovered.namespace());
+    let path = AssetPath::new("Creature/Test.m2")?;
+    let mut cache = M2ModelCache::new();
+    let one = cache.load(&mut a, &path)?;
+    let shared = cache.load(&mut alias, &AssetPath::new("creature/test.mdx")?)?;
+    assert!(Arc::ptr_eq(&one, &shared));
+    let other = cache.load(&mut b, &path)?;
+    assert_eq!(other.name(), Some("Beta"));
+    assert_eq!(one.name(), Some("Alpha"));
+    assert!(!Arc::ptr_eq(&one, &other));
+    let new_generation = cache.load(&mut rediscovered, &path)?;
+    assert!(!Arc::ptr_eq(&one, &new_generation));
+    let missing = Fixture::new(&[])?;
+    let mut missing = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(missing.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    assert!(matches!(
+        cache.load(&mut missing, &path),
+        Err(solarity_asset::AssetError::AssetNotFound { .. })
+    ));
+    assert_eq!(cache.len(), 3);
+    Ok(())
+}
+
+/// Merging optional worker results cannot overwrite the same path in another stack.
+#[test]
+fn texture_merge_and_upload_enumeration_preserve_namespace() -> Result<(), Box<dyn Error>> {
+    let first = raw3_blp(1, 1, &[0xFFFF_0000]);
+    let second = raw3_blp(2, 1, &[0xFF00_FF00, 0xFF00_FF00]);
+    let a = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Textures/Test.blp",
+        bytes: &first,
+    }])?;
+    let b = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Textures/Test.blp",
+        bytes: &second,
+    }])?;
+    let mut a = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(a.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let mut b = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(b.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let path = AssetPath::new("Textures/Test.blp")?;
+    let mut cache = BlpTextureCache::new();
+    let mut worker = BlpTextureCache::new();
+    let first = cache.load(&mut a, &path)?;
+    let second = worker.load(&mut b, &path)?;
+    assert_eq!(cache.merge(worker), 1);
+    assert_eq!(cache.len(), 2);
+    assert!(Arc::ptr_eq(&cache.load(&mut a, &path)?, &first));
+    assert!(Arc::ptr_eq(&cache.load(&mut b, &path)?, &second));
+    assert_eq!(
+        cache
+            .entries(a.namespace())
+            .map(|(_, source)| source.width())
+            .collect::<Vec<_>>(),
+        [1]
+    );
+    assert_eq!(
+        cache
+            .entries(b.namespace())
+            .map(|(_, source)| source.width())
+            .collect::<Vec<_>>(),
+        [2]
+    );
+    drop(first);
+    assert_eq!(cache.collect_unused(), 1);
+    assert_eq!(cache.entries(b.namespace()).count(), 1);
+    drop(second);
+    assert_eq!(cache.collect_unused(), 1);
+    Ok(())
+}

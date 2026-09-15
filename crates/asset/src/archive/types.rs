@@ -3,6 +3,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::archive::{AssetError, AssetPathViolation};
 
@@ -152,9 +153,10 @@ impl FromStr for Locale {
 /// A normalized, archive-relative MPQ file path.
 ///
 /// MPQ hashing is ASCII case-insensitive. Storing one uppercase representation
-/// avoids allocating a normalized string at every archive probe.
+/// avoids allocating a normalized string at every archive probe. Clones share
+/// the immutable canonical string across request keys and retained resources.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AssetPath(String);
+pub struct AssetPath(Arc<str>);
 
 impl AssetPath {
     /// Validates and normalizes a stock client-internal path.
@@ -176,7 +178,9 @@ impl AssetPath {
             });
         }
 
-        Ok(Self(original.replace('/', "\\").to_ascii_uppercase()))
+        Ok(Self(
+            original.replace('/', "\\").to_ascii_uppercase().into(),
+        ))
     }
 
     /// Returns the normalized MPQ hash path.

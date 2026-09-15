@@ -25,6 +25,7 @@ pub(in crate::audio) enum SoundDecodeAdmission {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DecodedSoundKey {
     path: AssetPath,
+    namespace: solarity_asset::AssetNamespaceId,
     mode: SoundDecodeMode,
 }
 
@@ -107,7 +108,7 @@ impl SoundDecoder {
         mode: SoundDecodeMode,
     ) -> Result<DecodedSoundHandle, SoundDecodeError> {
         let _profile_scope = solarity_profiling::profile!("media.audio.codec.decoder.load");
-        if let Some(handle) = self.retain_sample(encoded.path(), mode)? {
+        if let Some(handle) = self.retain_sample(encoded.namespace(), encoded.path(), mode)? {
             return Ok(handle);
         }
         let prepared = self.loader.prepare(encoded, mode)?;
@@ -121,7 +122,7 @@ impl SoundDecoder {
         encoded: &Arc<EncodedSound>,
         mode: SoundDecodeMode,
     ) -> Result<SoundDecodeAdmission, SoundDecodeError> {
-        if let Some(handle) = self.retain_sample(encoded.path(), mode)? {
+        if let Some(handle) = self.retain_sample(encoded.namespace(), encoded.path(), mode)? {
             return Ok(SoundDecodeAdmission::Ready(handle));
         }
         Ok(match self.loader.submit(cpu, Arc::clone(encoded), mode)? {
@@ -163,11 +164,13 @@ impl SoundDecoder {
     /// Reuses samples only; streamed voices always retain their own resource.
     fn retain_sample(
         &mut self,
+        namespace: solarity_asset::AssetNamespaceId,
         path: &AssetPath,
         mode: SoundDecodeMode,
     ) -> Result<Option<DecodedSoundHandle>, SoundDecodeError> {
         let key = DecodedSoundKey {
             path: path.clone(),
+            namespace,
             mode,
         };
         if mode == SoundDecodeMode::Predecoded
@@ -198,11 +201,14 @@ impl SoundDecoder {
     fn admit(&mut self, prepared: PreparedSound) -> Result<DecodedSoundHandle, SoundDecodeError> {
         let _profile_scope = solarity_profiling::profile!("media.audio.codec.decoder.admit");
         let mode = prepared.info.mode();
-        if let Some(handle) = self.retain_sample(prepared.info.path(), mode)? {
+        if let Some(handle) =
+            self.retain_sample(prepared.info.namespace(), prepared.info.path(), mode)?
+        {
             return Ok(handle);
         }
         let key = DecodedSoundKey {
             path: prepared.info.path().clone(),
+            namespace: prepared.info.namespace(),
             mode,
         };
         let slot =
@@ -281,6 +287,7 @@ impl SoundDecoder {
             }
             let key = DecodedSoundKey {
                 path: resource.info.path().clone(),
+                namespace: resource.info.namespace(),
                 mode: SoundDecodeMode::Predecoded,
             };
             let encoded_size_bytes = resource.encoded_size_bytes;

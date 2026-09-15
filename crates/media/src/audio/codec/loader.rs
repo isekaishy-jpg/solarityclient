@@ -242,6 +242,7 @@ fn prepare_sound(
         audio,
         info: DecodedSoundInfo::new(
             encoded.path().clone(),
+            encoded.namespace(),
             mode,
             sample_rate_hz,
             channel_count,

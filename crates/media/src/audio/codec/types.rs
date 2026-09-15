@@ -22,6 +22,7 @@ pub struct DecodedSoundHandle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecodedSoundInfo {
     path: AssetPath,
+    namespace: solarity_asset::AssetNamespaceId,
     mode: SoundDecodeMode,
     sample_rate_hz: u32,
     channel_count: u8,
@@ -32,6 +33,7 @@ impl DecodedSoundInfo {
     /// Captures the validated SDL resource description after admission.
     pub(super) const fn new(
         path: AssetPath,
+        namespace: solarity_asset::AssetNamespaceId,
         mode: SoundDecodeMode,
         sample_rate_hz: u32,
         channel_count: u8,
@@ -39,6 +41,7 @@ impl DecodedSoundInfo {
     ) -> Self {
         Self {
             path,
+            namespace,
             mode,
             sample_rate_hz,
             channel_count,
@@ -46,7 +49,13 @@ impl DecodedSoundInfo {
         }
     }
 
-    /// Returns the normalized encoded-source identity.
+    /// Returns the source namespace retained through worker decode and admission.
+    #[must_use]
+    pub const fn namespace(&self) -> solarity_asset::AssetNamespaceId {
+        self.namespace
+    }
+
+    /// Returns the normalized encoded-source path.
     #[must_use]
     pub const fn path(&self) -> &AssetPath {
         &self.path

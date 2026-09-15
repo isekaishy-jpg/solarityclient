@@ -1626,9 +1626,10 @@ impl ClientServices {
         if !covered || !self.glue_gpu_texture_prewarm_pending {
             return Ok(());
         }
-        let uploaded = self
-            .ui_texture_residency
-            .prewarm(&mut self.renderer, &self.ui_textures)?;
+        let namespace = self.assets.borrow().namespace();
+        let uploaded =
+            self.ui_texture_residency
+                .prewarm(&mut self.renderer, &self.ui_textures, namespace)?;
         self.glue_gpu_texture_prewarm_pending = false;
         tracing::info!(
             uploaded_texture_count = uploaded,

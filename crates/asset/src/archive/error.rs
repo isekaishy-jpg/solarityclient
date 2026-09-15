@@ -29,6 +29,9 @@ pub enum AssetPathViolation {
 /// A failure at the public client-asset boundary.
 #[derive(Debug, Error)]
 pub enum AssetError {
+    /// The process cannot issue another distinct immutable asset owner.
+    #[error("asset identity space is exhausted")]
+    IdentityExhausted,
     /// The supplied client data root does not resolve to a directory.
     #[error("invalid client data root {path}: {message}")]
     InvalidDataRoot {

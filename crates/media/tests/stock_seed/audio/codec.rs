@@ -79,3 +79,61 @@ fn invalid_encoded_sound_has_no_decoder_fallback() -> Result<(), Box<dyn Error>>
     assert!(decoder.is_empty());
     Ok(())
 }
+
+/// Both encoded lookup and decoded samples retain the source generation across job admission.
+#[test]
+fn identical_sound_paths_in_different_namespaces_do_not_reuse_samples() -> Result<(), Box<dyn Error>>
+{
+    let a = pcm_wav(8_000, &[0, 100, -100, 0])?;
+    let b = pcm_wav(16_000, &[0, 100, -100, 0, 0, 100, -100, 0])?;
+    let first = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Sound/Test.wav",
+        bytes: &a,
+    }])?;
+    let second = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Sound/Test.wav",
+        bytes: &b,
+    }])?;
+    let mut first = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(first.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let mut second = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(second.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let path = AssetPath::new("Sound/Test.wav")?;
+    let mut cache = SoundCache::new();
+    let a = cache.load(&mut first, &path)?;
+    let b = cache.load(&mut second, &path)?;
+    assert_ne!(a.bytes(), b.bytes());
+    let _sdl = sdl_test_lock();
+    let mut decoder = SoundDecoder::new()?;
+    let first = decoder.load(&a, SoundDecodeMode::Predecoded)?;
+    let second = decoder.load(&b, SoundDecodeMode::Predecoded)?;
+    assert_ne!(first, second);
+    assert_eq!(decoder.load(&a, SoundDecodeMode::Predecoded)?, first);
+    assert_eq!(
+        decoder.info(first).ok_or("first sample")?.sample_rate_hz(),
+        8_000
+    );
+    assert_eq!(
+        decoder
+            .info(second)
+            .ok_or("second sample")?
+            .sample_rate_hz(),
+        16_000
+    );
+    assert_eq!(
+        decoder.info(second).ok_or("second sample")?.namespace(),
+        b.namespace()
+    );
+    assert!(decoder.release(first));
+    assert!(decoder.release(first));
+    assert!(decoder.release(second));
+    assert_eq!(decoder.trim_predecoded_cache(0), 2);
+    assert_eq!(decoder.cached_sample_bytes(), 0);
+    Ok(())
+}

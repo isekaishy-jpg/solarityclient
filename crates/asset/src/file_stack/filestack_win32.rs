@@ -48,6 +48,7 @@ const CONSOLIDATED_ARCHIVES: [(&str, u16, ArchiveKind); 10] = [
 /// A validated, immutable archive list in highest-precedence-first order.
 #[derive(Clone, Debug)]
 pub struct ArchiveCatalog {
+    namespace: super::AssetNamespaceId,
     data_root: ClientDataRoot,
     locale: Locale,
     existing_locales: Vec<Locale>,
@@ -67,7 +68,8 @@ impl ArchiveCatalog {
     ///
     /// Returns an error when a required consolidated archive is missing, an
     /// archive directory cannot be enumerated, or the computed patch band would
-    /// overflow its priority representation.
+    /// overflow its priority representation. Namespace identity exhaustion also
+    /// fails discovery rather than reusing an existing generation.
     pub fn discover(data_root: ClientDataRoot, locale: Locale) -> Result<Self, AssetError> {
         let existing_locales = discover_existing_locales(&data_root)?;
         let mut descriptors = discover_consolidated_archives(&data_root, locale)?;
@@ -78,11 +80,20 @@ impl ArchiveCatalog {
         descriptors.sort_by_key(|descriptor| std::cmp::Reverse(descriptor.priority()));
 
         Ok(Self {
+            namespace: super::AssetNamespaceId::issue()?,
             data_root,
             locale,
             existing_locales,
             descriptors,
         })
+    }
+
+    /// Identifies this immutable mount plan; cloning preserves it and a new
+    /// discovery creates a separate generation. Replaced archives require a new
+    /// discovery; hot mutation of a live plan is not supported.
+    #[must_use]
+    pub const fn namespace(&self) -> super::AssetNamespaceId {
+        self.namespace
     }
 
     /// Returns the validated client data root.

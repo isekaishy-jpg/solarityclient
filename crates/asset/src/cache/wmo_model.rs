@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{AssetError, AssetPath, AssetStore, DecodedWorldModel};
+use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedWorldModel};
 
 /// Process-local shared cache of immutable WMO root and group generations.
 ///
@@ -12,7 +12,7 @@ use crate::{AssetError, AssetPath, AssetStore, DecodedWorldModel};
 /// generation through [`Arc`] instead of decoding it once per ADT reference.
 #[derive(Default)]
 pub struct WmoModelCache {
-    models: HashMap<AssetPath, Arc<DecodedWorldModel>>,
+    models: HashMap<AssetResourceKey, Arc<DecodedWorldModel>>,
 }
 
 impl WmoModelCache {
@@ -22,7 +22,7 @@ impl WmoModelCache {
         Self::default()
     }
 
-    /// Returns the number of distinct normalized root-WMO paths retained.
+    /// Returns the number of root-WMO generations retained across namespaces.
     #[must_use]
     pub fn len(&self) -> usize {
         self.models.len()
@@ -36,7 +36,7 @@ impl WmoModelCache {
 
     /// Returns a shared WMO generation, loading its selected MPQ entries once.
     ///
-    /// The normalized root path is the only cache identity. Identically named
+    /// The namespace and normalized root path form the cache identity. Identically named
     /// HD roots and groups replace ordinary source bytes through archive
     /// precedence and never create a parallel quality-specific namespace.
     ///
@@ -49,12 +49,13 @@ impl WmoModelCache {
         store: &mut AssetStore,
         path: &AssetPath,
     ) -> Result<Arc<DecodedWorldModel>, AssetError> {
-        if let Some(model) = self.models.get(path) {
+        let key = AssetResourceKey::new(store.namespace(), path.clone());
+        if let Some(model) = self.models.get(&key) {
             return Ok(Arc::clone(model));
         }
 
         let model = Arc::new(DecodedWorldModel::load(store, path)?);
-        self.models.insert(path.clone(), Arc::clone(&model));
+        self.models.insert(key, Arc::clone(&model));
         Ok(model)
     }
 

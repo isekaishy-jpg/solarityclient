@@ -128,6 +128,18 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   retain FIFO ties and protected-worker exclusion. A running archive/codec/free
   remains indivisible; these are service turns, not measured time slices.
 
+- Immutable archive catalogs now issue a namespace shared by their cloned mount
+  plans. Rediscovery creates a distinct generation even at identical paths;
+  individual mounted handles retain separate identities. M2/WMO/BLP and encoded
+  audio caches qualify source paths by namespace, and decoded samples carry it
+  through worker preparation, deduplication and retirement. Merged UI texture
+  caches enumerate only the application's namespace for upload.
+- Canonical asset paths share immutable string storage across cloned request
+  keys instead of copying bytes on cache lookup. Font coverage/metrics use the
+  namespace so switching handles within the same immutable plan reuses them;
+  a different plan still invalidates the provider's faces. These changes do not
+  establish a shared pending-request authority or merge independent model caches.
+
 ## Still required for the complete cutover
 
 - Typed shared-result leases across domains and main-only continuations.
@@ -146,7 +158,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
   ordered receiver lighting and end-of-frame state reclamation still have barriers.
-- Shared asset request identity/lifecycle, stock-evidenced animation demand and
+- Shared pending-request authority and consumer lifecycle beyond the implemented
+  archive namespace/source keys, stock-evidenced animation demand and
   retention, derived cache invalidation, byte-budgeted residency and GPU retirement
   from the resource design.
 - Full causal wait/queue attribution, overhead/scaling checks, and matched
@@ -157,6 +170,21 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Archive namespace checkpoint
+
+The full workspace suite passed 1,470 tests with 33 ignored. Final workspace
+Clippy with warnings denied and formatting passed. The suite covers M2 alias
+reuse across cloned mount plans, isolation across rediscovery/different bytes,
+missing-source errors, namespace-filtered texture merge/upload enumeration,
+WMO collection, font coverage reuse, and distinct decoded audio sample lifetimes.
+The final edit shortened the main asset borrow before UI GPU prewarm; it copies
+only the same namespace value. Final Clippy checks that source.
+
+Logs are in ignored `target/asset-namespace-workspace-tests.log` and
+`target/asset-namespace-clippy-final.log`. Independent caches still have their
+existing ownership and retention policy. No shared pending-request authority,
+cache byte budget, live FPS gain, or numbered Testing build is claimed here.
 
 ### Background demand checkpoint
 

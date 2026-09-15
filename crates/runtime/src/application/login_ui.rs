@@ -86,10 +86,11 @@ impl RuntimeUiResidency {
         &mut self,
         renderer: &mut VulkanRenderer,
         cache: &BlpTextureCache,
+        namespace: solarity_asset::AssetNamespaceId,
     ) -> Result<usize, ApplicationError> {
         let mut paths = Vec::new();
         let mut uploads = Vec::new();
-        for (path, source) in cache.entries() {
+        for (path, source) in cache.entries(namespace) {
             if self.textures.contains_key(path) {
                 continue;
             }

@@ -277,15 +277,24 @@ fn world_model_cache_shares_and_collects_generations() -> Result<(), Box<dyn Err
         },
     ])?;
     let root = ClientDataRoot::new(fixture.data_root())?;
-    let mut store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
+    let catalog = ArchiveCatalog::discover(root.clone(), Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
+    let mut shared_store = AssetStore::mount(catalog)?;
+    let mut other_store = AssetStore::mount(ArchiveCatalog::discover(root, Locale::EnUs)?)?;
     let path = AssetPath::new("World\\Wmo\\Fixture.wmo")?;
     let mut cache = WmoModelCache::new();
 
     let first = cache.load(&mut store, &path)?;
     let second = cache.load(&mut store, &path)?;
     assert!(Arc::ptr_eq(&first, &second));
-    assert_eq!(cache.len(), 1);
-    assert_eq!(cache.collect_unused(), 0);
+    let shared = cache.load(&mut shared_store, &path)?;
+    let other = cache.load(&mut other_store, &path)?;
+    assert!(Arc::ptr_eq(&first, &shared));
+    assert!(!Arc::ptr_eq(&first, &other));
+    assert_eq!(cache.len(), 2);
+    drop(shared);
+    drop(other);
+    assert_eq!(cache.collect_unused(), 1);
 
     drop(first);
     drop(second);

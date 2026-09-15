@@ -3,18 +3,25 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use solarity_asset::{ArchiveDescriptor, AssetError, AssetPath, AssetStore};
+use solarity_asset::{ArchiveDescriptor, AssetError, AssetPath, AssetResourceKey, AssetStore};
 
 /// One archive-selected WAV or MP3 payload retained for decoder lifetimes.
 #[derive(Debug)]
 pub struct EncodedSound {
     path: AssetPath,
+    namespace: solarity_asset::AssetNamespaceId,
     source: ArchiveDescriptor,
     bytes: Vec<u8>,
 }
 
 impl EncodedSound {
-    /// Returns the single normalized cache and archive identity.
+    /// Returns the immutable archive selection that produced these bytes.
+    #[must_use]
+    pub const fn namespace(&self) -> solarity_asset::AssetNamespaceId {
+        self.namespace
+    }
+
+    /// Returns the normalized path within its archive namespace.
     #[must_use]
     pub const fn path(&self) -> &AssetPath {
         &self.path
@@ -40,7 +47,7 @@ impl EncodedSound {
 /// callers explicitly collect entries after all external owners retire.
 #[derive(Default)]
 pub struct SoundCache {
-    sounds: HashMap<AssetPath, Arc<EncodedSound>>,
+    sounds: HashMap<AssetResourceKey, Arc<EncodedSound>>,
 }
 
 impl SoundCache {
@@ -50,7 +57,7 @@ impl SoundCache {
         Self::default()
     }
 
-    /// Returns the number of distinct encoded archive paths retained.
+    /// Returns the number of encoded source generations retained across namespaces.
     #[must_use]
     pub fn len(&self) -> usize {
         self.sounds.len()
@@ -64,7 +71,7 @@ impl SoundCache {
 
     /// Returns a shared payload, reading its selected MPQ entry only once.
     ///
-    /// The path is the only identity. Replacement sound packs therefore replace
+    /// Namespace and path select the payload. Replacement sound packs replace
     /// stock bytes through archive precedence instead of creating parallel
     /// cache entries or format-specific fallback searches.
     ///
@@ -77,7 +84,8 @@ impl SoundCache {
         store: &mut AssetStore,
         path: &AssetPath,
     ) -> Result<Arc<EncodedSound>, AssetError> {
-        if let Some(sound) = self.sounds.get(path) {
+        let key = AssetResourceKey::new(store.namespace(), path.clone());
+        if let Some(sound) = self.sounds.get(&key) {
             return Ok(Arc::clone(sound));
         }
 
@@ -85,10 +93,11 @@ impl SoundCache {
         let source = read.source().clone();
         let sound = Arc::new(EncodedSound {
             path: path.clone(),
+            namespace: store.namespace(),
             source,
             bytes: read.into_bytes(),
         });
-        self.sounds.insert(path.clone(), Arc::clone(&sound));
+        self.sounds.insert(key, Arc::clone(&sound));
         Ok(sound)
     }
 

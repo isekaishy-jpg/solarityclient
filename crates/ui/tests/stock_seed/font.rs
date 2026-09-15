@@ -54,13 +54,22 @@ fn shared_font_cache_retains_coverage_and_respects_provider_lifetimes() -> Resul
         path: "Fonts\\Shared.ttf",
         bytes: include_bytes!("../fixtures/tooltip_fixture.ttf"),
     }])?;
-    let mut store = mount(&fixture)?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
+    let mut shared_store = AssetStore::mount(catalog)?;
     let path = AssetPath::new("Fonts/Shared.ttf")?;
     let mut fonts = FontSystem::new()?;
     let first = fonts.rasterize(&mut store, &path, 16, 'A', FontRasterization::Antialiased)?;
     let bytes = fonts.cached_coverage_bytes();
     let mut other = fonts.clone();
-    let repeated = other.rasterize(&mut store, &path, 16, 'A', FontRasterization::Antialiased)?;
+    let repeated = other.rasterize(
+        &mut shared_store,
+        &path,
+        16,
+        'A',
+        FontRasterization::Antialiased,
+    )?;
     assert_eq!(first.coverage().as_ptr(), repeated.coverage().as_ptr());
     assert_eq!(fonts.cached_glyph_count(), 1);
     assert_eq!(fonts.cached_coverage_bytes(), bytes);

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::model::canonical_model_path;
-use crate::{AssetError, AssetPath, AssetStore, DecodedM2Model};
+use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedM2Model};
 
 /// Process-local shared cache of immutable decoded M2 and SKIN data.
 ///
@@ -13,7 +13,7 @@ use crate::{AssetError, AssetPath, AssetStore, DecodedM2Model};
 /// the same large immutable model concurrently, including HD replacements.
 #[derive(Default)]
 pub struct M2ModelCache {
-    models: HashMap<AssetPath, Arc<DecodedM2Model>>,
+    models: HashMap<AssetResourceKey, Arc<DecodedM2Model>>,
 }
 
 impl M2ModelCache {
@@ -36,7 +36,7 @@ impl M2ModelCache {
         canonical_model_path(path)
     }
 
-    /// Returns the number of distinct normalized M2 paths retained.
+    /// Returns the number of model sources retained across archive namespaces.
     #[must_use]
     pub fn len(&self) -> usize {
         self.models.len()
@@ -50,10 +50,11 @@ impl M2ModelCache {
 
     /// Returns a shared decoded model, loading its selected MPQ entries once.
     ///
-    /// The cache key is only the normalized virtual path because an
-    /// [`AssetStore`] mounts one immutable archive stack. A higher-priority HD
+    /// The cache key includes the immutable archive namespace and normalized
+    /// virtual path. Stores from the same catalog select identical content.
+    /// A higher-priority HD
     /// pack therefore selects larger bytes at the ordinary load boundary and
-    /// does not create another cache namespace.
+    /// does not create another quality-specific cache namespace.
     ///
     /// # Errors
     ///
@@ -65,7 +66,8 @@ impl M2ModelCache {
         path: &AssetPath,
     ) -> Result<Arc<DecodedM2Model>, AssetError> {
         let canonical_path = Self::canonical_path(path)?;
-        if let Some(model) = self.models.get(&canonical_path) {
+        let key = AssetResourceKey::new(store.namespace(), canonical_path.clone());
+        if let Some(model) = self.models.get(&key) {
             return Ok(Arc::clone(model));
         }
 
@@ -73,7 +75,7 @@ impl M2ModelCache {
             store,
             &canonical_path,
         )?);
-        self.models.insert(canonical_path, Arc::clone(&model));
+        self.models.insert(key, Arc::clone(&model));
         Ok(model)
     }
 

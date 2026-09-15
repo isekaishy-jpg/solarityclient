@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{AssetError, AssetPath, AssetStore, BlpTextureSource};
+use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, BlpTextureSource};
 
 /// Process-local shared cache of immutable compressed BLP sources.
 ///
@@ -12,7 +12,7 @@ use crate::{AssetError, AssetPath, AssetStore, BlpTextureSource};
 /// the same source concurrently without decoding all HD mip levels eagerly.
 #[derive(Default)]
 pub struct BlpTextureCache {
-    textures: HashMap<AssetPath, Arc<BlpTextureSource>>,
+    textures: HashMap<AssetResourceKey, Arc<BlpTextureSource>>,
 }
 
 impl BlpTextureCache {
@@ -22,7 +22,7 @@ impl BlpTextureCache {
         Self::default()
     }
 
-    /// Returns the number of distinct normalized BLP paths retained.
+    /// Returns the number of texture sources retained across archive namespaces.
     #[must_use]
     pub fn len(&self) -> usize {
         self.textures.len()
@@ -37,7 +37,7 @@ impl BlpTextureCache {
     /// Returns a shared parsed texture, loading its selected MPQ entry once.
     ///
     /// Higher-priority HD packs replace bytes at the ordinary archive lookup;
-    /// their identical virtual path remains the sole cache identity.
+    /// their identical virtual path remains the identity within one namespace.
     ///
     /// # Errors
     ///
@@ -48,12 +48,13 @@ impl BlpTextureCache {
         store: &mut AssetStore,
         path: &AssetPath,
     ) -> Result<Arc<BlpTextureSource>, AssetError> {
-        if let Some(texture) = self.textures.get(path) {
+        let key = AssetResourceKey::new(store.namespace(), path.clone());
+        if let Some(texture) = self.textures.get(&key) {
             return Ok(Arc::clone(texture));
         }
 
         let texture = Arc::new(BlpTextureSource::load(store, path)?);
-        self.textures.insert(path.clone(), Arc::clone(&texture));
+        self.textures.insert(key, Arc::clone(&texture));
         Ok(texture)
     }
 
@@ -69,9 +70,16 @@ impl BlpTextureCache {
         self.textures.len() - before
     }
 
-    /// Iterates canonical paths and immutable sources retained by this owner.
-    pub fn entries(&self) -> impl Iterator<Item = (&AssetPath, &Arc<BlpTextureSource>)> {
-        self.textures.iter()
+    /// Iterates only sources from the caller's immutable archive namespace.
+    /// A merged worker cache cannot upload a different client's identical path.
+    pub fn entries(
+        &self,
+        namespace: crate::AssetNamespaceId,
+    ) -> impl Iterator<Item = (&AssetPath, &Arc<BlpTextureSource>)> {
+        self.textures
+            .iter()
+            .filter(move |(key, _)| key.namespace() == namespace)
+            .map(|(key, source)| (key.path(), source))
     }
 
     /// Releases entries held only by the cache and returns the removal count.

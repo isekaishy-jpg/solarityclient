@@ -19,7 +19,7 @@ struct CachedFace {
 /// Faces precede the library so their native allocations are released first.
 pub(super) struct FontSystemState {
     faces: HashMap<AssetPath, CachedFace>,
-    provider: Option<u64>,
+    provider: Option<solarity_asset::AssetNamespaceId>,
     library: Library,
 }
 
@@ -339,9 +339,9 @@ impl FontSystemState {
     fn ensure_face(&mut self, store: &mut AssetStore, path: &AssetPath) -> Result<(), FontError> {
         let _profile_scope =
             solarity_profiling::detail_profile!("ui.font.gxu_font_util.state.ensure_face");
-        if self.provider != Some(store.identity()) {
+        if self.provider != Some(store.namespace()) {
             self.faces.clear();
-            self.provider = Some(store.identity());
+            self.provider = Some(store.namespace());
         }
         if self.faces.contains_key(path) {
             return Ok(());
