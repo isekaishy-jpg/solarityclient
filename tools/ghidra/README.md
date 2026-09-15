@@ -465,3 +465,44 @@ records the covered instructions and remaining runtime integration.
 ```text
 python tools/ghidra/world_model_batch_visibility_oracle.py <path-to-Wow.exe> crates/systems/tests/fixtures/world_scene_projection_native.txt target/world_model_local_frusta_native.txt target/world_model_batch_visibility_native.txt
 ```
+
+## Stock performance operating model
+
+[The stock performance review](../../docs/architecture/stock-performance-review-2026-09-15.md)
+records scheduling, loading, ownership, preparation and resource lifetime
+boundaries, with explicit limits on the evidence. `ExportStockPerformanceEvidence.java`
+checks the build-12340 executable fingerprint and exports selected function
+decompilation and assembly, relevant strings and wait-related imports. The
+function manifest is `stock-performance-functions.txt` in this directory. Its
+order recovers the network dispatch entry before a tail-jumping wrapper, so
+the wrapper does not absorb the dispatch body during function recovery.
+
+Run against an existing project imported from the pinned executable. In
+PowerShell, set the paths for your local Ghidra installation and project:
+
+```powershell
+$stockFunctions = Get-Content tools/ghidra/stock-performance-functions.txt
+$stockScripts = (Resolve-Path tools/ghidra).Path
+& '<ghidra>/support/analyzeHeadless.bat' '<project-directory>' '<project-name>' `
+    -process Wow.exe -noanalysis -readOnly -scriptPath $stockScripts `
+    -postScript ExportStockPerformanceEvidence.java `
+    '<absolute-output-directory>' @stockFunctions
+```
+
+Keep generated native output under ignored `target/` or outside the repository.
+Missing entry points may be recovered in memory. Overlapping entries are
+reported and skipped; decompilation failures are recorded in the output. Check
+those diagnostics before using the evidence. `-readOnly` discards recovered
+entries at completion. String xrefs depend on existing analysis; an absent xref
+does not establish that a string is unused.
+
+The focused lifetime oracle runs original shared-M2 release, reacquisition and
+collection instructions using Unicorn (validated with 2.1.4). Its only supplied
+call boundaries are time, destruction and allocator free. It checks 36 cases
+covering the ten-second age threshold, reacquisition, forced collection,
+qualification, remaining references and ordinary 32-bit clock wraparound.
+It does not measure live cache occupancy or execute the resource destructor.
+
+```text
+python -B tools/ghidra/model_cache_lifetime_oracle.py <path-to-Wow.exe> target/model-cache-lifetime.json
+```

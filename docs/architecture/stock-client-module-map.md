@@ -14,6 +14,10 @@ added.
 
 ## Evidence
 
+The [stock performance operating-model review](stock-performance-review-2026-09-15.md)
+extends this structural map with inspected scheduling, loading, scene preparation
+and resource lifetime behavior, including explicit research gaps.
+
 Ghidra 12.1.3 completed its default x86 PE analysis of the fingerprinted stock
 binary in 462 seconds. The deterministic exporter in `tools/ghidra` reported:
 
