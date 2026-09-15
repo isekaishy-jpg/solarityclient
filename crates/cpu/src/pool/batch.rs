@@ -18,6 +18,7 @@ struct State<T> {
     operation: fn(&mut T),
     lease: Option<WorkerLease>,
     trace: solarity_profiling::TraceContext,
+    notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
 }
 
 /// Shared only with this batch's admitted workers, never with domain world state.
@@ -51,6 +52,7 @@ impl<T: Send + 'static> FrameBatch<T> {
                     operation,
                     lease: None,
                     trace: solarity_profiling::TraceContext::default(),
+                    notifier: None,
                 }),
                 ready: Condvar::new(),
             }),
@@ -79,6 +81,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         state.next = 0;
         state.runners = runners;
         state.trace = solarity_profiling::TraceContext::capture().fork("cpu.frame.request");
+        state.notifier = cpu.notifier.clone();
         state.lease = Some(lease);
         if runners == 0 {
             state.lease = None;
@@ -107,6 +110,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         state.open = true;
         state.lease = Some(lease);
         state.trace = solarity_profiling::TraceContext::capture().fork("cpu.frame.request");
+        state.notifier = cpu.notifier.clone();
         self.stream = Some((Arc::clone(&cpu.dispatch), cpu.worker_count()));
         self.active = true;
         Ok(())
@@ -260,8 +264,12 @@ impl<T: Send> ReadyWork for Core<T> {
             state.jobs[index] = Some(job);
             state.panicked[index] = failed;
             state.done[index] = true;
+            let notifier = state.notifier.clone();
             drop(state);
             self.ready.notify_all();
+            if let Some(notifier) = notifier {
+                notifier.notify();
+            }
         }
     }
 }

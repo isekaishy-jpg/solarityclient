@@ -1,6 +1,7 @@
 //! CPU execution and platform-capability boundaries.
 
 mod capabilities;
+mod completion;
 mod environment;
 mod job;
 mod pool;
@@ -9,6 +10,7 @@ mod reciprocal;
 mod synchronization;
 
 pub use capabilities::CpuCapabilities;
+pub use completion::CoordinatorNotifier;
 pub use pool::{
     CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuTask, CpuTaskPermit, FrameBatch,
 };

@@ -411,7 +411,10 @@ impl ClientApplication {
                 return Err(error);
             }
             frame_profile.mark("presentation");
-            frame_limiter.wait();
+            frame_limiter.wait_with(std::time::Instant::now, |delay| {
+                self.services
+                    .wait_for_frame_deadline(std::time::Instant::now() + delay)
+            })?;
             frame_profile.mark("frame limiter");
         }
     }

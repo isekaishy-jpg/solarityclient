@@ -59,6 +59,11 @@ parallel work units.
 - Startup waits for each worker's initialization handshake. On x86-64 it
   matches the coordinator's MXCSR controls, preserving the existing numeric
   kernels and the unrefined stock reciprocal estimate.
+- Runtime supplies a `CoordinatorNotifier` before admission. Tasks and frame
+  batches publish durable outputs before calling it outside scheduler/result
+  locks. The notifier must be bounded and non-panicking; runtime latches native
+  failures for main-thread reporting. Notifications carry no result payload,
+  may coalesce, and keep their native signal alive through producer teardown.
 
 The shared lifecycle mutex is touched only for admission, snapshot, completion,
 and shutdown. Task bodies and result transport do not hold it, so expensive HD

@@ -103,13 +103,33 @@ fn frame_limiter_reschedules_after_a_complete_overrun() {
     );
 }
 
+/// A native failure stays observable and cannot silently consume a frame interval.
+#[test]
+fn frame_limiter_propagates_native_wait_failure_without_advancing_schedule() {
+    let start = Instant::now();
+    let limiter = RefCell::new(FrameLimiter::new());
+    let result = limiter
+        .borrow_mut()
+        .wait_with(|| start, |_| Err("native wait failed"));
+    assert_eq!(result, Err("native wait failed"));
+    let interval = Duration::from_nanos(1_000_000_000 / 1_200);
+    assert_eq!(
+        run_limiter_wait(&limiter, [start, start + interval]),
+        Some(interval)
+    );
+}
+
 /// Runs one deterministic limiter step and captures its requested delay.
 fn run_limiter_wait(limiter: &RefCell<FrameLimiter>, instants: [Instant; 2]) -> Option<Duration> {
     let mut instants = VecDeque::from(instants);
     let requested = RefCell::new(None);
-    limiter.borrow_mut().wait_with(
+    let result: Result<(), std::convert::Infallible> = limiter.borrow_mut().wait_with(
         || instants.pop_front().unwrap_or_else(Instant::now),
-        |duration| *requested.borrow_mut() = Some(duration),
+        |duration| {
+            *requested.borrow_mut() = Some(duration);
+            Ok(())
+        },
     );
+    assert!(result.is_ok());
     requested.into_inner()
 }

@@ -5,6 +5,24 @@ use thiserror::Error;
 /// A failure while owning the primary SDL window and event source.
 #[derive(Debug, Error)]
 pub enum PlatformError {
+    /// Native notification, timer or message waiting failed.
+    #[error("failed to {operation}: Win32 error {code}")]
+    NativeWait {
+        /// The failed operation, without an invented recovery path.
+        operation: &'static str,
+        /// Immediate native error or unexpected wait result.
+        code: u32,
+    },
+    /// SDL could not install the coordinator's notification watch.
+    #[error("failed to install SDL event watch: {message}")]
+    EventWatch {
+        /// SDL diagnostic supplied at registration failure.
+        message: String,
+    },
+    /// No implementation of the required coordinator wait exists on this OS.
+    #[error("native coordinator wait is unsupported on this platform")]
+    UnsupportedCoordinatorWait,
+
     /// SDL rejected the active camera gesture's relative mouse mode.
     #[error("failed to update camera mouse capture: {message}")]
     RelativeMouse {

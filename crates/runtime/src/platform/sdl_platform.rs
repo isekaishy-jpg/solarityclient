@@ -12,6 +12,7 @@ use crate::platform::{PlatformError, PlatformEvent, WindowId};
 
 /// Exclusive owner of SDL objects whose lifecycle is constrained to one thread.
 pub(crate) struct SdlPlatform {
+    wake: super::wakeup::WakeBridge,
     // Declaration order deliberately destroys the pump and window before their
     // subsystem handles and finally the process-level SDL context.
     event_pump: EventPump,
@@ -93,7 +94,9 @@ impl SdlPlatform {
             .and_then(|value| value.checked_mul(1_024 * 1_024))
             .ok_or(PlatformError::SystemRam)?;
 
+        let wake = super::wakeup::WakeBridge::new()?;
         Ok(Self {
+            wake,
             event_pump,
             window,
             total_physical_memory_bytes,
@@ -102,6 +105,47 @@ impl SdlPlatform {
             video,
             sdl,
         })
+    }
+
+    /// Surfaces producer-side native faults on every serviced frame.
+    pub(crate) fn check_wait_health(&self) -> Result<(), PlatformError> {
+        self.wake.check()
+    }
+
+    /// Shares native notification ownership without exposing SDL to workers.
+    pub(crate) fn coordinator_notifier(
+        &self,
+    ) -> std::sync::Arc<dyn solarity_cpu::CoordinatorNotifier> {
+        self.wake.notifier()
+    }
+
+    /// Parks idle/movie service until work, input or its next clock boundary.
+    pub(crate) fn wait_for_work(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> Result<super::wakeup::WakeReason, PlatformError> {
+        let ticket = self.wake.observe();
+        self.event_pump.pump_events();
+        // SAFETY: SDL is live on its owning thread. This checks the entire queue
+        // without removing events or invoking gameplay outside its cutoff.
+        if unsafe { sdl3::sys::events::SDL_HasEvents(0, u32::MAX) } {
+            return Ok(super::wakeup::WakeReason::Input);
+        }
+        self.wake.wait(ticket, deadline)
+    }
+
+    /// Keeps the presentation deadline while collecting native input into SDL's
+    /// queue. Gameplay translation remains at the next ordered frame boundary.
+    pub(crate) fn wait_for_frame_deadline(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> Result<(), PlatformError> {
+        while std::time::Instant::now() < deadline {
+            let ticket = self.wake.observe();
+            self.event_pump.pump_events();
+            self.wake.wait(ticket, deadline)?;
+        }
+        Ok(())
     }
 
     /// Polls until it finds one admitted client event or exhausts SDL's queue.

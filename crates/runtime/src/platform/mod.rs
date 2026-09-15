@@ -20,6 +20,7 @@ mod os_url_download;
 mod os_version_hash;
 mod sdl_platform;
 mod status;
+mod wakeup;
 mod window_identity;
 
 pub(crate) use calendar::realm_calendar_days;

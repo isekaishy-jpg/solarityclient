@@ -26,6 +26,7 @@ pub struct CpuExecutor {
     state: Arc<SharedExecutorState>,
     pub(super) frame_state: Arc<SharedExecutorState>,
     worker_count: usize,
+    pub(super) notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
 }
 
 impl CpuExecutor {
@@ -35,6 +36,24 @@ impl CpuExecutor {
     ///
     /// Returns [`CpuError::PoolBuild`] when worker creation fails.
     pub fn new(config: CpuPoolConfig) -> Result<Self, CpuError> {
+        Self::build(config, None)
+    }
+
+    /// Creates a pool whose published completions wake the runtime coordinator.
+    /// # Errors
+    /// Returns the same worker startup errors as `new`.
+    pub fn with_notifier(
+        config: CpuPoolConfig,
+        notifier: Arc<dyn crate::CoordinatorNotifier>,
+    ) -> Result<Self, CpuError> {
+        Self::build(config, Some(notifier))
+    }
+
+    /// Shares one notifier across the owned producer lifetime.
+    fn build(
+        config: CpuPoolConfig,
+        notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
+    ) -> Result<Self, CpuError> {
         let worker_count = config.worker_count().get();
         let (dispatch, workers) = Dispatch::start(worker_count, config.max_in_flight().get())?;
         Ok(Self {
@@ -43,6 +62,7 @@ impl CpuExecutor {
             state: SharedExecutorState::new(config.max_in_flight()),
             frame_state: SharedExecutorState::new(config.max_in_flight()),
             worker_count,
+            notifier,
         })
     }
 
@@ -76,6 +96,7 @@ impl CpuExecutor {
         Ok(CpuTaskPermit {
             pool,
             lease: self.state.reserve()?,
+            notifier: self.notifier.clone(),
         })
     }
 
@@ -148,6 +169,7 @@ impl CpuExecutor {
 pub struct CpuTaskPermit<'executor> {
     pool: &'executor Dispatch,
     lease: WorkerLease,
+    notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
 }
 
 impl CpuTaskPermit<'_> {
@@ -158,7 +180,11 @@ impl CpuTaskPermit<'_> {
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        let Self { pool, lease } = self;
+        let Self {
+            pool,
+            lease,
+            notifier,
+        } = self;
         let (sender, receiver) = sync_channel(1);
         let finished = Arc::new(AtomicBool::new(false));
         let finished_by_worker = Arc::clone(&finished);
@@ -182,6 +208,9 @@ impl CpuTaskPermit<'_> {
                 drop(lease);
                 let _completion_observed = sender.send(outcome);
                 finished_by_worker.store(true, Ordering::Release);
+                if let Some(notifier) = notifier {
+                    notifier.notify();
+                }
             })),
             WorkClass::Background,
         );

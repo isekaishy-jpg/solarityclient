@@ -311,11 +311,12 @@ and the sequence prevent lost wakeups, not a belief that OS events are counts.
 ### Current Windows/SDL integration
 
 The current [SDL platform owner](../../crates/runtime/src/platform/sdl_platform.rs)
-polls events; it does not yet implement this bridge. The pinned `sdl3` 0.18.4
-source provides an event sender and timed waits, but its duration-based event
-wait converts to whole milliseconds. Blindly using it for sub-millisecond frame
-deadlines can turn a short wait into polling. An SDL user event alone also must
-not carry the only copy of a required completion.
+connects the [native bridge](../../crates/runtime/src/platform/wakeup/mod.rs) to
+frame pacing, minimized service and cinematic deadlines. CPU task and frame
+result publication notify it after releasing result locks. In-frame result
+consumption and loading/GPU continuation integration remain recorded in
+[cutover status](cpu-cutover-status.md). An SDL user event never carries the
+only copy of a required completion.
 
 For the current Windows backend, runtime/platform owns a native notification
 event, a deadline timer and the main-thread event-pump integration. Wait for
@@ -340,6 +341,24 @@ use a narrowly owned event-watch/wakeup adapter that only advances the notifier,
 never filters events or calls gameplay. Verify the pinned SDL watch lifecycle
 and all actual background event producers in integration tests. CPU completions
 use the native signal directly, with no per-job heap-allocated SDL event.
+
+The pinned `sdl3-src` 3.4.14 `SDL_events.c::SDL_PushEvent` invokes watches
+**before** `SDL_PeepEvents(..., SDL_ADDEVENT, ...)`. Therefore a watch notification
+is advisory and cannot prove enqueue completion. The implementation keeps a
+finite maintenance deadline capped at 16 ms (ordinary frame pacing has its
+earlier deadline) to recheck an event inserted after a watch-triggered drain.
+Scheduling delay can extend actual service latency; this is not a post-enqueue
+handshake. The raw watch does no event conversion, allocation or dispatch.
+`SDL_eventwatch.c` serializes removal with callbacks, and the platform drops
+the watch before SDL; an independently owned signal handle pins late CPU
+producers. See SDL's [watch contract](https://wiki.libsdl.org/SDL3/SDL_AddEventWatch)
+and [removal API](https://wiki.libsdl.org/SDL3/SDL_RemoveEventWatch).
+
+Frame-deadline wakes pump Windows messages into SDL's queue without consuming
+gameplay input early or advancing the pacing deadline. Completion wakes do not
+authorize a second simulation step. The native bridge replaces `SDL_DelayPrecise`
+and the minimized/cinematic thread sleeps; timer overshoot remains a measurement
+requirement, not a guaranteed sub-millisecond scheduling latency.
 
 Native wait, timer and notification failures are explicit platform failures;
 they cannot turn into an indefinite successful wait. Latch producer-side signal

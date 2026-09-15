@@ -393,7 +393,8 @@ impl ClientServices {
         let first = u32::from(crt_rand.next_u15());
         let second = u32::from(crt_rand.next_u15());
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
-        let cpu = CpuExecutor::new(configuration.cpu_pool())?;
+        let cpu =
+            CpuExecutor::with_notifier(configuration.cpu_pool(), platform.coordinator_notifier())?;
         tracing::info!(
             protected_workers = cpu.frame_worker_count(),
             flexible_workers = cpu.background_worker_count(),
@@ -1097,6 +1098,7 @@ impl ClientServices {
 
     /// Presents one Glue or resident-world frame under the active VSync policy.
     pub(crate) fn present_frame(&mut self) -> Result<(), ApplicationError> {
+        self.platform.check_wait_health()?;
         self.instrumentation.poll();
         self.profile_scene_context();
         self.service_recording();
@@ -1131,10 +1133,11 @@ impl ClientServices {
                 }
             }
             // A minimized Vulkan surface cannot pace the main loop reliably,
-            // so keep animation time bounded and yield briefly while the event
-            // pump remains responsive to restoration.
+            // so keep animation time bounded and park until work, restoration
+            // input or the next maintenance deadline.
             self.glue_update_clock = update_time;
-            std::thread::sleep(std::time::Duration::from_millis(16));
+            self.platform
+                .wait_for_work(std::time::Instant::now() + std::time::Duration::from_millis(16))?;
             return Ok(());
         }
         self.poll_glue_texture_prewarm();
@@ -1234,11 +1237,10 @@ impl ClientServices {
                     // presents between authored movie frames. The audio device is
                     // the stock master clock, so the next pass recomputes the exact
                     // remaining interval instead of accumulating sleep error.
-                    std::thread::sleep(
-                        remaining
-                            .max(std::time::Duration::from_millis(1))
-                            .min(std::time::Duration::from_millis(8)),
-                    );
+                    self.platform.wait_for_work(
+                        std::time::Instant::now()
+                            + remaining.min(std::time::Duration::from_millis(8)),
+                    )?;
                     return Ok(());
                 }
                 RuntimeCinematicPoll::Finished { object_index } => {
@@ -3175,6 +3177,15 @@ impl ClientServices {
             self.sound.software_channel_count(),
             self.sound.engine_voice_capacity(),
         )
+    }
+
+    /// Waits through the platform bridge without moving the ordered input cutoff.
+    pub(super) fn wait_for_frame_deadline(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> Result<(), ApplicationError> {
+        self.platform.wait_for_frame_deadline(deadline)?;
+        Ok(())
     }
 
     /// Shuts down task admission before consuming the async runtime.

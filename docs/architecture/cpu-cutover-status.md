@@ -22,6 +22,15 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 - Added controlled tests for independent readiness, incremental producer restart,
   bounded batch admission, state return on worker/consumer panic, shutdown and
   rejecting a worker join that would deadlock its lane.
+- Connected durable CPU completion notifications to a Windows event/timer/message
+  wait bridge. Frame pacing, minimized service and cinematic deadlines use it;
+  SDL remains the input owner and gameplay keeps its existing ordered cutoff.
+  Native failures are explicit, producer faults are latched, and signal ownership
+  survives late producers. SDL watches precede queue insertion, so the adapter
+  retains a finite maintenance rescan (at most 16 ms before scheduling delays).
+- Terrain streaming now installs the current camera window before offering a
+  decoded tile for GPU admission. Regression coverage rejects both an unpolled
+  completion and an already-staged old-window tile after movement.
 
 ## Still required for the complete cutover
 
@@ -30,14 +39,13 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 - Node/result/scratch byte reservations and accounting. Current admission limits
   count background tasks and frame batches separately; they do not bound a
   batch's job count or total retained bytes.
-- Native main-thread completion/input/deadline wake bridge and its lifecycle
-  tests. Current frame consumers still wait at their necessary consumption
-  boundaries; the platform message pump has not been replaced.
+- Extend the native bridge to loading/GPU-slot waits and main-ready continuations.
+  Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
   ordered receiver lighting and final geometry reclamation still have barriers.
 - Shared asset request identity/lifecycle, stock-evidenced animation demand and
-  retention, derived cache invalidation, byte-budgeted residency, GPU retirement
-  and current-window-first publication from the resource design.
+  retention, derived cache invalidation, byte-budgeted residency and GPU retirement
+  from the resource design.
 - Full causal wait/queue attribution, overhead/scaling checks, and matched
   movement/loading/live measurements. No FPS gain is established by compilation
   or synthetic correctness tests.
@@ -46,6 +54,15 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+The native-wakeup/current-window checkpoint passed formatting, workspace Clippy
+and all 1,427 tests, with 33 ignored, on 2026-09-15. Coverage adds native arm and
+notification races, late-producer lifetime, SDL event preservation, already-seen
+Windows input, latched native failure, frame-limiter failure propagation and
+old-window rejection before GPU admission. Logs are in ignored
+`target/cpu-wakeup-workspace-tests.log` and `target/cpu-wakeup-clippy.log`.
+
+### Initial owned-batch checkpoint
 
 On 2026-09-15, formatting and workspace Clippy passed. The full
 `cargo test --workspace --all-features` run passed 1,417 tests with 33 ignored.
