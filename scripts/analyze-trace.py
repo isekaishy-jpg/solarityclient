@@ -134,6 +134,13 @@ def main():
     print("Inclusive spans overlap. Exclusive wall time is not charged CPU time. Worker and GPU durations are not additive to frame time.")
     for row in report["operations"]:
         print(f"{row['inclusive_ms']:8.3f} ms inclusive / {row['exclusive_wall_ms']:8.3f} ms exclusive wall  {row['scope']} owner={row['owner']} id={row['id']}")
+    labels = {row["span_id"]: row["label"] for row in selected}
+    timings = [row for row in report["observations"] if row["kind"] == "timing"
+               and row["label"] != labels.get(row["parent_id"])]
+    if timings:
+        print("Published CPU measurements (may overlap; timestamps are publication time):")
+        for row in sorted(timings, key=lambda row: -row["duration_ns"])[:args.top]:
+            print(f"{row['duration_ns'] / 1e6:8.3f} ms  {labels.get(row['parent_id'], 'unresolved owner')} / {row['label']}")
     print("Model-source work (ordered and worker time shown separately):")
     for row in report["models"]:
         print(f"{row.get('ordered_ms', 0):8.3f} ms ordered / {row.get('pose_worker_ms', 0):8.3f} ms pose / {row.get('geometry_worker_ms', 0):8.3f} ms geometry  {row['asset']} placements={int(row.get('placements', 0))} particles={int(row.get('particle_vertices', 0))}")

@@ -49,10 +49,13 @@ class TraceAnalysis(unittest.TestCase):
 
     def test_missing_dependency_is_explicit_and_gpu_is_separate(self):
         gpu = span(2, 99, 4, 8_000_000, kind="gpu")
-        report = analyzer.summarize([span(1, 0, 0, 10), gpu], 1, 10)
+        timing = span(3, 1, 20, 9_000_000, kind="timing")
+        report = analyzer.summarize([span(1, 0, 0, 10), gpu, timing], 1, 10)
         self.assertEqual(report["missing_references"], [99])
         self.assertEqual(len(report["gpu"]), 1)
         self.assertEqual(len(report["operations"]), 1)
+        self.assertEqual(report["operations"][0]["exclusive_wall_ms"], 0.00001)
+        self.assertIn(timing, report["observations"])
 
 
 if __name__ == "__main__":

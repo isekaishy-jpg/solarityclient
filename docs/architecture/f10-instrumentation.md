@@ -334,3 +334,22 @@ were prepared and all consumed. These observations demonstrate separate work
 and wait chains; they are not an FPS improvement or proof that hidden-window
 presentation costs match the live client. The Vulkan phase gap found in this
 capture led to the `timing` records described above.
+
+The final optimized recapture (`capture-1789456729864-1`) retained 221,061 rows,
+including 559 attached timing measurements, over 39.46 seconds. All references
+resolved and all four loss/capacity counters were zero. In sampled frame 3457,
+M2 preparation was 4.771 ms. Renderer CPU measurements separated queue present
+(4.777 ms), command recording (1.087 ms), slot wait/upload (0.634 ms), queue
+submit (0.080 ms) and fence wait (0.010 ms, already inside slot wait/upload).
+The submitting frame's ten GPU phases totaled 2.426 ms on their separate clock.
+This distinguishes a long presentation call from a fence stall; it does not yet
+identify whether the presentation cost comes from the compositor, driver or
+queue backpressure. Confirm that mechanism in the live client before changing
+frame scheduling. Source rows without names represent paths rejected before
+source admission; they remain numeric observations, not missing trace references.
+
+The final observer run measured disabled scopes at 13.42-14.25 ns, ordinary
+scopes at 131.80-147.52 ns and sampled owner/phase/output operations at
+495.60-593.65 ns; all three experiment captures had zero losses. Whole sampled
+frame times include observer work and must remain separate from ordinary frames.
+Neither hidden run is a matched before/after performance comparison.
