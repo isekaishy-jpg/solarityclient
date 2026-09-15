@@ -1,6 +1,7 @@
 //! Bounded owned epochs, prerequisite readiness and typed result consumption.
 
 mod execution;
+mod readiness;
 mod results;
 mod state;
 mod types;
@@ -9,7 +10,7 @@ pub use types::{FrameBatchPlan, FrameJob, JobOutcome};
 
 use super::dispatch::{Work, WorkClass};
 use super::{CpuError, CpuExecutor};
-use state::{Core, Kernel, State};
+use state::{Core, Gate, Kernel, State};
 use std::sync::{Arc, Condvar, Mutex};
 
 /// Reusable typed state with append-only dependencies inside a checked epoch.
@@ -39,6 +40,7 @@ impl<T: Send + 'static> FrameBatch<T> {
             core: Arc::new(Core {
                 state: Mutex::new(State::new(kernel)),
                 ready: Condvar::new(),
+                completion_port: crate::CompletionPort::empty(),
             }),
             active: false,
         }
@@ -55,9 +57,9 @@ impl<T: Send + 'static> FrameBatch<T> {
         }
         state.open = false;
         let launch = state.runners_to_launch();
-        state.release_if_terminal();
         drop(state);
         self.core.launch(launch);
+        self.core.finish_if_terminal();
         Ok(())
     }
 
@@ -66,9 +68,36 @@ impl<T: Send + 'static> FrameBatch<T> {
     /// Returns admission, epoch exhaustion or allocation errors without opening
     /// an epoch. The preceding epoch must first be reclaimed.
     pub fn begin(&mut self, cpu: &CpuExecutor, plan: FrameBatchPlan) -> Result<(), CpuError> {
+        self.begin_dependency(cpu, plan, None)
+    }
+
+    /// Opens a phase behind an external/resource or heterogeneous batch result.
+    /// Subscription capacity is reserved before any job input is transferred.
+    /// # Errors
+    /// Returns ordinary admission errors or stale/exhausted readiness capacity.
+    pub fn begin_when(
+        &mut self,
+        cpu: &CpuExecutor,
+        plan: FrameBatchPlan,
+        dependency: &crate::ReadyToken,
+    ) -> Result<(), CpuError> {
+        self.begin_dependency(cpu, plan, Some(dependency))
+    }
+
+    /// Both root and dependent phases share ownership and shutdown registration.
+    fn begin_dependency(
+        &mut self,
+        cpu: &CpuExecutor,
+        plan: FrameBatchPlan,
+        dependency: Option<&crate::ReadyToken>,
+    ) -> Result<(), CpuError> {
         if self.active {
             return Err(CpuError::BatchActive);
         }
+        let subscription = dependency.map(crate::ReadyToken::reserve).transpose()?;
+        let binder = subscription
+            .as_ref()
+            .map(crate::completion::Subscription::binder);
         let lease = cpu.frame_state.reserve()?;
         let mut state = self.core.lock();
         let generation = state
@@ -76,15 +105,36 @@ impl<T: Send + 'static> FrameBatch<T> {
             .checked_add(1)
             .ok_or(CpuError::EpochExhausted)?;
         state.reserve(plan)?;
+        let completion = self.core.completion_port.begin(cpu.frame_capacity)?;
         state.generation = generation;
         state.plan = plan;
         state.open = true;
+        state.gate = if dependency.is_some() {
+            Gate::Pending
+        } else {
+            Gate::Ready
+        };
+        state.subscription = subscription;
+        state.completion = Some(completion);
         state.workers = cpu.worker_count();
         state.dispatch = Some(Arc::clone(&cpu.dispatch));
         state.notifier = cpu.notifier.clone();
         state.trace = solarity_profiling::TraceContext::capture().fork("cpu.frame.request");
         state.lease = Some(lease);
         self.active = true;
+        drop(state);
+        let owner: Arc<dyn super::epochs::EpochOwner> = self.core.clone();
+        if let Err(error) = cpu.epochs.register(Arc::downgrade(&owner), generation) {
+            owner.stop(generation);
+            self.core.finish_if_terminal();
+            self.core.lock().clear();
+            self.active = false;
+            return Err(error);
+        }
+        if let Some(binder) = binder {
+            let sink: Arc<dyn crate::completion::ReadySink> = self.core.clone();
+            binder.bind(Arc::downgrade(&sink), generation);
+        }
         Ok(())
     }
 
@@ -156,7 +206,23 @@ impl<T: Send + 'static> FrameBatch<T> {
     pub fn close(&mut self) {
         let mut state = self.core.lock();
         state.open = false;
-        state.release_if_terminal();
+        drop(state);
+        self.core.finish_if_terminal();
+    }
+
+    /// Exports this phase's terminal readiness without erasing its typed payload.
+    /// Consumers retain their own immutable result leases across this dependency.
+    /// # Errors
+    /// An inactive batch has no currently admitted completion identity.
+    pub fn completion(&self) -> Result<crate::ReadyToken, CpuError> {
+        if !self.active {
+            return Err(CpuError::BatchInactive);
+        }
+        self.core
+            .lock()
+            .completion
+            .clone()
+            .ok_or(CpuError::BatchInactive)
     }
 
     /// Checks identity before touching a recycled slot.

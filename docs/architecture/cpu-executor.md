@@ -89,8 +89,10 @@ leases state outside the scheduler lock and returns it even if the consumer
 unwinds. Domain error payloads remain in T and are recovered through reclamation.
 
 `close` ends incremental admission; `reclaim` returns every input in admission
-order before reporting terminal failure. An open producer must close or reclaim
-its phase before asking the executor to shut down. Running cancellation is
+order before reporting terminal failure. Executor shutdown closes tracked open
+producers and cancels unresolved external gates before waiting for frame drain.
+An epoch registration includes its generation, so an old executor cannot stop a
+batch that has subsequently rebound elsewhere. Running cancellation is
 acknowledged after the finite kernel returns; it never steals mutable state from
 a running worker. This is not cooperative preemption inside domain kernels.
 
@@ -98,8 +100,46 @@ M2 pose and geometry consumers use these checked identities. Geometry publicatio
 consumes the ordered completed prefix before final reclamation, so stream copies
 can overlap later kernels. Receiver-light callbacks still follow actual emitted
 packet demand; their ordering is not inferred from broad visibility. Cross-batch
-dependencies, external readiness and main-only continuation dispatch remain
-required work, as do reusable dependency templates and global byte budgets.
+dependencies now include a phase completion port. Main-only continuation dispatch,
+reusable dependency templates and global byte budgets remain required work.
+
+## External readiness and phase edges
+
+`CompletionPort` owns a reusable generation with an explicit subscriber maximum.
+`CompletionProducer` is a single external completion owner; abandoning it cancels
+that generation. `ReadyToken` names the generation without owning its resource
+payload. A conflicting second outcome or a late completion after reuse is rejected.
+Reset requires terminal publication, finished delivery and released subscriptions.
+The domain still owns the decoded asset, typed shared product or GPU lease; a
+notification never substitutes for that payload or for GPU completion.
+
+`FrameBatch::begin_when` reserves one subscriber before admitting any owned input.
+The whole phase remains parked in metadata while its worker lanes serve other
+work. Completion racing subscription binding is delivered exactly once. The
+producer releases the port lock before delivery; the sole nested lock order is
+batch metadata -> port metadata for unsubscribe. Delivery changes readiness and
+enqueues workers, never runs domain kernels inline. Even an empty/failed closed
+phase publishes through a scheduled runner when released by a prerequisite,
+preventing recursive failure propagation across long chains.
+
+Dropping a consumer removes only its subscription and closes its producer.
+It does not wait inside a worker destructor: queued/running dispatch records
+retain the owned state, and executor admission remains live until completion.
+Callers needing their inputs back explicitly reclaim before disposal. Both
+explicit executor shutdown and executor drop close admission, stop tracked epochs
+and cancel unresolved external gates, then drain finite running tasks.
+Reclamation waits through terminal port delivery before recycling
+the epoch. Readiness ports visit actual bound subscribers during completion;
+they do not scan the maximum subscriber allowance for each completed frame.
+
+M2 geometry exports a phase token. Once its actual packets establish receiver
+demand, scene-light evaluation consumes that readiness and owns the light/receiver
+vectors on a worker while main sorts transparent packets. The token is normally
+already complete at that point; the useful overlap is light evaluation versus
+transparent ordering, not a claim that receiver callbacks run before geometry.
+The existing ordered light-source owner remains on main, and every vector returns
+before the renderer accesses the resulting scene bank. Arbitrary multi-domain
+fan-in, resource-cache consumers and I/O producers are still integration work.
 
 ## Validation
 

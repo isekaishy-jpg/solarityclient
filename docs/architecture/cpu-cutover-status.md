@@ -43,13 +43,30 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 - Geometry metadata reservation uses selected frame work plus the already-queued
   effect tail. It does not allocate job cells for all distant resident models.
   Dependency execution and output relocation now have focused folder modules.
+- Added reusable bounded completion ports and external producer ownership. Typed
+  phases can depend on another batch's completion without parking a worker.
+  Subscription cancellation affects only its consumer; abandoned producers and
+  failed prerequisites preserve waiting inputs and report dependency failure.
+- The executor now tracks admitted frame epochs for shutdown. Open producers are
+  closed and unresolved external gates are cancelled before waiting for drain;
+  finite running work retains its state until completion. Phase publication is
+  part of drain, so a port cannot be recycled while delivery is still active.
+- Executor drop follows the same shutdown order. Batch disposal closes its
+  producer without blocking a worker on another kernel; dispatch retains owned
+  inputs and executor admission until terminal publication. Explicit reclamation
+  remains the path for callers that need their inputs back.
+- M2 scene-light evaluation is a separate owned CPU phase after packet-dependent
+  receiver queries, gated by geometry completion. It overlaps transparent ordering
+  and transfers its vectors without cloning the spatial bank. Ordered Rc light
+  ownership and callback selection stay on main; all vectors return before errors
+  propagate or the renderer borrows them.
 
 ## Still required for the complete cutover
 
-- Reusable dependency templates, cross-batch/heterogeneous result dependencies,
-  external ready tokens, priority propagation and main-only continuations.
-  Current dependencies are within one reusable typed batch; M2 consumers use
-  checked handles and independent roots, not yet cross-domain dependency graphs.
+- Reusable dependency templates, typed shared-result leases across domains,
+  priority propagation and main-only continuations. Cross-batch readiness now
+  exists at phase boundaries; arbitrary heterogeneous node fan-in and resource
+  cache/I/O integration still require their complete dependency graphs.
 - Aggregate node/result/scratch byte reservations and accounting. Node/edge
   counts are now bounded per declared frame phase; executor-wide bytes and
   allocations nested inside domain job state are not yet budgeted.
@@ -68,6 +85,26 @@ These are remaining implementation requirements, not optional deferred scope.
 No numbered Testing build has been produced from this in-progress cutover.
 
 ## Checkpoint validation
+
+### Phase-readiness and lifecycle checkpoint
+
+The phase-readiness/scene-lighting checkpoint passed the full workspace suite
+with 1,439 tests and 33 ignored on 2026-09-15. This includes moving M2 geometry,
+receiver-uniform and light-source-order parity. A subsequent worker-disposal
+review removed the destructor wait; all 32 CPU tests then passed, including its
+new controlled in-flight disposal regression. Final formatting and workspace
+Clippy passed. The full workspace suite preceded that final disposal change;
+the complete CPU suite covers it. Logs are in ignored
+`target/cpu-readiness-workspace-tests-final.log`,
+`target/cpu-readiness-lifecycle-tests.log` and
+`target/cpu-readiness-clippy-final.log`.
+
+Readiness coverage includes late registration, subscriber capacity reuse,
+abandoned producers, heterogeneous phase ordering, chained failure, and both
+explicit shutdown and executor drop with unresolved gates/open producers.
+These checks establish ownership and ordering, not a live performance gain.
+
+### Bounded-dependency checkpoint
 
 The bounded-dependency/ordered-publication checkpoint passed the full workspace
 suite with 1,432 tests and 33 ignored on 2026-09-15. The moving M2 parity fixture

@@ -25,6 +25,8 @@ pub struct CpuExecutor {
     workers: Vec<JoinHandle<()>>,
     state: Arc<SharedExecutorState>,
     pub(super) frame_state: Arc<SharedExecutorState>,
+    pub(super) epochs: super::epochs::Epochs,
+    pub(super) frame_capacity: usize,
     worker_count: usize,
     pub(super) notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
 }
@@ -61,6 +63,8 @@ impl CpuExecutor {
             workers,
             state: SharedExecutorState::new(config.max_in_flight()),
             frame_state: SharedExecutorState::new(config.max_in_flight()),
+            epochs: super::epochs::Epochs::new(config.max_in_flight().get()),
+            frame_capacity: config.max_in_flight().get(),
             worker_count,
             notifier,
         })
@@ -147,13 +151,16 @@ impl CpuExecutor {
 
     /// Closes admission, waits for all admitted work, and releases the workers.
     ///
-    /// The operation is idempotent. No task is cancelled or detached.
+    /// The operation is idempotent. Unresolved external gates are cancelled;
+    /// finite running work drains and no task is detached.
     ///
     /// # Errors
     ///
     /// Returns [`CpuError::StateUnavailable`] if lifecycle state cannot be
     /// observed consistently.
     pub fn shutdown(&mut self) -> Result<(), CpuError> {
+        self.frame_state.close_admission()?;
+        self.epochs.stop()?;
         self.state.stop_and_wait()?;
         self.frame_state.stop_and_wait()?;
         self.dispatch.stop();
@@ -222,6 +229,8 @@ impl Drop for CpuExecutor {
     fn drop(&mut self) {
         // Destructors cannot report errors. Normal owners call `shutdown`; this
         // path still closes admission and drains all observable admitted work.
+        let _closed = self.frame_state.close_admission();
+        let _stopped = self.epochs.stop();
         let _shutdown_result = self.state.stop_and_wait();
         let _frame_shutdown = self.frame_state.stop_and_wait();
         self.dispatch.stop();

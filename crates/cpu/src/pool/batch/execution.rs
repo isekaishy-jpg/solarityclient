@@ -14,7 +14,8 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                 let index = loop {
                     let Some(index) = state.ready.pop_front() else {
                         state.runners -= 1;
-                        state.release_if_terminal();
+                        drop(state);
+                        self.finish_if_terminal();
                         self.ready.notify_all();
                         return;
                     };

@@ -1,5 +1,9 @@
 //! Completion notification is separate from durable typed result ownership.
 
+mod readiness;
+pub use readiness::{CompletionPort, CompletionProducer, ReadyToken};
+pub(crate) use readiness::{ReadySink, Subscription};
+
 /// Runtime-owned wake signal for a coordinator that may be parked.
 /// Implementations must be thread-safe, bounded and non-panicking. They must
 /// retain any native handle for the lifetime of every producer and latch native

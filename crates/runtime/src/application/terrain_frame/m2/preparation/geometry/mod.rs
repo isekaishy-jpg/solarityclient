@@ -76,6 +76,7 @@ pub(in super::super::super) struct GeometryBatch {
     pending: solarity_cpu::FrameBatch<GeometryJob>,
     handles: Vec<solarity_cpu::FrameJob<GeometryJob>>,
     submitted: bool,
+    completion: Option<solarity_cpu::ReadyToken>,
 }
 
 /// Immutable generation and camera inputs own every worker dependency.
@@ -94,6 +95,7 @@ impl Default for GeometryBatch {
             pending: solarity_cpu::FrameBatch::new(GeometryJob::execute),
             handles: Vec::new(),
             submitted: false,
+            completion: None,
         }
     }
 }

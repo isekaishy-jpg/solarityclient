@@ -6,6 +6,7 @@
 
 mod batch;
 mod dispatch;
+mod epochs;
 mod executor;
 mod task;
 mod types;

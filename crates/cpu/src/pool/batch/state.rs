@@ -1,9 +1,10 @@
 //! Flat reserved dependency metadata; no user operation runs under this lock.
 
 use super::{FrameBatchPlan, FrameJob, JobOutcome};
+use crate::completion::Subscription;
 use crate::pool::dispatch::Dispatch;
 use crate::pool::worker::WorkerLease;
-use crate::{CoordinatorNotifier, CpuError};
+use crate::{CompletionPort, CoordinatorNotifier, CpuError, ReadyToken};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
@@ -44,6 +45,13 @@ pub(super) enum Status {
     Running,
     Terminal(JobOutcome),
 }
+/// A phase has one explicit external/resource or other-batch prerequisite.
+#[derive(Clone, Copy)]
+pub(super) enum Gate {
+    Ready,
+    Pending,
+    Failed,
+}
 /// One admitted node and its dependency propagation state.
 pub(super) struct Node {
     pub status: Status,
@@ -65,6 +73,10 @@ pub(super) struct State<T> {
     pub runners: usize,
     pub workers: usize,
     pub open: bool,
+    pub gate: Gate,
+    pub subscription: Option<Subscription>,
+    pub completion: Option<ReadyToken>,
+    pub finishing: bool,
     pub kernel: Kernel<T>,
     pub lease: Option<WorkerLease>,
     pub dispatch: Option<Arc<Dispatch>>,
@@ -86,6 +98,10 @@ impl<T> State<T> {
             runners: 0,
             workers: 0,
             open: false,
+            gate: Gate::Ready,
+            subscription: None,
+            completion: None,
+            finishing: false,
             kernel,
             lease: None,
             dispatch: None,
@@ -136,7 +152,7 @@ impl<T> State<T> {
             }
         }
         if node.remaining == 0 {
-            if node.failed_parent {
+            if node.failed_parent || matches!(self.gate, Gate::Failed) {
                 node.status = Status::Terminal(JobOutcome::DependencyFailed);
             } else {
                 node.status = Status::Ready;
@@ -179,6 +195,9 @@ impl<T> State<T> {
     }
     /// Reserves dispatch entries before unlocking completion/admission metadata.
     pub fn runners_to_launch(&mut self) -> usize {
+        if matches!(self.gate, Gate::Pending) {
+            return 0;
+        }
         let launch = self
             .ready
             .len()
@@ -186,12 +205,26 @@ impl<T> State<T> {
         self.runners += launch;
         launch
     }
-    /// Backward-only dependencies guarantee a closed phase with no active/ready
-    /// worker has no unresolved external producer.
-    pub fn release_if_terminal(&mut self) {
-        if !self.open && self.runners == 0 && self.ready.is_empty() {
-            self.lease = None;
+    /// Identifies the final publication owner without releasing admission early.
+    pub fn can_finish(&self) -> bool {
+        !self.open
+            && self.runners == 0
+            && self.ready.is_empty()
+            && !matches!(self.gate, Gate::Pending)
+            && self.lease.is_some()
+            && !self.finishing
+    }
+    /// No kernel can have started behind a pending gate. Cancellation suppresses
+    /// every waiting input and removes its subscription independently of others.
+    pub fn fail_gate(&mut self) {
+        self.gate = Gate::Failed;
+        self.subscription = None;
+        for index in 0..self.nodes.len() {
+            if !matches!(self.nodes[index].status, Status::Terminal(_)) {
+                self.complete(index, JobOutcome::DependencyFailed);
+            }
         }
+        self.ready.clear();
     }
     /// Clears activation lengths while retaining metadata for later frames.
     pub fn clear(&mut self) {
@@ -200,12 +233,14 @@ impl<T> State<T> {
         self.edge_count = 0;
         self.ready.clear();
         self.dispatch = None;
+        self.subscription = None;
     }
 }
 /// Shared only with this epoch's workers, never mutable world state.
 pub(super) struct Core<T> {
     pub state: Mutex<State<T>>,
     pub ready: Condvar,
+    pub completion_port: CompletionPort,
 }
 impl<T> Core<T> {
     /// Metadata mutations never execute a domain kernel or consumer callback.

@@ -15,6 +15,7 @@ impl M2Frame {
         debug_assert!(self.geometry_batch.jobs.iter().all(|job| !job.owns_effects));
         self.geometry_batch.active = 0;
         self.geometry_batch.handles.clear();
+        self.geometry_batch.completion = None;
         if let Some(cpu) = cpu {
             let maximum = self
                 .frame_work
@@ -25,8 +26,14 @@ impl M2Frame {
                 .pending
                 .begin(cpu, solarity_cpu::FrameBatchPlan::new(maximum, 0))?;
             self.geometry_batch.submitted = true;
+            self.geometry_batch.completion = Some(self.geometry_batch.pending.completion()?);
         }
         Ok(())
+    }
+
+    /// Exports only readiness; geometry and effect payloads retain their typed owners.
+    pub(in super::super) fn geometry_completion(&self) -> Option<solarity_cpu::ReadyToken> {
+        self.geometry_batch.completion.clone()
     }
 
     /// Restores every model on success, validation errors and joined-worker panics.

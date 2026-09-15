@@ -82,6 +82,18 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// A removed producer or recycled readiness generation was referenced.
+    #[error("readiness generation is stale")]
+    StaleReadiness,
+    /// Reset or producer creation would invalidate active completion ownership.
+    #[error("readiness generation still has active ownership")]
+    ReadinessActive,
+    /// The resource's declared subscriber allowance is exhausted.
+    #[error("readiness subscriber capacity is exhausted")]
+    ReadinessCapacity,
+    /// A second terminal publication contradicts the first.
+    #[error("readiness completion conflicts with its terminal outcome")]
+    ReadinessConflict,
     /// A handle belongs to another batch or a reclaimed generation.
     #[error("CPU frame job identity is stale")]
     StaleJob,

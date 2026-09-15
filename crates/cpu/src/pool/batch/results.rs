@@ -115,14 +115,13 @@ impl<T: Send + 'static> FrameBatch<T> {
         if !self.active {
             return Ok(());
         }
-        let mut state = self.core.lock();
-        if crate::environment::is_worker() && state.runners != 0 {
+        if crate::environment::is_worker() && self.core.lock().lease.is_some() {
             return Err(CpuError::WorkerWait);
         }
-        state.open = false;
-        state.release_if_terminal();
+        self.close();
+        let mut state = self.core.lock();
         let _wait = solarity_profiling::profile!("cpu.frame.reclaim_wait");
-        while state.runners != 0 {
+        while state.lease.is_some() {
             state = self
                 .core
                 .ready
@@ -162,15 +161,12 @@ impl<T> Drop for ReturnedJob<'_, T> {
 }
 impl<T: Send + 'static> Drop for FrameBatch<T> {
     fn drop(&mut self) {
-        let mut state = self.core.lock();
-        state.open = false;
-        state.release_if_terminal();
-        while state.runners != 0 {
-            state = self
-                .core
-                .ready
-                .wait(state)
-                .unwrap_or_else(|_| unreachable!("batch metadata mutations cannot panic"));
-        }
+        let epoch = self.core.lock().generation;
+        let owner: std::sync::Arc<dyn crate::pool::epochs::EpochOwner> = self.core.clone();
+        owner.stop(epoch);
+        // Queued/running dispatch records retain Core and its owned inputs until
+        // terminal publication. Executor admission still counts that work. A
+        // dropped consumer cannot park its worker waiting for another worker;
+        // callers needing inputs back use explicit reclaim before dropping.
     }
 }

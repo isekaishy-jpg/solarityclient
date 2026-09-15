@@ -1066,63 +1066,77 @@ impl M2Frame {
             )?;
         }
         frame_profile.mark("visible receiver queries");
-        self.transparent_elements.sort_unstable_by(|left, right| {
-            (left.pass != first_transparent_pass)
-                .cmp(&(right.pass != first_transparent_pass))
-                .then_with(|| compare_m2_transparent(&left.key, &right.key))
-        });
-        let first_transparent_order = scene_element_count(
-            self.visible_draws.len(),
-            self.particle_draws.len(),
-            self.ribbon_draws.len(),
-        )?;
-        let water_scene_order = first_transparent_order
-            .checked_add(
-                self.transparent_elements
-                    .iter()
-                    .take_while(|element| element.pass == first_transparent_pass)
-                    .count(),
-            )
-            .and_then(|index| u32::try_from(index).ok())
-            .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
-        for (index, element) in self.transparent_elements.iter().enumerate() {
-            let scene_order = first_transparent_order
-                .checked_add(index)
+        if let Some((base, exterior)) = world_lighting
+            && cpu.is_some()
+        {
+            let dependency = self.geometry_completion();
+            self.scene_lighting
+                .begin_finish(cpu, dependency.as_ref(), base, exterior)?;
+        }
+        let transparent_result = (|| -> Result<u32, RuntimeTerrainFrameError> {
+            self.transparent_elements.sort_unstable_by(|left, right| {
+                (left.pass != first_transparent_pass)
+                    .cmp(&(right.pass != first_transparent_pass))
+                    .then_with(|| compare_m2_transparent(&left.key, &right.key))
+            });
+            let first_transparent_order = scene_element_count(
+                self.visible_draws.len(),
+                self.particle_draws.len(),
+                self.ribbon_draws.len(),
+            )?;
+            let water_scene_order = first_transparent_order
+                .checked_add(
+                    self.transparent_elements
+                        .iter()
+                        .take_while(|element| element.pass == first_transparent_pass)
+                        .count(),
+                )
                 .and_then(|index| u32::try_from(index).ok())
                 .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
-            match element.draw {
-                M2TransparentDrawIndex::Mesh(draw_index) => {
-                    let draw = self
-                        .visible_draws
-                        .get_mut(draw_index)
-                        .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
-                    *draw = draw.with_scene_order(scene_order);
-                }
-                M2TransparentDrawIndex::Particle(draw_index) => {
-                    let draw = self
-                        .particle_draws
-                        .get_mut(draw_index)
-                        .ok_or(solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
-                    *draw = draw.with_scene_order(scene_order);
-                }
-                M2TransparentDrawIndex::Ribbon { first, count } => {
-                    let draws = self
-                        .ribbon_draws
-                        .get_mut(first..first + count)
-                        .ok_or(solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
-                    for draw in draws {
+            for (index, element) in self.transparent_elements.iter().enumerate() {
+                let scene_order = first_transparent_order
+                    .checked_add(index)
+                    .and_then(|index| u32::try_from(index).ok())
+                    .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
+                match element.draw {
+                    M2TransparentDrawIndex::Mesh(draw_index) => {
+                        let draw = self
+                            .visible_draws
+                            .get_mut(draw_index)
+                            .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
                         *draw = draw.with_scene_order(scene_order);
+                    }
+                    M2TransparentDrawIndex::Particle(draw_index) => {
+                        let draw = self
+                            .particle_draws
+                            .get_mut(draw_index)
+                            .ok_or(solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
+                        *draw = draw.with_scene_order(scene_order);
+                    }
+                    M2TransparentDrawIndex::Ribbon { first, count } => {
+                        let draws = self
+                            .ribbon_draws
+                            .get_mut(first..first + count)
+                            .ok_or(solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
+                        for draw in draws {
+                            *draw = draw.with_scene_order(scene_order);
+                        }
                     }
                 }
             }
-        }
-        self.visible_draws.sort_by_key(|draw| draw.scene_order());
-        self.particle_draws.sort_by_key(|draw| draw.scene_order());
-        self.ribbon_draws.sort_by_key(|draw| draw.scene_order());
+            self.visible_draws.sort_by_key(|draw| draw.scene_order());
+            self.particle_draws.sort_by_key(|draw| draw.scene_order());
+            self.ribbon_draws.sort_by_key(|draw| draw.scene_order());
+            Ok(water_scene_order)
+        })();
         frame_profile.mark("transparent order");
-        if let Some((base, exterior)) = world_lighting {
-            self.scene_lighting.finish(base, exterior)?;
-        }
+        let lighting_result = match world_lighting {
+            Some((base, exterior)) if cpu.is_none() => self.scene_lighting.finish(base, exterior),
+            Some(_) => self.scene_lighting.finish_pending(),
+            None => Ok(()),
+        };
+        let water_scene_order = transparent_result?;
+        lighting_result?;
         frame_profile.mark("scene lights");
         Ok(M2VisibleFrame {
             trace: solarity_profiling::TraceContext::capture(),

@@ -10,7 +10,7 @@ mod reciprocal;
 mod synchronization;
 
 pub use capabilities::CpuCapabilities;
-pub use completion::CoordinatorNotifier;
+pub use completion::{CompletionPort, CompletionProducer, CoordinatorNotifier, ReadyToken};
 pub use pool::{
     CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuTask, CpuTaskPermit, FrameBatch,
     FrameBatchPlan, FrameJob, JobOutcome,

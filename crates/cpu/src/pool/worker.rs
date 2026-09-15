@@ -50,7 +50,13 @@ impl SharedExecutorState {
         })
     }
 
-    /// Closes admission and waits until every previously admitted task finishes.
+    /// Closes admission before owners cancel unresolved prerequisites.
+    pub(crate) fn close_admission(&self) -> Result<(), CpuError> {
+        self.lock()?.accepting = false;
+        Ok(())
+    }
+
+    /// Waits after owners have closed external dependencies and open producers.
     pub(crate) fn stop_and_wait(&self) -> Result<(), CpuError> {
         let mut lifecycle = self.lock()?;
         lifecycle.accepting = false;

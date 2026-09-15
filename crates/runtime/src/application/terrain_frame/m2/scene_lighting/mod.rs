@@ -1,10 +1,10 @@
-//! Current scene publication, then receiver queries after every source update.
+//! Ordered scene ownership and worker-ready receiver evaluation.
+
+mod work;
+use work::LightingBatch;
 
 use glam::Vec3;
-use solarity_rendering::{
-    M2DirectionalLight, M2LocalLightState, M2PointLight, M2SceneUniform, ScenePointLights,
-    merge_wotlk_directional_lights,
-};
+use solarity_rendering::{M2DirectionalLight, M2PointLight, M2SceneUniform, ScenePointLights};
 
 use super::RuntimeTerrainFrameError;
 use std::rc::{Rc, Weak};
@@ -18,6 +18,7 @@ struct RetainedDirectional {
 
 #[derive(Default)]
 pub(super) struct SceneLighting {
+    batch: LightingBatch,
     pub points: ScenePointLights,
     pub scenes: Vec<M2SceneUniform>,
     pub sample_directional: Vec<(usize, M2DirectionalLight)>,
@@ -136,11 +137,18 @@ impl SceneLighting {
         Ok(index)
     }
 
+    /// Serial compatibility path used by reference/parity callers.
     pub fn finish(
         &mut self,
         base: M2SceneUniform,
         exterior: M2DirectionalLight,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.begin_finish(None, None, base, exterior)?;
+        self.finish_pending()
+    }
+
+    /// Preserves linked-list source order on the existing Rc owner thread.
+    fn prepare_directionals(&mut self, exterior: M2DirectionalLight) {
         // Scene linked lists precede the entity callback's exterior contribution.
         self.retained_directionals.retain(|light| light.active);
         self.directional.extend(
@@ -150,58 +158,5 @@ impl SceneLighting {
                 .map(|entry| entry.light),
         );
         self.directional.push(exterior);
-        for (((center, light), fog), placement) in self
-            .centers
-            .iter()
-            .zip(&self.receiver_lights)
-            .zip(&self.receiver_fog)
-            .zip(&self.receiver_placements)
-        {
-            // A vehicle may be published after its passenger. Resolve only
-            // after every source and entity callback has joined this frame.
-            let (mut center, mut light) = (*center, *light);
-            let mut current = *placement;
-            for _ in 0..self.placement_end {
-                let Some(parent) = self.placement_parents.get(current).copied().flatten() else {
-                    break;
-                };
-                if parent == *placement {
-                    break;
-                }
-                if let Some(value) = self.placement_centers.get(parent).copied().flatten() {
-                    center = value;
-                }
-                light = self
-                    .placement_lights
-                    .get(parent)
-                    .copied()
-                    .flatten()
-                    .or(light);
-                current = parent;
-            }
-            if let Some(last) = self.directional.last_mut() {
-                *last = light.unwrap_or(exterior);
-            }
-            let sunlight = merge_wotlk_directional_lights(&self.directional);
-            let mut lights = [M2LocalLightState::disabled(); 4];
-            if let Some(sunlight) = sunlight {
-                lights[0] = sunlight.local_light_state();
-            }
-            for (slot, index) in self
-                .points
-                .query(center, 0.0)?
-                .indices()
-                .into_iter()
-                .flatten()
-                .take(3)
-                .enumerate()
-            {
-                lights[slot + 1] = self.points.points()[index].local_light_state();
-            }
-            let scene = base.with_local_lights(lights);
-            self.scenes
-                .push(fog.map_or(scene, |color| scene.with_fog_color(color)));
-        }
-        Ok(())
     }
 }
