@@ -4,6 +4,8 @@ This document records the existing executor and its initial ownership contract.
 The [CPU frame-job design](cpu-frame-job-design.md) specifies its planned
 dependency scheduler, worker policy, ordered publication and stall attribution
 for the 1,200 FPS goal. That design is not implemented by this documentation change.
+The [CPU crate composition design](cpu-crate-composition-design.md) defines the
+complete proposed facade and its capability, storage and wakeup contracts.
 
 The CPU executor is the second implementation boundary after deterministic
 asset resolution. It owns finite CPU-intensive work such as archive decoding,

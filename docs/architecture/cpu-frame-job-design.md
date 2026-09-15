@@ -10,6 +10,10 @@ defines shared pending resources, typed cache validity, memory budgets and
 stock-compatible retention/prefetch. CPU jobs execute that work; its domain
 policy remains outside the CPU scheduler.
 
+The [CPU crate composition design](cpu-crate-composition-design.md) completes
+the capabilities/environment, reusable execution-storage and completion/wakeup
+contracts and provides the full facade/module map.
+
 ## Objective and limits
 
 The steady-frame target is **0.833 ms per completed frame**. Shorten the CPU
@@ -583,7 +587,7 @@ Use existing numeric/native fixtures on both main and worker execution paths.
 
 ## Folder boundaries
 
-Keep the nine-crate modular monolith. No scheduler knowledge of M2, terrain,
+Keep the existing workspace modular monolith. No scheduler knowledge of M2, terrain,
 Lua, Vulkan or network payloads belongs in `solarity-cpu`.
 
 ```text
@@ -617,6 +621,8 @@ Names describe proposed responsibilities. Reuse existing modules where they
 already own them. Each `mod.rs` stays a small facade. CPU emits facts to the
 existing profiling dependency; profiling does not depend back on CPU. Runtime
 owns orchestration, and rendering owns GPU safety and resource lifetimes.
+The composition design linked above expands the CPU portion with the supporting
+modules; this abbreviated frame-integration map is not the complete crate tree.
 
 ## Migration and review gates
 

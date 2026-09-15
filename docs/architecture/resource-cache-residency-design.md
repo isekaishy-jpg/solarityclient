@@ -485,7 +485,7 @@ crates/profiling/src/         resource identities and off-thread accounting repo
 
 Keep resource-specific policy in its domain. Common request/accounting types
 live at the lowest existing dependency boundary that their real consumers can
-use; do not create a tenth crate just to host a generic cache abstraction.
+use; do not create another crate just to host a generic cache abstraction.
 Facades stay small; the old flat `m2_model.rs` becomes a folder only when its
 new responsibilities require it. No repository-wide reorganization is needed.
 
