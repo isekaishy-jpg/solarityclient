@@ -508,6 +508,57 @@ analysis stay off measured workers. Disabling capture releases its large buffers
 through bounded retirement; account for retained diagnostic memory explicitly.
 Instrumentation has nonzero cost and must pass the overhead gates below.
 
+## Execution boundaries
+
+### Responsiveness and lifecycle transitions
+
+An asynchronous graph must not make the application unresponsive while it
+prepares a long frame or loading transaction. Main processes platform events
+between bounded continuations and while servicing named readiness waits.
+Platform event collection does not execute arbitrary gameplay mutations against
+an already frozen frame. Record the frame's input/state cutoff; newly collected
+gameplay input belongs to the next permitted ordered-state boundary. Do not
+introduce late camera mutation against packets prepared for another camera.
+
+Resize, surface recreation, disconnect, map change and shutdown invalidate the
+appropriate publication generations. Stop admission of affected work, preserve
+its leases until it finishes, and keep ready main-only cleanup serviceable.
+Rendering establishes a safe device/surface transition boundary before replacing
+resources; stale commands cannot submit against a new surface/device generation.
+Do not force-cancel a worker using old memory or let a lifecycle transition wait
+on a completion that only its blocked main thread can service.
+
+Focus/minimize and frame-cap policy belong to runtime and must be recorded in
+benchmarks. Preserve stock clock, callback and background behavior where it is
+known; research missing behavior before changing update cadence or adding a
+catch-up loop. Spare workers do not imply continuous background simulation or
+busy polling when no frame is being requested.
+
+Measure event collection -> ordered application -> CPU submission, plus GPU
+completion/presentation timing where available. Label software endpoints
+accurately; they are not input-to-photon measurements. A larger queue or more
+frames in flight that raises throughput while increasing latency is an explicit
+tradeoff, not an unqualified performance gain.
+
+### Memory locality and worker execution state
+
+Workers reuse local scratch and return owned result pages; do not introduce a
+shared allocator/free-list lock for every model, bone or particle. Keep frequently
+written scheduler counters and adjacent worker outputs from unnecessarily
+contending on the same cache lines. Apply layout changes to measured hot state,
+not blanket padding of all instances. Track allocation count, copied bytes,
+scratch high-water marks and relevant lock wait time alongside worker occupancy.
+More active workers can increase memory traffic and must earn their place in
+the whole-frame scaling comparison.
+
+Declare and verify the floating-point execution assumptions used by parity
+kernels on each worker, including rounding/denormal handling where relevant.
+Do not assume thread creation or a foreign decoder preserves the desired state.
+Separate such foreign work, or establish/verify the required state at its
+boundary. Preserve reduction/evaluation order when it affects required results;
+a nondeterministic parallel reduction is not justified by unchanged RNG order.
+Use existing numeric/native fixtures on both main and worker execution paths.
+
 ## Failure, cancellation and shutdown
 
 - Domain errors preserve current stock-compatible handling. Scheduler errors
@@ -606,6 +657,9 @@ Tests live outside `src`, using controlled scheduling/completion order:
   bulk task while a frame becomes ready. No lost input or hidden inline execution.
 - Main-affinity continuations, parent/child attachment chains, shared resources,
   stale generations, frame abort and shutdown with pending work.
+- Input arriving during a long frame, resize/disconnect while jobs and GPU use
+  remain outstanding, and main-only publication during a readiness wait.
+  Verify progress, generation rejection and the ordered input cutoff.
 - Stock animation/callback/RNG traces, independent shadow demand, portal/WMO
   admission, particle/ribbon state and transparent order under different job
   completion orders. Use existing native fixtures and matched rendered captures.
@@ -627,6 +681,14 @@ main useful work, named waits, ready delay, worker occupancy, longest required
 chain, publication/recording cost, GPU time/backpressure and queue age. Compare
 the same workload with one and several workers; additional CPU use is acceptable
 only when latency/throughput or required background progress benefits justify it.
+
+Use a controlled matrix to distinguish scheduling gains from cache gains:
+one/several workers, cold/warm resources, required background loading off/on,
+and diagnostic capture off/on. Replay identical logical inputs and workload
+counts for CPU comparisons, then verify with real-time movement captures.
+Synthetic queue benchmarks validate overhead but cannot establish a world-frame
+speedup. Reject a change that moves the measured cost into copies, allocation,
+publication, a longer input queue or an unmeasured worker.
 
 Initial engineering budgets for the **0.833 ms CPU target**, not measured values:
 

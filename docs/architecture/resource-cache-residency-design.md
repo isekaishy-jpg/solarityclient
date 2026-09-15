@@ -349,6 +349,28 @@ traces under the same inputs. Cache hits still execute the surrounding ordered
 simulation/event phases. A validated input-generation mismatch recomputes the
 result; it does not silently use stale data.
 
+## Invalidation delivery
+
+Keys describe validity; they also need reliable producers of change. Each
+domain owns revision tokens for the inputs it mutates and a local journal of
+affected owners/products. Resource replacement, equipment changes, font metrics,
+spatial membership and relevant settings advance the appropriate revisions.
+A clock advancing does not invalidate unrelated static products.
+
+Publish revision changes at the ordered mutation boundary before consumers
+can use cached products. Worker output records its input revisions and is
+rejected if they no longer match at publication. Invalidation is not deferred
+until an asynchronous rebuild finishes: a stale value becomes unusable
+immediately, while recomputation can be scheduled according to demand.
+
+Keep reverse dependencies local and coalesce duplicate notifications. Do not
+walk every cached resource on each edit or allocate one notification per glyph.
+Invalidation is correctness state and cannot be dropped under pressure. Bound
+its representation through dirty owner/product state, with an explicit drain
+and lifetime for the dependency links. Diagnostic record-loss rules never apply
+to invalidation. Test repeated changes while an earlier rebuild is in flight,
+owner ID reuse, and multiple cached products depending on the same source.
+
 ## Prefetch and available resources
 
 Prefetch has its own consumer subscription and accounting. It may prepare
