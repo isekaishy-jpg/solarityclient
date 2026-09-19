@@ -19,6 +19,26 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- M2 preparation now retains an explicit continuation through admission, ordered
+  geometry publication, geometry/pose reclamation, receiver callbacks and scene
+  lighting. Each resume consumes only ready work; an unfinished dependency
+  returns the unrelated main owners before the driver selects its exact wait.
+  The geometry cursor and capacity totals survive yields, and terminal readiness
+  cannot repeat receivers, transparency ordering, effects or random consumption.
+- World presentation revisits root-pose admission between its ordered ground-detail
+  and WMO packet steps. A pose that becomes ready during ground-detail work can
+  now release geometry before WMO preparation finishes. Receiver callbacks and
+  fog-bank publication remain after those independent steps. Renderer options
+  are captured at admission, so the continuation need not retain its renderer
+  borrow. The world driver lives in the `terrain_frame/presentation` folder.
+- CPU batches expose non-consuming result/terminal waits for offline drivers.
+  An open producer is rejected at terminal wait, avoiding a wait on the caller's
+  own future append. Unfinished waits reject CPU workers. Dropping an M2
+  continuation restores lighting storage as well as poses and effect state.
+  This establishes resumable frame phases and two interleaved main operations;
+  it does not yet implement the complete cross-domain main-ready queue or loading
+  and upload continuation graph.
+
 - Live world/Glue, UI/loading and cinematic presentation now service native input
   while their exact next GPU frame slot is unavailable. One rendering-owned
   completion thread performs the host wait; CPU workers never wait for a GPU fence.
@@ -435,6 +455,24 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Resumable M2 phase checkpoint
+
+On 2026-09-19, formatting and full workspace/all-target/all-feature Clippy passed.
+The full workspace/all-feature test run passed **1,538 tests**, with **33 ignored**
+and no failures across 90 suites. The M2 motion fixture compares meshes,
+particles, ribbons, shadows, receiver lighting, ordering and CRT state with the
+frozen serial traversal. It now checks repeated nonblocking resumes while all
+workers are held, performs a hidden Vulkan operation using the released renderer
+owner, and revisits a completed continuation before checking identical output.
+Existing tests retain abandonment, resource-failure and attachment coverage.
+
+New CPU tests cover non-consuming readiness with unrelated work still blocked,
+stale handles, open-producer rejection without closing admission, worker wait
+rejection, and failure-state recovery. Native readiness still preserves queued
+gameplay input. Logs are in ignored `target/main-continuation-final-*` files.
+These checks establish ordering and ownership, not a live frame-time gain or
+completion of the outstanding cutover requirements.
 
 ### Build 146 package checkpoint
 

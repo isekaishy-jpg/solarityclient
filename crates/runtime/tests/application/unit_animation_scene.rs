@@ -815,7 +815,6 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
             );
         } else {
             let draws = pending.finish(
-                &renderer,
                 &cpu,
                 &mut crate::application::frame_pipeline::FrameWait::Offline,
                 &mut random,

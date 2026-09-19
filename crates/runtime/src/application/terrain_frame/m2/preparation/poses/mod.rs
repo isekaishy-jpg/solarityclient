@@ -33,6 +33,19 @@ impl Default for PoseBatch {
 }
 
 impl PoseBatch {
+    pub(in crate::application::terrain_frame::m2) fn is_finished(&self) -> bool {
+        self.pending.is_finished()
+    }
+
+    /// Waits only for closed-phase retirement; state remains owned until finish.
+    pub(in crate::application::terrain_frame::m2) fn wait_finished(
+        &self,
+        wait: &mut FrameWait<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        wait.before_reclaim(&self.pending)?;
+        Ok(())
+    }
+
     /// Services main before the next root enters ordered placement mutation.
     pub(in crate::application::terrain_frame::m2) fn wait_for_root(
         &self,

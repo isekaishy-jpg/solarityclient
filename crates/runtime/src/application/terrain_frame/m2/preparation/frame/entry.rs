@@ -5,7 +5,7 @@ use super::super::super::{
     RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum, unit_effects,
 };
 use super::PendingM2Frame;
-use super::input::{AdmissionMode, FrameAdmission, FrameView};
+use super::input::{FrameAdmission, FrameView};
 use crate::application::frame_pipeline::FrameWait;
 
 impl M2Frame {
@@ -16,7 +16,15 @@ impl M2Frame {
         let geometry = self.finish_geometry(&mut FrameWait::Offline);
         self.restore_geometry_states();
         let poses = self.pose_batch.finish(&mut FrameWait::Offline);
-        for error in [geometry, poses].into_iter().filter_map(Result::err) {
+        let lighting = if self.scene_lighting.has_pending() {
+            self.scene_lighting.finish_pending(&mut FrameWait::Offline)
+        } else {
+            Ok(())
+        };
+        for error in [geometry, poses, lighting]
+            .into_iter()
+            .filter_map(Result::err)
+        {
             tracing::warn!(error = %error, "M2 frame abandonment encountered an executor failure");
         }
     }
@@ -74,7 +82,6 @@ impl M2Frame {
             scenery_shadows,
         )?;
         pending.finish(
-            renderer,
             cpu,
             wait,
             random,
@@ -126,6 +133,7 @@ impl M2Frame {
         let mut pending = PendingM2Frame {
             frame: Some(self),
             view: FrameView {
+                liquid_clipping_enabled: renderer.m2_liquid_clipping_enabled(),
                 frustum,
                 camera,
                 first_transparent_pass,
@@ -137,6 +145,9 @@ impl M2Frame {
             },
             admission: FrameAdmission::new(),
             trace,
+            stage: super::progress::FrameStage::Admission,
+            publication: super::super::geometry::GeometryPublication::default(),
+            water_scene_order: 0,
         };
         let frame = pending
             .frame
@@ -172,10 +183,8 @@ impl M2Frame {
             frame.begin_geometry(cpu)?;
         }
         frame.admit_visible_draws(
-            renderer,
             pending.view,
             &mut pending.admission,
-            AdmissionMode::Ready,
             random,
             game_objects,
             spatial_lighting,

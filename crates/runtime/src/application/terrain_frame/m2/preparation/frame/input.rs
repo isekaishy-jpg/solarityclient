@@ -6,6 +6,7 @@ use super::super::super::{M2CameraEffectScale, M2TransparentPass, WorldCameraFra
 #[derive(Clone, Copy)]
 pub(super) struct FrameView {
     pub(super) frustum: WorldFrustum,
+    pub(super) liquid_clipping_enabled: bool,
     pub(super) camera: WorldCameraFrame,
     pub(super) first_transparent_pass: M2TransparentPass,
     pub(super) fog_color: glam::Vec3,
@@ -16,15 +17,6 @@ pub(super) struct FrameView {
         solarity_rendering::M2DirectionalLight,
     )>,
     pub(super) shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
-}
-
-/// The coordinator gets one useful-work turn before reaching a consumption wait.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum AdmissionMode {
-    /// Stop before the first unfinished root, without advancing its ordered state.
-    Ready,
-    /// Independent work has run; wait only at the original palette consumer.
-    Complete,
 }
 
 /// The placement cursor stays in M2Frame; this state prevents repeat publication

@@ -62,9 +62,10 @@ fn native_frame_readiness_preserves_input_and_publication_ownership() -> Result<
         Ok(batch.outcome(&handle)?.is_some())
     })?;
     let mut wait = FrameWait::Native(&mut platform);
+    wait.before_result(&batch, &handle)?;
     let mut consumed = 0;
     assert_eq!(
-        wait.consume(&mut batch, &handle, |job| {
+        batch.with_result(&handle, |job| {
             consumed += 1;
             job.value
         })?,

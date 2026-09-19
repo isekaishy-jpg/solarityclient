@@ -7,6 +7,7 @@ mod publication;
 mod ribbons;
 mod storage;
 
+pub(super) use publication::GeometryPublication;
 pub(in super::super) use ribbons::advance_ribbons;
 
 use super::super::{

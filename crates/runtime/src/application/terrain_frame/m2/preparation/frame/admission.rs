@@ -3,12 +3,12 @@
 use super::super::super::{
     CrtRand, GameObjectFrameInput, M2AnimationClock, M2BonePoseOverrides, M2Frame,
     M2GpuPlacementOwner, M2PlaybackStorage, M2TransparentPass, Mat4, RuntimeTerrainFrameError,
-    VulkanRenderer, append_triggered_events, held_item_finger_pose, m2_model_distance_key,
+    append_triggered_events, held_item_finger_pose, m2_model_distance_key,
     placement_bounding_sphere, placement_color, placement_light_bank, placement_mesh_color,
     placement_owner_guid, shadow,
 };
 
-use super::input::{AdmissionMode, FrameAdmission, FrameView};
+use super::input::{FrameAdmission, FrameView};
 
 impl M2Frame {
     /// Advances only whole placements. A readiness pause leaves the next owner
@@ -16,10 +16,8 @@ impl M2Frame {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn admit_visible_draws(
         &mut self,
-        renderer: &VulkanRenderer,
         view: FrameView,
         admission: &mut FrameAdmission,
-        mode: AdmissionMode,
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
         mut spatial_lighting: Option<(
@@ -34,6 +32,7 @@ impl M2Frame {
     ) -> Result<(), RuntimeTerrainFrameError> {
         let FrameView {
             frustum,
+            liquid_clipping_enabled,
             camera,
             first_transparent_pass,
             fog_color,
@@ -72,8 +71,7 @@ impl M2Frame {
                 }
                 // Poll before any per-owner mutation. Resuming must neither tick
                 // animation twice nor consume a second RNG/event window.
-                if mode == AdmissionMode::Ready
-                    && let Some(index) = self.frame_work.next_index()
+                if let Some(index) = self.frame_work.next_index()
                     && !self.pose_batch.is_ready(index)?
                 {
                     frame_profile.mark("pose readiness yield");
@@ -784,7 +782,7 @@ impl M2Frame {
                     false,
                 );
                 let model_liquid = particle_liquid.with_clipping_support(
-                    renderer.m2_liquid_clipping_enabled(),
+                    liquid_clipping_enabled,
                     first_transparent_pass == M2TransparentPass::One,
                 );
                 if world_lighting.is_some() {

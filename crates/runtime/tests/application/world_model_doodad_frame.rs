@@ -226,7 +226,6 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         let visible = pending.finish(
-            &renderer,
             &cpu,
             &mut crate::application::frame_pipeline::FrameWait::Offline,
             &mut random,

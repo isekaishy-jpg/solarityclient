@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use solarity_cpu::{CpuError, CpuExecutor, CpuPoolConfig, FrameBatch};
+use solarity_cpu::{CpuError, CpuExecutor, CpuPoolConfig, FrameBatch, FrameBatchPlan, JobOutcome};
 
 /// Explicit small scheduler budget for controlled interleavings.
 fn executor() -> Result<CpuExecutor, CpuError> {
@@ -68,6 +68,78 @@ fn independent_output_is_consumable_before_another_job_finishes() -> Result<(), 
     Ok(())
 }
 
+#[test]
+fn outcome_wait_preserves_payload_and_ignores_unrelated_pending_output()
+-> Result<(), Box<dyn Error>> {
+    let cpu = executor()?;
+    let (release, wait) = mpsc::sync_channel(1);
+    let mut jobs = vec![
+        Job {
+            wait: Some(wait),
+            value: 0,
+        },
+        Job {
+            wait: None,
+            value: 41,
+        },
+    ];
+    let mut batch = FrameBatch::new(run);
+    batch.start(&cpu, &mut jobs)?;
+    let handle = batch.job(1)?;
+    let (ready, observed) = mpsc::sync_channel(1);
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            assert!(ready.send(batch.wait_for_outcome(&handle)).is_ok());
+        });
+        let result = observed.recv_timeout(Duration::from_secs(5));
+        // Always unblock the worker, including when readiness regresses.
+        assert!(release.send(()).is_ok());
+        result
+    });
+    assert_eq!(result??, JobOutcome::Succeeded);
+    assert_eq!(batch.try_with_result(&handle, |job| job.value)?, Some(42));
+    batch.wait_until_finished()?;
+    assert!(batch.is_finished());
+    batch.reclaim(&mut jobs)?;
+    assert_eq!(jobs[0].value, 1);
+    assert_eq!(jobs[1].value, 42);
+    // Recycling an epoch must not make its previous readiness identity valid.
+    jobs[0].wait = None;
+    batch.start(&cpu, &mut jobs)?;
+    assert!(matches!(
+        batch.wait_for_outcome(&handle),
+        Err(CpuError::StaleJob)
+    ));
+    batch.reclaim(&mut jobs)?;
+    Ok(())
+}
+
+#[test]
+fn terminal_wait_rejects_an_open_producer_without_closing_it() -> Result<(), Box<dyn Error>> {
+    let cpu = executor()?;
+    let mut batch = FrameBatch::new(run);
+    batch.begin(&cpu, FrameBatchPlan::new(1, 0))?;
+    assert!(matches!(
+        batch.wait_until_finished(),
+        Err(CpuError::BatchOpen)
+    ));
+    let handle = batch.push(&mut Some(Job {
+        wait: None,
+        value: 7,
+    }))?;
+    assert_eq!(batch.wait_for_outcome(&handle)?, JobOutcome::Succeeded);
+    assert!(matches!(
+        batch.wait_until_finished(),
+        Err(CpuError::BatchOpen)
+    ));
+    batch.close();
+    batch.wait_until_finished()?;
+    let mut jobs = Vec::new();
+    batch.reclaim(&mut jobs)?;
+    assert_eq!(jobs[0].value, 8);
+    Ok(())
+}
+
 /// Mutates state before an intentional failure to verify unconditional recovery.
 fn fail(job: &mut Vec<usize>) {
     job.push(7);
@@ -80,11 +152,37 @@ fn panic_returns_owned_storage_before_reporting_failure() -> Result<(), Box<dyn 
     let mut batch = FrameBatch::new(fail);
     let mut jobs = vec![vec![1]];
     batch.start(&cpu, &mut jobs)?;
+    assert_eq!(
+        batch.wait_for_outcome(&batch.job(0)?)?,
+        JobOutcome::Panicked
+    );
+    batch.wait_until_finished()?;
+    assert!(jobs.is_empty());
     assert!(matches!(
         batch.reclaim(&mut jobs),
         Err(CpuError::TaskPanicked)
     ));
     assert_eq!(jobs, [vec![1, 7]]);
+    Ok(())
+}
+
+/// Domain failures carry modified owned payloads through terminal readiness.
+fn fail_domain(job: &mut Vec<usize>) -> JobOutcome {
+    job.push(9);
+    JobOutcome::Failed
+}
+
+#[test]
+fn failed_outcome_wait_leaves_domain_state_for_reclamation() -> Result<(), Box<dyn Error>> {
+    let cpu = executor()?;
+    let mut batch = FrameBatch::with_outcome(fail_domain);
+    let mut jobs = vec![vec![2]];
+    batch.start(&cpu, &mut jobs)?;
+    assert_eq!(batch.wait_for_outcome(&batch.job(0)?)?, JobOutcome::Failed);
+    batch.wait_until_finished()?;
+    assert!(jobs.is_empty());
+    assert!(matches!(batch.reclaim(&mut jobs), Err(CpuError::JobFailed)));
+    assert_eq!(jobs, [vec![2, 9]]);
     Ok(())
 }
 
@@ -196,5 +294,41 @@ fn worker_cannot_deadlock_its_lane_by_joining_a_queued_task() -> Result<(), Box<
     send.send(second)?;
     assert!(matches!(first.join()??, Err(CpuError::WorkerWait)));
     cpu.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn worker_readiness_waits_reject_queued_frame_work_and_return_ownership()
+-> Result<(), Box<dyn Error>> {
+    let cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(2).ok_or(CpuError::InvalidJob)?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
+    let (send, receive) = mpsc::sync_channel::<FrameBatch<Job>>(1);
+    let (entered, running) = mpsc::sync_channel(1);
+    let task = cpu.try_submit(move || {
+        assert!(entered.send(()).is_ok());
+        receive.recv().map(|batch| {
+            let outcome = batch
+                .job(0)
+                .and_then(|handle| batch.wait_for_outcome(&handle));
+            let terminal = batch.wait_until_finished();
+            (batch, outcome, terminal)
+        })
+    })?;
+    running.recv_timeout(Duration::from_secs(5))?;
+    let mut batch = FrameBatch::new(run);
+    let mut jobs = vec![Job {
+        wait: None,
+        value: 9,
+    }];
+    batch.start(&cpu, &mut jobs)?;
+    assert!(send.send(batch).is_ok());
+    let (mut batch, outcome, terminal) = task.join()??;
+    assert!(matches!(outcome, Err(CpuError::WorkerWait)));
+    assert!(matches!(terminal, Err(CpuError::WorkerWait)));
+    batch.reclaim(&mut jobs)?;
+    assert_eq!(jobs[0].value, 10);
     Ok(())
 }

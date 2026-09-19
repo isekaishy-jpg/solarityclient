@@ -147,6 +147,9 @@ pub enum CpuError {
     /// A producer appended after closing its phase.
     #[error("CPU frame batch admission is closed")]
     BatchClosed,
+    /// A terminal-phase wait cannot precede the last producer append.
+    #[error("cpu batch producer is still open")]
+    BatchOpen,
     /// A phase exceeded its reserved node or edge count.
     #[error("CPU frame batch exhausted its reserved node or edge capacity")]
     BatchCapacity,

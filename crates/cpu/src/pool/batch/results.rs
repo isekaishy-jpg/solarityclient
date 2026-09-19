@@ -26,6 +26,69 @@ impl<T: Send + 'static> FrameBatch<T> {
             _ => None,
         })
     }
+    /// Waits for one terminal outcome without leasing or consuming its payload.
+    /// A failed job remains a terminal outcome for the ordered consumer to report.
+    /// # Errors
+    /// Rejects inactive/stale handles and unfinished waits from CPU workers.
+    pub fn wait_for_outcome(&self, handle: &FrameJob<T>) -> Result<JobOutcome, CpuError> {
+        if !self.active {
+            return Err(CpuError::BatchInactive);
+        }
+        let mut state = self.core.lock();
+        self.validate(&state, handle)?;
+        if !matches!(state.nodes[handle.index].status, Status::Terminal(_)) {
+            if crate::environment::is_worker() {
+                return Err(CpuError::WorkerWait);
+            }
+            drop(state);
+            self.require_urgent()?;
+            state = self.core.lock();
+        }
+        let _wait = solarity_profiling::profile!("cpu.frame.result_wait");
+        loop {
+            if let Status::Terminal(outcome) = state.nodes[handle.index].status {
+                return Ok(outcome);
+            }
+            state = self
+                .core
+                .ready
+                .wait(state)
+                .unwrap_or_else(|_| unreachable!("batch metadata mutations cannot panic"));
+        }
+    }
+
+    /// Waits for terminal publication/admission release without taking job state.
+    /// The producer must already be closed, so no caller can wait on its own append.
+    /// # Errors
+    /// Rejects an open producer and unfinished waits from CPU workers.
+    pub fn wait_until_finished(&self) -> Result<(), CpuError> {
+        if !self.active {
+            return Ok(());
+        }
+        let mut state = self.core.lock();
+        if state.open {
+            return Err(CpuError::BatchOpen);
+        }
+        if state.lease.is_none() {
+            return Ok(());
+        }
+        if crate::environment::is_worker() {
+            return Err(CpuError::WorkerWait);
+        }
+        drop(state);
+        self.require_urgent()?;
+        state = self.core.lock();
+        let _wait = solarity_profiling::profile!("cpu.frame.reclaim_wait");
+        while state.lease.is_some() {
+            state = self
+                .core
+                .ready
+                .wait(state)
+                .unwrap_or_else(|_| unreachable!("batch metadata mutations cannot panic"));
+        }
+        Ok(())
+    }
+
     /// Attempts consumption without waiting or losing a pending handle.
     /// # Errors
     /// Reports stale identity or terminal execution/dependency failure.

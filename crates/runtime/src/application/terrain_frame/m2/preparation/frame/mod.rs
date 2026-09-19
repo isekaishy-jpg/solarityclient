@@ -5,6 +5,7 @@ mod completion;
 mod continuation;
 mod entry;
 mod input;
+mod progress;
 mod scene;
 
 use super::super::M2Frame;
@@ -21,4 +22,7 @@ pub(in crate::application::terrain_frame) struct PendingM2Frame<'frame> {
     admission: FrameAdmission,
     /// One causal identity covers setup, any resumed traversal and worker results.
     trace: solarity_profiling::TraceContext,
+    stage: progress::FrameStage,
+    publication: super::geometry::GeometryPublication,
+    water_scene_order: u32,
 }

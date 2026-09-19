@@ -146,6 +146,23 @@ impl Default for LightingBatch {
 }
 
 impl SceneLighting {
+    pub(in crate::application::terrain_frame::m2) fn has_pending(&self) -> bool {
+        self.batch.submitted
+    }
+
+    pub(in crate::application::terrain_frame::m2) fn is_ready(&self) -> bool {
+        !self.batch.submitted || self.batch.pending.is_finished()
+    }
+
+    /// The main driver parks only after running its other permitted continuations.
+    pub(in crate::application::terrain_frame::m2) fn wait_pending(
+        &self,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        wait.before_reclaim(&self.batch.pending)?;
+        Ok(())
+    }
+
     /// Dispatches only after packet-dependent receiver selection. The geometry
     /// completion token establishes the cross-batch dependency explicitly.
     pub(in crate::application::terrain_frame::m2) fn begin_finish(

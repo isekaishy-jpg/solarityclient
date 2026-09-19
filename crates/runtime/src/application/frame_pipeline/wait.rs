@@ -22,40 +22,8 @@ pub(in crate::application) enum FrameWaitError {
 }
 
 impl FrameWait<'_> {
-    /// Consumes a ready result with one readiness/lease lookup. Only pending
-    /// work enters platform service; the closure remains owned until it runs once.
-    pub(in crate::application) fn consume<T: Send + 'static, R>(
-        &mut self,
-        batch: &mut FrameBatch<T>,
-        job: &FrameJob<T>,
-        consume: impl FnOnce(&mut T) -> R,
-    ) -> Result<R, FrameWaitError> {
-        if matches!(self, Self::Offline) {
-            return Ok(batch.with_result(job, consume)?);
-        }
-        let mut consume = Some(consume);
-        if let Some(result) = batch.try_with_result(job, |input| {
-            consume
-                .take()
-                .unwrap_or_else(|| unreachable!("result consumes once"))(input)
-        })? {
-            return Ok(result);
-        }
-        self.before_result(batch, job)?;
-        Ok(batch.with_result(
-            job,
-            consume
-                .take()
-                .unwrap_or_else(|| unreachable!("pending result retains its consumer")),
-        )?)
-    }
-
-    pub(in crate::application) fn is_native(&self) -> bool {
-        matches!(self, Self::Native(_))
-    }
-
     /// Waits for the exact next consumer, not every later result. Offline callers
-    /// keep their existing executor wait at consumption. Terminal domain failures
+    /// use the executor condition wait without consuming its payload. Terminal domain failures
     /// remain with that consumer rather than changing publication precedence.
     pub(in crate::application) fn before_result<T: Send + 'static>(
         &mut self,
@@ -63,6 +31,7 @@ impl FrameWait<'_> {
         job: &FrameJob<T>,
     ) -> Result<(), FrameWaitError> {
         let Self::Native(platform) = self else {
+            batch.wait_for_outcome(job)?;
             return Ok(());
         };
         if batch.outcome(job)?.is_some() {
@@ -80,6 +49,7 @@ impl FrameWait<'_> {
         batch: &FrameBatch<T>,
     ) -> Result<(), FrameWaitError> {
         let Self::Native(platform) = self else {
+            batch.wait_until_finished()?;
             return Ok(());
         };
         if batch.is_finished() {

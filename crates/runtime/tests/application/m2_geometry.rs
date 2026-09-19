@@ -238,7 +238,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         let held = (!measure && step == 0)
             .then(|| continuation_support::HeldFrameWorkers::new(&cpu))
             .transpose()?;
-        let pending = candidate.begin_visible_draws_with_unit_effects(
+        let mut pending = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
@@ -256,17 +256,22 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             None,
         )?;
         if let Some(held) = held {
+            // Repeated nonblocking resumption leaves all ordered state untouched
+            // and returns the renderer for a real main-only Vulkan operation.
+            for _ in 0..3 {
+                assert!(!pending.try_advance(&cpu, candidate_random, None, None, None)?);
+            }
+            renderer.present_clear([64.0, 64.0])?;
             held.release()?;
         }
-        let b = pending.finish(
-            &renderer,
-            &cpu,
-            &mut FrameWait::Native(&mut platform),
-            candidate_random,
-            None,
-            None,
-            None,
-        )?;
+        while !pending.try_advance(&cpu, candidate_random, None, None, None)? {
+            pending.wait(&mut FrameWait::Native(&mut platform))?;
+        }
+        // A ready continuation stays ready; revisiting it cannot duplicate
+        // receivers, reorder packets again, advance effects or consume RNG.
+        assert!(pending.try_advance(&cpu, candidate_random, None, None, None)?);
+        assert!(pending.try_advance(&cpu, candidate_random, None, None, None)?);
+        let b = pending.into_visible_frame()?;
         if step >= 32 {
             reference_time += reference_elapsed;
             candidate_time += started.elapsed();

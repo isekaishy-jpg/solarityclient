@@ -7,6 +7,14 @@ use crate::application::frame_pipeline::FrameWait;
 use solarity_rendering::{M2BonePose, M2BonePoseOverrides, M2MaterialPose};
 use solarity_rendering::{M2CameraEffectScale, VulkanError, WorldCameraFrame};
 
+/// Ordered output prefix and capacity totals survive a coordinator yield.
+#[derive(Default)]
+pub(in super::super) struct GeometryPublication {
+    pub(in super::super) next: usize,
+    pub(in super::super) vertex_capacity: usize,
+    pub(in super::super) index_capacity: usize,
+}
+
 impl M2Frame {
     /// Starts the visible work list; prior state was returned before its frame ended.
     pub(in super::super) fn begin_geometry(
@@ -77,12 +85,33 @@ impl M2Frame {
         Ok(())
     }
 
-    /// Relocates model-local streams in the same order as the original traversal.
-    pub(in super::super) fn publish_geometry(
+    /// A closed batch can be reclaimed only after its final publication releases admission.
+    pub(in super::super) fn geometry_is_finished(&self) -> bool {
+        self.geometry_batch.pending.is_finished()
+    }
+
+    /// Waits for the exact unpublished result, or terminal phase release.
+    pub(in super::super) fn wait_geometry(
+        &self,
+        cursor: &GeometryPublication,
+        wait: &mut FrameWait<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let batch = &self.geometry_batch;
+        if let Some(handle) = batch.handles.get(cursor.next) {
+            wait.before_result(&batch.pending, handle)?;
+        } else {
+            wait.before_reclaim(&batch.pending)?;
+        }
+        Ok(())
+    }
+
+    /// Publishes only the ready ordered prefix, retaining cursor and capacity totals.
+    /// No pending result blocks main or leases a domain output across the yield.
+    pub(in super::super) fn try_publish_geometry(
         &mut self,
         work: &mut Work,
-        wait: &mut FrameWait<'_>,
-    ) -> Result<(usize, usize), RuntimeTerrainFrameError> {
+        cursor: &mut GeometryPublication,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
         let _profile = solarity_profiling::profile!("m2.geometry_publication");
         let mut output = super::output::GeometryOutput {
             bone_transforms: &mut self.bone_transforms,
@@ -94,17 +123,25 @@ impl M2Frame {
             particle_indices: &mut self.particle_indices,
             ribbon_vertices: &mut self.ribbon_vertices,
             recoverable_errors: &mut self.recoverable_errors,
-            vertex_capacity: 0,
-            index_capacity: 0,
+            vertex_capacity: cursor.vertex_capacity,
+            index_capacity: cursor.index_capacity,
         };
         let batch = &mut self.geometry_batch;
-        batch.pending.close();
-        for index in 0..batch.active {
-            wait.consume(&mut batch.pending, &batch.handles[index], |job| {
-                output.publish(job, work)
-            })??;
+        while cursor.next < batch.active {
+            let Some(result) = batch
+                .pending
+                .try_with_result(&batch.handles[cursor.next], |job| output.publish(job, work))?
+            else {
+                cursor.vertex_capacity = output.vertex_capacity;
+                cursor.index_capacity = output.index_capacity;
+                return Ok(false);
+            };
+            result?;
+            cursor.next += 1;
         }
-        Ok((output.vertex_capacity, output.index_capacity))
+        cursor.vertex_capacity = output.vertex_capacity;
+        cursor.index_capacity = output.index_capacity;
+        Ok(true)
     }
 }
 
