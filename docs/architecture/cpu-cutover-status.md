@@ -542,8 +542,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 154 was packaged and installed on 2026-09-19 from `f5a9540b`. It connects
-cost arbitration across phases, measured M2 job ordering and receiver partitioning,
+Build 155 was packaged and installed on 2026-09-19 from `4dd6a28d`. It connects
+local-player worker construction and shared primary requests, retaining cost
+arbitration across phases, measured M2 job ordering and receiver partitioning,
 retaining cinematic
 shared-source reader waits, the main
 readiness queue/world integration, shared Glue appearance sources, receiver-uniform
@@ -591,6 +592,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 155 package checkpoint
+
+Build **155** compiled through `scripts/build-client.ps1` in 4m49s from
+`4dd6a28ddda06034aaa8be34b688f0cf06150167`. Tracked source and index stayed fixed
+during compilation; `dirty=true` records only the reserved `BUILD_NUMBER`.
+Package and installed executable SHA-256 match
+`E9977E97B0875D11CEE8B0278929DD80052368D65A3FA19C31D75FD6880F1EA3`.
+Installation used `install-test-client.ps1 -SkipBuild`; executable identity,
+manifest, launcher and desktop shortcut were verified. Testing retains
+2560 x 1440 fullscreen-windowed, four CPU workers, capacity 256, two network
+workers and GPU zero, with F10 opt-in. No interactive client was launched.
+
+The full source checks and hidden functional smoke are recorded below. This
+package does not complete the CPU cutover or establish a live FPS gain.
+Evidence is retained in ignored `target/local-appearance-package.log` and
+`target/local-appearance-install.log`.
 
 ### Local-player worker construction checkpoint
 
