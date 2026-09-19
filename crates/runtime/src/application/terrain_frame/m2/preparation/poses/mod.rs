@@ -32,6 +32,18 @@ impl Default for PoseBatch {
 }
 
 impl PoseBatch {
+    /// Allows ordered traversal to yield before mutating a root whose palette is
+    /// still running. Terminal failures remain at the original consumer boundary.
+    pub(in crate::application::terrain_frame::m2) fn is_ready(
+        &self,
+        index: usize,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
+        let Some(job) = self.indices.get(index).copied().flatten() else {
+            return Ok(true);
+        };
+        Ok(!self.submitted || self.pending.outcome(&self.handles[job])?.is_some())
+    }
+
     /// Recovers owned inputs on normal publication and when a prior frame failed.
     pub(in crate::application::terrain_frame::m2) fn finish(
         &mut self,

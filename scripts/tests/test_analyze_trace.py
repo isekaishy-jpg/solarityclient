@@ -31,6 +31,28 @@ class TraceAnalysis(unittest.TestCase):
     def test_staged_admission_keeps_model_sources_and_deferred_workers_separate(self):
         self.check_scene_sources("m2.frame_admission")
 
+    def test_resumed_admission_and_earlier_pose_share_one_logical_scene(self):
+        scene = span(1, 0, 0, 0, kind="admit")
+        scene["label"] = "m2.frame"
+        setup = span(2, 1, 0, 10)
+        resumed = span(3, 1, 100, 10)
+        for row in (setup, resumed):
+            row["label"] = "m2.frame_admission"
+        placement = span(4, 3, 100, 5)
+        placement.update(label="m2.placement", owner=1, reason=1)
+        source = span(5, 4, 100, 0, kind="asset")
+        source.update(owner=1, name="UNIT.M2")
+        pose = span(6, 2, 10, 30, "worker")
+        pose.update(label="runtime.application.terrain_frame.m2.preparation.poses.input.sample", owner=1)
+        report = analyzer.summarize([scene, setup, resumed, placement, source, pose], 1, 10)
+        self.assertEqual(len(report["models"]), 1)
+        model = report["models"][0]
+        self.assertEqual(model["asset"], "UNIT.M2")
+        self.assertEqual(model["scene_span"], 1)
+        self.assertEqual(model["pose_worker_ms"], 0.00003)
+        self.assertFalse(any(row["id"] == 1 for row in report["operations"]))
+        self.check_scene_sources("m2.frame")
+
     def check_scene_sources(self, label):
         first = span(1, 0, 0, 100)
         first["label"] = label

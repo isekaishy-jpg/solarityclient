@@ -54,13 +54,17 @@ def summarize(rows, frame, top):
         # Several independent model scenes can be prepared in one UI/world frame.
         seen = set()
         current = row
+        legacy = 0
         while current and current["span_id"] not in seen:
             seen.add(current["span_id"])
-            # Retain historical captures as well as the staged admission boundary.
-            if current["label"] in ("M2 frame preparation", "m2.frame_admission"):
+            # One logical scene spans setup and resumed admission. Older captures
+            # used an elapsed admission span instead; prefer the logical ancestor.
+            if current["label"] == "m2.frame":
                 return current["span_id"]
+            if not legacy and current["label"] in ("M2 frame preparation", "m2.frame_admission"):
+                legacy = current["span_id"]
             current = by_id.get(current["parent_id"])
-        return 0
+        return legacy
     assets = {(row["origin_frame"], scene(row), row["owner"]): row["name"]
               for row in rows if row["kind"] == "asset"}
     models = collections.defaultdict(lambda: collections.defaultdict(float))

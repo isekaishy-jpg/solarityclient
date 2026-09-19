@@ -1,5 +1,7 @@
 //! Scene culling and GPU replacement cannot restart a unit's primary timer.
 
+use crate::frame_cpu_support::continuation_support;
+
 #[path = "equipment_residency.rs"]
 mod equipment_residency;
 
@@ -742,9 +744,15 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
     let mut expected = random;
     let _variation = expected.next_u15();
     let _cycle = expected.next_u15();
-    for (time, transform, visible) in [
-        (1500.0, Mat4::from_translation(Vec3::Y * 10_000.0), false),
-        (1600.0, Mat4::IDENTITY, true),
+    for (time, transform, visible, abandon) in [
+        (
+            1500.0,
+            Mat4::from_translation(Vec3::Y * 10_000.0),
+            false,
+            false,
+        ),
+        (1600.0, Mat4::IDENTITY, true, true),
+        (1700.0, Mat4::IDENTITY, true, false),
     ] {
         // This is the same placement constructor used by character GPU admission.
         frame.placements.clear();
@@ -759,9 +767,15 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
         )?;
         placement.unit_animation = Some(Rc::clone(&owner));
         frame.placements.push(placement);
-        let draws = frame.prepare_visible_draws(
+        let cpu = crate::frame_cpu_support::executor()?;
+        // A visible unit queues a real root pose. Occupy every worker until
+        // admission gives main its useful-work turn, then resume that same frame.
+        let held = visible
+            .then(|| continuation_support::HeldFrameWorkers::new(&cpu))
+            .transpose()?;
+        let pending = frame.begin_visible_draws_with_unit_effects(
             &renderer,
-            &crate::frame_cpu_support::executor()?,
+            &cpu,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,
@@ -770,8 +784,34 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
             M2CameraEffectScale::EXTERNAL_CAMERA,
             &mut random,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
-        assert_eq!(!draws.draws.is_empty(), visible);
+        if let Some(held) = held {
+            assert!(
+                owner.prepared_scene_clock().is_some(),
+                "ordered traversal has not consumed the root's callback sample"
+            );
+            assert_eq!(random, expected, "yield does not repeat callbacks or RNG");
+            held.release()?;
+        }
+        if abandon {
+            // An abandoned readiness pause must return the pose epoch and leave
+            // the next frame free to prepare the same owner with a new clock.
+            drop(pending);
+            assert!(owner.prepared_scene_clock().is_some());
+            assert_eq!(
+                frame.pose_batch.consumption(),
+                (1, 0),
+                "abandonment returns the unconsumed root palette"
+            );
+        } else {
+            let draws = pending.finish(&renderer, &cpu, &mut random, None, None, None)?;
+            assert_eq!(!draws.draws.is_empty(), visible);
+        }
         let expected_rotation = Mat4::from_rotation_z(-0.8);
         let actual = frame.placements[0].transform;
         assert!(

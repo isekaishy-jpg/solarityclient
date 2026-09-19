@@ -1,4 +1,4 @@
-//! Controlled worker occupation proves that main preparation returns before consumption.
+//! Controlled worker occupation proves that main preparation returns before pose or geometry consumption.
 
 use solarity_cpu::{CpuExecutor, FrameBatch};
 use std::error::Error;
@@ -31,7 +31,7 @@ impl HeldJob {
 
 /// Every worker is occupied before admission. The timeout only turns a forbidden
 /// main-thread join into a test failure instead of hanging the workspace suite.
-pub(super) struct HeldFrameWorkers {
+pub(crate) struct HeldFrameWorkers {
     pending: FrameBatch<HeldJob>,
     jobs: Vec<HeldJob>,
     release: Option<mpsc::Sender<()>>,
@@ -39,7 +39,7 @@ pub(super) struct HeldFrameWorkers {
 }
 
 impl HeldFrameWorkers {
-    pub(super) fn new(cpu: &CpuExecutor) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn new(cpu: &CpuExecutor) -> Result<Self, Box<dyn Error>> {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let (release, released) = mpsc::channel();
         let watched = Arc::clone(&gate);
@@ -72,7 +72,7 @@ impl HeldFrameWorkers {
     }
 
     /// Main calls this only after admission returns and its independent work can run.
-    pub(super) fn release(mut self) -> Result<(), Box<dyn Error>> {
+    pub(crate) fn release(mut self) -> Result<(), Box<dyn Error>> {
         self.finish()
     }
 

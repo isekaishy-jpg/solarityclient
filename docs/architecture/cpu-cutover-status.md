@@ -20,8 +20,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 ## Connected source changes
 
 - World presentation now uses a scoped M2 admission/publication boundary. Scene
-  callbacks and traversal launch owned geometry, then seal its producer before
-  returning to main. Ground-detail selection/publication and WMO packet creation
+  callbacks launch owned root poses; ordered traversal returns to main before its
+  first unfinished root palette, or seals geometry when all selected owners are
+  ready. The retained cursor resumes after independent main work without repeating
+  model clocks, callbacks, RNG, attachment publication or effect-tail admission.
+  Ground-detail selection/publication and WMO packet creation
   run against the admitted scene while those workers can still execute. Final
   geometry consumption, model receiver callbacks, terrain/liquid lighting and
   WMO fog-bank publication keep their ordered boundaries and error precedence.
@@ -32,10 +35,12 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Scene setup, admission, completion and entry handling have separate children
   under the frame folder; the standalone Glue path drives the same stages.
 - F10 separates M2 admission/publication from independent world preparation so
-  overlapping work is not counted as M2 execution. This first world continuation
-  does not remove per-model pose waits during traversal or the remaining final
-  consumption barriers; the full continuation/native-wait integration remains
-  required below.
+  overlapping work is not counted as M2 execution. Setup, resumed traversal and
+  worker descendants share one logical `m2.frame` identity; the readiness yield
+  has an explicit observation. Independent world preparation now precedes the
+  first root-pose wait. Later unfinished palettes and final consumption can still
+  wait after that useful-work turn; full continuation/native-wait integration
+  remains required below.
 
 - Background loading now uses the existing bounded dependency engine through
   `LoadBatch`. Waiting phases retain owned inputs and task admission but occupy
@@ -383,6 +388,29 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Root-pose readiness checkpoint
+
+On 2026-09-19, formatting, full workspace Clippy with warnings denied and all
+1,525 workspace Rust tests passed, with 33 ignored across 90 suites. Five Python
+trace-analysis tests passed. A controlled unit fixture holds every worker until
+main admission returns, checks that the root callback sample remains unconsumed,
+then exercises both resumed publication and abandonment followed by another frame.
+The moving serial-reference fixture includes a unit root midway through ordinary
+placements, so earlier geometry already owns effect state when traversal pauses.
+It compares meshes, palettes, shadows, particles, ribbons, receiver lighting,
+ordering, RNG and simulation state across motion and visibility changes.
+The existing WMO clip/fog and pixel fixtures also pass.
+
+The synthetic unit requires authored stand-turn clips and matching AnimationData
+rows; the fixture now supplies both. Production missing-animation behavior is
+unchanged. Trace analysis joins early pose workers to resumed placement/source
+records through one logical scene identity and still reads historical captures.
+
+Final logs are in ignored `target/m2-readiness-complete-{fmt,clippy,tests}.stdout.log`
+and `.stderr.log`; the same prefix's `targeted` log records the focused moving
+comparison. This verifies scheduling and parity, not a live FPS improvement.
+The full continuation/native-wait and resource cutover requirements remain above.
 
 ### Build 142 package checkpoint
 

@@ -5,6 +5,7 @@ use super::super::super::{
     RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum, unit_effects,
 };
 use super::PendingM2Frame;
+use super::input::{AdmissionMode, FrameAdmission, FrameView};
 
 impl M2Frame {
     /// Restores a failed or abandoned frame before its owner can mutate placements.
@@ -71,14 +72,19 @@ impl M2Frame {
             scenery_shadows,
         )?;
         pending.finish(
+            renderer,
             cpu,
-            spatial_lighting.map(|(terrain, environment, ..)| (terrain, environment)),
+            random,
+            game_objects,
+            spatial_lighting,
+            scenery_shadows,
         )
     }
 
-    /// Completes ordered callbacks and scene admission, then returns while geometry
-    /// can still run. The caller must not advance gameplay or change the admitted
-    /// scene before finishing; disjoint packet preparation may use its stable view.
+    /// Fixes callbacks and scene visibility, then admits ready ordered placements.
+    /// Returns before the first unfinished root palette, or after sealing geometry.
+    /// Independent world work may use the stable scene; it must not advance gameplay
+    /// or change any model inputs before finishing this preparation.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application::terrain_frame) fn begin_visible_draws_with_unit_effects(
         &mut self,
@@ -97,7 +103,7 @@ impl M2Frame {
             solarity_rendering::M2SceneUniform,
             solarity_rendering::M2DirectionalLight,
         )>,
-        spatial_lighting: Option<(
+        mut spatial_lighting: Option<(
             &mut crate::application::terrain_coordinator::RuntimeTerrainCoordinator,
             solarity_systems::WorldEntityLightEnvironment,
             glam::Vec3,
@@ -108,34 +114,70 @@ impl M2Frame {
             crate::application::terrain_frame::shadow::SceneryShadowQueries<'_>,
         >,
     ) -> Result<PendingM2Frame<'_>, RuntimeTerrainFrameError> {
-        match self.admit_visible_draws(
+        // This logical operation has no elapsed span covering independent world
+        // work. Each synchronous admission/publication enters it separately.
+        let trace = solarity_profiling::TraceContext::capture().fork("m2.frame");
+        let _trace = trace.enter();
+        // Create the cleanup owner before starting work so either stage can fail
+        // without stranding pose or effect storage on workers.
+        let mut pending = PendingM2Frame {
+            frame: Some(self),
+            view: FrameView {
+                frustum,
+                camera,
+                first_transparent_pass,
+                fog_color,
+                animation_time_ms,
+                effect_scale,
+                world_lighting,
+                shadow_projection,
+            },
+            admission: FrameAdmission::new(),
+            trace,
+        };
+        let frame = pending
+            .frame
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("pending frame retains its owner"));
+        {
+            let _profile = solarity_profiling::profile!("m2.frame_admission");
+            let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
+            frame.prepare_frame_scene(
+                cpu,
+                frustum,
+                camera,
+                animation_time_ms,
+                random,
+                game_objects,
+                unit_effect_callback,
+                spatial_lighting
+                    .as_mut()
+                    .map(|(terrain, ..)| &mut **terrain),
+                shadow_projection,
+                scenery_shadows,
+            )?;
+            frame.placement_visibility.select_frame_work(
+                camera.camera().position(),
+                frame.environment_detail,
+                scenery_shadows.is_some(),
+                &mut frame.frame_work,
+            );
+            frame.shadow_admission.resize(frame.placements.len(), false);
+            frame
+                .environment_shadow_admission
+                .resize(frame.placements.len(), 0);
+            frame.begin_geometry(cpu)?;
+        }
+        frame.admit_visible_draws(
             renderer,
-            cpu,
-            frustum,
-            camera,
-            first_transparent_pass,
-            fog_color,
-            animation_time_ms,
-            effect_scale,
+            pending.view,
+            &mut pending.admission,
+            AdmissionMode::Ready,
             random,
             game_objects,
-            unit_effect_callback,
-            world_lighting,
             spatial_lighting,
-            shadow_projection,
             scenery_shadows,
-        ) {
-            Ok(work) => Ok(PendingM2Frame {
-                frame: Some(self),
-                work,
-                first_transparent_pass,
-                animation_time_ms,
-                world_lighting,
-            }),
-            Err(error) => {
-                self.abandon_frame_preparation();
-                Err(error)
-            }
-        }
+        )?;
+        Ok(pending)
     }
 }

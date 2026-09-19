@@ -256,7 +256,7 @@ of an ordinary consumer frame. A transfer admitted before capture started also
 has no recorded request ancestry. These gaps are not inferred from temporal proximity.
 
 M2 placement span `owner` is placement ordinal plus one, and `reason` is source
-ordinal plus one. Qualify both by their ancestor `m2.frame_admission` span: a
+ordinal plus one. Qualify both by their ancestor `m2.frame` admission record: a
 single live frame can prepare multiple independent model scenes. `m2.requirements` attaches this bit mask to that placement:
 0 admitted, 1 visible mesh demand, 2 primary shadow, 3 environment shadow,
 4 light owner, 5 callback owner, 6 particle owner, 7 full palette demand,
@@ -265,12 +265,19 @@ Flags describe actual branch decisions and may overlap. `m2.owner.guid` connects
 dynamic placements to sampled ECS ownership. A GUID is not a lifetime guarantee;
 removal/recreation still needs its surrounding admission evidence.
 
-M2 admission and publication have separate scopes. The world coordinator can
-prepare ground detail and WMO packets in `world.independent_preparation` between
-them while geometry workers run; that work must not be attributed to M2 time.
+M2 setup, ready traversal and resumed traversal have separate `m2.frame_admission`
+scopes under the same logical `m2.frame` operation. That operation is a causal
+identity, not an elapsed span. Older captures use the admission span itself as
+the scene identity; the analyzer supports both formats. Pose jobs launched during
+setup still resolve to placements admitted after a readiness pause.
+The world coordinator prepares ground detail and WMO packets in
+`world.independent_preparation` before resuming traversal/publication. It gets this
+turn before the first unfinished root pose, or after geometry admission if no
+root blocks. `m2.pose_readiness_yield` is emitted when this turn interrupts
+traversal. Independent work must not be attributed to M2 time.
 `m2.frame_publication` covers ordered geometry consumption, receiver callbacks,
 transparent ordering and lighting completion. `m2.prepare_cpu` accumulates both
-M2 portions. `m2.frame_abandon_wait` identifies exceptional cleanup when an
+M2 portions, including resumed admission. `m2.frame_abandon_wait` identifies exceptional cleanup when an
 unfinished preparation is dropped or admission fails. It restores model-owned
 simulation state on main before that owner can start another frame.
 

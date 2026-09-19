@@ -1,84 +1,59 @@
 //! Selected-placement preparation; source admission and topology publication live separately.
 
 use super::super::super::{
-    CrtRand, GameObjectFrameInput, M2AnimationClock, M2BonePoseOverrides, M2CameraEffectScale,
-    M2Frame, M2GpuPlacementOwner, M2PlaybackStorage, M2TransparentPass, Mat4,
-    RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum,
-    append_triggered_events, held_item_finger_pose, m2_model_distance_key,
+    CrtRand, GameObjectFrameInput, M2AnimationClock, M2BonePoseOverrides, M2Frame,
+    M2GpuPlacementOwner, M2PlaybackStorage, M2TransparentPass, Mat4, RuntimeTerrainFrameError,
+    VulkanRenderer, append_triggered_events, held_item_finger_pose, m2_model_distance_key,
     placement_bounding_sphere, placement_color, placement_light_bank, placement_mesh_color,
-    placement_owner_guid, shadow, unit_effects,
+    placement_owner_guid, shadow,
 };
 
+use super::input::{AdmissionMode, FrameAdmission, FrameView};
+
 impl M2Frame {
-    /// Unit callbacks construct CEffect models before this frame's effect pass.
+    /// Advances only whole placements. A readiness pause leaves the next owner
+    /// untouched, preserving RNG, callbacks, attachments and effect-tail order.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn admit_visible_draws(
         &mut self,
         renderer: &VulkanRenderer,
-        cpu: &solarity_cpu::CpuExecutor,
-        frustum: WorldFrustum,
-        camera: WorldCameraFrame,
-        first_transparent_pass: M2TransparentPass,
-        fog_color: glam::Vec3,
-        animation_time_ms: f32,
-        effect_scale: M2CameraEffectScale,
+        view: FrameView,
+        admission: &mut FrameAdmission,
+        mode: AdmissionMode,
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
-        unit_effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
-        world_lighting: Option<(
-            solarity_rendering::M2SceneUniform,
-            solarity_rendering::M2DirectionalLight,
-        )>,
         mut spatial_lighting: Option<(
             &mut crate::application::terrain_coordinator::RuntimeTerrainCoordinator,
             solarity_systems::WorldEntityLightEnvironment,
             glam::Vec3,
             &solarity_asset::LiquidTypeCatalog,
         )>,
-        shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
         scenery_shadows: Option<
             crate::application::terrain_frame::shadow::SceneryShadowQueries<'_>,
         >,
-    ) -> Result<super::super::diagnostics::Work, RuntimeTerrainFrameError> {
-        let mut frame_profile = solarity_profiling::profile!("m2.frame_admission");
-        let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
-        let mut work = super::super::diagnostics::Work::new();
-        self.prepare_frame_scene(
-            cpu,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let FrameView {
             frustum,
             camera,
+            first_transparent_pass,
+            fog_color,
             animation_time_ms,
-            random,
-            game_objects,
-            unit_effect_callback,
-            spatial_lighting
-                .as_mut()
-                .map(|(terrain, ..)| &mut **terrain),
+            effect_scale,
+            world_lighting,
             shadow_projection,
-            scenery_shadows,
-        )?;
-        self.placement_visibility.select_frame_work(
-            camera.camera().position(),
-            self.environment_detail,
-            scenery_shadows.is_some(),
-            &mut self.frame_work,
-        );
-        self.shadow_admission.resize(self.placements.len(), false);
-        self.environment_shadow_admission
-            .resize(self.placements.len(), 0);
-        frame_profile.mark("frame work selection");
-        self.begin_geometry(cpu)?;
-        let traversal_result = (|| -> Result<(), RuntimeTerrainFrameError> {
-            let effect_start = self.placement_visibility.effect_start();
-            let mut effects_published = false;
+        } = view;
+        let mut frame_profile = solarity_profiling::profile!("m2.frame_admission");
+        let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
+        let effect_start = self.placement_visibility.effect_start();
+        let complete = (|| -> Result<bool, RuntimeTerrainFrameError> {
             loop {
-                if !effects_published
+                if !admission.effects_published
                     && self
                         .frame_work
                         .next_index()
                         .is_none_or(|index| index >= effect_start)
                 {
-                    effects_published = true;
+                    admission.effects_published = true;
                     if self.unit_effects.publish(
                         &mut self.placements,
                         &mut self.sources,
@@ -95,6 +70,16 @@ impl M2Frame {
                     self.frame_work
                         .publish_effect_tail(effect_start, self.placements.len());
                 }
+                // Poll before any per-owner mutation. Resuming must neither tick
+                // animation twice nor consume a second RNG/event window.
+                if mode == AdmissionMode::Ready
+                    && let Some(index) = self.frame_work.next_index()
+                    && !self.pose_batch.is_ready(index)?
+                {
+                    frame_profile.mark("pose readiness yield");
+                    solarity_profiling::profile_value!("m2.pose_readiness_yield", 1);
+                    return Ok(false);
+                }
                 let Some(placement_index) = self.frame_work.next() else {
                     break;
                 };
@@ -103,7 +88,7 @@ impl M2Frame {
                     placement_index as u64 + 1,
                     self.placements[placement_index].source_index as u64 + 1,
                 );
-                let mut observed = work.placement();
+                let mut observed = admission.work.placement();
                 // Moving-parent transforms have already been resolved. Forward
                 // attachments query that same root; earlier roots reuse admission.
                 let environment_maps = if let Some(queries) = scenery_shadows {
@@ -884,10 +869,12 @@ impl M2Frame {
                     &self.particle_twinkle,
                 )?;
             }
-            Ok(())
-        })();
-        traversal_result?;
-        self.close_geometry();
-        Ok(work)
+            Ok(true)
+        })()?;
+        if complete {
+            self.close_geometry();
+            admission.complete = true;
+        }
+        Ok(())
     }
 }

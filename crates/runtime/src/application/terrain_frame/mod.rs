@@ -971,8 +971,9 @@ impl TerrainFrame {
                 }),
         )?;
         profile.mark("M2 admission");
-        // The scene traversal and model clocks are fixed, while owned geometry
-        // is still running. These disjoint owners need neither emitted M2 packets
+        // Scene visibility and model clocks are fixed. Ordered M2 traversal may
+        // be paused before an unfinished root pose, with earlier geometry running.
+        // These disjoint owners need neither emitted M2 packets
         // nor receiver lights. Keep WMO fog-bank publication after the receiver
         // callbacks below; preparing its immutable packets does not publish it.
         let independent = (|| -> Result<_, RuntimeTerrainFrameError> {
@@ -999,7 +1000,24 @@ impl TerrainFrame {
         profile.mark("independent ground detail and WMO packets");
         // Complete M2 even if independent preparation failed: this returns every
         // model's simulation state and preserves the original error precedence.
-        let m2 = pending_m2.finish(cpu, Some((terrain, entity_light_environment)))?;
+        let m2 = pending_m2.finish(
+            renderer,
+            cpu,
+            random,
+            Some(game_objects),
+            Some((
+                terrain,
+                entity_light_environment,
+                environment.ordinary_model_fog().color(),
+                liquid_types,
+            )),
+            shadow_admission
+                .as_ref()
+                .map(|admission| shadow::SceneryShadowQueries {
+                    admission,
+                    doodads: self.world_models.shadow_doodads(),
+                }),
+        )?;
         let (exterior_frustum, wmo_result) = independent?;
         profile.mark("M2 publication");
         exterior::prepare_terrain_draws(

@@ -225,7 +225,14 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
                 )
             })
             .collect::<Vec<_>>();
-        let visible = pending.finish(&cpu, Some((&mut terrain, environment)))?;
+        let visible = pending.finish(
+            &renderer,
+            &cpu,
+            &mut random,
+            Some(objects.frame_input(Some(&world))),
+            Some((&mut terrain, environment, colors[0], &liquid_types)),
+            None,
+        )?;
         assert_eq!(
             exterior,
             terrain.world_terrain_frustum(camera)?,

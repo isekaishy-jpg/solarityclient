@@ -1,5 +1,8 @@
 //! Owned CPU service for crate-internal presentation fixtures.
 
+#[path = "frame_continuation_support.rs"]
+pub(crate) mod continuation_support;
+
 /// Small owned executor for presentation fixtures that previously selected inline work.
 pub(crate) fn executor() -> Result<solarity_cpu::CpuExecutor, solarity_cpu::CpuError> {
     solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
