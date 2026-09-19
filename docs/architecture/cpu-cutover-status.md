@@ -428,10 +428,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 147 was packaged and installed on 2026-09-19 from `1fc8f935`. It connects
-resumable M2 phases and revisits root admission between ground-detail and WMO
-preparation, retaining Build 146's native GPU presentation-slot waits and the
-earlier CPU native waits, shared-source, geometry-overlap and loading changes.
+Build 148 was packaged and installed on 2026-09-19 from `a9552fd5`. It publishes
+one immutable scene-light bank to receiver work and main terrain/liquid consumers,
+retaining the resumable M2 phases, native GPU presentation-slot and CPU waits,
+shared-source, geometry-overlap and loading changes from preceding packages.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -474,6 +474,37 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 148 package and hidden world checkpoint
+
+Build **148** was reserved and compiled through `scripts/build-client.ps1`, then
+installed through `install-test-client.ps1 -SkipBuild`. The optimized build
+completed in 5m16s. Source was frozen during compilation at
+`a9552fd5a6f44b68c35ab6cf81240072c8278b66`; `dirty=true` records only the reserved
+`BUILD_NUMBER`. Installed executable and package SHA-256 both match
+`D7DEA758FBD56E08CC90088D2B00442B17AC2971007BF13C505A4E4192E21963`.
+The manifest, executable identity, launcher and Desktop shortcut were verified.
+Settings remain 2560 x 1440 fullscreen-windowed, four CPU workers, capacity 256,
+two network workers and GPU zero; F10 remains opt-in.
+
+The optimized `benchmark_world` harness also completed **448 hidden frames**, 64
+each of streaming, stationary, orbit, pointer, outbound, return and settled.
+It used installed assets and Soap's saved appearance on map 1 at
+(1515.34, -4417.27, 18.0499), travel offset (-80, 0, 0), 2560 x 1440, four CPU
+workers, shadow quality 5 and an isolated profile with audio and VSync disabled.
+The route exercised 0-32 terrain packets, 2-313 WMO packets, 0-217 M2 packets and
+0-2,364 particle vertices per frame. One resident tile remained throughout, with
+no tile admissions or evictions. There were no authored NPCs, network session,
+live movement solver or audio; this does not establish loading coverage or live
+FPS. No interactive client was launched.
+
+The capture reports zero dropped samples, trace/event rows and capacity
+overflows. Detailed frames link the same `m2.light_sources` identity to both the
+receiver worker and `world.lit_surfaces.consume`, exercising the new full world
+presenter. Evidence remains in ignored `target/shared-light-package.*`,
+`target/shared-light-world.*` and `target/shared-light-world-profile/Profiles/`.
+The source validation below passed before packaging. The complete cutover remains
+open; these results do not establish a performance gain.
 
 ### Shared light-source overlap checkpoint
 
