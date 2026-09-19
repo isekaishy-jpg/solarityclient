@@ -12,6 +12,10 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
         self.urgent.load(Ordering::Acquire)
     }
 
+    fn cost(&self) -> u8 {
+        self.cost.load(Ordering::Acquire)
+    }
+
     fn propagate(&self, epoch: u64) {
         self.propagate_priority(epoch);
     }
@@ -30,8 +34,19 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
         loop {
             let (index, mut job, kernel, trace, cost) = {
                 let mut state = self.lock();
+                if !loading
+                    && !state.ready.is_empty()
+                    && dispatch.heavier_is_queued(self.urgent(), self.cost())
+                {
+                    let trace = state.trace;
+                    drop(state);
+                    trace.value("cpu.frame.cost_preempt", 0, 0, 1);
+                    self.launch(1);
+                    return;
+                }
                 let index = loop {
                     let Some(index) = state.pop_ready() else {
+                        self.update_cost(&mut state);
                         state.runners -= 1;
                         drop(state);
                         self.finish_if_terminal();
@@ -43,6 +58,7 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                     }
                 };
                 state.nodes[index].status = Status::Running;
+                self.update_cost(&mut state);
                 let trace = state.trace;
                 state.drain_tail.dispatch(trace);
                 (
@@ -80,15 +96,21 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                 outcome
             };
             state.complete(index, outcome);
+            let raised = self.update_cost(&mut state);
+            let has_ready = !state.ready.is_empty();
             let launch = state.runners_to_launch();
             let notifier = state.notifier.clone();
             drop(state);
+            if raised {
+                self.refresh_cost();
+            }
             self.launch(launch);
             self.ready.notify_all();
             if let Some(notifier) = notifier {
                 notifier.notify();
             }
-            if loading || dispatch.should_yield(self.urgent(), flexible) {
+            if has_ready && (loading || dispatch.should_yield(self.urgent(), flexible, self.cost()))
+            {
                 // Keep this runner reservation live while handing its lane back.
                 // No borrowed input or user operation crosses the queue boundary.
                 self.launch(1);

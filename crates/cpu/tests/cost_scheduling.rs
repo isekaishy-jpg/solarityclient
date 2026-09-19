@@ -1,5 +1,8 @@
 //! Controlled queues prove cost policy without measuring wall-clock speed.
 
+#[path = "cost_scheduling/phases.rs"]
+mod phases;
+
 use solarity_cpu::{
     CostCalibration, CpuError, CpuExecutor, CpuPoolConfig, CpuStoragePlan, FrameBatch,
     FrameBatchPlan, FrameGraphTemplate, FramePriority, JobCost, JobOutcome,

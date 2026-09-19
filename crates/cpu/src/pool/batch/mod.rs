@@ -1,8 +1,10 @@
 //! Bounded owned epochs, prerequisite readiness and typed result consumption.
 
 mod admission;
+mod cost;
 mod diagnostics;
 mod execution;
+mod incremental;
 mod loading;
 pub use loading::LoadBatch;
 mod priority;
@@ -53,6 +55,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         Self {
             core: Arc::new(Core {
                 urgent: std::sync::atomic::AtomicBool::new(false),
+                cost: std::sync::atomic::AtomicU8::new(0),
                 live_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 state: Mutex::new(State::new(kernel)),
                 ready: Condvar::new(),
@@ -89,80 +92,6 @@ impl<T: Send + 'static> FrameBatch<T> {
         dependency: &crate::ReadyToken,
     ) -> Result<(), CpuError> {
         self.begin_dependencies(cpu, plan, std::slice::from_ref(dependency))
-    }
-
-    /// Publishes an independent job under the epoch's reserved limits.
-    /// # Errors
-    /// Rejection leaves the input with the caller.
-    pub fn push(&mut self, job: &mut Option<T>) -> Result<FrameJob<T>, CpuError> {
-        self.push_after(job, &[])
-    }
-
-    /// Publishes after explicit predecessors. Completion and registration share
-    /// one lock, so a terminal parent can neither strand nor double-enqueue a child.
-    /// # Errors
-    /// Stale/duplicate parents, closed admission or exhausted node/edge capacity
-    /// preserve the input. Only earlier nodes in this epoch may be predecessors.
-    pub fn push_after(
-        &mut self,
-        job: &mut Option<T>,
-        parents: &[FrameJob<T>],
-    ) -> Result<FrameJob<T>, CpuError> {
-        self.push_after_with_cost(job, parents, crate::JobCost::default())
-    }
-
-    /// Publishes an estimated independent job without changing its output slot.
-    /// # Errors
-    /// Rejection leaves the input with the caller, as with `push`.
-    pub fn push_with_cost(
-        &mut self,
-        job: &mut Option<T>,
-        cost: crate::JobCost,
-    ) -> Result<FrameJob<T>, CpuError> {
-        self.push_after_with_cost(job, &[], cost)
-    }
-
-    /// Adds a cost hint to dependency admission. Priority and eligibility still
-    /// take precedence; only simultaneously ready jobs may exchange execution order.
-    /// # Errors
-    /// Preserves the input on the same identity/capacity errors as `push_after`.
-    pub fn push_after_with_cost(
-        &mut self,
-        job: &mut Option<T>,
-        parents: &[FrameJob<T>],
-        cost: crate::JobCost,
-    ) -> Result<FrameJob<T>, CpuError> {
-        if !self.active {
-            return Err(CpuError::BatchInactive);
-        }
-        let mut state = self.core.lock();
-        if !state.open {
-            return Err(CpuError::BatchClosed);
-        }
-        if job.is_none() {
-            return Err(CpuError::InvalidJob);
-        }
-        if state.jobs.len() == state.plan.jobs
-            || parents.len() > state.plan.edges.saturating_sub(state.edge_count)
-        {
-            return Err(CpuError::BatchCapacity);
-        }
-        for (position, parent) in parents.iter().enumerate() {
-            self.validate(&state, parent)?;
-            if parents[..position]
-                .iter()
-                .any(|earlier| earlier.index == parent.index)
-            {
-                return Err(CpuError::InvalidJob);
-            }
-        }
-        let index = state.jobs.len();
-        state.append(job.take(), cost, parents.iter().map(|parent| parent.index));
-        let handle = FrameJob::new(&self.core, state.generation, index);
-        let launch = state.runners_to_launch();
-        drop(state);
-        self.core.launch(launch);
-        Ok(handle)
     }
 
     /// Returns a checked handle for a root admitted by `start`.

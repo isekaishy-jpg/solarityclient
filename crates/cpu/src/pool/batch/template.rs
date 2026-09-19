@@ -150,6 +150,7 @@ impl<T: Send + 'static> FrameBatch<T> {
             );
         }
         state.open = false;
+        self.core.update_cost(&mut state);
         let launch = state.runners_to_launch();
         drop(state);
         self.core.launch(launch);

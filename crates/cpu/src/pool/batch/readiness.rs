@@ -27,6 +27,7 @@ impl<T: Send + 'static> ReadySink for Core<T> {
         } else {
             state.fail_gate();
         }
+        self.update_cost(&mut state);
         let mut launch = state.runners_to_launch();
         // Even an empty/failed closed phase publishes from a scheduled runner.
         // Chained external failures cannot recurse through an unbounded call stack.
@@ -54,6 +55,7 @@ impl<T: Send + 'static> EpochOwner for Core<T> {
         if matches!(state.gate, Gate::Pending(_)) {
             state.fail_gate();
         }
+        self.update_cost(&mut state);
         let launch = state.runners_to_launch();
         drop(state);
         self.launch(launch);

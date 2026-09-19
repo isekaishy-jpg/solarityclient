@@ -75,6 +75,9 @@ impl<T: Send + 'static> FrameBatch<T> {
         self.core
             .urgent
             .store(false, std::sync::atomic::Ordering::Release);
+        self.core
+            .cost
+            .store(0, std::sync::atomic::Ordering::Release);
         let priority_owner: Arc<dyn PrioritySink> = self.core.clone();
         self.core
             .completion_port

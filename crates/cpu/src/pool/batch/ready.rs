@@ -1,6 +1,6 @@
 //! Intrusive cost bins use the already charged node storage, with no extra queue.
 
-use super::state::Node;
+use super::state::{Node, Status};
 
 /// Each node is enqueued at most once. Cancellation leaves a stale entry for the
 /// ordinary status check; clearing a phase discards all three lists atomically.
@@ -46,6 +46,24 @@ impl ReadyJobs {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Cancelled heads must not keep a phase in a high global cost bucket. Their
+    /// links stay valid until removal, and each node is removed only once.
+    pub fn cost(&mut self, nodes: &mut [Node]) -> u8 {
+        for bin in (0..3).rev() {
+            while let Some(index) = self.heads[bin] {
+                if !matches!(nodes[index].status, Status::Terminal(_)) {
+                    return bin as u8;
+                }
+                self.heads[bin] = nodes[index].next_ready.take();
+                if self.heads[bin].is_none() {
+                    self.tails[bin] = None;
+                }
+                self.len -= 1;
+            }
+        }
+        0
     }
 
     /// Old node links are unreachable after the epoch is cleared.

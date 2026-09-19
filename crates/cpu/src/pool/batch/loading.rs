@@ -83,6 +83,7 @@ impl<T: Send + 'static> LoadBatch<T> {
             state.fail_gate();
         }
         state.ready.clear();
+        self.batch.core.update_cost(&mut state);
         drop(state);
         self.batch.core.finish_if_terminal();
         self.batch.core.ready.notify_all();

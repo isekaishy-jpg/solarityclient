@@ -11,8 +11,8 @@ impl Dispatch {
             .lock()
             .unwrap_or_else(|_| unreachable!("scheduler queue mutations cannot panic"));
         match class {
-            WorkClass::Frame if work.urgent() => queues.urgent.push_back(work),
-            WorkClass::Frame => queues.frame.push_back(work),
+            WorkClass::Frame if work.urgent() => queues.urgent.push(work),
+            WorkClass::Frame => queues.frame.push(work),
             WorkClass::Background => queues.service(work.service()).push_back(work),
             WorkClass::Priority => queues.priority.push_back(work),
         }
@@ -41,18 +41,8 @@ impl Dispatch {
             .queues
             .lock()
             .unwrap_or_else(|_| unreachable!("queue metadata cannot panic"));
-        let count = queues.frame.len();
-        for _ in 0..count {
-            let work = queues
-                .frame
-                .pop_front()
-                .unwrap_or_else(|| unreachable!("queue scan retains its length"));
-            if matches!(&work, Work::Retained(candidate) if Arc::ptr_eq(candidate, owner)) {
-                queues.urgent.push_back(work);
-            } else {
-                queues.frame.push_back(work);
-            }
-        }
+        let Queues { frame, urgent, .. } = &mut *queues;
+        frame.promote(owner, urgent);
         self.publish_queued(&queues);
         drop(queues);
         self.ready.notify_all();
@@ -60,17 +50,54 @@ impl Dispatch {
 
     /// Publishes a cheap boundary-yield hint while queue contents remain locked.
     pub(super) fn publish_queued(&self, queues: &Queues) {
-        let bits = u8::from(!queues.urgent.is_empty())
-            | (u8::from(!queues.priority.is_empty()) << 1)
-            | (u8::from(!queues.required.is_empty() || !queues.retirement.is_empty()) << 2);
+        // Two bits per cost level, then metadata/service predicates. Keeping the
+        // complete hint in one atomic avoids mixing snapshots across priorities.
+        let bits = queues.frame.level()
+            | (queues.urgent.level() << 2)
+            | (u8::from(!queues.priority.is_empty()) << 4)
+            | (u8::from(!queues.required.is_empty() || !queues.retirement.is_empty()) << 5);
         self.queued.store(bits, Ordering::Release);
     }
 
-    /// A kernel boundary yields for metadata, urgent prerequisites, or required
-    /// service on the flexible lane. Queue predicates are rechecked on dispatch.
-    pub(crate) fn should_yield(&self, urgent: bool, flexible: bool) -> bool {
+    /// A kernel boundary yields for metadata, urgent prerequisites, required
+    /// flexible service, or an equal/heavier ready runner in the same priority.
+    /// Equal costs receive FIFO turns; lower-cost phases cannot interrupt a
+    /// heavier phase. Queue predicates are rechecked on dispatch.
+    pub(crate) fn should_yield(&self, urgent: bool, flexible: bool, cost: u8) -> bool {
         let queued = self.queued.load(Ordering::Acquire);
-        queued & 2 != 0 || (!urgent && queued & 1 != 0) || (flexible && queued & 4 != 0)
+        let urgent_level = (queued >> 2) & 3;
+        let level = if urgent { urgent_level } else { queued & 3 };
+        // Nonempty levels encode bin + 1, so this includes equal-cost work.
+        queued & 16 != 0
+            || (!urgent && urgent_level != 0)
+            || (flexible && queued & 32 != 0)
+            || level > cost
+    }
+
+    /// A selected runner may lose its heavy nodes to another worker before it
+    /// claims state. Only strictly heavier work can preempt before a first kernel;
+    /// equal-cost runners must execute once to preserve FIFO progress.
+    pub(crate) fn heavier_is_queued(&self, urgent: bool, cost: u8) -> bool {
+        let queued = self.queued.load(Ordering::Acquire);
+        let urgent_level = (queued >> 2) & 3;
+        let level = if urgent { urgent_level } else { queued & 3 };
+        (!urgent && urgent_level != 0) || level > cost + 1
+    }
+
+    /// Queue-only adjustment follows phase metadata publication. No phase lock
+    /// is held here, matching urgency promotion's lock order.
+    pub(crate) fn reclassify_cost(&self, owner: &Arc<dyn ReadyWork>) {
+        // Even an apparently empty queue must synchronize: a concurrent push
+        // may have classified this owner before publishing its queue hint.
+        let mut queues = self
+            .queues
+            .lock()
+            .unwrap_or_else(|_| unreachable!("queue metadata cannot panic"));
+        queues.frame.reclassify(owner);
+        queues.urgent.reclassify(owner);
+        self.publish_queued(&queues);
+        drop(queues);
+        self.ready.notify_all();
     }
 
     /// Closes the durable sleep predicate after the admission owners drain.

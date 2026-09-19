@@ -66,12 +66,17 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
     let mut first = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
-    let mut second = CompletionPort::new(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+    let mut second = CompletionPort::new(2, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     let template =
         FrameGraphTemplate::with_dependencies(cpu.storage(), &[&[], &[0], &[0], &[1, 2]])?
             .with_priority(FramePriority::Prerequisite);
     let mut batch = FrameBatch::new(|value: &mut usize| *value += 1);
     let mut jobs = vec![0; 4];
+    let mut competing = FrameBatch::new(|value: &mut usize| *value += 1);
+    let competing_template = FrameGraphTemplate::independent(2);
+    let mut competing_jobs = vec![0; 2];
+    let competing_costs = [300, 10]
+        .map(|micros| solarity_cpu::JobCost::measured(std::time::Duration::from_micros(micros)));
     let costs = [1, 400, 100, 5]
         .map(|micros| solarity_cpu::JobCost::measured(std::time::Duration::from_micros(micros)));
     let mut window = None;
@@ -90,13 +95,22 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
             &[first.readiness(), second.readiness()],
             &costs,
         )?;
+        competing.start_costed_graph(
+            &cpu,
+            &competing_template,
+            &mut competing_jobs,
+            &[second.readiness()],
+            &competing_costs,
+        )?;
         producer.complete(JobOutcome::Succeeded)?;
         batch.reclaim(&mut jobs)?;
+        competing.reclaim(&mut competing_jobs)?;
         first.restart(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
-        second.restart(1, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
+        second.restart(2, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     }
     drop(window);
     assert_eq!(jobs, [1064; 4]);
+    assert_eq!(competing_jobs, [1064; 2]);
     assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0);
     Ok(())
 }

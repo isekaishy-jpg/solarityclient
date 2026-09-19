@@ -219,6 +219,10 @@ impl<T> State<T> {
     pub fn pop_ready(&mut self) -> Option<usize> {
         self.ready.pop(&mut self.nodes)
     }
+    /// Removes only cancelled heads; each stale node is discarded at most once.
+    pub fn ready_cost(&mut self) -> u8 {
+        self.ready.cost(&mut self.nodes)
+    }
     /// Reserves dispatch entries before unlocking completion/admission metadata.
     pub fn runners_to_launch(&mut self) -> usize {
         if matches!(self.gate, Gate::Pending(_)) {
@@ -268,6 +272,8 @@ impl<T> State<T> {
 /// Shared only with this epoch's workers, never mutable world state.
 pub(super) struct Core<T> {
     pub urgent: AtomicBool,
+    /// Highest ready bin (0..=2); empty phases use the cheapest dispatch class.
+    pub cost: std::sync::atomic::AtomicU8,
     // Zero is inactive. The registry observes this independent metadata owner so
     // pruning cannot retain/drop this Core or lock its domain-bearing state.
     pub live_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,

@@ -36,8 +36,8 @@ impl Dispatch {
                         queues
                             .priority
                             .pop_front()
-                            .or_else(|| queues.urgent.pop_front())
-                            .or_else(|| queues.frame.pop_front())
+                            .or_else(|| queues.urgent.pop())
+                            .or_else(|| queues.frame.pop())
                     } else if flexible {
                         queues.speculative.pop_front()
                     } else {

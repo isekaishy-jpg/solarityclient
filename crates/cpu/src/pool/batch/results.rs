@@ -177,6 +177,7 @@ impl<T: Send + 'static> FrameBatch<T> {
             Status::Running => state.nodes[handle.index].cancel_requested = true,
             Status::Ready | Status::Waiting => state.complete(handle.index, JobOutcome::Cancelled),
         }
+        self.core.update_cost(&mut state);
         let notifier = state.notifier.clone();
         drop(state);
         self.core.ready.notify_all();

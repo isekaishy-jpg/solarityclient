@@ -18,24 +18,14 @@ impl Dispatch {
     ) -> Result<(Arc<Self>, Vec<JoinHandle<()>>), CpuError> {
         let frame_capacity = count.checked_mul(capacity).ok_or(CpuError::BatchStorage)?;
         let priority_capacity = capacity.checked_mul(2).ok_or(CpuError::BatchStorage)?;
-        let mut frame = StorageDeque::default();
-        let mut urgent = StorageDeque::default();
+        let mut frame = super::cost::CostQueue::default();
+        let mut urgent = super::cost::CostQueue::default();
         let mut priority = StorageDeque::default();
         let mut required = StorageDeque::default();
         let mut retirement = StorageDeque::default();
         let mut speculative = StorageDeque::default();
-        frame.reserve(
-            budget,
-            CpuStorageClass::Frame,
-            CpuStorageKind::Metadata,
-            frame_capacity,
-        )?;
-        urgent.reserve(
-            budget,
-            CpuStorageClass::Frame,
-            CpuStorageKind::Metadata,
-            frame_capacity,
-        )?;
+        frame.reserve(budget, frame_capacity)?;
+        urgent.reserve(budget, frame_capacity)?;
         priority.reserve(
             budget,
             CpuStorageClass::Frame,

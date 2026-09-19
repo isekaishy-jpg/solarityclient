@@ -23,6 +23,13 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   preserving FIFO ties, prerequisite eligibility and original output slots.
   Node links use charged metadata; there is no whole-scene sort or per-bin
   allocation. Incremental and template admission accept frozen estimates.
+- The dispatcher also uses three reserved runner bins within each frame urgency.
+  Ready-cost increases move already queued runners; decreases are checked before
+  selection. All queue storage is charged at startup and admission counts stay
+  unchanged. Only atomic hints cross the phase/dispatcher lock boundary.
+  Between kernels, heavier or equal-cost ready phases receive a turn, with FIFO
+  ties. Protected-worker exclusion and required/retirement service precedence
+  remain independent of cost. Empty runners finish without another service turn.
 - Runtime supplies measured hints for M2 root poses, geometry and receiver
   ranges. Main retains calibration; owned jobs carry only work counts and sparse
   timing samples. The first eight jobs are sampled, then one in 64. Failed/partial
@@ -36,8 +43,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   `cpu.phase.drain_tail` measures last dispatch through last kernel return;
   `cpu.phase.last_return` identifies the last returning node in its phase.
   Publication/main-consumption time is separate. Disabled tracing adds no tail
-  clock reads. Cost ordering is currently within each typed phase; arbitration
-  between same-priority phases and calibrated bulk slicing still need connection.
+  clock reads. A selected runner that loses its heavy nodes before claiming work
+  yields to a heavier queued phase; F10 records `cpu.frame.cost_preempt`.
+  Calibrated bulk/service slicing beyond the connected M2 ranges remains required.
 
 - Live cinematic presentation now services native input while every reader of
   a changing decoded image retires. It uses the renderer's existing dedicated
@@ -475,9 +483,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Numeric main-ready storage and the four world operations are connected.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
-- Cost arbitration between typed phases and calibrated step-size policy beyond
-  the connected M2 kernels and receiver ranges. Per-phase cost bins, sparse
-  calibration and sampled drain-tail reporting are connected as described above;
+- Calibrated step-size policy beyond the connected M2 kernels and receiver ranges.
+  Cost bins within/across typed phases, sparse calibration and sampled drain-tail
+  reporting are connected as described above;
   resumable asset/bulk stages beyond retirement, the connected archive mounts,
   terrain stages and Glue texture steps, and
   remaining domain demand transitions beyond terrain/Glue prewarm. External producers
@@ -564,6 +572,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Cost arbitration across phases checkpoint
+
+On 2026-09-19, formatting, workspace Clippy with warnings denied and the full
+workspace suite passed: 1,582 tests, zero failures and 33 ignored across 94
+test summaries. Seven new controlled checks cover urgency before cost, FIFO
+ties, an already queued phase gaining expensive work, cancelled high-cost heads,
+dependency release, required-service turns, and concurrent admission with epoch
+reuse on two and four workers. The warmed graph/fan-in fixture now includes
+competing phases and still records zero allocator calls over 1,000 activations.
+Moving M2 pose/geometry and stock rendering fixtures remain in the passing suite.
+
+Logs are in ignored `target/phase-cost-final-{fmt,clippy,tests}.{stdout,stderr}.log`.
+The added runner buckets reserve and charge metadata at executor creation;
+admission bounds do not increase. These checks establish scheduler ordering,
+ownership and warmed allocation behavior. They do not measure whole-client
+overhead, live frame-time improvement or completion of the remaining cutover.
 
 ### Build 153 package checkpoint
 

@@ -1,5 +1,6 @@
 //! Persistent protected/flexible workers and durable ready-queue predicates.
 
+mod cost;
 mod queues;
 mod startup;
 mod worker;
@@ -16,6 +17,8 @@ pub(crate) trait ReadyWork: Send + Sync {
     fn run(self: Arc<Self>, flexible: bool);
     /// Reads phase urgency without acquiring its scheduler lock.
     fn urgent(&self) -> bool;
+    /// Reads the highest currently ready cost bin (0..=2), without a phase lock.
+    fn cost(&self) -> u8;
     /// Runs bounded metadata propagation instead of a domain kernel.
     fn propagate(&self, epoch: u64);
 }
@@ -81,12 +84,28 @@ impl Work {
     fn urgent(&self) -> bool {
         matches!(self, Self::Retained(operation) if operation.urgent())
     }
+
+    /// Only retained frame runners enter cost buckets; other classes have their
+    /// own eligibility and fairness policies rather than guessed execution costs.
+    fn cost(&self) -> u8 {
+        match self {
+            Self::Retained(operation) => operation.cost(),
+            Self::Once(..) | Self::Sliced(..) | Self::Loading(..) | Self::Priority(..) => {
+                unreachable!("only frame runners enter cost queues")
+            }
+        }
+    }
+
+    /// Identity comparisons do not lease or lock domain-bearing phase state.
+    fn belongs_to(&self, owner: &Arc<dyn ReadyWork>) -> bool {
+        matches!(self, Self::Retained(candidate) if Arc::ptr_eq(candidate, owner))
+    }
 }
 
 /// Both queue predicates and shutdown are changed under the same mutex.
 struct Queues {
-    frame: StorageDeque<Work>,
-    urgent: StorageDeque<Work>,
+    frame: cost::CostQueue,
+    urgent: cost::CostQueue,
     priority: StorageDeque<Work>,
     required: StorageDeque<Work>,
     retirement: StorageDeque<Work>,
