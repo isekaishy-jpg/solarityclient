@@ -494,11 +494,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 151 was packaged and installed on 2026-09-19 from `fffb70e2`. It connects
-the retained main readiness queue to world preparation, retaining shared Glue
-appearance sources, receiver-uniform batches, the shared light-source bank,
-terrain/liquid overlap, resumable M2 phases, native GPU presentation-slot and CPU
-waits, and preceding source/loading changes.
+Build 152 was packaged and installed on 2026-09-19 from `464ee0d1`. It connects
+cinematic shared-source reader waits to native servicing, retaining the main
+readiness queue/world integration, shared Glue appearance sources, receiver-uniform
+batches, the shared light-source bank, terrain/liquid overlap, resumable M2 phases,
+native GPU presentation-slot and CPU waits, and preceding source/loading changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -541,6 +541,24 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 152 package checkpoint
+
+Build **152** compiled through `scripts/build-client.ps1` in 5m23s from
+`464ee0d1516d0fb86acf32065d92614899d81fe8`. Source and index stayed fixed during
+compilation; `dirty=true` records only the reserved `BUILD_NUMBER`. Package and
+installed executable SHA-256 match
+`CEB7A6A1024D29B094812343B4C18EBA6429501D31E455FA7196B51D1E66745A`.
+Installation used `install-test-client.ps1 -SkipBuild`; identity, manifest,
+launcher and desktop shortcut were verified. Testing retains 2560 x 1440
+fullscreen-windowed, four CPU workers, capacity 256, two network workers and
+GPU zero, with F10 opt-in. No interactive client was launched.
+
+The source passed the full validation and hidden Vulkan cinematic fixture below.
+This closes cinematic shared-source native waiting, not movie decoding, general
+upload/acquisition waits or the full CPU cutover. No live movie latency or
+in-world FPS improvement is established. Evidence is retained in ignored
+`target/cinematic-readers-package.log` and `target/cinematic-readers-install.log`.
 
 ### Cinematic source-reader checkpoint
 
