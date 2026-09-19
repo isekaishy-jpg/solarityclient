@@ -1,28 +1,8 @@
-//! Main-thread SDL context, window, and event-pump ownership.
+//! Window construction, native surface ownership and presentation state.
 
-#![allow(unsafe_code)]
-
-use sdl3::video::{Window, WindowFlags};
-use sdl3::{EventPump, Sdl, VideoSubsystem};
-
+use super::SdlPlatform;
 use crate::configuration::{WindowConfiguration, WindowMode};
-use crate::platform::event_translation;
-use crate::platform::window_identity;
-use crate::platform::{PlatformError, PlatformEvent, WindowId};
-
-/// Exclusive owner of SDL objects whose lifecycle is constrained to one thread.
-pub(crate) struct SdlPlatform {
-    wake: super::wakeup::WakeBridge,
-    // Declaration order deliberately destroys the pump and window before their
-    // subsystem handles and finally the process-level SDL context.
-    event_pump: EventPump,
-    window: Window,
-    total_physical_memory_bytes: u64,
-    text_input_active: bool,
-    mouse_free_look: bool,
-    video: VideoSubsystem,
-    sdl: Sdl,
-}
+use crate::platform::{PlatformError, WindowId, window_identity};
 
 impl SdlPlatform {
     /// Initializes a hidden Vulkan-capable window before renderer construction.
@@ -94,7 +74,7 @@ impl SdlPlatform {
             .and_then(|value| value.checked_mul(1_024 * 1_024))
             .ok_or(PlatformError::SystemRam)?;
 
-        let wake = super::wakeup::WakeBridge::new()?;
+        let wake = crate::platform::wakeup::WakeBridge::new()?;
         Ok(Self {
             wake,
             event_pump,
@@ -105,76 +85,6 @@ impl SdlPlatform {
             video,
             sdl,
         })
-    }
-
-    /// Surfaces producer-side native faults on every serviced frame.
-    pub(crate) fn check_wait_health(&self) -> Result<(), PlatformError> {
-        self.wake.check()
-    }
-
-    /// Shares native notification ownership without exposing SDL to workers.
-    pub(crate) fn coordinator_notifier(
-        &self,
-    ) -> std::sync::Arc<dyn solarity_cpu::CoordinatorNotifier> {
-        self.wake.notifier()
-    }
-
-    /// Parks idle/movie service until work, input or its next clock boundary.
-    pub(crate) fn wait_for_work(
-        &mut self,
-        deadline: std::time::Instant,
-    ) -> Result<super::wakeup::WakeReason, PlatformError> {
-        let ticket = self.wake.observe();
-        self.event_pump.pump_events();
-        // SAFETY: SDL is live on its owning thread. This checks the entire queue
-        // without removing events or invoking gameplay outside its cutoff.
-        if unsafe { sdl3::sys::events::SDL_HasEvents(0, u32::MAX) } {
-            return Ok(super::wakeup::WakeReason::Input);
-        }
-        self.wake.wait(ticket, deadline)
-    }
-
-    /// Keeps the presentation deadline while collecting native input into SDL's
-    /// queue. Gameplay translation remains at the next ordered frame boundary.
-    pub(crate) fn wait_for_frame_deadline(
-        &mut self,
-        deadline: std::time::Instant,
-    ) -> Result<(), PlatformError> {
-        while std::time::Instant::now() < deadline {
-            let ticket = self.wake.observe();
-            self.event_pump.pump_events();
-            self.wake.wait(ticket, deadline)?;
-        }
-        Ok(())
-    }
-
-    /// Polls until it finds one admitted client event or exhausts SDL's queue.
-    pub(crate) fn poll_event(&mut self) -> Option<super::TimedPlatformEvent> {
-        loop {
-            let event = {
-                let _profile = solarity_profiling::profile!("platform.sdl.poll");
-                self.event_pump.poll_event()
-            };
-            let event = event?;
-            if let Some(event) = event_translation::translate(event) {
-                if let PlatformEvent::Window {
-                    window_id,
-                    event: window_event,
-                } = &event.event
-                    && *window_id == self.window_id()
-                {
-                    tracing::info!(
-                        event = ?window_event,
-                        position = ?self.window.position(),
-                        logical_extent = ?self.logical_extent(),
-                        pixel_extent = ?self.pixel_extent(),
-                        flags = ?WindowFlags::from(self.window.window_flags()),
-                        "primary SDL window lifecycle event"
-                    );
-                }
-                return Some(event);
-            }
-        }
     }
 
     /// Returns the SDL identifier used to reject or route window-scoped work.
@@ -245,36 +155,5 @@ impl SdlPlatform {
         Err(PlatformError::ShowWindow {
             message: sdl3::get_error().to_string(),
         })
-    }
-
-    /// Starts or stops SDL text/IME delivery for the primary window.
-    pub(crate) fn set_text_input_active(&mut self, active: bool) {
-        if self.text_input_active == active {
-            return;
-        }
-        let text_input = self.video.text_input();
-        if active {
-            text_input.start(&self.window);
-        } else {
-            text_input.stop(&self.window);
-        }
-        self.text_input_active = active;
-    }
-
-    /// Relative mode hides and confines the cursor during an admitted camera
-    /// gesture; SDL releases confinement when this window loses focus.
-    pub(crate) fn set_mouse_free_look(&mut self, enabled: bool) -> Result<(), PlatformError> {
-        if enabled == self.mouse_free_look {
-            return Ok(());
-        }
-        let mouse = self.sdl.mouse();
-        mouse.set_relative_mouse_mode(&self.window, enabled);
-        if mouse.relative_mouse_mode(&self.window) != enabled {
-            return Err(PlatformError::RelativeMouse {
-                message: sdl3::get_error().to_string(),
-            });
-        }
-        self.mouse_free_look = enabled;
-        Ok(())
     }
 }

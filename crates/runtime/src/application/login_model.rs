@@ -1214,10 +1214,12 @@ impl RuntimeGlueModelScene {
     }
 
     /// Presents the authored model/effects and then the loaded FrameXML pass.
+    #[allow(clippy::too_many_arguments)] // Platform waiting retains a separate main-only owner.
     pub(crate) fn present(
         &mut self,
         renderer: &mut VulkanRenderer,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         glue: &GlueManager,
         ui: &RuntimeUiFrame,
         random: &mut CrtRand,
@@ -1250,6 +1252,7 @@ impl RuntimeGlueModelScene {
         let visible = active.frame.prepare_visible_draws(
             renderer,
             cpu,
+            wait,
             frustum,
             camera,
             solarity_rendering::M2TransparentPass::One,

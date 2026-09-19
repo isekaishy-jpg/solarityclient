@@ -105,6 +105,7 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
     let draws = frame.prepare_visible_draws(
         &renderer,
         &crate::frame_cpu_support::executor()?,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -198,6 +199,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     frame.prepare_visible_draws(
         &renderer,
         &crate::frame_cpu_support::executor()?,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -286,6 +288,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     frame.prepare_visible_draws(
         &renderer,
         &crate::frame_cpu_support::executor()?,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -405,6 +408,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
         frame.prepare_visible_draws(
             &renderer,
             &crate::frame_cpu_support::executor()?,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,
@@ -465,6 +469,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     frame.prepare_visible_draws(
         &renderer,
         &crate::frame_cpu_support::executor()?,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
         WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
         camera,
         solarity_rendering::M2TransparentPass::One,
@@ -809,7 +814,15 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
                 "abandonment returns the unconsumed root palette"
             );
         } else {
-            let draws = pending.finish(&renderer, &cpu, &mut random, None, None, None)?;
+            let draws = pending.finish(
+                &renderer,
+                &cpu,
+                &mut crate::application::frame_pipeline::FrameWait::Offline,
+                &mut random,
+                None,
+                None,
+                None,
+            )?;
             assert_eq!(!draws.draws.is_empty(), visible);
         }
         let expected_rotation = Mat4::from_rotation_z(-0.8);

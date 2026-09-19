@@ -184,6 +184,7 @@ fn retired_game_object_follows_transport_then_freezes_when_parent_leaves()
         frame.prepare_visible_draws(
             renderer,
             &crate::frame_cpu_support::executor()?,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,

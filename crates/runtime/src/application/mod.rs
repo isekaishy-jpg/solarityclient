@@ -14,6 +14,7 @@ mod cpu_retirement;
 mod developer_console;
 mod entity_opacity;
 mod environment_coordinator;
+mod frame_pipeline;
 mod frame_profile;
 mod game_object_behavior;
 mod game_object_coordinator;

@@ -7,6 +7,7 @@ mod input;
 pub(in crate::application::terrain_frame::m2) use admission::PoseAdmission;
 
 use super::super::{M2BonePose, RuntimeTerrainFrameError};
+use crate::application::frame_pipeline::FrameWait;
 use input::PoseJob;
 use solarity_asset::ResourceLease;
 
@@ -32,6 +33,20 @@ impl Default for PoseBatch {
 }
 
 impl PoseBatch {
+    /// Services main before the next root enters ordered placement mutation.
+    pub(in crate::application::terrain_frame::m2) fn wait_for_root(
+        &self,
+        index: usize,
+        wait: &mut FrameWait<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        if self.submitted
+            && let Some(job) = self.indices.get(index).copied().flatten()
+        {
+            wait.before_result(&self.pending, &self.handles[job])?;
+        }
+        Ok(())
+    }
+
     /// Allows ordered traversal to yield before mutating a root whose palette is
     /// still running. Terminal failures remain at the original consumer boundary.
     pub(in crate::application::terrain_frame::m2) fn is_ready(
@@ -47,9 +62,13 @@ impl PoseBatch {
     /// Recovers owned inputs on normal publication and when a prior frame failed.
     pub(in crate::application::terrain_frame::m2) fn finish(
         &mut self,
+        wait: &mut FrameWait<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        self.pending.close();
+        let readiness = wait.before_reclaim(&self.pending);
         let result = self.pending.reclaim(&mut self.jobs);
         self.submitted = false;
+        readiness?;
         result?;
         Ok(())
     }

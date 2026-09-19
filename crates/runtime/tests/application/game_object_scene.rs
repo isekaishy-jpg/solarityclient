@@ -455,6 +455,7 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
                 .prepare_visible_draws(
                     &renderer,
                     &crate::frame_cpu_support::executor()?,
+                    &mut crate::application::frame_pipeline::FrameWait::Offline,
                     WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                     camera,
                     solarity_rendering::M2TransparentPass::One,

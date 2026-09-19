@@ -292,6 +292,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
             &crate::frame_cpu_support::executor()?,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -388,6 +389,6 @@ impl scene_lighting::SceneLighting {
         exterior: M2DirectionalLight,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.begin_finish(None, None, base, exterior)?;
-        self.finish_pending()
+        self.finish_pending(&mut crate::application::frame_pipeline::FrameWait::Offline)
     }
 }

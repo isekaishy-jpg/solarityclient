@@ -5,6 +5,13 @@ use super::{FrameBatch, FrameJob, JobOutcome};
 use crate::CpuError;
 
 impl<T: Send + 'static> FrameBatch<T> {
+    /// Reports when all kernels and terminal publication have released admission.
+    /// An inactive batch has no outstanding work. This does not consume results.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        !self.active || self.core.lock().lease.is_none()
+    }
+
     /// Observes terminal status without consuming domain state.
     /// # Errors
     /// Rejects inactive, foreign or recycled identities.

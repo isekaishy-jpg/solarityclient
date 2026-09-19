@@ -592,6 +592,7 @@ impl ClientServices {
             .present(
                 &mut self.renderer,
                 &self.cpu,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
                 self.terrain
                     .resident_mesh_plan()
                     .map(solarity_rendering::TerrainTileMeshPlan::tile),

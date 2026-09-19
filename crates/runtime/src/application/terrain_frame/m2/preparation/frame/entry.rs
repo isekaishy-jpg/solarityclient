@@ -6,15 +6,16 @@ use super::super::super::{
 };
 use super::PendingM2Frame;
 use super::input::{AdmissionMode, FrameAdmission, FrameView};
+use crate::application::frame_pipeline::FrameWait;
 
 impl M2Frame {
     /// Restores a failed or abandoned frame before its owner can mutate placements.
     /// Domain errors retain precedence; this boundary reports only executor failure.
     pub(super) fn abandon_frame_preparation(&mut self) {
         let _profile = solarity_profiling::profile!("m2.frame_abandon_wait");
-        let geometry = self.finish_geometry();
+        let geometry = self.finish_geometry(&mut FrameWait::Offline);
         self.restore_geometry_states();
-        let poses = self.pose_batch.finish();
+        let poses = self.pose_batch.finish(&mut FrameWait::Offline);
         for error in [geometry, poses].into_iter().filter_map(Result::err) {
             tracing::warn!(error = %error, "M2 frame abandonment encountered an executor failure");
         }
@@ -26,6 +27,7 @@ impl M2Frame {
         &mut self,
         renderer: &VulkanRenderer,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut FrameWait<'_>,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         first_transparent_pass: M2TransparentPass,
@@ -74,6 +76,7 @@ impl M2Frame {
         pending.finish(
             renderer,
             cpu,
+            wait,
             random,
             game_objects,
             spatial_lighting,

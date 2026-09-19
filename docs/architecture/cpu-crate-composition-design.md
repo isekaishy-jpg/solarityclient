@@ -310,11 +310,13 @@ and the sequence prevent lost wakeups, not a belief that OS events are counts.
 
 ### Current Windows/SDL integration
 
-The current [SDL platform owner](../../crates/runtime/src/platform/sdl_platform.rs)
+The current [SDL platform owner](../../crates/runtime/src/platform/sdl_platform/mod.rs)
 connects the [native bridge](../../crates/runtime/src/platform/wakeup/mod.rs) to
-frame pacing, minimized service and cinematic deadlines. CPU task and frame
-result publication notify it after releasing result locks. In-frame result
-consumption and loading/GPU continuation integration remain recorded in
+frame pacing, minimized service, cinematic deadlines and live M2 root/result/
+reclamation waits. CPU task and frame result publication notify it after releasing
+result locks. Ordered M2 publication consumes ready results without entering the
+platform; pending results collect native input for the next gameplay cutoff.
+Remaining main-ready continuations and loading/GPU integration are recorded in
 [cutover status](cpu-cutover-status.md). An SDL user event never carries the
 only copy of a required completion.
 

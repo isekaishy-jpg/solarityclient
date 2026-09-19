@@ -1345,7 +1345,8 @@ impl M2Frame {
             observed.particle_output = self.particle_draws.len() != first_particle;
             observed.ribbon_output = self.ribbon_draws.len() != first_ribbon;
         }
-        self.pose_batch.finish()?;
+        self.pose_batch
+            .finish(&mut crate::application::frame_pipeline::FrameWait::Offline)?;
         self.pose_batch.report_consumption();
         frame_profile.mark("instance traversal");
         solarity_profiling::profile_value!("m2.resident_placements", self.placements.len());

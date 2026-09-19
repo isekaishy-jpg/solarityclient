@@ -8,7 +8,7 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use solarity_cpu::CoordinatorNotifier;
 use windows_sys::Win32::Foundation::{GetLastError, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
@@ -21,11 +21,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, QS_ALLINPUT,
 };
 
-use super::{SignalAction, WakeReason, WakeSequence, WakeTicket};
+use super::{MAINTENANCE_INTERVAL, SignalAction, WakeReason, WakeSequence, WakeTicket};
 use crate::platform::PlatformError;
-
-/// Every wait keeps a finite maintenance deadline, including signal failure.
-const MAINTENANCE_INTERVAL: Duration = Duration::from_millis(16);
 
 /// Shared signal owns its handle until the final worker/watch producer leaves.
 struct NativeSignal {

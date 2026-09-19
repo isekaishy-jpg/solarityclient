@@ -1984,6 +1984,7 @@ impl M2Frame {
         &mut self,
         renderer: &VulkanRenderer,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         first_transparent_pass: M2TransparentPass,
@@ -1996,6 +1997,7 @@ impl M2Frame {
         self.prepare_visible_draws_with_unit_effects(
             renderer,
             cpu,
+            wait,
             frustum,
             camera,
             first_transparent_pass,

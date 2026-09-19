@@ -264,6 +264,7 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
         let draws = frame.prepare_visible_draws(
             &renderer,
             &crate::frame_cpu_support::executor()?,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,

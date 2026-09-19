@@ -14,7 +14,8 @@ impl M2Frame {
         admission: super::PoseAdmission<'_>,
         now: u32,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.pose_batch.finish()?;
+        self.pose_batch
+            .finish(&mut crate::application::frame_pipeline::FrameWait::Offline)?;
         let batch = &mut self.pose_batch;
         for job in &batch.jobs {
             batch.indices[job.placement()] = None;

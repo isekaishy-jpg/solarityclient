@@ -46,6 +46,9 @@ use world_model::WorldModelFrame;
 /// Failure while joining a resident ADT to renderer-local GPU resources.
 #[derive(Debug, Error)]
 pub enum RuntimeTerrainFrameError {
+    /// Main could not service a native CPU readiness boundary.
+    #[error(transparent)]
+    Platform(#[from] crate::platform::PlatformError),
     /// A bounded detail preparation task failed at its executor boundary.
     #[error(transparent)]
     Cpu(#[from] solarity_cpu::CpuError),
@@ -559,6 +562,15 @@ pub enum RuntimeTerrainFrameError {
     },
 }
 
+impl From<super::frame_pipeline::FrameWaitError> for RuntimeTerrainFrameError {
+    fn from(error: super::frame_pipeline::FrameWaitError) -> Self {
+        match error {
+            super::frame_pipeline::FrameWaitError::Cpu(error) => Self::Cpu(error),
+            super::frame_pipeline::FrameWaitError::Platform(error) => Self::Platform(error),
+        }
+    }
+}
+
 /// One retained ADT's immutable upload resources and culling plan.
 struct TerrainGpuTile {
     plan: Arc<TerrainTileMeshPlan>,
@@ -780,6 +792,7 @@ impl TerrainFrame {
         &mut self,
         renderer: &mut VulkanRenderer,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         plan: Option<TerrainTileIndex>,
         environment: RuntimeWorldEnvironmentFrame,
         terrain: &mut super::terrain_coordinator::RuntimeTerrainCoordinator,
@@ -1003,6 +1016,7 @@ impl TerrainFrame {
         let m2 = pending_m2.finish(
             renderer,
             cpu,
+            wait,
             random,
             Some(game_objects),
             Some((

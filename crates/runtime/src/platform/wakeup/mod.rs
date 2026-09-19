@@ -13,6 +13,10 @@ pub(super) use windows::WakeBridge;
 
 use sequence::{SignalAction, WakeSequence, WakeTicket};
 
+// SDL watches precede queue insertion; recheck this window even without a new
+// notification. CPU completion notifications still wake native waits immediately.
+pub(super) const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+
 /// A wake is an invitation to inspect durable state, never a completion payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WakeReason {

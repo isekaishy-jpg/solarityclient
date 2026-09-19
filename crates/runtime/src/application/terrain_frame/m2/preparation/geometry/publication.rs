@@ -3,6 +3,7 @@
 use super::super::super::{M2Frame, M2GpuPlacement, RuntimeTerrainFrameError};
 use super::super::diagnostics::Work;
 use super::{GeometryBatch, GeometryInput, GeometryJob};
+use crate::application::frame_pipeline::FrameWait;
 use solarity_rendering::{M2BonePose, M2BonePoseOverrides, M2MaterialPose};
 use solarity_rendering::{M2CameraEffectScale, VulkanError, WorldCameraFrame};
 
@@ -58,13 +59,19 @@ impl M2Frame {
     }
 
     /// Closes the producer and restores owned jobs before effect-state return.
-    pub(in super::super) fn finish_geometry(&mut self) -> Result<(), RuntimeTerrainFrameError> {
+    pub(in super::super) fn finish_geometry(
+        &mut self,
+        wait: &mut FrameWait<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
         let batch = &mut self.geometry_batch;
         if batch.submitted {
             // Placeholders have no live state. Reclaim retains the Vec allocation.
             batch.jobs.clear();
+            batch.pending.close();
+            let readiness = wait.before_reclaim(&batch.pending);
             let result = batch.pending.reclaim(&mut batch.jobs);
             batch.submitted = false;
+            readiness?;
             result?;
         }
         Ok(())
@@ -74,6 +81,7 @@ impl M2Frame {
     pub(in super::super) fn publish_geometry(
         &mut self,
         work: &mut Work,
+        wait: &mut FrameWait<'_>,
     ) -> Result<(usize, usize), RuntimeTerrainFrameError> {
         let _profile = solarity_profiling::profile!("m2.geometry_publication");
         let mut output = super::output::GeometryOutput {
@@ -92,9 +100,9 @@ impl M2Frame {
         let batch = &mut self.geometry_batch;
         batch.pending.close();
         for index in 0..batch.active {
-            batch
-                .pending
-                .with_result(&batch.handles[index], |job| output.publish(job, work))??;
+            wait.consume(&mut batch.pending, &batch.handles[index], |job| {
+                output.publish(job, work)
+            })??;
         }
         Ok((output.vertex_capacity, output.index_capacity))
     }

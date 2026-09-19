@@ -5,6 +5,7 @@ use super::super::super::{
     compare_m2_transparent, scene_element_count,
 };
 use super::super::diagnostics::Work;
+use crate::application::frame_pipeline::FrameWait;
 use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 
 impl M2Frame {
@@ -13,6 +14,7 @@ impl M2Frame {
     pub(super) fn complete_visible_draws(
         &mut self,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut FrameWait<'_>,
         work: &mut Work,
         first_transparent_pass: M2TransparentPass,
         animation_time_ms: f32,
@@ -29,10 +31,10 @@ impl M2Frame {
         let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
         // Ordered packet relocation can consume the ready prefix while later
         // kernels run. Receiver demand still follows actual emitted packets.
-        let publication_result = self.publish_geometry(work);
-        let geometry_result = self.finish_geometry();
+        let publication_result = self.publish_geometry(work, wait);
+        let geometry_result = self.finish_geometry(wait);
         self.restore_geometry_states();
-        let pose_result = self.pose_batch.finish();
+        let pose_result = self.pose_batch.finish(wait);
         let (particle_vertex_capacity, particle_index_capacity) = publication_result?;
         geometry_result?;
         pose_result?;
@@ -112,7 +114,7 @@ impl M2Frame {
         })();
         frame_profile.mark("transparent order");
         let lighting_result = match world_lighting {
-            Some(_) => self.scene_lighting.finish_pending(),
+            Some(_) => self.scene_lighting.finish_pending(wait),
             None => Ok(()),
         };
         let water_scene_order = transparent_result?;

@@ -199,7 +199,9 @@ impl SceneLighting {
     /// Restores all scene storage before surfacing domain or worker failures.
     pub(in crate::application::terrain_frame::m2) fn finish_pending(
         &mut self,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let readiness = wait.before_reclaim(&self.batch.pending);
         let worker = if self.batch.submitted {
             self.batch.submitted = false;
             self.batch.pending.reclaim(&mut self.batch.jobs)
@@ -217,6 +219,7 @@ impl SceneLighting {
         if let Some(result) = result {
             result?;
         }
+        readiness?;
         worker?;
         Ok(())
     }

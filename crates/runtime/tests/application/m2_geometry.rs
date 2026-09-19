@@ -5,7 +5,10 @@
 use crate::frame_cpu_support::continuation_support;
 
 use super::super::super::*;
+use crate::application::frame_pipeline::FrameWait;
 use crate::application::unit_animation::{UnitAnimationBehavior, UnitAnimationInput};
+use crate::configuration::{WindowConfiguration, WindowMode};
+use crate::platform::SdlPlatform;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models, unit_models};
 use glam::Vec3;
 use solarity_asset::ResourceLease;
@@ -73,16 +76,10 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         &AssetPath::new("Batch.m2")?,
     )?);
     let _lock = SDL_TEST_LOCK.lock().map_err(|_| "SDL lock poisoned")?;
-    let sdl = sdl3::init()?;
-    let video = sdl.video()?;
-    let window = video
-        .window("Solarity joined geometry parity", 64, 64)
-        .vulkan()
-        .hidden()
-        .build()?;
-    let bootstrap = VulkanBootstrap::start(&window.vulkan_instance_extensions()?)?;
+    let mut platform = SdlPlatform::start(WindowConfiguration::new(64, 64, WindowMode::Windowed))?;
+    let bootstrap = VulkanBootstrap::start(&platform.vulkan_instance_extensions()?)?;
     // SAFETY: SDL transfers sole surface ownership; its hidden window outlives the renderer.
-    let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
+    let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
     let source = prepare_gpu_source(
         &mut renderer,
@@ -146,11 +143,14 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         frames.push(frame);
         randoms.push(random);
     }
-    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(4).ok_or("workers")?,
-        NonZeroUsize::new(8).ok_or("capacity")?,
-        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
-    ))?;
+    let mut cpu = CpuExecutor::with_notifier(
+        CpuPoolConfig::new(
+            NonZeroUsize::new(4).ok_or("workers")?,
+            NonZeroUsize::new(8).ok_or("capacity")?,
+            solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+        ),
+        platform.coordinator_notifier(),
+    )?;
     let mut charged_output = false;
     let mut saw_particles = false;
     let mut saw_ribbons = false;
@@ -258,7 +258,15 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         if let Some(held) = held {
             held.release()?;
         }
-        let b = pending.finish(&renderer, &cpu, candidate_random, None, None, None)?;
+        let b = pending.finish(
+            &renderer,
+            &cpu,
+            &mut FrameWait::Native(&mut platform),
+            candidate_random,
+            None,
+            None,
+            None,
+        )?;
         if step >= 32 {
             reference_time += reference_elapsed;
             candidate_time += started.elapsed();
@@ -381,6 +389,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         let result = candidate.prepare_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
+            &mut FrameWait::Native(&mut platform),
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,

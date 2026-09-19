@@ -177,6 +177,7 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
             .prepare_visible_draws(
                 &renderer,
                 &crate::frame_cpu_support::executor()?,
+                &mut crate::application::frame_pipeline::FrameWait::Offline,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 solarity_rendering::M2TransparentPass::One,

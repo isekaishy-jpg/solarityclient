@@ -98,6 +98,7 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
             &crate::frame_cpu_support::executor()?,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -156,6 +157,7 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
     let hidden = frame.prepare_visible_draws_with_unit_effects(
         &renderer,
         &crate::frame_cpu_support::executor()?,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
         WorldFrustum::new(hidden_camera, WorldScreenWindow::FULL)?,
         hidden_camera,
         M2TransparentPass::One,
@@ -199,6 +201,7 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
             &crate::frame_cpu_support::executor()?,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -393,6 +396,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
             let visible = frame.prepare_visible_draws_with_unit_effects(
                 &renderer,
                 &crate::frame_cpu_support::executor()?,
+                &mut crate::application::frame_pipeline::FrameWait::Offline,
                 WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
                 camera,
                 M2TransparentPass::One,

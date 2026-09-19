@@ -228,6 +228,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
         let visible = pending.finish(
             &renderer,
             &cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             &mut random,
             Some(objects.frame_input(Some(&world))),
             Some((&mut terrain, environment, colors[0], &liquid_types)),

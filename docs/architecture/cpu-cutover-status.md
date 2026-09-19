@@ -19,6 +19,19 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Live world, Glue and world-replay frame consumption now uses an explicit
+  main-owned native wait context. Unfinished root palettes yield before placement
+  mutation; ordered geometry consumes each ready result directly, then services
+  native input while waiting for its exact next result. Final pose, geometry and
+  scene-light reclamation observes terminal publication and admission release.
+  SDL events stay queued until the ordinary gameplay cutoff. No scene clocks,
+  callbacks or simulation steps run from a wait, and no general worker pumps SDL.
+- Native-wait failure still drains owned CPU state before returning. Offline
+  fixtures explicitly retain synchronous executor consumption; this is a selected
+  execution context, not a live fallback on native errors. SDL window ownership,
+  input translation and native waiting now have separate folder-module children.
+  F10 has distinct result/reclamation native wait spans. Full main-ready service
+  and loading/GPU-slot integration remain required.
 - NPC and remote-player primary M2 loading now joins the same namespace/path
   authority as Glue and top-level GameObjects. A new source has one admitted
   producer; a pending source gates appearance work through `LoadBatch` without
@@ -52,9 +65,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   overlapping work is not counted as M2 execution. Setup, resumed traversal and
   worker descendants share one logical `m2.frame` identity; the readiness yield
   has an explicit observation. Independent world preparation now precedes the
-  first root-pose wait. Later unfinished palettes and final consumption can still
-  wait after that useful-work turn; full continuation/native-wait integration
-  remains required below.
+  first root-pose wait. Later unfinished palettes and final consumption use the
+  native readiness context described above; full main-ready continuation and
+  loading/GPU wait integration remain required below.
 
 - Background loading now uses the existing bounded dependency engine through
   `LoadBatch`. Waiting phases retain owned inputs and task admission but occupy
@@ -338,7 +351,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   final frame streams, ordinary asset buffers and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend the native bridge to loading/GPU-slot waits and main-ready continuations.
-  Current frame consumers still wait at their necessary consumption boundaries.
+  M2 normal consumption now services native input at its necessary waits;
+  exceptional abandonment retains unconditional CPU state reclamation.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
   ordered receiver lighting and end-of-frame state reclamation still have barriers.
 - Extend pending-request authority beyond runtime audio, Glue primary M2s,
@@ -405,6 +419,28 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Native frame-consumption checkpoint
+
+On 2026-09-19, formatting, full workspace Clippy with warnings denied and all
+1,529 workspace Rust tests passed, with 33 ignored across 90 suites. The new
+native-readiness fixture releases a blocked CPU result after observing the wake
+ticket, preserves a queued quit event until ordinary input dispatch, consumes
+the result exactly once and verifies reclaimed ownership and predicate-error
+propagation. Existing native wake race/fault fixtures also pass.
+
+The moving geometry comparison now uses the live native wait context and its
+coordinator notifier. It still matches the frozen serial traversal's meshes,
+palettes, particles, ribbons, shadows, scene lighting, ordering, RNG and retained
+state across motion and visibility changes, including recovery after a resource
+mismatch. Other scene fixtures explicitly retain offline executor consumption.
+Ready geometry consumption uses one batch result lookup and does not call SDL;
+pending waits keep named F10 spans separate from useful preparation.
+
+Logs are in ignored `target/frame-native-wait-checked-{fmt,clippy,tests}` with
+`.stdout.log` and `.stderr.log` suffixes. This connects native service at M2 CPU
+consumption boundaries, not general main-ready continuations or GPU-slot waits.
+It does not establish a live FPS gain or complete the architecture cutover.
 
 ### Build 144 package checkpoint
 
