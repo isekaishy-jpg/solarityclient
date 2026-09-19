@@ -9,10 +9,6 @@ impl M2Frame {
             return;
         }
         let mut profile = solarity_profiling::profile!("M2 placement topology");
-        solarity_profiling::profile_event_value!(
-            "m2.topology.rebuilt_placements",
-            self.placements.len()
-        );
         // Changes to body residency can append a parent after retained
         // CEffects. Keep every effect behind its current parent pose.
         self.placements.order_effects_last();

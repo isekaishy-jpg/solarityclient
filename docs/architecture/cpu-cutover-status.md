@@ -19,6 +19,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Placement storage now journals dynamic membership and static layout changes.
+  When no static identity or index changed, topology publication retains its
+  static arrays, spatial partitions and WMO membership, refreshing only dynamic
+  ancestry/owners and required-work membership. Actual static relocation,
+  removal or replacement still selects complete publication.
+- Effect partitioning visits only the suffix after the first effect. Replicated
+  WMO updates preserve static keys and ordered first-owner light facts. Static
+  visibility no longer carries unused source indices or walks its cache to remap
+  them. F10 distinguishes retained static slots from republished fields; see
+  [the publication contract and counter semantics](m2-topology-publication.md).
+
 - Selected static M2 scenery now has an owned spatial-admission phase. Workers
   apply native camera, distance and independent shadow predicates to compact
   captured values; ordered traversal consumes a group once, without locking an
@@ -643,6 +654,54 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Retained static topology publication checkpoint
+
+Workspace formatting and Clippy across all targets/features with warnings denied
+passed. The full workspace test run passed **1,597 tests**, with 33 ignored and
+zero failures (94 result summaries). Artifacts are
+`target/m2-retained-publication-final-{fmt,clippy,tests}.*`; helper exit was zero.
+The initial Clippy attempt rejected a duplicate test-fixture module declaration;
+the shared fixture now has one declaration, and the complete final checks passed.
+
+Four new external tests cover the structural journal, effect suffix ordering,
+retained static required-work entries and partial replicated-WMO membership.
+The existing 26,000-scenery fixture compares all published metadata and work
+queries with the full scalar oracle through dynamic removal/append, actual static
+relocation, source compaction, reused owners and replacement of the entire scene.
+See [the publication contract](m2-topology-publication.md) for the distinction
+between retained static indices and structural changes requiring full publication.
+
+The optimized manual fixture alternated 40 complete cached publications and 40
+dynamic publications per run, retaining 26,000 static and 28 dynamic placements.
+Both paths include the same outer topology/membership operation. Three runs of
+the same optimized executable produced the following mean milliseconds per
+publication (the raw fields ending in `total_ms` measure the complete operation):
+
+| Run | Complete cached publication | Dynamic publication |
+| --- | ---: | ---: |
+| 1 | 1.033555 | 0.005457 |
+| 2 | 1.066272 | 0.005655 |
+| 3 | 1.082935 | 0.006630 |
+
+This removes approximately 1.03-1.08 ms from this fixture's publication operation.
+It does not measure total live frame time, insertion/removal costs, actual static
+relocation or an older executable. The first optimized compilation took 9m14s.
+A documentation change prompted a redundant second Cargo compile; that owned
+process tree was stopped, and rounds two/three used the completed first binary
+directly. All three benchmark tests passed. Logs and the corrected repeat runner
+are `target/m2-retained-publication-benchmark*`.
+
+The hidden populated-world replay passed 168 frames across seven phases with
+Soap and 48 NPCs, real terrain/FrameXML and Vulkan. Primary and all three
+environment shadow maps produced packets throughout the replay. Its capture
+`1789853334350-1` reports zero dropped samples/events/trace rows and zero capacity
+overflows; stdout/stderr contain no warning/error. It exercised the complete
+initial publication, but no subsequent dynamic-only publication was recorded;
+the external mutation/oracle tests and optimized fixture cover that path.
+Artifacts are `target/m2-retained-publication-smoke*`. This is a debug functional
+replay with a 32 MiB stack, excluding live networking, movement solver, audio and
+overlays. Its timings are not live FPS evidence.
 
 ### Build 158 package checkpoint
 

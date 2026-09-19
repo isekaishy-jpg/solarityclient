@@ -152,27 +152,40 @@ fn exercise_dynamic_publications(measure: bool) -> Result<(), Box<dyn Error>> {
             }
             _ => unreachable!(),
         }
+        assert_eq!(
+            frame.placements.static_layout_unchanged(),
+            stage == 2,
+            "only appending dynamic owners preserves every static index, stage {stage}"
+        );
         frame.placement_topology_dirty = true;
         frame.publish_placement_topology();
         frame
             .placement_visibility
             .assert_matches_reference(frame.placements.as_slice(), &frame.sources);
         if measure && stage == 2 {
-            let mut reference = super::visibility::M2PlacementVisibility::default();
             let mut incremental = std::time::Duration::ZERO;
             let mut full = std::time::Duration::ZERO;
-            for _ in 0..40 {
-                let started = std::time::Instant::now();
-                frame.placement_topology_dirty = true;
-                frame.publish_placement_topology();
-                incremental += started.elapsed();
-                let started = std::time::Instant::now();
-                reference.rebuild_reference(frame.placements.as_slice(), &frame.sources);
-                full += started.elapsed();
-                std::hint::black_box((&frame.placement_visibility, &reference));
+            for round in 0..40 {
+                // Alternate order and include the same outer membership work.
+                // The baseline is today's full cached path, not the older
+                // scalar oracle or a matched live Build 158 frame.
+                for complete in [round % 2 == 0, round % 2 != 0] {
+                    if complete {
+                        frame.placement_visibility.require_full_publication();
+                    }
+                    frame.placement_topology_dirty = true;
+                    let started = std::time::Instant::now();
+                    frame.publish_placement_topology();
+                    if complete {
+                        full += started.elapsed();
+                    } else {
+                        incremental += started.elapsed();
+                    }
+                    std::hint::black_box(&frame.placement_visibility);
+                }
             }
             eprintln!(
-                "placement publication: resident={} full_metadata_ms={:.6} incremental_total_ms={:.6}",
+                "placement publication: resident={} full_cached_total_ms={:.6} dynamic_total_ms={:.6}",
                 frame.placements.len(),
                 full.as_secs_f64() * 25.,
                 incremental.as_secs_f64() * 25.,
@@ -366,7 +379,6 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     frame.sources.insert(0, None);
     let relocation = (1..frame.sources.len()).collect::<Vec<_>>();
     frame.placements.remap_sources(&relocation);
-    frame.placement_visibility.remap_sources(&relocation);
     frame
         .placement_visibility
         .rebuild(&mut frame.placements, &frame.sources);

@@ -36,3 +36,48 @@ fn doodad_membership_preserves_first_owner_and_rebuilds_remapped_lights() {
     assert!(lookup.index().is_empty());
     assert!(lookup.light_indices().is_empty());
 }
+
+/// Static and replicated WMO identities are disjoint; partial updates preserve
+/// static keys and native light order, including a return to an older full set.
+#[test]
+fn dynamic_doodads_preserve_static_members_and_invalidate_old_full_comparisons()
+-> Result<(), Box<dyn std::error::Error>> {
+    let world = solarity_ecs::ActiveWorld::enter(solarity_ecs::WorldBootstrap::new(
+        solarity_ecs::WorldMapId::new(1),
+        7,
+        "Fixture",
+        glam::Vec3::ZERO,
+        0.,
+    ));
+    let dynamic = (
+        RuntimeWorldModelMovementOwner::GameObject {
+            identity: world.object_identity(7).ok_or("identity")?,
+        },
+        0,
+    );
+    let fixed = (RuntimeWorldModelMovementOwner::Static { unique_id: 17 }, 0);
+    let mut lookup = DoodadLookup::default();
+    let full = |lookup: &mut DoodadLookup| {
+        lookup.begin();
+        lookup.record(dynamic, 5, false);
+        lookup.record(fixed, 10, true);
+        lookup.record(dynamic, 20, true);
+        lookup.finish();
+    };
+    full(&mut lookup);
+    assert_eq!(lookup.light_indices(), &[10]);
+    lookup.begin();
+    lookup.record(dynamic, 4, true);
+    lookup.finish_dynamic();
+    assert_eq!(lookup.index().get(&fixed), Some(&10));
+    assert_eq!(lookup.index().get(&dynamic), Some(&4));
+    assert_eq!(lookup.light_indices(), &[4, 10]);
+    lookup.begin();
+    lookup.finish_dynamic();
+    assert_eq!(lookup.index().get(&dynamic), None);
+    assert_eq!(lookup.light_indices(), &[10]);
+    full(&mut lookup);
+    assert_eq!(lookup.index().get(&dynamic), Some(&5));
+    assert_eq!(lookup.light_indices(), &[10]);
+    Ok(())
+}

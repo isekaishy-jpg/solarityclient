@@ -52,15 +52,4 @@ impl M2PlacementVisibility {
         self.static_metadata.resize(placements.len(), None);
         placements.published_from(first);
     }
-
-    /// Resource-slot relocation does not change authored bounds or membership.
-    pub(in super::super) fn remap_sources(&mut self, remap: &[usize]) {
-        // Pending removals can leave dead cached slots until the next topology
-        // publication. Their lineage is gone, so they must not index a later map.
-        for metadata in self.static_metadata.iter_mut().flatten() {
-            if metadata.source_index != usize::MAX {
-                metadata.source_index = remap[metadata.source_index];
-            }
-        }
-    }
 }

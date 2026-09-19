@@ -101,6 +101,9 @@ use crate::application::terrain_coordinator::m2_residency::{
 use crate::random::CrtRand;
 
 use super::RuntimeTerrainFrameError;
+#[cfg(test)]
+#[path = "../../../../tests/application/placement_fixtures.rs"]
+mod placement_fixtures;
 mod scene_lighting;
 pub(super) use scene_lighting::SceneLightInputs;
 #[cfg(test)]

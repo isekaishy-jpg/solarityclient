@@ -3,6 +3,12 @@
 use super::super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, M2PlacementVisibility};
 
 impl M2PlacementVisibility {
+    /// Benchmarks select the actual complete cached path without changing model
+    /// identities or simulating a resource reload. No production switch is added.
+    pub(in crate::application::terrain_frame::m2) fn require_full_publication(&mut self) {
+        self.published = false;
+    }
+
     /// Compares every published admission and ancestry field, independently of
     /// the cache backing it. Work queries include all distance/shadow consumers.
     pub(in crate::application::terrain_frame::m2) fn assert_matches_reference(

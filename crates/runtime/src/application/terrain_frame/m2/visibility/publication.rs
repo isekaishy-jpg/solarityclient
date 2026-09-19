@@ -9,7 +9,6 @@ use crate::application::terrain_frame::shadow::ModelShadowKind;
 /// Source compaction relocates a slot without replacing its authored resource.
 #[derive(Clone, Copy)]
 pub(super) struct StaticMetadata {
-    pub source_index: usize,
     spatial: Option<StaticM2Spatial>,
     distance_sort: bool,
     has_lights: bool,
@@ -40,7 +39,6 @@ impl StaticMetadata {
             }
         });
         Self {
-            source_index: placement.source_index,
             spatial,
             distance_sort: source.is_some_and(|source| source.model.skin_profile_count() >= 2),
             has_lights: source.is_some_and(|source| !source.model.animations().lights().is_empty()),
@@ -95,15 +93,22 @@ impl M2PlacementVisibility {
         placements: &mut M2PlacementStorage,
         sources: &[Option<M2GpuSource>],
     ) {
+        if self.published && placements.static_layout_unchanged() {
+            self.rebuild_dynamic(placements, sources);
+            return;
+        }
         let mut profile = solarity_profiling::profile!("M2 placement metadata");
-        self.dynamic_indices.clear();
-        self.dynamic_indices.extend(
-            placements
-                .lineage()
-                .iter()
-                .enumerate()
-                .filter_map(|(index, slot)| (!slot.is_static).then_some(index)),
+        solarity_profiling::profile_event_value!(
+            "m2.topology.rebuilt_placements",
+            placements.len()
         );
+        solarity_profiling::profile_event_value!(
+            "m2.topology.static_layout_rebuilt",
+            placements.len()
+        );
+        self.dynamic_indices.clear();
+        self.dynamic_indices
+            .extend_from_slice(placements.dynamic_indices());
         self.light_parents.clear();
         self.ancestry.rebuild_dynamic(
             placements.as_slice(),
@@ -197,5 +202,6 @@ impl M2PlacementVisibility {
         profile.mark("spatial membership");
         std::mem::swap(&mut self.static_metadata, &mut self.pending_static);
         placements.published_from(0);
+        self.published = true;
     }
 }

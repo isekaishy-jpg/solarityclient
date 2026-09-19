@@ -122,6 +122,20 @@ pub(super) struct M2FrameWorkIndex {
 }
 
 impl M2FrameWorkIndex {
+    /// Static indices and membership stayed fixed. Only required dynamic owners
+    /// change; neither distance-class entries nor spatial nodes are traversed.
+    pub(super) fn replace_dynamic(&mut self, previous: &[usize], current: &[usize]) {
+        let mut old = 0;
+        self.required.retain(|index| {
+            while previous.get(old).is_some_and(|previous| previous < index) {
+                old += 1;
+            }
+            previous.get(old) != Some(index)
+        });
+        self.required.extend_from_slice(current);
+        self.required.sort_unstable();
+    }
+
     /// Dynamic compaction relocates leaf references without changing spatial
     /// partitions. A removed static member requires the ordinary rebuild below.
     pub(super) fn remap_static(&mut self, remap: &[usize]) {

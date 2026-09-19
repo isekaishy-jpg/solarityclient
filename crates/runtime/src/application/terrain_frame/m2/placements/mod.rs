@@ -37,15 +37,46 @@ impl PlacementLineage {
 
 /// Keeps publication identities aligned through ordered removal and insertion.
 /// Slice access cannot change membership; only the structural methods can do so.
-#[derive(Default)]
 pub(super) struct M2PlacementStorage {
     entries: Vec<M2GpuPlacement>,
     lineage: Vec<PlacementLineage>,
+    dynamic_indices: Vec<usize>,
+    /// Sticky until complete publication; ordinary dynamic changes cannot reset it.
+    static_layout_dirty: bool,
+}
+
+impl Default for M2PlacementStorage {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            lineage: Vec::new(),
+            dynamic_indices: Vec::new(),
+            static_layout_dirty: true,
+        }
+    }
 }
 
 impl M2PlacementStorage {
     pub(super) fn lineage(&self) -> &[PlacementLineage] {
         &self.lineage
+    }
+
+    /// Structural operations maintain this list alongside the records they move.
+    pub(super) fn dynamic_indices(&self) -> &[usize] {
+        &self.dynamic_indices
+    }
+
+    /// No static owner was added, removed or relocated since complete publication.
+    pub(super) fn static_layout_unchanged(&self) -> bool {
+        !self.static_layout_dirty
+    }
+
+    /// A dynamic-only publication leaves every static lineage identity untouched.
+    pub(super) fn published_dynamic(&mut self) {
+        debug_assert!(!self.static_layout_dirty);
+        for &index in &self.dynamic_indices {
+            self.lineage[index].previous = Some(index);
+        }
     }
 
     /// Current references remain valid even while publication indices are dirty.
@@ -74,12 +105,29 @@ impl M2PlacementStorage {
         for (index, lineage) in self.lineage.iter_mut().enumerate().skip(first) {
             lineage.previous = Some(index);
         }
+        if first == 0 {
+            self.static_layout_dirty = false;
+        }
     }
 }
 
 impl From<Vec<M2GpuPlacement>> for M2PlacementStorage {
     fn from(entries: Vec<M2GpuPlacement>) -> Self {
-        let lineage = entries.iter().map(PlacementLineage::new).collect();
-        Self { entries, lineage }
+        let lineage = entries
+            .iter()
+            .map(PlacementLineage::new)
+            .collect::<Vec<_>>();
+        let dynamic_indices = lineage
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| (!slot.is_static).then_some(index))
+            .collect();
+        let static_layout_dirty = true;
+        Self {
+            entries,
+            lineage,
+            dynamic_indices,
+            static_layout_dirty,
+        }
     }
 }

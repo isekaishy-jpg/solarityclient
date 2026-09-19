@@ -11,6 +11,35 @@ fn prop(center: Vec3, extent: f32) -> SceneryDistance {
     )
 }
 
+/// Dynamic membership updates retain static distance and required-light lanes.
+#[test]
+fn dynamic_work_replacement_keeps_static_queries_and_required_sources() {
+    let mut scenery = vec![
+        Some(prop(Vec3::ZERO, 4.)),
+        None,
+        Some(prop(Vec3::X * 1000., 1.)),
+        None,
+        None,
+    ];
+    // Slot 4 is a source-less static owner; it must remain required even though
+    // the ordinary spatial data cannot distinguish it from a dynamic model.
+    let mut lights = vec![false, false, true, false, false];
+    let mut index = M2FrameWorkIndex::default();
+    index.rebuild(&scenery, &lights);
+    scenery.push(None);
+    lights.push(false);
+    index.replace_dynamic(&[1, 3], &[1, 3, 5]);
+    for camera in [Vec3::ZERO, Vec3::splat(10000.)] {
+        for shadows in [false, true] {
+            assert_matches_resident_reference(&index, &scenery, &lights, camera, 1., shadows);
+        }
+    }
+    index.replace_dynamic(&[1, 3, 5], &[1, 3]);
+    scenery.pop();
+    lights.pop();
+    assert_matches_resident_reference(&index, &scenery, &lights, Vec3::ZERO, 1., true);
+}
+
 fn assert_matches_resident_reference(
     index: &M2FrameWorkIndex,
     scenery: &[Option<SceneryDistance>],

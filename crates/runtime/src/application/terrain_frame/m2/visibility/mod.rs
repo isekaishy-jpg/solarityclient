@@ -1,6 +1,7 @@
 //! Compact placement admission and ordering metadata, separate from animated instances.
 
 mod doodads;
+mod dynamic;
 mod effects;
 mod publication;
 
@@ -29,6 +30,8 @@ impl Iterator for PlacementStateIndices<'_> {
 /// culling. Only terrain-owned placements have immutable world transforms.
 #[derive(Default)]
 pub(super) struct M2PlacementVisibility {
+    /// A new visibility owner must consume complete storage publication once.
+    published: bool,
     static_metadata: Vec<Option<publication::StaticMetadata>>,
     pending_static: Vec<Option<publication::StaticMetadata>>,
     /// Previous publication indices map to their new slot or usize::MAX on removal.

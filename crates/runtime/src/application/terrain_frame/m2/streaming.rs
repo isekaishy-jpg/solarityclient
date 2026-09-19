@@ -303,7 +303,6 @@ impl M2Frame {
         });
         profile.mark("source retirement");
         self.static_residency.remap_sources(&remap);
-        self.placement_visibility.remap_sources(&remap);
         profile.mark("static source remap");
         self.placements.remap_sources(&remap);
         profile.mark("placement source remap");
