@@ -1,18 +1,17 @@
 //! Owned pure receiver evaluation; retained Rc light ownership stays on main.
 
-use super::{RuntimeTerrainFrameError, SceneLighting};
+use super::{RuntimeTerrainFrameError, SceneLightSources, SceneLighting};
 use glam::Vec3;
 use solarity_rendering::{
-    M2DirectionalLight, M2LocalLightState, M2SceneUniform, ScenePointLights,
-    merge_wotlk_directional_lights,
+    M2DirectionalLight, M2LocalLightState, M2SceneUniform, merge_wotlk_directional_lights,
 };
+use std::sync::Arc;
 
 /// Frozen receiver inputs and reusable output storage owned by one phase.
 #[derive(Default)]
 pub(super) struct LightingWork {
-    points: ScenePointLights,
+    sources: Option<Arc<SceneLightSources>>,
     scenes: Vec<M2SceneUniform>,
-    directional: Vec<M2DirectionalLight>,
     centers: Vec<Vec3>,
     placement_centers: Vec<Option<Vec3>>,
     receiver_lights: Vec<Option<M2DirectionalLight>>,
@@ -29,9 +28,7 @@ pub(super) struct LightingWork {
 impl LightingWork {
     /// Transfers vector ownership without cloning the spatial bank or receiver lists.
     pub(super) fn swap(&mut self, scene: &mut SceneLighting) {
-        std::mem::swap(&mut self.points, &mut scene.points);
         std::mem::swap(&mut self.scenes, &mut scene.scenes);
-        std::mem::swap(&mut self.directional, &mut scene.directional);
         std::mem::swap(&mut self.centers, &mut scene.centers);
         std::mem::swap(&mut self.placement_centers, &mut scene.placement_centers);
         std::mem::swap(&mut self.receiver_lights, &mut scene.receiver_lights);
@@ -51,6 +48,11 @@ impl LightingWork {
         base: M2SceneUniform,
         exterior: M2DirectionalLight,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let sources = self
+            .sources
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("receiver work pins its published light sources"));
+        sources.trace.link("m2.light_sources.receiver");
         for (((center, light), fog), placement) in self
             .centers
             .iter()
@@ -80,15 +82,20 @@ impl LightingWork {
                     .or(light);
                 current = parent;
             }
-            if let Some(last) = self.directional.last_mut() {
-                *last = light.unwrap_or(exterior);
-            }
-            let sunlight = merge_wotlk_directional_lights(&self.directional);
+            let exterior = light.unwrap_or(exterior);
+            // Preserve stock's linked-list sources followed by this receiver's
+            // exterior contribution, without modifying the shared source bank.
+            let sunlight = merge_wotlk_directional_lights(
+                sources
+                    .directionals
+                    .iter()
+                    .chain(std::iter::once(&exterior)),
+            );
             let mut lights = [M2LocalLightState::disabled(); 4];
             if let Some(sunlight) = sunlight {
                 lights[0] = sunlight.local_light_state();
             }
-            for (slot, index) in self
+            for (slot, index) in sources
                 .points
                 .query(center, 0.0)?
                 .indices()
@@ -97,7 +104,7 @@ impl LightingWork {
                 .take(3)
                 .enumerate()
             {
-                lights[slot + 1] = self.points.points()[index].local_light_state();
+                lights[slot + 1] = sources.points.points()[index].local_light_state();
             }
             let scene = base.with_local_lights(lights);
             self.scenes
@@ -179,9 +186,10 @@ impl SceneLighting {
             }
             None => &[],
         };
-        self.prepare_directionals(exterior);
+        self.prepare_directionals();
         let mut job = self.batch.jobs.pop().unwrap_or_default();
         job.swap(self);
+        job.sources = Some(Arc::clone(&self.sources));
         job.base = Some(base);
         job.exterior = Some(exterior);
         job.result = None;
@@ -199,6 +207,7 @@ impl SceneLighting {
                     .pop()
                     .unwrap_or_else(|| unreachable!("rejected lighting retains state"));
                 job.swap(self);
+                job.sources = None;
                 self.batch.jobs.push(job);
                 return Err(error.into());
             }
@@ -231,6 +240,8 @@ impl SceneLighting {
             .pop()
             .unwrap_or_else(|| unreachable!("lighting phase retains its job"));
         job.swap(self);
+        // Release the worker pin before next-frame mutation, including failure.
+        job.sources = None;
         let result = job.result.take();
         self.batch.jobs.push(job);
         if let Some(result) = result {

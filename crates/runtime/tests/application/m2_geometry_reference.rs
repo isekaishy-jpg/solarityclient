@@ -1426,8 +1426,6 @@ impl M2Frame {
         Ok(M2VisibleFrame {
             trace: solarity_profiling::TraceContext::capture(),
             instance_scenes: &self.scene_lighting.scenes,
-            scene_points: &self.scene_lighting.points,
-            scene_directionals: self.scene_lighting.directionals(),
             water_scene_order,
             bone_transforms: &self.bone_transforms,
             draws: &self.visible_draws,

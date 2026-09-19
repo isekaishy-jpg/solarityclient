@@ -260,6 +260,10 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             // and returns the renderer for a real main-only Vulkan operation.
             for _ in 0..3 {
                 assert!(!pending.try_advance(&cpu, candidate_random, None, None, None)?);
+                assert!(
+                    pending.scene_lights().is_none(),
+                    "sources cannot escape before receiver callbacks"
+                );
             }
             renderer.present_clear([64.0, 64.0])?;
             held.release()?;
@@ -281,10 +285,6 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         assert_eq!(
             a.instance_scenes, b.instance_scenes,
             "receiver scenes step {step}"
-        );
-        assert_eq!(
-            a.scene_directionals, b.scene_directionals,
-            "light sources step {step}"
         );
         assert_eq!(a.shadow_draws, b.shadow_draws, "shadow step {step}");
         assert_eq!(a.bone_transforms, b.bone_transforms);
@@ -319,6 +319,11 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         ) > 0;
         saw_particles |= !b.particle_vertices.is_empty();
         saw_ribbons |= !b.ribbon_vertices.is_empty();
+        assert_eq!(
+            reference.scene_lighting.directionals(),
+            candidate.scene_lighting.directionals(),
+            "light sources step {step}"
+        );
         assert!(
             candidate
                 .geometry_batch

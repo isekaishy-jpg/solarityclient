@@ -140,10 +140,13 @@ impl M2Sunlight {
 /// sunlight slot. Authored vectors point along D3D light rays, so the final
 /// vector is inverted once into the renderer's surface-to-light convention.
 #[must_use]
-pub fn merge_wotlk_directional_lights(lights: &[M2DirectionalLight]) -> Option<M2Sunlight> {
-    if lights.is_empty() {
-        return None;
-    }
+pub fn merge_wotlk_directional_lights<'a>(
+    lights: impl IntoIterator<Item = &'a M2DirectionalLight>,
+) -> Option<M2Sunlight> {
+    // A receiver may append its own exterior contribution to immutable scene
+    // sources. Iterate in the original order without assembling a scratch list.
+    let mut lights = lights.into_iter().peekable();
+    lights.peek()?;
 
     let mut ambient = Vec3::ZERO;
     let mut red_vector = Vec3::ZERO;

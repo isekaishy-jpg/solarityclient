@@ -102,6 +102,7 @@ use crate::random::CrtRand;
 
 use super::RuntimeTerrainFrameError;
 mod scene_lighting;
+pub(super) use scene_lighting::SceneLightInputs;
 #[cfg(test)]
 #[path = "../../../../tests/application/scene_lighting.rs"]
 mod scene_lighting_tests;
@@ -565,9 +566,6 @@ pub(in crate::application) struct M2Frame {
 pub(in crate::application) struct M2VisibleFrame<'frame> {
     pub(in crate::application) trace: solarity_profiling::TraceContext,
     pub(in crate::application) instance_scenes: &'frame [solarity_rendering::M2SceneUniform],
-    pub(in crate::application) scene_points: &'frame solarity_rendering::ScenePointLights,
-    pub(in crate::application) scene_directionals:
-        &'frame [solarity_rendering::M2DirectionalLight],
     /// Native liquid queue one belongs between the two transparent model passes.
     pub(in crate::application) water_scene_order: u32,
     pub(in crate::application) bone_transforms: &'frame [Mat4],

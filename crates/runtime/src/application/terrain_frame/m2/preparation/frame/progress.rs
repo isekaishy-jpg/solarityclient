@@ -19,6 +19,21 @@ pub(super) enum FrameStage {
 }
 
 impl PendingM2Frame<'_> {
+    /// Published sources become readable after ordered receiver callbacks. They
+    /// stay immutable while the worker derives per-model uniform outputs.
+    pub(in crate::application::terrain_frame) fn scene_lights(
+        &self,
+    ) -> Option<super::super::super::SceneLightInputs<'_>> {
+        if !matches!(self.stage, FrameStage::Lighting | FrameStage::Ready) {
+            return None;
+        }
+        let frame = self
+            .frame
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("pending frame retains its owner"));
+        Some(frame.scene_lighting.inputs())
+    }
+
     /// Admits ready roots between independent main steps. Receiver callbacks stay
     /// behind the original world packet-preparation boundary.
     pub(in crate::application::terrain_frame) fn try_admit(

@@ -259,11 +259,6 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
             "WMO packets can use the admitted groups before M2 receivers complete"
         );
         assert_eq!(visible.draws.len(), 2, "moving {moving}, step {step}");
-        assert_eq!(
-            visible.scene_points.points().len(),
-            if publishes_light { 3 } else { 0 },
-            "the hidden WMO doodad still publishes its light"
-        );
         let expected_colors = [colors[0], colors[usize::from(step == 1)]];
         for (draw, expected) in visible.draws.iter().zip(expected_colors) {
             let scene = visible.instance_scenes[draw.scene_index().ok_or("doodad scene")? as usize]
@@ -311,6 +306,11 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
             visible.ribbon_vertices,
             visible.ribbon_draws,
         )?;
+        assert_eq!(
+            frame.scene_lighting.points().points().len(),
+            if publishes_light { 3 } else { 0 },
+            "the hidden WMO doodad still publishes its light"
+        );
         let capture = renderer.take_captured_frame()?.ok_or("capture")?;
         for (index, color) in expected_colors.into_iter().enumerate() {
             let point = root_transform.transform_point3(POSITIONS[index]);

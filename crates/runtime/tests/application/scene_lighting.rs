@@ -6,6 +6,8 @@ use solarity_asset::ResourceLease;
 
 #[path = "interior_scene_lighting.rs"]
 mod interior;
+#[path = "scene_lighting_overlap.rs"]
+mod overlap;
 
 /// Reusing sparse storage must match a fresh bank across residency and graph changes.
 #[test]
@@ -139,7 +141,7 @@ fn directional_reenable_order_matches_native_and_attached_receivers_inherit()
             bank.scenes[5], bank.scenes[0],
             "root callback survives forward inheritance"
         );
-        assert_eq!(bank.points.points()[0].diffuse(), Vec3::splat(0.5));
+        assert_eq!(bank.points().points()[0].diffuse(), Vec3::splat(0.5));
     }
     Ok(())
 }
@@ -317,10 +319,6 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
             2,
             "offscreen light emitters do not allocate color receiver scenes"
         );
-        assert_eq!(
-            visible.scene_points.points().len(),
-            if now < 500. { 2 } else { 0 }
-        );
         for (receiver_index, y) in [(0, 0_f32), (1, 20.)] {
             let scene = visible.instance_scenes[visible.draws[receiver_index]
                 .scene_index()
@@ -342,6 +340,10 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
                 );
             }
         }
+        assert_eq!(
+            frame.scene_lighting.points().points().len(),
+            if now < 500. { 2 } else { 0 }
+        );
     }
     Ok(())
 }

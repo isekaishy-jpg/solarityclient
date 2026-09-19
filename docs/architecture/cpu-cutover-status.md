@@ -19,6 +19,23 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Published M2 point and directional lights now form one retained immutable
+  source bank, pinned by receiver work and also readable by main. Receiver-specific
+  exterior light is appended through ordered iteration, rather than mutating a
+  shared directional vector. Reclamation releases the worker pin on success,
+  admission failure, dependency failure and receiver-query failure; next-frame
+  mutation requires sole ownership and does not copy an in-flight generation.
+- World presentation runs terrain and liquid packet preparation once those
+  sources are published, while receiver-uniform evaluation may still execute.
+  It retains surface failures until the original M2 consumption boundary, then
+  preserves terrain/liquid/WMO error order and the later fog/sky publication.
+  Source preparation, surface consumers and final M2 outputs now have separate
+  interfaces; source inputs no longer wait inside the final M2 draw bundle.
+  F10 links the `m2.light_sources` product to both the receiver worker and
+  `world.lit_surfaces.consume`. Surface preparation has its own folder child.
+  This removes the source-bank ownership barrier for these consumers, not every
+  remaining main-only continuation or receiver-evaluation barrier.
+
 - M2 preparation now retains an explicit continuation through admission, ordered
   geometry publication, geometry/pose reclamation, receiver callbacks and scene
   lighting. Each resume consumes only ready work; an unfinished dependency
@@ -390,8 +407,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   and useful main-ready continuations; presentation-slot waits are connected.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
-- Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
-  ordered receiver lighting and end-of-frame state reclamation still have barriers.
+- Extend cross-domain overlap beyond the connected ground-detail/WMO and
+  terrain/liquid consumers, including UI/rendering and phase-specific M2 demand.
+  Ordered receiver callbacks, receiver-uniform completion for M2 draws and
+  end-of-frame state reclamation still have barriers.
 - Extend pending-request authority beyond runtime audio, Glue primary M2s,
   asynchronous top-level GameObject M2s and NPC/remote-player primary M2s. Terrain,
   local/Glue appearance, population attachments/mounts, nested WMO doodads, effects
@@ -455,6 +474,24 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Shared light-source overlap checkpoint
+
+On 2026-09-19, formatting and full workspace/all-target/all-feature Clippy passed.
+The full workspace/all-feature test run passed **1,543 tests**, with **33 ignored**
+and no failures across 90 suites. A controlled pending dependency proves main can
+query terrain lighting from the same source bank while receiver work is waiting,
+and the only worker can execute unrelated work. Eight successive frames retain
+the source-bank allocation and match serial receiver output and directional order.
+Separate tests cover admission refusal, failed dependencies, and a failed receiver
+query after partial output, including exclusive source reuse after reclamation.
+
+The separate-bank sunlight test retains the stock cancellation/fill expectations.
+Moving M2/visibility, WMO doodad lighting/fog, terrain/liquid and renderer stock
+tests passed with the split light-source interface. Logs are in ignored
+`target/shared-light-final-*` files. These checks establish ownership and behavior;
+they do not establish a live FPS gain, full main-ready integration or completion
+of the other cutover requirements.
 
 ### Build 147 package checkpoint
 

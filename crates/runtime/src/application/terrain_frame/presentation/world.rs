@@ -1,6 +1,6 @@
 //! Ordered world-frame driver with resumable model admission between main steps.
 
-use super::super::{RuntimeTerrainFrameError, TerrainFrame, exterior, m2, shadow, world_model};
+use super::super::{RuntimeTerrainFrameError, TerrainFrame, m2, shadow, world_model};
 use crate::application::environment_coordinator::RuntimeWorldEnvironmentFrame;
 use crate::application::game_object_coordinator::GameObjectFrameInput;
 use crate::application::liquid::{liquid_depth_images, liquid_environment};
@@ -278,70 +278,66 @@ impl TerrainFrame {
             }
         }
         profile.mark("independent ground detail and WMO packets");
-        // Receiver callbacks stay after both independent main operations. The
-        // resumable driver restores owned state before surfacing any failure.
-        let m2 = pending_m2.finish(
-            cpu,
-            wait,
-            random,
-            Some(game_objects),
-            Some((
-                terrain,
-                entity_light_environment,
-                environment.ordinary_model_fog().color(),
-                liquid_types,
-            )),
-            shadow_admission
-                .as_ref()
-                .map(|admission| shadow::SceneryShadowQueries {
-                    admission,
-                    doodads: self.world_models.shadow_doodads(),
-                }),
-        )?;
-        let (exterior_frustum, wmo_result) = independent?;
-        profile.mark("M2 publication");
-        exterior::prepare_terrain_draws(
-            &self.tiles,
-            &mut self.visible_draws,
-            exterior_frustum,
-            camera,
-            m2.scene_points,
-        )?;
-        profile.mark("terrain culling and point lights");
-        let (liquid_lighting, liquid_fog) = liquid_environment(environment, camera, glare_lighting);
-        self.liquid_draws.clear();
-        for (frustum, batch) in exterior_frustum.into_iter().flat_map(|frustum| {
-            self.tiles
-                .iter()
-                .flat_map(|tile| &tile.liquids)
-                .map(move |batch| (frustum, batch))
-        }) {
-            if let Some(draw) = batch.prepare_draw(
-                renderer,
-                frustum,
-                camera,
-                liquid_lighting,
-                liquid_fog,
-                liquid_time_ms,
-                specular_enabled,
-                Some((m2.scene_points, m2.scene_directionals)),
-            )? {
-                self.liquid_draws.push(draw);
+        // Receiver callbacks stay after both independent main operations. Once
+        // sources are published, terrain/liquid consumers need not await M2
+        // receiver uniforms. Keep their failure pending until M2 completes.
+        let mut surface_result = None;
+        loop {
+            let ready = pending_m2.try_advance(
+                cpu,
+                random,
+                Some(game_objects),
+                Some((
+                    terrain,
+                    entity_light_environment,
+                    environment.ordinary_model_fog().color(),
+                    liquid_types,
+                )),
+                shadow_admission
+                    .as_ref()
+                    .map(|admission| shadow::SceneryShadowQueries {
+                        admission,
+                        doodads: self.world_models.shadow_doodads(),
+                    }),
+            )?;
+            if surface_result.is_none()
+                && let Ok((exterior_frustum, _)) = &independent
+                && let Some(lights) = pending_m2.scene_lights()
+            {
+                let (lighting, fog) = liquid_environment(environment, camera, glare_lighting);
+                surface_result = Some(
+                    super::surfaces::SurfacePreparation {
+                        tiles: &self.tiles,
+                        terrain_draws: &mut self.visible_draws,
+                        liquid_draws: &mut self.liquid_draws,
+                        world_models: &self.world_models,
+                    }
+                    .prepare(
+                        renderer,
+                        terrain,
+                        super::surfaces::SurfaceInputs {
+                            exterior_frustum: *exterior_frustum,
+                            camera,
+                            lighting,
+                            fog,
+                            ordinary_model_fog: environment.ordinary_model_fog().color(),
+                            liquid_time_ms,
+                            specular_enabled,
+                        },
+                        lights,
+                    ),
+                );
             }
+            if ready {
+                break;
+            }
+            pending_m2.wait(wait)?;
         }
-        self.world_models.prepare_liquid_draws(
-            renderer,
-            terrain.world_model_scene_groups(),
-            camera,
-            liquid_lighting,
-            liquid_fog,
-            environment.ordinary_model_fog().color(),
-            liquid_time_ms,
-            specular_enabled,
-            Some((m2.scene_points, m2.scene_directionals)),
-            &mut self.liquid_draws,
-        )?;
-        profile.mark("liquid packets");
+        let m2 = pending_m2.into_visible_frame()?;
+        let (_, wmo_result) = independent?;
+        surface_result
+            .unwrap_or_else(|| unreachable!("ready M2 published surface light inputs"))?;
+        profile.mark("M2 and lit surface publication");
         // Preserve the original failure order even though WMO work executed earlier.
         wmo_result?;
         let world_model::WorldModelVisibleFrame {

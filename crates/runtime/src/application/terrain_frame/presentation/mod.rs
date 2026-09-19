@@ -1,5 +1,6 @@
 //! Main-affinity world preparation retains explicit stock ordering boundaries.
 
+mod surfaces;
 mod world;
 
 /// These operations have frozen scene inputs and may run while model jobs are
