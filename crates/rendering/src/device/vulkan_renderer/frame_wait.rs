@@ -43,7 +43,9 @@ impl VulkanRenderer {
                 "native waits are not configured",
             )
         })?;
-        let _profile = solarity_profiling::profile!("rendering.cinematic_source.native_wait");
+        // Reader checks can return immediately; pending callbacks can service
+        // input. Actual host/OS waits have their own narrower instrumentation.
+        let _profile = solarity_profiling::profile!("rendering.cinematic_source.reader_check");
         completion.wait_for_pending(
             self.cinematic_frames.source_readers(extent, identity),
             |fence| {
@@ -121,7 +123,7 @@ impl VulkanRenderer {
         {
             return Ok(());
         }
-        let _profile = solarity_profiling::profile!("rendering.gpu_slot.native_wait");
+        let _profile = solarity_profiling::profile!("rendering.gpu_slot.pending");
         completion.wait_for(fence, service_native)
     }
 }

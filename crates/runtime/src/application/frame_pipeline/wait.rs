@@ -30,7 +30,9 @@ impl FrameWait<'_> {
         if queue.has_ready() {
             return Ok(());
         }
-        let _profile = solarity_profiling::profile!("frame_pipeline.main_ready_wait");
+        // This interval may service native input. Only the coordinator's inner
+        // native wait measures blocking; pending time is not idle time.
+        let _profile = solarity_profiling::profile!("frame_pipeline.main_ready_pending");
         match self {
             Self::Native(platform) => platform.wait_until_ready(|| Ok(queue.has_ready())),
             Self::Offline => {
@@ -56,7 +58,7 @@ impl FrameWait<'_> {
             return Ok(());
         }
         batch.require_urgent()?;
-        let _profile = solarity_profiling::profile!("frame_pipeline.cpu_result_wait");
+        let _profile = solarity_profiling::profile!("frame_pipeline.cpu_result_pending");
         platform.wait_until_ready(|| Ok(batch.outcome(job)?.is_some()))
     }
 
@@ -74,7 +76,7 @@ impl FrameWait<'_> {
             return Ok(());
         }
         batch.require_urgent()?;
-        let _profile = solarity_profiling::profile!("frame_pipeline.cpu_reclaim_wait");
+        let _profile = solarity_profiling::profile!("frame_pipeline.cpu_reclaim_pending");
         platform.wait_until_ready(|| Ok(batch.is_finished()))
     }
 }

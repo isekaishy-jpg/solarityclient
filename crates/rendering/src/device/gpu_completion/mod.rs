@@ -9,3 +9,7 @@ pub use state::GpuCompletion;
 #[cfg(test)]
 #[path = "../../../tests/device/gpu_completion.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/device/gpu_completion_trace.rs"]
+mod trace_tests;

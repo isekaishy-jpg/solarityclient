@@ -16,12 +16,19 @@ pub(super) enum CompletionFailure {
 
 pub(super) type Outcome = Result<(), CompletionFailure>;
 
+/// The single owned request carries its admitting frame to the driver-wait thread.
+pub(super) struct Request {
+    pub(super) fence: vk::Fence,
+    pub(super) trace: solarity_profiling::TraceContext,
+}
+
 /// Exactly one request may be active. Its caller drains before another begins.
 #[derive(Default)]
 pub(super) struct State {
-    pub(super) request: Option<vk::Fence>,
+    pub(super) request: Option<Request>,
     pub(super) outcome: Option<Outcome>,
     pub(super) stopping: bool,
+    pub(super) trace: solarity_profiling::TraceContext,
 }
 
 /// The mutex protects request/result ownership, never driver or native calls.
@@ -44,8 +51,15 @@ impl Shared {
         let mut state = self.lock();
         loop {
             if let Some(outcome) = state.outcome {
+                let trace = state.trace;
+                drop(state);
+                // Finish and final release may each observe the same result.
+                trace.link("rendering.gpu_completion.observe");
                 return outcome;
             }
+            state.trace.link("rendering.gpu_completion.drain_need");
+            let _origin = state.trace.enter();
+            let _profile = solarity_profiling::profile!("rendering.gpu_completion.drain_wait");
             state = self
                 .changed
                 .wait(state)

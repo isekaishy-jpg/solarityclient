@@ -228,17 +228,23 @@ impl WakeBridge {
         // Timer carries sub-millisecond precision. The finite timeout also bounds
         // signal faults and SDL's pre-publication watch/queue insertion window.
         let timeout_ms = interval.as_millis() as u32 + 1;
-        let _profile = solarity_profiling::profile!("platform.coordinator.wait");
-        // SAFETY: both distinct handles are pinned until the call returns; no
-        // wait-all, APC, second input dispatcher, or infinite timeout is used.
-        let result = unsafe {
-            MsgWaitForMultipleObjectsEx(
-                2,
-                handles.as_ptr(),
-                timeout_ms,
-                QS_ALLINPUT,
-                MWMO_INPUTAVAILABLE,
-            )
+        let result = {
+            let mut profile = solarity_profiling::profile!("platform.coordinator.wait");
+            // SAFETY: both distinct handles are pinned until the call returns; no
+            // wait-all, APC, second input dispatcher, or infinite timeout is used.
+            let result = unsafe {
+                MsgWaitForMultipleObjectsEx(
+                    2,
+                    handles.as_ptr(),
+                    timeout_ms,
+                    QS_ALLINPUT,
+                    MWMO_INPUTAVAILABLE,
+                )
+            };
+            // The raw Win32 result distinguishes completion, input, timeout and
+            // failure. Signal validation and native servicing are outside this span.
+            profile.trace_owner(0, u64::from(result));
+            result
         };
         self.signal.check()?;
         match result {

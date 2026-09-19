@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 use ash::vk;
 use solarity_cpu::CoordinatorNotifier;
 
-use super::state::{CompletionFailure, GpuCompletion, Shared};
+use super::state::{CompletionFailure, GpuCompletion, Request, Shared};
 use crate::device::VulkanError;
 
 /// Rendering owns this thread and joins it before destroying its Vulkan device.
@@ -30,11 +30,11 @@ impl GpuCompletionService {
             .name("solarity-gpu-completion".to_owned())
             .spawn(move || {
                 loop {
-                    let fence = {
+                    let request = {
                         let mut state = worker.lock();
                         loop {
-                            if let Some(fence) = state.request.take() {
-                                break fence;
+                            if let Some(request) = state.request.take() {
+                                break request;
                             }
                             if state.stopping {
                                 return;
@@ -45,9 +45,20 @@ impl GpuCompletionService {
                                 .unwrap_or_else(|error| error.into_inner());
                         }
                     };
-                    let outcome = catch_unwind(AssertUnwindSafe(|| wait(fence)))
-                        .map_err(|_| CompletionFailure::Panicked)
-                        .and_then(|result| result.map_err(CompletionFailure::Driver));
+                    let _origin = request.trace.enter();
+                    let outcome = {
+                        let _profile =
+                            solarity_profiling::profile!("rendering.gpu_completion.host_wait");
+                        catch_unwind(AssertUnwindSafe(|| wait(request.fence)))
+                            .map_err(|_| CompletionFailure::Panicked)
+                            .and_then(|result| result.map_err(CompletionFailure::Driver))
+                    };
+                    request.trace.value(
+                        "rendering.gpu_completion.host_return",
+                        0,
+                        0,
+                        u64::from(outcome.is_ok()),
+                    );
                     // The backend no longer touches this handle after publication.
                     {
                         let mut state = worker.lock();
@@ -107,10 +118,13 @@ impl GpuCompletionService {
         service_native: impl FnOnce(&GpuCompletion<'_>) -> Result<(), E>,
     ) -> Result<(), E> {
         self.check_health()?;
+        let trace =
+            solarity_profiling::TraceContext::capture().fork("rendering.gpu_completion.request");
         {
             let mut state = self.shared.lock();
             state.outcome = None;
-            state.request = Some(fence);
+            state.request = Some(Request { fence, trace });
+            state.trace = trace;
             self.shared.ready.store(false, Ordering::Release);
         }
         self.shared.changed.notify_one();

@@ -109,11 +109,15 @@ descheduling. It does not prove a 13 ms glyph rasterization problem.
 ## Measurement defects and observer effects
 
 `cpu.frame.result_wait` is currently misnamed. In
-[`cpu/pool/batch/results.rs`](../../crates/cpu/src/pool/batch/results.rs), the scope
+the then-flat `cpu/pool/batch/results.rs`, the scope
 is entered even for ready results and nonblocking consumption, and extends over
 the consumer and result-lease return. Its roughly 0.227 ms/frame is therefore
 not evidence of 0.227 ms blocked time. Actual waiting and consumption need
 separate attribution; this review does not change production instrumentation.
+
+The subsequent [consumption tracing change](cpu-consumption-tracing.md) corrects
+these boundaries in the folder-backed result module. It does not retroactively
+change this capture's values.
 
 Sampled phase drain tails average **0.0272 ms** each, with a **0.1327 ms** maximum.
 These measure final kernel start to final kernel return, not complete phase time

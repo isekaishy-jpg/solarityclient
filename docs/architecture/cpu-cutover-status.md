@@ -19,6 +19,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- CPU result/phase wait scopes now cover only native condition waits and mutex
+  reacquisition. Ready probes, callback/lease return and reclamation have separate
+  meanings. Need links and one-based result owners retain the producing phase
+  across frames; a constant-time reason identifies pending gate/node state.
+  The result module separates waiting, consumption, reclamation and lifecycle.
+- GPU host requests carry their origin to the dedicated completion thread.
+  Host backend waits and exceptional drains are distinct from native coordination;
+  ready readers dispatch no host request. Main pending/reader-check labels no
+  longer imply native blocking. Win32 wait timing ends before signal validation
+  and records the wake result. See [scope meanings and evidence](cpu-consumption-tracing.md).
+
 - M2 render palettes and shadow-material packet construction now belong to the
   owned draw phase, including camera-culled shadow casters. Ordered CPU callbacks
   sample their named bones; an already prepared root palette can serve those
@@ -96,7 +107,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   and dimensions do not drain unrelated slots. The exclusive renderer borrow
   pins reader fences and source storage through success, native failure and
   unwind. Movie decode, audio-master time, frame selection and upload order stay
-  unchanged. F10 records `rendering.cinematic_source.native_wait`.
+  unchanged. The current F10 name is `rendering.cinematic_source.reader_check`;
+  host/native waits are recorded separately as described above.
 
 - CPU now supplies a retained main-thread readiness queue. Its bounded numeric
   nodes and prerequisite subscriptions use the existing storage budget; runtime
@@ -112,7 +124,7 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Dropping a partial world phase cancels subscriptions and closes its producers.
 - F10 links `cpu.main.request`, `cpu.main.ready` and `cpu.main.consume` to the
   producing phase, alongside `world.main_continuation` and
-  `frame_pipeline.main_ready_wait`. This establishes a common continuation
+  `frame_pipeline.main_ready_pending`. This establishes a common continuation
   mechanism and its world consumer; UI/FrameXML order is unchanged. Loading,
   upload/acquire/growth and other main-only consumers still need integration.
 
@@ -202,7 +214,7 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   destruction until the host observer completes. Native error/unwind drains the
   observer; renderer teardown joins its thread before destroying Vulkan children.
   No gameplay callback runs in this wait. F10 records the moved wait in
-  `rendering.gpu_slot.native_wait`; the inner world's fence timing now records
+  `rendering.gpu_slot.pending`; the inner world's fence timing now records
   only its remaining synchronous wait. Frame-slot readiness does not mean asset
   upload readiness. Cinematic shared-source reader waits are connected as above;
   image acquisition, remaining uploads, buffer growth/device-idle waits and
@@ -617,6 +629,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### CPU consumption and native-wait tracing checkpoint
+
+On 2026-09-19 the full workspace suite passed 1,590 tests: zero failed, 33 ignored,
+94 summaries. Formatting and full workspace Clippy with warnings denied passed;
+the final test-isolation adjustment also passed all 47 CPU/rendering library tests.
+The CPU fixture proves pending probes and ready callbacks/reclamation create no
+false waits, a real gate wait keeps phase/node cause, and unwind/later-frame
+consumption retains ownership and provenance. The controlled GPU fixture proves
+request-to-host linkage and ready observation without a drain wait.
+
+The optimized ready-result observer experiment measured medians of 54.08 ns/call
+with capture disabled, 187.34 ns ordinary and 331.65 ns sampled. These are complete
+API-call costs, not whole-frame overhead or FPS gains. Nine captures had no dropped
+records/samples or capacity overflows. [Detailed evidence and scope meanings](cpu-consumption-tracing.md)
+record the limits and renamed counters. Production behavior, scheduling and the
+remaining complete cutover scope are unchanged by this diagnostic correction.
 
 ### Build 156 package checkpoint
 
