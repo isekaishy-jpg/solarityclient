@@ -516,8 +516,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 152 was packaged and installed on 2026-09-19 from `464ee0d1`. It connects
-cinematic shared-source reader waits to native servicing, retaining the main
+Build 153 was packaged and installed on 2026-09-19 from `967ca325`. It connects
+measured M2 job cost ordering and receiver partitioning, retaining cinematic
+shared-source reader waits, the main
 readiness queue/world integration, shared Glue appearance sources, receiver-uniform
 batches, the shared light-source bank, terrain/liquid overlap, resumable M2 phases,
 native GPU presentation-slot and CPU waits, and preceding source/loading changes.
@@ -563,6 +564,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 153 package checkpoint
+
+Build **153** compiled through `scripts/build-client.ps1` in 5m40s from
+`967ca32500148c9b337c3b66ba05988078fc2ba6`. Tracked source and index stayed fixed
+during compilation; `dirty=true` records only the reserved `BUILD_NUMBER`.
+Package and installed executable SHA-256 match
+`BF63A89345C7D91760884B8B554C199D8692BEF14B869A7DD44AA10E3D8468E0`.
+Installation used `install-test-client.ps1 -SkipBuild`; executable identity,
+manifest, launcher and desktop shortcut were verified. Testing uses 2560 x 1440
+fullscreen-windowed, four CPU workers, capacity 256, two network workers and
+GPU zero, with F10 opt-in. No interactive client was launched.
+
+The complete source checks and M2 parity results are recorded below. This
+package does not complete the CPU cutover or establish a live FPS gain.
+Evidence is retained in ignored `target/cost-dispatch-package.log` and
+`target/cost-dispatch-install.log`.
 
 ### Calibrated M2 job dispatch checkpoint
 
