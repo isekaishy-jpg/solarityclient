@@ -566,8 +566,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 155 was packaged and installed on 2026-09-19 from `4dd6a28d`. It connects
-local-player worker construction and shared primary requests, retaining cost
+Build 156 was packaged and installed on 2026-09-19 from `b34a6859`. It connects
+owned render palettes/shadow packets and bounded small-model dispatch groups,
+retaining local-player worker construction and shared primary requests, cost
 arbitration across phases, measured M2 job ordering and receiver partitioning,
 retaining cinematic
 shared-source reader waits, the main
@@ -616,6 +617,24 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 156 package checkpoint
+
+Build **156** compiled through `scripts/build-client.ps1` in 5m46s from
+`b34a6859605507f7cee36096621b43828d744040`. Tracked source and index stayed fixed
+during compilation; `dirty=true` records only the reserved `BUILD_NUMBER`.
+Package and installed executable SHA-256 match
+`F4D30A63914CD25ADE47434D572B4F92779589BFA162E7FE20BBF87EF6CC7FA6`.
+Installation used `install-test-client.ps1 -SkipBuild`; executable identity,
+manifest, launcher and desktop shortcut were verified. Testing retains
+2560 x 1440 fullscreen-windowed, four CPU workers, capacity 256, two network
+workers and GPU zero, with F10 opt-in. No interactive client was launched.
+
+The full source checks and hidden functional smoke are recorded below. The smoke
+trace places shadow-packet preparation on all four CPU workers and includes
+multi-model dispatch groups. This confirms the boundary is connected; it does not
+establish a live FPS gain or complete the CPU cutover. Evidence remains in ignored
+`target/m2-owned-draw-package.log` and `target/m2-owned-draw-install.log`.
 
 ### Owned M2 draw-phase checkpoint
 
