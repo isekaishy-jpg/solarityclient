@@ -111,3 +111,18 @@ synchronization owner and reuses it across activations. Registry pruning can
 release only that metadata under its lock, never a domain-bearing batch owner.
 As with other cold synchronization owners, the cell is outside the logical
 buffer-capacity ledger; this change does not expand the ledger into a heap census.
+
+Background loading phases share the ordinary task admission limit and reserve
+node/input/readiness metadata in their fixed required or speculative byte class.
+Each phase has at most one background runner; promotion reclassifies its current
+service identity without moving its existing allocation charges. Frame and load
+shutdown registries are separately bounded. Priority and completion capacity
+covers both sets of admitted phases. Loading allocates a new small service
+identity per activation so an old control cannot reclassify a later activation;
+this does not change warmed frame activation allocation behavior.
+
+Each shared M2 graph consumer reserves a one-slot completion port against its
+CPU byte class. The shared request's weak listener list, bridge Arc, source
+payload, mounted bank and buffers nested in a GameObject input remain ordinary
+domain allocations. Listener entries are removed on source publication and dead
+entries are pruned on registration. No global fixed model fan-out cap is assumed.

@@ -23,6 +23,14 @@ pub struct CpuServiceControl {
 }
 
 impl CpuServiceControl {
+    /// Creates a control for one admitted service identity, never for future epochs.
+    pub(super) fn new(dispatch: &Arc<Dispatch>, service: Arc<AtomicU8>) -> Self {
+        Self {
+            dispatch: Arc::downgrade(dispatch),
+            service,
+        }
+    }
+
     /// Changes queued service metadata; no domain callback or worker wait is involved.
     pub fn set_service(&self, service: CpuService) {
         if self.service.load(Ordering::Acquire) != service as u8

@@ -3,6 +3,7 @@
 use crate::application::terrain_coordinator::world_model_residency::ResidentWorldModelCache;
 mod model_request;
 mod passenger;
+mod pending;
 mod publication;
 mod transport;
 mod transport_animation;
@@ -11,11 +12,11 @@ mod worker;
 mod world_model;
 
 #[cfg(test)]
-#[path = "../../tests/application/game_object_jobs.rs"]
+#[path = "../../../tests/application/game_object_jobs.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "../../tests/application/game_object_transports.rs"]
+#[path = "../../../tests/application/game_object_transports.rs"]
 pub(in crate::application) mod transport_tests;
 
 use crate::application::entity_opacity::EntityOpacityOwner;
@@ -25,11 +26,12 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
+use pending::PendingTask;
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStoreHandle, BlpTextureCache,
     GameObjectDisplayCatalog, M2ModelCache, TransportCatalog, canonical_model_path,
 };
-use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
+use solarity_cpu::{CpuError, CpuExecutor};
 use solarity_ecs::{ActiveWorld, GameObjectPresentation, WorldObjectIdentity, WorldTransform};
 use solarity_systems::{
     GameObjectPlacement, GameObjectPlacementError, GameObjectPlacementResolver,
@@ -417,6 +419,12 @@ impl RuntimeGameObjectPresentation {
                 self.publish(&request, Err(error))?;
                 return Ok(self.poll_transport());
             }
+            // Joining an already-admitted source needs no worker until publication.
+            // Ordinary speculative throttling must not postpone dependency binding.
+            if self.model_wait.is_some() {
+                self.start_model_dependency(cpu, request)?;
+                return Ok(self.poll_transport());
+            }
             let transport_request = self
                 .transport_identity
                 .and_then(|identity| self.indices.get(&identity))
@@ -467,7 +475,7 @@ impl RuntimeGameObjectPresentation {
             self.pending = Some(PendingGeneration {
                 request,
                 eligible: true,
-                task,
+                task: PendingTask::Direct(task),
                 model_demand,
             });
         }
@@ -900,7 +908,9 @@ impl RuntimeGameObjectPresentation {
         }
         if pending.eligible {
             self.publish(&pending.request, completion.result)?;
-        } else if let Err(error) = completion.result {
+        } else if let Err(error) = completion.result
+            && !matches!(error, RuntimeGameObjectError::Cpu(CpuError::JobCancelled))
+        {
             tracing::warn!(path = %pending.request.path, %error, "retired GameObject resource preparation failed");
         }
         Ok(())
@@ -1201,10 +1211,7 @@ impl RuntimeGameObjectPresentation {
         self.transport_identity = None;
         self.last_transport = None;
         if let Some(pending) = &mut self.pending {
-            pending.eligible = false;
-            if let Some(demand) = &pending.model_demand {
-                demand.set_service(solarity_cpu::CpuService::Retirement);
-            }
+            pending.retire();
         }
         self.readiness = true;
         self.collect_unused();
@@ -1219,7 +1226,7 @@ struct ResourceRequest {
 struct PendingGeneration {
     request: ResourceRequest,
     eligible: bool,
-    task: CpuTask<GameObjectWorkerCompletion>,
+    task: PendingTask,
     model_demand: Option<solarity_asset::M2LoadRequest>,
 }
 struct TransportAdmission {

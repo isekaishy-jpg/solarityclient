@@ -130,7 +130,7 @@ fn game_object_task_panics_only_fail_the_owning_world() -> Result<(), Box<dyn Er
                 path: AssetPath::new("World\\Failed.m2")?,
             },
             eligible: true,
-            task,
+            task: super::PendingTask::Direct(task),
         });
         if retired {
             owner.disconnect();
@@ -202,23 +202,7 @@ fn game_object_source_wait_survives_world_withdrawal_without_blocking_a_worker()
         glam::Vec3::ZERO,
         0.,
     ));
-    world.create_object(
-        20,
-        solarity_ecs::ObjectKind::GameObject,
-        Some(solarity_ecs::WorldTransform::new(glam::Vec3::ZERO, 0.)),
-        [],
-    )?;
-    solarity_systems::project_object_fields(
-        &mut world,
-        20,
-        [
-            (4, 1),
-            (5, 1_f32.to_bits()),
-            (8, 42),
-            (14, 0),
-            (17, 31 << 8 | 1),
-        ],
-    )?;
+    create_shared_model_object(&mut world)?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         NonZeroUsize::MIN,
         NonZeroUsize::new(2).ok_or("positive capacity required")?,
@@ -236,12 +220,35 @@ fn game_object_source_wait_survives_world_withdrawal_without_blocking_a_worker()
     assert!(owner.model_wait.is_some());
     drop((occupied_a, occupied_b));
     let mut reader = AssetStore::mount(catalog)?;
+    // Bind the dependent phase while another admitted owner controls publication.
+    owner.synchronize_async(Some(&world), &cpu)?;
+    assert!(owner.pending.is_some());
+    assert!(owner.model_wait.is_none());
+    // Losing the last object consumer cancels its derived phase without touching
+    // the independently owned source producer. A replacement lifetime can rejoin.
+    world.remove_object(20)?;
+    owner.synchronize_async(Some(&world), &cpu)?;
+    assert!(owner.pending.is_none());
+    assert!(owner.instances.is_empty());
+    assert_eq!(cpu.snapshot()?.in_flight(), 0);
+    create_shared_model_object(&mut world)?;
+    owner.synchronize_async(Some(&world), &cpu)?;
+    assert!(owner.pending.is_some());
     let produced = cpu
         .try_submit(move || producer.load(&mut reader))?
         .join()??;
-    owner.synchronize_async(Some(&world), &cpu)?;
-    // One worker's FIFO marker follows the useful texture/mesh preparation job.
-    cpu.try_submit(|| ())?.join()?;
+    // No coordinator poll is needed between source publication and useful work.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !owner
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.task.is_finished())
+    {
+        if Instant::now() >= deadline {
+            return Err("dependent preparation did not complete without a coordinator poll".into());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
     owner.synchronize_async(Some(&world), &cpu)?;
     let resource = owner.instances[0]
         .resource
@@ -255,6 +262,113 @@ fn game_object_source_wait_survives_world_withdrawal_without_blocking_a_worker()
         source.model()
     ));
     assert!(owner.model_wait.is_none());
+
+    // An abandoned dependency after world withdrawal must return the exact
+    // mounted bank and must not report an error into the replacement world.
+    let bank = std::ptr::from_ref(owner.worker.as_deref().ok_or("missing mounted bank")?);
+    let catalog = owner.worker_catalog.as_ref().ok_or("missing catalog")?;
+    let path = AssetPath::new("World/Abandoned.m2")?;
+    let key = solarity_asset::AssetResourceKey::new(catalog.namespace(), path.clone());
+    let solarity_asset::M2Load::Producer(producer) = catalog.model_cache_service().request(&key)?
+    else {
+        return Err("missing producer".into());
+    };
+    let request = ResourceRequest {
+        kind: RuntimeGameObjectResourceKind::M2,
+        path,
+    };
+    owner.model_wait = Some((request.clone(), producer.subscribe()));
+    owner.start_model_dependency(&cpu, request)?;
+    owner.disconnect();
+    drop(producer);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !owner
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.task.is_finished())
+    {
+        if Instant::now() >= deadline {
+            return Err("failed dependency did not complete".into());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    owner.finish_pending()?;
+    assert_eq!(
+        bank,
+        std::ptr::from_ref(
+            owner
+                .worker
+                .as_deref()
+                .ok_or("bank lost on dependency failure")?
+        )
+    );
+    assert!(owner.instances.is_empty());
     cpu.shutdown()?;
+    Ok(())
+}
+
+/// Consumer withdrawal cannot temporarily demote a producer still needed by another owner.
+#[test]
+fn retiring_game_object_leaves_shared_producer_priority_with_combined_demand()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuService, CpuServiceDemand};
+    use std::sync::mpsc;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(2).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let blocker = cpu.try_submit(move || {
+        entered_tx.send(()).ok();
+        release_rx.recv_timeout(Duration::from_secs(10)).ok();
+    })?;
+    entered_rx.recv_timeout(Duration::from_secs(5))?;
+    let task = cpu.try_submit(|| super::GameObjectWorkerCompletion {
+        worker: None,
+        result: Err(solarity_asset::M2LoadError::Abandoned.into()),
+    })?;
+    let control = task.service_control();
+    let demand = CpuServiceDemand::default();
+    let own = demand.subscribe(CpuService::Required);
+    let other = demand.subscribe(CpuService::Required);
+    assert!(demand.bind(control.clone()));
+    let mut pending = super::PendingTask::Direct(task);
+    pending.retire();
+    let before_own_withdrawal = control.service();
+    own.set_service(CpuService::Retirement);
+    let with_other_consumer = control.service();
+    drop(other);
+    let without_other_consumer = control.service();
+    release_tx.send(())?;
+    blocker.join()?;
+    let _completion = pending.join()?;
+    assert_eq!(before_own_withdrawal, CpuService::Required);
+    assert_eq!(with_other_consumer, CpuService::Required);
+    assert_eq!(without_other_consumer, CpuService::Retirement);
+    cpu.shutdown()?;
+    Ok(())
+}
+
+/// Recreates the exact authored display under a fresh visible object lifetime.
+fn create_shared_model_object(world: &mut solarity_ecs::ActiveWorld) -> Result<(), Box<dyn Error>> {
+    world.create_object(
+        20,
+        solarity_ecs::ObjectKind::GameObject,
+        Some(solarity_ecs::WorldTransform::new(glam::Vec3::ZERO, 0.)),
+        [],
+    )?;
+    solarity_systems::project_object_fields(
+        world,
+        20,
+        [
+            (4, 1),
+            (5, 1_f32.to_bits()),
+            (8, 42),
+            (14, 0),
+            (17, 31 << 8 | 1),
+        ],
+    )?;
     Ok(())
 }

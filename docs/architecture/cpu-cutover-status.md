@@ -19,6 +19,26 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Background loading now uses the existing bounded dependency engine through
+  `LoadBatch`. Waiting phases retain owned inputs and task admission but occupy
+  no worker; each ready kernel runs only on the flexible lane and yields between
+  inputs. Frame prerequisite promotion changes service priority without changing
+  execution eligibility. Shutdown cancels unresolved loading gates before drain.
+- Shared M2 requests expose a per-consumer, one-subscription readiness owner.
+  Publication releases source locks before signaling CPU metadata; failure and
+  abandonment preserve the source error and suppress dependent kernels. Existing
+  selected GameObject consumers retain required demand on the source producer.
+- GameObject shared-source joins now start a gated loading phase. M2 publication
+  directly releases useful preparation without another coordinator poll. Admission
+  failure returns the mounted bank; terminal dependency failure reclaims it before
+  the normal publication policy runs. Final instance/transport admission still
+  belongs to the main owner. World withdrawal or loss of the last object consumer
+  cancels unstarted dependent work and preserves its bank. Combined demand keeps
+  other source consumers unaffected; unchanged frames add no membership scan.
+  The coordinator now has a folder facade and separate
+  pending-task module. This is the first resource-readiness consumer; terrain,
+  nested WMO and other loading consumers still need the same integration.
+
 - Replaced both Rayon pools with one persistent protected/flexible worker set;
   the configured total thread count is preserved and its resolved split logged.
 - Added worker startup handshakes and x86-64 MXCSR control matching. Existing
@@ -346,6 +366,31 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Resource-gated loading checkpoint
+
+On 2026-09-19, formatting, workspace Clippy and the full workspace suite passed:
+1,525 tests passed, none failed, and 33 were ignored across 90 suites. Coverage
+includes single-worker progress behind a resource gate, shared admission,
+protected-worker exclusion under inherited urgency, service turns between load
+kernels, cancellation before execution, shutdown, stale service controls and
+source-publication races. The warmed graph fixture still records zero allocator
+calls across 1,000 frame activations.
+
+The runtime fixture now admits the real GameObject dependency before source
+publication and observes completed preparation without another coordinator poll.
+It removes the last object, rejoins under a replacement lifetime, and verifies
+that withdrawal/failure returns the same mounted cache bank. A separate priority
+fixture verifies that retirement never directly demotes a producer shared with
+another required consumer.
+
+Logs are in ignored `target/load-graph-final-tests.log`,
+`target/load-graph-package-clippy.log` and `target/load-graph-final-fmt.log`.
+The resumed environment required restoring Ninja on PATH and using a shorter
+Cargo output-path alias to the same target directory for MSVC's native object
+path limit. No dependency versions or source behavior were changed for that fix.
+These checks establish ordering and ownership, not a measured FPS improvement
+or completion of the remaining cutover requirements.
 
 ### Epoch registration ownership checkpoint
 

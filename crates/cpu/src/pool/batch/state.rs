@@ -74,6 +74,7 @@ pub(super) struct State<T> {
     pub plan: FrameBatchPlan,
     pub runners: usize,
     pub workers: usize,
+    pub service: Option<Arc<std::sync::atomic::AtomicU8>>,
     pub open: bool,
     pub gate: Gate,
     pub subscriptions: StorageVec<Option<Subscription>>,
@@ -101,6 +102,7 @@ impl<T> State<T> {
             plan: FrameBatchPlan::default(),
             runners: 0,
             workers: 0,
+            service: None,
             open: false,
             gate: Gate::Ready,
             subscriptions: StorageVec::default(),
@@ -122,8 +124,8 @@ impl<T> State<T> {
         plan: FrameBatchPlan,
         dependencies: usize,
         budget: &CpuStorageBudget,
+        class: CpuStorageClass,
     ) -> Result<(), CpuError> {
-        let class = CpuStorageClass::Frame;
         let kind = CpuStorageKind::Metadata;
         self.jobs.reserve(budget, class, kind, plan.jobs)?;
         self.nodes.reserve(budget, class, kind, plan.jobs)?;

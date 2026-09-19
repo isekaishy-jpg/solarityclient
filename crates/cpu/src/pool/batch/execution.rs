@@ -17,11 +17,16 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
     }
 
     fn run(self: Arc<Self>, flexible: bool) {
-        let dispatch = self
-            .lock()
-            .dispatch
-            .clone()
-            .unwrap_or_else(|| unreachable!("admitted runner owns dispatch"));
+        let (dispatch, loading) = {
+            let state = self.lock();
+            (
+                state
+                    .dispatch
+                    .clone()
+                    .unwrap_or_else(|| unreachable!("admitted runner owns dispatch")),
+                state.service.is_some(),
+            )
+        };
         loop {
             let (index, mut job, kernel, trace) = {
                 let mut state = self.lock();
@@ -49,7 +54,11 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
             };
             let _trace = trace.enter();
             let outcome = {
-                let _execution = solarity_profiling::profile!("cpu.frame.execute");
+                let _execution = if loading {
+                    solarity_profiling::profile!("cpu.load.execute")
+                } else {
+                    solarity_profiling::profile!("cpu.frame.execute")
+                };
                 catch_unwind(AssertUnwindSafe(|| kernel.run(&mut job)))
                     .unwrap_or(JobOutcome::Panicked)
             };
@@ -70,13 +79,10 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
             if let Some(notifier) = notifier {
                 notifier.notify();
             }
-            if dispatch.should_yield(self.urgent(), flexible) {
+            if loading || dispatch.should_yield(self.urgent(), flexible) {
                 // Keep this runner reservation live while handing its lane back.
                 // No borrowed input or user operation crosses the queue boundary.
-                dispatch.push(
-                    crate::pool::dispatch::Work::Retained(self),
-                    crate::pool::dispatch::WorkClass::Frame,
-                );
+                self.launch(1);
                 return;
             }
         }

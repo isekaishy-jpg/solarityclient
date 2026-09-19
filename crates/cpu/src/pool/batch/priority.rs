@@ -25,9 +25,14 @@ impl<T: Send + 'static> PrioritySink for Core<T> {
             .dispatch
             .clone()
             .unwrap_or_else(|| unreachable!("admitted phase owns dispatch"));
+        let service = state.service.clone();
         drop(state);
         let work: Arc<dyn ReadyWork> = self;
-        dispatch.promote(&work);
+        if let Some(service) = service {
+            dispatch.reclassify(&service, crate::CpuService::Required);
+        } else {
+            dispatch.promote(&work);
+        }
         dispatch.push(Work::Priority(work, epoch), WorkClass::Priority);
     }
 }

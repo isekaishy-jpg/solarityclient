@@ -129,7 +129,11 @@ impl<T: Send + 'static> FrameBatch<T> {
         self.require_urgent()?;
         self.close();
         let mut state = self.core.lock();
-        let _wait = solarity_profiling::profile!("cpu.frame.reclaim_wait");
+        let _wait = if self.service.is_some() {
+            solarity_profiling::profile!("cpu.load.reclaim_wait")
+        } else {
+            solarity_profiling::profile!("cpu.frame.reclaim_wait")
+        };
         while state.lease.is_some() {
             state = self
                 .core

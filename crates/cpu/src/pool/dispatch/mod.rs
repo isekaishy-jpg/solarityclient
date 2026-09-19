@@ -40,6 +40,7 @@ pub(crate) enum Work {
     Once(Arc<AtomicU8>, Box<dyn FnOnce() + Send>),
     Sliced(Arc<AtomicU8>, Box<dyn ServiceStep>),
     Retained(Arc<dyn ReadyWork>),
+    Loading(Arc<AtomicU8>, Arc<dyn ReadyWork>),
     Priority(Arc<dyn ReadyWork>, u64),
 }
 
@@ -53,7 +54,7 @@ impl Work {
                     return Some(Self::Sliced(identity, operation));
                 }
             }
-            Self::Retained(operation) => operation.run(flexible),
+            Self::Retained(operation) | Self::Loading(_, operation) => operation.run(flexible),
             Self::Priority(operation, epoch) => operation.propagate(epoch),
         }
         None
@@ -62,7 +63,9 @@ impl Work {
     /// Reads the private service identity without invoking a kernel or trait method.
     fn service_identity(&self) -> Option<&Arc<AtomicU8>> {
         match self {
-            Self::Once(identity, _) | Self::Sliced(identity, _) => Some(identity),
+            Self::Once(identity, _) | Self::Sliced(identity, _) | Self::Loading(identity, _) => {
+                Some(identity)
+            }
             Self::Retained(_) | Self::Priority(_, _) => None,
         }
     }

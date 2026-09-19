@@ -16,7 +16,7 @@ mod types;
 mod worker;
 
 pub use batch::{
-    FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome,
+    FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome, LoadBatch,
 };
 pub use demand::{CpuServiceDemand, CpuServiceInterest};
 pub use executor::CpuExecutor;

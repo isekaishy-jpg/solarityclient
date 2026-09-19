@@ -17,6 +17,7 @@ impl Dispatch {
         budget: &CpuStorageBudget,
     ) -> Result<(Arc<Self>, Vec<JoinHandle<()>>), CpuError> {
         let frame_capacity = count.checked_mul(capacity).ok_or(CpuError::BatchStorage)?;
+        let priority_capacity = capacity.checked_mul(2).ok_or(CpuError::BatchStorage)?;
         let mut frame = StorageDeque::default();
         let mut urgent = StorageDeque::default();
         let mut priority = StorageDeque::default();
@@ -39,7 +40,7 @@ impl Dispatch {
             budget,
             CpuStorageClass::Frame,
             CpuStorageKind::Metadata,
-            capacity,
+            priority_capacity,
         )?;
         // Each bucket can receive all admitted records after a demand change.
         // Queue infrastructure is required metadata even when speculation is off.

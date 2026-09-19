@@ -23,6 +23,8 @@ pub struct CpuExecutor {
     pub(super) frame_state: Arc<SharedExecutorState>,
     pub(super) epochs: super::epochs::Epochs,
     pub(super) frame_capacity: usize,
+    pub(super) completion_capacity: usize,
+    pub(super) load_epochs: super::epochs::Epochs,
     worker_count: usize,
     storage: crate::CpuStorageBudget,
     pub(super) notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
@@ -56,7 +58,11 @@ impl CpuExecutor {
     ) -> Result<Self, CpuError> {
         let worker_count = config.worker_count().get();
         let storage = crate::CpuStorageBudget::new(config.storage());
-        let epochs = super::epochs::Epochs::new(config.max_in_flight().get(), &storage)?;
+        let capacity = config.max_in_flight().get();
+        let completion_capacity = capacity.checked_mul(2).ok_or(CpuError::BatchStorage)?;
+        let epochs = super::epochs::Epochs::new(capacity, &storage, crate::CpuStorageClass::Frame)?;
+        let load_epochs =
+            super::epochs::Epochs::new(capacity, &storage, crate::CpuStorageClass::Required)?;
         let (dispatch, workers) =
             Dispatch::start(worker_count, config.max_in_flight().get(), &storage)?;
         Ok(Self {
@@ -65,6 +71,8 @@ impl CpuExecutor {
             state: SharedExecutorState::new(config.max_in_flight()),
             frame_state: SharedExecutorState::new(config.max_in_flight()),
             epochs,
+            load_epochs,
+            completion_capacity,
             storage,
             frame_capacity: config.max_in_flight().get(),
             worker_count,
@@ -113,18 +121,26 @@ impl CpuExecutor {
     /// # Errors
     /// Returns the same lifecycle errors as [`Self::try_reserve`].
     pub fn try_reserve_for(&self, service: CpuService) -> Result<CpuTaskPermit<'_>, CpuError> {
-        let lease = if service == CpuService::Speculative {
-            self.state
-                .reserve_below(self.frame_capacity.saturating_sub(1).max(1))?
-        } else {
-            self.state.reserve()?
-        };
+        let lease = self.reserve_service(service)?;
         Ok(CpuTaskPermit::new(
             &self.dispatch,
             lease,
             self.notifier.clone(),
             service,
         ))
+    }
+
+    /// Background graphs and ordinary tasks share the same admission bound.
+    pub(super) fn reserve_service(
+        &self,
+        service: CpuService,
+    ) -> Result<super::worker::WorkerLease, CpuError> {
+        if service == CpuService::Speculative {
+            self.state
+                .reserve_below(self.frame_capacity.saturating_sub(1).max(1))
+        } else {
+            self.state.reserve()
+        }
     }
 
     /// Submits required loading, retirement, or optional preparation explicitly.
@@ -199,6 +215,8 @@ impl CpuExecutor {
     pub fn shutdown(&mut self) -> Result<(), CpuError> {
         self.frame_state.close_admission()?;
         self.epochs.stop()?;
+        self.state.close_admission()?;
+        self.load_epochs.stop()?;
         self.state.stop_and_wait()?;
         self.frame_state.stop_and_wait()?;
         self.dispatch.stop();
@@ -215,6 +233,8 @@ impl Drop for CpuExecutor {
         // path still closes admission and drains all observable admitted work.
         let _closed = self.frame_state.close_admission();
         let _stopped = self.epochs.stop();
+        let _load_closed = self.state.close_admission();
+        let _load_stopped = self.load_epochs.stop();
         let _shutdown_result = self.state.stop_and_wait();
         let _frame_shutdown = self.frame_state.stop_and_wait();
         self.dispatch.stop();

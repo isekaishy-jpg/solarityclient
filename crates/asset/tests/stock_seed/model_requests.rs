@@ -180,3 +180,150 @@ fn required_model_join_promotes_and_release_restores_prewarm() -> Result<(), Box
     cpu.shutdown()?;
     Ok(())
 }
+
+/// Real decode publication wakes a gated consumer without coordinator polling;
+/// registering after publication delivers the same immutable source identity.
+#[test]
+fn shared_model_readiness_drives_loading_and_late_subscribers() -> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{
+        CpuExecutor, CpuPoolConfig, CpuService, CpuStorageClass, CpuStoragePlan, JobOutcome,
+        LoadBatch,
+    };
+    use std::num::NonZeroUsize;
+    let fixture = fixture()?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let key = AssetResourceKey::new(
+        catalog.namespace(),
+        AssetPath::new("Creature/Solarity/Shared.m2")?,
+    );
+    let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
+        return Err("missing producer".into());
+    };
+    let request = producer.subscribe();
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(3).ok_or("capacity")?,
+        CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
+    let cancelled = request.dependency(cpu.storage(), CpuStorageClass::Required)?;
+    let cancelled_ready = cancelled.readiness();
+    drop(cancelled);
+    assert!(cancelled_ready.outcome().is_err());
+    let dependency = request.dependency(cpu.storage(), CpuStorageClass::Required)?;
+    let ready = dependency.readiness();
+    let mut jobs = vec![(dependency, None)];
+    let mut load = LoadBatch::new(
+        CpuService::Required,
+        |work: &mut (
+            solarity_asset::M2LoadDependency,
+            Option<ResourceLease<solarity_asset::DecodedM2Model>>,
+        )| {
+            match work.0.poll() {
+                Some(Ok(model)) => {
+                    work.1 = Some(model);
+                    JobOutcome::Succeeded
+                }
+                _ => JobOutcome::Failed,
+            }
+        },
+    );
+    load.start_after(&cpu, &mut jobs, &[ready])?;
+    assert_eq!(cpu.try_submit(|| 17)?.join()?, 17);
+    let mut reader = AssetStore::mount(catalog)?;
+    let model = cpu
+        .try_submit(move || producer.load(&mut reader))?
+        .join()??;
+    load.reclaim(&mut jobs)?;
+    assert!(ResourceLease::ptr_eq(
+        &model,
+        jobs[0].1.as_ref().ok_or("missing derived source")?
+    ));
+    let late = request.dependency(cpu.storage(), CpuStorageClass::Required)?;
+    assert_eq!(late.readiness().outcome()?, Some(JobOutcome::Succeeded));
+    cpu.shutdown()?;
+    Ok(())
+}
+
+/// Producer abandonment fails only its dependent work and retains error identity.
+#[test]
+fn abandoned_model_dependency_returns_owned_input_without_running_it() -> Result<(), Box<dyn Error>>
+{
+    use solarity_cpu::{
+        CpuExecutor, CpuPoolConfig, CpuService, CpuStorageClass, CpuStoragePlan, JobOutcome,
+        LoadBatch,
+    };
+    use std::num::NonZeroUsize;
+    let fixture = fixture()?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let key = AssetResourceKey::new(
+        catalog.namespace(),
+        AssetPath::new("Creature/Solarity/Shared.m2")?,
+    );
+    let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
+        return Err("missing producer".into());
+    };
+    let request = producer.subscribe();
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        NonZeroUsize::MIN,
+        NonZeroUsize::new(2).ok_or("capacity")?,
+        CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
+    let dependency = request.dependency(cpu.storage(), CpuStorageClass::Required)?;
+    let mut jobs = vec![71];
+    let mut load = LoadBatch::new(CpuService::Required, |value: &mut usize| {
+        *value = 0;
+        JobOutcome::Succeeded
+    });
+    load.start_after(&cpu, &mut jobs, &[dependency.readiness()])?;
+    drop(producer);
+    assert!(load.reclaim(&mut jobs).is_err());
+    assert_eq!(jobs, [71]);
+    assert!(matches!(
+        dependency.poll(),
+        Some(Err(M2LoadError::Abandoned))
+    ));
+    cpu.shutdown()?;
+    Ok(())
+}
+
+/// Registration racing terminal publication must neither miss nor double-complete an edge.
+#[test]
+fn model_dependency_registration_races_abandonment_without_lost_readiness()
+-> Result<(), Box<dyn Error>> {
+    let fixture = fixture()?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let key = AssetResourceKey::new(
+        catalog.namespace(),
+        AssetPath::new("Creature/Solarity/Shared.m2")?,
+    );
+    let budget = solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(
+        64 << 20,
+        64 << 20,
+        16 << 20,
+    ));
+    for _ in 0..64 {
+        let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
+            return Err("missing producer".into());
+        };
+        let request = producer.subscribe();
+        let ready = std::sync::Barrier::new(2);
+        let dependency = std::thread::scope(|scope| {
+            let registration = scope.spawn(|| {
+                ready.wait();
+                request.dependency(&budget, solarity_cpu::CpuStorageClass::Required)
+            });
+            ready.wait();
+            drop(producer);
+            registration.join()
+        })
+        .map_err(|_| "registration panicked")??;
+        assert_eq!(
+            dependency.readiness().outcome()?,
+            Some(solarity_cpu::JobOutcome::Failed)
+        );
+    }
+    Ok(())
+}

@@ -83,6 +83,7 @@ impl M2LoadProducer {
             .unwrap_or_else(|_| unreachable!("model result metadata cannot panic")) = Some(result);
         self.finished = true;
         self.slot.ready.notify_all();
+        self.slot.publish_dependencies();
     }
 }
 

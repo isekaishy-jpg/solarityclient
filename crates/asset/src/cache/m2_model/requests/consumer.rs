@@ -34,7 +34,7 @@ impl M2LoadRequest {
     }
 
     /// Waits at an explicit coordinator/tooling boundary; CPU workers may consume only ready results.
-    /// Normal frame code must use `poll` and keep dependent jobs unsubmitted.
+    /// Normal frame code uses `poll` or `dependency`; an unfinished resource never parks a worker.
     /// # Errors
     /// Returns a source/producer failure, or rejects an unfinished wait on a CPU worker.
     pub fn wait(&self) -> Outcome {

@@ -164,6 +164,7 @@ impl RuntimeGameObjectPresentation {
             );
         }
         if self.scene_revision != previous_revision {
+            self.retire_unreferenced_pending();
             self.collect_unused();
             self.placement_resolver.retain_world(world);
         }

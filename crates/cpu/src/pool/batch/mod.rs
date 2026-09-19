@@ -2,6 +2,8 @@
 
 mod admission;
 mod execution;
+mod loading;
+pub use loading::LoadBatch;
 mod priority;
 mod readiness;
 mod results;
@@ -26,6 +28,8 @@ use std::sync::{Arc, Condvar, Mutex};
 pub struct FrameBatch<T: Send + 'static> {
     core: Arc<Core<T>>,
     active: bool,
+    // Fixed admission class; per-epoch service identity lives in State.
+    service: Option<crate::CpuService>,
 }
 
 impl<T: Send + 'static> FrameBatch<T> {
@@ -53,6 +57,7 @@ impl<T: Send + 'static> FrameBatch<T> {
                 completion_port: crate::CompletionPort::empty(),
             }),
             active: false,
+            service: None,
         }
     }
 
@@ -189,13 +194,24 @@ impl<T: Send + 'static> Core<T> {
         if count == 0 {
             return;
         }
-        let dispatch = self
-            .lock()
-            .dispatch
-            .clone()
-            .unwrap_or_else(|| unreachable!("admitted epoch retains dispatcher"));
+        let (dispatch, service) = {
+            let state = self.lock();
+            (
+                state
+                    .dispatch
+                    .clone()
+                    .unwrap_or_else(|| unreachable!("admitted epoch retains dispatcher")),
+                state.service.clone(),
+            )
+        };
         for _ in 0..count {
-            dispatch.push(Work::Retained(self.clone()), WorkClass::Frame);
+            match &service {
+                Some(service) => dispatch.push(
+                    Work::Loading(Arc::clone(service), self.clone()),
+                    WorkClass::Background,
+                ),
+                None => dispatch.push(Work::Retained(self.clone()), WorkClass::Frame),
+            }
         }
     }
 }

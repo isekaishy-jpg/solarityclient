@@ -25,14 +25,13 @@ pub(super) struct Epochs {
 }
 impl Epochs {
     /// Reserves registry capacity once from the executor's admission bound.
-    pub fn new(limit: usize, budget: &CpuStorageBudget) -> Result<Self, CpuError> {
+    pub fn new(
+        limit: usize,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+    ) -> Result<Self, CpuError> {
         let mut entries = StorageVec::default();
-        entries.reserve(
-            budget,
-            CpuStorageClass::Frame,
-            CpuStorageKind::Metadata,
-            limit,
-        )?;
+        entries.reserve(budget, class, CpuStorageKind::Metadata, limit)?;
         Ok(Self {
             entries: Mutex::new(entries),
             limit,

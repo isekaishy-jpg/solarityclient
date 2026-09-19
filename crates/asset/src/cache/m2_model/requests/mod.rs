@@ -2,6 +2,8 @@
 
 mod consumer;
 mod producer;
+mod readiness;
+pub use readiness::M2LoadDependency;
 mod service;
 
 use super::super::resource::ResourceLease;
@@ -45,6 +47,7 @@ struct Slot {
     result: Mutex<Option<Outcome>>,
     ready: Condvar,
     demand: CpuServiceDemand,
+    dependencies: Mutex<Vec<std::sync::Weak<readiness::DependencyOwner>>>,
 }
 
 /// The table owns pending producers only; successful source retention uses the normal cache.
@@ -58,7 +61,7 @@ pub(super) struct RequestIndex {
 pub enum M2Load {
     /// The qualified retained source is already available.
     Ready(ResourceLease<DecodedM2Model>),
-    /// Another producer owns decoding; consumers must not submit a waiting CPU job.
+    /// Another producer owns decoding; consumers poll or declare a readiness dependency.
     Pending(M2LoadRequest),
     /// This owner must publish decoding or explicitly abandon the request.
     Producer(M2LoadProducer),
