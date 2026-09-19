@@ -9,6 +9,8 @@ use solarity_rendering::VulkanError;
 pub(super) struct GeometryOutput<'a> {
     pub(super) bone_transforms: &'a mut Vec<glam::Mat4>,
     pub(super) visible_draws: &'a mut Vec<solarity_rendering::M2PreparedDraw>,
+    pub(super) shadow_draws: &'a mut Vec<solarity_rendering::M2PreparedDraw>,
+    pub(super) environment_shadow_draws: &'a mut Vec<solarity_rendering::WorldEnvironmentM2Caster>,
     pub(super) particle_draws: &'a mut Vec<solarity_rendering::M2ParticlePreparedDraw>,
     pub(super) ribbon_draws: &'a mut Vec<solarity_rendering::M2RibbonPreparedDraw>,
     pub(super) transparent_elements: &'a mut Vec<super::super::super::M2TransparentElement>,
@@ -63,23 +65,39 @@ impl GeometryOutput<'_> {
                 job.pose.transforms().len() as u64,
             );
         }
-        if job.palette.pending {
-            let start = input.bone_offset as usize;
-            let end = start
+        let bone_offset = u32::try_from(self.bone_transforms.len())
+            .map_err(|_| VulkanError::M2BoneTransformRange)?;
+        let has_shadow_bones = !job.shadow_draws.is_empty();
+        if input.visible.is_some() || has_shadow_bones {
+            self.bone_transforms
+                .len()
                 .checked_add(job.pose.transforms().len())
                 .ok_or(VulkanError::M2BoneTransformRange)?;
-            let output = self
-                .bone_transforms
-                .get_mut(start..end)
-                .ok_or(VulkanError::M2BoneTransformRange)?;
-            output.copy_from_slice(job.pose.transforms());
+            self.bone_transforms
+                .extend_from_slice(job.pose.transforms());
+        }
+        for draw in job.shadow_draws.drain() {
+            let draw = draw.relocate_bones(bone_offset)?;
+            if input.primary_shadow {
+                self.shadow_draws.push(draw);
+            }
+            if input.environment_maps != 0 {
+                self.environment_shadow_draws
+                    .push(solarity_rendering::WorldEnvironmentM2Caster {
+                        draw,
+                        maps: input.environment_maps,
+                    });
+            }
         }
         work.geometry_outputs(
             !job.visible_draws.is_empty(),
             !job.particle_draws.is_empty(),
             !job.ribbon_draws.is_empty(),
-            input.has_shadow_bones,
+            has_shadow_bones,
         );
+        if input.visible.is_none() {
+            return Ok(());
+        }
         let meshes = self.visible_draws.len();
         let particles = self.particle_draws.len();
         let ribbons = self.ribbon_draws.len();
@@ -94,6 +112,7 @@ impl GeometryOutput<'_> {
         let ribbon_vertices = u32::try_from(self.ribbon_vertices.len())
             .map_err(|_| VulkanError::M2RibbonDrawVertexRange)?;
         for draw in job.visible_draws.drain() {
+            let draw = draw.relocate_bones(bone_offset)?;
             self.visible_draws.push(if draw.scene_order() == u32::MAX {
                 draw
             } else {

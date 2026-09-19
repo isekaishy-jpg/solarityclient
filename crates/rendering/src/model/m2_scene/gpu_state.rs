@@ -290,6 +290,12 @@ pub struct M2DrawPushConstants {
 }
 
 impl M2DrawPushConstants {
+    /// Relocates a worker-local palette while preserving every shader selector.
+    pub(crate) fn relocate_bones(mut self, offset: u32) -> Option<Self> {
+        self.bone_transform_offset = self.bone_transform_offset.checked_add(offset)?;
+        Some(self)
+    }
+
     /// Preserves validated SKIN classes while selecting one placement palette.
     pub(crate) const fn with_instance(mut self, offset: u32, flags: u32) -> Self {
         self.bone_transform_offset = offset;

@@ -102,8 +102,14 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         )?;
         frame.sources.push(Some(source.clone()));
         for index in 0..count {
-            let transform =
-                Mat4::from_translation(Vec3::new(0., (index % 6) as f32, ((index / 6) % 4) as f32));
+            // These models are outside the camera frustum but inside the native
+            // unit shadow volume. Their emitter clocks must remain untouched.
+            let y = if !measure && index % 4 == 3 {
+                18.
+            } else {
+                (index % 6) as f32
+            };
+            let transform = Mat4::from_translation(Vec3::new(0., y, ((index / 6) % 4) as f32));
             let playback = M2Playback::default_sequence(&model, &animations, 0, &mut random)?;
             let mut placement = m2_gpu_placement(
                 0,
@@ -154,6 +160,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     let mut charged_output = false;
     let mut saw_particles = false;
     let mut saw_ribbons = false;
+    let mut saw_shadow_only_job = false;
     let mut reference_time = std::time::Duration::ZERO;
     let mut candidate_time = std::time::Duration::ZERO;
     let mut measured = 0;
@@ -287,6 +294,10 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             "receiver scenes step {step}"
         );
         assert_eq!(a.shadow_draws, b.shadow_draws, "shadow step {step}");
+        assert_eq!(
+            a.environment_shadow_draws, b.environment_shadow_draws,
+            "environment shadows step {step}"
+        );
         assert_eq!(a.bone_transforms, b.bone_transforms);
         assert_eq!(a.particle_vertices, b.particle_vertices);
         assert_eq!(a.particle_indices, b.particle_indices);
@@ -296,6 +307,21 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         assert_eq!(a.water_scene_order, b.water_scene_order);
         assert_eq!(a.particle_vertex_capacity, b.particle_vertex_capacity);
         assert_eq!(a.particle_index_capacity, b.particle_index_capacity);
+        if let Some(draw) = b.draws.first().copied() {
+            assert_eq!(draw.relocate_bones(0)?, draw);
+            let shifted = draw.relocate_bones(32)?;
+            assert_eq!(shifted.material(), draw.material());
+            assert_eq!(shifted.scene_order(), draw.scene_order());
+            assert_eq!(shifted.shadow_material(), draw.shadow_material());
+            let original = draw.push_constants().to_bytes();
+            let relocated = shifted.push_constants().to_bytes();
+            assert_eq!(&original[4..], &relocated[4..]);
+            assert_eq!(
+                u32::from_le_bytes(relocated[..4].try_into()?),
+                u32::from_le_bytes(original[..4].try_into()?) + 32
+            );
+            assert!(draw.relocate_bones(1)?.relocate_bones(u32::MAX).is_err());
+        }
         if let Some(draw) = b.particle_draws.first().copied() {
             assert_eq!(draw.relocate(0, 0, 0, 0)?, draw);
             assert!(draw.relocate(u32::MAX, 0, 0, 0).is_err());
@@ -319,6 +345,12 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         ) > 0;
         saw_particles |= !b.particle_vertices.is_empty();
         saw_ribbons |= !b.ribbon_vertices.is_empty();
+        saw_shadow_only_job |= candidate.geometry_batch.jobs.iter().any(|job| {
+            job.input.is_some_and(|input| {
+                input.visible.is_none() && (input.primary_shadow || input.environment_maps != 0)
+            }) && job.palette.pending
+                && !job.owns_effects
+        });
         assert_eq!(
             reference.scene_lighting.directionals(),
             candidate.scene_lighting.directionals(),
@@ -351,6 +383,10 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         "both mutable effect consumers exercised: particles={saw_particles} ribbons={saw_ribbons}"
     );
     if !measure {
+        assert!(
+            saw_shadow_only_job,
+            "offscreen palettes and shadow packets ran in owned jobs"
+        );
         let candidate = &mut frames[1];
         let camera = WorldCamera::orthographic(
             Vec3::new(12., 0., 3.),

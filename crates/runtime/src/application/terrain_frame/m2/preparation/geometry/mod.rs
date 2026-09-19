@@ -1,97 +1,40 @@
-//! Owned visible work joins after ordered animation, attachment and shadow publication.
+//! Owned visible and shadow draw work follows ordered animation and CPU callbacks.
 
+mod chunk;
 mod cost;
+mod input;
+mod job;
+mod meshes;
 mod output;
 mod palette;
+mod particles;
 mod prepare;
 mod publication;
+mod ribbon_draws;
 mod ribbons;
+mod shadows;
 mod storage;
 
 pub(super) use publication::GeometryPublication;
 pub(in super::super) use ribbons::advance_ribbons;
 
-use super::super::{
-    M2BonePose, M2MaterialPose, M2ParticlePlacement, M2RibbonTrail, M2TransparentElement,
-    RuntimeTerrainFrameError,
-};
-use glam::{Mat4, Vec3, Vec4};
-use solarity_rendering::{
-    M2AnimationClock, M2LiquidPasses, M2ParticleColorReplacement, M2ParticlePreparedDraw,
-    M2ParticleRenderVertex, M2PreparedDraw, M2RibbonPreparedDraw, M2RibbonRenderVertex,
-    M2SceneLightBank,
-};
+use job::{GeometryContext, GeometryJob};
 
-/// Inputs are copied only after all native callbacks and ancestry requirements resolve.
-#[derive(Clone, Copy)]
-pub(in super::super) struct GeometryInput {
-    pub placement_index: usize,
-    pub trace: solarity_profiling::TraceContext,
-    pub source_index: usize,
-    pub clock: M2AnimationClock,
-    pub effect_delta_seconds: f32,
-    pub transform: Mat4,
-    pub model_view: Mat4,
-    pub instance_color: Vec4,
-    pub placement_fog_color: Vec3,
-    pub light_bank: M2SceneLightBank,
-    pub scene_index: Option<u32>,
-    pub bone_offset: u32,
-    pub effect_retiring: bool,
-    pub particle_liquid: M2LiquidPasses,
-    pub model_liquid: M2LiquidPasses,
-    pub instance_distance: f32,
-    pub instance_identity: usize,
-    pub model_distance_sort: bool,
-    pub particle_colors: Option<M2ParticleColorReplacement>,
-    pub has_shadow_bones: bool,
-}
-
-/// Reuses frame-local scratch and temporarily owns each admitted model's effect state.
-#[derive(Default)]
-struct GeometryJob {
-    measurement: solarity_cpu::WorkMeasurement,
-    cost_class: usize,
-    input: Option<GeometryInput>,
-    context: Option<GeometryContext>,
-    owns_effects: bool,
-    pose: M2BonePose,
-    palette: palette::PaletteInput,
-    material_poses: Vec<Option<M2MaterialPose>>,
-    particles: Vec<M2ParticlePlacement>,
-    ribbons: Vec<M2RibbonTrail>,
-    visible_draws: solarity_cpu::CpuBuffer<M2PreparedDraw>,
-    transparent_elements: solarity_cpu::CpuBuffer<M2TransparentElement>,
-    particle_vertices: solarity_cpu::CpuBuffer<M2ParticleRenderVertex>,
-    particle_indices: solarity_cpu::CpuBuffer<u32>,
-    particle_sort_indices: solarity_cpu::CpuBuffer<usize>,
-    particle_draws: solarity_cpu::CpuBuffer<M2ParticlePreparedDraw>,
-    ribbon_vertices: solarity_cpu::CpuBuffer<M2RibbonRenderVertex>,
-    ribbon_draws: solarity_cpu::CpuBuffer<M2RibbonPreparedDraw>,
-    particle_vertex_capacity: usize,
-    particle_index_capacity: usize,
-    recoverable_errors: Vec<String>,
-    result: Option<Result<(), RuntimeTerrainFrameError>>,
-}
+pub(in super::super) use input::{GeometryInput, VisibleGeometryInput};
 
 /// Retains only the current admitted job count, never historical model generations.
 pub(in super::super::super) struct GeometryBatch {
     jobs: Vec<GeometryJob>,
     active: usize,
-    pending: solarity_cpu::FrameBatch<GeometryJob>,
-    handles: Vec<solarity_cpu::FrameJob<GeometryJob>>,
+    staged: chunk::GeometryChunk,
+    spare_chunks: Vec<chunk::GeometryChunk>,
+    returned_chunks: Vec<chunk::GeometryChunk>,
+    pending: solarity_cpu::FrameBatch<chunk::GeometryChunk>,
+    handles: Vec<solarity_cpu::FrameJob<chunk::GeometryChunk>>,
     submitted: bool,
     completion: Option<solarity_cpu::ReadyToken>,
     storage: Option<solarity_cpu::CpuStorageBudget>,
     calibration: cost::GeometryCalibration,
-}
-
-/// Immutable generation and camera inputs own every worker dependency.
-struct GeometryContext {
-    source: super::super::M2GpuSource,
-    camera: solarity_rendering::WorldCameraFrame,
-    effect_scale: solarity_rendering::M2CameraEffectScale,
-    twinkle: std::sync::Arc<solarity_rendering::M2ParticleTwinkleTable>,
 }
 
 impl Default for GeometryBatch {
@@ -99,52 +42,16 @@ impl Default for GeometryBatch {
         Self {
             jobs: Vec::new(),
             active: 0,
-            pending: solarity_cpu::FrameBatch::new(GeometryJob::execute),
+            staged: chunk::GeometryChunk::default(),
+            spare_chunks: Vec::new(),
+            returned_chunks: Vec::new(),
+            pending: solarity_cpu::FrameBatch::new(chunk::GeometryChunk::execute),
             handles: Vec::new(),
             submitted: false,
             completion: None,
             storage: None,
             calibration: cost::GeometryCalibration::default(),
         }
-    }
-}
-
-impl GeometryJob {
-    /// Executes after this model's ancestry, clock and effect state are owned.
-    fn execute(&mut self) {
-        let started = self.measurement.start();
-        let context = self
-            .context
-            .take()
-            .unwrap_or_else(|| unreachable!("admitted geometry owns its context"));
-        self.result = Some(self.prepare(
-            &context.source,
-            context.camera,
-            context.effect_scale,
-            &context.twinkle,
-        ));
-        // Resource pins need only survive preparation; placement/source and
-        // published GPU-frame leases own their later lifetimes. Calibration
-        // includes returning those pins, which is part of this worker's kernel.
-        drop(context);
-        if self.result.as_ref().is_some_and(Result::is_ok) {
-            self.measurement.finish(started);
-        }
-    }
-
-    /// Clears output lengths while retaining storage for the next visible model.
-    fn reset(&mut self) {
-        self.visible_draws.clear();
-        self.transparent_elements.clear();
-        self.particle_vertices.clear();
-        self.particle_indices.clear();
-        self.particle_draws.clear();
-        self.ribbon_vertices.clear();
-        self.ribbon_draws.clear();
-        self.particle_vertex_capacity = 0;
-        self.particle_index_capacity = 0;
-        self.recoverable_errors.clear();
-        self.result = None;
     }
 }
 

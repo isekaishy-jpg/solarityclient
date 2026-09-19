@@ -1,20 +1,17 @@
 //! Original root-unit admission and recursive attached-model shadow packets.
 
-use super::super::shadow::{ModelShadowKind, SceneryShadowQueries, WorldShadowAdmission};
-use super::distance::SceneryDistance;
-use super::{
+use super::super::super::shadow::{ModelShadowKind, SceneryShadowQueries, WorldShadowAdmission};
+use super::super::distance::SceneryDistance;
+use super::super::{
     M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, RuntimeTerrainFrameError,
-    UnitSceneRegistration, placement_bounding_sphere, placement_color, placement_mesh_color,
+    UnitSceneRegistration, placement_bounding_sphere,
 };
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Owner;
-use glam::{Mat4, Vec3, Vec4};
-use solarity_rendering::{
-    M2AnimationClock, M2MaterialPose, M2MaterialUniform, M2PreparedDraw, M2ShadowMaterial,
-    WorldShadowProjection,
-};
+use glam::Vec3;
+use solarity_rendering::WorldShadowProjection;
 
 /// 7BB9D0 admits dynamic unit roots; 834660 recursively visits their attachments.
-pub(super) fn admits_root(
+pub(in super::super) fn admits_root(
     projection: WorldShadowProjection,
     source: &M2GpuSource,
     placement: &M2GpuPlacement,
@@ -48,7 +45,7 @@ pub(super) fn admits_root(
 
 /// Classifies the original root registration, with attachment inheritance left
 /// to the caller. Ordinary scenery must pass the fade-start distance cutoff.
-pub(super) fn environment_maps(
+pub(in super::super) fn environment_maps(
     queries: SceneryShadowQueries<'_>,
     source: &M2GpuSource,
     placement: &M2GpuPlacement,
@@ -143,77 +140,8 @@ pub(super) fn environment_maps(
         UnitSceneRegistration::new(&source.model, placement.transform)?.bounds
     };
     let mut maps = queries.admission.admitted_maps(bounds) & possible_maps;
-    if let Some(owner) = super::doodad_scene::owner_key(owner) {
+    if let Some(owner) = super::super::doodad_scene::owner_key(owner) {
         maps &= queries.doodads.get(&owner).copied().unwrap_or(0);
     }
     Ok(maps)
-}
-
-/// Samples the same material clock and pose used by the ordinary model queue.
-/// The returned packets use the caller's shared palette offset even off screen.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn append_packets(
-    source: &M2GpuSource,
-    placement: &M2GpuPlacement,
-    clock: M2AnimationClock,
-    model_view: Mat4,
-    opacity: f32,
-    bone_offset: u32,
-    material_poses: &mut Vec<Option<M2MaterialPose>>,
-    mut destination: impl FnMut(M2PreparedDraw),
-) -> Result<(), RuntimeTerrainFrameError> {
-    if source.mesh.is_none() {
-        return Ok(());
-    }
-    if placement
-        .unit_effect
-        .as_ref()
-        .is_some_and(|effect| effect.retiring())
-    {
-        return Ok(());
-    }
-    // The caller clears the retained scratch at each placement boundary.
-    material_poses.resize(source.draws.len(), None);
-    let mut instance_color = placement_mesh_color(placement.owner, placement.color);
-    if let Some(animation) = &placement.unit_animation {
-        instance_color *= placement_color(animation.model_color().to_le_bytes());
-    } else if let Some(pose) = placement
-        .retirement
-        .as_ref()
-        .and_then(|retired| retired.unit_pose)
-    {
-        instance_color *= placement_color(pose.color.to_le_bytes());
-    }
-    instance_color.w *= opacity;
-    for (draw_index, resources) in source.draws.iter().enumerate() {
-        let Some(resources) = resources else {
-            continue;
-        };
-        let pose = M2MaterialPose::sample(&source.model, &source.plan, draw_index, clock)?;
-        material_poses[draw_index] = Some(pose);
-        let draw = &source.plan.draws()[draw_index];
-        let color = pose.mesh_color() * instance_color;
-        if M2ShadowMaterial::select(
-            draw.batch(),
-            draw.material().flags(),
-            draw.material().blend_mode(),
-            color.w,
-        )
-        .is_none()
-        {
-            continue;
-        }
-        // ShadowMapSL uses raw UV0 and its own fixed alpha threshold. These
-        // ordinary material fields preserve the shared descriptor ABI.
-        let material = M2MaterialUniform::new(
-            placement.transform,
-            pose.texture_transforms(),
-            model_view,
-            color,
-            Vec4::ZERO,
-            Vec4::ZERO,
-        );
-        destination(resources.template.instantiate(material, bone_offset, 0)?);
-    }
-    Ok(())
 }

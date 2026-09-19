@@ -19,6 +19,30 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- M2 render palettes and shadow-material packet construction now belong to the
+  owned draw phase, including camera-culled shadow casters. Ordered CPU callbacks
+  sample their named bones; an already prepared root palette can serve those
+  callbacks directly. Shadow-only jobs neither take particle/ribbon ownership nor
+  advance effect clocks. Main retains spatial admission, attachment/callback order,
+  RNG, receiver queries and final output order.
+- Worker packets use local palette bases. Ordered publication appends only the
+  palettes retained by the previous visible/shadow rules and relocates both mesh
+  and shadow packets with checked arithmetic. Primary and environment shadow banks
+  share the same sampled material packets. Worker failure and abandoned admission
+  return every submitted or staged model's owned state.
+- Calibrated small draw jobs share a finite scheduler group, targeting at most
+  100 microseconds of estimated work and at most 16 models. Unknown or individually
+  expensive work runs separately; a kernel is not forcibly preempted. Model-record
+  capacity and shadow output buffers are charged before ownership transfer. F10
+  model traces remain per model; `cpu.frame.execute` now measures a group for this
+  phase, so per-call comparisons with prior builds are invalid. Numeric frame
+  order and per-model successful calibration remain independent of dispatch order.
+- The draw phase separates owned inputs/state, grouping, palettes, shadows,
+  meshes, particles, ribbons and output publication. Shadow spatial admission and
+  pure packet construction also have separate children. This removes more serial
+  render work but does not complete M2 admission, broad topology publication,
+  domain working-set accounting or the remaining cutover requirements below.
+
 - Live local-player appearance now uses the shared primary-M2 request and owned
   population worker. Body texture composition, textures, attachments, mounts and
   immutable draw-template preparation run in that worker. A stable pending key
@@ -592,6 +616,30 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Owned M2 draw-phase checkpoint
+
+On 2026-09-19, formatting, full workspace Clippy with all targets/features and
+warnings denied, and all 1,588 workspace tests passed: zero failures and 33 ignored
+across 94 summaries. The moving serial comparison includes offscreen shadow-only
+jobs, exact primary/environment shadow packets and palettes, checked relocation,
+unchanged effect state, failure and abandonment. Two deterministic tests cover
+group boundaries and transactional refusal/budget ownership. Logs are retained in
+ignored `target/m2-owned-draw-final-*`.
+
+A hidden debug replay completed 168 frames across streaming, stationary, orbit,
+pointer, outward travel, return and settled phases at the recorded Orgrimmar
+fixture. It used Soap's appearance, 48 authored NPCs, installed terrain/FrameXML,
+Vulkan, both shadow banks, four CPU workers and 2560 x 1440. No warning/error logs,
+dropped trace/event rows, dropped samples or metric-capacity overflows occurred.
+Only the debug diagnostic executable uses a 32 MiB Windows stack. Its isolated
+profile disables sound; it has no network or live movement-solver coverage.
+The unoptimized timings are functional evidence, not a desktop FPS comparison.
+Logs, CSV and capture remain in ignored `target/m2-owned-draw-smoke*`.
+
+Main spatial admission, ordered callback/receiver work, broad topology publication
+and the complete requirements above remain open. In particular, the ready-result
+wait-attribution defect identified in the Build 155 audit is not changed here.
 
 ### Build 155 live F10 review
 

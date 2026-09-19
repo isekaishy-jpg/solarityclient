@@ -561,9 +561,9 @@ impl M2Frame {
                 observed.primary_shadow = shadow_admitted;
                 observed.palette = needs_palette;
                 placement_profile.mark("admission and animation");
-                // Ordered callbacks require only their named bones. When there are
-                // no CPU bone consumers, full visible palettes can join the same
-                // owned job as effects and mesh packets after scene publication.
+                // Ordered callbacks consume only their named bones. Complete render
+                // palettes belong to the owned draw phase, including offscreen shadows;
+                // an already prepared root palette can serve both consumers directly.
                 let batch_hit = needs_palette
                     && self.pose_batch.take(
                         placement_index,
@@ -587,8 +587,7 @@ impl M2Frame {
                             publishes_lights,
                         });
                 }
-                let deferred_palette =
-                    needs_palette && visible && !batch_hit && self.bone_demand.bones().is_empty();
+                let deferred_palette = needs_palette && !batch_hit;
                 let unrequested =
                     super::super::demand::UnrequestedBones(source.model.animations().bones().len());
                 if solarity_profiling::TraceContext::capture().is_sampled() {
@@ -599,18 +598,10 @@ impl M2Frame {
                         self.bone_demand.bones().len() as u64,
                     );
                 }
-                let bone_pose: &dyn solarity_rendering::M2BoneTransforms = if deferred_palette {
-                    &unrequested
-                } else if needs_palette {
-                    if !batch_hit {
-                        self.bone_pose_scratch.recompose_with_overrides(
-                            source.model.animations(),
-                            clock,
-                            model_view,
-                            overrides,
-                        )?;
-                    }
+                let bone_pose: &dyn solarity_rendering::M2BoneTransforms = if batch_hit {
                     &self.bone_pose_scratch
+                } else if deferred_palette && self.bone_demand.bones().is_empty() {
+                    &unrequested
                 } else {
                     self.bone_samples_scratch.recompose(
                         source.model.animations(),
@@ -684,55 +675,59 @@ impl M2Frame {
                 } else {
                     None
                 };
-                let bone_pose = &self.bone_pose_scratch;
-                let shadow_bone_offset = u32::try_from(self.bone_transforms.len())
-                    .map_err(|_source| solarity_rendering::VulkanError::M2BoneTransformRange)?;
-                let first_shadow_draw = self.shadow_draws.len();
-                let first_environment_draw = self.environment_shadow_draws.len();
-                // A new instance/clock must never observe the previous model's samples.
-                self.material_pose_scratch.clear();
-                if shadow_admitted || environment_maps != 0 {
-                    shadow::append_packets(
-                        source,
-                        placement,
-                        clock,
+                // Both shadow banks consume the same frozen material clock/color.
+                // They are independent of callbacks and camera-visible effects.
+                let effect_retiring = placement
+                    .unit_effect
+                    .as_ref()
+                    .is_some_and(|effect| effect.retiring());
+                let mut model_color = placement_mesh_color(placement.owner, placement.color);
+                if let Some(animation) = &placement.unit_animation {
+                    model_color *= placement_color(animation.model_color().to_le_bytes());
+                } else if let Some(pose) = placement
+                    .retirement
+                    .as_ref()
+                    .and_then(|retired| retired.unit_pose)
+                {
+                    model_color *= placement_color(pose.color.to_le_bytes());
+                }
+                let mut shadow_color = model_color;
+                shadow_color.w *= shadow_opacity;
+                let mut input = super::super::geometry::GeometryInput {
+                    placement_index,
+                    trace: solarity_profiling::TraceContext::capture(),
+                    source_index: placement.source_index,
+                    clock,
+                    transform: placement.transform,
+                    model_view,
+                    shadow: shadow::ShadowInput {
+                        transform: placement.transform,
                         model_view,
-                        shadow_opacity,
-                        shadow_bone_offset,
-                        &mut self.material_pose_scratch,
-                        |draw| {
-                            if shadow_admitted {
-                                self.shadow_draws.push(draw);
-                            }
-                            if environment_maps != 0 {
-                                self.environment_shadow_draws.push(
-                                    solarity_rendering::WorldEnvironmentM2Caster {
-                                        draw,
-                                        maps: environment_maps,
-                                    },
-                                );
-                            }
-                        },
-                    )?;
-                }
-                let has_shadow_bones = self.shadow_draws.len() != first_shadow_draw
-                    || self.environment_shadow_draws.len() != first_environment_draw;
-                observed.shadow_output = has_shadow_bones;
-                if has_shadow_bones {
-                    if deferred_palette {
-                        let end = self
-                            .bone_transforms
-                            .len()
-                            .checked_add(source.model.animations().bones().len())
-                            .ok_or(solarity_rendering::VulkanError::M2BoneTransformRange)?;
-                        self.bone_transforms.resize(end, Mat4::IDENTITY);
-                    } else {
-                        self.bone_transforms
-                            .extend_from_slice(bone_pose.transforms());
-                    }
-                }
-                placement_profile.mark("shadow preparation");
+                        clock,
+                        instance_color: shadow_color,
+                        retiring: effect_retiring,
+                        bone_offset: 0,
+                    },
+                    primary_shadow: shadow_admitted,
+                    environment_maps,
+                    visible: None,
+                };
+                self.material_pose_scratch.clear();
                 if !visible {
+                    if shadow_admitted || environment_maps != 0 {
+                        observed.geometry_pending = true;
+                        self.geometry_batch.queue(
+                            input,
+                            &mut self.placements[placement_index],
+                            &mut self.bone_pose_scratch,
+                            &mut self.material_pose_scratch,
+                            deferred_palette.then_some(overrides),
+                            source,
+                            camera,
+                            effect_scale,
+                            &self.particle_twinkle,
+                        )?;
+                    }
                     continue;
                 }
 
@@ -800,49 +795,15 @@ impl M2Frame {
                     effect_time_ms.wrapping_sub(placement.last_effect_time_ms) as f32 * 0.001;
                 placement.last_effect_time_ms = effect_time_ms;
 
-                let bone_offset = shadow_bone_offset;
                 let light_bank = placement_light_bank(placement.owner);
-                let effect_retiring = placement
-                    .unit_effect
-                    .as_ref()
-                    .is_some_and(|effect| effect.retiring());
-                let mut instance_color = placement_mesh_color(placement.owner, placement.color);
-                if let Some(animation) = &placement.unit_animation {
-                    instance_color *= placement_color(animation.model_color().to_le_bytes());
-                } else if let Some(pose) = placement
-                    .retirement
-                    .as_ref()
-                    .and_then(|retired| retired.unit_pose)
-                {
-                    instance_color *= placement_color(pose.color.to_le_bytes());
-                }
+                let mut instance_color = model_color;
                 instance_color.w *= placement_opacity;
-                if !has_shadow_bones {
-                    if deferred_palette {
-                        let end = self
-                            .bone_transforms
-                            .len()
-                            .checked_add(source.model.animations().bones().len())
-                            .ok_or(solarity_rendering::VulkanError::M2BoneTransformRange)?;
-                        self.bone_transforms.resize(end, Mat4::IDENTITY);
-                    } else {
-                        self.bone_transforms
-                            .extend_from_slice(bone_pose.transforms());
-                    }
-                }
-                let input = super::super::geometry::GeometryInput {
-                    placement_index,
-                    trace: solarity_profiling::TraceContext::capture(),
-                    source_index: placement.source_index,
-                    clock,
+                input.visible = Some(super::super::geometry::VisibleGeometryInput {
                     effect_delta_seconds,
-                    transform: placement.transform,
-                    model_view,
                     instance_color,
                     placement_fog_color,
                     light_bank,
                     scene_index,
-                    bone_offset,
                     effect_retiring,
                     particle_liquid,
                     model_liquid,
@@ -852,8 +813,7 @@ impl M2Frame {
                         .placement_visibility
                         .model_distance_sort(placement_index),
                     particle_colors: placement.particle_colors,
-                    has_shadow_bones,
-                };
+                });
                 observed.geometry_pending = true;
                 self.geometry_batch.queue(
                     input,
@@ -870,7 +830,7 @@ impl M2Frame {
             Ok(true)
         })()?;
         if complete {
-            self.close_geometry();
+            self.close_geometry()?;
             admission.complete = true;
         }
         Ok(())

@@ -27,6 +27,19 @@ impl GeometryJob {
         placement: &M2GpuPlacement,
         source: &M2GpuSource,
     ) -> Result<(), RuntimeTerrainFrameError> {
+        let shadows = if (input.primary_shadow || input.environment_maps != 0)
+            && source.mesh.is_some()
+            && !input.shadow.retiring
+        {
+            source.draws.len()
+        } else {
+            0
+        };
+        self.shadow_draws
+            .reserve(budget, Class::Frame, Kind::Result, shadows)?;
+        let Some(visible) = input.visible else {
+            return Ok(());
+        };
         if source.particles.len() != source.model.animations().particles().len() {
             return Err(RuntimeTerrainFrameError::M2ParticleResourceCount {
                 model: source.model.path().clone(),
@@ -58,14 +71,14 @@ impl GeometryJob {
             indices = add(indices, emitter_indices)?;
             sorting = sorting.max(capacity);
         }
-        let meshes = if source.mesh.is_some() && !input.effect_retiring {
+        let meshes = if source.mesh.is_some() && !visible.effect_retiring {
             twice(source.draws.len())?
         } else {
             0
         };
         let mut ribbon_vertices = 0;
         let mut ribbon_draws = 0;
-        if !input.effect_retiring {
+        if !visible.effect_retiring {
             for (trail, passes) in placement.ribbons.iter().zip(&source.ribbons) {
                 if passes.is_empty() {
                     continue;

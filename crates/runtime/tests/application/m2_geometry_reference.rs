@@ -822,13 +822,30 @@ impl M2Frame {
             // A new instance/clock must never observe the previous model's samples.
             self.material_pose_scratch.clear();
             if shadow_admitted || environment_maps != 0 {
+                let mut shadow_color = placement_mesh_color(placement.owner, placement.color);
+                if let Some(animation) = &placement.unit_animation {
+                    shadow_color *= placement_color(animation.model_color().to_le_bytes());
+                } else if let Some(pose) = placement
+                    .retirement
+                    .as_ref()
+                    .and_then(|retired| retired.unit_pose)
+                {
+                    shadow_color *= placement_color(pose.color.to_le_bytes());
+                }
+                shadow_color.w *= shadow_opacity;
                 shadow::append_packets(
                     source,
-                    placement,
-                    clock,
-                    model_view,
-                    shadow_opacity,
-                    shadow_bone_offset,
+                    shadow::ShadowInput {
+                        transform: placement.transform,
+                        model_view,
+                        clock,
+                        instance_color: shadow_color,
+                        retiring: placement
+                            .unit_effect
+                            .as_ref()
+                            .is_some_and(|effect| effect.retiring()),
+                        bone_offset: shadow_bone_offset,
+                    },
                     &mut self.material_pose_scratch,
                     |draw| {
                         if shadow_admitted {
@@ -842,6 +859,7 @@ impl M2Frame {
                                 },
                             );
                         }
+                        Ok(())
                     },
                 )?;
             }

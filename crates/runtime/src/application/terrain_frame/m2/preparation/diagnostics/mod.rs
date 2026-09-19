@@ -81,7 +81,7 @@ impl Drop for Work {
 }
 
 impl Work {
-    /// Completes output accounting after an admitted visible model joins its workers.
+    /// Completes output accounting when visible or shadow-only work joins its workers.
     pub(in super::super) fn geometry_outputs(
         &mut self,
         mesh: bool,
@@ -92,6 +92,7 @@ impl Work {
         if self.epoch == 0 {
             return;
         }
+        self.shadow_owners += u64::from(shadow);
         self.mesh_owners += u64::from(mesh);
         self.particle_outputs += u64::from(particle);
         self.ribbon_outputs += u64::from(ribbon);

@@ -16,7 +16,7 @@ pub(in super::super) struct GeometryPublication {
 }
 
 impl M2Frame {
-    /// Starts the visible work list; prior state was returned before its frame ended.
+    /// Starts the visible/shadow work list after prior-frame state has returned.
     pub(in super::super) fn begin_geometry(
         &mut self,
         cpu: &solarity_cpu::CpuExecutor,
@@ -44,10 +44,12 @@ impl M2Frame {
         self.geometry_batch.completion.clone()
     }
 
-    /// Seals admission before independent main work so workers can publish the
+    /// Flushes the final group and seals admission before independent main work so workers publish
     /// durable phase completion without waiting for main to consume a packet.
-    pub(in super::super) fn close_geometry(&mut self) {
+    pub(in super::super) fn close_geometry(&mut self) -> Result<(), RuntimeTerrainFrameError> {
+        self.geometry_batch.flush_staged()?;
         self.geometry_batch.pending.close();
+        Ok(())
     }
 
     /// Restores every model on success, validation errors and joined-worker panics.
@@ -77,8 +79,17 @@ impl M2Frame {
             batch.jobs.clear();
             batch.pending.close();
             let readiness = wait.before_reclaim(&batch.pending);
-            let result = batch.pending.reclaim(&mut batch.jobs);
+            let result = batch.pending.reclaim(&mut batch.returned_chunks);
             batch.submitted = false;
+            let used = batch.returned_chunks.len();
+            for mut chunk in batch.returned_chunks.drain(..) {
+                chunk.reclaim(&mut batch.jobs);
+                batch.spare_chunks.push(chunk);
+            }
+            // An abandoned admission can own a final group never sent to workers.
+            // It follows the submitted prefix and returns effects without executing.
+            batch.staged.reclaim(&mut batch.jobs);
+            batch.spare_chunks.truncate(used);
             for job in &mut batch.jobs {
                 batch.calibration.record(job);
             }
@@ -119,6 +130,8 @@ impl M2Frame {
         let mut output = super::output::GeometryOutput {
             bone_transforms: &mut self.bone_transforms,
             visible_draws: &mut self.visible_draws,
+            shadow_draws: &mut self.shadow_draws,
+            environment_shadow_draws: &mut self.environment_shadow_draws,
             particle_draws: &mut self.particle_draws,
             ribbon_draws: &mut self.ribbon_draws,
             transparent_elements: &mut self.transparent_elements,
@@ -130,10 +143,16 @@ impl M2Frame {
             index_capacity: cursor.index_capacity,
         };
         let batch = &mut self.geometry_batch;
-        while cursor.next < batch.active {
-            let Some(result) = batch
-                .pending
-                .try_with_result(&batch.handles[cursor.next], |job| output.publish(job, work))?
+        while cursor.next < batch.handles.len() {
+            let Some(result) =
+                batch
+                    .pending
+                    .try_with_result(&batch.handles[cursor.next], |chunk| {
+                        for job in chunk.jobs.writer().iter_mut() {
+                            output.publish(job, work)?;
+                        }
+                        Ok::<_, RuntimeTerrainFrameError>(())
+                    })?
             else {
                 cursor.vertex_capacity = output.vertex_capacity;
                 cursor.index_capacity = output.index_capacity;
@@ -197,25 +216,27 @@ impl GeometryBatch {
         )?;
         batch.calibration.prepare(job, source, placement);
         let cost = job.measurement.cost();
-        job.owns_effects = true;
-        std::mem::swap(&mut job.particles, &mut placement.particles);
-        std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
+        if batch.staged.precedes(cost) {
+            batch.flush_staged()?;
+        }
+        batch.staged.reserve(
+            batch
+                .storage
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("admitted draw phase owns budget")),
+        )?;
+        let job = &mut batch.jobs[batch.active];
+        job.owns_effects = input.visible.is_some();
+        if job.owns_effects {
+            std::mem::swap(&mut job.particles, &mut placement.particles);
+            std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
+        }
         std::mem::swap(&mut job.pose, pose);
         std::mem::swap(&mut job.material_poses, material_poses);
+        batch.staged.push(std::mem::take(job), cost);
         batch.active += 1;
-        let mut owned = Some(std::mem::take(job));
-        match batch.pending.push_with_cost(&mut owned, cost) {
-            Ok(handle) => batch.handles.push(handle),
-            Err(error) => {
-                *job = owned.unwrap_or_else(|| unreachable!("rejected job retains its state"));
-                std::mem::swap(&mut job.particles, &mut placement.particles);
-                std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
-                std::mem::swap(&mut job.pose, pose);
-                std::mem::swap(&mut job.material_poses, material_poses);
-                job.owns_effects = false;
-                batch.active -= 1;
-                return Err(error.into());
-            }
+        if batch.staged.full() {
+            batch.flush_staged()?;
         }
         Ok(())
     }

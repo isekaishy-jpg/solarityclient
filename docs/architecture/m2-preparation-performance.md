@@ -1,5 +1,45 @@
 # M2 preparation: consumer demand, pose batches and shared registration
 
+## Owned draw-phase cutover
+
+The 2026-09-19 Build 155 live review found 3.424 ms/frame still in main-thread M2
+admission. Its worker boundary excluded shadow-only palette/packet preparation
+and left visible shadow packets on main. The current source moves complete
+render palettes and both shadow collectors' material packets into the owned draw
+phase. It keeps ordered gameplay callbacks on main, sampling only the bones they
+consume. Root palettes already produced by the pose phase remain reusable.
+
+`geometry/input.rs` distinguishes visible simulation from shadow-only demand.
+Offscreen shadow work does not advance particle/ribbon clocks or transfer their
+state. All packets initially use model-local bone offsets; ordered publication
+appends palettes under the existing visible/actual-shadow-output rules and checks
+relocation into final frame storage. Thus an alpha-rejected shadow-only model
+does not shift later models' palette offsets. The extracted shadow packet kernel
+retains the existing `834660` material/opacity selection and sampling order.
+
+Small calibrated model jobs share groups of at most 16 models and a target of
+100 microseconds of estimated work. Unknown/expensive jobs remain separate;
+estimates never change simulation demand or promise preemption of an indivisible
+kernel. Group records and shadow outputs use CPU storage reservations. Closing
+admission submits the final partial group; abandonment returns unsubmitted and
+submitted owned state without running the abandoned suffix.
+
+The serial moving-scene comparison retains its original color/caster calculation
+and shares only the extracted pure packet helper. It now includes explicit
+offscreen casters, exact palette/draw equality, relocation overflow, unchanged
+effect clocks/state, and frame abandonment/failure. Separate deterministic tests
+cover grouping limits, uncalibrated work, refused dispatch and budget ownership.
+This is an ownership/ordering proof, not a measured five-millisecond improvement.
+Spatial admission, ordered callbacks, receiver queries and broad topology work
+remain main-thread costs; see the complete CPU cutover checklist.
+
+Formatting, full workspace Clippy with warnings denied, and all 1,588 workspace
+tests pass (zero failures, 33 ignored). A hidden 168-frame debug replay with Soap's
+appearance and 48 authored NPCs completed travel/orbit/settled phases with primary
+and environment shadows and no warning/error logs. It checks integration only;
+no live FPS gain is established. Evidence is recorded in the
+[cutover checkpoint](cpu-cutover-status.md#owned-m2-draw-phase-checkpoint).
+
 ## Consumer-driven preparation
 
 The traversal now resolves camera and light-volume admission after final

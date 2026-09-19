@@ -1,4 +1,4 @@
-//! Owned pose overrides for visible models with no ordered CPU bone consumer.
+//! Owned render-pose overrides are independent of ordered CPU bone samples.
 
 use glam::Mat4;
 use solarity_rendering::{M2AnimationClock, M2BonePoseOverrides, M2FingerPoseHands};

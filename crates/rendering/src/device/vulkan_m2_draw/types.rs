@@ -25,6 +25,25 @@ pub struct M2PreparedDraw {
 }
 
 impl M2PreparedDraw {
+    /// Relocates an independently prepared packet into the ordered frame palette.
+    /// Resource identity, material state and scene/effect ordering stay unchanged.
+    ///
+    /// # Errors
+    /// Returns a palette-range error if either the base or required range overflows.
+    pub fn relocate_bones(mut self, offset: u32) -> Result<Self, crate::device::VulkanError> {
+        self.push_constants = self
+            .push_constants
+            .relocate_bones(offset)
+            .ok_or(crate::device::VulkanError::M2BoneTransformRange)?;
+        if self.required_bone_transforms != 0 {
+            self.required_bone_transforms = self
+                .required_bone_transforms
+                .checked_add(offset as usize)
+                .ok_or(crate::device::VulkanError::M2BoneTransformRange)?;
+        }
+        Ok(self)
+    }
+
     /// Reuses validated immutable fields, changing only placement state.
     pub(super) fn instantiate(
         mut self,
