@@ -2,6 +2,9 @@
 
 #![allow(unsafe_code)]
 
+#[path = "frame_continuation_support.rs"]
+mod continuation_support;
+
 use super::super::super::*;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models, unit_models};
 use glam::Vec3;
@@ -190,7 +193,12 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         )?;
         let reference_elapsed = started.elapsed();
         let started = std::time::Instant::now();
-        let b = candidate.prepare_visible_draws_with_unit_effects(
+        // A blocked frame lane must not prevent independent main preparation.
+        // The fixture has no root pose consumers, so only final geometry needs it.
+        let held = (!measure && step == 0)
+            .then(|| continuation_support::HeldFrameWorkers::new(&cpu))
+            .transpose()?;
+        let pending = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
@@ -207,6 +215,10 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             Some(shadow),
             None,
         )?;
+        if let Some(held) = held {
+            held.release()?;
+        }
+        let b = pending.finish(&cpu, None)?;
         if step >= 32 {
             reference_time += reference_elapsed;
             candidate_time += started.elapsed();
@@ -282,8 +294,6 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     );
     if !measure {
         let candidate = &mut frames[1];
-        let source = candidate.sources[0].as_mut().ok_or("source")?;
-        std::sync::Arc::make_mut(source).particles.clear();
         let camera = WorldCamera::orthographic(
             Vec3::new(12., 0., 3.),
             Vec3::new(0., 2., 1.),
@@ -294,6 +304,40 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             100.,
         )
         .frame(1.)?;
+        let abandoned = candidate.begin_visible_draws_with_unit_effects(
+            &renderer,
+            &cpu,
+            WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
+            camera,
+            M2TransparentPass::One,
+            Vec3::ZERO,
+            2_900.,
+            M2CameraEffectScale::EXTERNAL_CAMERA,
+            &mut randoms[1],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        drop(abandoned);
+        assert!(!candidate.geometry_batch.submitted);
+        assert!(
+            candidate
+                .geometry_batch
+                .jobs
+                .iter()
+                .all(|job| !job.owns_effects)
+        );
+        assert!(
+            candidate
+                .placements
+                .iter()
+                .all(|placement| placement.particles.len() == 1)
+        );
+        let source = candidate.sources[0].as_mut().ok_or("source")?;
+        std::sync::Arc::make_mut(source).particles.clear();
         let result = candidate.prepare_visible_draws_with_unit_effects(
             &renderer,
             &cpu,

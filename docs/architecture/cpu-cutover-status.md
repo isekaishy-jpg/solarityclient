@@ -19,6 +19,24 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- World presentation now uses a scoped M2 admission/publication boundary. Scene
+  callbacks and traversal launch owned geometry, then seal its producer before
+  returning to main. Ground-detail selection/publication and WMO packet creation
+  run against the admitted scene while those workers can still execute. Final
+  geometry consumption, model receiver callbacks, terrain/liquid lighting and
+  WMO fog-bank publication keep their ordered boundaries and error precedence.
+- The scoped M2 owner restores particle/ribbon state and pose jobs if independent
+  preparation unwinds or the caller drops it. This exceptional main-thread
+  consumption boundary is profiled separately. Normal completion transfers no
+  additional model state and retains the existing per-model ordered publication.
+  Scene setup, admission, completion and entry handling have separate children
+  under the frame folder; the standalone Glue path drives the same stages.
+- F10 separates M2 admission/publication from independent world preparation so
+  overlapping work is not counted as M2 execution. This first world continuation
+  does not remove per-model pose waits during traversal or the remaining final
+  consumption barriers; the full continuation/native-wait integration remains
+  required below.
+
 - Background loading now uses the existing bounded dependency engine through
   `LoadBatch`. Waiting phases retain owned inputs and task admission but occupy
   no worker; each ready kernel runs only on the flexible lane and yields between
@@ -364,6 +382,26 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Independent world preparation checkpoint
+
+On 2026-09-19, formatting, workspace Clippy with warnings denied and the complete
+workspace suite passed: 1,525 tests, zero failures and 33 ignored across 90 suites.
+All four trace-analyzer tests also passed, covering old and staged scene labels,
+source identity and deferred geometry-worker attribution.
+
+The moving geometry fixture now occupies every CPU worker before M2 admission.
+Admission returns before those workers are released, then final meshes, palettes,
+particles, ribbons, lighting, RNG state and ordering match the frozen serial path.
+Dropping another admitted frame restores all model-owned effect state. A separate
+static/moving WMO pixel fixture verifies unchanged exterior clips, ordered group
+frusta and fog selection before and after M2 receiver completion. Existing mount,
+vehicle, shadow, liquid and interior-lighting checks passed in the full suite.
+
+Logs are in ignored `target/frame-continuation-{fmt,clippy,tests}.stdout.log` and
+matching `.stderr.log` files. This proves the connected staging/ownership
+contracts; it establishes no live FPS gain and leaves the remaining complete
+cutover requirements open.
 
 ### Build 141 package checkpoint
 

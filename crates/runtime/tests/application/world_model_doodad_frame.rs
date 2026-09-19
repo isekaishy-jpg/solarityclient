@@ -187,9 +187,10 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
             -Vec3::Z,
             -Vec3::Z,
         );
-        let visible = frame.prepare_visible_draws_with_unit_effects(
+        let cpu = crate::frame_cpu_support::executor()?;
+        let pending = frame.begin_visible_draws_with_unit_effects(
             &renderer,
-            &crate::frame_cpu_support::executor()?,
+            &cpu,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -207,6 +208,49 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
             None,
             None,
         )?;
+        let exterior = terrain.world_terrain_frustum(camera)?;
+        let groups = terrain
+            .world_model_scene_groups()
+            .iter()
+            .map(|group| {
+                (
+                    group.owner,
+                    group.group,
+                    group.indoor_fog,
+                    group
+                        .frusta
+                        .iter()
+                        .map(|clip| (*clip.corners(), *clip.clip_planes()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let visible = pending.finish(&cpu, Some((&mut terrain, environment)))?;
+        assert_eq!(
+            exterior,
+            terrain.world_terrain_frustum(camera)?,
+            "receiver completion preserves the primary exterior clip"
+        );
+        let completed_groups = terrain
+            .world_model_scene_groups()
+            .iter()
+            .map(|group| {
+                (
+                    group.owner,
+                    group.group,
+                    group.indoor_fog,
+                    group
+                        .frusta
+                        .iter()
+                        .map(|clip| (*clip.corners(), *clip.clip_planes()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            groups, completed_groups,
+            "WMO packets can use the admitted groups before M2 receivers complete"
+        );
         assert_eq!(visible.draws.len(), 2, "moving {moving}, step {step}");
         assert_eq!(
             visible.scene_points.points().len(),

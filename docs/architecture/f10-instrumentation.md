@@ -256,7 +256,7 @@ of an ordinary consumer frame. A transfer admitted before capture started also
 has no recorded request ancestry. These gaps are not inferred from temporal proximity.
 
 M2 placement span `owner` is placement ordinal plus one, and `reason` is source
-ordinal plus one. Qualify both by their ancestor `M2 frame preparation` span: a
+ordinal plus one. Qualify both by their ancestor `m2.frame_admission` span: a
 single live frame can prepare multiple independent model scenes. `m2.requirements` attaches this bit mask to that placement:
 0 admitted, 1 visible mesh demand, 2 primary shadow, 3 environment shadow,
 4 light owner, 5 callback owner, 6 particle owner, 7 full palette demand,
@@ -264,6 +264,15 @@ single live frame can prepare multiple independent model scenes. `m2.requirement
 Flags describe actual branch decisions and may overlap. `m2.owner.guid` connects
 dynamic placements to sampled ECS ownership. A GUID is not a lifetime guarantee;
 removal/recreation still needs its surrounding admission evidence.
+
+M2 admission and publication have separate scopes. The world coordinator can
+prepare ground detail and WMO packets in `world.independent_preparation` between
+them while geometry workers run; that work must not be attributed to M2 time.
+`m2.frame_publication` covers ordered geometry consumption, receiver callbacks,
+transparent ordering and lighting completion. `m2.prepare_cpu` accumulates both
+M2 portions. `m2.frame_abandon_wait` identifies exceptional cleanup when an
+unfinished preparation is dropped or admission fails. It restores model-owned
+simulation state on main before that owner can start another frame.
 
 The recorder adds a separate bounded 32,768-row trace buffer per registered thread.
 Recording uses the same try-lock policy; writer contention and capacity exhaustion

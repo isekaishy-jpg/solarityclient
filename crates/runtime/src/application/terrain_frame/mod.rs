@@ -926,7 +926,13 @@ impl TerrainFrame {
             .transpose()?;
         self.world_models
             .prepare_shadow_draws(renderer, shadow_admission.as_ref())?;
-        let m2 = self.m2.prepare_visible_draws_with_unit_effects(
+        let entity_light_environment = solarity_systems::WorldEntityLightEnvironment::new(
+            ambient,
+            diffuse,
+            -environment.light_direction(),
+            solarity_asset::exterior_light_ray_at(environment.day_fraction()),
+        );
+        let pending_m2 = self.m2.begin_visible_draws_with_unit_effects(
             renderer,
             cpu,
             frustum,
@@ -952,12 +958,7 @@ impl TerrainFrame {
             )),
             Some((
                 terrain,
-                solarity_systems::WorldEntityLightEnvironment::new(
-                    ambient,
-                    diffuse,
-                    -environment.light_direction(),
-                    solarity_asset::exterior_light_ray_at(environment.day_fraction()),
-                ),
+                entity_light_environment,
                 environment.ordinary_model_fog().color(),
                 liquid_types,
             )),
@@ -969,12 +970,38 @@ impl TerrainFrame {
                     doodads: self.world_models.shadow_doodads(),
                 }),
         )?;
-        profile.mark("M2 packets");
-        // M2 preparation has completed this camera's WMO scene traversal.
-        let exterior_frustum = terrain.world_terrain_frustum(camera)?;
-        self.ground_detail
-            .prepare(renderer, terrain.resident_tiles(), camera, exterior_frustum)?;
-        profile.mark("ground detail");
+        profile.mark("M2 admission");
+        // The scene traversal and model clocks are fixed, while owned geometry
+        // is still running. These disjoint owners need neither emitted M2 packets
+        // nor receiver lights. Keep WMO fog-bank publication after the receiver
+        // callbacks below; preparing its immutable packets does not publish it.
+        let independent = (|| -> Result<_, RuntimeTerrainFrameError> {
+            let _profile = solarity_profiling::profile!("world.independent_preparation");
+            let exterior_frustum = terrain.world_terrain_frustum(camera)?;
+            self.ground_detail.prepare(
+                renderer,
+                terrain.resident_tiles(),
+                camera,
+                exterior_frustum,
+            )?;
+            let wmo = self
+                .world_models
+                .prepare_visible_draws(
+                    renderer,
+                    terrain.world_model_scene_groups(),
+                    environment.world_model_emissive(),
+                    environment.ordinary_model_fog().color(),
+                    fog.color(),
+                )
+                .map(|_| ());
+            Ok((exterior_frustum, wmo))
+        })();
+        profile.mark("independent ground detail and WMO packets");
+        // Complete M2 even if independent preparation failed: this returns every
+        // model's simulation state and preserves the original error precedence.
+        let m2 = pending_m2.finish(cpu, Some((terrain, entity_light_environment)))?;
+        let (exterior_frustum, wmo_result) = independent?;
+        profile.mark("M2 publication");
         exterior::prepare_terrain_draws(
             &self.tiles,
             &mut self.visible_draws,
@@ -1017,19 +1044,15 @@ impl TerrainFrame {
             &mut self.liquid_draws,
         )?;
         profile.mark("liquid packets");
+        // Preserve the original failure order even though WMO work executed earlier.
+        wmo_result?;
         let world_model::WorldModelVisibleFrame {
             draws: world_model_draws,
             last_group: last_world_model_group,
             shadow_draws: world_model_shadow_draws,
-        } = self.world_models.prepare_visible_draws(
-            renderer,
-            terrain.world_model_scene_groups(),
-            environment.world_model_emissive(),
-            environment.ordinary_model_fog().color(),
-            fog.color(),
-        )?;
+        } = self.world_models.visible_frame();
         terrain.complete_world_model_scene(last_world_model_group);
-        profile.mark("WMO packets");
+        profile.mark("WMO publication");
 
         let sky_window = terrain.world_model_sky_window()?;
         let has_sky_window = terrain.has_world_model_sky_window();

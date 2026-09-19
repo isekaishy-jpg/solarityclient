@@ -107,6 +107,8 @@ pub(super) struct WorldModelFrame {
     placement_indices: HashMap<RuntimeWorldModelMovementOwner, usize>,
     batch_visibility: WorldModelBatchVisibilityQuery,
     prepared_draws: Vec<WorldModelPreparedDraw>,
+    /// Final visited group associated with the current prepared packet list.
+    prepared_last_group: Option<usize>,
     shadow_draws: Vec<solarity_rendering::WorldEnvironmentWmoCaster>,
     shadow_doodads: super::shadow::WorldModelShadowDoodads,
     filtering: WorldModelTextureFiltering,
@@ -274,6 +276,7 @@ impl WorldModelFrame {
             placement_indices,
             batch_visibility: WorldModelBatchVisibilityQuery::default(),
             prepared_draws: Vec::with_capacity(prepared_capacity),
+            prepared_last_group: None,
             shadow_draws: Vec::new(),
             shadow_doodads: HashMap::new(),
             filtering,
@@ -478,11 +481,18 @@ impl WorldModelFrame {
                 }
             }
         }
-        Ok(WorldModelVisibleFrame {
+        self.prepared_last_group = last_group;
+        Ok(self.visible_frame())
+    }
+
+    /// Borrows the last successful packet preparation without repeating culling
+    /// or material validation. Main publishes the fog bank at its ordered boundary.
+    pub(super) fn visible_frame(&self) -> WorldModelVisibleFrame<'_> {
+        WorldModelVisibleFrame {
             draws: &self.prepared_draws,
-            last_group,
+            last_group: self.prepared_last_group,
             shadow_draws: &self.shadow_draws,
-        })
+        }
     }
 
     /// Returns the number of independently transformed MODF owners.

@@ -1,18 +1,18 @@
 //! Selected-placement preparation; source admission and topology publication live separately.
 
-use super::super::{
+use super::super::super::{
     CrtRand, GameObjectFrameInput, M2AnimationClock, M2BonePoseOverrides, M2CameraEffectScale,
-    M2Frame, M2GpuPlacementOwner, M2PlaybackStorage, M2TransparentDrawIndex, M2TransparentPass,
-    M2VisibleFrame, Mat4, RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum,
-    append_triggered_events, compare_m2_transparent, held_item_finger_pose, m2_model_distance_key,
+    M2Frame, M2GpuPlacementOwner, M2PlaybackStorage, M2TransparentPass, Mat4,
+    RuntimeTerrainFrameError, VulkanRenderer, WorldCameraFrame, WorldFrustum,
+    append_triggered_events, held_item_finger_pose, m2_model_distance_key,
     placement_bounding_sphere, placement_color, placement_light_bank, placement_mesh_color,
-    placement_owner_guid, scene_element_count, shadow, unit_effects,
+    placement_owner_guid, shadow, unit_effects,
 };
 
 impl M2Frame {
     /// Unit callbacks construct CEffect models before this frame's effect pass.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::application::terrain_frame) fn prepare_visible_draws_with_unit_effects(
+    pub(super) fn admit_visible_draws(
         &mut self,
         renderer: &VulkanRenderer,
         cpu: &solarity_cpu::CpuExecutor,
@@ -39,179 +39,24 @@ impl M2Frame {
         scenery_shadows: Option<
             crate::application::terrain_frame::shadow::SceneryShadowQueries<'_>,
         >,
-    ) -> Result<M2VisibleFrame<'_>, RuntimeTerrainFrameError> {
-        let mut frame_profile = solarity_profiling::profile!("M2 frame preparation");
+    ) -> Result<super::super::diagnostics::Work, RuntimeTerrainFrameError> {
+        let mut frame_profile = solarity_profiling::profile!("m2.frame_admission");
         let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
-        let mut work = super::diagnostics::Work::new();
-        let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
-        self.unit_scene_time_ms = animation_time_ms;
-        if let Some((terrain, ..)) = spatial_lighting.as_mut() {
-            terrain.prepare_world_scene(camera)?;
-        }
-        if let Some(game_objects) = game_objects {
-            game_objects.advance_scene(animation_time_ms, random)?;
-        }
-        self.advance_retired_models(animation_time_ms as u32, game_objects);
-        self.bone_transforms.clear();
-        self.visible_draws.clear();
-        self.shadow_draws.clear();
-        self.shadow_admission.clear();
-        self.environment_shadow_draws.clear();
-        self.environment_shadow_admission.clear();
-        self.transparent_elements.clear();
-        self.particle_vertices.clear();
-        self.particle_indices.clear();
-        self.particle_draws.clear();
-        self.ribbon_vertices.clear();
-        self.ribbon_draws.clear();
-        self.triggered_events.clear();
-        self.mount_camera_sample = None;
-        self.glue_directional_lights.clear();
-        self.glue_point_lights.clear();
-        self.scene_lighting.clear();
-        self.receiver_frame.clear();
-        frame_profile.mark("scene setup");
-        self.unit_effects
-            .publish_loaded(&self.animations, animation_time_ms, random)?;
-        self.unit_effects.begin_frame();
-        // Current topology excludes every ordinary model before the first
-        // effect. Publication can invalidate that boundary before this pass.
-        let first_effect = if self.placement_topology_dirty {
-            0
-        } else {
-            self.placement_visibility.effect_start()
-        };
-        if self
-            .unit_effects
-            .retire_drained(&mut self.placements, first_effect)
-        {
-            if !self.placement_topology_dirty {
-                self.placement_visibility
-                    .replace_effect_tail(&mut self.placements, &self.sources);
-            }
-            self.compact_sources();
-        }
-        self.publish_placement_topology();
-        frame_profile.mark("residency and topology");
-        self.vehicle_passengers.prepare_timing(
-            self.placements.as_mut_slice(),
-            &self.sources,
-            &self.placement_visibility,
-            &self.requested_items,
-            camera.view(),
+        let mut work = super::super::diagnostics::Work::new();
+        self.prepare_frame_scene(
+            cpu,
+            frustum,
+            camera,
             animation_time_ms,
             random,
+            game_objects,
+            unit_effect_callback,
+            spatial_lighting
+                .as_mut()
+                .map(|(terrain, ..)| &mut **terrain),
+            shadow_projection,
+            scenery_shadows,
         )?;
-        // Prepare unit selection and yaw before placement. Authored events and
-        // completion follow below in scene traversal order, before camera culling.
-        for &index in self.placement_visibility.dynamic_indices() {
-            let placement = &mut self.placements[index];
-            if let Some(animation) = &placement.unit_animation {
-                if let Some(registration) = placement.scene_registration
-                    && let Some((terrain, ..)) = spatial_lighting.as_mut()
-                    && terrain.unit_scene_admits(registration.position, registration.bounds)?
-                {
-                    animation.admit_scene_collision();
-                }
-                animation.prepare_scene(animation_time_ms, random)?;
-                placement.transform =
-                    placement.local_transform * animation.body_pose().placement_rotation;
-            }
-        }
-        // Ground placement follows unit animation/yaw for every model, including
-        // mounts inserted before their riders. It does not advance a second
-        // unit callback or substitute the rider's model/timer for the mount.
-        for &index in self.placement_visibility.dynamic_indices() {
-            let placement = &mut self.placements[index];
-            let Some(ground) = &placement.ground_placement else {
-                continue;
-            };
-            if ground.owner.passenger_input().is_some() {
-                continue;
-            }
-            if !ground.owner.uses_ground_placement() {
-                continue;
-            }
-            if placement.unit_animation.is_some() {
-                placement.transform = ground.owner.ground_transform(
-                    ground.position,
-                    ground.scale,
-                    animation_time_ms,
-                    frame_seconds,
-                )?;
-            } else if let Some(source) = &self.sources[placement.source_index]
-                && let Some(playback) = &placement.playback
-            {
-                placement.transform = ground.owner.ground_model_transform(
-                    ground.position,
-                    ground.scale,
-                    animation_time_ms,
-                    frame_seconds,
-                    &source.model,
-                    &playback.borrow(),
-                )?;
-            }
-        }
-        self.vehicle_passengers.prepare(
-            self.placements.as_mut_slice(),
-            &self.sources,
-            &self.placement_visibility,
-            &self.requested_items,
-            camera.view(),
-            animation_time_ms,
-            random,
-        )?;
-        self.placement_visibility
-            .set_vehicle_parents(self.vehicle_passengers.parents());
-        self.advance_unit_callbacks(camera, animation_time_ms, random, unit_effect_callback)?;
-        self.rider_transforms.clear();
-        self.rider_transforms.reserve(
-            self.mounted_guids
-                .len()
-                .saturating_sub(self.rider_transforms.capacity()),
-        );
-        self.item_transforms.clear();
-        self.item_transforms.reserve(
-            self.requested_items
-                .len()
-                .saturating_sub(self.item_transforms.capacity()),
-        );
-        self.visual_transforms.clear();
-        self.visual_transforms.reserve(
-            self.requested_visuals
-                .len()
-                .saturating_sub(self.visual_transforms.capacity()),
-        );
-        self.glue_attachment_transforms.clear();
-        self.glue_attachment_transforms.reserve(
-            self.glue_attachment_ids
-                .len()
-                .saturating_sub(self.glue_attachment_transforms.capacity()),
-        );
-        frame_profile.mark("dynamic models");
-        self.prepare_unit_poses(
-            Some(cpu),
-            super::poses::PoseAdmission::new(
-                camera,
-                frustum,
-                shadow_projection,
-                scenery_shadows,
-                self.environment_detail,
-            ),
-            animation_time_ms as u32,
-        )?;
-        frame_profile.mark("unit pose batch");
-        if let Some((terrain, ..)) = spatial_lighting.as_ref() {
-            self.doodad_scene.prepare(
-                terrain,
-                &self.placement_visibility,
-                self.placements.as_mut_slice(),
-                &self.sources,
-                camera.camera().position(),
-                self.environment_detail,
-            )?;
-        }
-        frame_profile.mark("WMO doodad admission");
         self.placement_visibility.select_frame_work(
             camera.camera().position(),
             self.environment_detail,
@@ -747,21 +592,22 @@ impl M2Frame {
                     )?;
                 observed.batch_hit = batch_hit;
                 if !batch_hit {
-                    self.bone_demand.model(super::demand::CpuModelInputs {
-                        placement,
-                        model: &source.model,
-                        window: event_window,
-                        items: &self.requested_items,
-                        visuals: &self.requested_visuals,
-                        glue_ids: &self.glue_attachment_ids,
-                        effects: &self.unit_effects,
-                        publishes_lights,
-                    });
+                    self.bone_demand
+                        .model(super::super::demand::CpuModelInputs {
+                            placement,
+                            model: &source.model,
+                            window: event_window,
+                            items: &self.requested_items,
+                            visuals: &self.requested_visuals,
+                            glue_ids: &self.glue_attachment_ids,
+                            effects: &self.unit_effects,
+                            publishes_lights,
+                        });
                 }
                 let deferred_palette =
                     needs_palette && visible && !batch_hit && self.bone_demand.bones().is_empty();
                 let unrequested =
-                    super::demand::UnrequestedBones(source.model.animations().bones().len());
+                    super::super::demand::UnrequestedBones(source.model.animations().bones().len());
                 if solarity_profiling::TraceContext::capture().is_sampled() {
                     solarity_profiling::TraceContext::capture().value(
                         "m2.cpu_bone_demand",
@@ -798,7 +644,7 @@ impl M2Frame {
                     + self.item_transforms.len()
                     + self.visual_transforms.len()
                     + self.glue_attachment_transforms.len();
-                super::publication::CpuPublication {
+                super::super::publication::CpuPublication {
                     retirement: &mut self.retirement,
                     triggered_events: &mut self.triggered_events,
                     unit_effects: &mut self.unit_effects,
@@ -818,7 +664,7 @@ impl M2Frame {
                     &source.model,
                     placement,
                     bone_pose,
-                    super::publication::CpuSample {
+                    super::super::publication::CpuSample {
                         clock,
                         event_window,
                         animation_time_ms,
@@ -1001,7 +847,7 @@ impl M2Frame {
                             .extend_from_slice(bone_pose.transforms());
                     }
                 }
-                let input = super::geometry::GeometryInput {
+                let input = super::super::geometry::GeometryInput {
                     placement_index,
                     trace: solarity_profiling::TraceContext::capture(),
                     source_index: placement.source_index,
@@ -1040,120 +886,8 @@ impl M2Frame {
             }
             Ok(())
         })();
-        // Ordered packet relocation can consume the ready prefix while later
-        // kernels run. Receiver demand still follows actual emitted packets.
-        let publication_result = traversal_result.and_then(|()| self.publish_geometry(&mut work));
-        let geometry_result = self.finish_geometry();
-        self.restore_geometry_states();
-        let (particle_vertex_capacity, particle_index_capacity) = publication_result?;
-        geometry_result?;
-        self.pose_batch.finish()?;
-        self.pose_batch.report_consumption();
-        frame_profile.mark("instance traversal");
-        solarity_profiling::profile_value!("m2.resident_placements", self.placements.len());
-        solarity_profiling::profile_value!(
-            "m2.dynamic_placements",
-            self.placement_visibility.dynamic_indices().len()
-        );
-        solarity_profiling::profile_value!("m2.particle_vertices", self.particle_vertices.len());
-        solarity_profiling::profile_value!("m2.bone_transforms", self.bone_transforms.len());
-        if world_lighting.is_some() {
-            self.prepare_visible_receivers(
-                animation_time_ms,
-                spatial_lighting
-                    .as_mut()
-                    .map(|(terrain, environment, ..)| (&mut **terrain, *environment)),
-            )?;
-        }
-        frame_profile.mark("visible receiver queries");
-        if let Some((base, exterior)) = world_lighting {
-            let dependency = self.geometry_completion();
-            self.scene_lighting
-                .begin_finish(Some(cpu), dependency.as_ref(), base, exterior)?;
-        }
-        let transparent_result = (|| -> Result<u32, RuntimeTerrainFrameError> {
-            self.transparent_elements.sort_unstable_by(|left, right| {
-                (left.pass != first_transparent_pass)
-                    .cmp(&(right.pass != first_transparent_pass))
-                    .then_with(|| compare_m2_transparent(&left.key, &right.key))
-            });
-            let first_transparent_order = scene_element_count(
-                self.visible_draws.len(),
-                self.particle_draws.len(),
-                self.ribbon_draws.len(),
-            )?;
-            let water_scene_order = first_transparent_order
-                .checked_add(
-                    self.transparent_elements
-                        .iter()
-                        .take_while(|element| element.pass == first_transparent_pass)
-                        .count(),
-                )
-                .and_then(|index| u32::try_from(index).ok())
-                .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
-            for (index, element) in self.transparent_elements.iter().enumerate() {
-                let scene_order = first_transparent_order
-                    .checked_add(index)
-                    .and_then(|index| u32::try_from(index).ok())
-                    .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
-                match element.draw {
-                    M2TransparentDrawIndex::Mesh(draw_index) => {
-                        let draw = self
-                            .visible_draws
-                            .get_mut(draw_index)
-                            .ok_or(solarity_rendering::VulkanError::M2DrawIndexRange)?;
-                        *draw = draw.with_scene_order(scene_order);
-                    }
-                    M2TransparentDrawIndex::Particle(draw_index) => {
-                        let draw = self
-                            .particle_draws
-                            .get_mut(draw_index)
-                            .ok_or(solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
-                        *draw = draw.with_scene_order(scene_order);
-                    }
-                    M2TransparentDrawIndex::Ribbon { first, count } => {
-                        let draws = self
-                            .ribbon_draws
-                            .get_mut(first..first + count)
-                            .ok_or(solarity_rendering::VulkanError::M2RibbonDrawVertexRange)?;
-                        for draw in draws {
-                            *draw = draw.with_scene_order(scene_order);
-                        }
-                    }
-                }
-            }
-            self.visible_draws.sort_by_key(|draw| draw.scene_order());
-            self.particle_draws.sort_by_key(|draw| draw.scene_order());
-            self.ribbon_draws.sort_by_key(|draw| draw.scene_order());
-            Ok(water_scene_order)
-        })();
-        frame_profile.mark("transparent order");
-        let lighting_result = match world_lighting {
-            Some(_) => self.scene_lighting.finish_pending(),
-            None => Ok(()),
-        };
-        let water_scene_order = transparent_result?;
-        lighting_result?;
-        frame_profile.mark("scene lights");
-        Ok(M2VisibleFrame {
-            trace: solarity_profiling::TraceContext::capture(),
-            instance_scenes: &self.scene_lighting.scenes,
-            scene_points: &self.scene_lighting.points,
-            scene_directionals: self.scene_lighting.directionals(),
-            water_scene_order,
-            bone_transforms: &self.bone_transforms,
-            draws: &self.visible_draws,
-            shadow_draws: &self.shadow_draws,
-            environment_shadow_draws: &self.environment_shadow_draws,
-            particle_vertices: &self.particle_vertices,
-            particle_indices: &self.particle_indices,
-            particle_draws: &self.particle_draws,
-            particle_vertex_capacity,
-            particle_index_capacity,
-            ribbon_vertices: &self.ribbon_vertices,
-            ribbon_draws: &self.ribbon_draws,
-            glue_directional_lights: &self.glue_directional_lights,
-            glue_point_lights: &self.glue_point_lights,
-        })
+        traversal_result?;
+        self.close_geometry();
+        Ok(work)
     }
 }

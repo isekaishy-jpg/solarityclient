@@ -56,7 +56,8 @@ def summarize(rows, frame, top):
         current = row
         while current and current["span_id"] not in seen:
             seen.add(current["span_id"])
-            if current["label"] == "M2 frame preparation":
+            # Retain historical captures as well as the staged admission boundary.
+            if current["label"] in ("M2 frame preparation", "m2.frame_admission"):
                 return current["span_id"]
             current = by_id.get(current["parent_id"])
         return 0

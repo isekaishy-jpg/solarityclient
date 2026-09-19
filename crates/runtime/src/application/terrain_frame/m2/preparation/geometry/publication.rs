@@ -35,6 +35,12 @@ impl M2Frame {
         self.geometry_batch.completion.clone()
     }
 
+    /// Seals admission before independent main work so workers can publish the
+    /// durable phase completion without waiting for main to consume a packet.
+    pub(in super::super) fn close_geometry(&mut self) {
+        self.geometry_batch.pending.close();
+    }
+
     /// Restores every model on success, validation errors and joined-worker panics.
     pub(in super::super) fn restore_geometry_states(&mut self) {
         for job in &mut self.geometry_batch.jobs[..self.geometry_batch.active] {

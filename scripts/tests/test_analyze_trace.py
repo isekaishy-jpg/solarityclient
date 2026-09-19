@@ -26,10 +26,16 @@ class TraceAnalysis(unittest.TestCase):
         self.assertEqual(report["missing_references"], [])
 
     def test_equal_source_ordinals_in_independent_scenes_stay_separate(self):
+        self.check_scene_sources("M2 frame preparation")
+
+    def test_staged_admission_keeps_model_sources_and_deferred_workers_separate(self):
+        self.check_scene_sources("m2.frame_admission")
+
+    def check_scene_sources(self, label):
         first = span(1, 0, 0, 100)
-        first["label"] = "M2 frame preparation"
+        first["label"] = label
         second = span(2, 0, 200, 100)
-        second["label"] = "M2 frame preparation"
+        second["label"] = label
         a, b = span(3, 1, 0, 10), span(4, 2, 200, 20)
         for row in (a, b):
             row.update(label="m2.placement", owner=1, reason=1)
@@ -38,13 +44,16 @@ class TraceAnalysis(unittest.TestCase):
         catalog_b.update(owner=1, name="SECOND.M2")
         requirements = span(7, 3, 2, 0, kind="value")
         requirements.update(label="m2.requirements", reason=(1 << 1) | (1 << 5), value=1)
-        report = analyzer.summarize([first, second, a, b, catalog_a, catalog_b, requirements], 1, 10)
+        worker = span(8, 3, 400, 200, "worker")
+        worker.update(label="m2.geometry", owner=1, reason=1)
+        report = analyzer.summarize([first, second, a, b, catalog_a, catalog_b, requirements, worker], 1, 10)
         self.assertEqual({row["asset"] for row in report["models"]}, {"FIRST.M2", "SECOND.M2"})
         self.assertEqual(len(report["models"]), 2)
         model = next(row for row in report["models"] if row["asset"] == "FIRST.M2")
         self.assertEqual(model["visible"], 1)
         self.assertEqual(model["callback_owner"], 1)
         self.assertEqual(model["primary_shadow"], 0)
+        self.assertEqual(model["geometry_worker_ms"], 0.0002)
         self.assertIn(requirements, report["observations"])
 
     def test_missing_dependency_is_explicit_and_gpu_is_separate(self):
