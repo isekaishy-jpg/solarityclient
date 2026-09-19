@@ -19,6 +19,23 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Receiver-uniform evaluation now fans out over independent contiguous ranges,
+  sharing one immutable receiver/ancestry bank and the existing light-source bank.
+  Main retains callback order and final scene indices; a late vehicle parent can
+  be read from any range because callbacks finish before dispatch. Workers write
+  only into output capacity reserved by main. Small scenes retain the single-job
+  vector transfer; larger scenes copy completed ranges into the reserved final
+  array in receiver order, preserving only the prefix through the first error.
+  Reclamation releases all reader pins on success, domain error, worker panic,
+  dependency failure and admission refusal. Unused job outputs are dropped when
+  the active range count shrinks. Receiver storage, batch lifecycle and evaluation
+  have separate children under the scene-lighting folder.
+- The initial partition targets 64 receivers per range, bounded to four ranges
+  per configured worker. This exposes independent work; it is not the required
+  calibrated cost model. F10 records batch/receiver counts and range identities.
+  Nested receiver/output byte accounting, calibrated partitioning and matched
+  scaling/live measurements remain required, alongside the barriers below.
+
 - Published M2 point and directional lights now form one retained immutable
   source bank, pinned by receiver work and also readable by main. Receiver-specific
   exterior light is appended through ordered iteration, rather than mutating a
@@ -474,6 +491,24 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Independent receiver-batch checkpoint
+
+On 2026-09-19, formatting, full workspace/all-target/all-feature Clippy and the
+full workspace/all-feature tests passed: **1,549 passed**, **33 ignored**, zero
+failures across 90 suites. Six new tests cover one/four-worker execution with
+empty, small and multi-range scenes; changing receiver counts; parents in a later
+range; and repeated reuse of the same source and receiver banks. A controlled
+first-range hold proves a later range completes on another worker before main
+publishes any uniform. Final scene arrays match the single-range reference.
+
+Separate tests verify exact partial output through the first malformed receiver,
+failed dependency cleanup, refusal at full admission followed by a successful
+frame, and reader-pin return after a caught worker panic. Existing stock lighting,
+moving M2, visibility, liquid/fog and renderer fixtures passed unchanged. Logs are
+in ignored `target/receiver-batches-final-*`. These results establish parallel
+execution and output/lifetime contracts, not calibrated partition sizes, full
+cutover completion or a live FPS gain.
 
 ### Build 148 package and hidden world checkpoint
 

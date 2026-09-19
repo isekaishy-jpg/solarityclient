@@ -1,10 +1,13 @@
 //! Ordered scene ownership and worker-ready receiver evaluation.
 
+mod batch;
+mod receivers;
 mod sources;
 mod work;
+use batch::LightingBatch;
+use receivers::ReceiverInputs;
 pub(in crate::application::terrain_frame) use sources::SceneLightInputs;
 use sources::SceneLightSources;
-use work::LightingBatch;
 
 use glam::Vec3;
 use solarity_rendering::{M2DirectionalLight, M2PointLight, M2SceneUniform, ScenePointLights};
@@ -28,15 +31,7 @@ pub(super) struct SceneLighting {
     pub sample_directional: Vec<(usize, M2DirectionalLight)>,
     pub sample_points: Vec<M2PointLight>,
     retained_directionals: Vec<RetainedDirectional>,
-    centers: Vec<Vec3>,
-    placement_centers: Vec<Option<Vec3>>,
-    receiver_lights: Vec<Option<M2DirectionalLight>>,
-    receiver_fog: Vec<Option<Vec3>>,
-    placement_lights: Vec<Option<M2DirectionalLight>>,
-    placement_parents: Vec<Option<usize>>,
-    receiver_placements: Vec<usize>,
-    /// Current frame's indexed extent, independent of retained storage capacity.
-    placement_end: usize,
+    receivers: Arc<ReceiverInputs>,
 }
 
 impl SceneLighting {
@@ -65,21 +60,7 @@ impl SceneLighting {
         for light in &mut self.retained_directionals {
             light.active = false;
         }
-        self.centers.clear();
-        // Placement indices include distant resident terrain. Reset only the
-        // receivers actually published last frame; preserving vector lengths
-        // avoids filling every intervening scenery slot at the next receiver.
-        // Clear all three facts together so removed or remapped parents cannot
-        // lend a stale center, light, or ancestry edge to the new frame.
-        for &placement in &self.receiver_placements {
-            self.placement_centers[placement] = None;
-            self.placement_lights[placement] = None;
-            self.placement_parents[placement] = None;
-        }
-        self.receiver_lights.clear();
-        self.receiver_fog.clear();
-        self.receiver_placements.clear();
-        self.placement_end = 0;
+        ReceiverInputs::exclusive(&mut self.receivers).clear();
     }
 
     pub fn publish(
@@ -138,21 +119,13 @@ impl SceneLighting {
         light: Option<M2DirectionalLight>,
         fog_color: Option<Vec3>,
     ) -> Result<u32, RuntimeTerrainFrameError> {
-        let size = self.placement_centers.len().max(placement_index + 1);
-        self.placement_end = self.placement_end.max(placement_index + 1);
-        self.placement_centers.resize(size, None);
-        self.placement_centers[placement_index] = Some(center);
-        self.placement_lights.resize(size, None);
-        self.placement_lights[placement_index] = light;
-        self.placement_parents.resize(size, None);
-        self.placement_parents[placement_index] = parent;
-        self.receiver_placements.push(placement_index);
-        self.receiver_lights.push(light);
-        self.receiver_fog.push(fog_color);
-        let index = u32::try_from(self.centers.len())
-            .map_err(|_| solarity_rendering::VulkanError::WorldFrameCapacity)?;
-        self.centers.push(center);
-        Ok(index)
+        ReceiverInputs::exclusive(&mut self.receivers).push(
+            placement_index,
+            parent,
+            center,
+            light,
+            fog_color,
+        )
     }
 
     /// Preserves linked-list source order on the existing Rc owner thread.
