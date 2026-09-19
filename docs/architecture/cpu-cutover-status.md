@@ -372,11 +372,12 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 144 was packaged and installed on 2026-09-19 from `ec5098bc`. It connects
-NPC/remote-player primary sources to shared readiness and preserves withdrawn
-appearance ownership. It includes Build 143's root-pose readiness yield,
-Build 142's geometry overlap and Build 141's resource-gated loading, epoch
-registration and resumable terrain changes.
+Build 145 was packaged and installed on 2026-09-19 from `1737172a`. It services
+native input at M2 CPU consumption boundaries while preserving ordered state.
+It includes Build 144's shared NPC/remote-player primary sources and withdrawn
+appearance ownership, Build 143's root-pose readiness yield, Build 142's geometry
+overlap and Build 141's resource-gated loading, epoch registration and resumable
+terrain changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -419,6 +420,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 145 package checkpoint
+
+Build **145** was reserved and compiled through `scripts/build-client.ps1`, then
+installed with `scripts/install-test-client.ps1 -SkipBuild`. Its executable source
+identity is `1737172aea09664efc10af2563f9a4322b9a1fc3`; `dirty=true` records the
+pending BUILD_NUMBER reservation, the only tracked change during packaging.
+The optimized build completed successfully in 5m 43s.
+
+Artifact and installed SHA-256 both equal
+`B0A04E4779AC32F84B0E98FA7EEEE8994735F30E109EDE461699FEBD87ABFCE0`.
+The Testing shortcut uses the installed launcher, retaining 2560x1440
+fullscreen-windowed, four CPU workers, capacity 256, two network workers and
+GPU zero. F10 remains opt-in. No live client was launched for this package;
+no measured FPS gain or complete CPU cutover is claimed.
+Logs are in ignored `target/frame-native-wait-package.stdout.log` and
+`target/frame-native-wait-package.stderr.log`.
 
 ### Native frame-consumption checkpoint
 
