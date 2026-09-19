@@ -2,6 +2,8 @@
 
 #![allow(unsafe_code)]
 
+mod frame_wait;
+pub use frame_wait::GpuFrameKind;
 mod effect_draws;
 pub use effect_draws::M2EffectDrawCatalog;
 mod liquid;
@@ -196,6 +198,7 @@ pub struct VulkanRenderer {
     capture: Option<super::vulkan_capture::FrameReadback>,
     video_capture: Option<super::vulkan_capture::VideoReadback>,
     device: Device,
+    gpu_completion: Option<super::gpu_completion::GpuCompletionService>,
     pipeline_cache: vk::PipelineCache,
     pipeline_cache_path: Option<PathBuf>,
     allocator: Option<vk_mem::Allocator>,
@@ -297,6 +300,7 @@ impl VulkanRenderer {
             capture: None,
             video_capture: None,
             device,
+            gpu_completion: None,
             pipeline_cache: vk::PipelineCache::null(),
             pipeline_cache_path: None,
             allocator: None,
@@ -3089,6 +3093,8 @@ impl VulkanRenderer {
 impl Drop for VulkanRenderer {
     /// Releases Vulkan children in reverse dependency order.
     fn drop(&mut self) {
+        // Stop the host observer before any fence or device is destroyed.
+        drop(self.gpu_completion.take());
         let _idle_result = self.wait_idle();
         let _pipeline_cache_result = self.save_pipeline_cache();
         self.destroy_resource_retirements();

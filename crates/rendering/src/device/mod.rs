@@ -13,6 +13,7 @@ mod c_gx_device_d3d9_ex;
 mod c_gx_device_open_gl;
 mod capacity;
 mod gfx_singleton_manager;
+mod gpu_completion;
 mod m2_model_orientation;
 mod status;
 mod vulkan_capture;
@@ -63,6 +64,7 @@ mod vulkan_world_model_pipeline;
 mod vulkan_world_model_sampler;
 mod vulkan_world_model_texture_set;
 
+pub use gpu_completion::GpuCompletion;
 pub use m2_model_orientation::M2ModelOrientation;
 pub use status::VulkanError;
 pub use vulkan_capture::CapturedFrame;
@@ -87,8 +89,8 @@ pub use vulkan_m2_texture_set::{
 };
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{
-    GpuResourceLease, GpuResourceUsage, M2EffectDrawCatalog, VulkanPresentMode, VulkanRenderer,
-    VulkanReport,
+    GpuFrameKind, GpuResourceLease, GpuResourceUsage, M2EffectDrawCatalog, VulkanPresentMode,
+    VulkanRenderer, VulkanReport,
 };
 pub use vulkan_ripple::{WaterRippleFrame, WaterRippleFrameError, WaterRipplePass};
 pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};

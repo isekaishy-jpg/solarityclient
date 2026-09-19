@@ -47,6 +47,11 @@ pub(in crate::device) struct UiFrameRenderer {
 }
 
 impl UiFrameRenderer {
+    /// Exposes only the exact next presentation slot to the device owner.
+    pub(in crate::device) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.resources.pending_fence()
+    }
+
     /// Shares the queue capability while keeping query ownership in UI frame slots.
     pub(in crate::device) fn with_gpu_profiler(
         profiler: Option<crate::device::vulkan_world_frame::GpuFrameProfiler>,

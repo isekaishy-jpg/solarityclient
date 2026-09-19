@@ -55,6 +55,11 @@ pub(super) struct FrameRenderer {
 }
 
 impl FrameRenderer {
+    /// Exposes only the exact next presentation slot to the device owner.
+    pub(in crate::device) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.resources.pending_fence()
+    }
+
     /// Uploads a changed authored frame and presents it without CPU resampling.
     pub(super) fn present(&mut self, context: FrameContext<'_>) -> Result<bool, VulkanError> {
         let _profile_scope =

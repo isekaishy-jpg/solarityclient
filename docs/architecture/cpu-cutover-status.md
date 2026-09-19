@@ -19,6 +19,21 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Live world/Glue, UI/loading and cinematic presentation now service native input
+  while their exact next GPU frame slot is unavailable. One rendering-owned
+  completion thread performs the host wait; CPU workers never wait for a GPU fence.
+  A single reusable request/result cell publishes terminal state before waking
+  the coordinator. Ready/unallocated slots skip thread dispatch; the ready path
+  performs a status query before the existing presentation wait/reset.
+- The scoped renderer borrow excludes fence reset, replacement, submission and
+  destruction until the host observer completes. Native error/unwind drains the
+  observer; renderer teardown joins its thread before destroying Vulkan children.
+  No gameplay callback runs in this wait. F10 records the moved wait in
+  `rendering.gpu_slot.native_wait`; the inner world's fence timing now records
+  only its remaining synchronous wait. Frame-slot readiness does not mean asset
+  upload readiness. Source reallocation waits, image acquisition, uploads, buffer
+  growth/device-idle waits and useful main-ready continuations remain required.
+
 - Live world, Glue and world-replay frame consumption now uses an explicit
   main-owned native wait context. Unfinished root palettes yield before placement
   mutation; ordered geometry consumes each ready result directly, then services
@@ -31,7 +46,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   execution context, not a live fallback on native errors. SDL window ownership,
   input translation and native waiting now have separate folder-module children.
   F10 has distinct result/reclamation native wait spans. Full main-ready service
-  and loading/GPU-slot integration remain required.
+  and loading dependency integration remain required. GPU-slot native servicing
+  is connected as described above.
 - NPC and remote-player primary M2 loading now joins the same namespace/path
   authority as Glue and top-level GameObjects. A new source has one admitted
   producer; a pending source gates appearance work through `LoadBatch` without
@@ -67,7 +83,7 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   has an explicit observation. Independent world preparation now precedes the
   first root-pose wait. Later unfinished palettes and final consumption use the
   native readiness context described above; full main-ready continuation and
-  loading/GPU wait integration remain required below.
+  loading/upload wait integration remain required below.
 
 - Background loading now uses the existing bounded dependency engine through
   `LoadBatch`. Waiting phases retain owned inputs and task admission but occupy
@@ -350,7 +366,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   result-page accounting now exist; model output and override buffers now adopt it. Live simulation/pose storage,
   final frame streams, ordinary asset buffers and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
-- Extend the native bridge to loading/GPU-slot waits and main-ready continuations.
+- Extend native servicing to loading dependencies, GPU upload/acquire/growth waits
+  and useful main-ready continuations; presentation-slot waits are connected.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
@@ -420,6 +437,30 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Native GPU-slot checkpoint
+
+Formatting and workspace Clippy with warnings denied passed. The full workspace
+suite passed 1,534 tests, with 33 ignored across 90 suites. Five new controlled
+completion tests cover 256 request generations on one worker, driver failures,
+backend panic, early native error/unwind, durable notifier faults and joined
+shutdown. The hidden Vulkan cinematic fixture now exercises the public slot-wait
+boundary through repeated ring reuse and unchanged decoded-source identity.
+Existing moving M2, native input ordering and stock GPU parity fixtures passed.
+
+Logs are in ignored `target/gpu-slot-final-{fmt,clippy,tests}.*.log`; the final
+helper exit is zero. The initial run's driver-error assertion expected Vulkan's
+enum spelling rather than its Display diagnostic; the corrected test compares
+the propagated operation and original driver diagnostic. No live frame-time or
+ready-path overhead result is established. This connects native presentation-slot
+waiting, not useful main-ready work or all external GPU operations.
+
+Read-only follow-up confirms ordinary BLP, UI glyph and character-atlas uploads
+already retain deferred transfers. Remaining direct texture host waits serve
+stock generated solid/default/failure textures. Cinematic source replacement
+still waits all readers, and surface rebuild/standalone M2 capacity paths retain
+separate device waits. Ordinary unified-world payload growth already waits only
+its selected slot; do not treat all buffer growth as a device-wide drain.
 
 ### Build 145 package checkpoint
 

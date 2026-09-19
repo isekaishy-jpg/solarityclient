@@ -52,6 +52,7 @@ impl RuntimeCinematicCoordinator {
         &mut self,
         request: Option<&UiGlueMovieRequest>,
         renderer: &mut VulkanRenderer,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         sound: &mut RuntimeSoundCoordinator,
         overlay: Option<([f32; 2], &[UiPreparedDraw])>,
     ) -> Result<RuntimeCinematicPoll, RuntimeCinematicError> {
@@ -120,6 +121,7 @@ impl RuntimeCinematicCoordinator {
         ) {
             return Ok(RuntimeCinematicPoll::Waiting { remaining });
         }
+        wait.before_gpu_frame(renderer, solarity_rendering::GpuFrameKind::Cinematic)?;
         let source_extent = (active.current.width(), active.current.height());
         let identity = CinematicFrameIdentity::new(active.generation, active.frame_index);
         if let Some((logical_extent, draws)) = overlay {
@@ -265,6 +267,9 @@ pub enum RuntimeCinematicError {
     /// Vulkan could not present a decoded movie frame.
     #[error(transparent)]
     Present(#[from] VulkanError),
+    /// The native coordinator could not service a GPU-slot wait.
+    #[error(transparent)]
+    Platform(#[from] crate::platform::PlatformError),
     /// SDL could not start, feed, or stop the movie audio track.
     #[error(transparent)]
     Sound(#[from] RuntimeSoundError),
@@ -274,6 +279,15 @@ pub enum RuntimeCinematicError {
     /// A movie exceeded the representable authored frame identity.
     #[error("cinematic decoded frame index exceeds u64 capacity")]
     FrameIndexCapacity,
+}
+
+impl From<super::frame_pipeline::GpuFrameWaitError> for RuntimeCinematicError {
+    fn from(error: super::frame_pipeline::GpuFrameWaitError) -> Self {
+        match error {
+            super::frame_pipeline::GpuFrameWaitError::Vulkan(error) => Self::Present(error),
+            super::frame_pipeline::GpuFrameWaitError::Platform(error) => Self::Platform(error),
+        }
+    }
 }
 
 #[cfg(test)]

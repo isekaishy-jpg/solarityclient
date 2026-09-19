@@ -541,6 +541,11 @@ pub(super) struct M2FrameResources {
 }
 
 impl M2FrameResources {
+    /// Observes the next slot without advancing, resetting or acquiring an image.
+    pub(super) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.slots.get(self.next_slot).map(|slot| slot.fence())
+    }
+
     /// Creates or grows all slots together without arbitrary capacity constants.
     pub(super) fn ensure(&mut self, context: FrameCreateContext<'_>) -> Result<(), VulkanError> {
         if !self.slots.is_empty()

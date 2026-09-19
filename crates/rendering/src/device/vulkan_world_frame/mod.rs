@@ -123,6 +123,11 @@ pub(in crate::device) struct WorldFrameRenderer {
 }
 
 impl WorldFrameRenderer {
+    /// Exposes only the exact next presentation slot to the device owner.
+    pub(in crate::device) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.resources.pending_fence()
+    }
+
     /// Retained sun response for the next frame's exterior lighting providers.
     pub(in crate::device) fn glare_lighting(&self) -> crate::WorldGlareLighting {
         self.glare.lighting()

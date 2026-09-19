@@ -327,6 +327,7 @@ impl ClientServices {
                 present_mode,
             )
         }?;
+        renderer.configure_frame_waits(platform.coordinator_notifier())?;
         renderer.configure_pipeline_cache(
             &configuration
                 .profile_root()
@@ -508,6 +509,9 @@ impl ClientServices {
                 overlay,
             )?;
             if !model_presented {
+                super::frame_pipeline::FrameWait::Native(&mut platform)
+                    .before_gpu_frame(&mut renderer, solarity_rendering::GpuFrameKind::Ui)
+                    .map_err(RuntimeTerrainFrameError::from)?;
                 frame.present_with_overlay(&mut renderer, overlay)?;
             }
             if let Some((camera, events)) = glue_model.drain_sound_events() {
@@ -1189,6 +1193,9 @@ impl ClientServices {
             self.loading_screen = None;
         } else if let Some(loading) = self.loading_screen.as_mut() {
             self.glue_update_clock = update_time;
+            super::frame_pipeline::FrameWait::Native(&mut self.platform)
+                .before_gpu_frame(&mut self.renderer, solarity_rendering::GpuFrameKind::Ui)
+                .map_err(RuntimeTerrainFrameError::from)?;
             loading.present(&mut self.renderer, &self.runtime_overlay_draws)?;
             if let Some(fps) = self.fps.as_mut() {
                 fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
@@ -1239,6 +1246,7 @@ impl ClientServices {
             match self.cinematic.synchronize(
                 movie.as_ref(),
                 &mut self.renderer,
+                &mut super::frame_pipeline::FrameWait::Native(&mut self.platform),
                 &mut self.sound,
                 cinematic_overlay,
             )? {
@@ -1687,6 +1695,9 @@ impl ClientServices {
             &self.runtime_overlay_draws,
         )?;
         if !model_presented {
+            super::frame_pipeline::FrameWait::Native(&mut self.platform)
+                .before_gpu_frame(&mut self.renderer, solarity_rendering::GpuFrameKind::Ui)
+                .map_err(RuntimeTerrainFrameError::from)?;
             frame.present_with_overlay(&mut self.renderer, &self.runtime_overlay_draws)?;
         }
         profile.mark("model and UI present");

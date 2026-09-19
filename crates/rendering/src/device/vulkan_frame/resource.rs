@@ -262,6 +262,11 @@ pub(super) struct FrameResources {
 }
 
 impl FrameResources {
+    /// Observes the next slot without advancing, resetting or acquiring an image.
+    pub(super) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.slots.get(self.next_slot).map(|slot| slot.fence())
+    }
+
     /// Lazily creates the exact swapchain-sized synchronization graph.
     pub(super) fn ensure_slots(
         &mut self,

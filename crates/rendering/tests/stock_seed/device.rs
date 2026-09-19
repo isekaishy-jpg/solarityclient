@@ -3,8 +3,19 @@
 #![allow(unsafe_code)]
 
 use std::error::Error;
+use std::sync::Arc;
+use std::thread::{self, Thread};
 
 use solarity_rendering::{CinematicFrameIdentity, VulkanBootstrap, VulkanError};
+
+/// Mirrors a coalesced native wake without requiring a visible test window.
+struct GpuSignal(Thread);
+
+impl solarity_cpu::CoordinatorNotifier for GpuSignal {
+    fn notify(&self) {
+        self.0.unpark();
+    }
+}
 
 /// Stock's 0x0095EBF0 update retains decoded surfaces until frame identity changes.
 #[test]
@@ -22,15 +33,38 @@ fn cinematic_frame_reuses_the_authored_source_between_display_refreshes()
     let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
     // SAFETY: SDL transfers its sole surface ownership into this renderer.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
+    renderer.configure_frame_waits(Arc::new(GpuSignal(thread::current())))?;
     let pixels = vec![0x7F_u8; 32 * 16 * 4];
     let identity = CinematicFrameIdentity::new(7, 11);
 
+    renderer
+        .wait_for_frame_slot::<VulkanError>(solarity_rendering::GpuFrameKind::Cinematic, |_| {
+            panic!("an unallocated frame ring must not enter native waiting")
+        })?;
     renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(false));
     renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(true));
     renderer.present_cinematic_rgba8(CinematicFrameIdentity::new(7, 12), (32, 16), &pixels)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(false));
+    let identity = CinematicFrameIdentity::new(7, 12);
+    for _ in 0..16 {
+        renderer.wait_for_frame_slot::<VulkanError>(
+            solarity_rendering::GpuFrameKind::Cinematic,
+            |completion| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while !completion.is_ready() {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    assert!(!remaining.is_zero(), "GPU completion notification was lost");
+                    thread::park_timeout(remaining);
+                }
+                Ok(())
+            },
+        )?;
+        renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
+        assert_eq!(renderer.report().presented_source_reused(), Some(true));
+    }
+    renderer.shutdown()?;
     Ok(())
 }
 

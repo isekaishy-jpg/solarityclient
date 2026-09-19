@@ -335,6 +335,11 @@ pub(super) struct TerrainFrameResources {
 }
 
 impl TerrainFrameResources {
+    /// Observes the next slot without advancing, resetting or acquiring an image.
+    pub(super) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.slots.get(self.next_slot).map(|slot| slot.fence())
+    }
+
     pub(super) fn ensure(&mut self, context: FrameCreateContext<'_>) -> Result<(), VulkanError> {
         if !self.slots.is_empty() {
             if self.slots.len() == context.slot_count && self.extent == Some(context.extent) {

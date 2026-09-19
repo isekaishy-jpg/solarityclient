@@ -54,6 +54,11 @@ pub(in crate::device) struct M2FrameRenderer {
 }
 
 impl M2FrameRenderer {
+    /// Exposes only the exact next presentation slot to the device owner.
+    pub(in crate::device) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.resources.pending_fence()
+    }
+
     /// Uploads one scene snapshot, records indexed draws, and queues presentation.
     pub(in crate::device) fn present(
         &mut self,

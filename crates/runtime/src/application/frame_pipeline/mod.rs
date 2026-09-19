@@ -1,7 +1,9 @@
 //! Main-owned frame consumption; workers never acquire platform or gameplay state.
 
+mod gpu;
 mod wait;
 
+pub(super) use gpu::GpuFrameWaitError;
 pub(super) use wait::{FrameWait, FrameWaitError};
 
 #[cfg(test)]

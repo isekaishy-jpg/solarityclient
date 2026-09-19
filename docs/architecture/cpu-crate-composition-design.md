@@ -316,9 +316,24 @@ frame pacing, minimized service, cinematic deadlines and live M2 root/result/
 reclamation waits. CPU task and frame result publication notify it after releasing
 result locks. Ordered M2 publication consumes ready results without entering the
 platform; pending results collect native input for the next gameplay cutoff.
-Remaining main-ready continuations and loading/GPU integration are recorded in
+Live world/Glue, UI/loading and cinematic presentation also service exact next-slot
+GPU waits. Rendering owns one persistent host-wait thread and a single reusable
+completion cell; already-signaled slots skip dispatch. The scoped renderer borrow
+excludes fence reuse/destruction, drains on native errors/unwind and joins the
+thread before Vulkan teardown. The worker publishes terminal state before native
+notification and never occupies the CPU executor. It does not service uploads,
+image acquisition or resource-growth/device-idle waits. Useful main-ready
+continuations and remaining loading/GPU integration are recorded in
 [cutover status](cpu-cutover-status.md). An SDL user event never carries the
 only copy of a required completion.
+
+The GPU boundary follows the host lifetime rules in
+[`vkWaitForFences`](https://docs.vulkan.org/refpages/latest/refpages/source/vkWaitForFences.html),
+[`vkGetFenceStatus`](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetFenceStatus.html)
+and [`vkDestroyFence`](https://docs.vulkan.org/refpages/latest/refpages/source/vkDestroyFence.html):
+submission returns before observation begins, and the host observer returns
+before the fence may be reset, replaced or destroyed. Ready-path driver-query
+and pending-path handoff overhead still require measurement.
 
 For the current Windows backend, runtime/platform owns a native notification
 event, a deadline timer and the main-thread event-pump integration. Wait for

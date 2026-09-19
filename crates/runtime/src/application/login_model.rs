@@ -1368,6 +1368,8 @@ impl RuntimeGlueModelScene {
         let bone_count = visible.bone_transforms.len();
         let particle_vertex_count = visible.particle_vertices.len();
 
+        wait.before_gpu_frame(renderer, solarity_rendering::GpuFrameKind::World)
+            .map_err(RuntimeTerrainFrameError::from)?;
         if strength > 0.0 || (gamma - 1.0).abs() > 0.0001 {
             renderer.present_world_frame_with_ui_layers_and_glow(
                 scene,

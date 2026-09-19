@@ -149,6 +149,11 @@ pub(super) struct UiFrameResources {
 }
 
 impl UiFrameResources {
+    /// Observes the next slot without advancing, resetting or acquiring an image.
+    pub(super) fn pending_fence(&self) -> Option<vk::Fence> {
+        self.slots.get(self.next_slot).map(|slot| slot.fence())
+    }
+
     /// Lazily creates the exact swapchain-sized resource graph.
     pub(super) fn ensure(
         &mut self,

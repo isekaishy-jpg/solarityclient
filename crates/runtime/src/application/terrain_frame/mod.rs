@@ -562,6 +562,15 @@ pub enum RuntimeTerrainFrameError {
     },
 }
 
+impl From<super::frame_pipeline::GpuFrameWaitError> for RuntimeTerrainFrameError {
+    fn from(error: super::frame_pipeline::GpuFrameWaitError) -> Self {
+        match error {
+            super::frame_pipeline::GpuFrameWaitError::Vulkan(error) => Self::Vulkan(error),
+            super::frame_pipeline::GpuFrameWaitError::Platform(error) => Self::Platform(error),
+        }
+    }
+}
+
 impl From<super::frame_pipeline::FrameWaitError> for RuntimeTerrainFrameError {
     fn from(error: super::frame_pipeline::FrameWaitError) -> Self {
         match error {
@@ -1176,6 +1185,7 @@ impl TerrainFrame {
         scene = scene.with_screen_effect(screen_effect);
         let _submission_trace = solarity_profiling::TraceSpan::new("world.render.consume", 0, 0);
         m2.trace.link("m2.frame.consume");
+        wait.before_gpu_frame(renderer, solarity_rendering::GpuFrameKind::World)?;
         let report = renderer.present_world_frame_with_ui_layers(
             scene,
             m2.bone_transforms,

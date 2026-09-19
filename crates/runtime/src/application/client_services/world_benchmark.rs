@@ -383,6 +383,10 @@ impl ClientServices {
             }
             let terrain_ready = self.service_terrain_streaming()?;
             let detail_ready = self.prepare_world_entry_detail()?;
+            super::super::frame_pipeline::FrameWait::Native(&mut self.platform)
+                .before_gpu_frame(&mut self.renderer, solarity_rendering::GpuFrameKind::Ui)
+                .map_err(super::super::terrain_frame::RuntimeTerrainFrameError::from)
+                .map_err(ApplicationError::from)?;
             self.loading_screen
                 .as_mut()
                 .ok_or(WorldBenchmarkError::State("missing loading card"))?
