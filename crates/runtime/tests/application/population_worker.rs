@@ -88,17 +88,16 @@ fn withdrawn_attempt_reclaims_failure_even_when_its_object_is_still_current()
             .map_err(|_| solarity_cpu::CpuError::CompletionLost)
             .and(Err(solarity_cpu::CpuError::JobCancelled))
             .map_err(Into::into);
-        super::super::worker_presentation::PopulationWorkerCompletion { cache, result }
+        super::super::worker_presentation::AppearanceCompletion { cache, result }
     });
     worker.pending = Some(PendingPopulation {
         identity,
         key: 17,
         level: CharacterComponentTextureLevel::DEFAULT,
         withdrawn: false,
-        stage: PopulationStage::Preparing(super::pending::PendingTask::Direct {
-            task,
-            demand: None,
-        }),
+        stage: PopulationStage::Preparing(
+            super::super::worker_presentation::AppearanceTask::Direct { task, demand: None },
+        ),
     });
     worker.discard_ready(identity)?;
     assert!(worker.pending.is_some());

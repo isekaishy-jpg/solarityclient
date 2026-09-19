@@ -2,6 +2,7 @@
 
 mod appearance_inputs;
 mod creatures;
+mod glue_character;
 mod local;
 mod population_worker;
 mod registration;
@@ -10,14 +11,13 @@ mod replicated_animation;
 mod worker_presentation;
 
 use appearance_inputs::{CreatureAppearanceInputs, PlayerAppearanceInputs};
+use glue_character::PendingGlueCharacter;
 use solarity_asset::ResourceLease;
-use worker_presentation::{
-    GlueCharacterWorkerCache, GlueWorkerCompletion, glue_steps, with_worker_presentation,
-};
+use worker_presentation::AppearanceWorkerCache;
 
 use super::unit_animation::{UnitAnimationBehavior, UnitAnimationInput, UnitAnimationScene};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use solarity_asset::{
     AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStoreHandle, BlpTextureCache,
@@ -27,11 +27,10 @@ use solarity_asset::{
     ItemDisplayCatalog, ItemVisualCatalog, M2HardcodedTextureSource, M2ModelCache, M2Texture,
     M2TextureKind, ParticleColorCatalog, VehicleCatalog,
 };
-use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
+use solarity_cpu::CpuError;
 use solarity_ecs::{
     ActiveWorld, PLAYER_EQUIPMENT_SLOT_COUNT, PlayerEquipmentSlot, PlayerViewState,
-    UnitAnimationTier, UnitSheathState, VisibleEquipmentItem, WorldObjectIdentity, WorldStateError,
-    WorldTransform,
+    UnitAnimationTier, VisibleEquipmentItem, WorldObjectIdentity, WorldStateError, WorldTransform,
 };
 use solarity_rendering::{
     CharacterAtlasTexture, CharacterAttachmentPlan, CharacterAttachmentPlanError,
@@ -426,8 +425,7 @@ pub struct RuntimePlayerPresentation {
     glue_character: Option<ResidentGlueCharacterModel>,
     requested_glue_character: Option<ResidentGlueCharacterKey>,
     glue_worker_catalog: Option<ArchiveCatalog>,
-    glue_worker_cache: Option<GlueCharacterWorkerCache>,
-    glue_worker_request: Arc<Mutex<Option<GlueCharacterWorkerRequest>>>,
+    glue_worker_cache: Option<AppearanceWorkerCache>,
     pending_glue_character: Option<PendingGlueCharacter>,
     failed_glue_character: Option<ResidentGlueCharacterKey>,
 }
@@ -473,8 +471,7 @@ impl RuntimePlayerPresentation {
             glue_character: None,
             requested_glue_character: None,
             glue_worker_catalog: None,
-            glue_worker_cache: Some(GlueCharacterWorkerCache::default()),
-            glue_worker_request: Arc::new(Mutex::new(None)),
+            glue_worker_cache: Some(AppearanceWorkerCache::default()),
             pending_glue_character: None,
             failed_glue_character: None,
         }
@@ -504,426 +501,21 @@ impl RuntimePlayerPresentation {
         }
     }
 
-    /// Polls or submits complete character-creation representation work.
-    ///
-    /// Archive reads, M2 parsing, BLP decoding, atlas composition, and item
-    /// attachment resolution stay off the presentation thread. The returned
-    /// change becomes true only after a matching complete generation arrives.
-    pub(super) fn synchronize_character_creation_async(
-        &mut self,
-        preview: Option<&UiCharacterCreationPreview>,
-        cpu: &CpuExecutor,
-    ) -> Result<bool, RuntimePlayerError> {
-        self.synchronize_glue_character_async(
-            preview.cloned().map(ResidentGlueCharacterKey::Creation),
-            cpu,
-        )
-    }
-
-    /// Polls or submits complete character-selection representation work.
-    pub(super) fn synchronize_character_selection_async(
-        &mut self,
-        preview: Option<&UiCharacterSelectionPreview>,
-        cpu: &CpuExecutor,
-    ) -> Result<bool, RuntimePlayerError> {
-        self.synchronize_glue_character_async(
-            preview
-                .cloned()
-                .map(Box::new)
-                .map(ResidentGlueCharacterKey::Selection),
-            cpu,
-        )
-    }
-
-    fn synchronize_glue_character_async(
-        &mut self,
-        requested: Option<ResidentGlueCharacterKey>,
-        cpu: &CpuExecutor,
-    ) -> Result<bool, RuntimePlayerError> {
-        let request_changed = match (&self.requested_glue_character, &requested) {
-            (Some(current), Some(requested)) => !current.same_residency(requested),
-            (None, None) => false,
-            (Some(_), None) | (None, Some(_)) => true,
-        };
-        self.requested_glue_character = requested.clone();
-        *self
-            .glue_worker_request
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            requested.clone().map(|key| GlueCharacterWorkerRequest {
-                key,
-                component_texture_level: self.component_texture_level,
-            });
-
-        if self
-            .pending_glue_character
-            .as_ref()
-            .is_some_and(|pending| pending.task.is_finished())
-        {
-            let pending = self
-                .pending_glue_character
-                .take()
-                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
-            let completion = pending.task.join()?;
-            self.glue_worker_cache = Some(completion.cache);
-            match completion.result {
-                Ok(Some(mut resident)) => {
-                    if let Some(current) = requested.as_ref()
-                        && resident.key.same_residency(current)
-                    {
-                        resident.apply_transform_key(current.clone());
-                        tracing::info!(
-                            residency_wait_ms =
-                                pending.submitted_at.elapsed().as_secs_f64() * 1_000.0,
-                            "published coalesced worker-prepared Glue character representation"
-                        );
-                        self.glue_character = Some(resident);
-                        return Ok(true);
-                    }
-                }
-                Ok(None) => {}
-                Err(failure) => {
-                    if let Some(current) = requested.as_ref()
-                        && failure.key.same_residency(current)
-                    {
-                        self.failed_glue_character = Some(current.clone());
-                        return Err(failure.source);
-                    }
-                    tracing::warn!(
-                        error = %failure.source,
-                        "retired obsolete Glue character preparation failure"
-                    );
-                }
-            }
-        };
-        let Some(requested) = requested else {
-            self.failed_glue_character = None;
-            return Ok(request_changed || self.glue_character.take().is_some());
-        };
-        if let Some(resident) = self.glue_character.as_mut()
-            && resident.key.same_residency(&requested)
-        {
-            resident.apply_transform_key(requested);
-            return Ok(request_changed);
-        }
-        if self
-            .failed_glue_character
-            .as_ref()
-            .is_some_and(|failed| failed.same_residency(&requested))
-        {
-            return Ok(request_changed);
-        }
-        self.failed_glue_character = None;
-        if self.pending_glue_character.is_some() {
-            return Ok(request_changed);
-        }
-
-        let catalog = self
-            .glue_worker_catalog
-            .as_ref()
-            .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?
-            .clone();
-        let catalogs = self.shared_catalogs();
-        let permit = match cpu.try_reserve() {
-            Ok(permit) => permit,
-            Err(CpuError::AtCapacity { .. }) => return Ok(request_changed),
-            Err(source) => return Err(source.into()),
-        };
-        let worker_cache = self
-            .glue_worker_cache
-            .take()
-            .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?;
-        let worker_request = Arc::clone(&self.glue_worker_request);
-        let task = permit.submit_steps(glue_steps(catalog, catalogs, worker_request, worker_cache));
-        self.pending_glue_character = Some(PendingGlueCharacter {
-            submitted_at: std::time::Instant::now(),
-            task,
-        });
-        Ok(request_changed)
-    }
-
     /// Applies the live component-texture level and invalidates affected models.
     pub fn set_component_texture_level(&mut self, level: CharacterComponentTextureLevel) -> bool {
         if self.component_texture_level == level {
             return false;
         }
         self.component_texture_level = level;
-        *self
-            .glue_worker_request
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        if let Some(pending) = &mut self.pending_glue_character {
+            pending.withdraw();
+        }
         self.failed_glue_character = None;
         self.requested_glue_character = None;
         self.resident = None;
         self.remote_players.clear();
         self.glue_character = None;
         true
-    }
-
-    /// Synchronizes the unequipped character-creation body from Glue choices.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimePlayerError`] when DBC joins, M2 loading, component
-    /// texture composition, or animation selection fails.
-    pub fn synchronize_character_creation(
-        &mut self,
-        preview: Option<&UiCharacterCreationPreview>,
-    ) -> Result<bool, RuntimePlayerError> {
-        let Some(preview) = preview else {
-            return Ok(self.glue_character.take().is_some());
-        };
-        if !preview.facing_degrees().is_finite() {
-            return Err(RuntimePlayerError::InvalidCreationFacing {
-                facing_degrees: preview.facing_degrees(),
-            });
-        }
-        if let Some(resident) = self.glue_character.as_mut()
-            && resident.key.matches_creation(preview)
-        {
-            // Wow.exe's SetCharacterCreateFacing path mutates the registered
-            // model transform; it does not recreate appearance GPU resources.
-            resident.key = ResidentGlueCharacterKey::Creation(preview.clone());
-            resident.facing_radians = preview.facing_degrees().to_radians() as f32;
-            return Ok(false);
-        }
-        let race = self.races.race(u32::from(preview.race_id())).ok_or(
-            RuntimePlayerError::MissingCharacterRace {
-                race_id: u32::from(preview.race_id()),
-            },
-        )?;
-        let display_id = match preview.gender_id() {
-            0 => race.male_display_id(),
-            1 => race.female_display_id(),
-            gender_id => {
-                return Err(RuntimePlayerError::InvalidCreationGender { gender_id });
-            }
-        };
-        let body = self.creatures.resolve_model(display_id)?;
-        let body_particle_color_id = body.display().particle_color_id();
-        let [skin, face, hair_style, hair_color, facial_hair] = preview.appearance();
-        let customization = solarity_asset::CharacterCustomization::new(
-            skin,
-            face,
-            hair_style,
-            hair_color,
-            facial_hair,
-        );
-        let appearance = self.characters.resolve_player(
-            u32::from(preview.race_id()),
-            u32::from(preview.gender_id()),
-            customization,
-        )?;
-        let mut equipment_items = resolve_creation_equipment(
-            preview,
-            &self.start_outfits,
-            &self.item_definitions,
-            &self.item_displays,
-        )?;
-        // CCharacterCreation presents starter clothing with showHelmet false.
-        // Excluding head inventory here keeps both the helmet child model and
-        // its hair/ear visibility masks out of the creation representation.
-        equipment_items.retain(|item| item.inventory_type() != Some(InventoryType::Head));
-        let texture_plan = CharacterTexturePlan::equipped(
-            &appearance,
-            &self.assets.borrow(),
-            equipment_items.iter().copied(),
-        )?;
-        let geosets = CharacterGeosetPlan::equipped(
-            &appearance,
-            CharacterGeosetContext::new(preview.class_id(), CharacterTabardMode::Equipment),
-            &self.helmet_visibility,
-            equipment_items.iter().copied(),
-        )?;
-        let attachment_plan = CharacterAttachmentPlan::equipped_items(
-            equipment_items.iter().copied(),
-            race,
-            u32::from(preview.gender_id()),
-            CharacterWeaponState::new(UnitSheathState::Unarmed),
-        )?;
-        let mut assets = self.assets.borrow_mut();
-        let model = self.models.load(&mut assets, body.model_path())?;
-        let atlas = texture_plan.compose_at_level(
-            &mut assets,
-            &mut self.textures,
-            self.component_texture_level,
-        )?;
-        let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
-        let extra_skin =
-            load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
-        let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
-        let textures = prepare_model_textures(
-            &model,
-            OptionalTextureBinding::new(texture_plan.hair(), hair.as_ref()),
-            OptionalTextureBinding::new(texture_plan.extra_skin(), extra_skin.as_ref()),
-            OptionalTextureBinding::new(texture_plan.cape(), cape.as_ref()),
-            &mut assets,
-            &mut self.textures,
-        )?;
-        let attachments = load_player_attachments(
-            &attachment_plan,
-            &self.item_visuals,
-            &self.particle_colors,
-            &mut self.models,
-            &mut self.textures,
-            &mut assets,
-        )?;
-        drop(assets);
-        let animation = resolve_resident_animation(
-            &self.animations,
-            &model,
-            UnitLocomotionAnimation::STAND,
-            UnitAnimationTier::Ground,
-        )?;
-        self.glue_character = Some(ResidentGlueCharacterModel {
-            key: ResidentGlueCharacterKey::Creation(preview.clone()),
-            model,
-            textures,
-            atlas,
-            texture_plan,
-            geosets,
-            attachment_plan,
-            animation,
-            facing_radians: preview.facing_degrees().to_radians() as f32,
-            hair,
-            extra_skin,
-            attachments,
-            pet: None,
-            particle_colors: M2ParticleColorReplacement::resolve(
-                &self.particle_colors,
-                body_particle_color_id,
-            ),
-        });
-        Ok(true)
-    }
-
-    /// Synchronizes the selected roster character and its enum-time equipment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimePlayerError`] when the roster fields cannot be joined
-    /// to the pinned client DBCs or their model resources cannot be prepared.
-    pub fn synchronize_character_selection(
-        &mut self,
-        preview: Option<&UiCharacterSelectionPreview>,
-    ) -> Result<bool, RuntimePlayerError> {
-        let Some(preview) = preview else {
-            return Ok(self.glue_character.take().is_some());
-        };
-        if !preview.facing_degrees().is_finite() {
-            return Err(RuntimePlayerError::InvalidSelectionFacing {
-                facing_degrees: preview.facing_degrees(),
-            });
-        }
-        if let Some(resident) = self.glue_character.as_mut()
-            && resident.key.matches_selection(preview)
-        {
-            // Wow.exe 0x004E3030 stores the narrowed facing directly on the
-            // selected model, leaving its body and equipment residency intact.
-            resident.key = ResidentGlueCharacterKey::Selection(Box::new(preview.clone()));
-            resident.facing_radians = preview.facing_degrees().to_radians() as f32;
-            return Ok(false);
-        }
-        let race = self.races.race(u32::from(preview.race_id())).ok_or(
-            RuntimePlayerError::MissingCharacterRace {
-                race_id: u32::from(preview.race_id()),
-            },
-        )?;
-        let display_id = match preview.gender_id() {
-            0 => race.male_display_id(),
-            1 => race.female_display_id(),
-            gender_id => {
-                return Err(RuntimePlayerError::InvalidCreationGender { gender_id });
-            }
-        };
-        let body = self.creatures.resolve_model(display_id)?;
-        let body_particle_color_id = body.display().particle_color_id();
-        let [skin, face, hair_style, hair_color, facial_hair] = preview.appearance();
-        let customization =
-            CharacterCustomization::new(skin, face, hair_style, hair_color, facial_hair);
-        let appearance = self.characters.resolve_player(
-            u32::from(preview.race_id()),
-            u32::from(preview.gender_id()),
-            customization,
-        )?;
-        let mut equipment_items = resolve_selection_equipment(preview, &self.item_displays)?;
-        equipment_items.retain(|item| {
-            (preview.show_helmet() || item.slot() != PlayerEquipmentSlot::Head)
-                && (preview.show_cloak() || item.slot() != PlayerEquipmentSlot::Back)
-        });
-        let texture_plan = CharacterTexturePlan::equipped(
-            &appearance,
-            &self.assets.borrow(),
-            equipment_items.iter().copied(),
-        )?;
-        let geosets = CharacterGeosetPlan::equipped(
-            &appearance,
-            CharacterGeosetContext::new(preview.class_id(), CharacterTabardMode::Equipment),
-            &self.helmet_visibility,
-            equipment_items.iter().copied(),
-        )?;
-        let attachment_plan = CharacterAttachmentPlan::character_selection(
-            equipment_items.iter().copied(),
-            resolve_selection_quiver(preview, &self.item_displays)?,
-            race,
-            u32::from(preview.gender_id()),
-            preview.class_id(),
-        )?;
-        let mut assets = self.assets.borrow_mut();
-        let model = self.models.load(&mut assets, body.model_path())?;
-        let atlas = texture_plan.compose_at_level(
-            &mut assets,
-            &mut self.textures,
-            self.component_texture_level,
-        )?;
-        let hair = load_optional_texture(texture_plan.hair(), &mut assets, &mut self.textures)?;
-        let extra_skin =
-            load_optional_texture(texture_plan.extra_skin(), &mut assets, &mut self.textures)?;
-        let cape = load_optional_texture(texture_plan.cape(), &mut assets, &mut self.textures)?;
-        let textures = prepare_model_textures(
-            &model,
-            OptionalTextureBinding::new(texture_plan.hair(), hair.as_ref()),
-            OptionalTextureBinding::new(texture_plan.extra_skin(), extra_skin.as_ref()),
-            OptionalTextureBinding::new(texture_plan.cape(), cape.as_ref()),
-            &mut assets,
-            &mut self.textures,
-        )?;
-        let attachments = load_player_attachments(
-            &attachment_plan,
-            &self.item_visuals,
-            &self.particle_colors,
-            &mut self.models,
-            &mut self.textures,
-            &mut assets,
-        )?;
-        drop(assets);
-        let pet = self.load_glue_pet(preview.pet())?;
-        let animation = resolve_resident_animation(
-            &self.animations,
-            &model,
-            UnitLocomotionAnimation::STAND,
-            UnitAnimationTier::Ground,
-        )?;
-        self.glue_character = Some(ResidentGlueCharacterModel {
-            key: ResidentGlueCharacterKey::Selection(Box::new(preview.clone())),
-            model,
-            textures,
-            atlas,
-            texture_plan,
-            geosets,
-            attachment_plan,
-            animation,
-            facing_radians: preview.facing_degrees().to_radians() as f32,
-            hair,
-            extra_skin,
-            attachments,
-            pet,
-            particle_colors: M2ParticleColorReplacement::resolve(
-                &self.particle_colors,
-                body_particle_color_id,
-            ),
-        });
-        Ok(true)
     }
 
     /// Resolves the optional character-selection pet through creature DBCs.
@@ -1430,26 +1022,12 @@ impl RuntimePlayerPresentation {
         self.resident = None;
         self.glue_character = None;
         self.requested_glue_character = None;
-        *self
-            .glue_worker_request
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        if let Some(pending) = &mut self.pending_glue_character {
+            pending.withdraw();
+        }
         self.creatures_resident.clear();
         self.remote_players.clear();
         self.textures.collect_unused();
-    }
-}
-
-#[derive(Clone)]
-struct GlueCharacterWorkerRequest {
-    key: ResidentGlueCharacterKey,
-    component_texture_level: CharacterComponentTextureLevel,
-}
-
-impl GlueCharacterWorkerRequest {
-    fn same_residency(&self, other: &Self) -> bool {
-        self.component_texture_level == other.component_texture_level
-            && self.key.same_residency(&other.key)
     }
 }
 
@@ -1536,17 +1114,6 @@ impl ResidentGlueCharacterModel {
         self.facing_radians = key.facing_radians();
         self.key = key;
     }
-}
-
-struct PendingGlueCharacter {
-    submitted_at: std::time::Instant,
-    task: CpuTask<GlueWorkerCompletion>,
-}
-
-/// One failed worker generation tagged before the shared request can advance.
-struct GlueCharacterWorkerFailure {
-    key: ResidentGlueCharacterKey,
-    source: RuntimePlayerError,
 }
 
 struct ResidentGluePetModel {

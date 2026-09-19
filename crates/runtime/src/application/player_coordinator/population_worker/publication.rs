@@ -1,6 +1,6 @@
 //! Exact-lifetime publication and incremental GPU admission retain their original order.
 
-use super::super::{GlueCharacterWorkerCache, RuntimePlayerError};
+use super::super::{AppearanceWorkerCache, RuntimePlayerError};
 use super::{PendingPopulation, PopulationStage, PopulationWorker, PreparedPopulation};
 use crate::application::cpu_retirement::CpuRetirementQueue;
 use crate::application::terrain_frame::m2::M2GluePipelineWarmup;
@@ -21,7 +21,7 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
     pub(in crate::application::player_coordinator) fn new() -> Self {
         Self {
             pending: None,
-            cache: Some(GlueCharacterWorkerCache::default()),
+            cache: Some(AppearanceWorkerCache::default()),
             retired: CpuRetirementQueue::new(),
         }
     }

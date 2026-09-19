@@ -12,8 +12,7 @@ use solarity_ecs::WorldObjectIdentity;
 use solarity_rendering::{CharacterComponentTextureLevel, VulkanRenderer};
 
 use super::{
-    GlueCharacterWorkerCache, ResidentCreatureModel, ResidentPlayerModel,
-    UnitPresentationGeneration,
+    AppearanceWorkerCache, ResidentCreatureModel, ResidentPlayerModel, UnitPresentationGeneration,
 };
 use crate::application::cpu_retirement::CpuRetirementQueue;
 use crate::application::terrain_frame::m2::M2GluePipelineWarmup;
@@ -21,7 +20,7 @@ use crate::application::terrain_frame::m2::M2GluePipelineWarmup;
 /// A population owns one archive/cache worker; no per-object task backlog exists.
 pub(super) struct PopulationWorker<K, T: PreparedPopulation> {
     pending: Option<PendingPopulation<K, T>>,
-    cache: Option<GlueCharacterWorkerCache>,
+    cache: Option<AppearanceWorkerCache>,
     retired: CpuRetirementQueue<T>,
 }
 
@@ -45,7 +44,7 @@ pub(super) struct PopulationRequest<K> {
 
 /// CPU completion precedes incremental driver admission and atomic placement publication.
 enum PopulationStage<T: PreparedPopulation> {
-    Preparing(pending::PendingTask<T>),
+    Preparing(super::worker_presentation::AppearanceTask<T>),
     Warming {
         resident: T,
         pipelines: VecDeque<M2GluePipelineWarmup>,

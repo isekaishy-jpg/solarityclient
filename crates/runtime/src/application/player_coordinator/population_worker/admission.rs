@@ -1,12 +1,12 @@
 //! Population primary-model admission joins the namespace's existing decode authority.
 
+use super::super::worker_presentation::{AppearanceRequest, AppearanceTask};
 use super::super::{RuntimePlayerError, RuntimePlayerPresentation, RuntimePlayerSharedCatalogs};
-use super::pending::{ModelInput, PendingTask, PopulationBank};
 use super::{
     PendingPopulation, PopulationRequest, PopulationStage, PopulationWorker, PreparedPopulation,
 };
-use solarity_asset::{ArchiveCatalog, AssetResourceKey, DecodedM2Model, M2Load, ResourceLease};
-use solarity_cpu::{CpuError, CpuExecutor, CpuService};
+use solarity_asset::{ArchiveCatalog, DecodedM2Model, ResourceLease};
+use solarity_cpu::CpuExecutor;
 
 impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
     /// Reserves execution before claiming a new decoder. Existing producers gate
@@ -33,70 +33,19 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
             }
             return Ok(());
         }
-        let source_key = AssetResourceKey::new(catalog.namespace(), request.model_path);
-        let service = catalog.model_cache_service();
-        let (permit, model) =
-            if let Some(waiting) = service.join_pending(&source_key, CpuService::Required)? {
-                (None, M2Load::Pending(waiting))
-            } else {
-                let permit = match cpu.try_reserve() {
-                    Ok(permit) => permit,
-                    Err(CpuError::AtCapacity { .. }) => return Ok(()),
-                    Err(error) => return Err(error.into()),
-                };
-                (Some(permit), service.request(&source_key)?)
-            };
-        let bank = PopulationBank {
-            catalog,
-            catalogs,
-            level: request.level,
-            cache: self
-                .cache
-                .take()
-                .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?,
-        };
-        let prepare = Box::new(prepare);
-        let task = match model {
-            M2Load::Pending(demand) => {
-                drop(permit);
-                let mut bank = Some(bank);
-                match PendingTask::dependent(cpu, &mut bank, demand, prepare) {
-                    Ok(task) => task,
-                    Err(error) => {
-                        self.cache = Some(
-                            bank.take()
-                                .unwrap_or_else(|| {
-                                    unreachable!("refused appearance retains its bank")
-                                })
-                                .cache,
-                        );
-                        return match error {
-                            CpuError::AtCapacity { .. } => Ok(()),
-                            error => Err(error.into()),
-                        };
-                    }
-                }
-            }
-            ready => {
-                let (model, demand) = match ready {
-                    M2Load::Ready(model) => (ModelInput::Ready(model), None),
-                    M2Load::Producer(producer) => {
-                        let demand = producer.subscribe();
-                        (ModelInput::Producer(producer), Some(demand))
-                    }
-                    M2Load::Pending(_) => unreachable!("pending sources use dependency admission"),
-                };
-                let task = permit
-                    .unwrap_or_else(|| unreachable!("new or ready sources reserve execution"))
-                    .submit(move || bank.prepare(model, prepare));
-                if let Some(demand) = &demand {
-                    assert!(
-                        demand.bind_service(task.service_control()),
-                        "one producer binds each source task"
-                    );
-                }
-                PendingTask::Direct { task, demand }
-            }
+        let Some(task) = AppearanceTask::submit(
+            cpu,
+            AppearanceRequest {
+                catalog,
+                catalogs,
+                level: request.level,
+                model_path: request.model_path,
+            },
+            &mut self.cache,
+            prepare,
+        )?
+        else {
+            return Ok(());
         };
         self.pending = Some(PendingPopulation {
             identity: request.identity,

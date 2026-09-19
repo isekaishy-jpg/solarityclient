@@ -1,19 +1,19 @@
 //! Finite jobs exclusively own their archive and model/texture cache bank.
 
 use super::super::{RuntimePlayerError, RuntimePlayerPresentation, RuntimePlayerSharedCatalogs};
-use super::GlueCharacterWorkerCache;
+use super::AppearanceWorkerCache;
 use crate::application::player_coordinator::population_worker;
 use crate::application::unit_animation::UnitAnimationScene;
 use solarity_asset::{ArchiveCatalog, AssetStoreHandle};
 use solarity_rendering::CharacterComponentTextureLevel;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Worker-local caches retain expensive decode results across finite jobs.
 pub(in crate::application::player_coordinator) fn with_worker_presentation<T>(
     catalog: ArchiveCatalog,
     catalogs: RuntimePlayerSharedCatalogs,
     component_texture_level: CharacterComponentTextureLevel,
-    worker_cache: &mut GlueCharacterWorkerCache,
+    worker_cache: &mut AppearanceWorkerCache,
     prepare: impl FnOnce(&mut RuntimePlayerPresentation) -> Result<T, RuntimePlayerError>,
 ) -> Result<T, RuntimePlayerError> {
     worker_cache.mount(&catalog)?;
@@ -55,8 +55,7 @@ pub(in crate::application::player_coordinator) fn with_worker_presentation<T>(
         glue_character: None,
         requested_glue_character: None,
         glue_worker_catalog: None,
-        glue_worker_cache: Some(GlueCharacterWorkerCache::default()),
-        glue_worker_request: Arc::new(Mutex::new(None)),
+        glue_worker_cache: Some(AppearanceWorkerCache::default()),
         pending_glue_character: None,
         failed_glue_character: None,
     };

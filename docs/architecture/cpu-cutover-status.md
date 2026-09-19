@@ -19,6 +19,26 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Live Glue creation and roster-selection bodies now use the same namespace-wide
+  primary-M2 request adapter as NPC and remote-player appearances. Pending source
+  readiness gates an owned appearance phase without occupying a waiting worker;
+  ready leases enter the existing construction path directly. Admission refusal
+  retains the private archive/cache bank, and ordinary completion restores it
+  before publication or error handling. This does not convert nested attachments,
+  selection pets or the synchronous local-player appearance path.
+- Main owns one selected Glue attempt. Residency or texture-quality changes
+  permanently withdraw that attempt; after it drains, main admits the latest
+  selection. No worker rereads a shared selection mutex or loops through replacement
+  appearances. Facing-only changes reuse residency and apply the latest transform
+  at publication. Current failures retain their selected identity without silent
+  retry. Withdrawal of a published selection removes its resident model on that
+  update, fixing the previous short-circuited removal.
+- Glue residency, source selection, admission and pending ownership now have
+  focused children under `player_coordinator/glue_character`. The common owned
+  dependency adapter lives under `worker_presentation/model_request`. Synchronous
+  creation/selection consumers explicitly retain their local-cache mode; both
+  modes run the same appearance/attachment/animation construction sequence.
+
 - Receiver-uniform evaluation now fans out over independent contiguous ranges,
   sharing one immutable receiver/ancestry bank and the existing light-source bank.
   Main retains callback order and final scene indices; a late vehicle parent can
@@ -379,15 +399,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 - Glue character and population workers now transfer their complete archive/cache
   bank after CPU admission and return it with ordinary success or failure. Cache
   ownership is restored before stale-result rejection or GPU warmup. The worker
-  wrapper shares only selected request metadata instead of a mutex-protected
+  wrapper receives frozen selected inputs instead of a mutex-protected
   archive/cache bank. Model caches retain their existing metadata synchronization.
-- Coalesced Glue character preparation returns to the CPU service queue after each
-  obsolete appearance attempt. It re-reads current demand on the next turn instead
-  of looping through replacements inside one indivisible task. Current failures
-  retain their selected key; withdrawal ends the continuation. Worker ownership,
-  source preparation and coalescing policy now have focused folder modules.
-  One complete appearance attempt remains indivisible; nested model dependencies
-  and shared source adoption for these consumers remain required.
+- Glue replacement attempts return to main after reclaiming the preceding owned
+  task, as described above. One complete appearance construction remains
+  indivisible; nested model dependencies and finer bulk stages remain required.
 - Terrain prewarm, authoritative entry and neighbor streaming now use the same
   owned CPU continuation. Archive mounting yields between MPQs, followed by
   separate WDT/WDL, ADT, mesh, surface/query and placement stages. MTEX resolution
@@ -430,9 +446,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   terrain/liquid consumers, including UI/rendering and phase-specific M2 demand.
   Ordered receiver callbacks, receiver-uniform completion for M2 draws and
   end-of-frame state reclamation still have barriers.
-- Extend pending-request authority beyond runtime audio, Glue primary M2s,
-  asynchronous top-level GameObject M2s and NPC/remote-player primary M2s. Terrain,
-  local/Glue appearance, population attachments/mounts, nested WMO doodads, effects
+- Extend pending-request authority beyond runtime audio, Glue backdrops and
+  creation/selection primary M2s, asynchronous top-level GameObject M2s and
+  NPC/remote-player primary M2s. Terrain, local-player appearance, Glue attachments
+  and pets, population attachments/mounts, nested WMO doodads, effects
   and sky sources still use their existing local decode caches.
   WMO and other source domains need shared pending authority, cross-resource I/O
   dependencies and the remaining domain-wide shared result leases. M2/WMO sources
@@ -493,6 +510,25 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Shared Glue appearance source checkpoint
+
+Final formatting, workspace all-target/all-feature Clippy with warnings denied,
+and the complete workspace suite passed: **1,552 passed, 0 failed, 33 ignored**
+across 90 suite summaries. Six production-coordinator tests replace the former
+three worker-step tests. They cover pending/ready primary-source sharing,
+sole-worker availability during a source wait, latest-selection publication,
+independent withdrawal, abandoned-source failure and cache return, admission
+refusal, quality invalidation and immediate resident removal. The selected
+appearance also matches synchronous atlas mips, geosets and facing. Existing
+population and M2 movement/lighting parity coverage passed in the full suite.
+
+The first focused run used an invalid fixture texture level of zero; the fixture
+now uses stock's supported level eight. The final full run includes quiet handling
+of expected selection cancellation. Logs are in ignored
+`target/glue-shared-final-{fmt,clippy,tests}.{stdout,stderr}.log` and
+`target/glue-shared-validation-summary.json`. These establish source ownership
+and parity contracts, not the complete cutover or a measured FPS gain.
 
 ### Build 149 package and populated world checkpoint
 
