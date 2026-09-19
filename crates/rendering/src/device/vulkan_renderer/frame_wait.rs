@@ -6,7 +6,7 @@ use solarity_cpu::CoordinatorNotifier;
 
 use super::VulkanRenderer;
 use crate::device::gpu_completion::GpuCompletionService;
-use crate::device::{GpuCompletion, VulkanError};
+use crate::device::{CinematicFrameIdentity, GpuCompletion, VulkanError};
 
 /// Independent presentation rings; waiting one never drains the other rings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +24,39 @@ pub enum GpuFrameKind {
 }
 
 impl VulkanRenderer {
+    /// Services native input while readers of a changing movie source finish.
+    /// The exclusive renderer borrow pins all fences and the shared image until
+    /// host observation ends, including callback failure or unwind. Repeating an
+    /// unchanged movie frame does not wait for unrelated presentation slots.
+    ///
+    /// # Errors
+    /// Returns configuration, fence observation, or native service failures.
+    pub fn wait_for_cinematic_source<E: From<VulkanError>>(
+        &mut self,
+        extent: (u32, u32),
+        identity: CinematicFrameIdentity,
+        service_native: impl FnMut(&GpuCompletion<'_>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let completion = self.gpu_completion.as_mut().ok_or_else(|| {
+            VulkanError::operation(
+                "wait for cinematic source",
+                "native waits are not configured",
+            )
+        })?;
+        let _profile = solarity_profiling::profile!("rendering.cinematic_source.native_wait");
+        completion.wait_for_pending(
+            self.cinematic_frames.source_readers(extent, identity),
+            |fence| {
+                // SAFETY: The exclusive renderer borrow excludes submission,
+                // reset and teardown until every host observer has returned.
+                unsafe { self.device.get_fence_status(fence) }.map_err(|source| {
+                    VulkanError::operation("query cinematic source reader", source)
+                })
+            },
+            service_native,
+        )
+    }
+
     /// Starts the renderer-owned host-wait service before native presentation.
     /// Offline renderers retain explicit synchronous presentation. Configuration
     /// does not change submission order or add a frame of latency.

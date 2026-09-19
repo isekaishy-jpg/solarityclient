@@ -187,3 +187,83 @@ fn notifier_panic_is_latched_before_the_next_completion() -> Result<(), Box<dyn 
     assert!(second.is_err_and(|error| error.to_string().contains("notifier panicked")));
     Ok(())
 }
+
+/// One source can be read by several slots. Ready slots skip dispatch; main
+/// cannot return after observing only the first unfinished reader.
+#[test]
+fn shared_source_wait_observes_every_pending_reader() -> Result<(), Box<dyn Error>> {
+    let (started_tx, started) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let (notifier, notified) = mpsc::channel();
+    let mut service = GpuCompletionService::new(
+        move |fence| {
+            let _sent = started_tx.send(fence.as_raw());
+            receive(&released);
+            Ok(())
+        },
+        Arc::new(Signal(notifier)),
+    )?;
+    let mut checked = Vec::new();
+    let mut observed = Vec::new();
+    service.wait_for_pending::<VulkanError>(
+        (1..=4).map(vk::Fence::from_raw),
+        |fence| {
+            checked.push(fence.as_raw());
+            Ok(fence.as_raw().is_multiple_of(2))
+        },
+        |completion| {
+            observed.push(receive(&started));
+            assert!(!completion.is_ready());
+            assert!(release.send(()).is_ok());
+            receive(&notified);
+            assert!(completion.is_ready());
+            Ok(())
+        },
+    )?;
+    assert_eq!(checked, [1, 2, 3, 4]);
+    assert_eq!(observed, [1, 3]);
+    assert!(started.try_recv().is_err());
+    Ok(())
+}
+
+/// A native failure drains its current host observer, then stops before touching
+/// later readers. The next scoped operation can safely reuse the service.
+#[test]
+fn failed_shared_source_service_drains_only_its_current_reader() -> Result<(), Box<dyn Error>> {
+    let (release, released) = mpsc::channel();
+    let completed = Arc::new(AtomicUsize::new(0));
+    let backend_completed = Arc::clone(&completed);
+    let (notifier, _notified) = mpsc::channel();
+    let mut service = GpuCompletionService::new(
+        move |_| {
+            receive(&released);
+            backend_completed.fetch_add(1, Ordering::Release);
+            Ok(())
+        },
+        Arc::new(Signal(notifier)),
+    )?;
+    let mut checked = Vec::new();
+    let result = service.wait_for_pending::<VulkanError>(
+        (1..=3).map(vk::Fence::from_raw),
+        |fence| {
+            checked.push(fence.as_raw());
+            Ok(false)
+        },
+        |_| {
+            assert!(release.send(()).is_ok());
+            Err(VulkanError::operation(
+                "fixture source service",
+                "native failure",
+            ))
+        },
+    );
+    assert!(result.is_err_and(|error| error.to_string().contains("native failure")));
+    assert_eq!(checked, [1]);
+    assert_eq!(completed.load(Ordering::Acquire), 1);
+    service.wait_for_pending::<VulkanError>(
+        [vk::Fence::from_raw(9)],
+        |_| Ok(true),
+        |_| panic!("ready reader cannot enter native service"),
+    )?;
+    Ok(())
+}

@@ -14,6 +14,23 @@ pub(in crate::application) enum GpuFrameWaitError {
 }
 
 impl FrameWait<'_> {
+    /// A new authored movie frame replaces one image shared by every slot. Drain
+    /// those readers through the native bridge before the existing upload owner
+    /// writes pixels; decoded timing and audio selection remain unchanged.
+    pub(in crate::application) fn before_cinematic_source(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        extent: (u32, u32),
+        identity: solarity_rendering::CinematicFrameIdentity,
+    ) -> Result<(), GpuFrameWaitError> {
+        let Self::Native(platform) = self else {
+            return Ok(());
+        };
+        renderer.wait_for_cinematic_source(extent, identity, |completion| {
+            platform.wait_until_ready(|| Ok(completion.is_ready()))
+        })
+    }
+
     /// Leaves all gameplay events queued and retains renderer ownership until
     /// its external host wait has released the fence. Offline rendering uses
     /// the existing synchronous wait inside presentation.

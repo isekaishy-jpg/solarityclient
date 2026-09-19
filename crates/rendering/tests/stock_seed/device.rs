@@ -17,6 +17,17 @@ impl solarity_cpu::CoordinatorNotifier for GpuSignal {
     }
 }
 
+/// Uses durable completion and a coalesced wake; the deadline only detects hangs.
+fn service_gpu(completion: &solarity_rendering::GpuCompletion<'_>) -> Result<(), VulkanError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !completion.is_ready() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        assert!(!remaining.is_zero(), "GPU completion notification was lost");
+        thread::park_timeout(remaining);
+    }
+    Ok(())
+}
+
 /// Stock's 0x0095EBF0 update retains decoded surfaces until frame identity changes.
 #[test]
 fn cinematic_frame_reuses_the_authored_source_between_display_refreshes()
@@ -37,33 +48,44 @@ fn cinematic_frame_reuses_the_authored_source_between_display_refreshes()
     let pixels = vec![0x7F_u8; 32 * 16 * 4];
     let identity = CinematicFrameIdentity::new(7, 11);
 
+    renderer.wait_for_cinematic_source::<VulkanError>((32, 16), identity, |_| {
+        panic!("a first movie source has no readers")
+    })?;
     renderer
         .wait_for_frame_slot::<VulkanError>(solarity_rendering::GpuFrameKind::Cinematic, |_| {
             panic!("an unallocated frame ring must not enter native waiting")
         })?;
     renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(false));
+    renderer.wait_for_cinematic_source::<VulkanError>((32, 16), identity, |_| {
+        panic!("unchanged movie pixels cannot drain unrelated slots")
+    })?;
     renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(true));
-    renderer.present_cinematic_rgba8(CinematicFrameIdentity::new(7, 12), (32, 16), &pixels)?;
-    assert_eq!(renderer.report().presented_source_reused(), Some(false));
     let identity = CinematicFrameIdentity::new(7, 12);
+    renderer.wait_for_cinematic_source((32, 16), identity, service_gpu)?;
+    renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
+    assert_eq!(renderer.report().presented_source_reused(), Some(false));
     for _ in 0..16 {
         renderer.wait_for_frame_slot::<VulkanError>(
             solarity_rendering::GpuFrameKind::Cinematic,
-            |completion| {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-                while !completion.is_ready() {
-                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                    assert!(!remaining.is_zero(), "GPU completion notification was lost");
-                    thread::park_timeout(remaining);
-                }
-                Ok(())
-            },
+            service_gpu,
         )?;
         renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
         assert_eq!(renderer.report().presented_source_reused(), Some(true));
     }
+    // Replacing the source extent uses the same complete reader boundary. A
+    // captured uniform color proves the new pixels, not stale previous storage.
+    let pixels = [23, 57, 91, 255].repeat(16 * 32);
+    let identity = CinematicFrameIdentity::new(8, 0);
+    renderer.wait_for_cinematic_source((16, 32), identity, service_gpu)?;
+    renderer.request_frame_capture()?;
+    renderer.present_cinematic_rgba8(identity, (16, 32), &pixels)?;
+    assert_eq!(renderer.report().presented_source_reused(), Some(false));
+    let capture = renderer.take_captured_frame()?.ok_or("movie capture")?;
+    let (width, height) = capture.extent();
+    let center = ((height / 2 * width + width / 2) * 4) as usize;
+    assert_eq!(&capture.rgba8()[center..center + 4], &[23, 57, 91, 255]);
     renderer.shutdown()?;
     Ok(())
 }

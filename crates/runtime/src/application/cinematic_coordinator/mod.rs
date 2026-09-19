@@ -121,9 +121,10 @@ impl RuntimeCinematicCoordinator {
         ) {
             return Ok(RuntimeCinematicPoll::Waiting { remaining });
         }
-        wait.before_gpu_frame(renderer, solarity_rendering::GpuFrameKind::Cinematic)?;
         let source_extent = (active.current.width(), active.current.height());
         let identity = CinematicFrameIdentity::new(active.generation, active.frame_index);
+        wait.before_cinematic_source(renderer, source_extent, identity)?;
+        wait.before_gpu_frame(renderer, solarity_rendering::GpuFrameKind::Cinematic)?;
         if let Some((logical_extent, draws)) = overlay {
             renderer.present_cinematic_rgba8_with_ui(
                 identity,
@@ -267,7 +268,7 @@ pub enum RuntimeCinematicError {
     /// Vulkan could not present a decoded movie frame.
     #[error(transparent)]
     Present(#[from] VulkanError),
-    /// The native coordinator could not service a GPU-slot wait.
+    /// The native coordinator could not service a GPU slot or source-reader wait.
     #[error(transparent)]
     Platform(#[from] crate::platform::PlatformError),
     /// SDL could not start, feed, or stop the movie audio track.
@@ -291,37 +292,5 @@ impl From<super::frame_pipeline::GpuFrameWaitError> for RuntimeCinematicError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::repeated_frame_wait;
-    use std::time::Duration;
-
-    #[test]
-    fn first_and_advanced_frames_present_immediately() {
-        let deadline = Duration::from_millis(40);
-        let elapsed = Duration::from_millis(10);
-        assert_eq!(repeated_frame_wait(None, 0, deadline, elapsed), None);
-        assert_eq!(repeated_frame_wait(Some(0), 1, deadline, elapsed), None);
-    }
-
-    #[test]
-    fn repeated_frame_waits_only_until_its_authored_deadline() {
-        assert_eq!(
-            repeated_frame_wait(
-                Some(7),
-                7,
-                Duration::from_millis(75),
-                Duration::from_millis(50),
-            ),
-            Some(Duration::from_millis(25)),
-        );
-        assert_eq!(
-            repeated_frame_wait(
-                Some(7),
-                7,
-                Duration::from_millis(50),
-                Duration::from_millis(75),
-            ),
-            Some(Duration::ZERO),
-        );
-    }
-}
+#[path = "../../../tests/application/cinematic_timing.rs"]
+mod tests;

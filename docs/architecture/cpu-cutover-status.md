@@ -19,6 +19,15 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Live cinematic presentation now services native input while every reader of
+  a changing decoded image retires. It uses the renderer's existing dedicated
+  completion thread and reusable request/result cell; no general CPU job waits
+  for a GPU fence. Ready readers skip dispatch, and unchanged movie identities
+  and dimensions do not drain unrelated slots. The exclusive renderer borrow
+  pins reader fences and source storage through success, native failure and
+  unwind. Movie decode, audio-master time, frame selection and upload order stay
+  unchanged. F10 records `rendering.cinematic_source.native_wait`.
+
 - CPU now supplies a retained main-thread readiness queue. Its bounded numeric
   nodes and prerequisite subscriptions use the existing storage budget; runtime
   retains all non-Send owners and execution. Registration rolls back on refusal,
@@ -125,8 +134,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   No gameplay callback runs in this wait. F10 records the moved wait in
   `rendering.gpu_slot.native_wait`; the inner world's fence timing now records
   only its remaining synchronous wait. Frame-slot readiness does not mean asset
-  upload readiness. Source reallocation waits, image acquisition, uploads, buffer
-  growth/device-idle waits and useful main-ready continuations remain required.
+  upload readiness. Cinematic shared-source reader waits are connected as above;
+  image acquisition, remaining uploads, buffer growth/device-idle waits and
+  further main-ready continuations remain required.
 
 - Live world, Glue and world-replay frame consumption now uses an explicit
   main-owned native wait context. Unfinished root palettes yield before placement
@@ -531,6 +541,24 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Cinematic source-reader checkpoint
+
+Formatting, workspace all-target/all-feature Clippy with warnings denied, and
+the full workspace suite passed: **1,567 passed, zero failed, 33 ignored** across
+93 summaries. Controlled completion tests verify that all unfinished readers
+are observed, ready readers skip dispatch, and native failure drains the current
+observer without touching subsequent readers. Existing panic, driver failure,
+notification and shutdown checks also passed.
+
+The hidden Vulkan cinematic fixture now checks no-reader and unchanged-source
+paths, changed frame identity, source dimension replacement and the new image's
+actual center pixel. Repeated display refreshes retain their authored source.
+Existing cinematic deadline tests moved unchanged into the external test tree.
+These checks establish readiness/lifetime and pixel behavior, not a live movie
+latency or in-world FPS improvement. Logs are in ignored
+`target/cinematic-readers-focused.log`, `target/cinematic-readers-final-*` and
+`target/cinematic-readers-validation-summary.json`.
 
 ### Build 151 package and main continuation replay
 

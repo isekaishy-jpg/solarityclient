@@ -315,6 +315,21 @@ impl FrameResources {
             || self.identity != identity
     }
 
+    /// A changed decoded source must outlive every submitted reader. An unchanged
+    /// frame needs only its next presentation slot and must not drain this ring.
+    pub(super) fn source_readers(
+        &self,
+        extent: (u32, u32),
+        identity: Option<CinematicFrameIdentity>,
+    ) -> impl Iterator<Item = vk::Fence> + '_ {
+        let count = if self.requires_upload(extent, identity) {
+            self.slots.len()
+        } else {
+            0
+        };
+        self.slots.iter().take(count).map(FrameSlot::fence)
+    }
+
     /// Waits every source reader before decoded pixels may be replaced.
     pub(super) fn wait_all(&self, device: &Device) -> Result<(), VulkanError> {
         let _profile_scope =

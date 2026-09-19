@@ -80,6 +80,24 @@ impl GpuCompletionService {
         Ok(())
     }
 
+    /// Drains only unfinished readers of one shared resource. The renderer keeps
+    /// all handles pinned for the complete sequence; no temporary fence bank or
+    /// CPU worker is needed. Ready readers never dispatch a host wait.
+    pub(in crate::device) fn wait_for_pending<E: From<VulkanError>>(
+        &mut self,
+        fences: impl IntoIterator<Item = vk::Fence>,
+        mut is_ready: impl FnMut(vk::Fence) -> Result<bool, VulkanError>,
+        mut service_native: impl FnMut(&GpuCompletion<'_>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.check_health()?;
+        for fence in fences {
+            if !is_ready(fence)? {
+                self.wait_for(fence, &mut service_native)?;
+            }
+        }
+        Ok(self.check_health()?)
+    }
+
     /// The device owner must keep the fence live and exclude reset, destruction
     /// and submission throughout this call. `VulkanRenderer`'s exclusive borrow
     /// supplies that invariant. The local completion drains on error and unwind.

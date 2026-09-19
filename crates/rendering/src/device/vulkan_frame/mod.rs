@@ -60,6 +60,16 @@ impl FrameRenderer {
         self.resources.pending_fence()
     }
 
+    /// Exposes shared-source readers without changing the selected movie frame,
+    /// resetting fences, or advancing the presentation ring.
+    pub(in crate::device) fn source_readers(
+        &self,
+        extent: (u32, u32),
+        identity: CinematicFrameIdentity,
+    ) -> impl Iterator<Item = vk::Fence> + '_ {
+        self.resources.source_readers(extent, Some(identity))
+    }
+
     /// Uploads a changed authored frame and presents it without CPU resampling.
     pub(super) fn present(&mut self, context: FrameContext<'_>) -> Result<bool, VulkanError> {
         let _profile_scope =

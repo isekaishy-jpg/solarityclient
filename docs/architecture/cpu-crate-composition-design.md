@@ -321,7 +321,12 @@ GPU waits. Rendering owns one persistent host-wait thread and a single reusable
 completion cell; already-signaled slots skip dispatch. The scoped renderer borrow
 excludes fence reuse/destruction, drains on native errors/unwind and joins the
 thread before Vulkan teardown. The worker publishes terminal state before native
-notification and never occupies the CPU executor. It does not service uploads,
+notification and never occupies the CPU executor. Cinematic source replacement
+now observes all pending readers through that same service before modifying the
+shared image; unchanged identity/extent skips source observation. The scoped
+renderer borrow covers the complete reader sequence and drains the current
+observer on native failure or unwind. Decode/audio clocks remain on their
+existing ordered path. This does not service image uploads generally,
 image acquisition or resource-growth/device-idle waits. The retained CPU
 `MainReadyQueue` now carries numeric world continuation notices; runtime keeps
 non-Send state and operation execution. Complete phase storage is reserved before
