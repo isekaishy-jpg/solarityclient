@@ -389,12 +389,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 145 was packaged and installed on 2026-09-19 from `1737172a`. It services
-native input at M2 CPU consumption boundaries while preserving ordered state.
-It includes Build 144's shared NPC/remote-player primary sources and withdrawn
-appearance ownership, Build 143's root-pose readiness yield, Build 142's geometry
-overlap and Build 141's resource-gated loading, epoch registration and resumable
-terrain changes.
+Build 146 was packaged and installed on 2026-09-19 from `213df652`. It connects
+native GPU presentation-slot waits for world/Glue, UI/loading and cinematic
+frames, retaining Build 145's M2 CPU native waits and earlier shared-source,
+ordered-continuation, geometry-overlap and resumable-loading changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -437,6 +435,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 146 package checkpoint
+
+Build **146** was reserved and compiled through `scripts/build-client.ps1`, then
+installed through `install-test-client.ps1 -SkipBuild`. The optimized build
+completed in 5m18s. Source was frozen during compilation at
+`213df6522b63df626a726039fc6f9c1352936470`; `dirty=true` records only the reserved
+`BUILD_NUMBER`. Installed executable and package SHA-256 both match
+`5C7D827DFECF8F8AD1F423E728280A41EF25BF8551079E9D2AE76A9B2E820465`.
+
+The Testing manifest, executable `--build-info`, launcher and Desktop shortcut
+were verified. Settings remain 2560 x 1440 fullscreen-windowed, four CPU workers,
+capacity 256, two network workers and GPU zero. F10 remains opt-in. No interactive
+client was launched and no live FPS or wait-overhead gain is claimed. Final
+workspace tests passed as below; post-review formatting and workspace Clippy
+also passed (`target/gpu-slot-post-review-clippy.*.log`). Package logs are in
+ignored `target/gpu-slot-package.*.log`, with an exit sentinel of zero.
 
 ### Native GPU-slot checkpoint
 
