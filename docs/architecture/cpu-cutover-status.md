@@ -343,9 +343,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 142 was packaged and installed on 2026-09-19 from `68b3f19f`. It includes
-the connected independent world preparation boundary on top of Build 141's
-resource-gated loading, epoch registration and resumable terrain changes.
+Build 143 was packaged and installed on 2026-09-19 from `4d9cc31d`. It lets
+independent world preparation run before the first unfinished root pose, extending
+Build 142's geometry overlap and Build 141's resource-gated loading, epoch
+registration and resumable terrain changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -388,6 +389,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 143 package checkpoint
+
+Build **143** was reserved and compiled through `scripts/build-client.ps1`, then
+installed with `scripts/install-test-client.ps1 -SkipBuild`. The Testing shortcut
+points at the installed executable. Its source identity is
+`4d9cc31d4033f39cb22c9f867a31ab5df384e685`; `dirty=true` records the pending
+BUILD_NUMBER reservation, which was the only tracked change during packaging.
+The optimized build completed successfully in 4m 35s.
+
+Artifact and installed SHA-256 both equal
+`E3027E858229A28D9A461F05CF12B32924FCD0B503FC8175BFE03A5D1DAD03CE`.
+The installed launcher retains 2560x1440 fullscreen-windowed, four CPU workers,
+capacity 256, two network workers and GPU zero. F10 remains opt-in. No live client
+was launched for this package and no frame-rate gain is established.
+Packaging logs are in ignored `target/m2-readiness-package.stdout.log` and
+`target/m2-readiness-package.stderr.log`.
 
 ### Root-pose readiness checkpoint
 
