@@ -591,9 +591,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 157 was packaged and installed on 2026-09-19 from `22ea7197`. It corrects
-CPU/native wait attribution and retains owned render palettes/shadow packets
-and bounded small-model dispatch groups,
+Build 158 was packaged and installed on 2026-09-19 from `2646c03d`. It adds owned
+static M2 admission, retaining corrected CPU/native wait attribution, owned render
+palettes/shadow packets and bounded small-model dispatch groups,
 retaining local-player worker construction and shared primary requests, cost
 arbitration across phases, measured M2 job ordering and receiver partitioning,
 retaining cinematic
@@ -643,6 +643,30 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 158 package checkpoint
+
+The numbered Testing artifact was built from
+`2646c03dccedca892f2b27438ab8cd1ba2c8018b` using
+`scripts/build-client.ps1 -Profile test-client` and installed with `-SkipBuild`.
+Source and index remained frozen during compilation; `dirty=true` records the
+reserved `BUILD_NUMBER` change. Optimized compilation finished in 4m42s and the
+package helper exited zero. Parent PowerShell's native-stderr wrapping was not a
+compiler failure; the completed artifact, helper exit and installed identity
+were checked together.
+
+Installation completed at `2026-09-19T16:50:45.7764625-04:00`. The installed and
+compiled executable SHA-256 values both equal
+`8F6538A0A4674261FE99401121B75172EE5F69A7A1B54141ED8AA5FFE361D560`.
+Executable identity, installed manifest and desktop launcher target were verified.
+The launcher retains four CPU workers/capacity 256, two network workers,
+2560 x 1440 fullscreen-windowed, GPU 0 and opt-in F10 capture. No interactive
+client was launched. Artifacts are `target/m2-spatial-package.*` and
+`target/m2-spatial-install.*`.
+
+The source checks and hidden replay are recorded below. This is a connected
+static-admission checkpoint, not completion of the full cutover or a measured
+live FPS gain.
 
 ### Owned static admission checkpoint
 
