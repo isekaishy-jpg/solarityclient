@@ -524,8 +524,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 153 was packaged and installed on 2026-09-19 from `967ca325`. It connects
-measured M2 job cost ordering and receiver partitioning, retaining cinematic
+Build 154 was packaged and installed on 2026-09-19 from `f5a9540b`. It connects
+cost arbitration across phases, measured M2 job ordering and receiver partitioning,
+retaining cinematic
 shared-source reader waits, the main
 readiness queue/world integration, shared Glue appearance sources, receiver-uniform
 batches, the shared light-source bank, terrain/liquid overlap, resumable M2 phases,
@@ -572,6 +573,22 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 154 package checkpoint
+
+Build **154** compiled through `scripts/build-client.ps1` in 6m21s from
+`f5a9540bcd57cda92733d30457b5a3e424b7bbd0`. Tracked source and index stayed fixed
+during compilation; `dirty=true` records only the reserved `BUILD_NUMBER`.
+Package and installed executable SHA-256 match
+`0C6F09C478BC89992CD81C38A9B9447916FDBAC8CB85A25E16C1EC8E1D25CAEE`.
+Installation used `install-test-client.ps1 -SkipBuild`; executable identity,
+manifest, launcher and desktop shortcut were verified. Testing retains
+2560 x 1440 fullscreen-windowed, four CPU workers, capacity 256, two network
+workers and GPU zero, with F10 opt-in. No interactive client was launched.
+
+The full source checks passed as recorded below. This package does not complete
+the CPU cutover or establish a live FPS gain. Evidence is retained in ignored
+`target/phase-cost-package.log` and `target/phase-cost-install.log`.
 
 ### Cost arbitration across phases checkpoint
 
