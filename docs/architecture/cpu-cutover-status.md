@@ -409,10 +409,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 146 was packaged and installed on 2026-09-19 from `213df652`. It connects
-native GPU presentation-slot waits for world/Glue, UI/loading and cinematic
-frames, retaining Build 145's M2 CPU native waits and earlier shared-source,
-ordered-continuation, geometry-overlap and resumable-loading changes.
+Build 147 was packaged and installed on 2026-09-19 from `1fc8f935`. It connects
+resumable M2 phases and revisits root admission between ground-detail and WMO
+preparation, retaining Build 146's native GPU presentation-slot waits and the
+earlier CPU native waits, shared-source, geometry-overlap and loading changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -455,6 +455,22 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 147 package checkpoint
+
+Build **147** was reserved and compiled through `scripts/build-client.ps1`, then
+installed through `install-test-client.ps1 -SkipBuild`. The optimized build
+completed in 5m40s. Source was frozen during compilation at
+`1fc8f9359b1565f83c1c074fd810ea7b3c28e481`; `dirty=true` records only the reserved
+`BUILD_NUMBER`. Installed executable and package SHA-256 both match
+`A39427B12637CD7EE7A3B6AF65ADD4EB000267667E4B37C58A4D935BC4176614`.
+
+The Testing manifest, executable `--build-info`, launcher and Desktop shortcut
+were verified. Settings remain 2560 x 1440 fullscreen-windowed, four CPU workers,
+capacity 256, two network workers and GPU zero. F10 remains opt-in. No interactive
+client was launched and no live FPS or wait-overhead gain is claimed. Validation
+for the unchanged runtime source is recorded immediately below. Packaging logs
+are in ignored `target/main-continuation-package.*` files.
 
 ### Resumable M2 phase checkpoint
 
