@@ -578,8 +578,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 156 was packaged and installed on 2026-09-19 from `b34a6859`. It connects
-owned render palettes/shadow packets and bounded small-model dispatch groups,
+Build 157 was packaged and installed on 2026-09-19 from `22ea7197`. It corrects
+CPU/native wait attribution and retains owned render palettes/shadow packets
+and bounded small-model dispatch groups,
 retaining local-player worker construction and shared primary requests, cost
 arbitration across phases, measured M2 job ordering and receiver partitioning,
 retaining cinematic
@@ -629,6 +630,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 157 package checkpoint
+
+Build **157** compiled through `scripts/build-client.ps1` in 6m37s from
+`22ea7197d0d86eef654c779d6f0ed55140703838`. Tracked source and index stayed fixed
+during compilation; `dirty=true` records only the reserved `BUILD_NUMBER`.
+Package and installed executable SHA-256 match
+`B0F279A94A1E76AFBBEBE9644D6A1456B3924EC86F5367FC9C164637EEE74F47`.
+Installation used `install-test-client.ps1 -SkipBuild`; executable identity,
+manifest, launcher and desktop shortcut were verified. Testing retains
+2560 x 1440 fullscreen-windowed, four CPU workers, capacity 256, two network
+workers and GPU zero, with F10 opt-in. No interactive client was launched.
+
+The source checks and observer experiment are recorded below. This package
+corrects measurement boundaries; it does not establish a live FPS gain or finish
+the complete cutover. Logs remain in ignored `target/cpu-consumption-package.log`
+and `target/cpu-consumption-install.log`.
 
 ### CPU consumption and native-wait tracing checkpoint
 
