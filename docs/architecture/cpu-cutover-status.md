@@ -19,6 +19,24 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- CPU now supplies a retained main-thread readiness queue. Its bounded numeric
+  nodes and prerequisite subscriptions use the existing storage budget; runtime
+  retains all non-Send owners and execution. Registration rolls back on refusal,
+  failed fan-in releases unrelated subscriptions, and cancellation withdraws only
+  this consumer. Late notifications cannot publish into a reused epoch. A main
+  consumer can be admitted even when its producing frame fills worker admission.
+- World preparation uses this queue for ground detail, WMO packets, lit surfaces
+  and receiver completion. Ground/WMO ordering and receiver callback placement
+  stay unchanged. Terrain/liquid consumes published light sources while receiver
+  computation can continue; terminal M2 reclamation still returns every worker
+  pin. The driver drains permitted notices before its native/offline wait.
+  Dropping a partial world phase cancels subscriptions and closes its producers.
+- F10 links `cpu.main.request`, `cpu.main.ready` and `cpu.main.consume` to the
+  producing phase, alongside `world.main_continuation` and
+  `frame_pipeline.main_ready_wait`. This establishes a common continuation
+  mechanism and its world consumer; UI/FrameXML order is unchanged. Loading,
+  upload/acquire/growth and other main-only consumers still need integration.
+
 - Live Glue creation and roster-selection bodies now use the same namespace-wide
   primary-M2 request adapter as NPC and remote-player appearances. Pending source
   readiness gates an owned appearance phase without occupying a waiting worker;
@@ -92,8 +110,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   own future append. Unfinished waits reject CPU workers. Dropping an M2
   continuation restores lighting storage as well as poses and effect state.
   This establishes resumable frame phases and two interleaved main operations;
-  it does not yet implement the complete cross-domain main-ready queue or loading
-  and upload continuation graph.
+  the numeric main-ready queue described above now carries world consumers,
+  while the complete cross-domain loading/upload continuation graph remains open.
 
 - Live world/Glue, UI/loading and cinematic presentation now service native input
   while their exact next GPU frame slot is unavailable. One rendering-owned
@@ -423,7 +441,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Still required for the complete cutover
 
-- Typed shared-result leases across domains and main-only continuations.
+- Typed shared-result leases across domains and remaining main-only continuations.
+  Numeric main-ready storage and the four world operations are connected.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
 - Calibrated cost buckets, straggler reporting and measured step-size policy;
@@ -439,7 +458,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   final frame streams, ordinary asset buffers and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, GPU upload/acquire/growth waits
-  and useful main-ready continuations; presentation-slot waits are connected.
+  and further useful main-ready continuations; world preparation and
+  presentation-slot waits are connected.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
 - Extend cross-domain overlap beyond the connected ground-detail/WMO and
@@ -511,6 +531,25 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Main readiness and world continuation checkpoint
+
+Formatting, workspace all-target/all-feature Clippy with warnings denied, and
+the full workspace suite passed: **1,565 passed, zero failed, 33 ignored** across
+93 test summaries. New coverage checks worker/main/worker dependencies with
+non-Send main state, subscription rollback, registration/publication races,
+failed fan-in with a never-ready sibling, cancellation/reuse, admission while
+worker capacity is full, and rejection of worker-side waits. A separate fixture
+observes zero allocations across 1,000 warmed queue epochs. A capture fixture
+verifies main readiness links to the actual producing CPU phase across frames.
+
+World tests cover surfaces before receiver completion, ground failure without
+preventing model cleanup, and abandoned-frame isolation. Existing moving M2,
+receiver lighting and rendering parity checks passed in the workspace run.
+The fixture's allocation result covers scheduler metadata only; it does not
+establish whole-client allocation behavior, live FPS or complete domain memory
+accounting. Logs are in ignored `target/main-ready-final-*` and
+`target/main-ready-validation-summary.json`.
 
 ### Build 150 package and Glue transition checkpoint
 

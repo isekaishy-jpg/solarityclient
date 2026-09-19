@@ -22,6 +22,24 @@ pub(in crate::application) enum FrameWaitError {
 }
 
 impl FrameWait<'_> {
+    /// Parks only after the driver has drained permitted main continuations.
+    pub(in crate::application) fn before_continuation(
+        &mut self,
+        queue: &solarity_cpu::MainReadyQueue,
+    ) -> Result<(), FrameWaitError> {
+        if queue.has_ready() {
+            return Ok(());
+        }
+        let _profile = solarity_profiling::profile!("frame_pipeline.main_ready_wait");
+        match self {
+            Self::Native(platform) => platform.wait_until_ready(|| Ok(queue.has_ready())),
+            Self::Offline => {
+                queue.wait_until_ready()?;
+                Ok(())
+            }
+        }
+    }
+
     /// Waits for the exact next consumer, not every later result. Offline callers
     /// use the executor condition wait without consuming its payload. Terminal domain failures
     /// remain with that consumer rather than changing publication precedence.

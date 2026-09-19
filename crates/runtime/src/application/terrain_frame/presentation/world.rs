@@ -181,6 +181,14 @@ impl TerrainFrame {
             -environment.light_direction(),
             solarity_asset::exterior_light_ray_at(environment.day_fraction()),
         );
+        if self.main_preparation.is_none() {
+            self.main_preparation = Some(super::WorldMainPreparation::new(cpu)?);
+        }
+        let mut main = self
+            .main_preparation
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("world main preparation was initialized"))
+            .begin(cpu)?;
         let mut pending_m2 = self.m2.begin_visible_draws_with_unit_effects(
             renderer,
             cpu,
@@ -229,7 +237,10 @@ impl TerrainFrame {
             .world_terrain_frustum(camera)
             .map_err(RuntimeTerrainFrameError::from)
             .map(|frustum| (frustum, Ok(())));
-        for step in super::MainPreparationStep::ORDERED {
+        while !main.initial_done() {
+            let (step, outcome) = main
+                .take_ready()
+                .ok_or(solarity_cpu::CpuError::CompletionLost)?;
             // Revisit ready root palettes between main-only operations. This can
             // release geometry while the following WMO operation is still pending.
             pending_m2.try_admit(
@@ -248,33 +259,41 @@ impl TerrainFrame {
                         doodads: self.world_models.shadow_doodads(),
                     }),
             )?;
-            let Ok((exterior_frustum, wmo)) = &mut independent else {
-                continue;
-            };
             let _profile = solarity_profiling::profile!("world.independent_preparation");
-            match step {
-                super::MainPreparationStep::GroundDetail => {
-                    if let Err(error) = self.ground_detail.prepare(
-                        renderer,
-                        terrain.resident_tiles(),
-                        camera,
-                        *exterior_frustum,
-                    ) {
-                        independent = Err(error);
+            let _trace =
+                solarity_profiling::TraceSpan::new("world.main_continuation", step as u64, 0);
+            if let Ok((exterior_frustum, wmo)) = &mut independent {
+                debug_assert_eq!(outcome, solarity_cpu::JobOutcome::Succeeded);
+                match step {
+                    super::MainPreparationStep::GroundDetail => {
+                        if let Err(error) = self.ground_detail.prepare(
+                            renderer,
+                            terrain.resident_tiles(),
+                            camera,
+                            *exterior_frustum,
+                        ) {
+                            independent = Err(error);
+                        }
+                    }
+                    super::MainPreparationStep::WorldModels => {
+                        *wmo = self
+                            .world_models
+                            .prepare_visible_draws(
+                                renderer,
+                                terrain.world_model_scene_groups(),
+                                environment.world_model_emissive(),
+                                environment.ordinary_model_fog().color(),
+                                fog.color(),
+                            )
+                            .map(|_| ());
+                    }
+                    super::MainPreparationStep::Surfaces | super::MainPreparationStep::Uniforms => {
+                        unreachable!("light continuations follow initial world preparation")
                     }
                 }
-                super::MainPreparationStep::WorldModels => {
-                    *wmo = self
-                        .world_models
-                        .prepare_visible_draws(
-                            renderer,
-                            terrain.world_model_scene_groups(),
-                            environment.world_model_emissive(),
-                            environment.ordinary_model_fog().color(),
-                            fog.color(),
-                        )
-                        .map(|_| ());
-                }
+            }
+            if step == super::MainPreparationStep::GroundDetail {
+                main.ground_finished(independent.is_ok())?;
             }
         }
         profile.mark("independent ground detail and WMO packets");
@@ -300,38 +319,63 @@ impl TerrainFrame {
                         doodads: self.world_models.shadow_doodads(),
                     }),
             )?;
-            if surface_result.is_none()
-                && let Ok((exterior_frustum, _)) = &independent
-                && let Some(lights) = pending_m2.scene_lights()
-            {
-                let (lighting, fog) = liquid_environment(environment, camera, glare_lighting);
-                surface_result = Some(
-                    super::surfaces::SurfacePreparation {
-                        tiles: &self.tiles,
-                        terrain_draws: &mut self.visible_draws,
-                        liquid_draws: &mut self.liquid_draws,
-                        world_models: &self.world_models,
+            if !main.sources_published() && pending_m2.scene_lights().is_some() {
+                main.publish_sources(pending_m2.receiver_completion()?)?;
+            }
+            while let Some((step, outcome)) = main.take_ready() {
+                let _trace =
+                    solarity_profiling::TraceSpan::new("world.main_continuation", step as u64, 0);
+                match step {
+                    super::MainPreparationStep::Surfaces => {
+                        if outcome != solarity_cpu::JobOutcome::Succeeded {
+                            continue;
+                        }
+                        let (exterior_frustum, _) = independent.as_ref().unwrap_or_else(|_| {
+                            unreachable!("surface readiness requires successful ground preparation")
+                        });
+                        let lights = pending_m2.scene_lights().unwrap_or_else(|| {
+                            unreachable!("surface readiness follows light publication")
+                        });
+                        let (lighting, fog) =
+                            liquid_environment(environment, camera, glare_lighting);
+                        surface_result = Some(
+                            super::surfaces::SurfacePreparation {
+                                tiles: &self.tiles,
+                                terrain_draws: &mut self.visible_draws,
+                                liquid_draws: &mut self.liquid_draws,
+                                world_models: &self.world_models,
+                            }
+                            .prepare(
+                                renderer,
+                                terrain,
+                                super::surfaces::SurfaceInputs {
+                                    exterior_frustum: *exterior_frustum,
+                                    camera,
+                                    lighting,
+                                    fog,
+                                    ordinary_model_fog: environment.ordinary_model_fog().color(),
+                                    liquid_time_ms,
+                                    specular_enabled,
+                                },
+                                lights,
+                            ),
+                        );
                     }
-                    .prepare(
-                        renderer,
-                        terrain,
-                        super::surfaces::SurfaceInputs {
-                            exterior_frustum: *exterior_frustum,
-                            camera,
-                            lighting,
-                            fog,
-                            ordinary_model_fog: environment.ordinary_model_fog().color(),
-                            liquid_time_ms,
-                            specular_enabled,
-                        },
-                        lights,
-                    ),
-                );
+                    super::MainPreparationStep::Uniforms => {}
+                    super::MainPreparationStep::GroundDetail
+                    | super::MainPreparationStep::WorldModels => {
+                        unreachable!("initial world continuations were consumed before receivers")
+                    }
+                }
             }
             if ready {
                 break;
             }
-            pending_m2.wait(wait)?;
+            if main.needs_uniform_notice() {
+                main.wait(wait)?;
+            } else {
+                pending_m2.wait(wait)?;
+            }
         }
         let m2 = pending_m2.into_visible_frame()?;
         let (_, wmo_result) = independent?;

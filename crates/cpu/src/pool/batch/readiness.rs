@@ -86,7 +86,11 @@ impl<T: Send + 'static> Core<T> {
             .completion
             .clone()
             .unwrap_or_else(|| unreachable!("admitted phase owns completion identity"));
+        let trace = state.trace;
         drop(state);
+        // Continuation readiness belongs to this phase, even when a later
+        // scheduler turn performs final publication after the last kernel.
+        let _trace = trace.enter();
         self.completion_port.complete(&completion, outcome);
         let mut state = self.lock();
         state.finishing = false;

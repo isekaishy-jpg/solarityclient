@@ -584,6 +584,7 @@ struct TerrainGpuTile {
 
 /// Resident world composition whose placement state survives tile changes.
 pub(super) struct TerrainFrame {
+    main_preparation: Option<presentation::WorldMainPreparation>,
     tile: Option<TerrainTileIndex>,
     map_id: Option<u32>,
     tiles: Vec<TerrainGpuTile>,
@@ -662,6 +663,7 @@ impl TerrainFrame {
             game_objects,
         )?;
         Ok(Self {
+            main_preparation: None,
             tile: Some(plan.tile()),
             map_id: Some(map_id),
             tile_admission: None,
@@ -716,6 +718,7 @@ impl TerrainFrame {
             game_objects,
         )?;
         Ok(Self {
+            main_preparation: None,
             tile: None,
             map_id: None,
             tiles: Vec::new(),

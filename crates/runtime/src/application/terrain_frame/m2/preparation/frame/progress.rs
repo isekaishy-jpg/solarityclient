@@ -19,6 +19,18 @@ pub(super) enum FrameStage {
 }
 
 impl PendingM2Frame<'_> {
+    /// A receiver phase can notify main while independent light-source consumers
+    /// run. The M2 owner still restores all state at its terminal boundary.
+    pub(in crate::application::terrain_frame) fn receiver_completion(
+        &self,
+    ) -> Result<Option<solarity_cpu::ReadyToken>, RuntimeTerrainFrameError> {
+        let frame = self
+            .frame
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("pending frame retains its owner"));
+        Ok(frame.scene_lighting.completion()?)
+    }
+
     /// Published sources become readable after ordered receiver callbacks. They
     /// stay immutable while the worker derives per-model uniform outputs.
     pub(in crate::application::terrain_frame) fn scene_lights(

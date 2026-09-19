@@ -29,6 +29,17 @@ impl Default for LightingBatch {
 }
 
 impl SceneLighting {
+    /// Main-only consumers subscribe to this phase without taking its output or
+    /// extending mutable receiver ownership beyond the existing batch lifecycle.
+    pub(in crate::application::terrain_frame::m2) fn completion(
+        &self,
+    ) -> Result<Option<solarity_cpu::ReadyToken>, CpuError> {
+        self.batch
+            .submitted
+            .then(|| self.batch.pending.completion())
+            .transpose()
+    }
+
     pub(in crate::application::terrain_frame::m2) fn has_pending(&self) -> bool {
         self.batch.submitted
     }

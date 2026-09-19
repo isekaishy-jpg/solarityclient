@@ -16,7 +16,10 @@ pub use storage::{
 };
 
 pub use capabilities::CpuCapabilities;
-pub use completion::{CompletionPort, CompletionProducer, CoordinatorNotifier, ReadyToken};
+pub use completion::{
+    CompletionPort, CompletionProducer, CoordinatorNotifier, MainReadyQueue, ReadyContinuation,
+    ReadyToken,
+};
 pub use environment::is_worker as is_worker_thread;
 pub use pool::{
     CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService, CpuServiceControl,

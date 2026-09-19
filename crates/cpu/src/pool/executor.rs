@@ -86,6 +86,12 @@ impl CpuExecutor {
         &self.storage
     }
 
+    /// Creates a main-affinity numeric inbox using this executor's durable wake signal.
+    /// The caller reserves its phase metadata with `MainReadyQueue::begin`.
+    pub fn main_ready_queue(&self) -> crate::MainReadyQueue {
+        crate::MainReadyQueue::new(self.notifier.clone())
+    }
+
     /// Attempts to admit finite CPU work without blocking on queue capacity.
     ///
     /// This entry point submits required service, retaining FIFO ties. Use

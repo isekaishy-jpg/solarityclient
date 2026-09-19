@@ -322,7 +322,14 @@ completion cell; already-signaled slots skip dispatch. The scoped renderer borro
 excludes fence reuse/destruction, drains on native errors/unwind and joins the
 thread before Vulkan teardown. The worker publishes terminal state before native
 notification and never occupies the CPU executor. It does not service uploads,
-image acquisition or resource-growth/device-idle waits. Useful main-ready
+image acquisition or resource-growth/device-idle waits. The retained CPU
+`MainReadyQueue` now carries numeric world continuation notices; runtime keeps
+non-Send state and operation execution. Complete phase storage is reserved before
+input transfer, failed fan-in releases sibling subscriptions, and cancellation
+withdraws only that queue's demand. Worker publication updates durable metadata
+before notifying outside the queue lock. World consumes ground/WMO work in order,
+then light-source surfaces and receiver completion independently. It still waits
+for terminal M2 reclamation before reusing state. UI, further main-ready
 continuations and remaining loading/GPU integration are recorded in
 [cutover status](cpu-cutover-status.md). An SDL user event never carries the
 only copy of a required completion.
