@@ -118,13 +118,36 @@ impl<T: Send + 'static> FrameBatch<T> {
         jobs: &mut Vec<T>,
         dependencies: &[ReadyToken],
     ) -> Result<(), CpuError> {
+        self.start_costed_graph(cpu, template, jobs, dependencies, &[])
+    }
+
+    /// Binds calibrated hints in admission order; an empty slice means unknown
+    /// cost for every job. No estimator or domain callback runs under a queue lock.
+    /// # Errors
+    /// Rejects mismatched hint counts and ordinary graph admission failures before
+    /// transferring inputs. Hints never change dependency or publication order.
+    pub fn start_costed_graph(
+        &mut self,
+        cpu: &CpuExecutor,
+        template: &FrameGraphTemplate,
+        jobs: &mut Vec<T>,
+        dependencies: &[ReadyToken],
+        costs: &[crate::JobCost],
+    ) -> Result<(), CpuError> {
+        if !costs.is_empty() && costs.len() != jobs.len() {
+            return Err(CpuError::GraphInputCount);
+        }
         if jobs.len() != template.job_count() {
             return Err(CpuError::GraphInputCount);
         }
         self.begin_dependencies(cpu, template.plan, dependencies)?;
         let mut state = self.core.lock();
         for (node, job) in jobs.drain(..).enumerate() {
-            state.append(Some(job), template.parents(node).iter().copied());
+            state.append(
+                Some(job),
+                costs.get(node).copied().unwrap_or_default(),
+                template.parents(node).iter().copied(),
+            );
         }
         state.open = false;
         let launch = state.runners_to_launch();

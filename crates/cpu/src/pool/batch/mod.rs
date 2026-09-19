@@ -1,11 +1,13 @@
 //! Bounded owned epochs, prerequisite readiness and typed result consumption.
 
 mod admission;
+mod diagnostics;
 mod execution;
 mod loading;
 pub use loading::LoadBatch;
 mod priority;
 mod readiness;
+mod ready;
 mod results;
 mod state;
 mod template;
@@ -106,6 +108,30 @@ impl<T: Send + 'static> FrameBatch<T> {
         job: &mut Option<T>,
         parents: &[FrameJob<T>],
     ) -> Result<FrameJob<T>, CpuError> {
+        self.push_after_with_cost(job, parents, crate::JobCost::default())
+    }
+
+    /// Publishes an estimated independent job without changing its output slot.
+    /// # Errors
+    /// Rejection leaves the input with the caller, as with `push`.
+    pub fn push_with_cost(
+        &mut self,
+        job: &mut Option<T>,
+        cost: crate::JobCost,
+    ) -> Result<FrameJob<T>, CpuError> {
+        self.push_after_with_cost(job, &[], cost)
+    }
+
+    /// Adds a cost hint to dependency admission. Priority and eligibility still
+    /// take precedence; only simultaneously ready jobs may exchange execution order.
+    /// # Errors
+    /// Preserves the input on the same identity/capacity errors as `push_after`.
+    pub fn push_after_with_cost(
+        &mut self,
+        job: &mut Option<T>,
+        parents: &[FrameJob<T>],
+        cost: crate::JobCost,
+    ) -> Result<FrameJob<T>, CpuError> {
         if !self.active {
             return Err(CpuError::BatchInactive);
         }
@@ -131,7 +157,7 @@ impl<T: Send + 'static> FrameBatch<T> {
             }
         }
         let index = state.jobs.len();
-        state.append(job.take(), parents.iter().map(|parent| parent.index));
+        state.append(job.take(), cost, parents.iter().map(|parent| parent.index));
         let handle = FrameJob::new(&self.core, state.generation, index);
         let launch = state.runners_to_launch();
         drop(state);

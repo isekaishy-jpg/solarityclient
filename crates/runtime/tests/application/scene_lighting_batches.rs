@@ -107,6 +107,38 @@ fn partitioned_receivers_match_serial_with_late_parents_and_changing_counts()
     Ok(())
 }
 
+/// Controlled calibration changes real range admission, with the same receiver inputs.
+#[test]
+fn calibrated_receiver_ranges_change_partition_without_changing_uniforms()
+-> Result<(), Box<dyn Error>> {
+    let cpu = executor(4, 8)?;
+    for (micros_per_receiver, expected_jobs) in [(1, 2), (50, 32)] {
+        let mut bank = SceneLighting::default();
+        let _owner = populate(&mut bank, 128)?;
+        let mut reference = SceneLighting::default();
+        let _reference_owner = populate(&mut reference, 128)?;
+        let (base, exterior) = uniforms();
+        reference.finish(base, exterior)?;
+        bank.batch
+            .calibration
+            .observe(1, Duration::from_micros(micros_per_receiver));
+        let port = ready(&cpu)?;
+        bank.begin_finish(Some(&cpu), Some(&port.readiness()), base, exterior)?;
+        assert_eq!(bank.batch.costs.len(), expected_jobs);
+        assert!(
+            bank.batch
+                .costs
+                .iter()
+                .all(|cost| cost.duration().is_some())
+        );
+        bank.finish_pending(&mut FrameWait::Offline)?;
+        assert_eq!(bank.scenes, reference.scenes);
+        assert_eq!(bank.batch.jobs.len(), expected_jobs);
+        assert_eq!(Arc::strong_count(&bank.receivers), 1);
+    }
+    Ok(())
+}
+
 /// Only the controlled-concurrency test installs this alternate batch kernel.
 struct HeldRange {
     events: mpsc::Sender<(usize, ThreadId)>,

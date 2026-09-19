@@ -17,6 +17,8 @@ pub(in crate::application::terrain_frame::m2) struct PoseBatch {
     indices: Vec<Option<usize>>,
     handles: Vec<solarity_cpu::FrameJob<PoseJob>>,
     pending: solarity_cpu::FrameBatch<PoseJob>,
+    calibration: solarity_cpu::CostCalibration,
+    costs: solarity_cpu::CpuBuffer<solarity_cpu::JobCost>,
     submitted: bool,
 }
 
@@ -27,6 +29,8 @@ impl Default for PoseBatch {
             indices: Vec::new(),
             handles: Vec::new(),
             pending: solarity_cpu::FrameBatch::new(PoseJob::sample),
+            calibration: solarity_cpu::CostCalibration::default(),
+            costs: solarity_cpu::CpuBuffer::default(),
             submitted: false,
         }
     }
@@ -81,6 +85,9 @@ impl PoseBatch {
         let readiness = wait.before_reclaim(&self.pending);
         let result = self.pending.reclaim(&mut self.jobs);
         self.submitted = false;
+        for job in &mut self.jobs {
+            self.calibration.record(&mut job.measurement);
+        }
         readiness?;
         result?;
         Ok(())

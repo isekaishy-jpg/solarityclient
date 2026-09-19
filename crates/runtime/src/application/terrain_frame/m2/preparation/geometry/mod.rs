@@ -1,5 +1,6 @@
 //! Owned visible work joins after ordered animation, attachment and shadow publication.
 
+mod cost;
 mod output;
 mod palette;
 mod prepare;
@@ -49,6 +50,8 @@ pub(in super::super) struct GeometryInput {
 /// Reuses frame-local scratch and temporarily owns each admitted model's effect state.
 #[derive(Default)]
 struct GeometryJob {
+    measurement: solarity_cpu::WorkMeasurement,
+    cost_class: usize,
     input: Option<GeometryInput>,
     context: Option<GeometryContext>,
     owns_effects: bool,
@@ -80,6 +83,7 @@ pub(in super::super::super) struct GeometryBatch {
     submitted: bool,
     completion: Option<solarity_cpu::ReadyToken>,
     storage: Option<solarity_cpu::CpuStorageBudget>,
+    calibration: cost::GeometryCalibration,
 }
 
 /// Immutable generation and camera inputs own every worker dependency.
@@ -100,6 +104,7 @@ impl Default for GeometryBatch {
             submitted: false,
             completion: None,
             storage: None,
+            calibration: cost::GeometryCalibration::default(),
         }
     }
 }
@@ -107,6 +112,7 @@ impl Default for GeometryBatch {
 impl GeometryJob {
     /// Executes after this model's ancestry, clock and effect state are owned.
     fn execute(&mut self) {
+        let started = self.measurement.start();
         let context = self
             .context
             .take()
@@ -118,7 +124,12 @@ impl GeometryJob {
             &context.twinkle,
         ));
         // Resource pins need only survive preparation; placement/source and
-        // published GPU-frame leases own their later lifetimes.
+        // published GPU-frame leases own their later lifetimes. Calibration
+        // includes returning those pins, which is part of this worker's kernel.
+        drop(context);
+        if self.result.as_ref().is_some_and(Result::is_ok) {
+            self.measurement.finish(started);
+        }
     }
 
     /// Clears output lengths while retaining storage for the next visible model.

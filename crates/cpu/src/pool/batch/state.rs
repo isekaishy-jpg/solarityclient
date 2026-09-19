@@ -1,5 +1,6 @@
 //! Flat reserved dependency metadata; no user operation runs under this lock.
 
+use super::ready::ReadyJobs;
 use super::{FrameBatchPlan, JobOutcome};
 use crate::completion::Subscription;
 use crate::pool::dispatch::Dispatch;
@@ -61,6 +62,8 @@ pub(super) struct Node {
     remaining: usize,
     failed_parent: bool,
     first_edge: Option<usize>,
+    pub cost: crate::JobCost,
+    pub next_ready: Option<usize>,
 }
 /// Reusable activation storage; capacity is checked before ownership transfer.
 pub(super) struct State<T> {
@@ -68,7 +71,7 @@ pub(super) struct State<T> {
     pub nodes: StorageVec<Node>,
     edges: StorageVec<Edge>,
     pub edge_count: usize,
-    pub ready: StorageDeque<usize>,
+    pub ready: ReadyJobs,
     propagation: StorageDeque<usize>,
     pub generation: u64,
     pub plan: FrameBatchPlan,
@@ -87,6 +90,7 @@ pub(super) struct State<T> {
     pub dispatch: Option<Arc<Dispatch>>,
     pub notifier: Option<Arc<dyn CoordinatorNotifier>>,
     pub trace: solarity_profiling::TraceContext,
+    pub drain_tail: super::diagnostics::DrainTail,
 }
 impl<T> State<T> {
     /// Defers scene-sized storage until a phase declares its bounds.
@@ -96,7 +100,7 @@ impl<T> State<T> {
             nodes: StorageVec::default(),
             edges: StorageVec::default(),
             edge_count: 0,
-            ready: StorageDeque::default(),
+            ready: ReadyJobs::default(),
             propagation: StorageDeque::default(),
             generation: 0,
             plan: FrameBatchPlan::default(),
@@ -115,6 +119,7 @@ impl<T> State<T> {
             dispatch: None,
             notifier: None,
             trace: solarity_profiling::TraceContext::default(),
+            drain_tail: super::diagnostics::DrainTail::default(),
         }
     }
     /// Reserves all metadata and propagation storage. Nested T allocations remain
@@ -130,7 +135,6 @@ impl<T> State<T> {
         self.jobs.reserve(budget, class, kind, plan.jobs)?;
         self.nodes.reserve(budget, class, kind, plan.jobs)?;
         self.edges.reserve(budget, class, kind, plan.edges)?;
-        self.ready.reserve(budget, class, kind, plan.jobs)?;
         self.propagation.reserve(budget, class, kind, plan.jobs)?;
         self.dependencies
             .reserve(budget, class, kind, dependencies)?;
@@ -139,7 +143,12 @@ impl<T> State<T> {
         Ok(())
     }
     /// Registers validated parents and atomically observes any terminal outcome.
-    pub fn append(&mut self, job: Option<T>, parents: impl ExactSizeIterator<Item = usize>) {
+    pub fn append(
+        &mut self,
+        job: Option<T>,
+        cost: crate::JobCost,
+        parents: impl ExactSizeIterator<Item = usize>,
+    ) {
         let index = self.jobs.len();
         let mut node = Node {
             status: Status::Waiting,
@@ -147,6 +156,8 @@ impl<T> State<T> {
             remaining: 0,
             failed_parent: false,
             first_edge: None,
+            cost,
+            next_ready: None,
         };
         self.edge_count += parents.len();
         for parent in parents {
@@ -165,11 +176,13 @@ impl<T> State<T> {
                 node.status = Status::Terminal(JobOutcome::DependencyFailed);
             } else {
                 node.status = Status::Ready;
-                self.ready.push_back(index);
             }
         }
         self.jobs.push(job);
         self.nodes.push(node);
+        if matches!(self.nodes[index].status, Status::Ready) {
+            self.ready.push(&mut self.nodes, index);
+        }
     }
     /// Releases transitive successors without recursion or main-thread polling.
     /// Each registered edge is visited at most once.
@@ -196,11 +209,15 @@ impl<T> State<T> {
                         self.propagation.push_back(entry.child);
                     } else {
                         child.status = Status::Ready;
-                        self.ready.push_back(entry.child);
+                        self.ready.push(&mut self.nodes, entry.child);
                     }
                 }
             }
         }
+    }
+    /// Splits metadata borrows before taking the most expensive ready node.
+    pub fn pop_ready(&mut self) -> Option<usize> {
+        self.ready.pop(&mut self.nodes)
     }
     /// Reserves dispatch entries before unlocking completion/admission metadata.
     pub fn runners_to_launch(&mut self) -> usize {
@@ -245,6 +262,7 @@ impl<T> State<T> {
         self.ready.clear();
         self.dispatch = None;
         self.subscriptions.clear();
+        self.drain_tail = super::diagnostics::DrainTail::default();
     }
 }
 /// Shared only with this epoch's workers, never mutable world state.

@@ -102,7 +102,22 @@ fn worker_unit_poses_match_serial_during_camera_and_override_changes() -> Result
         }
         {
             let mut batch = solarity_cpu::FrameBatch::new(PoseJob::sample);
-            batch.start(&cpu, &mut jobs)?;
+            // Unequal hints force a different execution order for the same exact
+            // skeletal inputs; publication must retain model/index correspondence.
+            let costs: Vec<_> = (0..jobs.len())
+                .map(|index| {
+                    solarity_cpu::JobCost::measured(std::time::Duration::from_micros(
+                        [10, 400, 100][index % 3],
+                    ))
+                })
+                .collect();
+            batch.start_costed_graph(
+                &cpu,
+                &solarity_cpu::FrameGraphTemplate::independent(jobs.len()),
+                &mut jobs,
+                &[],
+                &costs,
+            )?;
             batch.reclaim(&mut jobs)?;
         }
         for job in &mut jobs {

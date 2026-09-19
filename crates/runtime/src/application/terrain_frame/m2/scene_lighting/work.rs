@@ -16,6 +16,7 @@ pub(super) struct LightingInput {
 /// One contiguous receiver range; no receiver/placement bank is cloned for a batch.
 #[derive(Default)]
 pub(super) struct LightingWork {
+    pub measurement: solarity_cpu::WorkMeasurement,
     pub input: Option<LightingInput>,
     pub scenes: Vec<M2SceneUniform>,
     pub result: Option<Result<(), RuntimeTerrainFrameError>>,
@@ -49,9 +50,11 @@ impl LightingWork {
 
     /// Retains domain failure with the ordered output prefix, independent of execution order.
     pub(super) fn execute(&mut self) -> solarity_cpu::JobOutcome {
+        let started = self.measurement.start();
         let _profile = solarity_profiling::profile!("m2.scene_lighting.evaluate");
         self.result = Some(self.evaluate());
         if self.result.as_ref().is_some_and(Result::is_ok) {
+            self.measurement.finish(started);
             solarity_cpu::JobOutcome::Succeeded
         } else {
             solarity_cpu::JobOutcome::Failed

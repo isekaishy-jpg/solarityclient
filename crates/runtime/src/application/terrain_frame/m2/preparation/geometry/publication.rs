@@ -79,6 +79,9 @@ impl M2Frame {
             let readiness = wait.before_reclaim(&batch.pending);
             let result = batch.pending.reclaim(&mut batch.jobs);
             batch.submitted = false;
+            for job in &mut batch.jobs {
+                batch.calibration.record(job);
+            }
             readiness?;
             result?;
         }
@@ -192,6 +195,8 @@ impl GeometryBatch {
                 .as_ref()
                 .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget")),
         )?;
+        batch.calibration.prepare(job, source, placement);
+        let cost = job.measurement.cost();
         job.owns_effects = true;
         std::mem::swap(&mut job.particles, &mut placement.particles);
         std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
@@ -199,7 +204,7 @@ impl GeometryBatch {
         std::mem::swap(&mut job.material_poses, material_poses);
         batch.active += 1;
         let mut owned = Some(std::mem::take(job));
-        match batch.pending.push(&mut owned) {
+        match batch.pending.push_with_cost(&mut owned, cost) {
             Ok(handle) => batch.handles.push(handle),
             Err(error) => {
                 *job = owned.unwrap_or_else(|| unreachable!("rejected job retains its state"));

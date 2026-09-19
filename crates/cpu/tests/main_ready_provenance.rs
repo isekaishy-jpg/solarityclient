@@ -23,7 +23,10 @@ fn main_consumption_links_to_the_phase_that_released_it() -> Result<(), Box<dyn 
     let mut ready = cpu.main_ready_queue();
     let frame = begin_frame();
     batch.begin_when(&cpu, FrameBatchPlan::new(1, 0), &gate.readiness())?;
-    batch.push(&mut Some(41))?;
+    batch.push_with_cost(
+        &mut Some(41),
+        solarity_cpu::JobCost::measured(std::time::Duration::from_micros(250)),
+    )?;
     batch.close();
     ready.begin(1, 1, cpu.storage(), CpuStorageClass::Frame)?;
     ready.watch(7, &[batch.completion()?])?;
@@ -56,6 +59,13 @@ fn main_consumption_links_to_the_phase_that_released_it() -> Result<(), Box<dyn 
     let request = named("cpu.main.request")?;
     let published = named("cpu.main.ready")?;
     let consumed = named("cpu.main.consume")?;
+    let execution = named("cpu.frame.execute")?;
+    let tail = named("cpu.phase.last_return")?;
+    assert_eq!(execution[10], "1");
+    assert_eq!(execution[11], "250000");
+    assert_eq!(tail[2], phase[1]);
+    assert_eq!(tail[4], phase[4]);
+    assert_eq!(tail[10], "1");
     assert_eq!(published[2], phase[1]);
     assert_eq!(published[3], request[1]);
     assert_eq!(consumed[3], request[1]);

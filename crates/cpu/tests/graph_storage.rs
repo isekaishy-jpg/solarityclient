@@ -72,6 +72,8 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
             .with_priority(FramePriority::Prerequisite);
     let mut batch = FrameBatch::new(|value: &mut usize| *value += 1);
     let mut jobs = vec![0; 4];
+    let costs = [1, 400, 100, 5]
+        .map(|micros| solarity_cpu::JobCost::measured(std::time::Duration::from_micros(micros)));
     let mut window = None;
     for iteration in 0..1064 {
         if iteration == 64 {
@@ -81,11 +83,12 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
         }
         first.producer()?.complete(JobOutcome::Succeeded)?;
         let mut producer = second.producer()?;
-        batch.start_graph(
+        batch.start_costed_graph(
             &cpu,
             &template,
             &mut jobs,
             &[first.readiness(), second.readiness()],
+            &costs,
         )?;
         producer.complete(JobOutcome::Succeeded)?;
         batch.reclaim(&mut jobs)?;

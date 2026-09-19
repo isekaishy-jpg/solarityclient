@@ -87,10 +87,12 @@ impl<T: Send + 'static> Core<T> {
             .clone()
             .unwrap_or_else(|| unreachable!("admitted phase owns completion identity"));
         let trace = state.trace;
+        let drain_tail = std::mem::take(&mut state.drain_tail);
         drop(state);
         // Continuation readiness belongs to this phase, even when a later
         // scheduler turn performs final publication after the last kernel.
         let _trace = trace.enter();
+        drain_tail.report(trace);
         self.completion_port.complete(&completion, outcome);
         let mut state = self.lock();
         state.finishing = false;

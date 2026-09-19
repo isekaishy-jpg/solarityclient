@@ -2,6 +2,7 @@
 
 mod capabilities;
 mod completion;
+mod cost;
 mod environment;
 mod job;
 mod pool;
@@ -20,6 +21,7 @@ pub use completion::{
     CompletionPort, CompletionProducer, CoordinatorNotifier, MainReadyQueue, ReadyContinuation,
     ReadyToken,
 };
+pub use cost::{CostCalibration, JobCost, WorkMeasurement};
 pub use environment::is_worker as is_worker_thread;
 pub use pool::{
     CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService, CpuServiceControl,

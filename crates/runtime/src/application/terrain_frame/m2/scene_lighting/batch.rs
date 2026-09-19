@@ -6,16 +6,19 @@ use solarity_cpu::{CpuError, FrameBatch, FrameGraphTemplate, FramePriority};
 use solarity_rendering::{M2DirectionalLight, M2SceneUniform};
 use std::sync::Arc;
 
-/// Small scenes keep one task. Larger scenes expose up to four ranges per worker;
-/// this is a bounded initial partition, not a calibrated execution-time estimate.
+/// Initial partition until receiver execution supplies a usable calibration.
 const RECEIVERS_PER_BATCH: usize = 64;
-const BATCHES_PER_WORKER: usize = 4;
+const BATCHES_PER_WORKER: usize = 8;
+/// Scheduling quantum, not a gameplay time step or an execution deadline.
+const TARGET_QUANTUM: std::time::Duration = std::time::Duration::from_micros(100);
 
 /// The active phase owns all mutable outputs; completed frames retain reusable slots.
 pub(super) struct LightingBatch {
     pending: FrameBatch<LightingWork>,
     jobs: Vec<LightingWork>,
     submitted: bool,
+    calibration: solarity_cpu::CostCalibration,
+    costs: solarity_cpu::CpuBuffer<solarity_cpu::JobCost>,
 }
 
 impl Default for LightingBatch {
@@ -24,6 +27,8 @@ impl Default for LightingBatch {
             pending: FrameBatch::with_outcome(LightingWork::execute),
             jobs: Vec::new(),
             submitted: false,
+            calibration: solarity_cpu::CostCalibration::default(),
+            costs: solarity_cpu::CpuBuffer::default(),
         }
     }
 }
@@ -76,11 +81,26 @@ impl SceneLighting {
         let count = self.receivers.len();
         let jobs = cpu.map_or(1, |cpu| {
             count
-                .div_ceil(RECEIVERS_PER_BATCH)
+                .div_ceil(
+                    self.batch
+                        .calibration
+                        .units_for(TARGET_QUANTUM)
+                        .unwrap_or(RECEIVERS_PER_BATCH),
+                )
                 .max(1)
                 .min(cpu.worker_count().saturating_mul(BATCHES_PER_WORKER))
         });
         let width = count.div_ceil(jobs);
+        self.batch.costs.clear();
+        if let Some(cpu) = cpu {
+            // Hint storage is admitted before receiver/source pins or scene storage move.
+            self.batch.costs.reserve(
+                cpu.storage(),
+                solarity_cpu::CpuStorageClass::Frame,
+                solarity_cpu::CpuStorageKind::Metadata,
+                jobs,
+            )?;
+        }
         self.batch.jobs.resize_with(jobs, LightingWork::default);
         // Main publication requires a contiguous ordered array for scene indices.
         self.scenes
@@ -102,6 +122,10 @@ impl SceneLighting {
         }
         for (index, job) in self.batch.jobs.iter_mut().enumerate() {
             let start = (index * width).min(count);
+            job.measurement = self
+                .batch
+                .calibration
+                .prepare((start + width).min(count) - start);
             job.input = Some(LightingInput {
                 sources: Arc::clone(&self.sources),
                 receivers: Arc::clone(&self.receivers),
@@ -113,13 +137,18 @@ impl SceneLighting {
         solarity_profiling::profile_value!("m2.scene_lighting.batches", jobs);
         solarity_profiling::profile_value!("m2.scene_lighting.receivers", count);
         if let Some(cpu) = cpu {
+            for job in &self.batch.jobs {
+                self.batch.costs.push(job.measurement.cost())?;
+            }
             let template =
                 FrameGraphTemplate::independent(jobs).with_priority(FramePriority::Prerequisite);
-            if let Err(error) =
-                self.batch
-                    .pending
-                    .start_graph(cpu, &template, &mut self.batch.jobs, dependencies)
-            {
+            if let Err(error) = self.batch.pending.start_costed_graph(
+                cpu,
+                &template,
+                &mut self.batch.jobs,
+                dependencies,
+                &self.batch.costs,
+            ) {
                 for job in &mut self.batch.jobs {
                     job.input = None;
                 }
@@ -149,6 +178,7 @@ impl SceneLighting {
             Ok(())
         };
         for job in &mut self.batch.jobs {
+            self.batch.calibration.record(&mut job.measurement);
             job.input = None;
         }
         let mut result = Ok(());

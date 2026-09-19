@@ -10,6 +10,7 @@ use solarity_rendering::{
 
 /// Reusable current-frame sampling inputs and a single-consumer palette.
 pub(super) struct PoseJob {
+    pub(super) measurement: solarity_cpu::WorkMeasurement,
     placement: usize,
     trace: solarity_profiling::TraceContext,
     model: ResourceLease<DecodedM2Model>,
@@ -32,6 +33,7 @@ impl PoseJob {
     /// Pins the decoded generation while retaining scratch storage for later frames.
     pub(super) fn new(model: ResourceLease<DecodedM2Model>) -> Self {
         Self {
+            measurement: solarity_cpu::WorkMeasurement::default(),
             placement: 0,
             trace: solarity_profiling::TraceContext::default(),
             model,
@@ -80,6 +82,7 @@ impl PoseJob {
 
     /// Computes pure skeletal work without publishing errors or scene state.
     pub(super) fn sample(&mut self) {
+        let started = self.measurement.start();
         self.trace.link("m2.pose.execute");
         let _trace = self.trace.enter();
         let mut _profile_scope = solarity_profiling::detail_profile!(
@@ -97,6 +100,9 @@ impl PoseJob {
                 bone_sequences: &self.sequences,
             },
         ));
+        if self.result.as_ref().is_some_and(Result::is_ok) {
+            self.measurement.finish(started);
+        }
     }
 
     /// Publishes a matching palette or leaves the ordinary consumer responsible.

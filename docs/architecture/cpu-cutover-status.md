@@ -19,6 +19,26 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Owned CPU phases now dispatch ready nodes from three intrusive cost bins,
+  preserving FIFO ties, prerequisite eligibility and original output slots.
+  Node links use charged metadata; there is no whole-scene sort or per-bin
+  allocation. Incremental and template admission accept frozen estimates.
+- Runtime supplies measured hints for M2 root poses, geometry and receiver
+  ranges. Main retains calibration; owned jobs carry only work counts and sparse
+  timing samples. The first eight jobs are sampled, then one in 64. Failed/partial
+  kernels do not update estimates. Geometry separates palette/particle/ribbon
+  presence and uses collection lengths, without scanning particles or vertices.
+- Receiver ranges target a calibrated 100-microsecond quantum, capped at eight
+  ranges per worker. The initial uncalibrated width is 64 receivers. This is a
+  scheduling policy; callbacks, light ancestry and final uniform indices retain
+  their existing order. Hints never alter clocks, simulation steps or visibility.
+- F10 sampled execution spans carry node identity and estimated nanoseconds.
+  `cpu.phase.drain_tail` measures last dispatch through last kernel return;
+  `cpu.phase.last_return` identifies the last returning node in its phase.
+  Publication/main-consumption time is separate. Disabled tracing adds no tail
+  clock reads. Cost ordering is currently within each typed phase; arbitration
+  between same-priority phases and calibrated bulk slicing still need connection.
+
 - Live cinematic presentation now services native input while every reader of
   a changing decoded image retires. It uses the renderer's existing dedicated
   completion thread and reusable request/result cell; no general CPU job waits
@@ -77,12 +97,12 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   dependency failure and admission refusal. Unused job outputs are dropped when
   the active range count shrinks. Receiver storage, batch lifecycle and evaluation
   have separate children under the scene-lighting folder.
-- The initial partition targets 64 receivers per range, bounded to four ranges
-  per configured worker. This exposes independent work; it is not the required
-  calibrated cost model. F10 records batch/receiver counts and range identities.
+- The initial partition uses 64 receivers per range until measured calibration
+  supplies the width, bounded to eight ranges per configured worker. F10 records
+  batch/receiver counts and range identities.
   `m2.scene_lighting.evaluate` now measures individual batches; its per-call mean
   must not be compared with the former whole-receiver-phase mean as an FPS gain.
-  Nested receiver/output byte accounting, calibrated partitioning and matched
+  Nested receiver/output byte accounting and matched
   scaling/live measurements remain required, alongside the barriers below.
 
 - Published M2 point and directional lights now form one retained immutable
@@ -455,7 +475,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Numeric main-ready storage and the four world operations are connected.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
-- Calibrated cost buckets, straggler reporting and measured step-size policy;
+- Cost arbitration between typed phases and calibrated step-size policy beyond
+  the connected M2 kernels and receiver ranges. Per-phase cost bins, sparse
+  calibration and sampled drain-tail reporting are connected as described above;
   resumable asset/bulk stages beyond retirement, the connected archive mounts,
   terrain stages and Glue texture steps, and
   remaining domain demand transitions beyond terrain/Glue prewarm. External producers
@@ -541,6 +563,25 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Calibrated M2 job dispatch checkpoint
+
+On 2026-09-19, formatting, full workspace Clippy with warnings denied and the
+full workspace test suite passed: 1,575 tests, zero failures and 33 ignored across
+94 summaries. Seven new CPU tests cover expensive-first dispatch, FIFO ties,
+dependency release, cancellation/epoch reuse, urgency precedence, transactional
+hint-count rejection, calibration arithmetic and sparse timer selection. The
+warmed graph/fan-in fixture still allocates nothing across 1,000 activations
+while using all three cost bins.
+
+Moving-camera pose and full moving M2 geometry parity pass. Controlled receiver
+calibration changes the actual partition from two to 32 jobs with identical
+final uniforms. The F10 provenance test verifies node/estimate and final-return
+identity across a frame boundary. Logs are in ignored
+`target/cost-dispatch-final-*`, with totals in
+`target/cost-dispatch-validation-summary.json`. These establish behavior and
+storage contracts; live FPS gains, cost-model accuracy and cross-phase cost
+arbitration are not established by this checkpoint.
 
 ### Build 152 package checkpoint
 

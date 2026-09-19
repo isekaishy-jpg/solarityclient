@@ -28,10 +28,10 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
             )
         };
         loop {
-            let (index, mut job, kernel, trace) = {
+            let (index, mut job, kernel, trace, cost) = {
                 let mut state = self.lock();
                 let index = loop {
-                    let Some(index) = state.ready.pop_front() else {
+                    let Some(index) = state.pop_ready() else {
                         state.runners -= 1;
                         drop(state);
                         self.finish_if_terminal();
@@ -43,6 +43,8 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                     }
                 };
                 state.nodes[index].status = Status::Running;
+                let trace = state.trace;
+                state.drain_tail.dispatch(trace);
                 (
                     index,
                     state.jobs[index]
@@ -50,19 +52,26 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                         .unwrap_or_else(|| unreachable!("ready job owns state")),
                     state.kernel,
                     state.trace,
+                    state.nodes[index].cost,
                 )
             };
             let _trace = trace.enter();
             let outcome = {
-                let _execution = if loading {
+                let mut execution = if loading {
                     solarity_profiling::profile!("cpu.load.execute")
                 } else {
                     solarity_profiling::profile!("cpu.frame.execute")
                 };
+                execution.trace_owner(
+                    index as u64 + 1,
+                    cost.duration()
+                        .map_or(0, |duration| duration.as_nanos() as u64),
+                );
                 catch_unwind(AssertUnwindSafe(|| kernel.run(&mut job)))
                     .unwrap_or(JobOutcome::Panicked)
             };
             let mut state = self.lock();
+            state.drain_tail.returned(index);
             state.jobs[index] = Some(job);
             let outcome = if state.nodes[index].cancel_requested && outcome != JobOutcome::Panicked
             {

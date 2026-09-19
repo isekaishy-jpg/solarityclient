@@ -93,6 +93,9 @@ impl M2Frame {
                 animation.body_pose().bone_transforms(),
                 playback.bone_sequence_clocks(&source.model, clock, now),
             );
+            batch.jobs[active].measurement = batch
+                .calibration
+                .prepare(source.model.animations().bones().len());
             batch.indices[index] = Some(active);
             active += 1;
         }
@@ -101,12 +104,23 @@ impl M2Frame {
         // Sampling owns its inputs. Main can continue WMO admission and ordered
         // traversal; a palette consumer waits for only its own model result.
         if let Some(cpu) = cpu {
-            batch.pending.start_graph(
+            batch.costs.clear();
+            batch.costs.reserve(
+                cpu.storage(),
+                solarity_cpu::CpuStorageClass::Frame,
+                solarity_cpu::CpuStorageKind::Metadata,
+                active,
+            )?;
+            for job in &batch.jobs {
+                batch.costs.push(job.measurement.cost())?;
+            }
+            batch.pending.start_costed_graph(
                 cpu,
                 &solarity_cpu::FrameGraphTemplate::independent(active)
                     .with_priority(solarity_cpu::FramePriority::Prerequisite),
                 &mut batch.jobs,
                 &[],
+                &batch.costs,
             )?;
             batch.handles.clear();
             for index in 0..active {
