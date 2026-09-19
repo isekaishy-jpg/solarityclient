@@ -358,8 +358,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 143 was packaged and installed on 2026-09-19 from `4d9cc31d`. It lets
-independent world preparation run before the first unfinished root pose, extending
+Build 144 was packaged and installed on 2026-09-19 from `ec5098bc`. It connects
+NPC/remote-player primary sources to shared readiness and preserves withdrawn
+appearance ownership. It includes Build 143's root-pose readiness yield,
 Build 142's geometry overlap and Build 141's resource-gated loading, epoch
 registration and resumable terrain changes.
 Full source validation, optimized package compilation and
@@ -404,6 +405,23 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 144 package checkpoint
+
+Build **144** was reserved and compiled through `scripts/build-client.ps1`, then
+installed with `scripts/install-test-client.ps1 -SkipBuild`. The Testing shortcut
+points at the installed launcher. Its executable source identity is
+`ec5098bc63bb2c3f71714fd0ce511cb000298119`; `dirty=true` records the pending
+BUILD_NUMBER reservation, which was the only tracked change during packaging.
+The optimized build completed successfully in 4m 52s.
+
+Artifact and installed SHA-256 both equal
+`B673280EB204C7EA8AF2C848B47635415DCB65E76E4CA7E8DF3E06BAF623B712`.
+The installed launcher retains 2560x1440 fullscreen-windowed, four CPU workers,
+capacity 256, two network workers and GPU zero. F10 remains opt-in. No live client
+was launched for this package and no frame-rate gain is established.
+Packaging logs are in ignored `target/population-readiness-package.stdout.log`
+and `target/population-readiness-package.stderr.log`.
 
 ### Shared population primary-source checkpoint
 
