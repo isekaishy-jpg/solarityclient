@@ -7,12 +7,13 @@ mod entry;
 mod input;
 mod progress;
 mod scene;
+mod static_admission;
 
 use super::super::M2Frame;
 use input::{FrameAdmission, FrameView};
 
 /// Pins the current M2 owner while independent main-thread work uses disjoint owners.
-/// Root poses and admitted geometry may still be running. Dropping an unfinished
+/// Static admission, root poses and admitted geometry may still be running. Dropping an unfinished
 /// preparation reclaims that state at an explicitly profiled abandonment boundary;
 /// the non-Send frame owner keeps this cleanup on the coordinator thread.
 #[must_use = "complete the M2 frame after independent scene work"]

@@ -16,12 +16,13 @@ impl M2Frame {
         let geometry = self.finish_geometry(&mut FrameWait::Offline);
         self.restore_geometry_states();
         let poses = self.pose_batch.finish(&mut FrameWait::Offline);
+        let spatial = self.spatial_batch.finish(&mut FrameWait::Offline);
         let lighting = if self.scene_lighting.has_pending() {
             self.scene_lighting.finish_pending(&mut FrameWait::Offline)
         } else {
             Ok(())
         };
-        for error in [geometry, poses, lighting]
+        for error in [geometry, poses, spatial, lighting]
             .into_iter()
             .filter_map(Result::err)
         {
@@ -92,7 +93,7 @@ impl M2Frame {
     }
 
     /// Fixes callbacks and scene visibility, then admits ready ordered placements.
-    /// Returns before the first unfinished root palette, or after sealing geometry.
+    /// Returns before the next unfinished spatial/pose result, or after sealing geometry.
     /// Independent world work may use the stable scene; it must not advance gameplay
     /// or change any model inputs before finishing this preparation.
     #[allow(clippy::too_many_arguments)]
@@ -181,6 +182,12 @@ impl M2Frame {
                 .environment_shadow_admission
                 .resize(frame.placements.len(), 0);
             frame.begin_geometry(cpu)?;
+            frame.begin_static_admission(
+                cpu,
+                pending.view,
+                spatial_lighting.is_some(),
+                scenery_shadows,
+            )?;
         }
         frame.admit_visible_draws(
             pending.view,

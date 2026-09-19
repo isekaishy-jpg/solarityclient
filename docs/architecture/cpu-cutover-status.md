@@ -19,6 +19,18 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Selected static M2 scenery now has an owned spatial-admission phase. Workers
+  apply native camera, distance and independent shadow predicates to compact
+  captured values; ordered traversal consumes a group once, without locking an
+  executor result for each model. Static render bounds survive their residency.
+  WMO visibility/opacity and shadow membership are captured after scene admission;
+  hidden lights and offscreen casters retain their independent demands.
+- Groups target 100 microseconds of calibrated work, capped at 64 candidates.
+  Inline working sets, staging and references are charged before transfer. Errors
+  remain at each model's original consumer, and abandoned frames reclaim every
+  group. Dynamic/attachment admission and WMO scene queries remain ordered on main.
+  See [the boundary and remaining limits](m2-static-admission.md).
+
 - CPU result/phase wait scopes now cover only native condition waits and mutex
   reacquisition. Ready probes, callback/lease return and reclamation have separate
   meanings. Need links and one-based result owners retain the producing phase
@@ -34,8 +46,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   owned draw phase, including camera-culled shadow casters. Ordered CPU callbacks
   sample their named bones; an already prepared root palette can serve those
   callbacks directly. Shadow-only jobs neither take particle/ribbon ownership nor
-  advance effect clocks. Main retains spatial admission, attachment/callback order,
-  RNG, receiver queries and final output order.
+  advance effect clocks. Static admission now uses the phase above. Main retains
+  dynamic admission, attachment/callback order, RNG, receiver queries and final
+  output order.
 - Worker packets use local palette bases. Ordered publication appends only the
   palettes retained by the previous visible/shadow rules and relocates both mesh
   and shadow packets with checked arithmetic. Primary and environment shadow banks
@@ -630,6 +643,36 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Owned static admission checkpoint
+
+Workspace formatting and Clippy across all targets/features with warnings denied
+passed. The full workspace test run passed **1,593 tests**, with 33 ignored and
+zero failures (94 result summaries). Artifacts are
+`target/m2-spatial-validation-{fmt,clippy,tests}.*`; helper exit was zero.
+Only ownership-summary comments changed after those source checks.
+
+The three new external tests exercise independent offscreen/hidden shadow and
+light demands, WMO collector masks, the native fade cutoff, interleaved model
+order, multiple groups, malformed inputs, abandoned suffixes, budget refusal and
+reuse. The frozen serial geometry comparison now includes immutable scenery
+whose placement indices relocate after dynamic removals; packets, palettes,
+particles, ribbons and shared RNG remain equal through moving frames.
+
+The hidden populated-world replay passed 168 frames across streaming, stationary,
+orbit, pointer, travel-out, travel-back and settled phases with Soap and 48 NPCs.
+Primary and all three environment shadow maps produced packets. Sampled trace
+records show static admission on the three protected workers, with observed group
+lengths of 6–64. The capture reported zero dropped samples/events/trace rows and
+zero capacity overflows; stderr contained no warning/error. Artifacts are
+`target/m2-spatial-smoke*`, with capture `1789850594757-1` in its isolated profile.
+This was a debug functional replay with a 32 MiB stack, using installed terrain,
+FrameXML and Vulkan. It excludes live networking, movement solver, audio and
+overlays; its timings are not live FPS evidence.
+
+This connects static admission to the CPU executor. It does not establish a live
+FPS improvement or complete dynamic M2 admission, topology publication or the
+remaining full cutover scope.
 
 ### Build 157 package checkpoint
 

@@ -3,6 +3,7 @@
 use super::{M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, M2PlacementVisibility};
 use crate::application::m2_spatial::StaticM2Spatial;
 use crate::application::terrain_frame::m2::placements::M2PlacementStorage;
+use crate::application::terrain_frame::shadow::ModelShadowKind;
 
 /// These facts change only when a static placement is constructed or removed.
 /// Source compaction relocates a slot without replacing its authored resource.
@@ -13,6 +14,7 @@ pub(super) struct StaticMetadata {
     distance_sort: bool,
     has_lights: bool,
     doodad: Option<super::doodads::Owner>,
+    shadow_kind: Option<ModelShadowKind>,
 }
 
 impl StaticMetadata {
@@ -43,11 +45,49 @@ impl StaticMetadata {
             distance_sort: source.is_some_and(|source| source.model.skin_profile_count() >= 2),
             has_lights: source.is_some_and(|source| !source.model.animations().lights().is_empty()),
             doodad: super::super::doodad_scene::owner_key(placement.owner),
+            shadow_kind: source
+                .filter(|_| {
+                    placement.placement_valid
+                        && placement
+                            .entity_opacity
+                            .as_ref()
+                            .is_none_or(|owner| !owner.hidden())
+                })
+                .map(|source| {
+                    if source.animated_shadow_caster {
+                        ModelShadowKind::AnimatedScenery
+                    } else {
+                        ModelShadowKind::StaticScenery
+                    }
+                }),
         }
     }
 }
 
 impl M2PlacementVisibility {
+    /// Static residency has no mutable entity-opacity/vehicle ancestry. All
+    /// dynamic and retired owners retain the ordered admission path instead.
+    pub(in super::super) fn static_admission_input(
+        &self,
+        index: usize,
+        shadows: Option<crate::application::terrain_frame::shadow::SceneryShadowQueries<'_>>,
+    ) -> Option<super::super::preparation::spatial::StaticAdmissionInput> {
+        let metadata = self.static_metadata.get(index).copied().flatten()?;
+        Some(super::super::preparation::spatial::StaticAdmissionInput {
+            spatial: metadata.spatial,
+            shadow_kind: metadata.shadow_kind,
+            shadow_membership: metadata.doodad.map_or(15, |owner| {
+                shadows
+                    .and_then(|queries| queries.doodads.get(&owner).copied())
+                    .unwrap_or(0)
+            }),
+            publishes_lights: metadata.has_lights,
+            doodad_active: metadata.doodad.is_some(),
+            doodad_visible: true,
+            doodad_opacity: 1.,
+        })
+    }
+
     /// Rebuilds dynamic ancestry while retaining immutable scenery metadata and
     /// relocating existing spatial nodes through the exact ordered index map.
     pub(in super::super) fn rebuild(

@@ -151,6 +151,7 @@ fn minimum_category(depth: f32, detail: f32) -> usize {
 pub(super) struct StaticM2Spatial {
     sphere: (Vec3, f32),
     scenery: SceneryDistance,
+    world_bounds: (Vec3, Vec3),
 }
 
 impl StaticM2Spatial {
@@ -167,6 +168,7 @@ impl StaticM2Spatial {
         Self {
             sphere: (center, radius * maximum_scale),
             scenery: SceneryDistance::new(minimum, maximum, transform),
+            world_bounds: SceneryDistance::world_bounds(minimum, maximum, transform),
         }
     }
 
@@ -176,5 +178,11 @@ impl StaticM2Spatial {
 
     pub(super) const fn scenery(self) -> SceneryDistance {
         self.scenery
+    }
+
+    /// Native transformed render bounds are immutable for this scenery lifetime.
+    /// Validation stays at the consuming collector's original admission boundary.
+    pub(super) const fn world_bounds(self) -> (Vec3, Vec3) {
+        self.world_bounds
     }
 }

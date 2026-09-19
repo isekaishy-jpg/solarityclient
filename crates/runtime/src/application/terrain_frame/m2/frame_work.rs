@@ -215,6 +215,11 @@ pub(super) struct M2FrameWork {
 }
 
 impl M2FrameWork {
+    /// Immutable candidates can be captured before the ordered cursor advances.
+    pub(super) fn selected_indices(&self) -> &[usize] {
+        &self.indices[self.cursor..]
+    }
+
     /// Upper bound before exact camera/portal admission, excluding distant
     /// residents. Newly queued effects have a separate ordered-tail reservation.
     pub(super) fn remaining_count(&self) -> usize {

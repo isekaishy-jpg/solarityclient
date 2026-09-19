@@ -72,6 +72,13 @@ impl M2Frame {
                 // Poll before any per-owner mutation. Resuming must neither tick
                 // animation twice nor consume a second RNG/event window.
                 if let Some(index) = self.frame_work.next_index()
+                    && !self.spatial_batch.is_ready(index)?
+                {
+                    frame_profile.mark("spatial readiness yield");
+                    solarity_profiling::profile_value!("m2.spatial_readiness_yield", 1);
+                    return Ok(false);
+                }
+                if let Some(index) = self.frame_work.next_index()
                     && !self.pose_batch.is_ready(index)?
                 {
                     frame_profile.mark("pose readiness yield");
@@ -87,9 +94,12 @@ impl M2Frame {
                     self.placements[placement_index].source_index as u64 + 1,
                 );
                 let mut observed = admission.work.placement();
+                let static_admission = self.spatial_batch.take(placement_index)?;
                 // Moving-parent transforms have already been resolved. Forward
                 // attachments query that same root; earlier roots reuse admission.
-                let environment_maps = if let Some(queries) = scenery_shadows {
+                let environment_maps = if let Some(prepared) = static_admission {
+                    prepared.environment_maps
+                } else if let Some(queries) = scenery_shadows {
                     let root = self
                         .placement_visibility
                         .light_root(placement_index)
@@ -128,6 +138,9 @@ impl M2Frame {
                     && self.placement_visibility.has_lights(placement_index);
                 observed.light_owner = publishes_lights;
                 observed.environment_shadow = environment_maps != 0;
+                if static_admission.is_some_and(|prepared| prepared.rejected) {
+                    continue;
+                }
                 let bounds = self.placement_visibility.bounds()[placement_index];
                 let doodad_scene_active = spatial_lighting.is_some()
                     && self
@@ -145,7 +158,9 @@ impl M2Frame {
                 } else {
                     fog_color
                 };
-                let scenery_opacity = if doodad_scene_active {
+                let scenery_opacity = if let Some(prepared) = static_admission {
+                    prepared.scenery_opacity
+                } else if doodad_scene_active {
                     self.doodad_scene.opacity(placement_index)
                 } else {
                     self.placement_visibility.opacity(
@@ -158,6 +173,7 @@ impl M2Frame {
                     continue;
                 }
                 if let Some((center, radius)) = bounds
+                    && static_admission.is_none()
                     && !publishes_lights
                     && !doodad_scene_active
                     && environment_maps == 0

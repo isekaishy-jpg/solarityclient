@@ -38,6 +38,7 @@ pub(super) enum ModelShadowKind {
 }
 
 /// Immutable queries shared by WMO groups, M2 roots, and their attachments.
+#[derive(Clone, Copy)]
 pub(super) struct WorldShadowAdmission {
     quality: WorldShadowQuality,
     active_maps: u8,

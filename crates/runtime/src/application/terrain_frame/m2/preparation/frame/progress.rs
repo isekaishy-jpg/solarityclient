@@ -11,6 +11,7 @@ pub(super) enum FrameStage {
     Admission,
     Geometry,
     GeometryRetirement,
+    SpatialRetirement,
     PoseRetirement,
     Receivers,
     Lighting,
@@ -170,6 +171,13 @@ impl PendingM2Frame<'_> {
                     let result = frame.finish_geometry(&mut FrameWait::Offline);
                     frame.restore_geometry_states();
                     result?;
+                    self.stage = FrameStage::SpatialRetirement;
+                }
+                FrameStage::SpatialRetirement => {
+                    if !frame.spatial_batch.is_finished() {
+                        return Ok(false);
+                    }
+                    frame.spatial_batch.finish(&mut FrameWait::Offline)?;
                     self.stage = FrameStage::PoseRetirement;
                 }
                 FrameStage::PoseRetirement => {
@@ -224,6 +232,7 @@ impl PendingM2Frame<'_> {
         match self.stage {
             FrameStage::Admission => {
                 if let Some(index) = frame.frame_work.next_index() {
+                    frame.spatial_batch.wait_for(index, wait)?;
                     frame.pose_batch.wait_for_root(index, wait)?;
                 }
             }
@@ -231,6 +240,7 @@ impl PendingM2Frame<'_> {
                 frame.wait_geometry(&self.publication, wait)?
             }
             FrameStage::PoseRetirement => frame.pose_batch.wait_finished(wait)?,
+            FrameStage::SpatialRetirement => frame.spatial_batch.wait_finished(wait)?,
             FrameStage::Lighting => frame.scene_lighting.wait_pending(wait)?,
             FrameStage::Receivers | FrameStage::Ready => {}
             FrameStage::Failed => return Err(solarity_cpu::CpuError::BatchInactive.into()),

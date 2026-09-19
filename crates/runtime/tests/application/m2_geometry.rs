@@ -114,7 +114,17 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             let mut placement = m2_gpu_placement(
                 0,
                 transform,
-                M2GpuPlacementOwner::CreatureBody { guid: index + 1 },
+                if !measure && index >= count * 3 / 4 {
+                    // Immutable scenery shares the moving/abandoned frame test;
+                    // earlier dynamic removal relocates its cached admission.
+                    M2GpuPlacementOwner::Static(
+                        crate::application::terrain_coordinator::m2_residency::ResidentM2Owner::TerrainDoodad {
+                            unique_id: index as u32 + 1,
+                        },
+                    )
+                } else {
+                    M2GpuPlacementOwner::CreatureBody { guid: index + 1 }
+                },
                 &model,
                 Some(M2PlaybackStorage::Local(playback)),
                 None,

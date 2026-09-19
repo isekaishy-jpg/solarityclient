@@ -7,6 +7,7 @@ pub(super) mod geometry;
 pub(super) mod poses;
 mod publication;
 pub(super) mod receivers;
+pub(super) mod spatial;
 
 #[cfg(test)]
 #[path = "../../../../../tests/application/m2_geometry_reference.rs"]
