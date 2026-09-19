@@ -33,6 +33,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 - The initial partition targets 64 receivers per range, bounded to four ranges
   per configured worker. This exposes independent work; it is not the required
   calibrated cost model. F10 records batch/receiver counts and range identities.
+  `m2.scene_lighting.evaluate` now measures individual batches; its per-call mean
+  must not be compared with the former whole-receiver-phase mean as an FPS gain.
   Nested receiver/output byte accounting, calibrated partitioning and matched
   scaling/live measurements remain required, alongside the barriers below.
 
@@ -445,10 +447,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 148 was packaged and installed on 2026-09-19 from `a9552fd5`. It publishes
-one immutable scene-light bank to receiver work and main terrain/liquid consumers,
-retaining the resumable M2 phases, native GPU presentation-slot and CPU waits,
-shared-source, geometry-overlap and loading changes from preceding packages.
+Build 149 was packaged and installed on 2026-09-19 from `86625e3b`. It distributes
+receiver-uniform evaluation across bounded independent ranges, retaining the
+shared light-source bank, terrain/liquid overlap, resumable M2 phases, native GPU
+presentation-slot and CPU waits, and preceding source/loading changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -491,6 +493,37 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 149 package and populated world checkpoint
+
+Build **149** compiled through `scripts/build-client.ps1` in 4m42s and was installed
+with `install-test-client.ps1 -SkipBuild`. Source and index remained frozen at
+`86625e3b53108916d9061d2ea4cec8d5e8134578`; `dirty=true` records the reserved
+`BUILD_NUMBER`. Package and installed executable SHA-256 match
+`F79DD3D500AE3E70C7A7FB07E168BDBD29B9453382A767AF45A757896D8C464F`.
+Executable identity, manifest, launcher and shortcut were verified. Testing uses
+2560 x 1440 fullscreen-windowed, four CPU workers, capacity 256, two network
+workers, GPU zero and opt-in F10 capture. No interactive client was launched.
+
+The optimized hidden world harness completed **896 frames**, 128 in each of the
+seven existing phases, with Soap and 120 authored Goblin NPCs. Display 6882 was
+verified from the installed stock `CreatureCatalog` as `GOBLINMALE.MDX`. NPCs used
+an explicit local grid; this is not the server population. Starting position,
+travel offset, resolution, shadow quality and isolated audio/VSync settings match
+the Build 148 harness description below. It exercised 54-1,178 M2 packets and
+0-4,904 particle vertices per frame. Residency increased from one tile to two,
+with one admission and no evictions. No network session, live movement solver or
+audio was exercised, and hidden frame times are not matched live FPS evidence.
+
+Capture `1789828523275-1` reports zero dropped samples, trace/event rows or capacity
+overflows. It observes up to **217 receivers** and **four batches** per frame.
+Receiver work ran on all four CPU workers; the seven detailed frames contain
+20 receiver spans, including three overlapping spans on distinct workers.
+This verifies the fan-out is connected through the production world presenter.
+The initial partition still needs calibration and complete cutover requirements
+remain open. Evidence: ignored `target/receiver-batches-package.*`,
+`target/receiver-batches-world.*`, `target/receiver-batches-world-summary.json`
+and `target/receiver-batches-world-profile/Profiles/`.
 
 ### Independent receiver-batch checkpoint
 
