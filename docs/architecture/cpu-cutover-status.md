@@ -464,10 +464,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 149 was packaged and installed on 2026-09-19 from `86625e3b`. It distributes
-receiver-uniform evaluation across bounded independent ranges, retaining the
-shared light-source bank, terrain/liquid overlap, resumable M2 phases, native GPU
-presentation-slot and CPU waits, and preceding source/loading changes.
+Build 150 was packaged and installed on 2026-09-19 from `70e035ce`. It connects
+Glue creation/selection primary sources to the shared appearance adapter,
+retaining receiver-uniform batches, the shared light-source bank, terrain/liquid
+overlap, resumable M2 phases, native GPU presentation-slot and CPU waits, and
+preceding source/loading changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -510,6 +511,43 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 150 package and Glue transition checkpoint
+
+Build **150** compiled through `scripts/build-client.ps1` in 4m43s. The subsequent
+Cargo dependency inventory rebuilt the same frozen revision in 4m40s; it reserved
+no additional number. Source and index remained at
+`70e035ce67fe87a23f2aead87ced98460b7889b7` during compilation; `dirty=true`
+records the reserved `BUILD_NUMBER`. Final package and installed executable
+SHA-256 match
+`494F80B1021E19095C947BA116737E22A3DC500E5A3BE145838D1152ACEEC2E9`.
+Installation used `install-test-client.ps1 -SkipBuild`. Executable identity,
+manifest, launcher and desktop shortcut were verified. Testing retains
+2560 x 1440 fullscreen-windowed, four CPU workers, capacity 256, two network
+workers and GPU zero. F10 remains opt-in; no interactive client was launched.
+
+A hidden optimized replay completed **31 Glue transitions and 3,623 frames**:
+3,127 transition frames plus 16 following frames per step. It covers cold/warm
+Human, Night Elf and Blood Elf selections, an equipped hunter and pet, ghost
+transitions, creation race/class changes, both directions on all five
+customization controls, returns to prior races and randomization. It ran against
+installed assets at 2560 x 1440 with four CPU workers, an isolated profile and
+audio disabled. The existing benchmark drives the live Glue presentation path
+and requires complete scene readiness at each step. Capture
+`1789831738343-1` reported zero dropped samples/events/trace rows and zero capacity
+overflows. These hidden, short, offline pre-world intervals are not evidence of
+visible in-world FPS improvement, world movement, networking or live audio.
+
+The ignored harness copies `benchmark_glue_transitions` with only its startup
+changed to `start_hidden`, using the existing 32 MiB diagnostic stack convention.
+Its first compile selected incompatible cached library variants; Cargo's exact
+artifact inventory corrected that selection. A second link exposed the missing
+thin-LTO setting; using the package's thin-LTO setting completed the harness.
+Neither failure changed client source. Evidence is retained in
+`target/glue-shared-package.log`, `target/glue-shared-artifacts.jsonl`,
+`target/glue-shared-hidden.{csv,stdout.log,stderr.log}`,
+`target/glue-shared-hidden-summary.json` and the isolated profile's `Profiles`
+directory. Full source validation is recorded below. The cutover remains active.
 
 ### Shared Glue appearance source checkpoint
 
