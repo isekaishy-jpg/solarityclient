@@ -602,8 +602,9 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 158 was packaged and installed on 2026-09-19 from `2646c03d`. It adds owned
-static M2 admission, retaining corrected CPU/native wait attribution, owned render
+Build 159 was packaged and installed on 2026-09-19 from `8a4ae681`. It adds
+retained static topology publication when static indices remain unchanged,
+retaining owned static M2 admission, corrected CPU/native wait attribution, owned render
 palettes/shadow packets and bounded small-model dispatch groups,
 retaining local-player worker construction and shared primary requests, cost
 arbitration across phases, measured M2 job ordering and receiver partitioning,
@@ -654,6 +655,31 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 159 package checkpoint
+
+The numbered Testing artifact was built from
+`8a4ae6813ff09df27202540a1737f4541c3c32cc` using
+`scripts/build-client.ps1 -Profile test-client` and installed with `-SkipBuild`.
+Tracked source and index stayed frozen during compilation; `dirty=true` records
+the reserved `BUILD_NUMBER` change. Optimized compilation completed in 4m54s and
+the package helper exited zero. The parent PowerShell exit of one was native
+stderr wrapping, not a compiler failure; helper completion, artifact identity
+and installed hash were checked together.
+
+Installation completed at `2026-09-19T17:35:57.2007710-04:00`. The installed and
+compiled executable SHA-256 values both equal
+`3A3E7C1E4E9521EE2B685EAA3A2B001502FB973F557F356001AA06B4AD5D20B1`.
+The executable identity, installed manifest and desktop shortcut were verified.
+Testing retains four CPU workers/capacity 256, two network workers, 2560 x 1440
+fullscreen-windowed, GPU 0 and opt-in F10 capture. No interactive client was
+launched. Artifacts are `target/m2-retained-publication-{package,install}.*`.
+
+The latest available live F10 capture remains Build 155, `1789843563290-1`,
+ending at 14:47 on 2026-09-19. The later 16:18 client log is Build 157 without
+an F10 capture. Consequently neither the current publication measurement nor
+the hidden replay establishes a live FPS improvement for Builds 156-159.
+This package does not complete the remaining cutover requirements.
 
 ### Retained static topology publication checkpoint
 
