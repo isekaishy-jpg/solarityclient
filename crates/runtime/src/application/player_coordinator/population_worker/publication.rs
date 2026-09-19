@@ -17,6 +17,28 @@ impl<K, T: PreparedPopulation> PendingPopulation<K, T> {
 }
 
 impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
+    /// Owner/configuration withdrawal remains permanent even if the same key returns.
+    pub(in crate::application::player_coordinator) fn withdraw(&mut self) {
+        if let Some(pending) = &mut self.pending {
+            pending.withdraw();
+        }
+    }
+
+    /// A stable pending request skips reconstruction of its immutable appearance plan.
+    pub(in crate::application::player_coordinator) fn matches_request(
+        &self,
+        identity: WorldObjectIdentity,
+        key: &K,
+        level: CharacterComponentTextureLevel,
+    ) -> bool {
+        self.pending.as_ref().is_some_and(|pending| {
+            !pending.withdrawn
+                && pending.identity == identity
+                && pending.key == *key
+                && pending.level == level
+        })
+    }
+
     /// Keeps one exclusive cache bank and no initial source or GPU work.
     pub(in crate::application::player_coordinator) fn new() -> Self {
         Self {

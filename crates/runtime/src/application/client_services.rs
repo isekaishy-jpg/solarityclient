@@ -2714,7 +2714,11 @@ impl ClientServices {
                 .and_then(|world| self.terrain.map_kind(world.map_id().value())),
         );
         profile.mark("remote movement effects and passenger publication");
-        match self.player.synchronize(self.gameplay.world())? {
+        match self.player.synchronize_local_async(
+            self.gameplay.world(),
+            &self.cpu,
+            &mut self.renderer,
+        )? {
             RuntimePlayerPoll::ModelLoaded => {
                 if let (Some(model), Some(height)) = (
                     self.player.resident_model(),

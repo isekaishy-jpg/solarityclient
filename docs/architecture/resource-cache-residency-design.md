@@ -84,11 +84,11 @@ Current useful foundations and gaps:
   reads every available external sequence and decodes its tracks. The temporary
   encoded payloads are dropped; do not count them as permanently retained.
 - Glue backdrop/creation/selection, asynchronous top-level GameObject and
-  NPC/remote-player primary M2s now join namespace-wide source requests.
+  local/NPC/remote-player primary M2s now join namespace-wide source requests.
   Each consumer keeps its own scene/publication owner;
   texture and draw preparation follows source readiness. Pending joins register
   demand before CPU admission, so a full queue cannot prevent promotion of an
-  existing producer. Terrain, local-player appearance, nested appearance assets,
+  existing producer. Terrain, nested appearance assets,
   WMO doodads, effects and sky paths still need conversion from their local decode
   caches. Do not
   infer duplicate live allocations solely from those remaining owner counts.

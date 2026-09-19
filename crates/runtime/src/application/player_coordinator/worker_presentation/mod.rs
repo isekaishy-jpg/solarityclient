@@ -3,6 +3,7 @@
 mod glue;
 mod model_request;
 mod owner;
+mod player;
 
 use super::RuntimePlayerError;
 pub(super) use glue::prepare_glue_character;

@@ -414,6 +414,8 @@ pub struct RuntimePlayerPresentation {
     textures: BlpTextureCache,
     component_texture_level: CharacterComponentTextureLevel,
     resident: Option<ResidentPlayerModel>,
+    /// Authoritative table dimensions must not wait for visual asset construction.
+    local_dimensions: Option<([f32; 2], f32)>,
     unit_animations: UnitAnimationScene,
     camera_opacity_subject: super::entity_opacity::CameraOpacitySubject,
     arena_map: bool,
@@ -422,6 +424,7 @@ pub struct RuntimePlayerPresentation {
     remote_players: Vec<ResidentPlayerModel>,
     creature_worker: population_worker::PopulationWorker<CreatureModelKey, ResidentCreatureModel>,
     remote_worker: population_worker::PopulationWorker<PlayerAppearanceInputs, ResidentPlayerModel>,
+    local_worker: population_worker::PopulationWorker<PlayerAppearanceInputs, ResidentPlayerModel>,
     glue_character: Option<ResidentGlueCharacterModel>,
     requested_glue_character: Option<ResidentGlueCharacterKey>,
     glue_worker_catalog: Option<ArchiveCatalog>,
@@ -460,6 +463,7 @@ impl RuntimePlayerPresentation {
             textures: BlpTextureCache::new(),
             component_texture_level: CharacterComponentTextureLevel::DEFAULT,
             resident: None,
+            local_dimensions: None,
             unit_animations: UnitAnimationScene::default(),
             camera_opacity_subject: Default::default(),
             arena_map: false,
@@ -468,6 +472,7 @@ impl RuntimePlayerPresentation {
             remote_players: Vec::new(),
             creature_worker: population_worker::PopulationWorker::new(),
             remote_worker: population_worker::PopulationWorker::new(),
+            local_worker: population_worker::PopulationWorker::new(),
             glue_character: None,
             requested_glue_character: None,
             glue_worker_catalog: None,
@@ -512,6 +517,7 @@ impl RuntimePlayerPresentation {
         }
         self.failed_glue_character = None;
         self.requested_glue_character = None;
+        self.local_worker.withdraw();
         self.resident = None;
         self.remote_players.clear();
         self.glue_character = None;
@@ -867,20 +873,13 @@ impl RuntimePlayerPresentation {
     /// Returns the selected player's scaled stock collision width and height.
     #[must_use]
     pub fn collision_extent(&self) -> Option<[f32; 2]> {
-        self.resident
-            .as_ref()
-            .map(|resident| resident.collision_extent)
+        self.local_dimensions.map(|(extent, _)| extent)
     }
 
     /// Native radius, height, and step scale for the resident controlled player.
     pub(super) fn movement_dimensions(&self) -> Option<[f32; 3]> {
-        self.resident.as_ref().map(|resident| {
-            [
-                resident.collision_extent[0] * 0.5,
-                resident.collision_extent[1],
-                resident.object_scale.max(1.0),
-            ]
-        })
+        self.local_dimensions
+            .map(|(extent, scale)| [extent[0] * 0.5, extent[1], scale.max(1.0)])
     }
 
     /// Model-authored body dimensions also apply before GPU model residency.
@@ -1020,6 +1019,8 @@ impl RuntimePlayerPresentation {
     pub fn disconnect(&mut self) {
         self.unit_animations.clear();
         self.resident = None;
+        self.local_dimensions = None;
+        self.local_worker.withdraw();
         self.glue_character = None;
         self.requested_glue_character = None;
         if let Some(pending) = &mut self.pending_glue_character {
@@ -1279,13 +1280,12 @@ impl UnitPresentationGeneration {
 }
 
 struct ResidentPlayerModel {
-    /// Exact appearance inputs consumed by the remote character resolver.
+    /// Exact appearance inputs consumed by either character resolver.
     appearance_inputs: Option<PlayerAppearanceInputs>,
     generation: UnitPresentationGeneration,
     identity: WorldObjectIdentity,
     guid: u64,
     object_scale: f32,
-    collision_extent: [f32; 2],
     particle_color_id: u32,
     particle_colors: Option<M2ParticleColorReplacement>,
     base_texture_plan: CharacterTexturePlan,
@@ -1311,7 +1311,7 @@ struct ResidentPlayerModel {
     mount: Option<ResidentMountModel>,
 }
 
-struct DesiredRemotePlayerModel {
+struct DesiredPlayerModel {
     identity: WorldObjectIdentity,
     guid: u64,
     object_scale: f32,

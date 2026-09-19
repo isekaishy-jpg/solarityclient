@@ -19,6 +19,24 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Live local-player appearance now uses the shared primary-M2 request and owned
+  population worker. Body texture composition, textures, attachments, mounts and
+  immutable draw-template preparation run in that worker. A stable pending key
+  skips rebuilding its main-side appearance plan. Source failure restores the
+  cache bank; world/identity, texture-quality and appearance withdrawal reject
+  obsolete output. Nested attachment/mount source requests still use local caches.
+- Local and remote players share the same character construction function. Main
+  keeps local scaling, the exact Glue-to-world transfer, animation callbacks and
+  camera state. Publication applies current movement/view and preserves the current
+  camera clock and mount transition. Existing residency continues its own motion
+  until an exact replacement publishes. Table-derived collision dimensions are
+  held independently of visual residency, so worker loading and texture-quality
+  invalidation do not defer that metadata. The local folder separates capture,
+  coordination, Glue transfer, publication and pose updates.
+- F10 records `player.local.synchronize` and `player.appearance.prepare` alongside
+  the existing CPU/source dependency records. Synchronous diagnostic callers
+  explicitly select synchronous loading through the same construction path.
+
 - Owned CPU phases now dispatch ready nodes from three intrusive cost bins,
   preserving FIFO ties, prerequisite eligibility and original output slots.
   Node links use charged metadata; there is no whole-scene sort or per-bin
@@ -79,8 +97,8 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   readiness gates an owned appearance phase without occupying a waiting worker;
   ready leases enter the existing construction path directly. Admission refusal
   retains the private archive/cache bank, and ordinary completion restores it
-  before publication or error handling. This does not convert nested attachments,
-  selection pets or the synchronous local-player appearance path.
+  before publication or error handling. This does not convert nested attachments
+  or selection pets; the live local-player path is connected as described above.
 - Main owns one selected Glue attempt. Residency or texture-quality changes
   permanently withdraw that attempt; after it drains, main admits the latest
   selection. No worker rereads a shared selection mutex or loops through replacement
@@ -180,7 +198,7 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   F10 has distinct result/reclamation native wait spans. Full main-ready service
   and loading dependency integration remain required. GPU-slot native servicing
   is connected as described above.
-- NPC and remote-player primary M2 loading now joins the same namespace/path
+- Local-player, NPC and remote-player primary M2 loading now joins the same namespace/path
   authority as Glue and top-level GameObjects. A new source has one admitted
   producer; a pending source gates appearance work through `LoadBatch` without
   occupying a worker. Ready leases enter the existing texture, attachment, mount
@@ -508,7 +526,7 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   end-of-frame state reclamation still have barriers.
 - Extend pending-request authority beyond runtime audio, Glue backdrops and
   creation/selection primary M2s, asynchronous top-level GameObject M2s and
-  NPC/remote-player primary M2s. Terrain, local-player appearance, Glue attachments
+  local/NPC/remote-player primary M2s. Terrain, Glue attachments
   and pets, population attachments/mounts, nested WMO doodads, effects
   and sky sources still use their existing local decode caches.
   WMO and other source domains need shared pending authority, cross-resource I/O
@@ -573,6 +591,29 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Local-player worker construction checkpoint
+
+On 2026-09-19, formatting, workspace Clippy with warnings denied and all 1,586
+workspace tests passed, with zero failures and 33 ignored across 94 summaries.
+Four new local-consumer checks cover saturated admission, a shared pending source
+without a waiting worker, exact lease sharing, failure/cache recovery, current
+motion on publication, appearance reversion, world replacement with a reused GUID,
+and serial/worker atlas, geoset, mount, collision and camera output parity. Existing
+camera, equipment, mount and moving M2 scene fixtures remain in the passing suite.
+Logs are in ignored `target/local-appearance-verified-*`.
+
+A hidden debug smoke run completed 56 frames across streaming, stationary, orbit,
+pointer, outward travel, return and settled phases using Soap's appearance and
+12 authored NPCs at the recorded Orgrimmar fixture, with installed terrain,
+FrameXML and Vulkan. No warning/error logs were produced. The diagnostic's
+default Windows main stack overflowed before scene output; rebuilding only that
+example with a 32 MiB stack completed successfully. The smoke exercises the common
+construction/render path; its player initialization remains synchronous. The
+controlled tests above exercise asynchronous admission. This is functional
+evidence, not a matched live FPS measurement or a network/audio/movement-solver
+test. Logs/CSV are in ignored `target/local-appearance-smoke*`; the initial stack
+failure remains recorded in `target/local-appearance-world*`.
 
 ### Build 154 package checkpoint
 

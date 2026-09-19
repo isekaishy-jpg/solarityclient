@@ -16,6 +16,14 @@ use std::thread::{self, ThreadId};
 use std::time::Duration;
 
 impl super::super::RuntimePlayerPresentation {
+    /// Local fixtures distinguish source/CPU readiness from main-only GPU warmup.
+    pub(in crate::application) fn local_preparation_pending(&self) -> bool {
+        self.local_worker
+            .pending
+            .as_ref()
+            .is_some_and(|pending| !pending.stage.is_finished())
+    }
+
     /// Tests wait on the real coordinator notifier only while CPU work remains.
     /// This observes readiness without consuming results or bypassing GPU admission.
     pub(in crate::application) fn population_preparation_pending(&self) -> bool {

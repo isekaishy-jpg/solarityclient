@@ -11,6 +11,9 @@ mod entity_retirement;
 #[path = "population_admission.rs"]
 mod population_admission;
 
+#[path = "local_player_admission.rs"]
+mod local_player_admission;
+
 #[path = "stock_npc_residency.rs"]
 mod stock_npc_residency;
 
