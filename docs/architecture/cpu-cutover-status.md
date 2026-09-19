@@ -484,11 +484,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 150 was packaged and installed on 2026-09-19 from `70e035ce`. It connects
-Glue creation/selection primary sources to the shared appearance adapter,
-retaining receiver-uniform batches, the shared light-source bank, terrain/liquid
-overlap, resumable M2 phases, native GPU presentation-slot and CPU waits, and
-preceding source/loading changes.
+Build 151 was packaged and installed on 2026-09-19 from `fffb70e2`. It connects
+the retained main readiness queue to world preparation, retaining shared Glue
+appearance sources, receiver-uniform batches, the shared light-source bank,
+terrain/liquid overlap, resumable M2 phases, native GPU presentation-slot and CPU
+waits, and preceding source/loading changes.
 Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
@@ -531,6 +531,35 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 151 package and main continuation replay
+
+Build **151** compiled through `scripts/build-client.ps1` in 5m41s from
+`fffb70e23eeceddf78606c596ee7b5016f617da3`. Source and index remained fixed through
+package and replay compilation; `dirty=true` records the reserved `BUILD_NUMBER`.
+The package and installed executable share SHA-256
+`AADF9C559FCD0EA412433EAE81CEEEA1E75F5F9FB35431D6F0D921CEE19B63AF`.
+Installation used `install-test-client.ps1 -SkipBuild`; executable identity,
+manifest, launcher and desktop shortcut were verified. Testing retains 2560 x
+1440 fullscreen-windowed, four CPU workers, capacity 256, two network workers
+and GPU zero. F10 remains opt-in. No interactive client was launched.
+
+The optimized hidden world replay completed **896 frames**, 128 each of
+streaming, stationary, orbit, pointer, outward travel, return and settled phases.
+It used Soap's saved appearance and 120 authored NPCs, installed terrain/FrameXML/
+Vulkan, map 1 at (1515.34, -4417.27, 18.0499), travel offset (-80, 0, 0), 2K,
+four CPU workers and an isolated profile with audio/VSync disabled. It admitted
+one neighboring tile, with one to two resident tiles and no evictions.
+M2 packets ranged from 54 to 1,178 and bone transforms from 401 to 15,305.
+Capture `1789834878039-1` contains 28 sampled main requests, each with exactly one
+ready notice and one consumption. There were zero dropped samples/events/trace
+rows and zero capacity overflows; the replay logs contain no warnings or errors.
+
+This exercises actual world preparation and rendering under camera/content
+changes, but not live network, audio or the movement solver. Hidden offline times
+do not establish a matched live FPS gain or complete the remaining cutover.
+Evidence: ignored `target/main-ready-package.log`, `target/main-ready-world*`,
+`target/main-ready-world-profile/Profiles` and `target/main-ready-install.log`.
 
 ### Main readiness and world continuation checkpoint
 
