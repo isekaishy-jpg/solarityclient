@@ -338,9 +338,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 141 was packaged and installed on 2026-09-19 from `45d6ab02`. It includes
-the resource-gated loading, epoch registration and resumable terrain changes
-since Build 139. Full source validation, optimized package compilation and
+Build 142 was packaged and installed on 2026-09-19 from `68b3f19f`. It includes
+the connected independent world preparation boundary on top of Build 141's
+resource-gated loading, epoch registration and resumable terrain changes.
+Full source validation, optimized package compilation and
 installed executable identity/hash verification passed, as recorded below.
 The package does not complete the cutover or establish a measured FPS gain.
 
@@ -382,6 +383,22 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 142 package checkpoint
+
+On 2026-09-19, the optimized `test-client` package compiled successfully and was
+installed through the existing Testing shortcut. The executable reports version
+`0.0.3a`, build `142`, source `68b3f19f65d1d5222f84d6289799ad3c1e52c1f4`, and
+`dirty=true`; only the build-number reservation was uncommitted during compilation.
+The installed executable matches the packaged artifact's SHA-256:
+`A9C6CB746EB7E9FC248A6DCFE01DE52B332FDBBBA28D7ACE402DD05255FFD96A`.
+
+The shortcut and launcher were verified at 2560x1440 fullscreen-windowed, four
+CPU workers, CPU capacity 256, two network workers and GPU index 0. F10 remains
+opt-in, and the client was not launched. This is a tested, connected source
+checkpoint; no live FPS improvement or full cutover completion is established.
+Packaging logs are in ignored `target/frame-continuation-package.stdout.log`
+and `target/frame-continuation-package.stderr.log`.
 
 ### Independent world preparation checkpoint
 
