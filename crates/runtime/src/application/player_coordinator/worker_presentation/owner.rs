@@ -4,7 +4,7 @@ use super::super::{RuntimePlayerError, RuntimePlayerPresentation, RuntimePlayerS
 use super::GlueCharacterWorkerCache;
 use crate::application::player_coordinator::population_worker;
 use crate::application::unit_animation::UnitAnimationScene;
-use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle};
+use solarity_asset::{ArchiveCatalog, AssetStoreHandle};
 use solarity_rendering::CharacterComponentTextureLevel;
 use std::sync::{Arc, Mutex};
 
@@ -16,10 +16,13 @@ pub(in crate::application::player_coordinator) fn with_worker_presentation<T>(
     worker_cache: &mut GlueCharacterWorkerCache,
     prepare: impl FnOnce(&mut RuntimePlayerPresentation) -> Result<T, RuntimePlayerError>,
 ) -> Result<T, RuntimePlayerError> {
-    let store = worker_cache.store.take();
+    worker_cache.mount(&catalog)?;
+    let store = worker_cache
+        .store
+        .take()
+        .unwrap_or_else(|| unreachable!("mounted worker bank owns its store"));
     let models = std::mem::take(&mut worker_cache.models);
     let textures = std::mem::take(&mut worker_cache.textures);
-    let store = store.map_or_else(|| AssetStore::mount(catalog), Ok)?;
     let mut presentation = RuntimePlayerPresentation {
         passenger_frames: crate::application::unit_passenger::UnitPassengerFrames::new(Arc::clone(
             &catalogs.vehicles,

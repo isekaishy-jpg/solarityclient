@@ -303,10 +303,11 @@ impl RuntimePlayerPresentation {
                             identity: desired.key.identity,
                             key: desired.key.clone(),
                             level: self.component_texture_level,
+                            model_path: desired.key.path.clone(),
                         },
                         catalog,
                         catalogs,
-                        move |presentation| presentation.load_creature(desired),
+                        move |presentation, model| presentation.prepare_creature(desired, model),
                     )?;
                 }
             } else {
@@ -348,6 +349,21 @@ impl RuntimePlayerPresentation {
             .resolve_model(desired.key.display_id)
             .map_err(UnitModelAppearanceError::from)?;
         let model = self.models.load(&mut assets, appearance.model_path())?;
+        drop(assets);
+        self.prepare_creature(desired, model)
+    }
+
+    /// Composes one appearance from its exact shared primary-model generation.
+    pub(super) fn prepare_creature(
+        &mut self,
+        desired: DesiredCreatureModel,
+        model: solarity_asset::ResourceLease<solarity_asset::DecodedM2Model>,
+    ) -> Result<ResidentCreatureModel, RuntimePlayerError> {
+        let mut assets = self.assets.borrow_mut();
+        let appearance = self
+            .creatures
+            .resolve_model(desired.key.display_id)
+            .map_err(UnitModelAppearanceError::from)?;
         let (textures, geosets, mut attachment_plan) = if let Some(extra) = appearance.extra() {
             let character = self.characters.resolve_player(
                 extra.race_id(),

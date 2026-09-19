@@ -144,10 +144,13 @@ impl RuntimePlayerPresentation {
                                 identity: desired.identity,
                                 key: inputs,
                                 level: self.component_texture_level,
+                                model_path: desired.path.clone(),
                             },
                             catalog,
                             catalogs,
-                            move |presentation| presentation.load_remote_player(desired, inputs),
+                            move |presentation, model| {
+                                presentation.prepare_remote_player(desired, inputs, model)
+                            },
                         )?;
                     }
                 } else {
@@ -331,6 +334,19 @@ impl RuntimePlayerPresentation {
         desired: DesiredRemotePlayerModel,
         inputs: PlayerAppearanceInputs,
     ) -> Result<ResidentPlayerModel, RuntimePlayerError> {
+        let model = self
+            .models
+            .load(&mut self.assets.borrow_mut(), &desired.path)?;
+        self.prepare_remote_player(desired, inputs, model)
+    }
+
+    /// Composes textures and attachments after the shared primary source is ready.
+    pub(super) fn prepare_remote_player(
+        &mut self,
+        desired: DesiredRemotePlayerModel,
+        inputs: PlayerAppearanceInputs,
+        model: solarity_asset::ResourceLease<solarity_asset::DecodedM2Model>,
+    ) -> Result<ResidentPlayerModel, RuntimePlayerError> {
         let appearance = inputs.appearance;
         let character = self.characters.resolve_player(
             u32::from(inputs.unit.race_id()),
@@ -373,7 +389,6 @@ impl RuntimePlayerPresentation {
             .transpose()
             .map_err(UnitModelAppearanceError::from)?;
         let mut assets = self.assets.borrow_mut();
-        let model = self.models.load(&mut assets, &desired.path)?;
         let texture_plan =
             CharacterTexturePlan::equipped(&character, &assets, equipment_items.iter().copied())?;
         let geosets = CharacterGeosetPlan::equipped(

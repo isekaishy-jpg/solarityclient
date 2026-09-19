@@ -16,6 +16,19 @@ pub(super) struct GlueCharacterWorkerCache {
     textures: BlpTextureCache,
 }
 
+impl GlueCharacterWorkerCache {
+    /// Mounts before transferring cache fields so a failed source preserves the bank.
+    pub(in crate::application::player_coordinator) fn mount(
+        &mut self,
+        catalog: &solarity_asset::ArchiveCatalog,
+    ) -> Result<(), solarity_asset::AssetError> {
+        if self.store.is_none() {
+            self.store = Some(AssetStore::mount(catalog.clone())?);
+        }
+        Ok(())
+    }
+}
+
 /// Coalesced Glue completion returns cache ownership independently of presentation success.
 pub(super) struct GlueWorkerCompletion {
     pub(super) cache: GlueCharacterWorkerCache,

@@ -19,6 +19,20 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- NPC and remote-player primary M2 loading now joins the same namespace/path
+  authority as Glue and top-level GameObjects. A new source has one admitted
+  producer; a pending source gates appearance work through `LoadBatch` without
+  occupying a worker. Ready leases enter the existing texture, attachment, mount
+  and GPU-warmup path directly. Nested models still use the owned local caches.
+- Population source waits retain the exclusive archive/cache bank. Admission
+  refusal preserves that bank; source failure returns it before reporting the
+  original error. Removed/replaced appearances withdraw their own demand and
+  cancel unstarted dependent work without cancelling another consumer's decode.
+  Withdrawal remains terminal if an appearance switches back before completion;
+  the old cancellation is reclaimed before the returning appearance is admitted.
+  Producer mount failure publishes the actual archive error to joined owners.
+  Population admission, readiness and ordered publication now have separate
+  children under a folder module.
 - World presentation now uses a scoped M2 admission/publication boundary. Scene
   callbacks launch owned root poses; ordered traversal returns to main before its
   first unfinished root palette, or seals geometry when all selected owners are
@@ -327,9 +341,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   Current frame consumers still wait at their necessary consumption boundaries.
 - Cross-domain terrain/WMO/UI/rendering overlap and phase-specific M2 demand;
   ordered receiver lighting and end-of-frame state reclamation still have barriers.
-- Extend pending-request authority beyond runtime audio, Glue primary M2s and
-  asynchronous top-level GameObject M2s. Terrain, population/appearance, nested WMO
-  doodads, effects and sky sources still use their existing local decode caches.
+- Extend pending-request authority beyond runtime audio, Glue primary M2s,
+  asynchronous top-level GameObject M2s and NPC/remote-player primary M2s. Terrain,
+  local/Glue appearance, population attachments/mounts, nested WMO doodads, effects
+  and sky sources still use their existing local decode caches.
   WMO and other source domains need shared pending authority, cross-resource I/O
   dependencies and the remaining domain-wide shared result leases. M2/WMO sources
   already have external leases and coalesced final-release delivery.
@@ -389,6 +404,26 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Shared population primary-source checkpoint
+
+On 2026-09-19, formatting, full workspace Clippy with warnings denied and all
+1,528 workspace Rust tests passed, with 33 ignored across 90 suites. A controlled
+source owner holds publication while both NPC and remote-player consumers join;
+useful work still executes on the only worker. Both published residents retain
+the exact same source lease. The fixtures also cover saturated dependency
+admission, object withdrawal and recycled-identity rejoin, abandoned-source error
+fan-out followed by a new successful request, complete mounts and current motion
+at publication. A separate controlled completion verifies that a withdrawn
+attempt returns its cache and discards cancellation even while its object remains
+current. This prevents appearance changes from reviving obsolete attempts.
+
+Final logs are in ignored `target/population-readiness-checked-{fmt,clippy,tests}`
+with `.stdout.log` and `.stderr.log` suffixes. The preceding full run passed 1,527
+tests before adding terminal-withdrawal handling; the final run covers that
+correction. These checks establish request ownership and publication behavior,
+not a measured live frame-rate improvement. Nested appearance sources and the
+remaining cutover requirements are still open.
 
 ### Build 143 package checkpoint
 

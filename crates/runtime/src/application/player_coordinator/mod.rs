@@ -90,6 +90,9 @@ pub enum RuntimePlayerError {
     /// The selected M2 or one of its SKIN companions failed strict loading.
     #[error(transparent)]
     Asset(#[from] AssetError),
+    /// A shared primary-model producer failed before appearance preparation.
+    #[error(transparent)]
+    ModelRequest(#[from] solarity_asset::M2LoadError),
     /// Authored M2 geometry cannot produce a finite stock camera height.
     #[error(transparent)]
     CameraHeight(#[from] CameraSubjectHeightError),
