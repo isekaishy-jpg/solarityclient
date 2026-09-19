@@ -593,6 +593,24 @@ readiness behavior.
 
 ## Checkpoint validation
 
+### Build 155 live F10 review
+
+The user's 65.8-second moving capture on 2026-09-19 is reviewed in
+[Build 155 performance](testing-build155-performance.md). Ordinary frames average
+9.059 ms. Main consumes 98.44% of one logical CPU while individual workers consume
+10.73-13.10%; M2 admission remains 3.424 ms/frame on main. Movement exposes broad
+placement publication and terrain-service spikes; UI render-plan preparation
+also has a 13.045 ms texture-quad phase outlier. GPU samples average 3.401 ms.
+These are current costs, not a matched before/after regression or gain.
+
+The review identifies incorrect wait attribution: `cpu.frame.result_wait` includes
+ready-result consumption and lease return. Detail-frame observer perturbation is
+also material. Neither should be interpreted as native blocking. Memory plateaus
+and later declines during the capture, so this run alone does not establish a
+leak. Remaining serial M2 admission, broad residency/UI publication, instrumentation
+correction and the existing complete cutover requirements remain open. This was
+an analysis/documentation checkpoint; the installed executable is unchanged.
+
 ### Build 155 package checkpoint
 
 Build **155** compiled through `scripts/build-client.ps1` in 4m49s from
