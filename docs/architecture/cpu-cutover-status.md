@@ -320,13 +320,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
-Build 139 was packaged and installed on 2026-09-15 at the user's request to stop
-further cutover work and provide a Testing client. It includes the current owned
-character/population cache handoff and finite Glue coalescing steps on top of
-`5e7d0b7b`. Optimized package compilation and installed executable identity/hash
-verification passed. The latest worker edits subsequently passed full workspace validation,
-recorded in the Build 139 checkpoint below. This package does not complete the cutover
-or establish a measured FPS gain.
+Build 141 was packaged and installed on 2026-09-19 from `45d6ab02`. It includes
+the resource-gated loading, epoch registration and resumable terrain changes
+since Build 139. Full source validation, optimized package compilation and
+installed executable identity/hash verification passed, as recorded below.
+The package does not complete the cutover or establish a measured FPS gain.
 
 ## Archive table investigation
 
@@ -366,6 +364,29 @@ does not authorize guessed lookup flags, forced pressure eviction, or animation
 readiness behavior.
 
 ## Checkpoint validation
+
+### Build 141 package checkpoint
+
+On 2026-09-19, the optimized `test-client` package compiled successfully and was
+installed through the existing Testing shortcut. The installed executable and
+Cargo artifact have matching SHA-256:
+`C3CE37A1A0FF65BDB576B0213FF2A703D94379B9B0EED70C069051B953BF1CEB`.
+The executable reports version `0.0.3a`, build `141`, source
+`45d6ab020e22205c2f626e1904549843391472ed`, and `dirty=true`; the build-number
+reservation was the only tracked change during compilation. Installation reused
+that artifact identity without reserving another number.
+
+The launcher retains 2560x1440 fullscreen-windowed presentation, four CPU workers,
+CPU capacity 256, two network workers and GPU index 0. F10 detail tracing remains
+opt-in. The client was not launched, so this package establishes availability,
+not live performance or gameplay verification. Source validation is recorded in
+the resource-gated loading checkpoint below.
+
+Build 140 was reserved before the reported Codex crash and VS Code restart. Its
+build process disappeared without producing an executable; the number remains
+an incomplete attempt. Build 141 reused the compiled dependencies and completed.
+Persistent packaging logs are in ignored `target/build141-package.stdout.log`
+and `target/build141-package.stderr.log`.
 
 ### Resource-gated loading checkpoint
 
