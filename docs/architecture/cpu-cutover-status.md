@@ -623,6 +623,15 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
+Build 161 was packaged and installed on 2026-09-20 from `32400768`. Geometry
+output buffers now follow source generation and visible/shadow demand instead
+of accumulating unrelated models' capacities by traversal ordinal. This repairs
+a retention defect found after Build 160 exhausted the 128 MiB CPU Frame budget;
+it preserves that budget and the camera sampling correction. Formatting, Clippy
+and all 1,603 workspace tests pass (33 existing ignored), and the hidden
+896-frame movement replay completed. The exact live scene and remaining camera
+hitches are not reproduced by that fixture; see [the package record](testing-build161-storage.md).
+
 Build 160 was packaged and installed on 2026-09-20 from `dcd1e4e4`. It restores
 clock-dependent camera recovery sampling before reusing the shared
 terrain/presentation collision result. Unchanged sampled poses retain spatial
