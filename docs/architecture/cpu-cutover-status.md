@@ -19,6 +19,14 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+A [two-variant M2 output-assembly experiment](m2-output-assembly-experiment.md)
+rejected a separate final-copy worker phase. Early overlap saved about 0.24 ms of
+main publication/prefix work but added about 0.26 ms of phase-pending time; moving
+camera results were mixed. Both prototypes were removed, and Build 166 remains
+installed. Future distribution must consume producer-owned output directly or
+produce final records inside existing kernels, rather than adding another copy
+phase and consumer join. The full remaining cutover scope below is unchanged.
+
 Shadow command recording now uses the shared CPU executor with four exclusive
 per-slot command pools, scoped unconditional joins and native input servicing.
 Main still owns scene recording and the single ordered GPU submission. The
