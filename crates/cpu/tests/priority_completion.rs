@@ -39,7 +39,11 @@ fn an_empty_promoted_phase_notifies_after_metadata_finishes() -> Result<(), Box<
     let notifier = Arc::new(Notifier::default());
     let mut cpu = CpuExecutor::with_notifier(
         CpuPoolConfig::new(
-            NonZeroUsize::MIN,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::new(4).ok_or("capacity")?,
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ),

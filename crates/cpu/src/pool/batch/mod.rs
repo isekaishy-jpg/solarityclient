@@ -50,6 +50,13 @@ impl<T: Send + 'static> FrameBatch<T> {
         Self::create(Kernel::Reported(operation))
     }
 
+    /// Registers a kernel with scoped scratch, cooperative cancellation and
+    /// admission provenance. User code still runs outside all scheduler locks.
+    #[must_use]
+    pub fn with_context(operation: fn(&mut T, &crate::JobContext<'_>) -> JobOutcome) -> Self {
+        Self::create(Kernel::Contextual(operation))
+    }
+
     /// Allocates the synchronization owner only at batch registration.
     fn create(kernel: Kernel<T>) -> Self {
         Self {

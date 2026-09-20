@@ -16,7 +16,11 @@ use std::{
 #[test]
 fn registration_progresses_while_an_unrelated_batch_is_locked() -> Result<(), Box<dyn Error>> {
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            crate::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or("capacity")?,
         CpuStoragePlan::new(1 << 20, 1 << 20, 0),
     ))?;

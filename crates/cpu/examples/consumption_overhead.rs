@@ -76,7 +76,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| std::env::temp_dir().join("solarity-consumption-overhead"));
     let mut capture = Capture::new(&root, "fixture=consumption-overhead".to_owned());
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(8).ok_or("capacity")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 0),
     ))?;

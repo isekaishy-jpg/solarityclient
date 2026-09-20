@@ -16,7 +16,11 @@ use std::{error::Error, num::NonZeroUsize};
 /// No native window or installed archives are needed for pure collector tests.
 fn executor() -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(4).ok_or("workers")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(4).ok_or("workers")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(8).ok_or("capacity")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)

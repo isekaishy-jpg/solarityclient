@@ -34,7 +34,11 @@ fn native_frame_readiness_preserves_input_and_publication_ownership() -> Result<
     events.push_event(sdl3::event::Event::Quit { timestamp: 123 })?;
     let mut cpu = CpuExecutor::with_notifier(
         CpuPoolConfig::new(
-            NonZeroUsize::MIN,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::MIN,
             CpuStoragePlan::new(64 << 20, 64 << 20, 0),
         ),

@@ -10,6 +10,7 @@ mod dispatch;
 mod epochs;
 mod executor;
 mod permit;
+mod plan;
 mod service;
 mod task;
 mod types;
@@ -21,6 +22,7 @@ pub use batch::{
 pub use demand::{CpuServiceDemand, CpuServiceInterest};
 pub use executor::CpuExecutor;
 pub use permit::CpuTaskPermit;
+pub use plan::CpuExecutionPlan;
 pub use service::CpuService;
 pub use task::{CpuServiceControl, CpuTask};
 pub use types::{CpuError, CpuPoolConfig, CpuPoolSnapshot};

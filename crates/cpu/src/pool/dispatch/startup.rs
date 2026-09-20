@@ -10,12 +10,13 @@ use std::{
 };
 
 impl Dispatch {
-    /// Starts exactly the configured workers; the last worker is flexible.
+    /// Starts the resolved protected/flexible split within one thread allowance.
     pub(crate) fn start(
-        count: usize,
+        plan: crate::CpuExecutionPlan,
         capacity: usize,
         budget: &CpuStorageBudget,
     ) -> Result<(Arc<Self>, Vec<JoinHandle<()>>), CpuError> {
+        let count = plan.worker_count().get();
         let frame_capacity = count.checked_mul(capacity).ok_or(CpuError::BatchStorage)?;
         let priority_capacity = capacity.checked_mul(2).ok_or(CpuError::BatchStorage)?;
         let mut frame = super::cost::CostQueue::default();
@@ -51,16 +52,21 @@ impl Dispatch {
                 retirement,
                 speculative,
                 stopping: false,
+                active_service: 0,
             }),
             ready: Condvar::new(),
             queued: AtomicU8::new(0),
-            protected: count > 1,
+            protected: plan.protected_workers() != 0,
+            bulk_limit: plan.bulk_limit().get(),
+            flexible_workers: plan.flexible_workers().get(),
         });
         let environment = WorkerEnvironment::capture();
         let mut handles = Vec::with_capacity(count);
         for index in 0..count {
             let worker = Arc::clone(&shared);
-            let flexible = index + 1 == count;
+            let flexible = index >= plan.protected_workers();
+            let service_reserved =
+                flexible && index - plan.protected_workers() < plan.service_reserve().get();
             let name = if flexible {
                 format!("solarity-flex-{index}")
             } else {
@@ -72,7 +78,7 @@ impl Dispatch {
                 if initialized.send(ready).is_err() || !ready {
                     return;
                 }
-                worker.worker(flexible);
+                worker.worker(flexible, service_reserved);
             }) {
                 Ok(handle) => {
                     handles.push(handle);

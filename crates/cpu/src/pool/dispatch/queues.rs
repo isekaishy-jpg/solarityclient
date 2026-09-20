@@ -22,18 +22,6 @@ impl Dispatch {
         self.ready.notify_all();
     }
 
-    /// Returns a yielded operation to the currently executing flexible worker.
-    /// That worker will inspect this durable queue on its next loop; waking the
-    /// protected sleepers for every cleanup chunk would provide no useful work.
-    pub(super) fn resume_service(&self, work: Work) {
-        let mut queues = self
-            .queues
-            .lock()
-            .unwrap_or_else(|_| unreachable!("scheduler queue mutations cannot panic"));
-        queues.service(work.service()).push_back(work);
-        self.publish_queued(&queues);
-    }
-
     /// Moves this phase's already queued runners, retaining FIFO ties. The scan
     /// is over admitted runner records only, once per phase promotion.
     pub(crate) fn promote(&self, owner: &Arc<dyn ReadyWork>) {
@@ -55,7 +43,10 @@ impl Dispatch {
         let bits = queues.frame.level()
             | (queues.urgent.level() << 2)
             | (u8::from(!queues.priority.is_empty()) << 4)
-            | (u8::from(!queues.required.is_empty() || !queues.retirement.is_empty()) << 5);
+            | (u8::from(
+                queues.active_service < self.bulk_limit
+                    && (!queues.required.is_empty() || !queues.retirement.is_empty()),
+            ) << 5);
         self.queued.store(bits, Ordering::Release);
     }
 
@@ -112,7 +103,10 @@ impl Dispatch {
 
 impl Queues {
     /// Selects one reserved FIFO without allocating or invoking domain code.
-    fn service(&mut self, service: CpuService) -> &mut crate::storage::StorageDeque<Work> {
+    pub(super) fn service(
+        &mut self,
+        service: CpuService,
+    ) -> &mut crate::storage::StorageDeque<Work> {
         match service {
             CpuService::Required => &mut self.required,
             CpuService::Retirement => &mut self.retirement,

@@ -17,7 +17,11 @@ use super::ResourceRequests;
 /// One flexible lane makes service ordering deterministic without clocks or sleeps.
 fn pool(capacity: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(capacity).ok_or("positive test capacity required")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)

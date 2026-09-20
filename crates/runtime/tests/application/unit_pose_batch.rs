@@ -22,7 +22,11 @@ impl super::super::PoseBatch {
 
 fn executor() -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(4).ok_or("worker count")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(4).ok_or("worker count")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(8).ok_or("capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)

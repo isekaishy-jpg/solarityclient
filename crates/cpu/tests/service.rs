@@ -8,7 +8,11 @@ use std::{error::Error, num::NonZeroUsize, sync::mpsc, time::Duration};
 /// Explicit one-lane fixture makes queue order independent of OS scheduling.
 fn cpu(workers: usize, capacity: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(workers).ok_or("zero workers")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(workers).ok_or("zero workers")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(capacity).ok_or("zero capacity")?,
         CpuStoragePlan::new(1 << 20, 1 << 20, 1 << 20),
     ))?)

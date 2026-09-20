@@ -32,7 +32,7 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
             )
         };
         loop {
-            let (index, mut job, kernel, trace, cost) = {
+            let (index, mut job, kernel, trace, cost, generation, cancellation) = {
                 let mut state = self.lock();
                 if !loading
                     && !state.ready.is_empty()
@@ -69,6 +69,11 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                     state.kernel,
                     state.trace,
                     state.nodes[index].cost,
+                    state.generation,
+                    state
+                        .kernel
+                        .uses_context()
+                        .then(|| Arc::clone(&state.cancellation)),
                 )
             };
             let _trace = trace.enter();
@@ -83,9 +88,14 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                     cost.duration()
                         .map_or(0, |duration| duration.as_nanos() as u64),
                 );
-                catch_unwind(AssertUnwindSafe(|| kernel.run(&mut job)))
+                let context = cancellation
+                    .as_ref()
+                    .map(|flags| crate::JobContext::new(generation, index, &flags[index], trace));
+                catch_unwind(AssertUnwindSafe(|| kernel.run(&mut job, context.as_ref())))
                     .unwrap_or(JobOutcome::Panicked)
             };
+            // No context/page pin survives terminal publication or next-epoch reserve.
+            drop(cancellation);
             let mut state = self.lock();
             state.drain_tail.returned(index);
             state.jobs[index] = Some(job);

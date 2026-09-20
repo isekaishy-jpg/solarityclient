@@ -19,7 +19,11 @@ impl Drop for DropProbe {
 fn detail_retirement_retries_saturation_and_shutdown_waits_for_worker_drops()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -55,7 +59,11 @@ fn detail_retirement_retries_saturation_and_shutdown_waits_for_worker_drops()
 fn detail_retirement_keeps_unsubmitted_ownership_when_admission_is_closed()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -95,7 +103,11 @@ impl Drop for OrderedDrop {
 fn required_loading_gets_a_turn_before_the_retirement_backlog_finishes()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or("capacity")?,
         solarity_cpu::CpuStoragePlan::new(1 << 20, 1 << 20, 1 << 20),
     ))?;

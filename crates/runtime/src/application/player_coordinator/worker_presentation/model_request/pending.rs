@@ -35,7 +35,11 @@ struct DependentWork<T: Send + 'static> {
 
 impl<T: Send + 'static> DependentWork<T> {
     /// The readiness gate guarantees publication before any worker begins this call.
-    fn run(&mut self) -> JobOutcome {
+    fn run(&mut self, context: &solarity_cpu::JobContext<'_>) -> JobOutcome {
+        // Withdrawal before taking the bank needs no partial appearance cleanup.
+        if context.is_cancelled() {
+            return JobOutcome::Cancelled;
+        }
         let model = self
             .dependency
             .poll()
@@ -93,7 +97,7 @@ impl<T: Send + 'static> AppearanceTask<T> {
             dependency,
             completion: None,
         }];
-        let mut batch = LoadBatch::new(CpuService::Required, DependentWork::run);
+        let mut batch = LoadBatch::with_context(CpuService::Required, DependentWork::run);
         if let Err(error) = batch.start_after(cpu, &mut jobs, &[ready]) {
             *bank = Some(
                 jobs.pop()

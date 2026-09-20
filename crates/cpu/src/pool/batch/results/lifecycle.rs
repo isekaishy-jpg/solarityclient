@@ -15,7 +15,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         self.validate(&state, handle)?;
         match state.nodes[handle.index].status {
             Status::Terminal(_) => return Ok(()),
-            Status::Running => state.nodes[handle.index].cancel_requested = true,
+            Status::Running => state.request_cancel(handle.index),
             Status::Ready | Status::Waiting => state.complete(handle.index, JobOutcome::Cancelled),
         }
         self.core.update_cost(&mut state);

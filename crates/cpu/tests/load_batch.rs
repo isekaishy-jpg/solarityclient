@@ -9,7 +9,11 @@ use std::{error::Error, num::NonZeroUsize, sync::mpsc, time::Duration};
 // Uses real bounded workers; no external resources or application state are required.
 fn cpu(workers: usize, capacity: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(workers).ok_or("workers")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(workers).ok_or("workers")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(capacity).ok_or("capacity")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)

@@ -20,6 +20,17 @@ impl<T: Send + 'static> LoadBatch<T> {
         Self { batch }
     }
 
+    /// Registers a loading kernel with cooperative withdrawal and admitted scratch.
+    #[must_use]
+    pub fn with_context(
+        service: CpuService,
+        operation: fn(&mut T, &crate::JobContext<'_>) -> JobOutcome,
+    ) -> Self {
+        let mut batch = FrameBatch::with_context(operation);
+        batch.service = Some(service);
+        Self { batch }
+    }
+
     /// Reserves all metadata and subscriptions before transferring any input.
     /// # Errors
     /// Capacity, lifecycle or readiness errors leave every input with the caller.
@@ -74,7 +85,7 @@ impl<T: Send + 'static> LoadBatch<T> {
         state.open = false;
         for index in 0..state.nodes.len() {
             match state.nodes[index].status {
-                Status::Running => state.nodes[index].cancel_requested = true,
+                Status::Running => state.request_cancel(index),
                 Status::Waiting | Status::Ready => state.complete(index, JobOutcome::Cancelled),
                 Status::Terminal(_) => {}
             }

@@ -15,7 +15,11 @@ fn result_consumption_follows_worker_output_and_keeps_request_identity()
     let mut capture = Capture::new(&root, "fixture=cpu-provenance".to_owned());
     let (_, path) = capture.toggle()?;
     let mut executor = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

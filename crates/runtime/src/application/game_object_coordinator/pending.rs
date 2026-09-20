@@ -28,7 +28,11 @@ struct DependentWork {
 }
 impl DependentWork {
     /// Called only after shared decoding succeeds. No resource wait occurs here.
-    fn prepare(&mut self) -> JobOutcome {
+    fn prepare(&mut self, context: &solarity_cpu::JobContext<'_>) -> JobOutcome {
+        // Keep the complete mounted source with its owner on early withdrawal.
+        if context.is_cancelled() {
+            return JobOutcome::Cancelled;
+        }
         let model = self
             .dependency
             .poll()
@@ -152,7 +156,7 @@ impl RuntimeGameObjectPresentation {
             dependency,
             completion: None,
         }];
-        let mut batch = LoadBatch::new(CpuService::Required, DependentWork::prepare);
+        let mut batch = LoadBatch::with_context(CpuService::Required, DependentWork::prepare);
         if let Err(error) = batch.start_after(cpu, &mut jobs, &[ready]) {
             let mut work = jobs
                 .pop()

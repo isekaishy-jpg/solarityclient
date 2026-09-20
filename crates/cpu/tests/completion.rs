@@ -22,7 +22,11 @@ fn background_and_frame_outputs_notify_after_completing_and_survive_shutdown()
     let notifier = Arc::new(Notifier::default());
     let mut cpu = CpuExecutor::with_notifier(
         CpuPoolConfig::new(
-            NonZeroUsize::new(2).ok_or("workers")?,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::new(2).ok_or("workers")?;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::MIN,
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ),

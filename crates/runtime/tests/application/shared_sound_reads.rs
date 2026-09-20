@@ -71,7 +71,11 @@ fn engine(store: &mut AssetStore) -> Result<OwnedSoundEngine, Box<dyn Error>> {
 /// One flexible lane provides deterministic FIFO completion markers.
 fn pool() -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(8).ok_or("positive test capacity required")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)

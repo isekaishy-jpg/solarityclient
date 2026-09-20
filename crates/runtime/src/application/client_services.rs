@@ -406,6 +406,8 @@ impl ClientServices {
         tracing::info!(
             protected_workers = cpu.frame_worker_count(),
             flexible_workers = cpu.background_worker_count(),
+            service_workers = cpu.execution_plan().service_reserve().get(),
+            bulk_limit = cpu.execution_plan().bulk_limit().get(),
             available_concurrency = ?solarity_cpu::CpuCapabilities::discover().available_workers(),
             "CPU execution plan initialized"
         );

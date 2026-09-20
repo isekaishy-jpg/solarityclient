@@ -4,6 +4,7 @@
 //! family. Parsing failures remain explicit and do not substitute guessed
 //! defaults unless stock behavior documents that default.
 
+mod cpu_policy;
 mod login;
 mod profile;
 mod startup_profile;

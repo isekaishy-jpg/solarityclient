@@ -71,7 +71,11 @@ fn exercise_shared_primary(lifecycle: SourceLifecycle) -> Result<(), Box<dyn Err
     let (notify, ready) = mpsc::channel();
     let mut cpu = CpuExecutor::with_notifier(
         CpuPoolConfig::new(
-            NonZeroUsize::MIN,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::new(3).ok_or("three admissions")?,
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ),
@@ -235,7 +239,11 @@ fn saturated_population_admission_preserves_active_generations_until_replacement
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -317,7 +325,11 @@ fn prepared_population_workers_publish_complete_mounts_with_current_motion()
     let (notify, ready) = mpsc::channel();
     let mut cpu = CpuExecutor::with_notifier(
         CpuPoolConfig::new(
-            slots,
+            {
+                let total: std::num::NonZeroUsize = slots;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             slots,
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ),

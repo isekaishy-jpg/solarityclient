@@ -61,7 +61,11 @@ impl Drop for CountWindow {
 fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result<(), Box<dyn Error>>
 {
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(2).ok_or("workers")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(2).ok_or("workers")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(8).ok_or("capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

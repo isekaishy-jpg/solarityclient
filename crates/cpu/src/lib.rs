@@ -11,10 +11,12 @@ mod reciprocal;
 mod storage;
 mod synchronization;
 
+pub use job::{JobContext, JobIdentity};
 pub use storage::{
     ByteReservation, CpuBuffer, CpuResultLease, CpuResultPage, CpuStorageBudget, CpuStorageClass,
     CpuStorageKind, CpuStoragePlan, CpuStorageSnapshot, FixedWriter, OutputBuffer,
 };
+pub use storage::{CpuScratch, ScratchScope};
 
 pub use capabilities::CpuCapabilities;
 pub use completion::{
@@ -24,9 +26,9 @@ pub use completion::{
 pub use cost::{CostCalibration, JobCost, WorkMeasurement};
 pub use environment::is_worker as is_worker_thread;
 pub use pool::{
-    CpuError, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService, CpuServiceControl,
-    CpuServiceDemand, CpuServiceInterest, CpuTask, CpuTaskPermit, FrameBatch, FrameBatchPlan,
-    FrameGraphTemplate, FrameJob, FramePriority, JobOutcome, LoadBatch,
+    CpuError, CpuExecutionPlan, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService,
+    CpuServiceControl, CpuServiceDemand, CpuServiceInterest, CpuTask, CpuTaskPermit, FrameBatch,
+    FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome, LoadBatch,
 };
 pub use random::BlizzardRand;
 pub use reciprocal::reciprocal_sqrt_estimate;

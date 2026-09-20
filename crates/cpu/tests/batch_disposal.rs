@@ -20,7 +20,11 @@ struct Child {
 #[test]
 fn disposing_a_batch_on_a_worker_never_waits_for_another_kernel() -> Result<(), Box<dyn Error>> {
     let cpu = Arc::new(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(2).ok_or("worker count")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(2).ok_or("worker count")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(4).ok_or("capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?);

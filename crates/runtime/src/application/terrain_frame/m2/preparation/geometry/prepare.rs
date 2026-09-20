@@ -9,6 +9,7 @@ impl GeometryJob {
     pub(super) fn prepare(
         &mut self,
         context: &GeometryContext,
+        job_context: &solarity_cpu::JobContext<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let Some(input) = self.input else {
             unreachable!("admitted draw job owns its inputs");
@@ -36,7 +37,7 @@ impl GeometryJob {
         let Some(visible) = input.visible else {
             return Ok(());
         };
-        self.prepare_particles(context, input, visible)?;
+        self.prepare_particles(context, input, visible, job_context)?;
         profile.mark("particle simulation and geometry");
         advance_ribbons(
             &source.model,

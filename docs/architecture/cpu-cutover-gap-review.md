@@ -5,7 +5,18 @@ against Build 159, source `8a4ae681`. The findings below were checked against
 source, rather than inferred from the design vocabulary. They supplement the
 existing three design documents; the complete cutover remains unfinished.
 
-## Camera smoothness is an unresolved regression
+Subsequent implementation connects current placement ownership, explicit worker
+policy and the first real `JobContext` consumers. See the
+[adoption record](cpu-cutover-foundation-adoption.md) for the current contracts
+and limits. The findings below retain the original Build 159 review baseline.
+
+## Camera smoothness: resolved in the user's Build 161 test
+
+On 2026-09-20 the user confirmed no crash and smooth camera motion again after
+the Build 160 camera-clock correction and Build 161 output-retention fix. This
+closes the reported visual regression based on live observation. It does not
+establish which contribution dominated or close the remaining performance work.
+The investigation below records the original report and evidence limits.
 
 The user describes camera movement that previously looked smooth and clear but
 now looks rough, blurred, possibly choppy or tearing. That report is broader

@@ -91,7 +91,11 @@ fn model_request_failure_is_shared_and_abandoned_producer_wakes_consumers()
     let joined = producer.subscribe();
     let worker_consumer = joined.clone();
     let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
-        std::num::NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = std::num::NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         std::num::NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -150,7 +154,11 @@ fn required_model_join_promotes_and_release_restores_prewarm() -> Result<(), Box
     let prewarm = producer.subscribe_for(solarity_cpu::CpuService::Speculative);
     let mut store = AssetStore::mount(catalog)?;
     let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
-        std::num::NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = std::num::NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         // The blocker and speculative producer must leave required admission headroom.
         std::num::NonZeroUsize::new(3).ok_or("positive capacity required")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
@@ -202,7 +210,11 @@ fn shared_model_readiness_drives_loading_and_late_subscribers() -> Result<(), Bo
     };
     let request = producer.subscribe();
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(3).ok_or("capacity")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -266,7 +278,11 @@ fn abandoned_model_dependency_returns_owned_input_without_running_it() -> Result
     };
     let request = producer.subscribe();
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or("capacity")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

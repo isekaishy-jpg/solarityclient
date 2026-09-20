@@ -7,6 +7,55 @@ use solarity_runtime::{ConfigurationError, RuntimeConfiguration, StartupProfile,
 
 use crate::support::ClientFixture;
 
+/// Runtime resolves a configurable split without silently expanding total CPU capacity.
+#[test]
+fn execution_policy_options_resolve_and_validate() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    let options = [
+        "--cpu-workers",
+        "7",
+        "--cpu-capacity",
+        "24",
+        "--cpu-flexible-workers",
+        "3",
+        "--cpu-service-workers",
+        "2",
+        "--cpu-bulk-limit",
+        "2",
+    ];
+    let configuration = RuntimeConfiguration::from_arguments(arguments(&fixture, &options))?;
+    let plan = configuration.cpu_pool().execution();
+    assert_eq!(plan.protected_workers(), 4);
+    assert_eq!(plan.flexible_workers().get(), 3);
+    assert_eq!(plan.service_reserve().get(), 2);
+    assert_eq!(plan.bulk_limit().get(), 2);
+    for (total, flexible, reserve, bulk) in [
+        ("2", "3", "1", "1"),
+        ("7", "3", "3", "2"),
+        ("7", "3", "1", "4"),
+    ] {
+        assert!(matches!(
+            RuntimeConfiguration::from_arguments(arguments(
+                &fixture,
+                &[
+                    "--cpu-workers",
+                    total,
+                    "--cpu-capacity",
+                    "24",
+                    "--cpu-flexible-workers",
+                    flexible,
+                    "--cpu-service-workers",
+                    reserve,
+                    "--cpu-bulk-limit",
+                    bulk
+                ]
+            )),
+            Err(ConfigurationError::InvalidCpuExecutionPlan)
+        ));
+    }
+    Ok(())
+}
+
 /// Every capacity and client-selection value is explicit and typed.
 #[test]
 fn complete_arguments_produce_typed_configuration() -> Result<(), Box<dyn Error>> {

@@ -26,6 +26,7 @@ pub struct CpuExecutor {
     pub(super) completion_capacity: usize,
     pub(super) load_epochs: super::epochs::Epochs,
     worker_count: usize,
+    execution: super::CpuExecutionPlan,
     storage: crate::CpuStorageBudget,
     pub(super) notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
 }
@@ -64,7 +65,7 @@ impl CpuExecutor {
         let load_epochs =
             super::epochs::Epochs::new(capacity, &storage, crate::CpuStorageClass::Required)?;
         let (dispatch, workers) =
-            Dispatch::start(worker_count, config.max_in_flight().get(), &storage)?;
+            Dispatch::start(config.execution(), config.max_in_flight().get(), &storage)?;
         Ok(Self {
             dispatch,
             workers,
@@ -76,6 +77,7 @@ impl CpuExecutor {
             storage,
             frame_capacity: config.max_in_flight().get(),
             worker_count,
+            execution: config.execution(),
             notifier,
         })
     }
@@ -173,13 +175,19 @@ impl CpuExecutor {
     /// Returns the flexible worker count within the configured total budget.
     #[must_use]
     pub const fn background_worker_count(&self) -> usize {
-        1
+        self.execution.flexible_workers().get()
     }
 
     /// Returns workers protected from blocking background operations.
     #[must_use]
     pub const fn frame_worker_count(&self) -> usize {
-        self.worker_count.saturating_sub(1)
+        self.execution.protected_workers()
+    }
+
+    /// Reports exactly the execution policy instantiated by this executor.
+    #[must_use]
+    pub const fn execution_plan(&self) -> super::CpuExecutionPlan {
+        self.execution
     }
 
     /// Returns a lock-consistent executor lifecycle snapshot.
@@ -205,7 +213,7 @@ impl CpuExecutor {
     /// Returns [`CpuError::StateUnavailable`] when lifecycle state is poisoned.
     pub fn can_admit_speculative(&self) -> Result<bool, CpuError> {
         let snapshot = self.snapshot()?;
-        let speculative_limit = 1;
+        let speculative_limit = self.execution.bulk_limit().get();
         Ok(snapshot.is_accepting() && snapshot.in_flight() < speculative_limit)
     }
 

@@ -24,7 +24,11 @@ fn wait_spans_exclude_ready_probes_callbacks_and_reclamation() -> Result<(), Box
     let mut capture = Capture::new(&root, "fixture=batch-waits".to_owned());
     let (_, path) = capture.toggle()?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(2).ok_or("workers")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(2).ok_or("workers")?;
+            crate::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(8).ok_or("capacity")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 0),
     ))?;

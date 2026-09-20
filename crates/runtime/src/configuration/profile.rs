@@ -20,6 +20,9 @@ const DATA_ROOT_OPTION: &str = "--data-root";
 const PROFILE_ROOT_OPTION: &str = "--profile-root";
 const LOCALE_OPTION: &str = "--locale";
 const CPU_WORKERS_OPTION: &str = "--cpu-workers";
+const CPU_FLEXIBLE_OPTION: &str = "--cpu-flexible-workers";
+const CPU_SERVICE_OPTION: &str = "--cpu-service-workers";
+const CPU_BULK_OPTION: &str = "--cpu-bulk-limit";
 const CPU_CAPACITY_OPTION: &str = "--cpu-capacity";
 const CPU_FRAME_BYTES_OPTION: &str = "--cpu-frame-bytes";
 const CPU_REQUIRED_BYTES_OPTION: &str = "--cpu-required-bytes";
@@ -92,6 +95,18 @@ impl RuntimeConfiguration {
                 CPU_WORKERS_OPTION => {
                     let value = next_value(&mut arguments, CPU_WORKERS_OPTION)?;
                     set_once(&mut values.cpu_workers, value, CPU_WORKERS_OPTION)?;
+                }
+                CPU_FLEXIBLE_OPTION => {
+                    let value = next_value(&mut arguments, CPU_FLEXIBLE_OPTION)?;
+                    set_once(&mut values.cpu_flexible, value, CPU_FLEXIBLE_OPTION)?;
+                }
+                CPU_SERVICE_OPTION => {
+                    let value = next_value(&mut arguments, CPU_SERVICE_OPTION)?;
+                    set_once(&mut values.cpu_service, value, CPU_SERVICE_OPTION)?;
+                }
+                CPU_BULK_OPTION => {
+                    let value = next_value(&mut arguments, CPU_BULK_OPTION)?;
+                    set_once(&mut values.cpu_bulk, value, CPU_BULK_OPTION)?;
                 }
                 CPU_FRAME_BYTES_OPTION => {
                     let value = next_value(&mut arguments, CPU_FRAME_BYTES_OPTION)?;
@@ -180,7 +195,9 @@ impl RuntimeConfiguration {
          --window-mode <windowed|fullscreen-windowed> \
          --gpu-index <zero-based-index> [--record-video] \
          [--cpu-frame-bytes <bytes>] [--cpu-required-bytes <bytes>] \
-         [--cpu-speculative-bytes <bytes>]"
+         [--cpu-speculative-bytes <bytes>] \
+         [--cpu-flexible-workers <count>] [--cpu-service-workers <count>] \
+         [--cpu-bulk-limit <count>]"
     }
 
     /// Returns the validated client `Data` directory.
@@ -351,7 +368,16 @@ impl RuntimeConfiguration {
             data_root,
             profile_root,
             locale,
-            cpu_pool: CpuPoolConfig::new(cpu_workers, cpu_capacity, cpu_storage),
+            cpu_pool: CpuPoolConfig::new(
+                super::cpu_policy::resolve(
+                    cpu_workers,
+                    values.cpu_flexible,
+                    values.cpu_service,
+                    values.cpu_bulk,
+                )?,
+                cpu_capacity,
+                cpu_storage,
+            ),
             network_workers,
             network_shutdown_timeout: Duration::from_millis(shutdown_milliseconds),
             login,
@@ -369,6 +395,9 @@ struct ParsedValues {
     profile_root: Option<OsString>,
     locale: Option<OsString>,
     cpu_workers: Option<OsString>,
+    cpu_flexible: Option<OsString>,
+    cpu_service: Option<OsString>,
+    cpu_bulk: Option<OsString>,
     cpu_capacity: Option<OsString>,
     cpu_frame_bytes: Option<OsString>,
     cpu_required_bytes: Option<OsString>,

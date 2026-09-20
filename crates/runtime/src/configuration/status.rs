@@ -10,6 +10,11 @@ use solarity_network::TransportError;
 /// A failure to construct complete typed runtime configuration.
 #[derive(Debug, Error)]
 pub enum ConfigurationError {
+    /// Explicit worker eligibility must fit the configured total compute count.
+    #[error(
+        "cpu worker counts must satisfy 1 <= service workers <= bulk limit <= flexible workers <= total workers"
+    )]
+    InvalidCpuExecutionPlan,
     /// The explicit persistent profile root is unavailable or not a directory.
     #[error("invalid --profile-root value {path}: {message}")]
     InvalidProfileRoot {

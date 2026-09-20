@@ -80,7 +80,11 @@ fn withdrawn_attempt_reclaims_failure_even_when_its_object_is_still_current()
     let (notify, ready) = channel();
     let mut cpu = CpuExecutor::with_notifier(
         CpuPoolConfig::new(
-            NonZeroUsize::MIN,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::MIN,
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ),
@@ -159,7 +163,11 @@ fn reused_guid_retires_warming_generation_on_cpu_even_when_initially_saturated()
     assert_ne!(identity, replacement);
     assert!(!worker.accepts(replacement));
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

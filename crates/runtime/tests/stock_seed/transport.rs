@@ -39,7 +39,11 @@ fn ordinary_game_objects_share_preparation_across_lifetimes() -> Result<(), Box<
         RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations)
             .with_worker_catalog(catalog);
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -164,7 +168,11 @@ fn retired_jobs_cannot_publish_or_fail_a_replacement_world() -> Result<(), Box<d
         RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), displays, animations)
             .with_worker_catalog(catalog);
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or("bad capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -276,7 +284,11 @@ fn referenced_transport_admits_the_exact_world_model_generation() -> Result<(), 
         RuntimeGameObjectPresentation::new(AssetStoreHandle::new(store), catalog, animations)
             .with_worker_catalog(archive_catalog);
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

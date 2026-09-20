@@ -104,7 +104,11 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     let mut ui =
         RuntimeUiFrame::prepare_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

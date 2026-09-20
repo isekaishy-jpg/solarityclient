@@ -224,7 +224,11 @@ fn neighbor_terrain_waits_for_exact_gpu_admission_before_cpu_publication()
     let window =
         solarity_systems::TerrainStreamingWindow::new(origin, distance, Vec3::new(777., 0., 0.))?;
     let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
-        std::num::NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = std::num::NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         std::num::NonZeroUsize::new(2).ok_or("capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -286,7 +290,11 @@ fn moving_window_rejects_old_completion_before_gpu_admission() -> Result<(), Box
         assert!(window.contains(neighbor));
         assert!(!moved_window.contains(neighbor));
         let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
-            std::num::NonZeroUsize::MIN,
+            {
+                let total: std::num::NonZeroUsize = std::num::NonZeroUsize::MIN;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             std::num::NonZeroUsize::new(2).ok_or("capacity")?,
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ))?;

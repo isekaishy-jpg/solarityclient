@@ -25,7 +25,11 @@ impl CoordinatorNotifier for Notices {
 
 fn cpu() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(8).ok_or(CpuError::InvalidJob)?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 0),
     ))
@@ -68,7 +72,11 @@ fn failed_fan_in_releases_a_never_ready_sibling_and_wakes_main() -> Result<(), B
     let notifier = Arc::new(Notices(AtomicUsize::new(0)));
     let cpu = CpuExecutor::with_notifier(
         CpuPoolConfig::new(
-            NonZeroUsize::MIN,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::MIN,
             CpuStoragePlan::new(64 << 20, 64 << 20, 0),
         ),
@@ -197,7 +205,11 @@ fn ready_work_precedes_wait_and_incomplete_epoch_cannot_be_overwritten()
 #[test]
 fn full_frame_capacity_still_admits_its_main_consumer() -> Result<(), Box<dyn Error>> {
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         CpuStoragePlan::new(64 << 20, 64 << 20, 0),
     ))?;

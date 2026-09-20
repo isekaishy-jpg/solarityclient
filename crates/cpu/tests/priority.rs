@@ -13,7 +13,11 @@ use std::{
 /// One lane makes every asserted queue ordering independent of timing estimates.
 fn cpu() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(16).ok_or(CpuError::InvalidJob)?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))

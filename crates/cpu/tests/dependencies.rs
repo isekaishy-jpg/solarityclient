@@ -51,7 +51,11 @@ fn execute(job: &mut Job) -> JobOutcome {
 /// One admitted frame graph can occupy all workers without an auxiliary pool.
 fn cpu(workers: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(workers).ok_or("workers")?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(workers).ok_or("workers")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or("capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)

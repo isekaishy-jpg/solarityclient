@@ -10,7 +10,11 @@ use solarity_cpu::{CpuError, CpuExecutor, CpuPoolConfig, FrameBatch, FrameBatchP
 /// Explicit small scheduler budget for controlled interleavings.
 fn executor() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(3).ok_or(CpuError::InvalidJob)?,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::new(3).ok_or(CpuError::InvalidJob)?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))
@@ -284,7 +288,11 @@ fn incremental_producer_can_resume_after_workers_have_drained() -> Result<(), Bo
 #[test]
 fn worker_cannot_deadlock_its_lane_by_joining_a_queued_task() -> Result<(), Box<dyn Error>> {
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or(CpuError::InvalidJob)?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -301,7 +309,11 @@ fn worker_cannot_deadlock_its_lane_by_joining_a_queued_task() -> Result<(), Box<
 fn worker_readiness_waits_reject_queued_frame_work_and_return_ownership()
 -> Result<(), Box<dyn Error>> {
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or(CpuError::InvalidJob)?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

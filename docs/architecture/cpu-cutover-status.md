@@ -19,6 +19,18 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+- Simulation owner lookup now follows placement storage mutations before render
+  metadata publication. Creature/player residency and state updates no longer
+  scan the whole scene per owner while topology is dirty; duplicate ordering and
+  in-place retirement remain explicit. Unit lifecycle code has focused children.
+- Runtime resolves a validated `CpuExecutionPlan`, including protected/flexible
+  counts, reserved service workers and concurrent bulk/service capacity. CPU
+  enforces and reports the plan. Existing Testing defaults retain their split.
+- `JobContext` now reaches M2 geometry and dependent appearance/GameObject loads:
+  batch-local provenance, inherited diagnostics, atomic withdrawal and scoped
+  preadmitted typed scratch. Particle sorting uses that scratch boundary, with
+  unconditional temporary cleanup. See [implementation and remaining limits](cpu-cutover-foundation-adoption.md).
+
 - Placement storage now journals dynamic membership and static layout changes.
   When no static identity or index changed, topology publication retains its
   static arrays, spatial partitions and WMO membership, refreshing only dynamic
@@ -557,22 +569,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Still required for the complete cutover
 
-- Close the reported Build 159 camera-motion regression: formerly clear/smooth
-  motion now appears blurred, choppy or tearing. Frame-time spikes are confirmed,
-  but input/camera/render identity, active screen effects and displayed cadence
-  still need correlated evidence. Preserve stock camera/input boundaries.
-  The earlier streaming/presentation camera cache now includes its missing client
-  clock dependency; see [the focused review](cpu-cutover-gap-review.md#earlier-camera-sharing-missing-clock-dependency).
-  This corrects stale collision-recovery reuse, but does not yet establish the
-  cause or closure of the complete visible-motion report.
-- Implement the designed `JobContext` through real frame/loading consumers:
-  admitted scoped scratch, cooperative cancellation at valid domain boundaries,
-  job/epoch diagnostics and ownership-safe terminal cleanup. Kernels currently
-  receive only mutable job state; the type is not implemented.
-- Replace the hard-coded single-flexible-worker split with the designed explicit
-  validated execution plan, including bounded bulk eligibility/concurrency and
-  resolved capability reporting. Preserve protected capacity and the configured
-  whole-process budget.
+- Preserve the restored camera/input behavior. After Build 161 the user confirmed
+  that the client no longer crashed in their test and camera motion was smooth
+  again. The reported camera regression is closed on that live confirmation;
+  remaining frame-time spikes and cutover scaling still require measurement.
+- Extend the connected `JobContext` into resumable service continuations and
+  broader domain consumers. Typed scratch is currently retained with domain jobs;
+  generic worker-local scratch and optimized overhead evidence remain required.
+- Measure the explicit execution plan under varied worker counts and concurrent
+  loading. Improve capability reporting within the agreed scope, and complete
+  finite-step/bulk classification and whole-process concurrency policy. Fixed
+  affinity and NUMA placement remain deferred.
 - Batch runner queue publication and measure queue-lock/batch-lock residence,
   enqueue-to-start distributions and cold wake latency across worker counts.
   Central queues currently lock and notify per pushed runner; contention is not

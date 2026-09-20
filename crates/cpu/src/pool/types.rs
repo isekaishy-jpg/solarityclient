@@ -7,7 +7,7 @@ use thiserror::Error;
 /// Explicit capacity for the application-owned CPU pool.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CpuPoolConfig {
-    worker_count: NonZeroUsize,
+    execution: super::CpuExecutionPlan,
     max_in_flight: NonZeroUsize,
     storage: crate::CpuStoragePlan,
 }
@@ -19,12 +19,12 @@ impl CpuPoolConfig {
     /// from configuration and platform capabilities.
     #[must_use]
     pub const fn new(
-        worker_count: NonZeroUsize,
+        execution: super::CpuExecutionPlan,
         max_in_flight: NonZeroUsize,
         storage: crate::CpuStoragePlan,
     ) -> Self {
         Self {
-            worker_count,
+            execution,
             max_in_flight,
             storage,
         }
@@ -33,7 +33,13 @@ impl CpuPoolConfig {
     /// Returns the exact number of worker threads to create.
     #[must_use]
     pub const fn worker_count(self) -> NonZeroUsize {
-        self.worker_count
+        self.execution.worker_count()
+    }
+
+    /// The validated split is enforced unchanged at pool startup.
+    #[must_use]
+    pub const fn execution(self) -> super::CpuExecutionPlan {
+        self.execution
     }
 
     /// Returns the maximum admitted running-plus-queued task count.
@@ -93,6 +99,9 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// Worker/service counts must fit one explicit finite execution allowance.
+    #[error("cpu execution plan has invalid worker or service counts")]
+    InvalidExecutionPlan,
     /// A domain writer exceeded its preadmitted element count.
     #[error("cpu output needs {requested} elements with {available} available")]
     OutputCapacity {

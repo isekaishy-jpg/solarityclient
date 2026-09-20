@@ -9,7 +9,11 @@ use std::{error::Error, num::NonZeroUsize};
 /// Minimal pool leaves ample frame metadata space for pressure-controlled tests.
 fn executor() -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         CpuStoragePlan::new(1 << 20, 1 << 20, 0),
     ))
@@ -200,7 +204,11 @@ fn shutdown_cancels_gates_but_keeps_input_and_port_storage_until_disposal()
 fn startup_byte_rejection_happens_before_workers_are_created() {
     assert!(matches!(
         CpuExecutor::new(CpuPoolConfig::new(
-            NonZeroUsize::MIN,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::MIN,
             CpuStoragePlan::new(0, 0, 0),
         )),

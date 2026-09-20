@@ -264,7 +264,11 @@ fn terrain_streaming_retains_neighbors_and_retires_old_jobs() -> Result<(), Box<
     let window = TerrainStreamingWindow::new(origin, distance, Vec3::new(777., 0., 0.))?;
     assert!(window.contains(second));
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(3).ok_or("bad capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -506,7 +510,11 @@ fn terrain_streaming_validates_shared_placement_identities() -> Result<(), Box<d
         terrain.synchronize(Some(&world))?;
         let one = NonZeroUsize::new(1).ok_or("bad worker count")?;
         let cpu = CpuExecutor::new(CpuPoolConfig::new(
-            one,
+            {
+                let total: std::num::NonZeroUsize = one;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::new(2).ok_or("bad worker capacity")?,
             solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
         ))?;
@@ -618,7 +626,11 @@ fn static_movement_retains_reference_order_and_placement_owners() -> Result<(), 
     ))?;
     let window = TerrainStreamingWindow::new(origin, distance, Vec3::new(777., 0., 0.))?;
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(2).ok_or("bad capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;
@@ -1088,7 +1100,11 @@ fn terrain_residency_follows_authoritative_player_tile() -> Result<(), Box<dyn E
 
     terrain.disconnect();
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(3).ok_or("invalid admission bound")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

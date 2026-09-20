@@ -16,7 +16,11 @@ use std::{error::Error, num::NonZeroUsize, ops::ControlFlow, sync::mpsc};
 fn terrain_yields_service_before_whole_generation_publication() -> Result<(), Box<dyn Error>> {
     let (_fixture, catalog, definition) = fixture()?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(3).ok_or("capacity")?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?;

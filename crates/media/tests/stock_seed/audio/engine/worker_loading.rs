@@ -270,7 +270,12 @@ fn dropping_engine_joins_decode_before_releasing_sdl_initialization() -> Result<
 /// One worker makes queueing deterministic; capacity includes queued and running work.
 fn pool(capacity: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(1).ok_or("invalid worker count")?,
+        {
+            let total: std::num::NonZeroUsize =
+                NonZeroUsize::new(1).ok_or("invalid worker count")?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(capacity).ok_or("invalid admission capacity")?,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     ))?)

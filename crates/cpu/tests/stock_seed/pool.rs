@@ -19,7 +19,11 @@ fn config(worker_count: usize, max_in_flight: usize) -> CpuPoolConfig {
         None => unreachable!("test task bound is a nonzero literal"),
     };
     CpuPoolConfig::new(
-        worker_count,
+        {
+            let total: std::num::NonZeroUsize = worker_count;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         max_in_flight,
         solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
     )

@@ -111,6 +111,7 @@ struct Queues {
     retirement: StorageDeque<Work>,
     speculative: StorageDeque<Work>,
     stopping: bool,
+    active_service: usize,
 }
 
 /// The pool owns all handles; no task creates or detaches a thread.
@@ -120,4 +121,6 @@ pub(crate) struct Dispatch {
     queued: AtomicU8,
     // With no protected worker, service must alternate with frame kernels.
     protected: bool,
+    bulk_limit: usize,
+    flexible_workers: usize,
 }

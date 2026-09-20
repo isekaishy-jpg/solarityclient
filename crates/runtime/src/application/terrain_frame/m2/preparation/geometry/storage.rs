@@ -100,7 +100,7 @@ impl GeometryJob {
         self.particle_indices
             .reserve(budget, Class::Frame, Kind::Result, indices)?;
         self.particle_sort_indices
-            .reserve(budget, Class::Frame, Kind::Scratch, sorting)?;
+            .reserve(budget, Class::Frame, sorting)?;
         self.ribbon_vertices
             .reserve(budget, Class::Frame, Kind::Result, ribbon_vertices)?;
         self.ribbon_draws

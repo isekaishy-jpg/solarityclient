@@ -17,6 +17,7 @@ impl GeometryJob {
         context: &GeometryContext,
         input: GeometryInput,
         visible: VisibleGeometryInput,
+        job_context: &solarity_cpu::JobContext<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let source = &context.source;
         let camera = context.camera;
@@ -137,6 +138,7 @@ impl GeometryJob {
                 .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawVertexRange)?;
             let first_index = u32::try_from(self.particle_indices.len())
                 .map_err(|_source| solarity_rendering::VulkanError::M2ParticleDrawIndexRange)?;
+            let mut sorting = job_context.scratch(&mut self.particle_sort_indices);
             let (vertex_count, index_count) =
                 M2ParticleMeshPlan::append_transformed_with_particle_color(
                     emitter,
@@ -148,7 +150,7 @@ impl GeometryJob {
                     instance_color.w,
                     twinkle,
                     visible.particle_colors.as_ref(),
-                    &mut self.particle_sort_indices.writer(),
+                    sorting.writer(),
                     &mut self.particle_vertices.writer(),
                     &mut self.particle_indices.writer(),
                 )?;

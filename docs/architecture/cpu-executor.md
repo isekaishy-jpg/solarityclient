@@ -35,11 +35,13 @@ parallel work units.
 - The in-flight bound covers running and queued work. Submission returns an
   immediate typed capacity error instead of blocking the interactive producer
   or growing an unbounded queue.
-- One configured worker is flexible: it services admitted background work,
-  then helps frame work. The remaining workers are protected from background
-  operations. The single-worker plan uses its sole flexible worker.
-- Speculative admission stops while any background work is in flight. Required
-  background submission retains the configured hard admission bound.
+- The explicit execution plan sets protected/flexible counts, reserved service
+  capacity and the shared concurrent bulk/service limit. Runtime's initial
+  default remains one flexible worker. The single-worker plan uses that sole
+  lane; no extra pool is created. See [the connected policy](cpu-cutover-foundation-adoption.md).
+- Speculative admission stops when admitted background work reaches the plan's
+  bulk allowance. Required submission retains the configured admission bound;
+  dispatch independently enforces the simultaneous service-call limit.
 - Frame batches have separate bounded admission and reusable typed state.
   Pose outputs are independently consumed; geometry inputs are published while
   ordered traversal continues. The old synchronous frame API is removed.

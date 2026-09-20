@@ -16,7 +16,11 @@ use std::{
 /// One lane makes queue-order assertions independent of OS scheduling.
 fn cpu(capacity: usize) -> Result<CpuExecutor, Box<dyn Error>> {
     Ok(CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(capacity).ok_or("capacity")?,
         CpuStoragePlan::new(1 << 20, 1 << 20, 1 << 20),
     ))?)

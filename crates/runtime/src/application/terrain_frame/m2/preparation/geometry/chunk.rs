@@ -71,14 +71,17 @@ impl GeometryChunk {
     }
 
     /// Independent kernels share dispatch only. No job waits for another job or main.
-    pub(super) fn execute(&mut self) {
-        let trace = solarity_profiling::TraceContext::capture();
-        if trace.is_sampled() {
-            trace.value("m2.geometry.chunk_models", 0, 0, self.jobs.len() as u64);
-        }
+    pub(super) fn execute(
+        &mut self,
+        context: &solarity_cpu::JobContext<'_>,
+    ) -> solarity_cpu::JobOutcome {
+        context.diagnostic_value("m2.geometry.chunk_models", self.jobs.len() as u64);
+        // Admission transferred living simulation state. Complete its ordered
+        // model updates even if the consumer withdraws; never discard half a tick.
         for job in self.jobs.writer().iter_mut() {
-            job.execute();
+            job.execute(context);
         }
+        solarity_cpu::JobOutcome::Succeeded
     }
 
     /// Ordered reclamation returns every model, including failed/unexecuted jobs.

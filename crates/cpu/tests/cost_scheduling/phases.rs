@@ -263,7 +263,11 @@ fn concurrent_cost_changes_preserve_every_input_across_reused_phases() -> Result
 {
     for workers in [2, 4] {
         let cpu = CpuExecutor::new(CpuPoolConfig::new(
-            NonZeroUsize::new(workers).ok_or("workers")?,
+            {
+                let total: std::num::NonZeroUsize = NonZeroUsize::new(workers).ok_or("workers")?;
+                solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                    .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+            },
             NonZeroUsize::new(8).ok_or("capacity")?,
             CpuStoragePlan::new(64 << 20, 64 << 20, 0),
         ))?;

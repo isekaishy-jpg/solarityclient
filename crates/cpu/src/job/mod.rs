@@ -4,4 +4,6 @@
 //! domain crates. Every submitted job must retain an owner and an observable
 //! completion or cancellation path.
 
+mod context;
 mod types;
+pub use context::{JobContext, JobIdentity};

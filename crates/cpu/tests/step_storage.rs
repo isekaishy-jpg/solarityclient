@@ -58,7 +58,11 @@ impl Drop for CountWindow {
 #[test]
 fn one_thousand_service_resumes_allocate_no_task_or_queue_storage() -> Result<(), Box<dyn Error>> {
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         solarity_cpu::CpuStoragePlan::new(1 << 20, 1 << 20, 1 << 20),
     ))?;

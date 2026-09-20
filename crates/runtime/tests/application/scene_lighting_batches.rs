@@ -20,7 +20,12 @@ use std::{
 /// The protected workers can prove independent progress while one receiver range is held.
 fn executor(workers: usize, capacity: usize) -> Result<CpuExecutor, CpuError> {
     CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::new(workers).ok_or(CpuError::BatchCapacity)?,
+        {
+            let total: std::num::NonZeroUsize =
+                NonZeroUsize::new(workers).ok_or(CpuError::BatchCapacity)?;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::new(capacity).ok_or(CpuError::BatchCapacity)?,
         CpuStoragePlan::new(64 << 20, 64 << 20, 0),
     ))

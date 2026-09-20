@@ -13,7 +13,11 @@ fn main_consumption_links_to_the_phase_that_released_it() -> Result<(), Box<dyn 
     let mut capture = Capture::new(&root, "fixture=main-provenance".to_owned());
     let (_, path) = capture.toggle()?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
-        NonZeroUsize::MIN,
+        {
+            let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+            solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1)
+                .unwrap_or_else(|_| unreachable!("one flexible worker fits a nonzero total"))
+        },
         NonZeroUsize::MIN,
         CpuStoragePlan::new(64 << 20, 64 << 20, 0),
     ))?;

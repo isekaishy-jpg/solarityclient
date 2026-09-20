@@ -48,7 +48,7 @@ impl Default for GeometryBatch {
             staged: chunk::GeometryChunk::default(),
             spare_chunks: Vec::new(),
             returned_chunks: Vec::new(),
-            pending: solarity_cpu::FrameBatch::new(chunk::GeometryChunk::execute),
+            pending: solarity_cpu::FrameBatch::with_context(chunk::GeometryChunk::execute),
             handles: Vec::new(),
             submitted: false,
             completion: None,

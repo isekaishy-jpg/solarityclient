@@ -15,6 +15,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 pub(super) enum Kernel<T> {
     Ordinary(fn(&mut T)),
     Reported(fn(&mut T) -> JobOutcome),
+    Contextual(fn(&mut T, &crate::JobContext<'_>) -> JobOutcome),
 }
 impl<T> Copy for Kernel<T> {}
 impl<T> Clone for Kernel<T> {
@@ -24,14 +25,25 @@ impl<T> Clone for Kernel<T> {
 }
 impl<T> Kernel<T> {
     /// Runs only with exclusively leased state and no scheduler guard.
-    pub fn run(self, input: &mut T) -> JobOutcome {
+    pub fn run(self, input: &mut T, context: Option<&crate::JobContext<'_>>) -> JobOutcome {
         match self {
             Self::Ordinary(operation) => {
                 operation(input);
                 JobOutcome::Succeeded
             }
             Self::Reported(operation) => operation(input),
+            Self::Contextual(operation) => operation(
+                input,
+                context.unwrap_or_else(|| {
+                    unreachable!("context kernel has admitted cancellation storage")
+                }),
+            ),
         }
+    }
+
+    /// Legacy kernels need no cancellation-page clone during execution.
+    pub fn uses_context(self) -> bool {
+        matches!(self, Self::Contextual(_))
     }
 }
 
@@ -69,6 +81,7 @@ pub(super) struct Node {
 pub(super) struct State<T> {
     pub jobs: StorageVec<Option<T>>,
     pub nodes: StorageVec<Node>,
+    pub cancellation: Arc<StorageVec<AtomicBool>>,
     edges: StorageVec<Edge>,
     pub edge_count: usize,
     pub ready: ReadyJobs,
@@ -98,6 +111,7 @@ impl<T> State<T> {
         Self {
             jobs: StorageVec::default(),
             nodes: StorageVec::default(),
+            cancellation: Arc::new(StorageVec::default()),
             edges: StorageVec::default(),
             edge_count: 0,
             ready: ReadyJobs::default(),
@@ -134,6 +148,13 @@ impl<T> State<T> {
         let kind = CpuStorageKind::Metadata;
         self.jobs.reserve(budget, class, kind, plan.jobs)?;
         self.nodes.reserve(budget, class, kind, plan.jobs)?;
+        if self.kernel.uses_context() {
+            let cancellation = Arc::get_mut(&mut self.cancellation).unwrap_or_else(|| {
+                unreachable!("prior kernels release context before epoch reclamation")
+            });
+            cancellation.reserve(budget, class, kind, plan.jobs)?;
+            cancellation.resize_with(plan.jobs, || AtomicBool::new(false));
+        }
         self.edges.reserve(budget, class, kind, plan.edges)?;
         self.propagation.reserve(budget, class, kind, plan.jobs)?;
         self.dependencies
@@ -150,6 +171,9 @@ impl<T> State<T> {
         parents: impl ExactSizeIterator<Item = usize>,
     ) {
         let index = self.jobs.len();
+        if self.kernel.uses_context() {
+            self.cancellation[index].store(false, std::sync::atomic::Ordering::Release);
+        }
         let mut node = Node {
             status: Status::Waiting,
             cancel_requested: false,
@@ -267,6 +291,14 @@ impl<T> State<T> {
         self.dispatch = None;
         self.subscriptions.clear();
         self.drain_tail = super::diagnostics::DrainTail::default();
+    }
+
+    /// Running kernels observe one atomic cell without taking the phase mutex.
+    pub fn request_cancel(&mut self, index: usize) {
+        self.nodes[index].cancel_requested = true;
+        if self.kernel.uses_context() {
+            self.cancellation[index].store(true, std::sync::atomic::Ordering::Release);
+        }
     }
 }
 /// Shared only with this epoch's workers, never mutable world state.

@@ -29,7 +29,12 @@ fn executor(capacity: usize) -> Result<(CpuExecutor, mpsc::Receiver<()>), Box<dy
     Ok((
         CpuExecutor::with_notifier(
             CpuPoolConfig::new(
-                NonZeroUsize::MIN,
+                {
+                    let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
+                    solarity_cpu::CpuExecutionPlan::new(total.get() - 1, 1, 1, 1).unwrap_or_else(
+                        |_| unreachable!("one flexible worker fits a nonzero total"),
+                    )
+                },
                 NonZeroUsize::new(capacity).ok_or("capacity")?,
                 solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
             ),
