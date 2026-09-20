@@ -72,6 +72,8 @@ Code inspection confirms root poses already run as independent worker inputs,
 selected by camera or shadow demand after ordered callbacks. Attached models
 have later transform dependencies. The older capture `1789889511517-1` reports
 zero unconsumed root palettes in its sampled frames, but predates this report.
-It cannot rule out different behavior in the dense Brewfest scene. Controlled
-population scaling and a matching live trace are still needed; no NPC hotspot
+It cannot rule out different behavior in the dense Brewfest scene. A subsequent
+[isolated population sweep](npc-density-cutover-measurements.md) reproduces about
+4.5 ms of added frame cost at 192 authored NPCs, spread across preparation,
+publication and rendering. A matching live trace is still needed; no NPC hotspot
 fix or measured saving is claimed by this checkpoint.

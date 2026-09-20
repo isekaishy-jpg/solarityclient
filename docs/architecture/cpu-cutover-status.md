@@ -19,6 +19,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+An [isolated NPC-density sweep](npc-density-cutover-measurements.md) reproduces
+roughly 4.5 ms of added frame cost at 192 authored NPCs. Preparation, publication
+and Vulkan command recording all scale with population. This is a measured
+remaining cost, not a performance fix or an exact live Brewfest reproduction.
+
 `JobContext` now reaches finite and resumable services. Terrain retires obsolete
 demand between whole operations and returns its owned archive bank without
 publishing a partial resident. Required retirement and cache maintenance still
