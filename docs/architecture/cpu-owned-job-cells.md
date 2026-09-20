@@ -88,4 +88,4 @@ Baseline SHA-256 is
 `CDC77269CC13A7E62D4219AB9ADCD1A3527671321A58673EBE30E161A32BDFF6`;
 candidate SHA-256 is
 `748925A6D4C0BC4C62315A7F81B867AFE88585968A308C63F5EA3F741FF86F0F`.
-No new numbered Testing build has been installed at this source checkpoint.
+[Testing Build 167](testing-build167-cells.md) packages this source boundary.

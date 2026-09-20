@@ -29,7 +29,8 @@ tests pass. Four alternating optimized runs show matched stationary medians
 A separate profile reduces main admission/publication from 2.641 to 2.413 ms per
 ordinary frame without a renderer increase. This is a modest measured boundary
 improvement, not completion of main-thread distribution or the requested multi-ms
-target. A new package is pending; the linked report records memory and fixture limits.
+target. [Testing Build 167](testing-build167-cells.md) packages this boundary;
+the linked report records memory and fixture limits.
 
 A [four-variant borrowed-output experiment](m2-borrowed-output-pages.md) also
 failed to establish a useful whole-frame gain. Direct worker pages saved about
@@ -41,8 +42,8 @@ This rejects that particular output boundary, not the remaining cutover scope.
 A [two-variant M2 output-assembly experiment](m2-output-assembly-experiment.md)
 rejected a separate final-copy worker phase. Early overlap saved about 0.24 ms of
 main publication/prefix work but added about 0.26 ms of phase-pending time; moving
-camera results were mixed. Both prototypes were removed, and Build 166 remains
-installed. Future distribution must consume producer-owned output directly or
+camera results were mixed. Both prototypes were removed before the stable-cell
+checkpoint. Future distribution must consume producer-owned output directly or
 produce final records inside existing kernels, rather than adding another copy
 phase and consumer join. The full remaining cutover scope below is unchanged.
 
@@ -96,7 +97,12 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 166](testing-build166-recording.md),
+The current installed checkpoint is [Testing Build 167](testing-build167-cells.md),
+source `e8c2c8eb`, installed on 2026-09-20 at 14:35 EDT. All 1,628 workspace tests,
+Clippy, formatting, optimized compilation and installed identity/hash checks pass.
+Its measured stable-cell improvement and remaining limits are recorded above.
+
+The preceding [Testing Build 166](testing-build166-recording.md),
 source `4fd3ab6d`. Full workspace tests passed 1,623 cases with 33 existing ignored;
 the additional recording failure/unwind test also passes, alongside final Clippy
 and formatting. Four unprofiled 192-NPC runs completed 16,384 frames: matched
