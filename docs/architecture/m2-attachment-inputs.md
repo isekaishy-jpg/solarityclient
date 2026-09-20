@@ -146,3 +146,6 @@ analysis are retained with the driver scripts in ignored `target/`. All runs
 completed successfully without a concurrent compiler or GPU test. This checkpoint
 preserves a measured scaling improvement and establishes an equipped qualification
 fixture; it does not complete main-thread distribution or the full cutover.
+
+[Testing Build 169](testing-build169-attachments.md) packages this source and
+records the installed artifact identity.

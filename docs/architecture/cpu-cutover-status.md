@@ -28,7 +28,8 @@ show 0.232-0.414 ms lower matched stationary medians, with mixed tails; the unar
 control is essentially flat. Separate profiles reduce main M2 admission by
 0.421 ms/frame but leave 4.099 ms admission and 3.001 ms publication, plus
 4.655 ms renderer CPU time. Those remaining large boundaries take priority over
-further small lookup changes. This is not completion of main-thread distribution.
+further small lookup changes. [Testing Build 169](testing-build169-attachments.md)
+packages this checkpoint; it does not complete main-thread distribution.
 
 [Admitted worker scratch](cpu-worker-scratch.md) now carries physical execution
 identity through frame/loading jobs and both service adapters. M2 particle sorting
@@ -121,7 +122,13 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 168](testing-build168-scratch.md),
+The current installed checkpoint is [Testing Build 169](testing-build169-attachments.md),
+source `75a21fca`, installed on 2026-09-20 at 15:55 EDT. All 1,638 workspace tests,
+Clippy, formatting, optimized compilation and installed identity/hash checks pass.
+The equipped comparison shows a modest median improvement with mixed tails;
+large M2 publication and renderer costs and the complete cutover remain open.
+
+The preceding [Testing Build 168](testing-build168-scratch.md),
 source `5ae0207c`, installed on 2026-09-20 at 15:17 EDT. All 1,634 workspace tests,
 Clippy, formatting, optimized compilation and installed identity/hash checks pass.
 The scratch ownership contract and its small measured timing increase are recorded
