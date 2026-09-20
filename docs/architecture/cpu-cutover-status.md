@@ -29,6 +29,10 @@ orbit medians are slightly higher and the lighter unarmed control regresses by
 0.145 ms. Profiles move about 2.695 ms out of main publication, accompanied by
 increased coordinator waiting. Main admission remains 3.853 ms and renderer CPU
 4.572 ms. These remaining costs and lighter-scene overhead stay open.
+[Testing Build 170](testing-build170-finalization.md) packages this boundary.
+The [live Build 169 capture](live-build169-capture.md) still concentrates CPU
+work on main and attributes 6.267 ms of its busiest 12.333 ms interval to M2
+admission/publication. It overlapped compilation, limiting timing comparisons.
 
 [Retained owner attachment inputs](m2-attachment-inputs.md) replace per-owner
 scene-wide membership and parent-result scans with topology-owned request groups
@@ -133,7 +137,13 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 169](testing-build169-attachments.md),
+The current installed checkpoint is [Testing Build 170](testing-build170-finalization.md),
+source `bc57f191`, installed on 2026-09-20 at 16:44 EDT. All 1,642 workspace tests,
+Clippy, formatting, optimized compilation and installed identity/hash checks pass.
+The equipped fixture improves by about 0.9 ms, while unarmed and orbit medians
+regress slightly. Full cutover requirements remain active.
+
+The preceding [Testing Build 169](testing-build169-attachments.md),
 source `75a21fca`, installed on 2026-09-20 at 15:55 EDT. All 1,638 workspace tests,
 Clippy, formatting, optimized compilation and installed identity/hash checks pass.
 The equipped comparison shows a modest median improvement with mixed tails;

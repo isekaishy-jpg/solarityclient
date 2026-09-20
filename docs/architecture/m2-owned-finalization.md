@@ -136,5 +136,6 @@ and `target/finalization-equipped-profile-analysis.json`. These offline results
 do not establish live FPS or complete the requested multi-ms improvement.
 
 The [complete cutover requirements](cpu-cutover-status.md#still-required-for-the-complete-cutover)
-remain active, including main-thread admission, other domain adapters and complete
+[remain active in Testing Build 170](testing-build170-finalization.md),
+including main-thread admission, other domain adapters and complete
 working-set accounting.
