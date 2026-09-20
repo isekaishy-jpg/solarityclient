@@ -557,6 +557,23 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Still required for the complete cutover
 
+- Close the reported Build 159 camera-motion regression: formerly clear/smooth
+  motion now appears blurred, choppy or tearing. Frame-time spikes are confirmed,
+  but input/camera/render identity, active screen effects and displayed cadence
+  still need correlated evidence. Preserve stock camera/input boundaries.
+- Implement the designed `JobContext` through real frame/loading consumers:
+  admitted scoped scratch, cooperative cancellation at valid domain boundaries,
+  job/epoch diagnostics and ownership-safe terminal cleanup. Kernels currently
+  receive only mutable job state; the type is not implemented.
+- Replace the hard-coded single-flexible-worker split with the designed explicit
+  validated execution plan, including bounded bulk eligibility/concurrency and
+  resolved capability reporting. Preserve protected capacity and the configured
+  whole-process budget.
+- Batch runner queue publication and measure queue-lock/batch-lock residence,
+  enqueue-to-start distributions and cold wake latency across worker counts.
+  Central queues currently lock and notify per pushed runner; contention is not
+  established as the dominant live cost. See the
+  [verified gap review and policy boundaries](cpu-cutover-gap-review.md).
 - Typed shared-result leases across domains and remaining main-only continuations.
   Numeric main-ready storage and the four world operations are connected.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
