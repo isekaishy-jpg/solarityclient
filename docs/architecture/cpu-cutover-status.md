@@ -30,7 +30,7 @@ stationary medians, slightly lower orbit medians and no demonstrated FPS gain.
 Separate profiles show effectively unchanged combined M2 admission/publication
 and about 26 KB less mean retained Frame-ledger memory in this fixture. The
 change establishes required storage ownership; the linked report retains the
-timing limits. Testing Build 167 remains installed pending the next package.
+timing limits. [Testing Build 168](testing-build168-scratch.md) packages this boundary.
 
 M2 geometry now transfers [stable owned job cells](cpu-owned-job-cells.md) through
 staging, workers, consumption and reclamation instead of moving complete model
@@ -110,7 +110,13 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 167](testing-build167-cells.md),
+The current installed checkpoint is [Testing Build 168](testing-build168-scratch.md),
+source `5ae0207c`, installed on 2026-09-20 at 15:17 EDT. All 1,634 workspace tests,
+Clippy, formatting, optimized compilation and installed identity/hash checks pass.
+The scratch ownership contract and its small measured timing increase are recorded
+above; this package does not establish an FPS gain or complete the cutover.
+
+The preceding [Testing Build 167](testing-build167-cells.md),
 source `e8c2c8eb`, installed on 2026-09-20 at 14:35 EDT. All 1,628 workspace tests,
 Clippy, formatting, optimized compilation and installed identity/hash checks pass.
 Its measured stable-cell improvement and remaining limits are recorded above.

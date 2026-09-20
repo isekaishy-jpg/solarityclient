@@ -78,7 +78,7 @@ not establish desktop FPS.
 
 | Median total frame time (ms) | Baseline 1 | Worker scratch 1 | Baseline 2 | Worker scratch 2 |
 | --- | ---: | ---: | ---: | ---: |
-| Matched stationary | 5.646 | 5.683 | 5.638 | 5.707 |
+| Matched stationary | 5.646 | 5.683 | 5.639 | 5.707 |
 | Streaming | 5.559 | 5.674 | 5.556 | 5.561 |
 | Orbit | 4.869 | 4.860 | 4.806 | 4.782 |
 | Pointer motion | 6.462 | 6.537 | 6.491 | 6.532 |
@@ -117,4 +117,4 @@ Artifacts are under ignored `target/worker-scratch-comparison-*` and
 - Baseline: `748925A6D4C0BC4C62315A7F81B867AFE88585968A308C63F5EA3F741FF86F0F`.
 - Candidate: `BAE9093B832D5047E14C6B9A1DC35EFCFA37BE4DBB833CD7A245479218F8D1AE`.
 
-No new numbered Testing build has been installed at this source checkpoint.
+[Testing Build 168](testing-build168-scratch.md) packages this source boundary.
