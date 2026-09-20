@@ -561,6 +561,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   motion now appears blurred, choppy or tearing. Frame-time spikes are confirmed,
   but input/camera/render identity, active screen effects and displayed cadence
   still need correlated evidence. Preserve stock camera/input boundaries.
+  The earlier streaming/presentation camera cache now includes its missing client
+  clock dependency; see [the focused review](cpu-cutover-gap-review.md#earlier-camera-sharing-missing-clock-dependency).
+  This corrects stale collision-recovery reuse, but does not yet establish the
+  cause or closure of the complete visible-motion report.
 - Implement the designed `JobContext` through real frame/loading consumers:
   admitted scoped scratch, cooperative cancellation at valid domain boundaries,
   job/epoch diagnostics and ownership-safe terminal cleanup. Kernels currently

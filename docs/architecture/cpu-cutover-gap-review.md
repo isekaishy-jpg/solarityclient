@@ -50,6 +50,36 @@ change VSync, disable effects or reuse old scene products merely to hide the
 symptom. A measured FPS average or a hidden numerical replay alone does not
 close the user's visible regression.
 
+### Earlier camera sharing: missing clock dependency
+
+The broader history review found that `581da609` combined terrain-demand and
+presentation camera resolution through a per-service-frame cache. Its key checked
+pose, collision settings, terrain revision, extent, far clip and pivot pitch,
+but skipped the client clock. A cache hit returned before
+`sample_camera_collision(now)`. Stock `603D30` collision-height recovery depends
+on that clock even when the pre-sample pose and all spatial providers match.
+Unchanged camera files between Builds 155 and 159 do not establish that this
+earlier optimization was correct.
+
+The immediate cache return now requires exact client-tick equality as well as
+matching providers. When streaming/UI work crossed a tick, presentation first
+samples current collision recovery, then checks spatial reuse against that
+updated pose. An unchanged sample keeps the expensive collision result; a
+changed sample triggers a new solve. This avoids blindly repeating the roughly
+0.4 ms camera solve seen in the Build 159 world capture. The time stored is the
+sample's input time, never a later completion time. The existing frame reset and
+geometry/input invalidation remain in place. This restores the clock dependency
+without changing ordered mouse admission, worker ownership, the stock recovery
+curve, VSync or screen-effect policy.
+
+The regression fixture keeps transform/view/scene fixed, advances the clock
+between terrain and presentation, and verifies both rejection of the old camera
+and advancement of the real Systems recovery/projection. Additional cases cover
+clock wrap, same-tick provider changes and reuse after an unchanged later sample.
+This establishes a cache-validity bug,
+not that this bug accounts for the entire reported free-look blur or pacing
+regression. The matched visible-motion comparison remains required.
+
 ## Missing JobContext
 
 `JobContext` appears in the composition design but is absent from the CPU crate.

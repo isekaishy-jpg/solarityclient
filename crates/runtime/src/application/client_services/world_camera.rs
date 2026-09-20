@@ -8,12 +8,13 @@ use crate::application::{ApplicationError, RuntimeTerrainError, RuntimeTerrainSt
 
 /// One frame's completed camera and the state after native feedback publication.
 pub(super) struct ResolvedCameraFrame {
+    sampled_at_ms: u32,
     inputs: CameraInputs,
     camera: WorldCameraFrame,
 }
 
-/// Clock reuse is restricted to this service frame; changes to any camera or
-/// geometry provider force a new solve, including newly admitted terrain.
+/// Spatial providers after clock-driven recovery has been sampled. An unchanged
+/// sample can reuse collision work even when the client clock has advanced.
 #[derive(PartialEq)]
 struct CameraInputs {
     pose: solarity_systems::PlayerCameraPose,
@@ -24,6 +25,27 @@ struct CameraInputs {
     pivot_pitch: f32,
 }
 
+impl ResolvedCameraFrame {
+    /// Reuses the current tick without sampling our own collision feedback twice.
+    fn camera_for(&self, inputs: Option<&CameraInputs>, now_ms: u32) -> Option<WorldCameraFrame> {
+        (self.sampled_at_ms == now_ms && inputs == Some(&self.inputs)).then_some(self.camera)
+    }
+
+    /// Clock recovery has already advanced: retain the expensive spatial solve
+    /// only if that current sample and every other provider still match.
+    fn after_clock_sample(
+        &mut self,
+        inputs: Option<&CameraInputs>,
+        now_ms: u32,
+    ) -> Option<WorldCameraFrame> {
+        if inputs != Some(&self.inputs) {
+            return None;
+        }
+        self.sampled_at_ms = now_ms;
+        Some(self.camera)
+    }
+}
+
 impl ClientServices {
     /// Resolves the final camera from admitted environment, player, and collision.
     pub(super) fn resolved_world_camera(
@@ -32,14 +54,23 @@ impl ClientServices {
         let _profile_scope = solarity_profiling::profile!(
             "runtime.application.client_services.world_camera.resolved_world_camera"
         );
+        let now = crate::platform::client_milliseconds();
         if let Some(cached) = &self.world_camera_frame
-            && self.camera_inputs().as_ref() == Some(&cached.inputs)
+            && let Some(camera) = cached.camera_for(self.camera_inputs().as_ref(), now)
         {
-            return Ok(Some(cached.camera));
+            return Ok(Some(camera));
+        }
+        // 603D30's collision-height recovery is time-dependent. Terrain demand
+        // cannot substitute its earlier sample for presentation, but a new tick
+        // alone does not invalidate an unchanged geometric collision result.
+        self.player.sample_camera_collision(now)?;
+        let inputs = self.camera_inputs();
+        if let Some(cached) = &mut self.world_camera_frame
+            && let Some(camera) = cached.after_clock_sample(inputs.as_ref(), now)
+        {
+            return Ok(Some(camera));
         }
         self.world_camera_frame = None;
-        let now = crate::platform::client_milliseconds();
-        self.player.sample_camera_collision(now)?;
         let (Some(environment), Some(pose)) =
             (self.environment.current(), self.player.camera_pose())
         else {
@@ -83,7 +114,11 @@ impl ClientServices {
         .with_view_direction(pose.forward())
         .frame(aspect_ratio)?;
         if let Some(inputs) = self.camera_inputs() {
-            self.world_camera_frame = Some(ResolvedCameraFrame { inputs, camera });
+            self.world_camera_frame = Some(ResolvedCameraFrame {
+                sampled_at_ms: now,
+                inputs,
+                camera,
+            });
         }
         Ok(Some(camera))
     }
@@ -206,3 +241,7 @@ impl ClientServices {
         Ok(frame.ground_detail_ready())
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/application/world_camera.rs"]
+mod tests;
