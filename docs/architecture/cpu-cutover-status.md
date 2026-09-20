@@ -656,6 +656,25 @@ readiness behavior.
 
 ## Checkpoint validation
 
+### Build 159 live review
+
+The 2026-09-20 F10 run confirms dynamic-only topology publication is active:
+290 partial and 89 complete publications in the selected world window. Partial
+metadata publication averages 0.143 ms. Ordinary world frames still average
+8.454 ms, with a 32.304 ms maximum; main consumes 97.46% of one logical CPU while
+workers use about 9-12% each. M2 CPU preparation remains 3.665 ms per world frame;
+the large apparent drop in the first admission phase includes work redistributed
+into later main continuations.
+
+The largest world spike contains 9.499 ms creature/player residency followed by
+8.917 ms unit-state updates. Both paths still have repeated searches across the
+full placement bank: per-input retained-generation searches, then dirty-topology
+owner lookups before render metadata publishes. Correct current owner identity
+independent of deferred render metadata remains required. Loading also contains a
+131 ms UI slice and 68 ms scene GPU publication. See the
+[complete capture review and attribution limits](testing-build159-performance.md).
+Only documentation changed in this review; no additional build or fix is claimed.
+
 ### Build 159 package checkpoint
 
 The numbered Testing artifact was built from
