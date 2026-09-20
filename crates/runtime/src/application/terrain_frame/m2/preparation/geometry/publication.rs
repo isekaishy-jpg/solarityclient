@@ -26,6 +26,7 @@ impl M2Frame {
             .reuse
             .index(&mut self.geometry_batch.jobs);
         self.geometry_batch.active = 0;
+        self.geometry_batch.published_bones = 0;
         self.geometry_batch.handles.clear();
         self.geometry_batch.completion = None;
         self.geometry_batch.storage = Some(cpu.storage().clone());
@@ -148,8 +149,9 @@ impl M2Frame {
         cursor: &mut GeometryPublication,
     ) -> Result<bool, RuntimeTerrainFrameError> {
         let _profile = solarity_profiling::profile!("m2.geometry_publication");
+        let batch = &mut self.geometry_batch;
         let mut output = super::output::GeometryOutput {
-            bone_transforms: &mut self.bone_transforms,
+            published_bones: &mut batch.published_bones,
             visible_draws: &mut self.visible_draws,
             shadow_draws: &mut self.shadow_draws,
             environment_shadow_draws: &mut self.environment_shadow_draws,
@@ -163,7 +165,6 @@ impl M2Frame {
             vertex_capacity: cursor.vertex_capacity,
             index_capacity: cursor.index_capacity,
         };
-        let batch = &mut self.geometry_batch;
         while cursor.next < batch.handles.len() {
             let Some(result) =
                 batch

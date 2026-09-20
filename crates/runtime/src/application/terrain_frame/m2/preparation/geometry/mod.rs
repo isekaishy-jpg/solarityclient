@@ -7,6 +7,7 @@ mod job;
 mod meshes;
 mod output;
 mod palette;
+mod palettes;
 mod particles;
 mod prepare;
 mod publication;
@@ -28,6 +29,7 @@ pub(in super::super::super) struct GeometryBatch {
     jobs: Vec<GeometryJob>,
     reuse: reuse::GeometryReuse,
     active: usize,
+    published_bones: usize,
     staged: chunk::GeometryChunk,
     spare_chunks: Vec<chunk::GeometryChunk>,
     returned_chunks: Vec<chunk::GeometryChunk>,
@@ -45,6 +47,7 @@ impl Default for GeometryBatch {
             jobs: Vec::new(),
             reuse: reuse::GeometryReuse::default(),
             active: 0,
+            published_bones: 0,
             staged: chunk::GeometryChunk::default(),
             spare_chunks: Vec::new(),
             returned_chunks: Vec::new(),

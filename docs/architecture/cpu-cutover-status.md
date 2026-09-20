@@ -19,6 +19,19 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+M2 palette publication now keeps completed worker pages through renderer upload,
+removing the duplicate main-thread concatenation and scalar matrix packing.
+[The ownership contract](m2-palette-pages.md) preserves ordered draw offsets,
+shadow-only palettes and fenced GPU-slot lifetime. [Instruction sampling](m2-main-copy-evidence.md)
+identified this transfer and further large draw-record copies; this boundary
+alone does not complete main-thread preparation distribution.
+
+A [controlled receiver-query experiment](m2-receiver-query-experiment.md) rejected
+a late floor-only worker phase: matched steady frames did not improve, and
+duplicated collision preparation introduced severe stalls. The prototype was
+removed; installed Build 164 is unchanged. Future spatial distribution must
+precede the first expensive consumer and share prepared immutable query inputs.
+
 Typed immutable products now bind payload, readiness generation and lifetime in
 the CPU crate. M2 dependent appearance/GameObject loading uses this boundary,
 retaining source leases and consumer urgency without a separate request-slot
@@ -109,9 +122,10 @@ findings claimed yet.
   advance effect clocks. Static admission now uses the phase above. Main retains
   dynamic admission, attachment/callback order, RNG, receiver queries and final
   output order.
-- Worker packets use local palette bases. Ordered publication appends only the
+- Worker packets use local palette bases. Ordered publication selects only the
   palettes retained by the previous visible/shadow rules and relocates both mesh
-  and shadow packets with checked arithmetic. Primary and environment shadow banks
+  and shadow packets with checked arithmetic. The renderer now borrows those
+  completed palette pages without concatenating them into a main-owned vector. Primary and environment shadow banks
   share the same sampled material packets. Worker failure and abandoned admission
   return every submitted or staged model's owned state.
 - Calibrated small draw jobs share a finite scheduler group, targeting at most

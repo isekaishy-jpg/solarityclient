@@ -525,6 +525,8 @@ pub(in crate::application) struct M2Frame {
     receiver_frame: preparation::receivers::ReceiverFrame,
     /// Reused only between shadow and ordinary draws of the current placement.
     material_pose_scratch: Vec<Option<M2MaterialPose>>,
+    // Only the frozen serial oracle concatenates palettes; production borrows jobs.
+    #[cfg(test)]
     bone_transforms: Vec<Mat4>,
     visible_draws: Vec<M2PreparedDraw>,
     shadow_draws: Vec<M2PreparedDraw>,
@@ -570,7 +572,7 @@ pub(in crate::application) struct M2VisibleFrame<'frame> {
     pub(in crate::application) instance_scenes: &'frame [solarity_rendering::M2SceneUniform],
     /// Native liquid queue one belongs between the two transparent model passes.
     pub(in crate::application) water_scene_order: u32,
-    pub(in crate::application) bone_transforms: &'frame [Mat4],
+    pub(in crate::application) bone_transforms: &'frame dyn solarity_rendering::M2BonePaletteSource,
     pub(in crate::application) draws: &'frame [M2PreparedDraw],
     pub(in crate::application) shadow_draws: &'frame [M2PreparedDraw],
     pub(in crate::application) environment_shadow_draws:
@@ -600,7 +602,7 @@ impl M2Frame {
             visible_draws = self.visible_draws.len(),
             primary_shadow_draws = self.shadow_draws.len(),
             environment_shadow_draws = self.environment_shadow_draws.len(),
-            bones = self.bone_transforms.len(),
+            bones = self.geometry_batch.bone_count(),
             particle_vertices = self.particle_vertices.len(),
             "live diagnostic retained model workload"
         );
@@ -654,6 +656,7 @@ impl M2Frame {
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),
+            #[cfg(test)]
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             shadow_draws: Vec::new(),
@@ -809,6 +812,7 @@ impl M2Frame {
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),
+            #[cfg(test)]
             bone_transforms: Vec::new(),
             visible_draws: Vec::new(),
             shadow_draws: Vec::new(),

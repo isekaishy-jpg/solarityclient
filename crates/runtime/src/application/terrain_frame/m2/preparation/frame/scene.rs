@@ -34,7 +34,6 @@ impl M2Frame {
             game_objects.advance_scene(animation_time_ms, random)?;
         }
         self.advance_retired_models(animation_time_ms as u32, game_objects);
-        self.bone_transforms.clear();
         self.visible_draws.clear();
         self.shadow_draws.clear();
         self.shadow_admission.clear();

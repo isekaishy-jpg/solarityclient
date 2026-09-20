@@ -18,6 +18,8 @@ mod ui;
 mod weather;
 mod world_text;
 
+pub use model::M2BonePaletteSource;
+
 pub use weather::{
     WorldCelestialBody, WorldCelestialDraw, WorldCelestialFrame, WorldCelestialLighting,
     WorldCelestialMesh, WorldCelestials, WorldCloudDome, WorldCloudFrame, WorldCloudLighting,

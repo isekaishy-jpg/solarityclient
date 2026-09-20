@@ -29,7 +29,7 @@ impl M2Frame {
             self.placement_visibility.dynamic_indices().len()
         );
         solarity_profiling::profile_value!("m2.particle_vertices", self.particle_vertices.len());
-        solarity_profiling::profile_value!("m2.bone_transforms", self.bone_transforms.len());
+        solarity_profiling::profile_value!("m2.bone_transforms", self.geometry_batch.bone_count());
         if world_lighting.is_some() {
             self.prepare_visible_receivers(animation_time_ms, spatial_lighting)?;
         }
@@ -115,7 +115,7 @@ impl M2Frame {
             trace: solarity_profiling::TraceContext::capture(),
             instance_scenes: &self.scene_lighting.scenes,
             water_scene_order,
-            bone_transforms: &self.bone_transforms,
+            bone_transforms: &self.geometry_batch,
             draws: &self.visible_draws,
             shadow_draws: &self.shadow_draws,
             environment_shadow_draws: &self.environment_shadow_draws,

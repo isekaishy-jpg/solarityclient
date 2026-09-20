@@ -7,7 +7,7 @@ use solarity_rendering::VulkanError;
 
 /// Main-only output references keep worker result ownership separate from publication.
 pub(super) struct GeometryOutput<'a> {
-    pub(super) bone_transforms: &'a mut Vec<glam::Mat4>,
+    pub(super) published_bones: &'a mut usize,
     pub(super) visible_draws: &'a mut Vec<solarity_rendering::M2PreparedDraw>,
     pub(super) shadow_draws: &'a mut Vec<solarity_rendering::M2PreparedDraw>,
     pub(super) environment_shadow_draws: &'a mut Vec<solarity_rendering::WorldEnvironmentM2Caster>,
@@ -65,16 +65,15 @@ impl GeometryOutput<'_> {
                 job.pose.transforms().len() as u64,
             );
         }
-        let bone_offset = u32::try_from(self.bone_transforms.len())
-            .map_err(|_| VulkanError::M2BoneTransformRange)?;
+        let bone_offset =
+            u32::try_from(*self.published_bones).map_err(|_| VulkanError::M2BoneTransformRange)?;
         let has_shadow_bones = !job.shadow_draws.is_empty();
         if input.visible.is_some() || has_shadow_bones {
-            self.bone_transforms
-                .len()
+            *self.published_bones = self
+                .published_bones
                 .checked_add(job.pose.transforms().len())
                 .ok_or(VulkanError::M2BoneTransformRange)?;
-            self.bone_transforms
-                .extend_from_slice(job.pose.transforms());
+            job.publishes_palette = true;
         }
         for draw in job.shadow_draws.drain() {
             let draw = draw.relocate_bones(bone_offset)?;

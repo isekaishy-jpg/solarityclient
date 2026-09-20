@@ -312,7 +312,17 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             a.environment_shadow_draws, b.environment_shadow_draws,
             "environment shadows step {step}"
         );
-        assert_eq!(a.bone_transforms, b.bone_transforms);
+        let collect_bones = |source: &dyn solarity_rendering::M2BonePaletteSource| {
+            (0..source.palette_count())
+                .flat_map(|index| source.palette(index))
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(a.bone_transforms.len(), b.bone_transforms.len());
+        assert_eq!(
+            collect_bones(a.bone_transforms),
+            collect_bones(b.bone_transforms)
+        );
         assert_eq!(a.particle_vertices, b.particle_vertices);
         assert_eq!(a.particle_indices, b.particle_indices);
         assert_eq!(a.particle_draws, b.particle_draws);

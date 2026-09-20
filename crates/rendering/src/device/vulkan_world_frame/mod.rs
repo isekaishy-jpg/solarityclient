@@ -10,7 +10,6 @@ mod resource;
 mod types;
 
 use ash::{Device, vk};
-use glam::Mat4;
 
 use crate::WorldScreenWindow;
 use crate::device::VulkanError;
@@ -149,7 +148,7 @@ impl WorldFrameRenderer {
         context: WorldFrameContext<'_>,
         descriptor_layouts: [vk::DescriptorSetLayout; 13],
         scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
+        bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],

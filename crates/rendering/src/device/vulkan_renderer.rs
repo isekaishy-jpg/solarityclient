@@ -2340,7 +2340,7 @@ impl VulkanRenderer {
     pub fn present_world_frame(
         &mut self,
         scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
+        bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
@@ -2383,7 +2383,7 @@ impl VulkanRenderer {
     pub fn present_world_frame_with_ui(
         &mut self,
         scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
+        bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
@@ -2428,7 +2428,7 @@ impl VulkanRenderer {
     pub fn present_world_frame_with_ui_layers(
         &mut self,
         scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
+        bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
@@ -2470,7 +2470,7 @@ impl VulkanRenderer {
     pub fn present_world_frame_with_ui_and_glow(
         &mut self,
         scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
+        bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
@@ -2516,7 +2516,7 @@ impl VulkanRenderer {
     pub fn present_world_frame_with_ui_layers_and_glow(
         &mut self,
         scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
+        bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],
@@ -2558,7 +2558,7 @@ impl VulkanRenderer {
     fn present_world_frame_internal(
         &mut self,
         scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
+        bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
         world_model_draws: &[WorldModelPreparedDraw],
         m2_draws: &[M2PreparedDraw],

@@ -21,6 +21,7 @@ pub(super) struct GeometryJob {
     pub(super) input: Option<GeometryInput>,
     pub(super) context: Option<GeometryContext>,
     pub(super) owns_effects: bool,
+    pub(super) publishes_palette: bool,
     pub(super) pose: M2BonePose,
     pub(super) palette: super::palette::PaletteInput,
     pub(super) material_poses: Vec<Option<M2MaterialPose>>,
@@ -69,6 +70,7 @@ impl GeometryJob {
 
     /// Clears output lengths while retaining storage for the next visible model.
     pub(super) fn reset(&mut self) {
+        self.publishes_palette = false;
         self.shadow_draws.clear();
         self.visible_draws.clear();
         self.transparent_elements.clear();

@@ -8,6 +8,7 @@ mod character_model_base;
 mod component_utils;
 pub(crate) mod m2_animation;
 mod m2_ground;
+mod m2_palettes;
 mod m2_scene;
 mod world_model_scene;
 
@@ -32,6 +33,8 @@ pub use m2_animation::{
     scan_m2_callbacks, triggered_m2_event_indices,
 };
 pub use m2_ground::{M2GroundNormal, M2GroundPlacementError};
+pub use m2_palettes::M2BonePaletteSource;
+pub(crate) use m2_palettes::write_palette_bytes;
 pub use m2_scene::{
     M2DrawCall, M2DrawPushConstants, M2EffectOrder, M2ElementAlphaState, M2LiquidPasses,
     M2LiquidState, M2LocalLightState, M2MaterialUniform, M2MeshPlan, M2MeshPlanError,

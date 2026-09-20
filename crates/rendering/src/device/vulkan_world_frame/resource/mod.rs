@@ -2,8 +2,9 @@
 
 #![allow(unsafe_code)]
 
+mod upload;
+
 use ash::{Device, vk};
-use glam::Mat4;
 use vk_mem::Alloc;
 
 use crate::device::VulkanError;
@@ -16,10 +17,9 @@ use crate::device::vulkan_m2_pipeline::M2_MATERIAL_DESCRIPTOR_TYPE;
 use crate::device::vulkan_ripple::RippleFrameResources;
 use crate::device::vulkan_sky::SkyFrameResources;
 use crate::device::vulkan_underwater::UnderwaterFrameResources;
-use crate::device::vulkan_world_model_draw::WorldModelPreparedDraw;
 use crate::{
     M2ParticleRenderVertex, M2RibbonRenderVertex, M2SceneUniform, TerrainSceneUniform,
-    WorldFrameScene, WorldModelMaterialUniform, WorldModelSceneUniform,
+    WorldModelMaterialUniform, WorldModelSceneUniform,
 };
 
 const DESCRIPTOR_SET_COUNT: usize = 13;
@@ -301,222 +301,6 @@ impl WorldFrameSlot {
         self.fence = unsafe { device.create_fence(&info, None) }
             .map_err(|source| VulkanError::operation("restore world frame fence", source))?;
         Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn write(
-        &mut self,
-        allocator: &vk_mem::Allocator,
-        scene: WorldFrameScene<'_>,
-        bone_transforms: &[Mat4],
-        world_model_draws: &[WorldModelPreparedDraw],
-        m2_draws: &[M2PreparedDraw],
-        particle_vertices: &[M2ParticleRenderVertex],
-        particle_indices: &[u32],
-        ribbon_vertices: &[M2RibbonRenderVertex],
-    ) -> Result<(), VulkanError> {
-        let allocation = self.buffer_allocation.as_ref().ok_or_else(|| {
-            VulkanError::operation("access world frame buffer", "allocation is unavailable")
-        })?;
-        let destination = allocator
-            .get_allocation_info(allocation)
-            .mapped_data
-            .cast::<u8>();
-        if destination.is_null() {
-            return Err(VulkanError::operation(
-                "access world frame mapping",
-                "persistent mapping is unavailable",
-            ));
-        }
-        // SAFETY: VMA reports a persistent mapping covering `total_bytes`, and
-        // the slot fence was waited before this CPU write.
-        (|| {
-            copy_bytes(
-                destination,
-                self.layout.terrain_scene_offset,
-                &scene.terrain().to_bytes(),
-                self.layout.total_bytes,
-            )?;
-            copy_bytes(
-                destination,
-                self.layout.world_model_scene_offset,
-                &scene.world_model().to_bytes(),
-                self.layout.total_bytes,
-            )?;
-            for light_bank in [
-                M2SceneLightBank::Environment,
-                M2SceneLightBank::Character,
-                M2SceneLightBank::Pet,
-            ] {
-                let mut m2_scene = scene.m2(light_bank);
-                if let Some(frame) = scene.primary_shadows() {
-                    m2_scene =
-                        m2_scene.with_world_shadow(frame.projection(), scene.environment_shadows());
-                }
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.m2_scene_offset,
-                        self.layout.m2_scene_stride,
-                        light_bank.index(),
-                    )?,
-                    &m2_scene.to_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            for (index, instance) in scene.m2_instance_scenes().iter().enumerate() {
-                let mut instance = *instance;
-                if let Some(frame) = scene.primary_shadows() {
-                    instance =
-                        instance.with_world_shadow(frame.projection(), scene.environment_shadows());
-                }
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.m2_scene_offset,
-                        self.layout.m2_scene_stride,
-                        index + 8,
-                    )?,
-                    &instance.to_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            let sky_models = scene.sky_models();
-            let sky_bones = sky_models.map_or(&[][..], |frame| frame.bones);
-            copy_bytes(
-                destination,
-                self.layout.m2_scene_offset + self.layout.m2_scene_stride * 3,
-                &sky_models
-                    .map_or_else(
-                        || scene.m2(M2SceneLightBank::Environment),
-                        |frame| frame.scene,
-                    )
-                    .to_bytes(),
-                self.layout.total_bytes,
-            )?;
-            for slot in 0..4 {
-                copy_bytes(
-                    destination,
-                    self.layout.m2_scene_offset + self.layout.m2_scene_stride * (4 + slot as u64),
-                    &sky_models
-                        .map_or_else(
-                            || scene.m2(M2SceneLightBank::Environment),
-                            |frame| frame.skyboxes[slot].scene,
-                        )
-                        .to_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            if bone_transforms.is_empty() && sky_bones.is_empty() {
-                copy_bytes(
-                    destination,
-                    self.layout.bone_offset,
-                    &[0_u8; 64],
-                    self.layout.total_bytes,
-                )?;
-            } else {
-                for (index, transform) in
-                    bone_transforms.iter().chain(sky_bones).copied().enumerate()
-                {
-                    copy_bytes(
-                        destination,
-                        indexed_offset(self.layout.bone_offset, BONE_TRANSFORM_BYTES, index)?,
-                        &matrix_bytes(transform),
-                        self.layout.total_bytes,
-                    )?;
-                }
-            }
-            for (index, material) in world_model_draws
-                .iter()
-                .map(|draw| draw.material())
-                .chain(scene.environment_shadows().into_iter().flat_map(|frame| {
-                    frame
-                        .wmo_casters()
-                        .iter()
-                        .map(|caster| caster.draw.material())
-                }))
-                .enumerate()
-            {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.world_model_material_offset,
-                        self.layout.world_model_material_stride,
-                        index,
-                    )?,
-                    &material.to_bytes(scene.world_model().view()),
-                    self.layout.total_bytes,
-                )?;
-            }
-            for (index, draw) in m2_draws
-                .iter()
-                .chain(sky_models.into_iter().flat_map(|frame| frame.draws()))
-                .chain(
-                    scene
-                        .primary_shadows()
-                        .into_iter()
-                        .flat_map(|frame| frame.casters()),
-                )
-                .chain(
-                    scene
-                        .environment_shadows()
-                        .into_iter()
-                        .flat_map(|frame| frame.m2_casters().iter().map(|caster| &caster.draw)),
-                )
-                .copied()
-                .enumerate()
-            {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.m2_material_offset,
-                        self.layout.m2_material_stride,
-                        index,
-                    )?,
-                    &draw.instance_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            for (index, vertex) in particle_vertices.iter().copied().enumerate() {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.particle_vertex_offset,
-                        M2ParticleRenderVertex::BYTE_SIZE as u64,
-                        index,
-                    )?,
-                    &vertex.to_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            for (index, particle_index) in particle_indices.iter().copied().enumerate() {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.particle_index_offset,
-                        size_of::<u32>() as u64,
-                        index,
-                    )?,
-                    &particle_index.to_le_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            for (index, vertex) in ribbon_vertices.iter().copied().enumerate() {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.ribbon_vertex_offset,
-                        M2RibbonRenderVertex::BYTE_SIZE as u64,
-                        index,
-                    )?,
-                    &vertex.to_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            allocator
-                .flush_allocation(allocation, 0, self.layout.total_bytes)
-                .map_err(|source| VulkanError::operation("flush world frame buffer", source))
-        })()
     }
 
     /// Replaces only this retired slot's data; descriptors and fixed resources survive.
@@ -1113,13 +897,4 @@ fn copy_bytes(
     // SAFETY: Validated range lies within mapped memory and cannot overlap source.
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination.add(offset), bytes.len()) };
     Ok(())
-}
-
-fn matrix_bytes(matrix: Mat4) -> [u8; 64] {
-    let mut bytes = [0_u8; 64];
-    for (index, value) in matrix.to_cols_array().into_iter().enumerate() {
-        let offset = index * 4;
-        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-    }
-    bytes
 }
