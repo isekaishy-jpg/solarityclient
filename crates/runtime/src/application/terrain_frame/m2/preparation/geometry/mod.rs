@@ -15,6 +15,7 @@ mod publication;
 mod reuse;
 mod ribbon_draws;
 mod ribbons;
+mod scratch;
 mod shadows;
 mod storage;
 
@@ -40,6 +41,8 @@ pub(in super::super::super) struct GeometryBatch {
     submitted: bool,
     completion: Option<solarity_cpu::ReadyToken>,
     storage: Option<solarity_cpu::CpuStorageBudget>,
+    particle_scratch: Option<solarity_cpu::CpuWorkerScratch<usize>>,
+    particle_scratch_peak: usize,
     calibration: cost::GeometryCalibration,
 }
 
@@ -58,6 +61,8 @@ impl Default for GeometryBatch {
             submitted: false,
             completion: None,
             storage: None,
+            particle_scratch: None,
+            particle_scratch_peak: 0,
             calibration: cost::GeometryCalibration::default(),
         }
     }

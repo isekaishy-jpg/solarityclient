@@ -17,6 +17,8 @@ mod task;
 mod types;
 mod worker;
 
+pub(crate) use dispatch::{Dispatch, WorkerLane};
+
 pub use batch::{
     FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome, LoadBatch,
 };

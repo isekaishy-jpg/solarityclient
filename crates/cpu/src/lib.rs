@@ -16,7 +16,7 @@ pub use storage::{
     ByteReservation, CpuBuffer, CpuOwnedCell, CpuResultLease, CpuResultPage, CpuStorageBudget,
     CpuStorageClass, CpuStorageKind, CpuStoragePlan, CpuStorageSnapshot, FixedWriter, OutputBuffer,
 };
-pub use storage::{CpuScratch, ScratchScope};
+pub use storage::{CpuScratch, CpuWorkerScratch, ScratchScope};
 
 pub use capabilities::CpuCapabilities;
 pub use completion::{

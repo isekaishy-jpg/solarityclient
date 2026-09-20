@@ -35,6 +35,7 @@ impl M2Frame {
         self.geometry_batch.handles.clear();
         self.geometry_batch.completion = None;
         self.geometry_batch.storage = Some(cpu.storage().clone());
+        self.geometry_batch.prepare_scratch(cpu)?;
         let maximum = self
             .frame_work
             .remaining_count()
@@ -226,7 +227,7 @@ impl GeometryBatch {
         let job = batch.jobs[slot].job_mut();
         job.reuse_identity = Some(identity);
         job.reset();
-        job.reserve_outputs(
+        let sorting = job.reserve_outputs(
             batch
                 .storage
                 .as_ref()
@@ -235,6 +236,12 @@ impl GeometryBatch {
             placement,
             source,
         )?;
+        batch
+            .particle_scratch
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("geometry admission owns worker scratch"))
+            .reserve(sorting)?;
+        batch.particle_scratch_peak = batch.particle_scratch_peak.max(sorting);
         job.input = Some(input);
         job.context = Some(super::GeometryContext {
             source: std::sync::Arc::clone(source),

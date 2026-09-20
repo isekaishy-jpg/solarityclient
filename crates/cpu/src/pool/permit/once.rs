@@ -46,7 +46,7 @@ impl CpuTaskPermit<'_> {
         pool.push(
             Work::Once(
                 Arc::clone(&identity),
-                Box::new(move || {
+                Box::new(move |worker| {
                     let _trace = trace.enter();
                     let _profile = solarity_profiling::profile!("cpu.job.execute");
                     if let Some(queued) = queued {
@@ -55,7 +55,7 @@ impl CpuTaskPermit<'_> {
                         QUEUE.cpu_duration(epoch, "", queued.elapsed());
                     }
                     let outcome = match catch_unwind(AssertUnwindSafe(|| {
-                        operation(&executing.context(trace))
+                        operation(&executing.context(trace, worker))
                     })) {
                         Ok(value) => TaskOutcome::Completed(value),
                         Err(_panic_payload) => TaskOutcome::Panicked,

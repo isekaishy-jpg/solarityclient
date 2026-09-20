@@ -26,7 +26,7 @@ impl GeometryJob {
         input: &GeometryInput,
         placement: &M2GpuPlacement,
         source: &M2GpuSource,
-    ) -> Result<(), RuntimeTerrainFrameError> {
+    ) -> Result<usize, RuntimeTerrainFrameError> {
         let shadows = if (input.primary_shadow || input.environment_maps != 0)
             && source.mesh.is_some()
             && !input.shadow.retiring
@@ -38,7 +38,7 @@ impl GeometryJob {
         self.shadow_draws
             .reserve(budget, Class::Frame, Kind::Result, shadows)?;
         let Some(visible) = input.visible else {
-            return Ok(());
+            return Ok(0);
         };
         if source.particles.len() != source.model.animations().particles().len() {
             return Err(RuntimeTerrainFrameError::M2ParticleResourceCount {
@@ -99,12 +99,10 @@ impl GeometryJob {
             .reserve(budget, Class::Frame, Kind::Result, vertices)?;
         self.particle_indices
             .reserve(budget, Class::Frame, Kind::Result, indices)?;
-        self.particle_sort_indices
-            .reserve(budget, Class::Frame, sorting)?;
         self.ribbon_vertices
             .reserve(budget, Class::Frame, Kind::Result, ribbon_vertices)?;
         self.ribbon_draws
             .reserve(budget, Class::Frame, Kind::Result, ribbon_draws)?;
-        Ok(())
+        Ok(sorting)
     }
 }

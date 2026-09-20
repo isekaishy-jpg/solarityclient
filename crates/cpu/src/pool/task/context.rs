@@ -30,8 +30,18 @@ impl TaskControl {
     }
 
     /// Context borrows this admitted identity only for the synchronous call.
-    pub fn context(&self, trace: solarity_profiling::TraceContext) -> JobContext<'_> {
-        JobContext::new(self.memory.allocation_id(), 0, &self.cancelled, trace)
+    pub fn context(
+        &self,
+        trace: solarity_profiling::TraceContext,
+        worker: crate::pool::WorkerLane,
+    ) -> JobContext<'_> {
+        JobContext::new(
+            self.memory.allocation_id(),
+            0,
+            &self.cancelled,
+            trace,
+            worker,
+        )
     }
 
     /// Withdrawal is monotonic; only the domain decides a safe stopping boundary.

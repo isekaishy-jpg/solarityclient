@@ -33,7 +33,7 @@ where
     F: FnMut(&crate::JobContext<'_>) -> ControlFlow<T> + Send,
     T: Send,
 {
-    fn step(&mut self) -> bool {
+    fn step(&mut self, worker: crate::pool::WorkerLane) -> bool {
         let _trace = self.trace.enter();
         let _profile = solarity_profiling::profile!("cpu.job.execute");
         if let Some((epoch, queued)) = self.queued.take() {
@@ -48,7 +48,7 @@ where
         // Own the closure inside the unwind boundary. Its captured state must
         // retire on this worker before publishing failure or returning capacity.
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            match operation(&self.control.context(self.trace)) {
+            match operation(&self.control.context(self.trace, worker)) {
                 ControlFlow::Continue(()) => {
                     self.operation = Some(operation);
                     ControlFlow::Continue(())

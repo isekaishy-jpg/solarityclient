@@ -99,6 +99,12 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// Temporary storage belongs to a different executor generation.
+    #[error("cpu worker scratch belongs to another executor")]
+    WorkerScratchOwner,
+    /// The same operation tried to borrow its worker lane recursively.
+    #[error("cpu worker scratch lane is already borrowed")]
+    WorkerScratchBorrowed,
     /// Worker/service counts must fit one explicit finite execution allowance.
     #[error("cpu execution plan has invalid worker or service counts")]
     InvalidExecutionPlan,

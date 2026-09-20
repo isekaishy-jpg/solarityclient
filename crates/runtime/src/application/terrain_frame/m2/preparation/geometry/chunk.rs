@@ -14,6 +14,7 @@ const TARGET: Duration = Duration::from_micros(100);
 #[derive(Default)]
 pub(super) struct GeometryChunk {
     pub(super) jobs: solarity_cpu::CpuBuffer<GeometryOwner>,
+    scratch: Option<solarity_cpu::CpuWorkerScratch<usize>>,
     estimated: Duration,
     unknown: bool,
 }
@@ -78,8 +79,12 @@ impl GeometryChunk {
         context.diagnostic_value("m2.geometry.chunk_models", self.jobs.len() as u64);
         // Admission transferred living simulation state. Complete its ordered
         // model updates even if the consumer withdraws; never discard half a tick.
+        let scratch = self
+            .scratch
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("admitted draw chunk pins worker scratch"));
         for job in self.jobs.writer().iter_mut() {
-            job.job_mut().execute(context);
+            job.job_mut().execute(context, scratch);
         }
         solarity_cpu::JobOutcome::Succeeded
     }
@@ -87,6 +92,7 @@ impl GeometryChunk {
     /// Ordered reclamation returns every model, including failed/unexecuted jobs.
     pub(super) fn reclaim(&mut self, jobs: &mut Vec<GeometryOwner>) {
         jobs.extend(self.jobs.drain());
+        self.scratch = None;
         self.estimated = Duration::ZERO;
         self.unknown = false;
     }
@@ -98,7 +104,16 @@ impl GeometryBatch {
         if self.staged.jobs.is_empty() {
             return Ok(());
         }
+        if !self.submitted {
+            return Err(solarity_cpu::CpuError::BatchInactive.into());
+        }
         let cost = self.staged.cost();
+        self.staged.scratch = Some(
+            self.particle_scratch
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("draw admission owns worker scratch"))
+                .clone(),
+        );
         let replacement = self.spare_chunks.pop().unwrap_or_default();
         let mut owned = Some(std::mem::replace(&mut self.staged, replacement));
         match self.pending.push_with_cost(&mut owned, cost) {

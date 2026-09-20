@@ -20,7 +20,7 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
         self.propagate_priority(epoch);
     }
 
-    fn run(self: Arc<Self>, flexible: bool) {
+    fn run(self: Arc<Self>, flexible: bool, worker: crate::pool::WorkerLane) {
         let (dispatch, loading) = {
             let state = self.lock();
             (
@@ -88,9 +88,9 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                     cost.duration()
                         .map_or(0, |duration| duration.as_nanos() as u64),
                 );
-                let context = cancellation
-                    .as_ref()
-                    .map(|flags| crate::JobContext::new(generation, index, &flags[index], trace));
+                let context = cancellation.as_ref().map(|flags| {
+                    crate::JobContext::new(generation, index, &flags[index], trace, worker)
+                });
                 catch_unwind(AssertUnwindSafe(|| kernel.run(&mut job, context.as_ref())))
                     .unwrap_or(JobOutcome::Panicked)
             };

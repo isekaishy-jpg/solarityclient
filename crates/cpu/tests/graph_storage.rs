@@ -3,8 +3,8 @@
 #![allow(unsafe_code)]
 
 use solarity_cpu::{
-    CompletionPort, CpuExecutor, CpuPoolConfig, FrameBatch, FrameGraphTemplate, FramePriority,
-    JobOutcome,
+    CompletionPort, CpuExecutor, CpuPoolConfig, CpuStorageClass, CpuWorkerScratch, FrameBatch,
+    FrameGraphTemplate, FramePriority, JobOutcome,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::error::Error;
@@ -58,8 +58,8 @@ impl Drop for CountWindow {
 }
 
 #[test]
-fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result<(), Box<dyn Error>>
-{
+fn warmed_graphs_worker_scratch_and_external_fan_in_allocate_no_activation_metadata()
+-> Result<(), Box<dyn Error>> {
     let cpu = CpuExecutor::new(CpuPoolConfig::new(
         {
             let total: std::num::NonZeroUsize = NonZeroUsize::new(2).ok_or("workers")?;
@@ -74,8 +74,22 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
     let template =
         FrameGraphTemplate::with_dependencies(cpu.storage(), &[&[], &[0], &[0], &[1, 2]])?
             .with_priority(FramePriority::Prerequisite);
-    let mut batch = FrameBatch::new(|value: &mut usize| *value += 1);
-    let mut jobs = vec![0; 4];
+    let mut scratch = CpuWorkerScratch::<usize>::new(&cpu, CpuStorageClass::Frame)?;
+    scratch.reserve(4)?;
+    let mut batch =
+        FrameBatch::with_context(|value: &mut (CpuWorkerScratch<usize>, usize), context| {
+            let result = context.with_worker_scratch(&value.0, 4, |scope| {
+                assert!(scope.writer().is_empty());
+                assert!(scope.writer().extend_from_slice(&[1, 2, 3, 4]).is_ok());
+                value.1 += scope.writer()[0];
+            });
+            if result.is_ok() {
+                JobOutcome::Succeeded
+            } else {
+                JobOutcome::Failed
+            }
+        });
+    let mut jobs = vec![(scratch.clone(), 0); 4];
     let mut competing = FrameBatch::new(|value: &mut usize| *value += 1);
     let competing_template = FrameGraphTemplate::independent(2);
     let mut competing_jobs = vec![0; 2];
@@ -113,7 +127,7 @@ fn warmed_graphs_and_external_fan_in_allocate_no_activation_metadata() -> Result
         second.restart(2, cpu.storage(), solarity_cpu::CpuStorageClass::Frame)?;
     }
     drop(window);
-    assert_eq!(jobs, [1064; 4]);
+    assert!(jobs.iter().all(|(_, value)| *value == 1064));
     assert_eq!(competing_jobs, [1064; 2]);
     assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0);
     Ok(())

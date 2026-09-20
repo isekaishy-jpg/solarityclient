@@ -16,7 +16,7 @@ use super::{CpuError, CpuService};
 /// Reusable typed work is erased only at the queue boundary.
 pub(crate) trait ReadyWork: Send + Sync {
     /// Executes an admitted portion without waiting for another worker job.
-    fn run(self: Arc<Self>, flexible: bool);
+    fn run(self: Arc<Self>, flexible: bool, worker: WorkerLane);
     /// Reads phase urgency without acquiring its scheduler lock.
     fn urgent(&self) -> bool;
     /// Reads the highest currently ready cost bin (0..=2), without a phase lock.
@@ -37,12 +37,19 @@ pub(crate) enum WorkClass {
 /// Implementations stay private to the pool; no domain callback runs under queues.
 pub(crate) trait ServiceStep: Send {
     /// Returns true only when the same owned operation needs another ready turn.
-    fn step(&mut self) -> bool;
+    fn step(&mut self, worker: WorkerLane) -> bool;
+}
+
+/// Physical execution identity selects scratch only, never gameplay RNG or job order.
+#[derive(Clone, Copy)]
+pub(crate) struct WorkerLane {
+    pub owner: usize,
+    pub index: usize,
 }
 
 /// Cold background closures and retained frame operations share thread ownership.
 pub(crate) enum Work {
-    Once(Arc<AtomicU8>, Box<dyn FnOnce() + Send>),
+    Once(Arc<AtomicU8>, Box<dyn FnOnce(WorkerLane) + Send>),
     Sliced(Arc<AtomicU8>, Box<dyn ServiceStep>),
     Retained(Arc<dyn ReadyWork>),
     Loading(Arc<AtomicU8>, Arc<dyn ReadyWork>),
@@ -51,15 +58,17 @@ pub(crate) enum Work {
 
 impl Work {
     /// Runs outside every scheduler lock.
-    fn run(self, flexible: bool) -> Option<Self> {
+    fn run(self, flexible: bool, worker: WorkerLane) -> Option<Self> {
         match self {
-            Self::Once(_, operation) => operation(),
+            Self::Once(_, operation) => operation(worker),
             Self::Sliced(identity, mut operation) => {
-                if operation.step() {
+                if operation.step(worker) {
                     return Some(Self::Sliced(identity, operation));
                 }
             }
-            Self::Retained(operation) | Self::Loading(_, operation) => operation.run(flexible),
+            Self::Retained(operation) | Self::Loading(_, operation) => {
+                operation.run(flexible, worker)
+            }
             Self::Priority(operation, epoch) => operation.propagate(epoch),
         }
         None

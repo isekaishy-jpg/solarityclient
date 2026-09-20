@@ -1,6 +1,6 @@
 //! A synchronous kernel sees admission identity and cooperative control only.
 
-use crate::{CpuScratch, ScratchScope};
+use crate::{CpuError, CpuScratch, CpuWorkerScratch, ScratchScope};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Identity within a registered batch or one service admission. It is
@@ -26,10 +26,21 @@ impl JobIdentity {
 
 /// Borrowed for one synchronous operation. No runtime state, worker wait,
 /// allocator growth, global RNG or dependency consumption is exposed here.
+/// The context cannot authorize scratch access from another thread:
+/// ```compile_fail
+/// fn transfer(context: &solarity_cpu::JobContext<'_>) {
+///     std::thread::scope(|scope| {
+///         scope.spawn(move || context.identity());
+///     });
+/// }
+/// ```
 pub struct JobContext<'job> {
     identity: JobIdentity,
     cancelled: &'job AtomicBool,
     trace: solarity_profiling::TraceContext,
+    worker: crate::pool::WorkerLane,
+    // A lane loan is synchronous and cannot be transferred to a foreign thread.
+    affinity: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 impl<'job> JobContext<'job> {
@@ -39,11 +50,14 @@ impl<'job> JobContext<'job> {
         index: usize,
         cancelled: &'job AtomicBool,
         trace: solarity_profiling::TraceContext,
+        worker: crate::pool::WorkerLane,
     ) -> Self {
         Self {
             identity: JobIdentity { epoch, index },
             cancelled,
             trace,
+            worker,
+            affinity: std::marker::PhantomData,
         }
     }
 
@@ -67,6 +81,31 @@ impl<'job> JobContext<'job> {
         scratch: &'scope mut CpuScratch<T>,
     ) -> ScratchScope<'scope, T> {
         scratch.scope()
+    }
+
+    /// Loans this physical worker's preadmitted typed storage. No scheduler or
+    /// storage lock is held during the callback; temporary values cannot escape.
+    /// `requested` declares the operation's necessary element capacity and records
+    /// its per-lane demand peak. The callback may use only admitted storage.
+    /// ```compile_fail
+    /// fn escape<'a>(context: &'a solarity_cpu::JobContext<'a>,
+    ///     scratch: &'a solarity_cpu::CpuWorkerScratch<u8>) -> &'a u8 {
+    ///     context.with_worker_scratch(scratch, 1, |scope| {
+    ///         &scope.writer()[0]
+    ///     }).unwrap()
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    /// Rejects another executor's binding, demand beyond admitted capacity or a
+    /// nested loan of the same lane. Internal transfer-state failure is reported.
+    pub fn with_worker_scratch<T, R>(
+        &self,
+        scratch: &CpuWorkerScratch<T>,
+        requested: usize,
+        operation: impl for<'scope> FnOnce(&mut ScratchScope<'scope, T>) -> R,
+    ) -> Result<R, CpuError> {
+        scratch.scope(self.worker, requested, operation)
     }
 
     /// Inherits the admitted trace rather than capturing a worker's unrelated

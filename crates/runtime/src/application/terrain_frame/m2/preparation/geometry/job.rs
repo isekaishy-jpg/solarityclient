@@ -32,7 +32,6 @@ pub(super) struct GeometryJob {
     pub(super) transparent_elements: solarity_cpu::CpuBuffer<M2TransparentElement>,
     pub(super) particle_vertices: solarity_cpu::CpuBuffer<M2ParticleRenderVertex>,
     pub(super) particle_indices: solarity_cpu::CpuBuffer<u32>,
-    pub(super) particle_sort_indices: solarity_cpu::CpuScratch<usize>,
     pub(super) particle_draws: solarity_cpu::CpuBuffer<M2ParticlePreparedDraw>,
     pub(super) ribbon_vertices: solarity_cpu::CpuBuffer<M2RibbonRenderVertex>,
     pub(super) ribbon_draws: solarity_cpu::CpuBuffer<M2RibbonPreparedDraw>,
@@ -52,13 +51,17 @@ pub(super) struct GeometryContext {
 
 impl GeometryJob {
     /// Executes after this model's ancestry, clock and effect state are owned.
-    pub(super) fn execute(&mut self, job_context: &solarity_cpu::JobContext<'_>) {
+    pub(super) fn execute(
+        &mut self,
+        job_context: &solarity_cpu::JobContext<'_>,
+        scratch: &solarity_cpu::CpuWorkerScratch<usize>,
+    ) {
         let started = self.measurement.start();
         let context = self
             .context
             .take()
             .unwrap_or_else(|| unreachable!("admitted geometry owns its context"));
-        self.result = Some(self.prepare(&context, job_context));
+        self.result = Some(self.prepare(&context, job_context, scratch));
         // Resource pins need only survive preparation; placement/source and
         // published GPU-frame leases own their later lifetimes. Calibration
         // includes returning those pins, which is part of this worker's kernel.

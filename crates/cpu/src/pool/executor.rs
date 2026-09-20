@@ -32,6 +32,11 @@ pub struct CpuExecutor {
 }
 
 impl CpuExecutor {
+    /// Weak identity prevents scratch bindings from matching a recycled executor address.
+    pub(crate) fn worker_owner(&self) -> std::sync::Weak<Dispatch> {
+        Arc::downgrade(&self.dispatch)
+    }
+
     /// Builds persistent protected/flexible workers with bounded admission.
     ///
     /// # Errors

@@ -6,6 +6,10 @@ impl Dispatch {
     /// Reserved service workers guarantee a turn at kernel boundaries. Other
     /// flexible capacity prefers frames; every service call shares the bulk cap.
     pub(super) fn worker(&self, index: usize, flexible: bool, service_reserved: bool) {
+        let worker = super::WorkerLane {
+            owner: std::ptr::from_ref(self).addr(),
+            index,
+        };
         let mut served_background = false;
         let mut served_retirement = false;
         loop {
@@ -69,7 +73,7 @@ impl Dispatch {
             }
             // Only workers with reserved service turns yield a frame runner for
             // background demand. Other flexible workers keep assisting frames.
-            let resumed = work.run(service_reserved);
+            let resumed = work.run(service_reserved, worker);
             if service {
                 let mut queues = self.lock();
                 queues.active_service -= 1;

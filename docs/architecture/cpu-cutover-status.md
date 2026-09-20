@@ -19,6 +19,19 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+[Admitted worker scratch](cpu-worker-scratch.md) now carries physical execution
+identity through frame/loading jobs and both service adapters. M2 particle sorting
+uses versioned, budgeted worker lanes instead of a temporary container per model.
+Admission and trimming preserve in-flight versions; scoped loans clear on return
+and unwind. Formatting, workspace Clippy and all 1,634 tests pass; warmed graph
+activation with scratch allocates nothing across 1,000 measured activations.
+Four alternating comparisons show a small 0.036-0.069 ms increase in matched
+stationary medians, slightly lower orbit medians and no demonstrated FPS gain.
+Separate profiles show effectively unchanged combined M2 admission/publication
+and about 26 KB less mean retained Frame-ledger memory in this fixture. The
+change establishes required storage ownership; the linked report retains the
+timing limits. Testing Build 167 remains installed pending the next package.
+
 M2 geometry now transfers [stable owned job cells](cpu-owned-job-cells.md) through
 staging, workers, consumption and reclamation instead of moving complete model
 records. Cells remain budgeted during main-side retention and support transactional
@@ -680,8 +693,10 @@ an operation has a context parameter. The requirements below remain in scope.
   again. The reported camera regression is closed on that live confirmation;
   remaining frame-time spikes and cutover scaling still require measurement.
 - Extend `JobContext` beyond connected frame/loading and resumable terrain,
-  retirement and cache-maintenance consumers. Typed scratch is retained with domain jobs;
-  generic worker-local scratch and optimized overhead evidence remain required.
+  retirement and cache-maintenance consumers. Generic admitted worker lanes now
+  serve M2 particle sorting; other typed scratch remains with domain jobs.
+  The first optimized overhead comparison is recorded in the worker-scratch
+  report; broader adoption and qualification under other workloads remain required.
 - Measure the explicit execution plan under varied worker counts and concurrent
   loading. Improve capability reporting within the agreed scope, and complete
   finite-step/bulk classification and whole-process concurrency policy. Fixed
