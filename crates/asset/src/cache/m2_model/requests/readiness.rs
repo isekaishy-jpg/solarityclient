@@ -1,9 +1,10 @@
 //! Per-consumer bounded readiness bridges preserve shared source and demand ownership.
 
-use super::{M2LoadRequest, Outcome, Slot};
+use super::{M2LoadError, M2LoadRequest, Outcome, Slot};
+use crate::{DecodedM2Model, ResourceLease};
 use solarity_cpu::{
-    CompletionPort, CompletionProducer, CpuError, CpuStorageBudget, CpuStorageClass, JobOutcome,
-    ReadyToken,
+    CpuError, CpuStorageBudget, CpuStorageClass, ProductOutcome, ProductPublisher, ReadyToken,
+    SharedProduct,
 };
 use std::sync::{Arc, Mutex};
 
@@ -11,30 +12,27 @@ use std::sync::{Arc, Mutex};
 /// Keep this owner until the dependent phase is reclaimed. Dropping it cancels
 /// only this edge, never the shared source producer or another consumer.
 pub struct M2LoadDependency {
-    owner: Arc<DependencyOwner>,
-    request: M2LoadRequest,
+    _owner: Arc<DependencyOwner>,
+    product: SharedProduct<ResourceLease<DecodedM2Model>, M2LoadError>,
+    // This lease retains this consumer's source priority until derived work returns.
+    _interest: solarity_cpu::CpuServiceInterest,
 }
 
 /// Publication pins port and producer together, preventing last-consumer drop
 /// from cancelling the port while a producer is publishing successful readiness.
 pub(super) struct DependencyOwner {
-    port: CompletionPort,
-    producer: Mutex<Option<CompletionProducer>>,
+    producer: Mutex<Option<ProductPublisher<ResourceLease<DecodedM2Model>, M2LoadError>>>,
 }
 impl DependencyOwner {
     /// Detaches the single producer before signaling scheduler metadata.
-    fn complete(&self, outcome: JobOutcome) {
+    fn complete(&self, outcome: Outcome) {
         let producer = self
             .producer
             .lock()
             .unwrap_or_else(|_| unreachable!("dependency producer metadata cannot panic"))
             .take();
-        if let Some(mut producer) = producer {
-            let published = producer.complete(outcome);
-            debug_assert!(
-                published.is_ok(),
-                "owned model dependency remains in its original generation"
-            );
+        if let Some(producer) = producer {
+            producer.publish(outcome);
         }
     }
 }
@@ -49,10 +47,8 @@ impl M2LoadRequest {
         budget: &CpuStorageBudget,
         class: CpuStorageClass,
     ) -> Result<M2LoadDependency, CpuError> {
-        let port = CompletionPort::new(1, budget, class)?;
-        let producer = port.producer()?;
+        let (producer, product) = SharedProduct::new(1, budget, class)?;
         let owner = Arc::new(DependencyOwner {
-            port,
             producer: Mutex::new(Some(producer)),
         });
         let mut listeners = self
@@ -67,11 +63,12 @@ impl M2LoadRequest {
         }
         drop(listeners);
         if let Some(outcome) = outcome {
-            owner.complete(job_outcome(&outcome));
+            owner.complete(outcome);
         }
         Ok(M2LoadDependency {
-            owner,
-            request: self.clone(),
+            _owner: owner,
+            product,
+            _interest: self.interest.clone(),
         })
     }
 }
@@ -79,13 +76,17 @@ impl M2LoadDependency {
     /// Borrows the one reserved consumer's readiness identity.
     #[must_use]
     pub fn readiness(&self) -> ReadyToken {
-        self.owner.port.readiness()
+        self.product.readiness()
     }
 
     /// Observes the original source result; scheduler failure does not erase it.
     #[must_use]
     pub fn poll(&self) -> Option<Outcome> {
-        self.request.poll()
+        self.product.poll().map(|outcome| match outcome {
+            ProductOutcome::Succeeded(model) => Ok(model.clone()),
+            ProductOutcome::Failed(error) => Err(error.clone()),
+            ProductOutcome::Abandoned => Err(M2LoadError::Abandoned),
+        })
     }
 }
 impl Slot {
@@ -96,11 +97,10 @@ impl Slot {
                 .result
                 .lock()
                 .unwrap_or_else(|_| unreachable!("model result metadata cannot panic"));
-            job_outcome(
-                result
-                    .as_ref()
-                    .unwrap_or_else(|| unreachable!("dependencies follow source publication")),
-            )
+            result
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("dependencies follow source publication"))
+                .clone()
         };
         let listeners = std::mem::take(
             &mut *self
@@ -110,16 +110,8 @@ impl Slot {
         );
         for listener in listeners {
             if let Some(owner) = listener.upgrade() {
-                owner.complete(outcome);
+                owner.complete(outcome.clone());
             }
         }
-    }
-}
-/// Source error details remain in the request; only readiness crosses the CPU API.
-fn job_outcome(result: &Outcome) -> JobOutcome {
-    if result.is_ok() {
-        JobOutcome::Succeeded
-    } else {
-        JobOutcome::Failed
     }
 }

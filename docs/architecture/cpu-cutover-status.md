@@ -19,6 +19,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+Typed immutable products now bind payload, readiness generation and lifetime in
+the CPU crate. M2 dependent appearance/GameObject loading uses this boundary,
+retaining source leases and consumer urgency without a separate request-slot
+dependency. See [ownership, connected consumers and limits](cpu-shared-products.md).
+
+The [Build 163 live Brewfest capture](live-build163-brewfest.md) records 11.254 ms
+ordinary frames, including 5.432 ms across M2 admission/publication. Main consumes
+0.964 of a core while each CPU worker consumes 0.075–0.084 cores. Scene changes
+and incomplete background-activity isolation prevent a build-only regression
+claim; remaining main-thread model work is a concrete cutover target.
+
 An [isolated NPC-density sweep](npc-density-cutover-measurements.md) reproduces
 roughly 4.5 ms of added frame cost at 192 authored NPCs. Preparation, publication
 and Vulkan command recording all scale with population. This is a measured
@@ -592,6 +603,14 @@ matched live performance and the remaining cutover requirements are still open.
 
 ## Still required for the complete cutover
 
+The next priority after the current typed-product ownership checkpoint is the
+remaining main-thread preparation/assembly boundary. The user expects work to
+be distributed across cores for ordinary mixed populations of 200–300 entities.
+M2 geometry already receives `JobContext`; completing every unrelated service
+adapter is not a prerequisite for that distribution work. Preserve stock
+ordering and compare main-thread time and worker utilization, not just whether
+an operation has a context parameter. The requirements below remain in scope.
+
 - Preserve the restored camera/input behavior. After Build 161 the user confirmed
   that the client no longer crashed in their test and camera motion was smooth
   again. The reported camera regression is closed on that live confirmation;
@@ -609,7 +628,8 @@ matched live performance and the remaining cutover requirements are still open.
   they do not establish contention as the dominant live cost or complete causal
   product attribution. Keep the central scheduler unless measurements justify
   a replacement.
-- Typed shared-result leases across domains and remaining main-only continuations.
+- Extend typed shared-result leases beyond connected M2 loading edges to the
+  remaining domains and main-only continuations.
   Numeric main-ready storage and the four world operations are connected.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.

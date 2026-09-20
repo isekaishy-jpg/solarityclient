@@ -1,7 +1,9 @@
-//! Completion notification is separate from durable typed result ownership.
+//! Completion readiness, immutable product ownership and coordinator notification.
 
+mod product;
 mod readiness;
 mod ready_queue;
+pub use product::{ProductOutcome, ProductPublisher, SharedProduct};
 pub use readiness::{CompletionPort, CompletionProducer, ReadyToken};
 pub(crate) use readiness::{PrioritySink, ReadySink, Subscription};
 pub use ready_queue::{MainReadyQueue, ReadyContinuation};

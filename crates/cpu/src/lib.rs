@@ -20,8 +20,8 @@ pub use storage::{CpuScratch, ScratchScope};
 
 pub use capabilities::CpuCapabilities;
 pub use completion::{
-    CompletionPort, CompletionProducer, CoordinatorNotifier, MainReadyQueue, ReadyContinuation,
-    ReadyToken,
+    CompletionPort, CompletionProducer, CoordinatorNotifier, MainReadyQueue, ProductOutcome,
+    ProductPublisher, ReadyContinuation, ReadyToken, SharedProduct,
 };
 pub use cost::{CostCalibration, JobCost, WorkMeasurement};
 pub use environment::is_worker as is_worker_thread;

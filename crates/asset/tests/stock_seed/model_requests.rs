@@ -253,7 +253,14 @@ fn shared_model_readiness_drives_loading_and_late_subscribers() -> Result<(), Bo
     ));
     let late = request.dependency(cpu.storage(), CpuStorageClass::Required)?;
     assert_eq!(late.readiness().outcome()?, Some(JobOutcome::Succeeded));
+    drop(request);
     cpu.shutdown()?;
+    assert!(ResourceLease::ptr_eq(
+        &model,
+        &late
+            .poll()
+            .ok_or("missing product after request and executor retirement")??
+    ));
     Ok(())
 }
 
@@ -293,6 +300,7 @@ fn abandoned_model_dependency_returns_owned_input_without_running_it() -> Result
         JobOutcome::Succeeded
     });
     load.start_after(&cpu, &mut jobs, &[dependency.readiness()])?;
+    drop(request);
     drop(producer);
     assert!(load.reclaim(&mut jobs).is_err());
     assert_eq!(jobs, [71]);
