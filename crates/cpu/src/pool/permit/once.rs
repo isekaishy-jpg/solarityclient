@@ -20,13 +20,25 @@ impl CpuTaskPermit<'_> {
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
+        self.submit_with_context(move |_| operation())
+    }
+
+    /// Supplies admitted control to an indivisible operation. Cancellation cannot
+    /// preempt a foreign call; the operation chooses safe checks around it.
+    pub fn submit_with_context<F, T>(self, operation: F) -> CpuTask<T>
+    where
+        F: FnOnce(&crate::JobContext<'_>) -> T + Send + 'static,
+        T: Send + 'static,
+    {
         let Self {
             pool,
             lease,
             notifier,
             service,
+            control,
         } = self;
-        let (mut publication, receiver, finished) = Publication::new(lease, notifier);
+        let (mut publication, receiver) = Publication::new(lease, notifier, Arc::clone(&control));
+        let executing = Arc::clone(&control);
         let epoch = solarity_profiling::generation();
         let queued = (epoch != 0).then(Instant::now);
         let trace = solarity_profiling::TraceContext::capture().fork("cpu.job");
@@ -42,7 +54,9 @@ impl CpuTaskPermit<'_> {
                             solarity_profiling::Site::new("cpu.job.queue_wait", false);
                         QUEUE.cpu_duration(epoch, "", queued.elapsed());
                     }
-                    let outcome = match catch_unwind(AssertUnwindSafe(operation)) {
+                    let outcome = match catch_unwind(AssertUnwindSafe(|| {
+                        operation(&executing.context(trace))
+                    })) {
                         Ok(value) => TaskOutcome::Completed(value),
                         Err(_panic_payload) => TaskOutcome::Panicked,
                     };
@@ -51,6 +65,6 @@ impl CpuTaskPermit<'_> {
             ),
             WorkClass::Background,
         );
-        CpuTask::new(receiver, finished, trace, Arc::downgrade(pool), identity)
+        CpuTask::new(receiver, control, trace, Arc::downgrade(pool), identity)
     }
 }

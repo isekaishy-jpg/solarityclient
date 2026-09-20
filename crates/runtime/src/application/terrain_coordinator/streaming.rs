@@ -185,6 +185,11 @@ impl RuntimeTerrainCoordinator {
                 tiles,
             });
         }
+        if let Some(pending) = self.pending_stream.as_mut()
+            && (pending.request.map_id != map_id || !window.contains(pending.request.tile))
+        {
+            pending.retire();
+        }
         // 7831A0/780860 installs current camera demand before 7B6B00 services
         // loading. A completion belongs to that new window before GPU admission
         // or collision membership; yesterday's demand cannot authorize uploads.
@@ -228,7 +233,7 @@ impl RuntimeTerrainCoordinator {
             let source = self.take_worker_source()?;
             let request = TerrainRequest { map_id, tile };
             let specular_textures = self.specular_textures;
-            let task = permit.submit_steps(terrain_steps(
+            let task = permit.submit_steps_with_context(terrain_steps(
                 source,
                 definition,
                 request,
@@ -291,7 +296,7 @@ impl RuntimeTerrainCoordinator {
             return Ok(());
         }
         match completion.result {
-            Ok(mut resident) => {
+            Ok(Some(mut resident)) => {
                 if let Some(tile) = resident.tile.take()
                     && active.tile_at(tile.index()).is_none()
                 {
@@ -305,6 +310,7 @@ impl RuntimeTerrainCoordinator {
                     });
                 }
             }
+            Ok(None) => {}
             Err(error) => {
                 self.failed_stream.insert(pending.request.tile);
                 return Err(error);
@@ -353,7 +359,7 @@ impl RuntimeTerrainCoordinator {
         self.streaming = None;
         self.failed_stream.clear();
         if let Some(pending) = self.pending_stream.as_mut() {
-            pending.eligible_for_publication = false;
+            pending.retire();
         }
     }
 

@@ -44,7 +44,10 @@ impl<T: Send + 'static> CpuRetirementQueue<T> {
         let mut pending = std::mem::take(&mut self.pending).into_iter();
         // The executor retains this finite task even after its result handle
         // is discarded, and shutdown waits for every admitted destructor.
-        drop(permit.submit_steps(move || {
+        drop(permit.submit_steps_with_context(move |context| {
+            // The result handle is intentionally discarded. Withdrawal cannot
+            // skip mandatory destruction; context still carries step provenance.
+            context.diagnostic_value("cpu.retirement.remaining", pending.len() as u64);
             for _ in 0..RETIREMENTS_PER_STEP {
                 let Some(retired) = pending.next() else {
                     return ControlFlow::Break(());

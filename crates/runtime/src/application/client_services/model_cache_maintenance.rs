@@ -68,7 +68,9 @@ impl RuntimeModelCacheMaintenance {
         };
         let sources = self.sources.clone();
         let mut collection = None;
-        self.pending = Some(permit.submit_steps(move || {
+        self.pending = Some(permit.submit_steps_with_context(move |context| {
+            // Cache release is mandatory even if its consumer withdraws.
+            context.diagnostic_value("assets.m2_cache.retirement_step", 1);
             let _profile = solarity_profiling::profile!("assets.m2_cache.retire");
             let collection = collection.get_or_insert_with(|| sources.begin_collection());
             collection.step()

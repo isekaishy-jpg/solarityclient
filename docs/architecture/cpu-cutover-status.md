@@ -19,6 +19,12 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+`JobContext` now reaches finite and resumable services. Terrain retires obsolete
+demand between whole operations and returns its owned archive bank without
+publishing a partial resident. Required retirement and cache maintenance still
+drain after consumer withdrawal. See [the service contract, tests and remaining
+limits](cpu-service-context.md).
+
 Runner publication now inserts a phase's reserved runners under one queue lock
 and one notification. Sampled dispatcher/batch acquisition, queue residence and
 useful native wake intervals distinguish those boundaries. The optimized
@@ -584,8 +590,8 @@ matched live performance and the remaining cutover requirements are still open.
   that the client no longer crashed in their test and camera motion was smooth
   again. The reported camera regression is closed on that live confirmation;
   remaining frame-time spikes and cutover scaling still require measurement.
-- Extend the connected `JobContext` into resumable service continuations and
-  broader domain consumers. Typed scratch is currently retained with domain jobs;
+- Extend `JobContext` beyond connected frame/loading and resumable terrain,
+  retirement and cache-maintenance consumers. Typed scratch is retained with domain jobs;
   generic worker-local scratch and optimized overhead evidence remain required.
 - Measure the explicit execution plan under varied worker counts and concurrent
   loading. Improve capability reporting within the agreed scope, and complete

@@ -1,69 +1,13 @@
-//! Owned terrain continuations return service between complete asset operations.
+//! Whole-operation service boundaries preserve terrain publication and cache ownership.
 
-#[cfg(test)]
-#[path = "../../../tests/application/terrain_worker_steps.rs"]
-mod tests;
-
-use std::{ops::ControlFlow, sync::Arc};
-
-use solarity_asset::{
-    ArchiveCatalog, AssetMount, AssetStore, BlpTextureCache, M2ModelCache, MapDefinition,
-    TerrainMap,
-};
-use solarity_rendering::TerrainLowDetailMap;
-
-use super::{
+use super::super::{
     ResidentGlobalWorldModel, ResidentTerrainMap, RuntimeTerrainError, TerrainRequest,
-    ground_detail::GroundDetailAssetCache, load_low_detail, movement::ResidentMovementScene,
-    streaming::ResidentTileLookup, tile_preparation::TilePreparation,
-    world_model_residency::ResidentWorldModelCache,
+    load_low_detail, movement::ResidentMovementScene, streaming::ResidentTileLookup,
+    tile_preparation::TilePreparation,
 };
-use crate::application::liquid::LiquidAssetCache;
-
-/// Moves the private archive/cache bank only after the caller reserves CPU admission.
-pub(super) enum TerrainWorkerSource {
-    Catalog(ArchiveCatalog),
-    Ready(Box<TerrainWorkerState>),
-}
-
-/// One bank survives tile jobs; no cache mutex spans decoding or a service yield.
-pub(super) struct TerrainWorkerState {
-    // The inner absence remembers an absent WDL for the current map.
-    low_detail: Option<(u32, Option<Arc<TerrainLowDetailMap>>)>,
-    assets: AssetStore,
-    textures: BlpTextureCache,
-    models: M2ModelCache,
-    world_models: ResidentWorldModelCache,
-    liquid_assets: LiquidAssetCache,
-    ground_detail_assets: GroundDetailAssetCache,
-}
-
-impl TerrainWorkerState {
-    /// A partially mounted archive stack never enters the reusable bank.
-    fn new(assets: AssetStore) -> Self {
-        Self {
-            assets,
-            low_detail: None,
-            textures: BlpTextureCache::new(),
-            models: M2ModelCache::new(),
-            world_models: ResidentWorldModelCache::new(),
-            liquid_assets: LiquidAssetCache::default(),
-            ground_detail_assets: GroundDetailAssetCache::default(),
-        }
-    }
-
-    /// Terminal cleanup follows both success and domain failure, as before staging.
-    fn collect_unused(&mut self) {
-        self.textures.collect_unused();
-        self.world_models.collect_unused();
-    }
-}
-
-/// Only a terminal generation can cross the existing main-thread publication gate.
-pub(super) struct TerrainWorkerCompletion {
-    pub(super) worker: Option<Box<TerrainWorkerState>>,
-    pub(super) result: Result<ResidentTerrainMap, RuntimeTerrainError>,
-}
+use super::{TerrainWorkerCompletion, TerrainWorkerSource, TerrainWorkerState};
+use solarity_asset::{AssetMount, AssetStore, MapDefinition, TerrainMap};
+use std::ops::ControlFlow;
 
 /// Each state owns everything needed by the next complete asset operation.
 enum TerrainStage {
@@ -76,18 +20,34 @@ enum TerrainStage {
 }
 
 /// The same admitted task and captures survive every service turn.
-pub(super) fn terrain_steps(
+pub(in crate::application::terrain_coordinator) fn terrain_steps(
     source: TerrainWorkerSource,
     definition: MapDefinition,
     request: TerrainRequest,
     specular_textures: bool,
-) -> impl FnMut() -> ControlFlow<TerrainWorkerCompletion> + Send {
+) -> impl FnMut(&solarity_cpu::JobContext<'_>) -> ControlFlow<TerrainWorkerCompletion> + Send {
     let mut stage = Some(TerrainStage::Start(source));
     let mut worker = None;
-    move || {
+    move |context| {
         let current = stage.take().unwrap_or_else(|| {
             unreachable!("a completed terrain task cannot execute another step")
         });
+        if context.is_cancelled() {
+            // A not-yet-started reused bank belongs to this task too. Partial
+            // mounting/decoding is retired here on the worker, never published.
+            match current {
+                TerrainStage::Start(TerrainWorkerSource::Ready(bank)) => worker = Some(bank),
+                abandoned => drop(abandoned),
+            }
+            if let Some(worker) = worker.as_mut() {
+                worker.collect_unused();
+            }
+            context.diagnostic_value("terrain.worker.withdrawn", 1);
+            return ControlFlow::Break(TerrainWorkerCompletion {
+                worker: worker.take(),
+                result: Ok(None),
+            });
+        }
         match advance(
             current,
             &mut worker,
@@ -104,7 +64,7 @@ pub(super) fn terrain_steps(
                     worker.collect_unused();
                 }
                 let result = result.map(|done| match done {
-                    ControlFlow::Break(resident) => resident,
+                    ControlFlow::Break(resident) => Some(resident),
                     ControlFlow::Continue(_) => unreachable!("continuations return above"),
                 });
                 ControlFlow::Break(TerrainWorkerCompletion {
@@ -224,7 +184,7 @@ fn advance(
 fn resident(
     worker: &TerrainWorkerState,
     terrain: TerrainMap,
-    tile: Option<super::ResidentTerrainTile>,
+    tile: Option<super::super::ResidentTerrainTile>,
     global_world_model: Option<ResidentGlobalWorldModel>,
 ) -> ResidentTerrainMap {
     ResidentTerrainMap {

@@ -354,6 +354,7 @@ impl RuntimeTerrainCoordinator {
                 pending.retain_without_world = true;
                 return Ok(false);
             }
+            pending.retire();
             if !pending.task.is_finished() {
                 return Ok(false);
             }
@@ -372,7 +373,7 @@ impl RuntimeTerrainCoordinator {
         };
         let source = self.take_worker_source()?;
         let specular_textures = self.specular_textures;
-        let task = permit.submit_steps(terrain_steps(
+        let task = permit.submit_steps_with_context(terrain_steps(
             source,
             definition,
             request,
@@ -422,6 +423,9 @@ impl RuntimeTerrainCoordinator {
             {
                 self.capture_finished_prewarm()?;
             } else {
+                if let Some(pending) = self.pending.as_mut() {
+                    pending.retire();
+                }
                 self.recover_finished_stale_worker()?;
             }
             return Ok(RuntimeTerrainPoll::Idle);
@@ -429,6 +433,11 @@ impl RuntimeTerrainCoordinator {
         let map_id = world.map_id().value();
         let position = world.local_player_transform()?.position();
         let request = TerrainRequest::at_world_position(map_id, position.x, position.y);
+        if let Some(pending) = self.pending.as_mut()
+            && pending.request != request
+        {
+            pending.retire();
+        }
         if self
             .active
             .as_ref()
@@ -517,7 +526,7 @@ impl RuntimeTerrainCoordinator {
             }
             if pending.eligible_for_publication && pending_request == request {
                 match completion.result {
-                    Ok(active) => {
+                    Ok(Some(active)) => {
                         let global_world_model = active.global_world_model.is_some();
                         self.publish_active(active)?;
                         self.failed_request = None;
@@ -539,6 +548,7 @@ impl RuntimeTerrainCoordinator {
                             }
                         });
                     }
+                    Ok(None) => {}
                     Err(source) => {
                         self.failed_request = Some(request);
                         return Err(source);
@@ -565,7 +575,7 @@ impl RuntimeTerrainCoordinator {
         };
         let source = self.take_worker_source()?;
         let specular_textures = self.specular_textures;
-        let task = permit.submit_steps(terrain_steps(
+        let task = permit.submit_steps_with_context(terrain_steps(
             source,
             definition,
             request,
@@ -643,7 +653,7 @@ impl RuntimeTerrainCoordinator {
             self.worker = Some(worker);
         }
         match completion.result {
-            Ok(resident) => {
+            Ok(Some(resident)) => {
                 tracing::debug!(
                     map_id = pending.request.map_id,
                     tile_x = pending.request.tile.x(),
@@ -657,6 +667,7 @@ impl RuntimeTerrainCoordinator {
                     resident,
                 });
             }
+            Ok(None) => {}
             Err(error) => {
                 tracing::warn!(
                     map_id = pending.request.map_id,
@@ -1215,7 +1226,7 @@ impl RuntimeTerrainCoordinator {
             // A same-map NEW_WORLD is a new ownership generation. Recover
             // the worker's archive handle when it finishes, but never publish
             // that retired generation just because its tile key still matches.
-            pending.eligible_for_publication = false;
+            pending.retire();
         }
         self.failed_request = None;
         self.textures.collect_unused();
@@ -1245,6 +1256,16 @@ struct PendingTerrainGeneration {
     /// Cleared when a world replacement retires the job's ownership generation.
     eligible_for_publication: bool,
     task: CpuTask<TerrainWorkerCompletion>,
+}
+
+impl PendingTerrainGeneration {
+    /// Withdraws work and publication together. Returning to the same key needs
+    /// a new generation; cancellation never discards the worker's owned bank.
+    fn retire(&mut self) {
+        self.eligible_for_publication = false;
+        self.retain_without_world = false;
+        self.task.cancel();
+    }
 }
 
 struct PrefetchedTerrainGeneration {

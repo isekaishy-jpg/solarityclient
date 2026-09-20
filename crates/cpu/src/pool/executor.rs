@@ -103,7 +103,8 @@ impl CpuExecutor {
     /// # Errors
     ///
     /// Returns [`CpuError::AtCapacity`] when the running-plus-queued bound is
-    /// full or [`CpuError::ShuttingDown`] after admission closes.
+    /// full, [`CpuError::ShuttingDown`] after admission closes, or a storage
+    /// admission error when the service control cannot be charged.
     pub fn try_submit<F, T>(&self, operation: F) -> Result<CpuTask<T>, CpuError>
     where
         F: FnOnce() -> T + Send + 'static,
@@ -130,12 +131,13 @@ impl CpuExecutor {
     /// Returns the same lifecycle errors as [`Self::try_reserve`].
     pub fn try_reserve_for(&self, service: CpuService) -> Result<CpuTaskPermit<'_>, CpuError> {
         let lease = self.reserve_service(service)?;
-        Ok(CpuTaskPermit::new(
+        CpuTaskPermit::new(
             &self.dispatch,
             lease,
             self.notifier.clone(),
             service,
-        ))
+            &self.storage,
+        )
     }
 
     /// Background graphs and ordinary tasks share the same admission bound.

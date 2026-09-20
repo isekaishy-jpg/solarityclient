@@ -3,7 +3,7 @@
 use crate::{CpuScratch, ScratchScope};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Identity within the registered batch that invoked this kernel. It is
+/// Identity within a registered batch or one service admission. It is
 /// diagnostic provenance, not a cross-domain product or a result access token.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JobIdentity {
@@ -12,12 +12,12 @@ pub struct JobIdentity {
 }
 
 impl JobIdentity {
-    /// Generation of this activation within its registered batch.
+    /// Batch activation generation, or the service control's allocation identity.
     #[must_use]
     pub const fn epoch(self) -> u64 {
         self.epoch
     }
-    /// Zero-based admission order, independent of worker execution order.
+    /// Zero-based batch admission order; a single service operation uses zero.
     #[must_use]
     pub const fn index(self) -> usize {
         self.index

@@ -16,6 +16,7 @@ pub struct CpuTaskPermit<'executor> {
     service: CpuService,
     lease: WorkerLease,
     notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
+    control: Arc<super::task::TaskControl>,
 }
 
 impl<'executor> CpuTaskPermit<'executor> {
@@ -25,12 +26,15 @@ impl<'executor> CpuTaskPermit<'executor> {
         lease: WorkerLease,
         notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
         service: CpuService,
-    ) -> Self {
-        Self {
+        budget: &crate::CpuStorageBudget,
+    ) -> Result<Self, crate::CpuError> {
+        let control = super::task::TaskControl::reserve(budget)?;
+        Ok(Self {
             pool,
             lease,
             notifier,
             service,
-        }
+            control,
+        })
     }
 }

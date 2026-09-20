@@ -34,13 +34,15 @@ fn terrain_yields_service_before_whole_generation_publication() -> Result<(), Bo
     );
     let (events, received) = mpsc::channel();
     let terminal = events.clone();
-    let terrain = cpu.try_reserve()?.submit_steps(move || {
-        let result = steps();
-        if result.is_break() {
-            let _sent = terminal.send("terrain");
-        }
-        result
-    });
+    let terrain = cpu
+        .try_reserve()?
+        .submit_steps_with_context(move |context| {
+            let result = steps(context);
+            if result.is_break() {
+                let _sent = terminal.send("terrain");
+            }
+            result
+        });
     let marker = cpu.try_submit(move || {
         let _sent = events.send("service");
     })?;
@@ -49,7 +51,7 @@ fn terrain_yields_service_before_whole_generation_publication() -> Result<(), Bo
     marker.join()?;
     let complete = terrain.join()?;
     cpu.shutdown()?;
-    let resident = complete.result?;
+    let resident = complete.result?.ok_or("required terrain withdrew")?;
     assert_eq!(
         received.into_iter().collect::<Vec<_>>(),
         ["service", "terrain"]
@@ -96,7 +98,12 @@ fn failed_tile_returns_archive_bank_for_the_next_generation() -> Result<(), Box<
         identity
     );
     assert_eq!(
-        complete.result?.tile.ok_or("missing tile")?.index(),
+        complete
+            .result?
+            .ok_or("required terrain withdrew")?
+            .tile
+            .ok_or("missing tile")?
+            .index(),
         request(21)?.tile
     );
     Ok(())
@@ -104,14 +111,113 @@ fn failed_tile_returns_archive_bank_for_the_next_generation() -> Result<(), Box<
 
 /// A finite ceiling catches a continuation that retries failed work indefinitely.
 fn finish(
-    mut steps: impl FnMut() -> ControlFlow<TerrainWorkerCompletion>,
+    mut steps: impl FnMut(&solarity_cpu::JobContext<'_>) -> ControlFlow<TerrainWorkerCompletion>
+    + Send
+    + 'static,
 ) -> Result<TerrainWorkerCompletion, Box<dyn Error>> {
-    for _ in 0..128 {
-        if let ControlFlow::Break(result) = steps() {
-            return Ok(result);
+    let mut cpu = test_cpu()?;
+    let mut turns = 0;
+    let task = cpu
+        .try_reserve()?
+        .submit_steps_with_context(move |context| {
+            turns += 1;
+            assert!(
+                turns <= 128,
+                "terrain did not terminate within the fixture operations"
+            );
+            steps(context)
+        });
+    let result = task.join()?;
+    cpu.shutdown()?;
+    Ok(result)
+}
+
+/// One service worker exposes exact step boundaries to controlled fixture channels.
+fn test_cpu() -> Result<CpuExecutor, Box<dyn Error>> {
+    Ok(CpuExecutor::new(CpuPoolConfig::new(
+        solarity_cpu::CpuExecutionPlan::new(0, 1, 1, 1)?,
+        NonZeroUsize::new(3).ok_or("capacity")?,
+        CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?)
+}
+
+/// Withdraw before execution and at each early map/tile boundary. A reused bank
+/// returns unchanged in identity and the missing later texture is never required.
+#[test]
+fn withdrawn_terrain_returns_its_bank_without_publishing_or_decoding_later_assets()
+-> Result<(), Box<dyn Error>> {
+    let (_fixture, catalog, definition) = fixture()?;
+    let complete = finish(terrain_steps(
+        TerrainWorkerSource::Catalog(catalog),
+        definition.clone(),
+        request(21)?,
+        true,
+    ))?;
+    let mut bank = complete.worker.ok_or("initial mounted bank")?;
+    let identity = bank.assets.identity();
+    for boundary in 0..=4 {
+        let mut cpu = test_cpu()?;
+        let (release, wait) = mpsc::channel();
+        let (entered, observed) = mpsc::channel();
+        let blocker = if boundary == 0 {
+            Some(cpu.try_submit(move || {
+                let _sent = entered.send(());
+                wait.recv()
+            })?)
+        } else {
+            None
+        };
+        // Separate channels keep the initial queue gate independent from step gates.
+        let (step_release, step_wait) = mpsc::channel();
+        let (step_entered, step_observed) = mpsc::channel();
+        let mut steps = terrain_steps(
+            TerrainWorkerSource::Ready(bank),
+            definition.clone(),
+            request(22)?,
+            true,
+        );
+        let mut turn = 0;
+        let task = cpu
+            .try_reserve()?
+            .submit_steps_with_context(move |context| {
+                let result = steps(context);
+                turn += 1;
+                if boundary != 0 && turn == boundary {
+                    assert!(
+                        result.is_continue(),
+                        "withdrawal boundary must precede missing-texture decode"
+                    );
+                    let _sent = step_entered.send(());
+                    let _released = step_wait.recv();
+                }
+                result
+            });
+        let arrived = if boundary == 0 {
+            observed.recv_timeout(std::time::Duration::from_secs(5))
+        } else {
+            step_observed.recv_timeout(std::time::Duration::from_secs(5))
+        };
+        task.cancel();
+        let _released = release.send(());
+        let _released = step_release.send(());
+        if let Some(blocker) = blocker {
+            blocker.join()??;
         }
+        let cancelled = task.join()?;
+        cpu.shutdown()?;
+        arrived?;
+        assert!(cancelled.result?.is_none());
+        bank = cancelled.worker.ok_or("withdrawal lost the mounted bank")?;
+        assert_eq!(bank.assets.identity(), identity);
     }
-    Err("terrain did not terminate within the finite fixture's operations".into())
+    let complete = finish(terrain_steps(
+        TerrainWorkerSource::Ready(bank),
+        definition,
+        request(21)?,
+        true,
+    ))?;
+    assert!(complete.result?.is_some());
+    Ok(())
 }
 
 /// Both authored tiles exist; the second fails only after ADT decode at texture admission.

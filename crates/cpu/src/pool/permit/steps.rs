@@ -16,6 +16,7 @@ use std::{
 /// Domain captures and logical admission stay in the same box through every turn.
 struct Steps<F, T> {
     operation: Option<F>,
+    control: Arc<crate::pool::task::TaskControl>,
     publication: Publication<T>,
     trace: solarity_profiling::TraceContext,
     queued: Option<(u64, Instant)>,
@@ -29,7 +30,7 @@ fn queue_time() -> Option<(u64, Instant)> {
 
 impl<F, T> ServiceStep for Steps<F, T>
 where
-    F: FnMut() -> ControlFlow<T> + Send,
+    F: FnMut(&crate::JobContext<'_>) -> ControlFlow<T> + Send,
     T: Send,
 {
     fn step(&mut self) -> bool {
@@ -46,14 +47,16 @@ where
             .unwrap_or_else(|| unreachable!("only a pending operation is resumed"));
         // Own the closure inside the unwind boundary. Its captured state must
         // retire on this worker before publishing failure or returning capacity.
-        let outcome = catch_unwind(AssertUnwindSafe(|| match operation() {
-            ControlFlow::Continue(()) => {
-                self.operation = Some(operation);
-                ControlFlow::Continue(())
-            }
-            ControlFlow::Break(value) => {
-                drop(operation);
-                ControlFlow::Break(value)
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            match operation(&self.control.context(self.trace)) {
+                ControlFlow::Continue(()) => {
+                    self.operation = Some(operation);
+                    ControlFlow::Continue(())
+                }
+                ControlFlow::Break(value) => {
+                    drop(operation);
+                    ControlFlow::Break(value)
+                }
             }
         }));
         match outcome {
@@ -88,13 +91,26 @@ impl CpuTaskPermit<'_> {
         F: FnMut() -> ControlFlow<T> + Send + 'static,
         T: Send + 'static,
     {
+        let mut operation = operation;
+        self.submit_steps_with_context(move |_| operation())
+    }
+
+    /// Resumes the same admitted identity with scoped scratch, diagnostics and
+    /// cooperative withdrawal. Required cleanup must ignore withdrawal and drain;
+    /// no cancellation check may discard half-advanced gameplay or borrowed state.
+    pub fn submit_steps_with_context<F, T>(self, operation: F) -> CpuTask<T>
+    where
+        F: FnMut(&crate::JobContext<'_>) -> ControlFlow<T> + Send + 'static,
+        T: Send + 'static,
+    {
         let Self {
             pool,
             lease,
             notifier,
             service,
+            control,
         } = self;
-        let (publication, receiver, finished) = Publication::new(lease, notifier);
+        let (publication, receiver) = Publication::new(lease, notifier, Arc::clone(&control));
         let identity = Arc::new(AtomicU8::new(service as u8));
         let trace = solarity_profiling::TraceContext::capture().fork("cpu.job");
         pool.push(
@@ -102,6 +118,7 @@ impl CpuTaskPermit<'_> {
                 Arc::clone(&identity),
                 Box::new(Steps {
                     operation: Some(operation),
+                    control: Arc::clone(&control),
                     publication,
                     trace,
                     queued: queue_time(),
@@ -109,6 +126,6 @@ impl CpuTaskPermit<'_> {
             ),
             WorkClass::Background,
         );
-        CpuTask::new(receiver, finished, trace, Arc::downgrade(pool), identity)
+        CpuTask::new(receiver, control, trace, Arc::downgrade(pool), identity)
     }
 }

@@ -70,9 +70,10 @@ not expose runtime state, RNG, dependency waits or implicit scratch growth.
 
 Tests cover epoch reuse, stable retained charges, temporary destruction on
 success/cancellation/panic, cooperative cancellation while running, and owned
-input recovery. Broader context adoption into resumable service continuations,
-worker-local scratch policy and optimized observer/dispatch overhead measurement
-remain required. Typed cross-domain product binding is a separate remaining
+input recovery. Finite and resumable services now also receive context, with
+terrain withdrawal and mandatory cleanup connected; see [the service adoption
+record](cpu-service-context.md). Broader domain adoption, worker-local scratch
+policy and whole-frame overhead measurements remain required. Typed cross-domain product binding is a separate remaining
 requirement; diagnostic `JobIdentity` is explicitly not such a product token.
 
 ## Validation

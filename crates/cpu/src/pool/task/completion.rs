@@ -1,7 +1,8 @@
 //! Typed CPU task completion boundary.
 
-use super::{CpuService, dispatch::Dispatch};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use super::{CpuServiceControl, TaskControl, TaskInterest};
+use crate::pool::{CpuService, dispatch::Dispatch};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Weak};
 
@@ -15,45 +16,15 @@ pub(crate) enum TaskOutcome<T> {
     Panicked,
 }
 
-/// Scheduling control can be shared without sharing consumption of the task result.
-#[derive(Clone)]
-pub struct CpuServiceControl {
-    dispatch: Weak<Dispatch>,
-    service: Arc<AtomicU8>,
-}
-
-impl CpuServiceControl {
-    /// Creates a control for one admitted service identity, never for future epochs.
-    pub(super) fn new(dispatch: &Arc<Dispatch>, service: Arc<AtomicU8>) -> Self {
-        Self {
-            dispatch: Arc::downgrade(dispatch),
-            service,
-        }
-    }
-
-    /// Changes queued service metadata; no domain callback or worker wait is involved.
-    pub fn set_service(&self, service: CpuService) {
-        if self.service.load(Ordering::Acquire) != service as u8
-            && let Some(dispatch) = self.dispatch.upgrade()
-        {
-            dispatch.reclassify(&self.service, service);
-        }
-    }
-
-    /// Reports the current scheduling class of this task identity.
-    #[must_use]
-    pub fn service(&self) -> CpuService {
-        CpuService::from_raw(self.service.load(Ordering::Acquire))
-    }
-}
-
 /// The single-owner completion handle for one admitted CPU task.
 ///
-/// Dropping this handle discards the result but does not detach executor
-/// ownership: shutdown still waits for the underlying task to finish.
+/// Dropping this handle requests cooperative withdrawal and discards the result,
+/// but does not detach executor ownership: shutdown still waits for the task.
+/// Contextual operations choose their safe stopping boundaries; legacy operations
+/// and mandatory cleanup continue to completion.
 pub struct CpuTask<T> {
     receiver: Receiver<TaskOutcome<T>>,
-    finished: Arc<AtomicBool>,
+    control: TaskInterest,
     trace: solarity_profiling::TraceContext,
     dispatch: Weak<Dispatch>,
     service: Arc<AtomicU8>,
@@ -61,20 +32,27 @@ pub struct CpuTask<T> {
 
 impl<T> CpuTask<T> {
     /// Creates a completion handle for the executor's one-result channel.
-    pub(crate) fn new(
+    pub(in crate::pool) fn new(
         receiver: Receiver<TaskOutcome<T>>,
-        finished: Arc<AtomicBool>,
+        control: Arc<TaskControl>,
         trace: solarity_profiling::TraceContext,
         dispatch: Weak<Dispatch>,
         service: Arc<AtomicU8>,
     ) -> Self {
         Self {
             receiver,
-            finished,
+            control: TaskInterest(control),
             trace,
             dispatch,
             service,
         }
+    }
+
+    /// Requests cooperative withdrawal. Contextual operations observe this at
+    /// their own safe boundaries; indivisible calls and required cleanup still
+    /// finish. The handle retains its result and can be joined normally.
+    pub fn cancel(&self) {
+        self.control.0.cancel();
     }
 
     /// Changes queued demand without repeating work or touching domain state.
@@ -124,7 +102,7 @@ impl<T> CpuTask<T> {
     /// interactive owner polling a finite set of outstanding tasks.
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::Acquire)
+        self.control.0.finished.load(Ordering::Acquire)
     }
 }
 
