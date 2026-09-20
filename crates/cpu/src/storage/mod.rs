@@ -2,6 +2,7 @@
 
 mod budget;
 mod buffer;
+mod cell;
 mod output;
 mod result;
 mod scratch;
@@ -9,6 +10,7 @@ mod types;
 
 pub use budget::{ByteReservation, CpuStorageBudget};
 pub(crate) use buffer::{StorageDeque, StorageVec};
+pub use cell::CpuOwnedCell;
 pub use output::{CpuBuffer, FixedWriter, OutputBuffer};
 pub use result::{CpuResultLease, CpuResultPage};
 pub use scratch::{CpuScratch, ScratchScope};

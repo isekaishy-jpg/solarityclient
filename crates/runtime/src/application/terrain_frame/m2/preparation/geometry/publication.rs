@@ -21,7 +21,12 @@ impl M2Frame {
         &mut self,
         cpu: &solarity_cpu::CpuExecutor,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        debug_assert!(self.geometry_batch.jobs.iter().all(|job| !job.owns_effects));
+        debug_assert!(
+            self.geometry_batch
+                .jobs
+                .iter()
+                .all(|owner| !owner.job().owns_effects)
+        );
         self.geometry_batch
             .reuse
             .index(&mut self.geometry_batch.jobs);
@@ -58,7 +63,8 @@ impl M2Frame {
 
     /// Restores every model on success, validation errors and joined-worker panics.
     pub(in super::super) fn restore_geometry_states(&mut self) {
-        for job in &mut self.geometry_batch.jobs[..self.geometry_batch.active] {
+        for owner in &mut self.geometry_batch.jobs[..self.geometry_batch.active] {
+            let job = owner.job_mut();
             if !job.owns_effects {
                 continue;
             }
@@ -97,7 +103,7 @@ impl M2Frame {
             batch.staged.reclaim(&mut batch.jobs);
             batch.spare_chunks.truncate(used);
             for job in &mut batch.jobs {
-                batch.calibration.record(job);
+                batch.calibration.record(job.job_mut());
             }
             readiness?;
             result?;
@@ -171,7 +177,7 @@ impl M2Frame {
                     .pending
                     .try_with_result(&batch.handles[cursor.next], |chunk| {
                         for job in chunk.jobs.writer().iter_mut() {
-                            output.publish(job, work)?;
+                            output.publish(job.job_mut(), work)?;
                         }
                         Ok::<_, RuntimeTerrainFrameError>(())
                     })?
@@ -209,8 +215,15 @@ impl GeometryBatch {
             return Err(solarity_cpu::CpuError::BatchInactive.into());
         }
         let identity = super::reuse::GeometryReuseIdentity::new(source, &input);
-        let slot = batch.reuse.take(&identity, &mut batch.jobs);
-        let job = &mut batch.jobs[slot];
+        let slot = batch.reuse.take(
+            &identity,
+            &mut batch.jobs,
+            batch
+                .storage
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget")),
+        )?;
+        let job = batch.jobs[slot].job_mut();
         job.reuse_identity = Some(identity);
         job.reset();
         job.reserve_outputs(
@@ -247,7 +260,7 @@ impl GeometryBatch {
                 .as_ref()
                 .unwrap_or_else(|| unreachable!("admitted draw phase owns budget")),
         )?;
-        let job = &mut batch.jobs[slot];
+        let job = batch.jobs[slot].job_mut();
         job.owns_effects = input.visible.is_some();
         if job.owns_effects {
             std::mem::swap(&mut job.particles, &mut placement.particles);
@@ -255,7 +268,9 @@ impl GeometryBatch {
         }
         std::mem::swap(&mut job.pose, pose);
         std::mem::swap(&mut job.material_poses, material_poses);
-        batch.staged.push(std::mem::take(job), cost);
+        batch
+            .staged
+            .push(std::mem::take(&mut batch.jobs[slot]), cost);
         batch.active += 1;
         if batch.staged.full() {
             batch.flush_staged()?;

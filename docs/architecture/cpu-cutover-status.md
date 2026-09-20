@@ -19,11 +19,23 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+M2 geometry now transfers [stable owned job cells](cpu-owned-job-cells.md) through
+staging, workers, consumption and reclamation instead of moving complete model
+records. Cells remain budgeted during main-side retention and support transactional
+executor rebinding. The existing generation/demand reuse policy and contiguous
+renderer outputs remain authoritative. Formatting, Clippy and all 1,628 workspace
+tests pass. Four alternating optimized runs show matched stationary medians
+0.17-0.33 ms lower and lower camera-motion medians; isolated long frames remain.
+A separate profile reduces main admission/publication from 2.641 to 2.413 ms per
+ordinary frame without a renderer increase. This is a modest measured boundary
+improvement, not completion of main-thread distribution or the requested multi-ms
+target. A new package is pending; the linked report records memory and fixture limits.
+
 A [four-variant borrowed-output experiment](m2-borrowed-output-pages.md) also
 failed to establish a useful whole-frame gain. Direct worker pages saved about
 0.28 ms in publication but added about 0.25 ms in renderer consumption, including
 after replacing per-packet callbacks with typed storage. All prototype changes
-were removed; production source and installed Build 166 remain unchanged.
+were removed before the stable-cell work; none was installed in Testing.
 This rejects that particular output boundary, not the remaining cutover scope.
 
 A [two-variant M2 output-assembly experiment](m2-output-assembly-experiment.md)
@@ -690,7 +702,8 @@ an operation has a context parameter. The requirements below remain in scope.
   priority withdrawal; remaining source domains still need that connection.
 - Connect reservations to allocations nested inside domain job state and the
   complete required phase working set. Executor-wide scheduler metadata and typed
-  result-page accounting now exist; model output and override buffers now adopt it. Live simulation/pose storage,
+  result-page accounting now exist; model output, override buffers and retained
+  geometry job records now adopt it. Live simulation/pose storage,
   final frame streams, ordinary asset buffers and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, GPU upload/acquire/growth waits

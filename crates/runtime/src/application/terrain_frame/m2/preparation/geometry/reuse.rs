@@ -1,7 +1,7 @@
 //! Prior-frame output storage follows model generations, never traversal ordinals.
 
 use super::super::super::{M2GpuSource, M2GpuSourceData};
-use super::{GeometryInput, GeometryJob};
+use super::{GeometryInput, GeometryOwner};
 use std::{collections::HashMap, sync::Weak};
 
 /// Different visible/shadow demands must not spread particle capacities into
@@ -44,9 +44,10 @@ pub(super) struct GeometryReuse {
 impl GeometryReuse {
     /// Effect state has already returned to placements. Index only completed
     /// jobs, without moving their output allocations or retaining source payloads.
-    pub(super) fn index(&mut self, jobs: &mut [GeometryJob]) {
+    pub(super) fn index(&mut self, jobs: &mut [GeometryOwner]) {
         self.heads.clear();
-        for (index, job) in jobs.iter_mut().enumerate() {
+        for (index, owner) in jobs.iter_mut().enumerate() {
+            let job = owner.job_mut();
             debug_assert!(!job.owns_effects);
             job.next_reuse = job
                 .reuse_identity
@@ -60,22 +61,25 @@ impl GeometryReuse {
     pub(super) fn take(
         &mut self,
         identity: &GeometryReuseIdentity,
-        jobs: &mut Vec<GeometryJob>,
-    ) -> usize {
+        jobs: &mut Vec<GeometryOwner>,
+        budget: &solarity_cpu::CpuStorageBudget,
+    ) -> Result<usize, solarity_cpu::CpuError> {
         if let std::collections::hash_map::Entry::Occupied(mut head) =
             self.heads.entry(identity.key)
         {
             let slot = *head.get();
-            if let Some(next) = jobs[slot].next_reuse.take() {
+            // Refusal must leave the reusable list and its original owner intact.
+            jobs[slot].admit(budget)?;
+            if let Some(next) = jobs[slot].job_mut().next_reuse.take() {
                 *head.get_mut() = next;
             } else {
                 head.remove();
             }
-            return slot;
+            return Ok(slot);
         }
         let slot = jobs.len();
-        jobs.push(GeometryJob::default());
-        slot
+        jobs.push(GeometryOwner::new(budget)?);
+        Ok(slot)
     }
 
     /// No index may survive replacement of the reclaimed job list.

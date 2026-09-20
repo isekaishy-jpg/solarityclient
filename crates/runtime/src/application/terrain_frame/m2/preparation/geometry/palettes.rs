@@ -23,7 +23,7 @@ impl M2BonePaletteSource for GeometryBatch {
         self.jobs.len()
     }
     fn palette(&self, index: usize) -> &[Mat4] {
-        let job = &self.jobs[index];
+        let job = self.jobs[index].job();
         if job.publishes_palette {
             job.pose.transforms()
         } else {

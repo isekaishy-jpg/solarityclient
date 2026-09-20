@@ -369,7 +369,8 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         ) > 0;
         saw_particles |= !b.particle_vertices.is_empty();
         saw_ribbons |= !b.ribbon_vertices.is_empty();
-        saw_shadow_only_job |= candidate.geometry_batch.jobs.iter().any(|job| {
+        saw_shadow_only_job |= candidate.geometry_batch.jobs.iter().any(|owner| {
+            let job = owner.job();
             job.input.is_some_and(|input| {
                 input.visible.is_none() && (input.primary_shadow || input.environment_maps != 0)
             }) && job.palette.pending
@@ -385,7 +386,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
                 .geometry_batch
                 .jobs
                 .iter()
-                .all(|job| !job.owns_effects)
+                .all(|owner| !owner.job().owns_effects)
         );
         assert_eq!(
             reference_random, candidate_random,
@@ -446,7 +447,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
                 .geometry_batch
                 .jobs
                 .iter()
-                .all(|job| !job.owns_effects)
+                .all(|owner| !owner.job().owns_effects)
         );
         assert!(
             candidate
@@ -483,7 +484,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
                 .geometry_batch
                 .jobs
                 .iter()
-                .all(|job| !job.owns_effects)
+                .all(|owner| !owner.job().owns_effects)
         );
         assert!(
             candidate

@@ -1,7 +1,7 @@
 //! Finite model groups amortize dispatch while retaining per-model owned state.
 
 use super::super::super::RuntimeTerrainFrameError;
-use super::{GeometryBatch, GeometryJob};
+use super::{GeometryBatch, GeometryOwner};
 use solarity_cpu::{CpuStorageBudget, CpuStorageClass, CpuStorageKind, JobCost};
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ const TARGET: Duration = Duration::from_micros(100);
 /// Charged model records move as one scheduler node; each keeps its own output pages.
 #[derive(Default)]
 pub(super) struct GeometryChunk {
-    pub(super) jobs: solarity_cpu::CpuBuffer<GeometryJob>,
+    pub(super) jobs: solarity_cpu::CpuBuffer<GeometryOwner>,
     estimated: Duration,
     unknown: bool,
 }
@@ -43,7 +43,7 @@ impl GeometryChunk {
     }
 
     /// Admission already proved capacity, so the transfer cannot lose owned state.
-    pub(super) fn push(&mut self, job: GeometryJob, cost: JobCost) {
+    pub(super) fn push(&mut self, job: GeometryOwner, cost: JobCost) {
         assert!(
             self.jobs.len() < MAX_MODELS && self.jobs.len() < self.jobs.capacity(),
             "draw chunk owns reserved model capacity before transfer"
@@ -79,13 +79,13 @@ impl GeometryChunk {
         // Admission transferred living simulation state. Complete its ordered
         // model updates even if the consumer withdraws; never discard half a tick.
         for job in self.jobs.writer().iter_mut() {
-            job.execute(context);
+            job.job_mut().execute(context);
         }
         solarity_cpu::JobOutcome::Succeeded
     }
 
     /// Ordered reclamation returns every model, including failed/unexecuted jobs.
-    pub(super) fn reclaim(&mut self, jobs: &mut Vec<GeometryJob>) {
+    pub(super) fn reclaim(&mut self, jobs: &mut Vec<GeometryOwner>) {
         jobs.extend(self.jobs.drain());
         self.estimated = Duration::ZERO;
         self.unknown = false;

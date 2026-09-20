@@ -6,6 +6,7 @@ mod input;
 mod job;
 mod meshes;
 mod output;
+mod owner;
 mod palette;
 mod palettes;
 mod particles;
@@ -21,12 +22,13 @@ pub(super) use publication::GeometryPublication;
 pub(in super::super) use ribbons::advance_ribbons;
 
 use job::{GeometryContext, GeometryJob};
+use owner::GeometryOwner;
 
 pub(in super::super) use input::{GeometryInput, VisibleGeometryInput};
 
 /// Retains only the current admitted job count, never historical model generations.
 pub(in super::super::super) struct GeometryBatch {
-    jobs: Vec<GeometryJob>,
+    jobs: Vec<GeometryOwner>,
     reuse: reuse::GeometryReuse,
     active: usize,
     published_bones: usize,
