@@ -623,6 +623,13 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
   or synthetic correctness tests.
 
 These are remaining implementation requirements, not optional deferred scope.
+Build 160 was packaged and installed on 2026-09-20 from `dcd1e4e4`. It restores
+clock-dependent camera recovery sampling before reusing the shared
+terrain/presentation collision result. Unchanged sampled poses retain spatial
+reuse. Formatting, Clippy and all 1,600 workspace tests pass (33 existing ignored).
+The visible-motion regression remains open pending a matched movement comparison;
+see [the package record](testing-build160-camera.md).
+
 Build 159 was packaged and installed on 2026-09-19 from `8a4ae681`. It adds
 retained static topology publication when static indices remain unchanged,
 retaining owned static M2 admission, corrected CPU/native wait attribution, owned render
