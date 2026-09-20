@@ -61,10 +61,12 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 164](testing-build164-products.md),
-source `d17673db`. Full workspace checks pass: 1,620 tests passed, 33 existing
-ignored. The prior optimized hidden population sweep completed 20,480 frames;
-matched live performance and the remaining cutover requirements are still open.
+The current installed checkpoint is [Testing Build 165](testing-build165-palettes.md),
+source `bad0038e`. Full workspace checks pass: 1,623 tests passed, 33 existing
+ignored. Four unprofiled 192-NPC runs completed 16,384 frames; matched steady
+medians improve by 0.38-0.53 ms with worker-owned palette upload. This is below
+the requested multi-ms overall improvement; matched live performance and the
+remaining cutover requirements are still open.
 The user also supplied a [modern Classic comparison binary](modern-classic-reference.md)
 for architecture investigation; its identity is pinned, with no new disassembly
 findings claimed yet.
