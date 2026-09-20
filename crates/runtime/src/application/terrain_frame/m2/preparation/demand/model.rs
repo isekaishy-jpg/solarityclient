@@ -1,7 +1,7 @@
 //! Current model consumers determine CPU work after final placement admission.
 
+use super::super::super::attachments::{ItemRequests, VisualRequests};
 use solarity_asset::DecodedM2Model;
-use solarity_rendering::CharacterAttachmentPoint;
 use solarity_rendering::M2EventTimeWindow;
 
 use super::super::super::{M2GpuPlacement, M2GpuPlacementOwner, unit_effects::M2UnitEffectScene};
@@ -12,8 +12,8 @@ pub(in crate::application::terrain_frame::m2) struct CpuModelInputs<'a> {
     pub placement: &'a M2GpuPlacement,
     pub model: &'a DecodedM2Model,
     pub window: M2EventTimeWindow,
-    pub items: &'a [(u64, CharacterAttachmentPoint)],
-    pub visuals: &'a [(u64, CharacterAttachmentPoint, u32)],
+    pub items: &'a ItemRequests,
+    pub visuals: &'a VisualRequests,
     pub glue_ids: &'a [u32],
     pub effects: &'a M2UnitEffectScene,
     pub publishes_lights: bool,
@@ -64,17 +64,13 @@ impl CpuBoneDemand {
             M2GpuPlacementOwner::PlayerBody { guid }
             | M2GpuPlacementOwner::RemotePlayerBody { guid }
             | M2GpuPlacementOwner::CreatureBody { guid } => {
-                for &(owner, point) in items {
-                    if owner == guid {
-                        self.attachment(model, point.id());
-                    }
+                for &(_, point) in items.for_owner(guid) {
+                    self.attachment(model, point.id());
                 }
             }
             M2GpuPlacementOwner::UnitItem { guid, point } => {
-                for &(owner, item, effect) in visuals {
-                    if owner == guid && item == point {
-                        self.attachment(model, effect);
-                    }
+                for &(_, _, effect) in visuals.for_owner((guid, point)) {
+                    self.attachment(model, effect);
                 }
             }
             M2GpuPlacementOwner::Retired(_)

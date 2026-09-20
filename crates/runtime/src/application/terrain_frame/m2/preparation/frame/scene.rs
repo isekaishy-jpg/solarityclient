@@ -146,23 +146,11 @@ impl M2Frame {
             .set_vehicle_parents(self.vehicle_passengers.parents());
         self.advance_unit_callbacks(camera, animation_time_ms, random, unit_effect_callback)?;
         self.rider_transforms.clear();
-        self.rider_transforms.reserve(
-            self.mounted_guids
-                .len()
-                .saturating_sub(self.rider_transforms.capacity()),
-        );
+        self.rider_transforms.reserve(self.mounted_guids.len());
         self.item_transforms.clear();
-        self.item_transforms.reserve(
-            self.requested_items
-                .len()
-                .saturating_sub(self.item_transforms.capacity()),
-        );
+        self.item_transforms.reserve(self.requested_items.len());
         self.visual_transforms.clear();
-        self.visual_transforms.reserve(
-            self.requested_visuals
-                .len()
-                .saturating_sub(self.visual_transforms.capacity()),
-        );
+        self.visual_transforms.reserve(self.requested_visuals.len());
         self.glue_attachment_transforms.clear();
         self.glue_attachment_transforms.reserve(
             self.glue_attachment_ids

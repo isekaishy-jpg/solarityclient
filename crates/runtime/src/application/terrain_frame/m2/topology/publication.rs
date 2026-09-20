@@ -16,8 +16,7 @@ impl M2Frame {
         self.placement_visibility
             .rebuild(&mut self.placements, &self.sources);
         profile.mark("visibility publication");
-        self.requested_items.clear();
-        self.requested_items.extend(
+        self.requested_items.replace(
             self.placement_visibility
                 .dynamic_indices()
                 .iter()
@@ -40,8 +39,7 @@ impl M2Frame {
                     | M2GpuPlacementOwner::UnitItemVisual { .. } => None,
                 }),
         );
-        self.requested_visuals.clear();
-        self.requested_visuals.extend(
+        self.requested_visuals.replace(
             self.placement_visibility
                 .dynamic_indices()
                 .iter()
@@ -68,8 +66,7 @@ impl M2Frame {
                     | M2GpuPlacementOwner::UnitItem { .. } => None,
                 }),
         );
-        self.mounted_guids.clear();
-        self.mounted_guids.extend(
+        self.mounted_guids.replace(
             self.placement_visibility
                 .dynamic_indices()
                 .iter()

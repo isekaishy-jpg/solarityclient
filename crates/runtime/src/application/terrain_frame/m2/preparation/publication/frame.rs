@@ -116,11 +116,7 @@ impl CpuPublication<'_> {
         | M2GpuPlacementOwner::RemotePlayerBody { guid }
         | M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
         {
-            for (_owner_guid, point) in self
-                .requested_items
-                .iter()
-                .filter(|(owner_guid, _point)| *owner_guid == guid)
-            {
+            for (_owner_guid, point) in self.requested_items.for_owner(guid) {
                 let attachment = model.attachment(point.id()).ok_or_else(|| {
                     RuntimeTerrainFrameError::MissingPlayerM2Attachment {
                         model: model.path().clone(),
@@ -137,10 +133,8 @@ impl CpuPublication<'_> {
             }
         }
         if let M2GpuPlacementOwner::UnitItem { guid, point } = placement.owner {
-            for (_owner_guid, _owner_item_point, effect_point) in self
-                .requested_visuals
-                .iter()
-                .filter(|(owner_guid, item_point, _)| *owner_guid == guid && *item_point == point)
+            for (_owner_guid, _owner_item_point, effect_point) in
+                self.requested_visuals.for_owner((guid, point))
             {
                 let attachment = model.attachment(*effect_point).ok_or_else(|| {
                     RuntimeTerrainFrameError::MissingPlayerM2Attachment {

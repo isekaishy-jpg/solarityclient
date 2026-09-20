@@ -2,7 +2,8 @@
 
 use super::{
     M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, RuntimeTerrainFrameError,
-    UnitAnimationBehavior, held_item_finger_pose, visibility::M2PlacementVisibility,
+    UnitAnimationBehavior, attachments::ItemRequests, held_item_finger_pose,
+    visibility::M2PlacementVisibility,
 };
 use crate::application::unit_animation::{
     UnitAnimationScene,
@@ -11,9 +12,7 @@ use crate::application::unit_animation::{
 use crate::random::CrtRand;
 use glam::{Mat4, Vec3};
 use solarity_ecs::WorldObjectIdentity;
-use solarity_rendering::{
-    CharacterAttachmentPoint, M2AnimationClock, M2BonePose, M2BonePoseOverrides,
-};
+use solarity_rendering::{M2AnimationClock, M2BonePose, M2BonePoseOverrides};
 use solarity_systems::{
     VehiclePassengerPhase as Phase, VehicleSeatPose, vehicle_entry_target, vehicle_seat_attachment,
     vehicle_seat_transform,
@@ -82,7 +81,7 @@ impl M2VehiclePassengers {
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
         visibility: &M2PlacementVisibility,
-        requested_items: &[(u64, CharacterAttachmentPoint)],
+        requested_items: &ItemRequests,
         view: Mat4,
         now: f32,
         random: &mut CrtRand,
@@ -117,7 +116,7 @@ impl M2VehiclePassengers {
         scene: &UnitAnimationScene,
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
-        requested_items: &[(u64, CharacterAttachmentPoint)],
+        requested_items: &ItemRequests,
         now: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -188,7 +187,7 @@ impl M2VehiclePassengers {
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
         visibility: &M2PlacementVisibility,
-        requested_items: &[(u64, CharacterAttachmentPoint)],
+        requested_items: &ItemRequests,
         view: Mat4,
         now: f32,
         random: &mut CrtRand,
@@ -252,7 +251,7 @@ impl M2VehiclePassengers {
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
         visibility: &M2PlacementVisibility,
-        requested_items: &[(u64, CharacterAttachmentPoint)],
+        requested_items: &ItemRequests,
         view: Mat4,
         now: f32,
         random: &mut CrtRand,
@@ -339,7 +338,7 @@ impl M2VehiclePassengers {
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
         visibility: &M2PlacementVisibility,
-        requested_items: &[(u64, CharacterAttachmentPoint)],
+        requested_items: &ItemRequests,
         view: Mat4,
         now: f32,
         random: &mut CrtRand,
@@ -409,7 +408,7 @@ impl M2VehiclePassengers {
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
         visibility: &M2PlacementVisibility,
-        requested_items: &[(u64, CharacterAttachmentPoint)],
+        requested_items: &ItemRequests,
         view: Mat4,
         now: f32,
         random: &mut CrtRand,
@@ -493,7 +492,7 @@ impl M2VehiclePassengers {
         purpose: SeatPosePurpose,
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
-        requested_items: &[(u64, CharacterAttachmentPoint)],
+        requested_items: &ItemRequests,
         view: Mat4,
         now: f32,
         _random: &mut CrtRand,

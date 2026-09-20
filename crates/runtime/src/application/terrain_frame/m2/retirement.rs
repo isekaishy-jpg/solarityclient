@@ -137,7 +137,7 @@ impl M2Frame {
                     M2GpuPlacementOwner::UnitItem { guid, point } => Some((guid, point)),
                     _ => None,
                 })
-                .collect::<Vec<_>>();
+                .collect::<super::attachments::ItemRequests>();
             let mut requests: HashMap<usize, Vec<u32>> = HashMap::new();
             for (&index, parent) in members.iter().zip(&parents) {
                 let placement = &mut self.placements[index];

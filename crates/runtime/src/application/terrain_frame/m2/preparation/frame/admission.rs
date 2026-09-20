@@ -278,16 +278,12 @@ impl M2Frame {
                 | M2GpuPlacementOwner::CreatureBody { guid } = placement.owner
                     && self.mounted_guids.contains(&guid)
                 {
-                    let transform = self
-                        .rider_transforms
-                        .iter()
-                        .find_map(|(owner_guid, transform)| {
-                            (*owner_guid == guid).then_some(*transform)
-                        })
-                        .ok_or(RuntimeTerrainFrameError::MissingMountM2AttachmentPose {
+                    let transform = self.rider_transforms.first(guid).ok_or(
+                        RuntimeTerrainFrameError::MissingMountM2AttachmentPose {
                             guid,
                             attachment_id: 0,
-                        })?;
+                        },
+                    )?;
                     let Some(transform) = transform else {
                         continue;
                     };
@@ -295,23 +291,15 @@ impl M2Frame {
                         transform * Mat4::from_scale(glam::Vec3::splat(placement.rider_scale));
                 }
                 if let M2GpuPlacementOwner::UnitItem { guid, point } = placement.owner {
-                    if self
-                        .rider_transforms
-                        .iter()
-                        .any(|(owner_guid, transform)| *owner_guid == guid && transform.is_none())
-                    {
+                    if self.rider_transforms.any_hidden(guid) {
                         continue;
                     }
-                    let transform = self
-                        .item_transforms
-                        .iter()
-                        .find_map(|(owner_guid, owner_point, transform)| {
-                            (*owner_guid == guid && *owner_point == point).then_some(*transform)
-                        })
-                        .ok_or(RuntimeTerrainFrameError::MissingPlayerM2AttachmentPose {
+                    let transform = self.item_transforms.first((guid, point)).ok_or(
+                        RuntimeTerrainFrameError::MissingPlayerM2AttachmentPose {
                             guid,
                             attachment_id: point.id(),
-                        })?;
+                        },
+                    )?;
                     let Some(transform) = transform else {
                         continue;
                     };
@@ -323,24 +311,12 @@ impl M2Frame {
                     effect_point,
                 } = placement.owner
                 {
-                    if self
-                        .rider_transforms
-                        .iter()
-                        .any(|(owner_guid, transform)| *owner_guid == guid && transform.is_none())
-                    {
+                    if self.rider_transforms.any_hidden(guid) {
                         continue;
                     }
                     let transform = self
                         .visual_transforms
-                        .iter()
-                        .find_map(
-                            |(owner_guid, owner_item_point, owner_effect_point, transform)| {
-                                (*owner_guid == guid
-                                    && *owner_item_point == item_point
-                                    && *owner_effect_point == effect_point)
-                                    .then_some(*transform)
-                            },
-                        )
+                        .first((guid, item_point, effect_point))
                         .ok_or(RuntimeTerrainFrameError::MissingPlayerM2AttachmentPose {
                             guid,
                             attachment_id: effect_point,

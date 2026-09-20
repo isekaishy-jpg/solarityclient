@@ -19,6 +19,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+[Retained owner attachment inputs](m2-attachment-inputs.md) replace per-owner
+scene-wide membership and parent-result scans with topology-owned request groups
+and indexed ordered frame samples. Duplicate order, first-parent selection and
+any-hidden-rider behavior are preserved through one publication API. Formatting,
+workspace Clippy and all 1,638 tests pass. Four alternating 300-equipped-NPC runs
+show 0.232-0.414 ms lower matched stationary medians, with mixed tails; the unarmed
+control is essentially flat. Separate profiles reduce main M2 admission by
+0.421 ms/frame but leave 4.099 ms admission and 3.001 ms publication, plus
+4.655 ms renderer CPU time. Those remaining large boundaries take priority over
+further small lookup changes. This is not completion of main-thread distribution.
+
 [Admitted worker scratch](cpu-worker-scratch.md) now carries physical execution
 identity through frame/loading jobs and both service adapters. M2 particle sorting
 uses versioned, budgeted worker lanes instead of a temporary container per model.

@@ -10,7 +10,14 @@ mod unit_effect_model_tests;
 
 mod admission;
 mod ancestry;
+#[cfg(test)]
+#[path = "../../../../tests/application/m2_attachment_inputs.rs"]
+mod attachment_input_tests;
+mod attachments;
 pub(super) use admission::M2SourceAdmission;
+use attachments::{
+    ItemRequests, ItemSamples, MountedOwners, RiderSamples, VisualRequests, VisualSamples,
+};
 mod character_residency;
 mod distance;
 mod doodad_scene;
@@ -552,13 +559,13 @@ pub(in crate::application) struct M2Frame {
     scene_lighting: scene_lighting::SceneLighting,
     glue_directional_lights: Vec<solarity_rendering::M2DirectionalLight>,
     glue_point_lights: Vec<solarity_rendering::M2PointLight>,
-    requested_items: Vec<(u64, CharacterAttachmentPoint)>,
-    requested_visuals: Vec<(u64, CharacterAttachmentPoint, u32)>,
-    mounted_guids: Vec<u64>,
-    rider_transforms: Vec<(u64, Option<Mat4>)>,
+    requested_items: ItemRequests,
+    requested_visuals: VisualRequests,
+    mounted_guids: MountedOwners,
+    rider_transforms: RiderSamples,
     vehicle_passengers: vehicle_passengers::M2VehiclePassengers,
-    item_transforms: Vec<(u64, CharacterAttachmentPoint, Option<Mat4>)>,
-    visual_transforms: Vec<(u64, CharacterAttachmentPoint, u32, Option<Mat4>)>,
+    item_transforms: ItemSamples,
+    visual_transforms: VisualSamples,
     glue_attachment_ids: Vec<u32>,
     glue_attachment_transforms: Vec<(u32, Option<Mat4>)>,
     recoverable_errors: Vec<String>,
@@ -681,13 +688,13 @@ impl M2Frame {
             scene_lighting: scene_lighting::SceneLighting::default(),
             glue_directional_lights: Vec::new(),
             glue_point_lights: Vec::new(),
-            requested_items: Vec::new(),
-            requested_visuals: Vec::new(),
-            mounted_guids: Vec::new(),
-            rider_transforms: Vec::new(),
+            requested_items: ItemRequests::default(),
+            requested_visuals: VisualRequests::default(),
+            mounted_guids: MountedOwners::default(),
+            rider_transforms: RiderSamples::default(),
             vehicle_passengers: vehicle_passengers::M2VehiclePassengers::default(),
-            item_transforms: Vec::new(),
-            visual_transforms: Vec::new(),
+            item_transforms: ItemSamples::default(),
+            visual_transforms: VisualSamples::default(),
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
             recoverable_errors: Vec::new(),
@@ -837,13 +844,13 @@ impl M2Frame {
             scene_lighting: scene_lighting::SceneLighting::default(),
             glue_directional_lights: Vec::new(),
             glue_point_lights: Vec::new(),
-            requested_items: Vec::new(),
-            requested_visuals: Vec::new(),
-            mounted_guids: Vec::new(),
-            rider_transforms: Vec::new(),
+            requested_items: ItemRequests::default(),
+            requested_visuals: VisualRequests::default(),
+            mounted_guids: MountedOwners::default(),
+            rider_transforms: RiderSamples::default(),
             vehicle_passengers: vehicle_passengers::M2VehiclePassengers::default(),
-            item_transforms: Vec::new(),
-            visual_transforms: Vec::new(),
+            item_transforms: ItemSamples::default(),
+            visual_transforms: VisualSamples::default(),
             glue_attachment_ids: Vec::new(),
             glue_attachment_transforms: Vec::new(),
             recoverable_errors: Vec::new(),
@@ -1399,7 +1406,7 @@ fn placement_bounding_sphere(model: &DecodedM2Model, transform: Mat4) -> (glam::
 
 /// Selects the held-item finger trees layered by animation 15 (`HandsClosed`).
 fn held_item_finger_pose(
-    requested_items: &[(u64, CharacterAttachmentPoint)],
+    requested_items: &ItemRequests,
     owner: M2GpuPlacementOwner,
 ) -> Option<M2FingerPoseHands> {
     let guid = match owner {
@@ -1410,10 +1417,7 @@ fn held_item_finger_pose(
     };
     let mut right = false;
     let mut left = false;
-    for (_guid, point) in requested_items
-        .iter()
-        .filter(|(item_guid, _point)| *item_guid == guid)
-    {
+    for (_guid, point) in requested_items.for_owner(guid) {
         match point {
             CharacterAttachmentPoint::HandRight => right = true,
             CharacterAttachmentPoint::HandLeft | CharacterAttachmentPoint::Shield => left = true,

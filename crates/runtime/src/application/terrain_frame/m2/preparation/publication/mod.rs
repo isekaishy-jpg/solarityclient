@@ -3,13 +3,14 @@
 mod frame;
 
 use super::super::{
-    RuntimeM2Event, RuntimeMountCameraSample, retirement::M2RetirementScene,
-    scene_lighting::SceneLighting, unit_effects::M2UnitEffectScene,
+    RuntimeM2Event, RuntimeMountCameraSample,
+    attachments::{ItemRequests, ItemSamples, RiderSamples, VisualRequests, VisualSamples},
+    retirement::M2RetirementScene,
+    scene_lighting::SceneLighting,
+    unit_effects::M2UnitEffectScene,
 };
 use glam::Mat4;
-use solarity_rendering::{
-    CharacterAttachmentPoint, M2AnimationClock, M2DirectionalLight, M2EventTimeWindow, M2PointLight,
-};
+use solarity_rendering::{M2AnimationClock, M2DirectionalLight, M2EventTimeWindow, M2PointLight};
 
 /// Borrowed destinations preserve callback and attachment publication order.
 pub(super) struct CpuPublication<'a> {
@@ -22,11 +23,11 @@ pub(super) struct CpuPublication<'a> {
     pub(super) glue_attachment_ids: &'a [u32],
     pub(super) glue_attachment_transforms: &'a mut Vec<(u32, Option<Mat4>)>,
     pub(super) mount_camera_sample: &'a mut Option<RuntimeMountCameraSample>,
-    pub(super) rider_transforms: &'a mut Vec<(u64, Option<Mat4>)>,
-    pub(super) requested_items: &'a [(u64, CharacterAttachmentPoint)],
-    pub(super) item_transforms: &'a mut Vec<(u64, CharacterAttachmentPoint, Option<Mat4>)>,
-    pub(super) requested_visuals: &'a [(u64, CharacterAttachmentPoint, u32)],
-    pub(super) visual_transforms: &'a mut Vec<(u64, CharacterAttachmentPoint, u32, Option<Mat4>)>,
+    pub(super) rider_transforms: &'a mut RiderSamples,
+    pub(super) requested_items: &'a ItemRequests,
+    pub(super) item_transforms: &'a mut ItemSamples,
+    pub(super) requested_visuals: &'a VisualRequests,
+    pub(super) visual_transforms: &'a mut VisualSamples,
 }
 
 /// Clocks and visibility-independent state selected before CPU publication.
