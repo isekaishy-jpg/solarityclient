@@ -2,6 +2,7 @@
 
 #![allow(unsafe_code)]
 
+mod effects;
 mod upload;
 
 use ash::{Device, vk};

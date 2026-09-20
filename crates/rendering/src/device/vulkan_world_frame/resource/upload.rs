@@ -183,42 +183,27 @@ impl WorldFrameSlot {
                     self.layout.total_bytes,
                 )?;
             }
-            for (index, vertex) in particle_vertices.iter().copied().enumerate() {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.particle_vertex_offset,
-                        M2ParticleRenderVertex::BYTE_SIZE as u64,
-                        index,
-                    )?,
-                    &vertex.to_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            for (index, particle_index) in particle_indices.iter().copied().enumerate() {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.particle_index_offset,
-                        size_of::<u32>() as u64,
-                        index,
-                    )?,
-                    &particle_index.to_le_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
-            for (index, vertex) in ribbon_vertices.iter().copied().enumerate() {
-                copy_bytes(
-                    destination,
-                    indexed_offset(
-                        self.layout.ribbon_vertex_offset,
-                        M2RibbonRenderVertex::BYTE_SIZE as u64,
-                        index,
-                    )?,
-                    &vertex.to_bytes(),
-                    self.layout.total_bytes,
-                )?;
-            }
+            super::effects::write_stream(
+                destination,
+                self.layout.particle_vertex_offset,
+                self.layout.total_bytes,
+                particle_vertices,
+                M2ParticleRenderVertex::to_bytes,
+            )?;
+            super::effects::write_stream(
+                destination,
+                self.layout.particle_index_offset,
+                self.layout.total_bytes,
+                particle_indices,
+                u32::to_le_bytes,
+            )?;
+            super::effects::write_stream(
+                destination,
+                self.layout.ribbon_vertex_offset,
+                self.layout.total_bytes,
+                ribbon_vertices,
+                M2RibbonRenderVertex::to_bytes,
+            )?;
             allocator
                 .flush_allocation(allocation, 0, self.layout.total_bytes)
                 .map_err(|source| VulkanError::operation("flush world frame buffer", source))

@@ -19,6 +19,16 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+[Worker-produced effect streams](effect-stream-upload.md) now use their final
+shader byte layout directly for bulk particle/ribbon/index upload. This removes
+main-side per-element serialization without another worker phase, staging copy
+or join. Formatting, Clippy and all 1,646 tests pass. Two alternating equipped
+pairs show 3.118-5.518 ms lower matched stationary medians, but variable native
+presentation prevents attributing that entire gain to CPU work. The separate
+profile reduces upload by 0.591 ms and renderer thread cycles by about 11.1%,
+while total profiled frame time is worse. This removes redundant consumer work;
+main admission, presentation behavior and the complete cutover remain open.
+
 [Owned M2 finalization](m2-owned-finalization.md) now transfers complete geometry
 assembly and transparent ordering to a retained CPU operation using `JobContext`,
 budgeted output capacity and compact stable ordering scratch. Main consumes owned
