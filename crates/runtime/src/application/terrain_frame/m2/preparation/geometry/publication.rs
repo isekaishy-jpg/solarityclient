@@ -2,7 +2,7 @@
 
 use super::super::super::{M2Frame, M2GpuPlacement, RuntimeTerrainFrameError};
 use super::super::diagnostics::Work;
-use super::{GeometryBatch, GeometryInput, GeometryJob};
+use super::{GeometryBatch, GeometryInput};
 use crate::application::frame_pipeline::FrameWait;
 use solarity_rendering::{M2BonePose, M2BonePoseOverrides, M2MaterialPose};
 use solarity_rendering::{M2CameraEffectScale, VulkanError, WorldCameraFrame};
@@ -22,6 +22,9 @@ impl M2Frame {
         cpu: &solarity_cpu::CpuExecutor,
     ) -> Result<(), RuntimeTerrainFrameError> {
         debug_assert!(self.geometry_batch.jobs.iter().all(|job| !job.owns_effects));
+        self.geometry_batch
+            .reuse
+            .index(&mut self.geometry_batch.jobs);
         self.geometry_batch.active = 0;
         self.geometry_batch.handles.clear();
         self.geometry_batch.completion = None;
@@ -75,8 +78,10 @@ impl M2Frame {
     ) -> Result<(), RuntimeTerrainFrameError> {
         let batch = &mut self.geometry_batch;
         if batch.submitted {
-            // Placeholders have no live state. Reclaim retains the Vec allocation.
+            // Used slots are placeholders. Unmatched prior-frame jobs release
+            // their output capacities here instead of following new draw ordinals.
             batch.jobs.clear();
+            batch.reuse.clear();
             batch.pending.close();
             let readiness = wait.before_reclaim(&batch.pending);
             let result = batch.pending.reclaim(&mut batch.returned_chunks);
@@ -95,6 +100,22 @@ impl M2Frame {
             }
             readiness?;
             result?;
+            if solarity_profiling::detail_enabled()
+                && let Some(storage) = &batch.storage
+            {
+                let storage = storage.snapshot();
+                solarity_profiling::profile_value!(
+                    "m2.geometry.retained_frame_bytes",
+                    storage.used(solarity_cpu::CpuStorageClass::Frame)
+                );
+                solarity_profiling::profile_value!(
+                    "m2.geometry.retained_result_bytes",
+                    storage.bytes(
+                        solarity_cpu::CpuStorageClass::Frame,
+                        solarity_cpu::CpuStorageKind::Result,
+                    )
+                );
+            }
         }
         Ok(())
     }
@@ -186,10 +207,10 @@ impl GeometryBatch {
         if !batch.submitted {
             return Err(solarity_cpu::CpuError::BatchInactive.into());
         }
-        if batch.active == batch.jobs.len() {
-            batch.jobs.push(GeometryJob::default());
-        }
-        let job = &mut batch.jobs[batch.active];
+        let identity = super::reuse::GeometryReuseIdentity::new(source, &input);
+        let slot = batch.reuse.take(&identity, &mut batch.jobs);
+        let job = &mut batch.jobs[slot];
+        job.reuse_identity = Some(identity);
         job.reset();
         job.reserve_outputs(
             batch
@@ -225,7 +246,7 @@ impl GeometryBatch {
                 .as_ref()
                 .unwrap_or_else(|| unreachable!("admitted draw phase owns budget")),
         )?;
-        let job = &mut batch.jobs[batch.active];
+        let job = &mut batch.jobs[slot];
         job.owns_effects = input.visible.is_some();
         if job.owns_effects {
             std::mem::swap(&mut job.particles, &mut placement.particles);

@@ -10,6 +10,7 @@ mod palette;
 mod particles;
 mod prepare;
 mod publication;
+mod reuse;
 mod ribbon_draws;
 mod ribbons;
 mod shadows;
@@ -25,6 +26,7 @@ pub(in super::super) use input::{GeometryInput, VisibleGeometryInput};
 /// Retains only the current admitted job count, never historical model generations.
 pub(in super::super::super) struct GeometryBatch {
     jobs: Vec<GeometryJob>,
+    reuse: reuse::GeometryReuse,
     active: usize,
     staged: chunk::GeometryChunk,
     spare_chunks: Vec<chunk::GeometryChunk>,
@@ -41,6 +43,7 @@ impl Default for GeometryBatch {
     fn default() -> Self {
         Self {
             jobs: Vec::new(),
+            reuse: reuse::GeometryReuse::default(),
             active: 0,
             staged: chunk::GeometryChunk::default(),
             spare_chunks: Vec::new(),

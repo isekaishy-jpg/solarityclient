@@ -14,6 +14,8 @@ use super::GeometryInput;
 /// Reuses frame-local scratch and temporarily owns each admitted model's effect state.
 #[derive(Default)]
 pub(super) struct GeometryJob {
+    pub(super) reuse_identity: Option<super::reuse::GeometryReuseIdentity>,
+    pub(super) next_reuse: Option<usize>,
     pub(super) measurement: solarity_cpu::WorkMeasurement,
     pub(super) cost_class: usize,
     pub(super) input: Option<GeometryInput>,
