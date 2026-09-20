@@ -19,6 +19,13 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+A [four-variant borrowed-output experiment](m2-borrowed-output-pages.md) also
+failed to establish a useful whole-frame gain. Direct worker pages saved about
+0.28 ms in publication but added about 0.25 ms in renderer consumption, including
+after replacing per-packet callbacks with typed storage. All prototype changes
+were removed; production source and installed Build 166 remain unchanged.
+This rejects that particular output boundary, not the remaining cutover scope.
+
 A [two-variant M2 output-assembly experiment](m2-output-assembly-experiment.md)
 rejected a separate final-copy worker phase. Early overlap saved about 0.24 ms of
 main publication/prefix work but added about 0.26 ms of phase-pending time; moving
