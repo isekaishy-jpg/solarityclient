@@ -2,6 +2,7 @@
 
 mod chunk;
 mod cost;
+mod finalization;
 mod input;
 mod job;
 mod meshes;
@@ -30,6 +31,7 @@ pub(in super::super) use input::{GeometryInput, VisibleGeometryInput};
 /// Retains only the current admitted job count, never historical model generations.
 pub(in super::super::super) struct GeometryBatch {
     jobs: Vec<GeometryOwner>,
+    finalization: finalization::Finalization,
     reuse: reuse::GeometryReuse,
     active: usize,
     published_bones: usize,
@@ -50,6 +52,7 @@ impl Default for GeometryBatch {
     fn default() -> Self {
         Self {
             jobs: Vec::new(),
+            finalization: finalization::Finalization::default(),
             reuse: reuse::GeometryReuse::default(),
             active: 0,
             published_bones: 0,

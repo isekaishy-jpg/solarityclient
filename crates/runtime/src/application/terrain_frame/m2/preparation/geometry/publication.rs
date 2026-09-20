@@ -1,7 +1,6 @@
 //! Incremental owned publication and unconditional effect-state return.
 
 use super::super::super::{M2Frame, M2GpuPlacement, RuntimeTerrainFrameError};
-use super::super::diagnostics::Work;
 use super::{GeometryBatch, GeometryInput};
 use crate::application::frame_pipeline::FrameWait;
 use solarity_rendering::{M2BonePose, M2BonePoseOverrides, M2MaterialPose};
@@ -10,7 +9,6 @@ use solarity_rendering::{M2CameraEffectScale, VulkanError, WorldCameraFrame};
 /// Ordered output prefix and capacity totals survive a coordinator yield.
 #[derive(Default)]
 pub(in super::super) struct GeometryPublication {
-    pub(in super::super) next: usize,
     pub(in super::super) vertex_capacity: usize,
     pub(in super::super) index_capacity: usize,
 }
@@ -133,66 +131,13 @@ impl M2Frame {
         self.geometry_batch.pending.is_finished()
     }
 
-    /// Waits for the exact unpublished result, or terminal phase release.
+    /// A complete geometry phase returns model ownership before finalization.
     pub(in super::super) fn wait_geometry(
         &self,
-        cursor: &GeometryPublication,
         wait: &mut FrameWait<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        let batch = &self.geometry_batch;
-        if let Some(handle) = batch.handles.get(cursor.next) {
-            wait.before_result(&batch.pending, handle)?;
-        } else {
-            wait.before_reclaim(&batch.pending)?;
-        }
+        wait.before_reclaim(&self.geometry_batch.pending)?;
         Ok(())
-    }
-
-    /// Publishes only the ready ordered prefix, retaining cursor and capacity totals.
-    /// No pending result blocks main or leases a domain output across the yield.
-    pub(in super::super) fn try_publish_geometry(
-        &mut self,
-        work: &mut Work,
-        cursor: &mut GeometryPublication,
-    ) -> Result<bool, RuntimeTerrainFrameError> {
-        let _profile = solarity_profiling::profile!("m2.geometry_publication");
-        let batch = &mut self.geometry_batch;
-        let mut output = super::output::GeometryOutput {
-            published_bones: &mut batch.published_bones,
-            visible_draws: &mut self.visible_draws,
-            shadow_draws: &mut self.shadow_draws,
-            environment_shadow_draws: &mut self.environment_shadow_draws,
-            particle_draws: &mut self.particle_draws,
-            ribbon_draws: &mut self.ribbon_draws,
-            transparent_elements: &mut self.transparent_elements,
-            particle_vertices: &mut self.particle_vertices,
-            particle_indices: &mut self.particle_indices,
-            ribbon_vertices: &mut self.ribbon_vertices,
-            recoverable_errors: &mut self.recoverable_errors,
-            vertex_capacity: cursor.vertex_capacity,
-            index_capacity: cursor.index_capacity,
-        };
-        while cursor.next < batch.handles.len() {
-            let Some(result) =
-                batch
-                    .pending
-                    .try_with_result(&batch.handles[cursor.next], |chunk| {
-                        for job in chunk.jobs.writer().iter_mut() {
-                            output.publish(job.job_mut(), work)?;
-                        }
-                        Ok::<_, RuntimeTerrainFrameError>(())
-                    })?
-            else {
-                cursor.vertex_capacity = output.vertex_capacity;
-                cursor.index_capacity = output.index_capacity;
-                return Ok(false);
-            };
-            result?;
-            cursor.next += 1;
-        }
-        cursor.vertex_capacity = output.vertex_capacity;
-        cursor.index_capacity = output.index_capacity;
-        Ok(true)
     }
 }
 

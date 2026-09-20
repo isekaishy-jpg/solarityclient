@@ -523,7 +523,6 @@ pub(in crate::application) struct M2Frame {
     unit_scene_time_ms: f32,
     retirement: retirement::M2RetirementScene,
     bone_pose_scratch: M2BonePose,
-    geometry_batch: preparation::geometry::GeometryBatch,
     /// CPU samples cannot be mistaken for a complete render palette.
     bone_samples_scratch: M2BoneSamples,
     bone_demand: preparation::demand::CpuBoneDemand,
@@ -571,6 +570,8 @@ pub(in crate::application) struct M2Frame {
     recoverable_errors: Vec<String>,
     pending_glue_playback_advance: Option<M2PlaybackAdvance>,
     unit_effects: unit_effects::M2UnitEffectScene,
+    /// Declared last so renderer vectors drop before their retained capacity charges.
+    geometry_batch: preparation::geometry::GeometryBatch,
 }
 
 /// Borrowed dynamic streams assembled for one unified world submission.

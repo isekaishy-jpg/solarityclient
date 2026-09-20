@@ -26,4 +26,5 @@ pub(in crate::application::terrain_frame) struct PendingM2Frame<'frame> {
     stage: progress::FrameStage,
     publication: super::geometry::GeometryPublication,
     water_scene_order: u32,
+    ordering_error: Option<super::super::RuntimeTerrainFrameError>,
 }

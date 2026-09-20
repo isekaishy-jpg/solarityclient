@@ -423,7 +423,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             100.,
         )
         .frame(1.)?;
-        let abandoned = candidate.begin_visible_draws_with_unit_effects(
+        let mut abandoned = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
@@ -440,7 +440,18 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             None,
             None,
         )?;
+        // Exhaust at most one pose/spatial yield per authored root, then the
+        // terminal geometry/finalization boundaries. Do not advance receivers:
+        // Drop must recover the completed worker-owned streams itself.
+        for _ in 0..count + 4 {
+            abandoned.try_admit(&cpu, &mut randoms[1], None, None, None)?;
+            abandoned.wait(&mut FrameWait::Offline)?;
+        }
         drop(abandoned);
+        assert!(
+            !candidate.visible_draws.is_empty(),
+            "abandonment restores the worker-finalized output owner"
+        );
         assert!(!candidate.geometry_batch.submitted);
         assert!(
             candidate

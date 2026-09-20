@@ -244,6 +244,7 @@ impl TerrainFrame {
             // Revisit ready root palettes between main-only operations. This can
             // release geometry while the following WMO operation is still pending.
             pending_m2.try_admit(
+                cpu,
                 random,
                 Some(game_objects),
                 Some((

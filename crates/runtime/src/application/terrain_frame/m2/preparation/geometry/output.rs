@@ -5,7 +5,7 @@ use super::super::diagnostics::Work;
 use super::GeometryJob;
 use solarity_rendering::VulkanError;
 
-/// Main-only output references keep worker result ownership separate from publication.
+/// Exclusive fixed-capacity outputs are admitted before finalization runs.
 pub(super) struct GeometryOutput<'a> {
     pub(super) published_bones: &'a mut usize,
     pub(super) visible_draws: &'a mut Vec<solarity_rendering::M2PreparedDraw>,
@@ -78,14 +78,15 @@ impl GeometryOutput<'_> {
         for draw in job.shadow_draws.drain() {
             let draw = draw.relocate_bones(bone_offset)?;
             if input.primary_shadow {
-                self.shadow_draws.push(draw);
+                solarity_cpu::FixedWriter::new(self.shadow_draws).push(draw)?;
             }
             if input.environment_maps != 0 {
-                self.environment_shadow_draws
-                    .push(solarity_rendering::WorldEnvironmentM2Caster {
+                solarity_cpu::FixedWriter::new(self.environment_shadow_draws).push(
+                    solarity_rendering::WorldEnvironmentM2Caster {
                         draw,
                         maps: input.environment_maps,
-                    });
+                    },
+                )?;
             }
         }
         work.geometry_outputs(
@@ -112,23 +113,28 @@ impl GeometryOutput<'_> {
             .map_err(|_| VulkanError::M2RibbonDrawVertexRange)?;
         for draw in job.visible_draws.drain() {
             let draw = draw.relocate_bones(bone_offset)?;
-            self.visible_draws.push(if draw.scene_order() == u32::MAX {
-                draw
-            } else {
-                draw.with_scene_order(
-                    draw.scene_order()
-                        .checked_add(scene)
-                        .ok_or(VulkanError::M2DrawIndexRange)?,
-                )
-            });
+            solarity_cpu::FixedWriter::new(self.visible_draws).push(
+                if draw.scene_order() == u32::MAX {
+                    draw
+                } else {
+                    draw.with_scene_order(
+                        draw.scene_order()
+                            .checked_add(scene)
+                            .ok_or(VulkanError::M2DrawIndexRange)?,
+                    )
+                },
+            )?;
         }
         for draw in job.particle_draws.drain() {
-            self.particle_draws
-                .push(draw.relocate(vertices, indices, scene, effects)?);
+            solarity_cpu::FixedWriter::new(self.particle_draws)
+                .push(draw.relocate(vertices, indices, scene, effects)?)?;
         }
         for draw in job.ribbon_draws.drain() {
-            self.ribbon_draws
-                .push(draw.relocate(ribbon_vertices, scene, effects)?);
+            solarity_cpu::FixedWriter::new(self.ribbon_draws).push(draw.relocate(
+                ribbon_vertices,
+                scene,
+                effects,
+            )?)?;
         }
         for mut element in job.transparent_elements.drain() {
             element.key = element
@@ -153,7 +159,7 @@ impl GeometryOutput<'_> {
                     count,
                 },
             };
-            self.transparent_elements.push(element);
+            solarity_cpu::FixedWriter::new(self.transparent_elements).push(element)?;
         }
         self.vertex_capacity = self
             .vertex_capacity
@@ -163,20 +169,15 @@ impl GeometryOutput<'_> {
             .index_capacity
             .checked_add(job.particle_index_capacity)
             .ok_or(solarity_rendering::M2ParticleMeshPlanError::IndexCount)?;
-        self.particle_vertices.reserve(
-            self.vertex_capacity
-                .saturating_sub(self.particle_vertices.len()),
-        );
-        self.particle_indices.reserve(
-            self.index_capacity
-                .saturating_sub(self.particle_indices.len()),
-        );
-        self.particle_vertices
-            .extend_from_slice(&job.particle_vertices);
-        self.particle_indices
-            .extend_from_slice(&job.particle_indices);
-        self.ribbon_vertices.extend_from_slice(&job.ribbon_vertices);
-        self.recoverable_errors.append(&mut job.recoverable_errors);
+        solarity_cpu::FixedWriter::new(self.particle_vertices)
+            .extend_from_slice(&job.particle_vertices)?;
+        solarity_cpu::FixedWriter::new(self.particle_indices)
+            .extend_from_slice(&job.particle_indices)?;
+        solarity_cpu::FixedWriter::new(self.ribbon_vertices)
+            .extend_from_slice(&job.ribbon_vertices)?;
+        for error in job.recoverable_errors.drain(..) {
+            solarity_cpu::FixedWriter::new(self.recoverable_errors).push(error)?;
+        }
         Ok(())
     }
 }

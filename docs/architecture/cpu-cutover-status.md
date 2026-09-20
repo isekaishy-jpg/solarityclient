@@ -19,6 +19,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+[Owned M2 finalization](m2-owned-finalization.md) now transfers complete geometry
+assembly and transparent ordering to a retained CPU operation using `JobContext`,
+budgeted output capacity and compact stable ordering scratch. Main consumes owned
+contiguous streams at the original receiver boundary; camera, animation/RNG and
+renderer interfaces are preserved. All 1,642 tests, Clippy and formatting pass.
+Four equipped comparisons show 0.892-0.967 ms lower matched stationary medians;
+orbit medians are slightly higher and the lighter unarmed control regresses by
+0.145 ms. Profiles move about 2.695 ms out of main publication, accompanied by
+increased coordinator waiting. Main admission remains 3.853 ms and renderer CPU
+4.572 ms. These remaining costs and lighter-scene overhead stay open.
+
 [Retained owner attachment inputs](m2-attachment-inputs.md) replace per-owner
 scene-wide membership and parent-result scans with topology-owned request groups
 and indexed ordered frame samples. Duplicate order, first-parent selection and
@@ -704,8 +715,9 @@ findings claimed yet.
 
 ## Still required for the complete cutover
 
-The next priority after the current typed-product ownership checkpoint is the
-remaining main-thread preparation/assembly boundary. The user expects work to
+The next priority is the remaining main-thread admission and renderer boundary.
+Complete M2 assembly/ordering now runs as an owned worker operation; its join and
+lighter-scene overhead still need improvement. The user expects work to
 be distributed across cores for ordinary mixed populations of 200–300 entities.
 M2 geometry already receives `JobContext`; completing every unrelated service
 adapter is not a prerequisite for that distribution work. Preserve stock
@@ -748,8 +760,8 @@ an operation has a context parameter. The requirements below remain in scope.
 - Connect reservations to allocations nested inside domain job state and the
   complete required phase working set. Executor-wide scheduler metadata and typed
   result-page accounting now exist; model output, override buffers and retained
-  geometry job records now adopt it. Live simulation/pose storage,
-  final frame streams, ordinary asset buffers and caches still require adoption,
+  geometry job records and final frame streams now adopt it. Live simulation/pose
+  storage, ordinary asset buffers and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, GPU upload/acquire/growth waits
   and further useful main-ready continuations; world preparation and

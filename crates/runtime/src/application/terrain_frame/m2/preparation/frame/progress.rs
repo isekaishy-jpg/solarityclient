@@ -10,7 +10,7 @@ use crate::application::terrain_coordinator::RuntimeTerrainCoordinator;
 pub(super) enum FrameStage {
     Admission,
     Geometry,
-    GeometryRetirement,
+    Finalization,
     SpatialRetirement,
     PoseRetirement,
     Receivers,
@@ -51,6 +51,7 @@ impl PendingM2Frame<'_> {
     /// behind the original world packet-preparation boundary.
     pub(in crate::application::terrain_frame) fn try_admit(
         &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
         spatial_lighting: Option<(
@@ -66,7 +67,7 @@ impl PendingM2Frame<'_> {
         if self.stage == FrameStage::Failed {
             return Err(solarity_cpu::CpuError::BatchInactive.into());
         }
-        if self.stage != FrameStage::Admission {
+        if !matches!(self.stage, FrameStage::Admission | FrameStage::Geometry) {
             return Ok(());
         }
         let _trace = self.trace.enter();
@@ -89,6 +90,17 @@ impl PendingM2Frame<'_> {
         }
         if self.admission.complete {
             self.stage = FrameStage::Geometry;
+            if frame.geometry_is_finished() {
+                let result = frame.finish_geometry(&mut FrameWait::Offline);
+                frame.restore_geometry_states();
+                result?;
+                frame.begin_finalization(
+                    cpu,
+                    &mut self.admission.work,
+                    self.view.first_transparent_pass,
+                )?;
+                self.stage = FrameStage::Finalization;
+            }
         }
         Ok(())
     }
@@ -134,6 +146,7 @@ impl PendingM2Frame<'_> {
         >,
     ) -> Result<bool, RuntimeTerrainFrameError> {
         self.try_admit(
+            cpu,
             random,
             game_objects,
             spatial_lighting
@@ -156,21 +169,22 @@ impl PendingM2Frame<'_> {
         loop {
             match self.stage {
                 FrameStage::Admission => unreachable!("admission was serviced before publication"),
-                FrameStage::Geometry => {
-                    if !frame
-                        .try_publish_geometry(&mut self.admission.work, &mut self.publication)?
-                    {
+                FrameStage::Geometry => return Ok(false),
+                FrameStage::Finalization => {
+                    if !frame.finalization_is_finished() {
                         return Ok(false);
                     }
-                    self.stage = FrameStage::GeometryRetirement;
-                }
-                FrameStage::GeometryRetirement => {
-                    if !frame.geometry_is_finished() {
-                        return Ok(false);
+                    let output = frame
+                        .finish_finalization(
+                            &mut FrameWait::Offline,
+                            Some(&mut self.admission.work),
+                        )?
+                        .ok_or(solarity_cpu::CpuError::CompletionLost)?;
+                    self.publication = output.capacities;
+                    match output.water {
+                        Ok(order) => self.water_scene_order = order,
+                        Err(error) => self.ordering_error = Some(error),
                     }
-                    let result = frame.finish_geometry(&mut FrameWait::Offline);
-                    frame.restore_geometry_states();
-                    result?;
                     self.stage = FrameStage::SpatialRetirement;
                 }
                 FrameStage::SpatialRetirement => {
@@ -198,8 +212,11 @@ impl PendingM2Frame<'_> {
                     )?;
                     // Lighting now owns its input; failure below must still drain it.
                     self.stage = FrameStage::Lighting;
-                    self.water_scene_order =
-                        frame.order_frame_transparency(self.view.first_transparent_pass)?;
+                    // Pure ordering may finish earlier, but its error remains
+                    // after the original ordered receiver callback boundary.
+                    if let Some(error) = self.ordering_error.take() {
+                        return Err(error);
+                    }
                 }
                 FrameStage::Lighting => {
                     if !frame.scene_lighting.is_ready() {
@@ -236,9 +253,8 @@ impl PendingM2Frame<'_> {
                     frame.pose_batch.wait_for_root(index, wait)?;
                 }
             }
-            FrameStage::Geometry | FrameStage::GeometryRetirement => {
-                frame.wait_geometry(&self.publication, wait)?
-            }
+            FrameStage::Geometry => frame.wait_geometry(wait)?,
+            FrameStage::Finalization => frame.wait_finalization(wait)?,
             FrameStage::PoseRetirement => frame.pose_batch.wait_finished(wait)?,
             FrameStage::SpatialRetirement => frame.spatial_batch.wait_finished(wait)?,
             FrameStage::Lighting => frame.scene_lighting.wait_pending(wait)?,

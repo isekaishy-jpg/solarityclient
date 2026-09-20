@@ -13,6 +13,9 @@ impl M2Frame {
     /// Domain errors retain precedence; this boundary reports only executor failure.
     pub(super) fn abandon_frame_preparation(&mut self) {
         let _profile = solarity_profiling::profile!("m2.frame_abandon_wait");
+        let finalization = self
+            .finish_finalization(&mut FrameWait::Offline, None)
+            .map(|_| ());
         let geometry = self.finish_geometry(&mut FrameWait::Offline);
         self.restore_geometry_states();
         let poses = self.pose_batch.finish(&mut FrameWait::Offline);
@@ -22,7 +25,7 @@ impl M2Frame {
         } else {
             Ok(())
         };
-        for error in [geometry, poses, spatial, lighting]
+        for error in [finalization, geometry, poses, spatial, lighting]
             .into_iter()
             .filter_map(Result::err)
         {
@@ -149,6 +152,7 @@ impl M2Frame {
             stage: super::progress::FrameStage::Admission,
             publication: super::super::geometry::GeometryPublication::default(),
             water_scene_order: 0,
+            ordering_error: None,
         };
         let frame = pending
             .frame
