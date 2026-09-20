@@ -37,7 +37,7 @@ alone does not complete main-thread preparation distribution.
 A [controlled receiver-query experiment](m2-receiver-query-experiment.md) rejected
 a late floor-only worker phase: matched steady frames did not improve, and
 duplicated collision preparation introduced severe stalls. The prototype was
-removed; installed Build 164 is unchanged. Future spatial distribution must
+removed before Build 165. Future spatial distribution must
 precede the first expensive consumer and share prepared immutable query inputs.
 
 Typed immutable products now bind payload, readiness generation and lifetime in
@@ -69,12 +69,16 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 165](testing-build165-palettes.md),
-source `bad0038e`. Full workspace checks pass: 1,623 tests passed, 33 existing
-ignored. Four unprofiled 192-NPC runs completed 16,384 frames; matched steady
-medians improve by 0.38-0.53 ms with worker-owned palette upload. This is below
-the requested multi-ms overall improvement; matched live performance and the
-remaining cutover requirements are still open.
+The current installed checkpoint is [Testing Build 166](testing-build166-recording.md),
+source `4fd3ab6d`. Full workspace tests passed 1,623 cases with 33 existing ignored;
+the additional recording failure/unwind test also passes, alongside final Clippy
+and formatting. Four unprofiled 192-NPC runs completed 16,384 frames: matched
+steady medians improve by 0.62-0.74 ms against Build 165. Separate profiles show
+main recording at 1.02 ms versus 1.59 ms, with sampled GPU time slightly higher.
+Main M2 admission/publication still sum to roughly 2.67 ms in that fixture.
+Long frames, matched live performance, the requested 5 ms overall reduction and
+the remaining cutover requirements stay open. [Build 165](testing-build165-palettes.md)
+records the earlier palette-page improvement separately.
 The user also supplied a [modern Classic comparison binary](modern-classic-reference.md)
 for architecture investigation; its identity is pinned, with no new disassembly
 findings claimed yet.
@@ -676,7 +680,7 @@ an operation has a context parameter. The requirements below remain in scope.
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, GPU upload/acquire/growth waits
   and further useful main-ready continuations; world preparation and
-  presentation-slot waits are connected.
+  presentation-slot waits and required shadow-recording joins are connected.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
 - Extend cross-domain overlap beyond the connected ground-detail/WMO and
