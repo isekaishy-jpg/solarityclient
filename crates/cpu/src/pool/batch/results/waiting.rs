@@ -1,7 +1,7 @@
 //! Native wait scopes exist only around a condition-variable wait and reacquisition.
 
 use super::{Core, CpuError, FrameBatch, FrameJob, Gate, JobOutcome, State, Status};
-use std::sync::MutexGuard;
+use crate::pool::observation::ObservedGuard;
 
 /// A job wait identifies its node; phase retirement waits for all publication.
 #[derive(Clone, Copy)]
@@ -16,9 +16,9 @@ impl<T> Core<T> {
     /// native attempt, including spurious wakeups; no consumer work enters it.
     pub(super) fn wait_for_change<'a>(
         &'a self,
-        state: MutexGuard<'a, State<T>>,
+        state: ObservedGuard<'a, State<T>>,
         target: WaitTarget,
-    ) -> MutexGuard<'a, State<T>> {
+    ) -> ObservedGuard<'a, State<T>> {
         state.trace.link("cpu.phase.wait_need");
         let _origin = state.trace.enter();
         let mut profile = match (state.service.is_some(), target) {
@@ -49,9 +49,7 @@ impl<T> Core<T> {
             }
         };
         profile.trace_owner(owner, reason);
-        self.ready
-            .wait(state)
-            .unwrap_or_else(|_| unreachable!("batch metadata mutations cannot panic"))
+        state.wait(&self.ready)
     }
 }
 

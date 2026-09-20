@@ -4,12 +4,13 @@ use super::ready::ReadyJobs;
 use super::{FrameBatchPlan, JobOutcome};
 use crate::completion::Subscription;
 use crate::pool::dispatch::Dispatch;
+use crate::pool::observation::ObservedGuard;
 use crate::pool::worker::WorkerLease;
 use crate::storage::{StorageDeque, StorageVec};
 use crate::{CompletionPort, CoordinatorNotifier, CpuError, ReadyToken};
 use crate::{CpuStorageBudget, CpuStorageClass, CpuStorageKind};
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// Registered adapters introduce no per-activation boxed closure.
 pub(super) enum Kernel<T> {
@@ -315,9 +316,9 @@ pub(super) struct Core<T> {
 }
 impl<T> Core<T> {
     /// Metadata mutations never execute a domain kernel or consumer callback.
-    pub fn lock(&self) -> MutexGuard<'_, State<T>> {
-        self.state
-            .lock()
-            .unwrap_or_else(|_| unreachable!("batch metadata mutations cannot panic"))
+    pub fn lock(&self) -> ObservedGuard<'_, State<T>> {
+        static WAIT: solarity_profiling::Site =
+            solarity_profiling::Site::new("cpu.batch.lock_wait", true);
+        ObservedGuard::lock(&self.state, &WAIT)
     }
 }

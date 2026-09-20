@@ -25,6 +25,14 @@ impl Dispatch {
         let mut required = StorageDeque::default();
         let mut retirement = StorageDeque::default();
         let mut speculative = StorageDeque::default();
+        let mut sleepers = crate::storage::StorageVec::default();
+        sleepers.reserve(
+            budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Metadata,
+            count,
+        )?;
+        sleepers.resize_with(count, super::SleepingWorker::default);
         frame.reserve(budget, frame_capacity)?;
         urgent.reserve(budget, frame_capacity)?;
         priority.reserve(
@@ -51,6 +59,7 @@ impl Dispatch {
                 required,
                 retirement,
                 speculative,
+                sleepers,
                 stopping: false,
                 active_service: 0,
             }),
@@ -78,7 +87,7 @@ impl Dispatch {
                 if initialized.send(ready).is_err() || !ready {
                     return;
                 }
-                worker.worker(flexible, service_reserved);
+                worker.worker(index, flexible, service_reserved);
             }) {
                 Ok(handle) => {
                     handles.push(handle);

@@ -22,7 +22,6 @@ pub use template::FrameGraphTemplate;
 
 pub use types::{FrameBatchPlan, FrameJob, FramePriority, JobOutcome};
 
-use super::dispatch::{Work, WorkClass};
 use super::{CpuError, CpuExecutor};
 use state::{Core, Kernel, State};
 use std::sync::{Arc, Condvar, Mutex};
@@ -166,14 +165,6 @@ impl<T: Send + 'static> Core<T> {
                 state.service.clone(),
             )
         };
-        for _ in 0..count {
-            match &service {
-                Some(service) => dispatch.push(
-                    Work::Loading(Arc::clone(service), self.clone()),
-                    WorkClass::Background,
-                ),
-                None => dispatch.push(Work::Retained(self.clone()), WorkClass::Frame),
-            }
-        }
+        dispatch.push_runners(self.clone(), service, count);
     }
 }

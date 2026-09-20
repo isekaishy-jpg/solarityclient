@@ -1,11 +1,13 @@
 //! Persistent protected/flexible workers and durable ready-queue predicates.
 
 mod cost;
+mod observation;
 mod queues;
 mod startup;
 mod worker;
 
 use crate::storage::StorageDeque;
+use observation::{QueuedWork, SleepingWorker};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -106,10 +108,11 @@ impl Work {
 struct Queues {
     frame: cost::CostQueue,
     urgent: cost::CostQueue,
-    priority: StorageDeque<Work>,
-    required: StorageDeque<Work>,
-    retirement: StorageDeque<Work>,
-    speculative: StorageDeque<Work>,
+    priority: StorageDeque<QueuedWork>,
+    required: StorageDeque<QueuedWork>,
+    retirement: StorageDeque<QueuedWork>,
+    speculative: StorageDeque<QueuedWork>,
+    sleepers: crate::storage::StorageVec<SleepingWorker>,
     stopping: bool,
     active_service: usize,
 }

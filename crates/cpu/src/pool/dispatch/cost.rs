@@ -1,6 +1,6 @@
 //! Fixed cost buckets for admitted runner records; no domain state is inspected.
 
-use super::{ReadyWork, Work};
+use super::{QueuedWork as Work, ReadyWork};
 use crate::storage::StorageDeque;
 use crate::{CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind};
 use std::sync::Arc;

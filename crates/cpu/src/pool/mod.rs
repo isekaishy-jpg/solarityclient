@@ -9,6 +9,7 @@ mod demand;
 mod dispatch;
 mod epochs;
 mod executor;
+mod observation;
 mod permit;
 mod plan;
 mod service;

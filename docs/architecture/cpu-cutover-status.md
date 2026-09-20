@@ -19,6 +19,13 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+Runner publication now inserts a phase's reserved runners under one queue lock
+and one notification. Sampled dispatcher/batch acquisition, queue residence and
+useful native wake intervals distinguish those boundaries. The optimized
+1/3/5/7-worker comparison exposes both scaling and empty-kernel contention; it
+does not establish a live improvement. See the [measurements and exact interval
+semantics](cpu-dispatch-publication.md).
+
 The current installed checkpoint is [Testing Build 162](testing-build162-foundation.md),
 source `eac55b9f`. Its full workspace checks and hidden movement replay pass;
 matched live performance and the remaining cutover requirements are still open.
@@ -584,11 +591,12 @@ matched live performance and the remaining cutover requirements are still open.
   loading. Improve capability reporting within the agreed scope, and complete
   finite-step/bulk classification and whole-process concurrency policy. Fixed
   affinity and NUMA placement remain deferred.
-- Batch runner queue publication and measure queue-lock/batch-lock residence,
-  enqueue-to-start distributions and cold wake latency across worker counts.
-  Central queues currently lock and notify per pushed runner; contention is not
-  established as the dominant live cost. See the
-  [verified gap review and policy boundaries](cpu-cutover-gap-review.md).
+- Apply the connected batch publication and sampled lock/queue/wake observations
+  to matched live movement and concurrent loading. Synthetic 1/3/5/7-worker
+  comparisons are recorded in the [dispatch report](cpu-dispatch-publication.md);
+  they do not establish contention as the dominant live cost or complete causal
+  product attribution. Keep the central scheduler unless measurements justify
+  a replacement.
 - Typed shared-result leases across domains and remaining main-only continuations.
   Numeric main-ready storage and the four world operations are connected.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
