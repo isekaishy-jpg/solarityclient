@@ -37,8 +37,9 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 162](testing-build162-foundation.md),
-source `eac55b9f`. Its full workspace checks and hidden movement replay pass;
+The current installed checkpoint is [Testing Build 163](testing-build163-services.md),
+source `1b9bf3fb`. Full workspace checks pass: 1,617 tests passed, 33 existing
+ignored. The optimized hidden population sweep completed 20,480 frames;
 matched live performance and the remaining cutover requirements are still open.
 
 - Simulation owner lookup now follows placement storage mutations before render

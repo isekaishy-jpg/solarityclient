@@ -75,6 +75,11 @@ typed ownership permits it and account for retained pose/final-stream storage.
 Draw batching and character instancing remain distinct renderer work, with stock
 material, attachment, shadow and traversal behavior still required.
 
+All five captures report zero dropped samples/events/trace rows and capacity
+overflows. Each has 32 detailed frames; all prepared root palettes were consumed
+in those samples (zero `m2.pose_batch.unconsumed`). This provides no evidence for
+discarded root-pose work as the cause of this fixture's population scaling.
+
 Raw artifacts are ignored under `target/npc-density-clean-*`: five frame CSVs,
 profiling summaries/traces and stdout/stderr logs. The executable hash and helper
 arguments are retained with the study. The contaminated initial artifacts use
