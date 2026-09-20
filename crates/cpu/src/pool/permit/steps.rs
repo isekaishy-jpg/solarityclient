@@ -59,6 +59,11 @@ where
                 }
             }
         }));
+        if !worker.environment.install() {
+            self.operation = None;
+            self.publication.finish(TaskOutcome::EnvironmentFailed);
+            return false;
+        }
         match outcome {
             Ok(ControlFlow::Continue(())) => {
                 self.queued = queue_time();
@@ -108,6 +113,7 @@ impl CpuTaskPermit<'_> {
             lease,
             notifier,
             service,
+            execution,
             control,
         } = self;
         let (publication, receiver) = Publication::new(lease, notifier, Arc::clone(&control));
@@ -116,6 +122,7 @@ impl CpuTaskPermit<'_> {
         pool.push(
             Work::Sliced(
                 Arc::clone(&identity),
+                execution,
                 Box::new(Steps {
                     operation: Some(operation),
                     control: Arc::clone(&control),

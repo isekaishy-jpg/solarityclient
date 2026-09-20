@@ -90,10 +90,11 @@ impl<T: Send + 'static> FrameBatch<T> {
             Gate::Pending(dependencies.len())
         };
         state.completion = Some(completion);
-        // Exactly one queued runner per background admission; service reclassification
-        // can therefore move it atomically without expanding the bounded queue.
+        // Independent resource kernels use the configured flexible capacity.
+        // Dispatch separately enforces the bulk limit and keeps every loading
+        // runner off protected workers, including after urgency propagation.
         state.workers = if self.service.is_some() {
-            1
+            cpu.background_worker_count()
         } else {
             cpu.worker_count()
         };

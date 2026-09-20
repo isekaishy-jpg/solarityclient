@@ -34,7 +34,7 @@ impl Default for SpatialBatch {
             indices: CpuBuffer::default(),
             costs: CpuBuffer::default(),
             handles: CpuBuffer::default(),
-            pending: FrameBatch::new(SpatialJob::execute),
+            pending: FrameBatch::with_context(SpatialJob::run),
             current: std::array::from_fn(|_| None),
             loaded_group: None,
             cursor: 0,

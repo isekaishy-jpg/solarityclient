@@ -41,26 +41,31 @@ impl PendingDetail {
         Self {
             plan: Arc::clone(&request.plan),
             density: request.density,
-            task: permit.submit(move || {
-                let scatter = TerrainDetailChunk::prepare(
-                    &request.decoded,
-                    request.chunk,
-                    &request.catalog,
-                    request.density,
-                )?;
-                let mesh = Arc::new(GroundDetailMeshPlan::prepare(
-                    &scatter,
-                    &request.catalog,
-                    request.density,
-                    |id| request.assets.models.get(&id).map(Arc::as_ref),
-                )?);
-                Ok(PreparedDetail {
-                    _plan: request.plan,
-                    assets: request.assets,
-                    mesh,
-                    index: request.index,
-                })
-            }),
+            // A single authored chunk uses resident inputs only. Unlike archive
+            // and codec services it cannot enter a blocking foreign operation.
+            task: permit
+                .with_execution(solarity_cpu::CpuServiceExecution::Finite)
+                .submit_with_context(move |context| {
+                    context.diagnostic_value("terrain.detail.chunk", request.index as u64);
+                    let scatter = TerrainDetailChunk::prepare(
+                        &request.decoded,
+                        request.chunk,
+                        &request.catalog,
+                        request.density,
+                    )?;
+                    let mesh = Arc::new(GroundDetailMeshPlan::prepare(
+                        &scatter,
+                        &request.catalog,
+                        request.density,
+                        |id| request.assets.models.get(&id).map(Arc::as_ref),
+                    )?);
+                    Ok(PreparedDetail {
+                        _plan: request.plan,
+                        assets: request.assets,
+                        mesh,
+                        index: request.index,
+                    })
+                }),
         }
     }
 

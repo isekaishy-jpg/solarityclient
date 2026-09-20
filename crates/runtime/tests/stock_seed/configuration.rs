@@ -31,7 +31,7 @@ fn execution_policy_options_resolve_and_validate() -> Result<(), Box<dyn Error>>
     assert_eq!(plan.bulk_limit().get(), 2);
     for (total, flexible, reserve, bulk) in [
         ("2", "3", "1", "1"),
-        ("7", "3", "3", "2"),
+        ("7", "3", "4", "2"),
         ("7", "3", "1", "4"),
     ] {
         assert!(matches!(
@@ -52,6 +52,26 @@ fn execution_policy_options_resolve_and_validate() -> Result<(), Box<dyn Error>>
             )),
             Err(ConfigurationError::InvalidCpuExecutionPlan)
         ));
+    }
+    Ok(())
+}
+
+/// Ordinary loading shares flexible compute without expanding the configured pool.
+#[test]
+fn default_execution_policy_scales_with_the_configured_budget() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::new()?;
+    for (total, flexible) in [(1, 1), (2, 1), (4, 2), (8, 4)] {
+        let total_text = total.to_string();
+        let configuration = RuntimeConfiguration::from_arguments(arguments(
+            &fixture,
+            &["--cpu-workers", &total_text, "--cpu-capacity", "24"],
+        ))?;
+        let plan = configuration.cpu_pool().execution();
+        assert_eq!(plan.worker_count().get(), total);
+        assert_eq!(plan.flexible_workers().get(), flexible);
+        assert_eq!(plan.protected_workers(), total - flexible);
+        assert_eq!(plan.bulk_limit().get(), flexible);
+        assert_eq!(plan.service_reserve().get(), 1);
     }
     Ok(())
 }

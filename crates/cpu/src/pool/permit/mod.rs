@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub struct CpuTaskPermit<'executor> {
     pool: &'executor Arc<Dispatch>,
     service: CpuService,
+    execution: crate::CpuServiceExecution,
     lease: WorkerLease,
     notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
     control: Arc<super::task::TaskControl>,
@@ -34,7 +35,17 @@ impl<'executor> CpuTaskPermit<'executor> {
             lease,
             notifier,
             service,
+            execution: crate::CpuServiceExecution::Bulk,
             control,
         })
+    }
+
+    /// Declares execution eligibility before ownership moves. Finite operations
+    /// must provide bounded nonblocking turns, including their captured cleanup.
+    /// The default bulk classification remains appropriate for archive/codec I/O.
+    #[must_use]
+    pub fn with_execution(mut self, execution: crate::CpuServiceExecution) -> Self {
+        self.execution = execution;
+        self
     }
 }

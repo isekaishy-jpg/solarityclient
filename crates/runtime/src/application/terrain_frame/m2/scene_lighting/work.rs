@@ -23,6 +23,18 @@ pub(super) struct LightingWork {
 }
 
 impl LightingWork {
+    /// Admitted receiver ranges keep their owned output through terminal publication.
+    pub(super) fn run(
+        &mut self,
+        context: &solarity_cpu::JobContext<'_>,
+    ) -> solarity_cpu::JobOutcome {
+        context.diagnostic_value(
+            "m2.lighting.receivers",
+            self.input.as_ref().map_or(0, |input| input.range.len()) as u64,
+        );
+        self.execute()
+    }
+
     /// Output was reserved by main before dispatch; worker evaluation cannot grow it.
     fn evaluate(&mut self) -> Result<(), RuntimeTerrainFrameError> {
         let input = self

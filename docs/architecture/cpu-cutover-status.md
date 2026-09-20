@@ -19,6 +19,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+[Service execution and skeletal ownership](cpu-service-execution-cutover.md) now
+separate finite/bulk eligibility from request urgency, remove the one-runner loading
+graph restriction, and scale the default flexible capacity with configured compute
+workers. Service queues reserve all runners and retain constant-time eligibility.
+Remaining M2 batches and cold consumers receive JobContext; skeletal allocations
+carry their budget through worker/main ownership transfer. Minimap loading preserves
+its reader under admission backpressure and uses resumable archive/texture steps.
+Shadow recording uses measured cost hints. Formatting, workspace Clippy and all
+1,654 tests pass (zero failures, 33 existing ignored). No new performance gain or
+full-cutover completion is claimed.
+
 [Worker-produced effect streams](effect-stream-upload.md) now use their final
 shader byte layout directly for bulk particle/ribbon/index upload. This removes
 main-side per-element serialization without another worker phase, staging copy
@@ -762,15 +773,15 @@ an operation has a context parameter. The requirements below remain in scope.
   that the client no longer crashed in their test and camera motion was smooth
   again. The reported camera regression is closed on that live confirmation;
   remaining frame-time spikes and cutover scaling still require measurement.
-- Extend `JobContext` beyond connected frame/loading and resumable terrain,
-  retirement and cache-maintenance consumers. Generic admitted worker lanes now
-  serve M2 particle sorting; other typed scratch remains with domain jobs.
-  The first optimized overhead comparison is recorded in the worker-scratch
-  report; broader adoption and qualification under other workloads remain required.
+- JobContext now reaches every production frame/loading and cold/resumable service
+  submission. Generic admitted worker lanes serve M2 particle sorting; other typed
+  scratch remains with domain jobs. The first optimized overhead comparison is
+  recorded in the worker-scratch report; broader scratch adoption and qualification
+  under other workloads remain required. Do not repeat the completed adapter work.
 - Measure the explicit execution plan under varied worker counts and concurrent
-  loading. Improve capability reporting within the agreed scope, and complete
-  finite-step/bulk classification and whole-process concurrency policy. Fixed
-  affinity and NUMA placement remain deferred.
+  loading. Finite/bulk eligibility, multiple loading runners, scalable runtime
+  defaults and capability/process-ownership reporting are connected. Whole-process
+  policy qualification remains; fixed affinity and NUMA placement remain deferred.
 - Apply the connected batch publication and sampled lock/queue/wake observations
   to matched live movement and concurrent loading. Synthetic 1/3/5/7-worker
   comparisons are recorded in the [dispatch report](cpu-dispatch-publication.md);
@@ -782,7 +793,8 @@ an operation has a context parameter. The requirements below remain in scope.
   Numeric main-ready storage and the four world operations are connected.
   Templates, heterogeneous phase fan-in and frame urgency propagation now exist; resource
   cache/I/O integration still requires its complete concrete dependency graphs.
-- Calibrated step-size policy beyond the connected M2 kernels and receiver ranges.
+- Calibrated step-size policy beyond the connected M2 kernels, receiver ranges
+  and shadow command-recording cost hints.
   Cost bins within/across typed phases, sparse calibration and sampled drain-tail
   reporting are connected as described above;
   resumable asset/bulk stages beyond retirement, the connected archive mounts,
@@ -794,8 +806,9 @@ an operation has a context parameter. The requirements below remain in scope.
 - Connect reservations to allocations nested inside domain job state and the
   complete required phase working set. Executor-wide scheduler metadata and typed
   result-page accounting now exist; model output, override buffers and retained
-  geometry job records and final frame streams now adopt it. Live simulation/pose
-  storage, ordinary asset buffers and caches still require adoption,
+  geometry job records, final frame streams and owned full skeletal palettes now
+  adopt it. Live effect simulation, named CPU bone samples, ordinary asset buffers
+  and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, GPU upload/acquire/growth waits
   and further useful main-ready continuations; world preparation and

@@ -112,7 +112,8 @@ impl SoundLoader {
             .checked_add(1)
             .ok_or(SoundDecodeError::Capacity)?;
         let mixer = LoadingMixer(Arc::clone(&self.mixer));
-        let task = match cpu.try_submit(move || {
+        let task = match cpu.try_submit_with_context(move |context| {
+            context.diagnostic_value("audio.decode.encoded_bytes", encoded.bytes().len() as u64);
             let _profile = solarity_profiling::profile!("audio.decode.worker");
             mixer.prepare(&encoded, mode)
         }) {

@@ -15,8 +15,10 @@ impl ShadowJob {
         let _profile = solarity_profiling::profile!("rendering.shadow.record");
         let _cycles = solarity_profiling::profile_cycles!("rendering.shadow.record_cpu");
         context.diagnostic_value("rendering.shadow.commands", self.draws.len() as u64);
+        let started = self.measurement.start();
         let result = self.record();
         let outcome = if result.is_ok() {
+            self.measurement.finish(started);
             solarity_cpu::JobOutcome::Succeeded
         } else {
             solarity_cpu::JobOutcome::Failed

@@ -118,6 +118,34 @@ impl CpuExecutor {
         Ok(self.try_reserve()?.submit(operation))
     }
 
+    /// Admits required service with the same context as owned frame operations.
+    /// # Errors
+    /// Reports the same admission failures as [`Self::try_reserve`].
+    pub fn try_submit_with_context<F, T>(&self, operation: F) -> Result<CpuTask<T>, CpuError>
+    where
+        F: FnOnce(&crate::JobContext<'_>) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        Ok(self.try_reserve()?.submit_with_context(operation))
+    }
+
+    /// Admits explicitly classified demand without changing bulk eligibility.
+    /// # Errors
+    /// Reports the same admission failures as [`Self::try_reserve_for`].
+    pub fn try_submit_for_with_context<F, T>(
+        &self,
+        service: CpuService,
+        operation: F,
+    ) -> Result<CpuTask<T>, CpuError>
+    where
+        F: FnOnce(&crate::JobContext<'_>) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        Ok(self
+            .try_reserve_for(service)?
+            .submit_with_context(operation))
+    }
+
     /// Reserves admission before the caller transfers ownership of task inputs.
     /// Dropping an unused permit immediately returns its capacity. This lets
     /// interactive producers retry saturation without losing captured frames or

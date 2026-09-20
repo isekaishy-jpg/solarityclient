@@ -75,7 +75,10 @@ impl<T: Send + 'static> AppearanceTask<T> {
                 };
                 let task = permit
                     .unwrap_or_else(|| unreachable!("new or ready sources reserve execution"))
-                    .submit(move || bank.prepare(model, prepare));
+                    .submit_with_context(move |context| {
+                        context.diagnostic_value("appearance.prepare.direct", 1);
+                        bank.prepare(model, prepare)
+                    });
                 if let Some(demand) = &demand {
                     assert!(
                         demand.bind_service(task.service_control()),

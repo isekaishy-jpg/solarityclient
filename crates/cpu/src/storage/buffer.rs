@@ -173,6 +173,11 @@ impl<T> StorageDeque<T> {
     pub(crate) fn pop_front(&mut self) -> Option<T> {
         self.values.pop_front()
     }
+    /// Selects eligible cold service work without rotating skipped FIFO records.
+    pub(crate) fn pop_matching(&mut self, predicate: impl FnMut(&T) -> bool) -> Option<T> {
+        let index = self.values.iter().position(predicate)?;
+        self.values.remove(index)
+    }
     /// Every producer reserves queue/phase maxima before enqueueing a value.
     pub(crate) fn push_back(&mut self, value: T) {
         assert!(

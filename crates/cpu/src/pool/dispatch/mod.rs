@@ -3,6 +3,7 @@
 mod cost;
 mod observation;
 mod queues;
+mod service;
 mod startup;
 mod worker;
 
@@ -45,12 +46,22 @@ pub(crate) trait ServiceStep: Send {
 pub(crate) struct WorkerLane {
     pub owner: usize,
     pub index: usize,
+    pub environment: crate::environment::WorkerEnvironment,
+    pub execution: crate::CpuServiceExecution,
 }
 
 /// Cold background closures and retained frame operations share thread ownership.
 pub(crate) enum Work {
-    Once(Arc<AtomicU8>, Box<dyn FnOnce(WorkerLane) + Send>),
-    Sliced(Arc<AtomicU8>, Box<dyn ServiceStep>),
+    Once(
+        Arc<AtomicU8>,
+        crate::CpuServiceExecution,
+        Box<dyn FnOnce(WorkerLane) + Send>,
+    ),
+    Sliced(
+        Arc<AtomicU8>,
+        crate::CpuServiceExecution,
+        Box<dyn ServiceStep>,
+    ),
     Retained(Arc<dyn ReadyWork>),
     Loading(Arc<AtomicU8>, Arc<dyn ReadyWork>),
     Priority(Arc<dyn ReadyWork>, u64),
@@ -60,10 +71,10 @@ impl Work {
     /// Runs outside every scheduler lock.
     fn run(self, flexible: bool, worker: WorkerLane) -> Option<Self> {
         match self {
-            Self::Once(_, operation) => operation(worker),
-            Self::Sliced(identity, mut operation) => {
+            Self::Once(_, _, operation) => operation(worker),
+            Self::Sliced(identity, execution, mut operation) => {
                 if operation.step(worker) {
-                    return Some(Self::Sliced(identity, operation));
+                    return Some(Self::Sliced(identity, execution, operation));
                 }
             }
             Self::Retained(operation) | Self::Loading(_, operation) => {
@@ -77,11 +88,25 @@ impl Work {
     /// Reads the private service identity without invoking a kernel or trait method.
     fn service_identity(&self) -> Option<&Arc<AtomicU8>> {
         match self {
-            Self::Once(identity, _) | Self::Sliced(identity, _) | Self::Loading(identity, _) => {
+            Self::Once(identity, ..) | Self::Sliced(identity, ..) | Self::Loading(identity, _) => {
                 Some(identity)
             }
             Self::Retained(_) | Self::Priority(_, _) => None,
         }
+    }
+
+    /// Loading kernels can contain foreign asset calls; frame kernels are finite.
+    fn execution(&self) -> crate::CpuServiceExecution {
+        match self {
+            Self::Once(_, execution, _) | Self::Sliced(_, execution, _) => *execution,
+            Self::Loading(..) => crate::CpuServiceExecution::Bulk,
+            Self::Retained(..) | Self::Priority(..) => crate::CpuServiceExecution::Finite,
+        }
+    }
+
+    /// A saturated bulk allowance does not occupy an idle finite service lane.
+    fn eligible(&self, bulk_available: bool) -> bool {
+        bulk_available || self.execution() == crate::CpuServiceExecution::Finite
     }
 
     /// Called while queue metadata is locked so reclassification cannot race enqueue.
@@ -118,12 +143,12 @@ struct Queues {
     frame: cost::CostQueue,
     urgent: cost::CostQueue,
     priority: StorageDeque<QueuedWork>,
-    required: StorageDeque<QueuedWork>,
-    retirement: StorageDeque<QueuedWork>,
-    speculative: StorageDeque<QueuedWork>,
+    required: service::ServiceQueue,
+    retirement: service::ServiceQueue,
+    speculative: service::ServiceQueue,
     sleepers: crate::storage::StorageVec<SleepingWorker>,
     stopping: bool,
-    active_service: usize,
+    active_bulk: usize,
 }
 
 /// The pool owns all handles; no task creates or detaches a thread.

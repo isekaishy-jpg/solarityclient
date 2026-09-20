@@ -24,7 +24,7 @@ pub(super) struct LightingBatch {
 impl Default for LightingBatch {
     fn default() -> Self {
         Self {
-            pending: FrameBatch::with_outcome(LightingWork::execute),
+            pending: FrameBatch::with_context(LightingWork::run),
             jobs: Vec::new(),
             submitted: false,
             calibration: solarity_cpu::CostCalibration::default(),

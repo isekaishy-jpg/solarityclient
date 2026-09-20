@@ -19,6 +19,13 @@ pub(super) struct SpatialJob {
 }
 
 impl SpatialJob {
+    /// Publishes per-owner failures in order; required predicates are not cancelled.
+    pub fn run(&mut self, context: &solarity_cpu::JobContext<'_>) -> solarity_cpu::JobOutcome {
+        context.diagnostic_value("m2.spatial.entries", self.count as u64);
+        self.execute();
+        solarity_cpu::JobOutcome::Succeeded
+    }
+
     /// Starts an empty reusable group without allocating model-local scratch.
     pub fn new(view: SpatialView) -> Self {
         Self {

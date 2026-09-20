@@ -1,6 +1,7 @@
 //! Parent-first M2 bone transform composition.
 
 mod samples;
+mod storage;
 
 pub use samples::M2BoneSamples;
 
@@ -37,12 +38,23 @@ impl M2FingerPoseHands {
 }
 
 /// One complete model-bone matrix palette ready for GPU upload.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct M2BonePose {
     transforms: Vec<Mat4>,
     local: Vec<Mat4>,
     sequence_clocks: Vec<Option<M2AnimationClock>>,
     identity_pose: bool,
+    // Declared last so all vector payloads retire before their shared byte charge.
+    memory: Option<storage::PoseMemory>,
+}
+
+impl PartialEq for M2BonePose {
+    fn eq(&self, other: &Self) -> bool {
+        self.transforms == other.transforms
+            && self.local == other.local
+            && self.sequence_clocks == other.sequence_clocks
+            && self.identity_pose == other.identity_pose
+    }
 }
 
 /// Instance-owned modifications applied while composing the authored pose.
@@ -263,6 +275,7 @@ impl M2BonePose {
         required: Option<&[bool]>,
     ) -> Result<(), M2BonePoseError> {
         let clock = clock.resolve(animations)?;
+        self.check_cpu_storage(animations.bones().len())?;
         self.sequence_clocks.resize(animations.bones().len(), None);
         self.sequence_clocks.fill(None);
         for &(key, clock) in bone_sequences {

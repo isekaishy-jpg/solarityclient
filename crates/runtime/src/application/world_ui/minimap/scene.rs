@@ -1,7 +1,9 @@
 //! Native minimap slots, asynchronous archive residency, and retained GPU draws.
 
+use super::texture_loading;
+
 #[cfg(test)]
-#[path = "../../../tests/application/minimap.rs"]
+#[path = "../../../../tests/application/minimap.rs"]
 mod tests;
 
 use std::collections::{HashMap, HashSet};
@@ -18,12 +20,12 @@ use solarity_rendering::{
 };
 use solarity_ui::{FrameManager, UiMinimapPresentation};
 
-use super::{ApplicationError, RuntimeUiFrame, RuntimeWorldUiError};
+use super::super::{ApplicationError, RuntimeUiFrame, RuntimeWorldUiError};
 use crate::application::ui_frame::PreparedUiFrame;
 
-struct TextureCompletion {
-    store: AssetStore,
-    sources: Vec<(AssetPath, Result<BlpTextureSource, AssetError>)>,
+pub(super) struct TextureCompletion {
+    pub(super) store: AssetStore,
+    pub(super) sources: Vec<(AssetPath, Result<BlpTextureSource, AssetError>)>,
 }
 
 struct MinimapSlot {
@@ -50,7 +52,7 @@ impl MinimapSlot {
     }
 }
 
-pub(super) struct RuntimeMinimapScene {
+pub(in crate::application::world_ui) struct RuntimeMinimapScene {
     catalog: MinimapTextureCatalog,
     archive_catalog: ArchiveCatalog,
     worker_store: Option<AssetStore>,
@@ -74,13 +76,13 @@ pub(super) struct RuntimeMinimapScene {
 }
 
 impl RuntimeMinimapScene {
-    pub(super) fn ready(&self) -> bool {
+    pub(in crate::application::world_ui) fn ready(&self) -> bool {
         self.ui_revision.is_some()
             && self.scene_revision.is_some()
             && self.pending.is_none()
             && !self.request_deferred
     }
-    pub(super) fn new(
+    pub(in crate::application::world_ui) fn new(
         store: &mut AssetStore,
         archive_catalog: ArchiveCatalog,
     ) -> Result<Self, AssetError> {
@@ -106,7 +108,10 @@ impl RuntimeMinimapScene {
         })
     }
 
-    pub(super) fn draws<'a>(&'a self, ui: &'a RuntimeUiFrame) -> &'a [UiPreparedDraw] {
+    pub(in crate::application::world_ui) fn draws<'a>(
+        &'a self,
+        ui: &'a RuntimeUiFrame,
+    ) -> &'a [UiPreparedDraw] {
         if self.ui_revision.is_some() {
             &self.combined
         } else {
@@ -115,7 +120,7 @@ impl RuntimeMinimapScene {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn synchronize(
+    pub(in crate::application::world_ui) fn synchronize(
         &mut self,
         renderer: &mut VulkanRenderer,
         cpu: &CpuExecutor,
@@ -360,29 +365,21 @@ impl RuntimeMinimapScene {
         if paths.is_empty() {
             return Ok(());
         }
-        let catalog = self.archive_catalog.clone();
-        let worker = self.worker_store.take();
-        self.pending = match cpu.try_submit(move || {
-            let mut store = match worker {
-                Some(store) => store,
-                None => AssetStore::mount(catalog)?,
-            };
-            let sources = paths
-                .into_iter()
-                .map(|path| {
-                    let source = BlpTextureSource::load(&mut store, &path);
-                    (path, source)
-                })
-                .collect();
-            Ok(TextureCompletion { store, sources })
-        }) {
-            Ok(task) => Some(task),
+        let permit = match cpu.try_reserve() {
+            Ok(permit) => permit,
             Err(CpuError::AtCapacity { .. }) => {
                 self.request_deferred = true;
-                None
+                return Ok(());
             }
             Err(error) => return Err(error.into()),
         };
+        // Refusal above leaves the reusable reader owned here. Taking it into a
+        // rejected closure would destroy the mounted archive bank on main.
+        self.pending = Some(permit.submit_steps_with_context(texture_loading::prepare(
+            self.archive_catalog.clone(),
+            self.worker_store.take(),
+            paths,
+        )));
         Ok(())
     }
 

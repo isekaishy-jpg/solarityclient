@@ -15,6 +15,20 @@ enum Stage {
     Ready(AssetStore),
 }
 
+/// Connects domain-owned archive steps to the admitted job's trace and worker
+/// boundary. Required cache/input return still completes after withdrawal.
+pub(super) fn contextual<T>(
+    name: &'static str,
+    mut operation: impl FnMut() -> ControlFlow<T>,
+) -> impl FnMut(&solarity_cpu::JobContext<'_>) -> ControlFlow<T> {
+    let mut step = 0_u64;
+    move |context| {
+        context.diagnostic_value(name, step);
+        step = step.saturating_add(1);
+        operation()
+    }
+}
+
 /// Creates one resumable CPU operation. Admission must precede transferring the
 /// catalog and domain captures here. Mounting opens one archive per turn, then
 /// yields before domain preparation. The domain defines its own finite steps;

@@ -172,6 +172,16 @@ impl GeometryBatch {
         let job = batch.jobs[slot].job_mut();
         job.reuse_identity = Some(identity);
         job.reset();
+        let budget = batch
+            .storage
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget"));
+        if palette.is_some() {
+            job.pose
+                .reserve_cpu_storage(budget, source.model.animations().bones().len())?;
+        } else {
+            pose.reserve_cpu_storage(budget, source.model.animations().bones().len())?;
+        }
         let sorting = job.reserve_outputs(
             batch
                 .storage
@@ -218,7 +228,11 @@ impl GeometryBatch {
             std::mem::swap(&mut job.particles, &mut placement.particles);
             std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
         }
-        std::mem::swap(&mut job.pose, pose);
+        // Deferred palettes are produced into this model's retained storage.
+        // Only an already sampled root transfers a palette from ordered admission.
+        if !job.palette.pending {
+            std::mem::swap(&mut job.pose, pose);
+        }
         std::mem::swap(&mut job.material_poses, material_poses);
         batch
             .staged

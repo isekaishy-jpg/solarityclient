@@ -99,6 +99,9 @@ impl CpuPoolSnapshot {
 /// A stable CPU-executor failure independent of scheduler internals.
 #[derive(Debug, Error)]
 pub enum CpuError {
+    /// A foreign service boundary failed to restore approved floating-point controls.
+    #[error("cpu worker numeric environment restoration failed")]
+    WorkerEnvironment,
     /// Temporary storage belongs to a different executor generation.
     #[error("cpu worker scratch belongs to another executor")]
     WorkerScratchOwner,

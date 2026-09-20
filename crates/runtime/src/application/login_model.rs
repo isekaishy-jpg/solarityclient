@@ -231,7 +231,9 @@ fn glue_character_cpu_models(
 fn prepare_glue_cpu_task(
     model: &ResourceLease<solarity_asset::DecodedM2Model>,
     local_light_count: M2LocalLightCount,
+    context: &solarity_cpu::JobContext<'_>,
 ) -> Result<PreparedGlueCpuSource, RuntimeTerrainFrameError> {
+    context.diagnostic_value("glue.model.bones", model.animations().bones().len() as u64);
     let started = std::time::Instant::now();
     let source = prepare_m2_cpu_source(model, local_light_count)?;
     Ok(PreparedGlueCpuSource {
@@ -560,7 +562,9 @@ impl RuntimeGlueModelScene {
         let textures = loaded.textures.clone();
         let local_light_count = maximum_glue_light_count(&model, external_directional_light);
         let task_model = ResourceLease::clone(&model);
-        let task = cpu.try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))?;
+        let task = cpu.try_submit_with_context(move |context| {
+            prepare_glue_cpu_task(&task_model, local_light_count, context)
+        })?;
         self.pending.push(PendingGlueModel {
             generation,
             local_light_count,
@@ -696,9 +700,10 @@ impl RuntimeGlueModelScene {
         {
             let local_light_count = maximum_glue_light_count(&loaded.model, true);
             let task_model = ResourceLease::clone(&loaded.model);
-            match cpu.try_submit_for(solarity_cpu::CpuService::Speculative, move || {
-                prepare_glue_cpu_task(&task_model, local_light_count)
-            }) {
+            match cpu.try_submit_for_with_context(
+                solarity_cpu::CpuService::Speculative,
+                move |context| prepare_glue_cpu_task(&task_model, local_light_count, context),
+            ) {
                 Ok(task) => self.pending.push(PendingGlueModel {
                     generation: loaded.generation,
                     local_light_count,
@@ -981,9 +986,9 @@ impl RuntimeGlueModelScene {
         let model = ResourceLease::clone(&loaded.model);
         let environment_light_count = maximum_glue_light_count(&model, external_directional_light);
         let task_model = ResourceLease::clone(&model);
-        let task = match cpu
-            .try_submit(move || prepare_glue_cpu_task(&task_model, environment_light_count))
-        {
+        let task = match cpu.try_submit_with_context(move |context| {
+            prepare_glue_cpu_task(&task_model, environment_light_count, context)
+        }) {
             Ok(task) => task,
             Err(CpuError::AtCapacity { .. }) => return Ok(RuntimeGlueModelPoll::Pending),
             Err(source) => return Err(source.into()),
@@ -1029,9 +1034,9 @@ impl RuntimeGlueModelScene {
                 }
                 let local_light_count = key.local_light_count();
                 let task_model = ResourceLease::clone(model);
-                let task = match cpu
-                    .try_submit(move || prepare_glue_cpu_task(&task_model, local_light_count))
-                {
+                let task = match cpu.try_submit_with_context(move |context| {
+                    prepare_glue_cpu_task(&task_model, local_light_count, context)
+                }) {
                     Ok(task) => task,
                     // A preview can contain more equipment/effect models than
                     // the bounded executor can admit at once. Preserve the

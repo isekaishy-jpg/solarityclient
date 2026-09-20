@@ -82,13 +82,16 @@ impl RuntimeUnitEffects {
                     match cpu.try_reserve() {
                         Ok(permit) => {
                             let environmental = Arc::clone(&self.environmental);
-                            Sources::Running(permit.submit_steps(
-                                super::archive_job::prepare_archive(catalog, move |store| {
-                                    ControlFlow::Break(ResidentUnitEffect::load(
-                                        store,
-                                        &environmental,
-                                    ))
-                                }),
+                            Sources::Running(permit.submit_steps_with_context(
+                                super::archive_job::contextual(
+                                    "unit_effects.source_step",
+                                    super::archive_job::prepare_archive(catalog, move |store| {
+                                        ControlFlow::Break(ResidentUnitEffect::load(
+                                            store,
+                                            &environmental,
+                                        ))
+                                    }),
+                                ),
                             ))
                         }
                         Err(solarity_cpu::CpuError::AtCapacity { .. }) => {

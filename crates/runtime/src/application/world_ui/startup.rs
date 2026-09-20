@@ -61,9 +61,14 @@ impl WorldUiSourcePreparation {
             Err(error) => return Err(error.into()),
         };
         let catalog = catalog.clone();
-        self.task = Some(permit.submit_steps(prepare_archive(catalog, |store| {
-            ControlFlow::Break(WorldUiSourceImage::load(store))
-        })));
+        self.task = Some(permit.submit_steps_with_context(
+            crate::application::archive_job::contextual(
+                "world_ui.source_step",
+                prepare_archive(catalog, |store| {
+                    ControlFlow::Break(WorldUiSourceImage::load(store))
+                }),
+            ),
+        ));
         Ok(())
     }
 

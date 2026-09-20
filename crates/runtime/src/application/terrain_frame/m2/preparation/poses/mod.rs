@@ -28,7 +28,7 @@ impl Default for PoseBatch {
             jobs: Vec::new(),
             indices: Vec::new(),
             handles: Vec::new(),
-            pending: solarity_cpu::FrameBatch::new(PoseJob::sample),
+            pending: solarity_cpu::FrameBatch::with_context(PoseJob::execute),
             calibration: solarity_cpu::CostCalibration::default(),
             costs: solarity_cpu::CpuBuffer::default(),
             submitted: false,

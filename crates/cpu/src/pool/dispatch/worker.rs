@@ -4,39 +4,47 @@ use super::Dispatch;
 
 impl Dispatch {
     /// Reserved service workers guarantee a turn at kernel boundaries. Other
-    /// flexible capacity prefers frames; every service call shares the bulk cap.
-    pub(super) fn worker(&self, index: usize, flexible: bool, service_reserved: bool) {
-        let worker = super::WorkerLane {
+    /// flexible capacity prefers frames; indivisible services share the bulk cap.
+    pub(super) fn worker(
+        &self,
+        index: usize,
+        flexible: bool,
+        service_reserved: bool,
+        environment: crate::environment::WorkerEnvironment,
+    ) {
+        let mut worker = super::WorkerLane {
             owner: std::ptr::from_ref(self).addr(),
             index,
+            environment,
+            execution: crate::CpuServiceExecution::Finite,
         };
         let mut served_background = false;
         let mut served_retirement = false;
         loop {
-            let (work, service, residence, wake) = {
+            let (work, service, bulk, residence, wake) = {
                 let mut wake = None;
                 let mut queues = self.lock();
                 loop {
                     let has_frame = !queues.priority.is_empty()
                         || !queues.urgent.is_empty()
                         || !queues.frame.is_empty();
-                    let has_service = !queues.required.is_empty() || !queues.retirement.is_empty();
-                    let service_available = flexible && queues.active_service < self.bulk_limit;
+                    let bulk_available = queues.active_bulk < self.bulk_limit;
+                    let has_required = queues.required.eligible(bulk_available);
+                    let has_retirement = queues.retirement.eligible(bulk_available);
+                    let has_service = has_required || has_retirement;
                     let take_background = flexible
-                        && service_available
                         && has_service
                         && (!has_frame
                             || (service_reserved && (self.protected || !served_background)));
                     let work = if take_background {
                         // One finite turn per class prevents either backlog from
                         // monopolizing service. A single indivisible call can still be slow.
-                        let retire = !queues.retirement.is_empty()
-                            && (!served_retirement || queues.required.is_empty());
+                        let retire = has_retirement && (!served_retirement || !has_required);
                         served_retirement = retire;
                         if retire {
-                            queues.retirement.pop_front()
+                            queues.retirement.pop_eligible(bulk_available)
                         } else {
-                            queues.required.pop_front()
+                            queues.required.pop_eligible(bulk_available)
                         }
                     } else if has_frame {
                         queues
@@ -44,18 +52,19 @@ impl Dispatch {
                             .pop_front()
                             .or_else(|| queues.urgent.pop())
                             .or_else(|| queues.frame.pop())
-                    } else if service_available {
-                        queues.speculative.pop_front()
+                    } else if flexible {
+                        queues.speculative.pop_eligible(bulk_available)
                     } else {
                         None
                     };
                     if let Some(work) = work {
                         served_background = take_background;
                         let service = work.service_identity().is_some();
-                        queues.active_service += usize::from(service);
+                        let bulk = service && work.execution() == crate::CpuServiceExecution::Bulk;
+                        queues.active_bulk += usize::from(bulk);
                         self.publish_queued(&queues);
                         let (work, residence) = work.take();
-                        break (work, service, residence, wake);
+                        break (work, service, bulk, residence, wake);
                     }
                     if queues.stopping {
                         return;
@@ -73,10 +82,20 @@ impl Dispatch {
             }
             // Only workers with reserved service turns yield a frame runner for
             // background demand. Other flexible workers keep assisting frames.
+            worker.execution = work.execution();
             let resumed = work.run(service_reserved, worker);
+            // A withdrawn result can be destroyed during publication, after the
+            // adapter's pre-publication restore. That destructor also belongs to
+            // the foreign service boundary, before this lane runs another kernel.
+            if service {
+                assert!(
+                    worker.environment.install(),
+                    "initialized worker numeric controls remain supported"
+                );
+            }
             if service {
                 let mut queues = self.lock();
-                queues.active_service -= 1;
+                queues.active_bulk -= usize::from(bulk);
                 if let Some(work) = resumed {
                     let queued = crate::pool::observation::SampleTime::now();
                     queues

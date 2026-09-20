@@ -5,6 +5,14 @@ use thiserror::Error;
 /// A decoded animation set cannot produce the requested model pose.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum M2BonePoseError {
+    /// An owned frame kernel attempted to grow beyond its admitted skeletal storage.
+    #[error("m2 pose needs {requested} bones with {available} admitted")]
+    StorageCapacity {
+        /// Complete model bone count needed by the producer.
+        requested: usize,
+        /// Minimum capacity across its admitted palette and scratch vectors.
+        available: usize,
+    },
     /// A CPU consumer requested a bone outside the admitted model.
     #[error("m2 requested bone {requested} is unavailable; model has {available} bones")]
     RequestedBoneIndex {

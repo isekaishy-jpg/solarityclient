@@ -44,6 +44,7 @@ pub(super) struct ShadowJob {
     pub(super) query_pool: Option<vk::QueryPool>,
     pub(super) initialize: [vk::Image; 6],
     pub(super) result: Option<Result<(), VulkanError>>,
+    pub(super) measurement: solarity_cpu::WorkMeasurement,
 }
 
 /// Submission retains the original primary/environment order regardless of CPU finish order.

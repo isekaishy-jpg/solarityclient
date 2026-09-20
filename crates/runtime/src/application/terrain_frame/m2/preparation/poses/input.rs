@@ -25,6 +25,29 @@ pub(super) struct PoseJob {
 }
 
 impl PoseJob {
+    /// Skeletal output and scratch are charged before any worker receives input.
+    pub(super) fn admit(
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        self.pose
+            .reserve_cpu_storage(cpu.storage(), self.model.animations().bones().len())
+    }
+
+    /// Required frame sampling completes even after consumer withdrawal; errors
+    /// remain attached to the exact model and are observed in traversal order.
+    pub(super) fn execute(
+        &mut self,
+        context: &solarity_cpu::JobContext<'_>,
+    ) -> solarity_cpu::JobOutcome {
+        context.diagnostic_value(
+            "m2.pose.bones",
+            self.model.animations().bones().len() as u64,
+        );
+        self.sample();
+        solarity_cpu::JobOutcome::Succeeded
+    }
+
     /// A result remains present when traversal rejected it or never requested it.
     pub(super) fn unconsumed(&self) -> bool {
         self.result.is_some()

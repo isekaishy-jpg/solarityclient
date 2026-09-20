@@ -109,7 +109,10 @@ impl RuntimeScreenshots {
                 Ok(None) => return None,
                 Ok(Some(frame)) => {
                     let directory = self.directory.clone();
-                    Ok(permit.submit(move || write_screenshot(&directory, &frame, request)))
+                    Ok(permit.submit_with_context(move |context| {
+                        context.diagnostic_value("screenshot.encode", 1);
+                        write_screenshot(&directory, &frame, request)
+                    }))
                 }
                 Err(error) => Err(error.to_string()),
             };

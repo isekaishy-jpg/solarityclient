@@ -19,12 +19,17 @@ impl Dispatch {
         let count = plan.worker_count().get();
         let frame_capacity = count.checked_mul(capacity).ok_or(CpuError::BatchStorage)?;
         let priority_capacity = capacity.checked_mul(2).ok_or(CpuError::BatchStorage)?;
+        let service_capacity = plan
+            .flexible_workers()
+            .get()
+            .checked_mul(capacity)
+            .ok_or(CpuError::BatchStorage)?;
         let mut frame = super::cost::CostQueue::default();
         let mut urgent = super::cost::CostQueue::default();
         let mut priority = StorageDeque::default();
-        let mut required = StorageDeque::default();
-        let mut retirement = StorageDeque::default();
-        let mut speculative = StorageDeque::default();
+        let mut required = super::service::ServiceQueue::default();
+        let mut retirement = super::service::ServiceQueue::default();
+        let mut speculative = super::service::ServiceQueue::default();
         let mut sleepers = crate::storage::StorageVec::default();
         sleepers.reserve(
             budget,
@@ -41,15 +46,11 @@ impl Dispatch {
             CpuStorageKind::Metadata,
             priority_capacity,
         )?;
-        // Each bucket can receive all admitted records after a demand change.
+        // Each bucket can receive every admitted graph's flexible runners after
+        // a demand change. Single-call services consume only one such record.
         // Queue infrastructure is required metadata even when speculation is off.
         for queue in [&mut required, &mut retirement, &mut speculative] {
-            queue.reserve(
-                budget,
-                CpuStorageClass::Required,
-                CpuStorageKind::Metadata,
-                capacity,
-            )?;
+            queue.reserve(budget, service_capacity)?;
         }
         let shared = Arc::new(Self {
             queues: Mutex::new(Queues {
@@ -61,7 +62,7 @@ impl Dispatch {
                 speculative,
                 sleepers,
                 stopping: false,
-                active_service: 0,
+                active_bulk: 0,
             }),
             ready: Condvar::new(),
             queued: AtomicU8::new(0),
@@ -87,7 +88,7 @@ impl Dispatch {
                 if initialized.send(ready).is_err() || !ready {
                     return;
                 }
-                worker.worker(index, flexible, service_reserved);
+                worker.worker(index, flexible, service_reserved, environment);
             }) {
                 Ok(handle) => {
                     handles.push(handle);

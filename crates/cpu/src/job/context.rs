@@ -67,6 +67,12 @@ impl<'job> JobContext<'job> {
         self.identity
     }
 
+    /// Execution classification cannot be changed by promoting consumer demand.
+    #[must_use]
+    pub const fn execution(&self) -> crate::CpuServiceExecution {
+        self.worker.execution
+    }
+
     /// Observe withdrawal only at a domain-approved safe boundary. Required
     /// gameplay state must finish coherently; this never forcibly interrupts it.
     #[must_use]

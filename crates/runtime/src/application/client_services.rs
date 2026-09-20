@@ -403,12 +403,22 @@ impl ClientServices {
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
         let cpu =
             CpuExecutor::with_notifier(configuration.cpu_pool(), platform.coordinator_notifier())?;
+        let capabilities = solarity_cpu::CpuCapabilities::discover();
         tracing::info!(
             protected_workers = cpu.frame_worker_count(),
             flexible_workers = cpu.background_worker_count(),
             service_workers = cpu.execution_plan().service_reserve().get(),
             bulk_limit = cpu.execution_plan().bulk_limit().get(),
-            available_concurrency = ?solarity_cpu::CpuCapabilities::discover().available_workers(),
+            available_concurrency = ?capabilities.available_workers(),
+            architecture = capabilities.architecture(),
+            sse2 = capabilities.sse2(),
+            avx2 = capabilities.avx2(),
+            network_workers = configuration.network_workers().get(),
+            coordinator_threads = 1,
+            gpu_completion_threads = 1,
+            configured_compute_and_network_threads = cpu.worker_count() + configuration.network_workers().get(),
+            audio_threads = "backend-owned",
+            recording_threads = "one hardware encoder worker while recording",
             "CPU execution plan initialized"
         );
         // The stock default ghost callback samples LightParams row 3 at time
@@ -467,9 +477,12 @@ impl ClientServices {
         } else {
             match cpu.try_reserve_for(solarity_cpu::CpuService::Speculative) {
                 Ok(permit) => Some(ConfiguredGlueTexturePrewarmJob::Running(
-                    permit.submit_steps(prepare_configured_glue_textures(
-                        ui_texture_catalog,
-                        configured_texture_paths,
+                    permit.submit_steps_with_context(crate::application::archive_job::contextual(
+                        "glue.texture.source_step",
+                        prepare_configured_glue_textures(
+                            ui_texture_catalog,
+                            configured_texture_paths,
+                        ),
                     )),
                 )),
                 Err(CpuError::AtCapacity { limit }) => {

@@ -8,6 +8,7 @@ mod batch;
 mod demand;
 mod dispatch;
 mod epochs;
+mod execution;
 mod executor;
 mod observation;
 mod permit;
@@ -23,6 +24,7 @@ pub use batch::{
     FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome, LoadBatch,
 };
 pub use demand::{CpuServiceDemand, CpuServiceInterest};
+pub use execution::CpuServiceExecution;
 pub use executor::CpuExecutor;
 pub use permit::CpuTaskPermit;
 pub use plan::CpuExecutionPlan;

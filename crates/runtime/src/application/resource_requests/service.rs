@@ -29,7 +29,14 @@ impl<K: Eq + Hash + Clone, C, T: Send + Sync + 'static, E: From<CpuError> + Send
         }
         let permit = cpu.try_reserve_for(entry.service())?;
         let _trace = entry.trace.enter();
-        let task = permit.submit(make_producer());
+        let producer = make_producer();
+        let consumers = entry.consumers.len();
+        let task = permit.submit_with_context(move |context| {
+            // Demand withdrawal changes queue class, not this shared producer's
+            // result or failure policy. Every joined owner retains its result.
+            context.diagnostic_value("resource.producer.consumers_at_admission", consumers as u64);
+            producer()
+        });
         entry.state = State::Running(task);
         self.active.push(key.clone());
         Ok(true)

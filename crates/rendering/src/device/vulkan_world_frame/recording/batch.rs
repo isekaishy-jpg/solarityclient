@@ -14,6 +14,7 @@ pub(in super::super) struct ShadowRecording {
     jobs: Vec<ShadowJob>,
     batch: FrameBatch<ShadowJob>,
     active: bool,
+    calibration: solarity_cpu::CostCalibration,
 }
 
 impl Default for ShadowRecording {
@@ -23,6 +24,7 @@ impl Default for ShadowRecording {
             jobs: Vec::with_capacity(4),
             batch: FrameBatch::with_context(ShadowJob::execute),
             active: false,
+            calibration: solarity_cpu::CostCalibration::default(),
         }
     }
 }
@@ -53,6 +55,7 @@ impl ShadowRecording {
             match captured {
                 Ok(true) => {
                     job.pass_index = index;
+                    job.measurement = self.calibration.prepare(job.draws.len());
                     submission.commands[submission.count] = command;
                     submission.count += 1;
                     self.jobs.push(job);
@@ -66,7 +69,20 @@ impl ShadowRecording {
             }
         }
         if !self.jobs.is_empty() {
-            if let Err(error) = self.batch.start(cpu, &mut self.jobs) {
+            // Pass order remains fixed at submission. Scheduling can use prior
+            // successful command-recording costs without sampling every frame.
+            let mut costs = [solarity_cpu::JobCost::default(); 4];
+            for (cost, job) in costs.iter_mut().zip(&self.jobs) {
+                *cost = job.measurement.cost();
+            }
+            let count = self.jobs.len();
+            if let Err(error) = self.batch.start_costed_graph(
+                cpu,
+                &solarity_cpu::FrameGraphTemplate::independent(count),
+                &mut self.jobs,
+                &[],
+                &costs[..count],
+            ) {
                 self.restore();
                 return Err(error.into());
             }
@@ -97,6 +113,7 @@ impl ShadowRecording {
         self.active = false;
         let mut domain = Ok(());
         for job in &mut self.jobs {
+            self.calibration.record(&mut job.measurement);
             if domain.is_ok() {
                 domain = job.result.take().unwrap_or_else(|| {
                     if joined.is_err() {

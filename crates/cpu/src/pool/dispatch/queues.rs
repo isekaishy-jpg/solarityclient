@@ -79,8 +79,12 @@ impl Dispatch {
             | (queues.urgent.level() << 2)
             | (u8::from(!queues.priority.is_empty()) << 4)
             | (u8::from(
-                queues.active_service < self.bulk_limit
-                    && (!queues.required.is_empty() || !queues.retirement.is_empty()),
+                queues
+                    .required
+                    .eligible(queues.active_bulk < self.bulk_limit)
+                    || queues
+                        .retirement
+                        .eligible(queues.active_bulk < self.bulk_limit),
             ) << 5);
         self.queued.store(bits, Ordering::Release);
     }
@@ -150,10 +154,7 @@ impl Queues {
     }
 
     /// Selects one reserved FIFO without allocating or invoking domain code.
-    pub(super) fn service(
-        &mut self,
-        service: CpuService,
-    ) -> &mut crate::storage::StorageDeque<super::QueuedWork> {
+    pub(super) fn service(&mut self, service: CpuService) -> &mut super::service::ServiceQueue {
         match service {
             CpuService::Required => &mut self.required,
             CpuService::Retirement => &mut self.retirement,
@@ -179,23 +180,23 @@ impl Dispatch {
             return;
         }
         let previous = CpuService::from_raw(previous);
-        let source = queues.service(previous);
-        let mut moved = None;
-        for _ in 0..source.len() {
-            let work = source
+        // A loading phase publishes several runners with the same interest.
+        // Move every matching record; retaining only the last one loses runnable
+        // ownership and can strand a phase after its dependency is promoted.
+        let count = queues.service(previous).len();
+        for _ in 0..count {
+            let work = queues
+                .service(previous)
                 .pop_front()
                 .unwrap_or_else(|| unreachable!("queue scan retains its length"));
             if work
                 .service_identity()
                 .is_some_and(|candidate| Arc::ptr_eq(candidate, identity))
             {
-                moved = Some(work);
+                queues.service(service).push_back(work);
             } else {
-                source.push_back(work);
+                queues.service(previous).push_back(work);
             }
-        }
-        if let Some(work) = moved {
-            queues.service(service).push_back(work);
         }
         self.publish_queued(&queues);
         self.notify_ready(queues);

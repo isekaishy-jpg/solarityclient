@@ -21,7 +21,7 @@ impl CpuExecutionPlan {
     /// flexible workers prefer ready frames and assist service when frames idle.
     /// # Errors
     /// Rejects overflow, zero flexible/service/bulk capacity, or a reserve above
-    /// the bulk limit or a bulk limit above flexible capacity.
+    /// flexible capacity or a bulk limit above flexible capacity.
     pub fn new(
         protected: usize,
         flexible: usize,
@@ -32,7 +32,7 @@ impl CpuExecutionPlan {
         let flexible = NonZeroUsize::new(flexible).ok_or_else(invalid)?;
         let service_reserve = NonZeroUsize::new(service_reserve).ok_or_else(invalid)?;
         let bulk_limit = NonZeroUsize::new(bulk_limit).ok_or_else(invalid)?;
-        if service_reserve > bulk_limit || bulk_limit > flexible {
+        if service_reserve > flexible || bulk_limit > flexible {
             return Err(invalid());
         }
         let total = protected
@@ -68,7 +68,8 @@ impl CpuExecutionPlan {
     pub const fn service_reserve(self) -> NonZeroUsize {
         self.service_reserve
     }
-    /// Maximum simultaneously executing service calls across flexible workers.
+    /// Maximum simultaneously executing bulk calls across flexible workers.
+    /// Finite nonblocking service turns do not consume this allowance.
     #[must_use]
     pub const fn bulk_limit(self) -> NonZeroUsize {
         self.bulk_limit

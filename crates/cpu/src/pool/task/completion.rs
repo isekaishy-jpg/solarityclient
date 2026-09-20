@@ -14,6 +14,8 @@ pub(crate) enum TaskOutcome<T> {
     Completed(T),
     /// The task unwound through the executor boundary.
     Panicked,
+    /// The worker could not reestablish the admitted numeric execution contract.
+    EnvironmentFailed,
 }
 
 /// The single-owner completion handle for one admitted CPU task.
@@ -111,5 +113,6 @@ fn decode_outcome<T>(outcome: TaskOutcome<T>) -> Result<T, CpuError> {
     match outcome {
         TaskOutcome::Completed(value) => Ok(value),
         TaskOutcome::Panicked => Err(CpuError::TaskPanicked),
+        TaskOutcome::EnvironmentFailed => Err(CpuError::WorkerEnvironment),
     }
 }

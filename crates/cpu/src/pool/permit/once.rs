@@ -35,6 +35,7 @@ impl CpuTaskPermit<'_> {
             lease,
             notifier,
             service,
+            execution,
             control,
         } = self;
         let (mut publication, receiver) = Publication::new(lease, notifier, Arc::clone(&control));
@@ -46,6 +47,7 @@ impl CpuTaskPermit<'_> {
         pool.push(
             Work::Once(
                 Arc::clone(&identity),
+                execution,
                 Box::new(move |worker| {
                     let _trace = trace.enter();
                     let _profile = solarity_profiling::profile!("cpu.job.execute");
@@ -54,12 +56,17 @@ impl CpuTaskPermit<'_> {
                             solarity_profiling::Site::new("cpu.job.queue_wait", false);
                         QUEUE.cpu_duration(epoch, "", queued.elapsed());
                     }
-                    let outcome = match catch_unwind(AssertUnwindSafe(|| {
+                    let mut outcome = match catch_unwind(AssertUnwindSafe(|| {
                         operation(&executing.context(trace, worker))
                     })) {
                         Ok(value) => TaskOutcome::Completed(value),
                         Err(_panic_payload) => TaskOutcome::Panicked,
                     };
+                    // Foreign calls and captured destructors may alter thread
+                    // controls. Restore before any consumer can observe success.
+                    if !worker.environment.install() {
+                        outcome = TaskOutcome::EnvironmentFailed;
+                    }
                     publication.finish(outcome);
                 }),
             ),

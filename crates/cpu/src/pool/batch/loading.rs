@@ -48,6 +48,36 @@ impl<T: Send + 'static> LoadBatch<T> {
         )
     }
 
+    /// Binds an owned loading DAG; independent nodes can use all flexible workers.
+    /// Priority and external prerequisites do not change its bulk eligibility.
+    /// # Errors
+    /// Rejects invalid edges, insufficient admission or stale prerequisites before
+    /// transferring inputs. Reclamation retains the declared input order.
+    pub fn start_graph(
+        &mut self,
+        cpu: &CpuExecutor,
+        template: &FrameGraphTemplate,
+        jobs: &mut Vec<T>,
+        dependencies: &[ReadyToken],
+    ) -> Result<(), CpuError> {
+        self.batch.start_graph(cpu, template, jobs, dependencies)
+    }
+
+    /// Uses domain-calibrated costs on the same loading ownership boundary.
+    /// # Errors
+    /// Returns graph/admission errors before transferring caller-owned inputs.
+    pub fn start_costed_graph(
+        &mut self,
+        cpu: &CpuExecutor,
+        template: &FrameGraphTemplate,
+        jobs: &mut Vec<T>,
+        dependencies: &[ReadyToken],
+        costs: &[crate::JobCost],
+    ) -> Result<(), CpuError> {
+        self.batch
+            .start_costed_graph(cpu, template, jobs, dependencies, costs)
+    }
+
     /// Exports terminal readiness without erasing or transferring typed results.
     /// # Errors
     /// An inactive batch has no completion identity.

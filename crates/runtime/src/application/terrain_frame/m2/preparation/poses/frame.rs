@@ -104,6 +104,9 @@ impl M2Frame {
         // Sampling owns its inputs. Main can continue WMO admission and ordered
         // traversal; a palette consumer waits for only its own model result.
         if let Some(cpu) = cpu {
+            for job in &mut batch.jobs {
+                job.admit(cpu)?;
+            }
             batch.costs.clear();
             batch.costs.reserve(
                 cpu.storage(),

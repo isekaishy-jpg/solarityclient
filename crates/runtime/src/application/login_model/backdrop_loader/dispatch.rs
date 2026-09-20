@@ -88,7 +88,8 @@ impl GlueBackdropLoader {
             .take()
             .ok_or_else(|| Arc::new(RuntimeGlueModelError::BackdropWorkerUnavailable))?;
         let result_path = worker_path.clone();
-        let task = permit.submit(move || {
+        let task = permit.submit_with_context(move |context| {
+            context.diagnostic_value("glue.backdrop.archive_request", 1);
             let started = Instant::now();
             let result = assets.load(model);
             tracing::info!(model = %worker_path,

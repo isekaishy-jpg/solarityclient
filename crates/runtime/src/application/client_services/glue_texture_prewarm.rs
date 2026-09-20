@@ -76,8 +76,12 @@ impl ClientServices {
                     .try_reserve_for(solarity_cpu::CpuService::Speculative)
                 {
                     Ok(permit) => {
-                        let task =
-                            permit.submit_steps(prepare_configured_glue_textures(catalog, paths));
+                        let task = permit.submit_steps_with_context(
+                            crate::application::archive_job::contextual(
+                                "glue.texture.source_step",
+                                prepare_configured_glue_textures(catalog, paths),
+                            ),
+                        );
                         self.pending_glue_texture_prewarm =
                             Some(ConfiguredGlueTexturePrewarmJob::Running(task));
                         return;

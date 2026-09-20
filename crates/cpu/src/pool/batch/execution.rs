@@ -77,7 +77,7 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                 )
             };
             let _trace = trace.enter();
-            let outcome = {
+            let mut outcome = {
                 let mut execution = if loading {
                     solarity_profiling::profile!("cpu.load.execute")
                 } else {
@@ -94,6 +94,11 @@ impl<T: Send + 'static> ReadyWork for Core<T> {
                 catch_unwind(AssertUnwindSafe(|| kernel.run(&mut job, context.as_ref())))
                     .unwrap_or(JobOutcome::Panicked)
             };
+            // Asset kernels may enter foreign libraries. Restore controls before
+            // successor readiness or a later frame kernel can observe this lane.
+            if loading && !worker.environment.install() {
+                outcome = JobOutcome::Failed;
+            }
             // No context/page pin survives terminal publication or next-epoch reserve.
             drop(cancellation);
             let mut state = self.lock();

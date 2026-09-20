@@ -40,10 +40,19 @@ impl<T> Publication<T> {
     /// Domain captures have already retired; publish exactly one terminal outcome.
     pub(super) fn finish(&mut self, outcome: TaskOutcome<T>) {
         drop(self.lease.take());
-        let _observed = self.sender.send(outcome);
+        let observed = self.sender.send(outcome);
         self.control.finished.store(true, Ordering::Release);
         if let Some(notifier) = &self.notifier {
             notifier.notify();
+        }
+        // Withdrawal retains worker-side destruction. An arbitrary result Drop
+        // must not kill the persistent worker or strand the dispatch bulk count.
+        if let Err(unobserved) = observed {
+            let dropped =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(unobserved)));
+            if dropped.is_err() {
+                solarity_profiling::profile_value!("cpu.job.abandoned_result_drop_panic", 1);
+            }
         }
     }
 }
