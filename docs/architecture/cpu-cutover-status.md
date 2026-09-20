@@ -19,6 +19,10 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+The current installed checkpoint is [Testing Build 162](testing-build162-foundation.md),
+source `eac55b9f`. Its full workspace checks and hidden movement replay pass;
+matched live performance and the remaining cutover requirements are still open.
+
 - Simulation owner lookup now follows placement storage mutations before render
   metadata publication. Creature/player residency and state updates no longer
   scan the whole scene per owner while topology is dirty; duplicate ordering and
