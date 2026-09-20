@@ -28,6 +28,7 @@ presentation prevents attributing that entire gain to CPU work. The separate
 profile reduces upload by 0.591 ms and renderer thread cycles by about 11.1%,
 while total profiled frame time is worse. This removes redundant consumer work;
 main admission, presentation behavior and the complete cutover remain open.
+[Testing Build 171](testing-build171-effects.md) packages this boundary.
 
 [Owned M2 finalization](m2-owned-finalization.md) now transfers complete geometry
 assembly and transparent ordering to a retained CPU operation using `JobContext`,
@@ -147,7 +148,13 @@ useful native wake intervals distinguish those boundaries. The optimized
 does not establish a live improvement. See the [measurements and exact interval
 semantics](cpu-dispatch-publication.md).
 
-The current installed checkpoint is [Testing Build 170](testing-build170-finalization.md),
+The current installed checkpoint is [Testing Build 171](testing-build171-effects.md),
+source `dae47563`, installed on 2026-09-20 at 17:35 EDT. All 1,646 workspace tests,
+Clippy, formatting, optimized compilation and installed identity/hash checks pass.
+Upload and renderer thread-cycle costs improve in the separate profile, but total
+profiled frame time is worse. Full cutover requirements remain active.
+
+The preceding checkpoint is [Testing Build 170](testing-build170-finalization.md),
 source `bc57f191`, installed on 2026-09-20 at 16:44 EDT. All 1,642 workspace tests,
 Clippy, formatting, optimized compilation and installed identity/hash checks pass.
 The equipped fixture improves by about 0.9 ms, while unarmed and orbit medians
@@ -734,6 +741,13 @@ findings claimed yet.
   owners outside the registry lock, and the identity cell is reused across epochs.
 
 ## Still required for the complete cutover
+
+On 2026-09-20 the user directed that the next turn complete this CPU cutover and
+accepted dealing with fallout afterward. Prioritize implementing the remaining
+architecture and connecting its consumers in that turn. Do not substitute another
+isolated performance checkpoint for completion. Preserve stock gameplay ordering
+and the restored camera behavior; broader performance tuning follows cutover.
+The complete requirements below remain in scope.
 
 The next priority is the remaining main-thread admission and renderer boundary.
 Complete M2 assembly/ordering now runs as an owned worker operation; its join and
