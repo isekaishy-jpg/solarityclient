@@ -484,6 +484,7 @@ impl TerrainFrame {
         m2.trace.link("m2.frame.consume");
         wait.before_gpu_frame(renderer, solarity_rendering::GpuFrameKind::World)?;
         let report = renderer.present_world_frame_with_ui_layers(
+            &mut wait.recording(cpu),
             scene,
             m2.bone_transforms,
             &self.visible_draws,

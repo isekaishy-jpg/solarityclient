@@ -7,6 +7,7 @@ use super::*;
 #[test]
 fn projection_preserves_nearby_model_surfaces_at_large_world_coordinates()
 -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("Projection", 1)?;
     let vertices = m2_array_offset(&bytes, 0x3c)?;
     for (index, position) in [[-2_f32, -2., 0.5], [6., -2., 0.5], [-2., 6., 0.5]]
@@ -152,6 +153,7 @@ fn projection_preserves_nearby_model_surfaces_at_large_world_coordinates()
             renderer.request_frame_capture()?;
             // Draw the back surface last: collapsed depth would overwrite green with red.
             renderer.present_world_frame(
+                &mut &recording_cpu,
                 scene,
                 &bones,
                 &[],

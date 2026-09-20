@@ -3059,6 +3059,7 @@ fn m2_sphere_particle_simulation_uses_authored_shell() -> Result<(), Box<dyn Err
 // surface; both unsafe calls are constrained to the live window/instance below.
 #[allow(unsafe_code)]
 fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let model = render_m2_bytes("Renderable", 1)?;
     let skin = render_skin_bytes()?;
     let texture = solid_raw3_blp(2, 2, &[0xFFFF_0000, 0xFF00_FF00]);
@@ -3702,6 +3703,7 @@ fn m2_mesh_plan_prepares_direct_gpu_geometry() -> Result<(), Box<dyn Error>> {
         M2SceneLightBank::Character
     );
     let ribbon_frame = renderer.present_world_frame(
+        &mut &recording_cpu,
         world_scene,
         &bone_transforms,
         &[],

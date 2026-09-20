@@ -42,6 +42,7 @@ fn horizon_preserves_main_camera_basis_when_world_target_rounds() -> Result<(), 
 #[test]
 #[allow(unsafe_code)] // SDL transfers this hidden test surface to Vulkan ownership.
 fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let _sdl_test = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -127,7 +128,19 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
             .with_world_depth_range()
             .with_sky(WorldSkyFrame::new(&sky, camera));
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(baseline, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            baseline,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         let background = renderer
             .take_captured_frame()?
             .ok_or("missing horizon baseline")?;
@@ -148,8 +161,19 @@ fn horizon_frames_preserve_native_banks_projection_and_world_depth() -> Result<(
                 scene = scene.with_liquids(LiquidFrame::new(&draws, &depth, &depth, &depth, 0));
             }
             renderer.request_frame_capture()?;
-            let report =
-                renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+            let report = renderer.present_world_frame(
+                &mut &recording_cpu,
+                scene,
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )?;
             assert_eq!(
                 report.low_detail_draw_count(),
                 if !frame.is_visible(&map.tiles()[0])? {

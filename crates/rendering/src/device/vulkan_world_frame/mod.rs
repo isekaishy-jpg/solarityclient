@@ -6,7 +6,9 @@ mod command;
 mod fog;
 mod glare;
 mod gpu_profile;
+mod recording;
 mod resource;
+pub use recording::{WorldFrameExecution, WorldRecordingCompletion};
 mod types;
 
 use ash::{Device, vk};
@@ -112,6 +114,7 @@ pub(in crate::device) struct WorldFrameWindow {
 #[derive(Default)]
 pub(in crate::device) struct WorldFrameRenderer {
     submission_fog: fog::SubmissionFog,
+    shadow_recording: recording::ShadowRecording,
     shadows: crate::device::vulkan_shadow::ShadowPipelines,
     environment_shadows: crate::device::vulkan_shadow::EnvironmentShadowImages,
     resources: WorldFrameResources,
@@ -146,6 +149,7 @@ impl WorldFrameRenderer {
     pub(in crate::device) fn present(
         &mut self,
         context: WorldFrameContext<'_>,
+        execution: &mut impl WorldFrameExecution,
         descriptor_layouts: [vk::DescriptorSetLayout; 13],
         scene: WorldFrameScene<'_>,
         bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
@@ -550,13 +554,17 @@ impl WorldFrameRenderer {
             .copied()
             .ok_or(VulkanError::WorldFrameCapacity)?;
         let slot = self.resources.slot_mut(slot_index)?;
+        if shadow_frame.is_some() {
+            slot.recording_pools
+                .ensure(context.device, context.graphics_queue_family)?;
+        }
         let record_started = profile_enabled.then(std::time::Instant::now);
         let gpu_queries = if gpu_sample {
             Some(slot.gpu_timestamps.ensure(context.device)?)
         } else {
             None
         };
-        let (low_detail_draw_count, submission_fog) = record(RecordContext {
+        let record_context = RecordContext {
             gpu_queries,
             scene,
             submission_fog: self.submission_fog,
@@ -648,7 +656,15 @@ impl WorldFrameRenderer {
             }),
             glow: context.glow,
             image_index,
-        })?;
+        };
+        let pending = self.shadow_recording.begin(
+            execution.executor(),
+            &record_context,
+            &slot.recording_pools,
+        )?;
+        let scene_recording = record(&record_context, pending.has_shadows());
+        let shadows = pending.finish(execution)?;
+        let (low_detail_draw_count, submission_fog) = scene_recording?;
         let record_elapsed = record_started
             .map(|started| started.elapsed())
             .unwrap_or_default();
@@ -659,6 +675,7 @@ impl WorldFrameRenderer {
             image_index,
             profile_enabled,
             gpu_sample,
+            &shadows,
         )?;
         self.submission_fog = submission_fog;
         slot.glare.submitted();

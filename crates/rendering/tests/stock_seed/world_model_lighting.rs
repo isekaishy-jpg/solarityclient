@@ -21,6 +21,7 @@ use crate::support::{Fixture, FixtureFile};
 #[test]
 fn world_model_missing_vertex_colors_preserve_stock_rendered_lighting() -> Result<(), Box<dyn Error>>
 {
+    let recording_cpu = crate::support::recording_cpu()?;
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -147,7 +148,19 @@ fn world_model_missing_vertex_colors_preserve_stock_rendered_lighting() -> Resul
                 ),
             );
             renderer.request_frame_capture()?;
-            renderer.present_world_frame(scene, &[], &[], &[draw], &[], &[], &[], &[], &[], &[])?;
+            renderer.present_world_frame(
+                &mut &recording_cpu,
+                scene,
+                &[],
+                &[],
+                &[draw],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )?;
             let frame = renderer
                 .take_captured_frame()?
                 .ok_or("missing WMO lighting capture")?;

@@ -22,6 +22,7 @@ use crate::support::{Fixture, FixtureFile};
 #[test]
 #[allow(unsafe_code)] // SDL transfers the Vulkan surface through its raw handle API.
 fn particle_framebuffer_uses_stock_depth_and_fog_exponent() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("Particle.blp", 1)?;
     let offset = m2_array_offset(&bytes, 0x128)?;
     let flags = 0x0002_0010_u32;
@@ -160,6 +161,7 @@ fn particle_framebuffer_uses_stock_depth_and_fog_exponent() -> Result<(), Box<dy
                     );
                     renderer.request_frame_capture()?;
                     renderer.present_world_frame(
+                        &mut &recording_cpu,
                         scene,
                         &[Mat4::IDENTITY],
                         &[],

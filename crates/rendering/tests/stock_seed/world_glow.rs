@@ -50,6 +50,7 @@ fn normal_glow_inputs_match_native_player_and_water_producer() -> Result<(), Box
 
 #[test]
 fn world_glow_matches_native_blur_wave_and_composite() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -94,7 +95,19 @@ fn world_glow_matches_native_blur_wave_and_composite() -> Result<(), Box<dyn Err
         );
         let frame = super::ghost_screen::scene().with_sky(WorldSkyFrame::new(&sky, camera));
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            frame,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         let baseline = renderer.take_captured_frame()?.ok_or("base capture")?;
         for _ in 0..25 {
             assert_eq!((word(offset), word(offset + 4)), (width, height));
@@ -119,6 +132,7 @@ fn world_glow_matches_native_blur_wave_and_composite() -> Result<(), Box<dyn Err
             let expected = &fixture[offset + 32 + size..offset + 32 + size * 2];
             renderer.request_frame_capture()?;
             renderer.present_world_frame(
+                &mut &recording_cpu,
                 frame.with_screen_effect(Some(effect)),
                 &[],
                 &[],
@@ -168,6 +182,7 @@ fn world_glow_matches_native_blur_wave_and_composite() -> Result<(), Box<dyn Err
         for wet in [false, true] {
             renderer.request_frame_capture()?;
             renderer.present_world_frame_with_ui(
+                &mut &recording_cpu,
                 frame.with_screen_effect(Some(WorldFrameScreenEffect::normal(
                     1.,
                     Some(1.),
@@ -192,7 +207,19 @@ fn world_glow_matches_native_blur_wave_and_composite() -> Result<(), Box<dyn Err
             assert_eq!(&overlay.rgba8()[middle..middle + 4], &[255, 0, 0, 255]);
         }
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            frame,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         let restored = renderer.take_captured_frame()?.ok_or("restored capture")?;
         assert_eq!(restored.rgba8(), baseline.rgba8());
     }

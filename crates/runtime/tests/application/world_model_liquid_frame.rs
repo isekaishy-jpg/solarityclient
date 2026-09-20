@@ -362,6 +362,7 @@ fn capture(
     draws: &[LiquidPreparedDraw],
     expected: [u8; 4],
 ) -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let depths = [
         LiquidDepthTextureKind::River,
         LiquidDepthTextureKind::Ocean,
@@ -401,8 +402,19 @@ fn capture(
         draws, &depths[0], &depths[1], &depths[2], 0,
     ));
     renderer.request_frame_capture()?;
-    let report =
-        renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+    let report = renderer.present_world_frame(
+        &mut &recording_cpu,
+        scene,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    )?;
     assert_eq!(report.liquid_draw_count(), draws.len());
     let image = renderer
         .take_captured_frame()?

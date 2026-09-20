@@ -13,6 +13,7 @@ use std::error::Error;
 #[test]
 #[allow(unsafe_code)] // SDL transfers the hidden surface to its owning Vulkan renderer.
 fn glare_queries_fade_occluders_clouds_and_moon_across_slots() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -101,7 +102,19 @@ fn glare_queries_fade_occluders_clouds_and_moon_across_slots() -> Result<(), Box
             if step == 15 {
                 renderer.request_frame_capture()?;
             }
-            renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+            renderer.present_world_frame(
+                &mut &recording_cpu,
+                frame,
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )?;
             if step == 15 {
                 if matches!(case, 0 | 4 | 7) {
                     let light = renderer.world_glare_lighting().apply(Vec3::ONE);

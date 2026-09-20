@@ -1,6 +1,7 @@
 //! Main-owned frame consumption; workers never acquire platform or gameplay state.
 
 mod gpu;
+mod recording;
 mod wait;
 
 pub(super) use gpu::GpuFrameWaitError;

@@ -10,6 +10,7 @@ use solarity_rendering::{
 #[test]
 #[allow(unsafe_code)] // Sole ownership of the hidden SDL surface transfers to Vulkan.
 fn surface_fog_matches_original_depth_programs() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let positions = [[-1_f32, -1., 0.], [3., -1., 0.], [-1., 3., 0.]];
     let mut bytes = render_m2_bytes("Surface", 1)?;
     let vertices = m2_array_offset(&bytes, 0x3c)?;
@@ -249,6 +250,7 @@ fn surface_fog_matches_original_depth_programs() -> Result<(), Box<dyn Error>> {
                     }
                     renderer.request_frame_capture()?;
                     renderer.present_world_frame(
+                        &mut &recording_cpu,
                         scene,
                         &bones,
                         &[],

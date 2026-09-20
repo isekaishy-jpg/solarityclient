@@ -26,6 +26,7 @@ use solarity_rendering::{
 #[test]
 #[allow(unsafe_code)] // SDL transfers this hidden test surface to the renderer.
 fn liquid_resident_terrain_reaches_the_world_frame() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let fixture = fixture()?;
     let mut store = mounted(&fixture)?;
     let maps = MapCatalog::load(&mut store)?;
@@ -123,8 +124,19 @@ fn liquid_resident_terrain_reaches_the_world_frame() -> Result<(), Box<dyn Error
             .with_texture_filtering(WorldModelTextureFiltering::Anisotropic4x),
     );
     renderer.request_frame_capture()?;
-    let report =
-        renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+    let report = renderer.present_world_frame(
+        &mut &recording_cpu,
+        scene,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    )?;
     assert_eq!(report.liquid_draw_count(), draws.len());
     let capture = renderer.take_captured_frame()?.ok_or("missing capture")?;
     for pixel in capture.rgba8().as_chunks::<4>().0 {

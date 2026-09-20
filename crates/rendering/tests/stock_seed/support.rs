@@ -95,3 +95,19 @@ fn build_archive(
     builder.build(path)?;
     Ok(())
 }
+
+/// One explicit CPU pool per rendering fixture, retained across every frame in that fixture.
+pub(crate) fn recording_cpu() -> Result<solarity_cpu::CpuExecutor, solarity_cpu::CpuError> {
+    recording_cpu_with_workers(4)
+}
+
+/// Allows the same GPU fixture to exercise serial and parallel worker ownership.
+pub(crate) fn recording_cpu_with_workers(
+    workers: usize,
+) -> Result<solarity_cpu::CpuExecutor, solarity_cpu::CpuError> {
+    solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
+        solarity_cpu::CpuExecutionPlan::new(workers - 1, 1, 1, 1)?,
+        std::num::NonZeroUsize::new(16).ok_or(solarity_cpu::CpuError::BatchCapacity)?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))
+}

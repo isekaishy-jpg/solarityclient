@@ -9,6 +9,7 @@ use solarity_rendering::{
 
 #[test]
 fn sky_models_share_bone_storage_and_keep_native_compositor_order() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("SkyModelProbe", 1)?;
     let vertices = m2_array_offset(&bytes, 0x3c)?;
     for (i, position) in [[-1_f32, -1., 0.5], [3., -1., 0.5], [-1., 3., 0.5]]
@@ -251,6 +252,7 @@ fn sky_models_share_bone_storage_and_keep_native_compositor_order() -> Result<()
         );
         renderer.request_frame_capture()?;
         let report = renderer.present_world_frame(
+            &mut &recording_cpu,
             scene,
             &world_bones,
             &[],

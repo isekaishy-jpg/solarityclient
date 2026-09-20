@@ -8,6 +8,7 @@ use wow_adt::{ParsedAdt, builder::BuiltAdt, parse_adt};
 
 #[test]
 fn terrain_point_lights_match_native_queries_and_shader_frames() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -217,7 +218,19 @@ fn terrain_point_lights_match_native_queries_and_shader_frames() -> Result<(), B
                     [M2LocalLightState::disabled(); 4],
                 ),
             );
-            renderer.present_world_frame(world, &[], &[draw], &[], &[], &[], &[], &[], &[], &[])?;
+            renderer.present_world_frame(
+                &mut &recording_cpu,
+                world,
+                &[],
+                &[draw],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )?;
         }
         let frame = renderer.take_captured_frame()?.ok_or("terrain UV frame")?;
         for (yi, y) in [24, 32, 40].into_iter().enumerate() {

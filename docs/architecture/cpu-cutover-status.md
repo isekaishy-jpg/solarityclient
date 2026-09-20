@@ -19,6 +19,14 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+Shadow command recording now uses the shared CPU executor with four exclusive
+per-slot command pools, scoped unconditional joins and native input servicing.
+Main still owns scene recording and the single ordered GPU submission. The
+[ownership contract and controlled comparison](parallel-shadow-recording.md)
+record 0.62-0.74 ms lower matched 192-NPC steady medians and the corresponding
+CPU/GPU costs. Existing long frames and the requested multi-ms overall target
+remain open; this does not complete M2 admission/publication distribution.
+
 M2 palette publication now keeps completed worker pages through renderer upload,
 removing the duplicate main-thread concatenation and scalar matrix packing.
 [The ownership contract](m2-palette-pages.md) preserves ordered draw offsets,

@@ -12,6 +12,7 @@ use solarity_rendering::{
 #[allow(unsafe_code)]
 fn installed_stars_follow_opacity_without_camera_translation()
 -> Result<(), Box<dyn std::error::Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let _lock = crate::test_support::SDL_TEST_LOCK
         .lock()
         .map_err(|_| "SDL lock poisoned")?;
@@ -100,8 +101,19 @@ fn installed_stars_follow_opacity_without_camera_translation()
             &[],
         ));
         renderer.request_frame_capture()?;
-        let report =
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(report.sky_model_draw_count(), 7);
         let capture = renderer
             .take_captured_frame()?

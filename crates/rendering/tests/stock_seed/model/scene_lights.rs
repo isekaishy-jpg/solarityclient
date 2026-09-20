@@ -6,6 +6,7 @@ use super::*;
 #[test]
 fn instance_lighting_grows_independently_of_mesh_draws_and_selects_each_gpu_queue()
 -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("SceneLights", 1)?;
     let vertices = m2_array_offset(&bytes, 0x3c)?;
     for (index, position) in [[-1_f32, -1., 0.5], [3., -1., 0.5], [-1., 3., 0.5]]
@@ -237,6 +238,7 @@ fn instance_lighting_grows_independently_of_mesh_draws_and_selects_each_gpu_queu
             let ribbon_draws = [ribbon_draw.with_scene_index(index)];
             renderer.request_frame_capture()?;
             renderer.present_world_frame(
+                &mut &recording_cpu,
                 scene,
                 &frame_bones,
                 &[],
@@ -275,6 +277,7 @@ fn instance_lighting_grows_independently_of_mesh_draws_and_selects_each_gpu_queu
             let ribbon_draws = [ribbon_draw.with_scene_index(Some(count as u32))];
             assert!(matches!(
                 renderer.present_world_frame(
+                    &mut &recording_cpu,
                     scene,
                     &bones,
                     &[],

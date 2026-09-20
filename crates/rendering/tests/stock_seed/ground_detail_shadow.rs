@@ -17,6 +17,7 @@ pub(super) fn compare_receivers(
     casters: &[M2PreparedDraw],
     bones: &[Mat4],
 ) -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let eye = base + Vec3::Z * 20.;
     let view = Mat4::look_at_rh(eye, base, Vec3::Y);
     let projection = Mat4::orthographic_rh(-10., 10., -10., 10., 0.1, 150.);
@@ -70,6 +71,7 @@ pub(super) fn compare_receivers(
                     });
                     renderer.request_frame_capture()?;
                     let report = renderer.present_world_frame(
+                        &mut &recording_cpu,
                         frame_scene,
                         bones,
                         &[],

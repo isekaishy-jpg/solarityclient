@@ -14,6 +14,7 @@ use std::error::Error;
 
 #[test]
 fn invisibility_matches_original_vertex_and_pixel_shaders() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -57,7 +58,19 @@ fn invisibility_matches_original_vertex_and_pixel_shaders() -> Result<(), Box<dy
         );
         let scene = super::ghost_screen::scene().with_sky(WorldSkyFrame::new(&sky, camera));
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         let baseline = renderer.take_captured_frame()?.ok_or("base capture")?;
         let mut state = WorldNetherState::default();
         for _ in 0..10 {
@@ -74,6 +87,7 @@ fn invisibility_matches_original_vertex_and_pixel_shaders() -> Result<(), Box<dy
             let expected = &fixture[offset + 28 + size..offset + 28 + size * 2];
             renderer.request_frame_capture()?;
             renderer.present_world_frame(
+                &mut &recording_cpu,
                 scene.with_screen_effect(Some(WorldFrameScreenEffect::Nether(effect))),
                 &[],
                 &[],
@@ -120,6 +134,7 @@ fn invisibility_matches_original_vertex_and_pixel_shaders() -> Result<(), Box<dy
         let draws = [renderer.prepare_ui_draw(mesh, pipeline, None, &plan, 0)?];
         renderer.request_frame_capture()?;
         renderer.present_world_frame_with_ui(
+            &mut &recording_cpu,
             scene.with_screen_effect(Some(WorldFrameScreenEffect::Nether(
                 state.advance(0.75, [1., 0., 0.]),
             ))),
@@ -140,7 +155,19 @@ fn invisibility_matches_original_vertex_and_pixel_shaders() -> Result<(), Box<dy
         let middle = ((height / 2 * width + width / 2) * 4) as usize;
         assert_eq!(&overlay.rgba8()[middle..middle + 4], &[255, 0, 0, 255]);
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(
             renderer
                 .take_captured_frame()?

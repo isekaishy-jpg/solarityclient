@@ -24,6 +24,7 @@ use crate::support::{Fixture, FixtureFile};
 
 /// A single native-selected instance fills the inspected viewport with a planar quad.
 pub(super) fn compare_native_detail(renderer: &mut VulkanRenderer) -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut draws = BTreeMap::new();
     let mut textures = BTreeMap::new();
     let mut count = 0;
@@ -85,8 +86,19 @@ pub(super) fn compare_native_detail(renderer: &mut VulkanRenderer) -> Result<(),
             GroundDetailFrame::new(std::slice::from_ref(&draws[&key]), distance, camera)?,
         );
         renderer.request_frame_capture()?;
-        let report =
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(report.ground_detail_draw_count(), 1);
         let capture = renderer
             .take_captured_frame()?

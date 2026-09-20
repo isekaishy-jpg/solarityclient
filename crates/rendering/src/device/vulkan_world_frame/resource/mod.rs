@@ -187,6 +187,7 @@ pub(super) struct WorldFrameSlot {
     depth_image: vk::Image,
     depth_allocation: Option<vk_mem::Allocation>,
     depth_view: vk::ImageView,
+    pub(super) recording_pools: super::recording::RecordingPools,
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
     image_available: vk::Semaphore,
@@ -263,7 +264,7 @@ impl WorldFrameSlot {
     /// Retires this slot and optionally measures only its normal fence wait.
     /// Resetting the command pool stays outside the reported wait interval.
     pub(super) fn wait_and_reset(
-        &self,
+        &mut self,
         device: &Device,
         profile: bool,
     ) -> Result<std::time::Duration, VulkanError> {
@@ -283,6 +284,7 @@ impl WorldFrameSlot {
                     VulkanError::operation("reset world frame command pool", source)
                 })?;
         }
+        self.recording_pools.reset(device)?;
         Ok(waited)
     }
 
@@ -568,6 +570,7 @@ impl WorldFrameSlot {
     }
 
     fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
+        self.recording_pools.destroy(device);
         self.gpu_timestamps.destroy(device);
         self.shadows.destroy(device, allocator);
         self.liquids.destroy(device, allocator);
@@ -637,6 +640,7 @@ impl WorldFrameSlot {
             depth_image: vk::Image::null(),
             depth_allocation: None,
             depth_view: vk::ImageView::null(),
+            recording_pools: super::recording::RecordingPools::default(),
             command_pool: vk::CommandPool::null(),
             command_buffer: vk::CommandBuffer::null(),
             image_available: vk::Semaphore::null(),

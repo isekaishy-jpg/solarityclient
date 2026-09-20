@@ -123,7 +123,8 @@ pub use vulkan_underwater::{
     UnderwaterParticleFog, UnderwaterParticleFrame, UnderwaterParticleFrameError,
 };
 pub use vulkan_world_frame::{
-    WorldFrameReport, WorldFrameScene, WorldSkyModelBatch, WorldSkyModelFrame,
+    WorldFrameExecution, WorldFrameReport, WorldFrameScene, WorldRecordingCompletion,
+    WorldSkyModelBatch, WorldSkyModelFrame,
 };
 pub use vulkan_world_model_draw::{WorldModelPreparedDraw, WorldModelShadowDraw};
 pub use vulkan_world_model_mesh::{WorldModelMeshHandle, WorldModelMeshResourceInfo};

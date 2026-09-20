@@ -31,6 +31,7 @@ fn compare_bone_class(
     terrain: TerrainPreparedDraw,
     bone_class: u16,
 ) -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut model_bytes = crate::model::render_m2_bytes("Shadow", 1)?;
     let vertices = u32::from_le_bytes(model_bytes[0x40..0x44].try_into()?) as usize;
     // One broad triangle above the receiver; its visible world queue stays empty.
@@ -192,6 +193,7 @@ fn compare_bone_class(
                 let shadow = WorldShadowProjection::primary(quality, center, eye, ray)?;
                 renderer.request_frame_capture()?;
                 let report = renderer.present_world_frame(
+                    &mut &recording_cpu,
                     scene.with_primary_shadows(WorldPrimaryShadowFrame::new(
                         shadow,
                         &casters[..count],
@@ -329,6 +331,7 @@ fn compare_bone_class(
                 });
                 renderer.request_frame_capture()?;
                 renderer.present_world_frame(
+                    &mut &recording_cpu,
                     scene,
                     &bones,
                     &[],

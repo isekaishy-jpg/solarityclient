@@ -9,6 +9,7 @@ use solarity_rendering::{
 #[test]
 #[allow(unsafe_code)] // SDL transfers the hidden surface to Vulkan ownership.
 fn celestial_frames_clip_sample_blend_and_reuse_slots() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let pixels = [0xffe08040, 0x80a0c060, 0x402080c0, 0xc0c04080];
     let bytes = crate::model::raw3_blp_pixels(2, 2, &pixels);
     let fixture = Fixture::new(&[FixtureFile {
@@ -84,8 +85,19 @@ fn celestial_frames_clip_sample_blend_and_reuse_slots() -> Result<(), Box<dyn Er
             scene = scene.with_liquids(LiquidFrame::new(&world_draws, &depth, &depth, &depth, 0));
         }
         renderer.request_frame_capture()?;
-        let report =
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(report.celestial_draw_count(), frame.draw_count());
         let capture = renderer
             .take_captured_frame()?

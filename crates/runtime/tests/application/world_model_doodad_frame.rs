@@ -29,6 +29,7 @@ fn wmo_doodad_portal_visibility_and_fog_reach_static_and_moving_pixels()
 
 #[allow(unsafe_code)] // The hidden test window transfers its surface to Vulkan.
 fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let (_, floor, wdt, map) = fixture_files();
     let (root, outside, inside) = rooms(floor)?;
     let mut model_bytes = game_object_models::model_with_animations(&[0])?;
@@ -295,6 +296,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
         .with_m2_instance_scenes(visible.instance_scenes);
         renderer.request_frame_capture()?;
         renderer.present_world_frame(
+            &mut &recording_cpu,
             scene,
             visible.bone_transforms,
             &[],

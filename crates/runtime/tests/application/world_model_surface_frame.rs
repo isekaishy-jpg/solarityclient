@@ -31,6 +31,7 @@ use crate::test_support::{ClientFixture, SDL_TEST_LOCK, liquid_models};
 #[allow(unsafe_code)] // Sole surface ownership transfers from the hidden SDL window.
 fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Result<(), Box<dyn Error>>
 {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let (root, group) = surface_files();
     let mut files = liquid_models::files(0, 0, 0, 1, 0);
     files[0].1 = root;
@@ -208,6 +209,7 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
     };
     renderer.request_frame_capture()?;
     let report = renderer.present_world_frame(
+        &mut &recording_cpu,
         scene(Vec4::new(100., 200., 0., 1.)),
         &[],
         &[],
@@ -320,6 +322,7 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
         );
         renderer.request_frame_capture()?;
         renderer.present_world_frame(
+            &mut &recording_cpu,
             scene(fog_parameters),
             &[],
             &[],

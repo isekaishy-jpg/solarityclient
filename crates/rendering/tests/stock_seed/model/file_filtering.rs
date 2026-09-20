@@ -12,6 +12,7 @@ use wow_adt::{AdtVersion, builder::AdtBuilder};
 #[test]
 fn file_texture_sampling_reaches_terrain_and_m2_without_changing_explicit_samplers()
 -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("FileSampling", 1)?;
     let vertices = m2_array_offset(&bytes, 0x3c)?;
     for (index, position) in [[-1_f32, -1., 0.5], [3., -1., 0.5], [-1., 3., 0.5]]
@@ -212,6 +213,7 @@ fn file_texture_sampling_reaches_terrain_and_m2_without_changing_explicit_sample
                 );
                 renderer.request_frame_capture()?;
                 renderer.present_world_frame(
+                    &mut &recording_cpu,
                     scene,
                     &bones,
                     &[],

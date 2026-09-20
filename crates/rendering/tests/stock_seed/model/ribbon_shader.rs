@@ -6,6 +6,7 @@ use super::*;
 #[allow(unsafe_code)] // The hidden SDL surface transfers to the renderer.
 fn ribbon_pixels_match_original_color_variants_and_material_culling() -> Result<(), Box<dyn Error>>
 {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("Ribbon.blp", 1)?;
     let materials = bytes.len();
     for flags in [0u16, 1, 4, 5] {
@@ -185,6 +186,7 @@ fn ribbon_pixels_match_original_color_variants_and_material_culling() -> Result<
                 }
                 renderer.request_frame_capture()?;
                 renderer.present_world_frame(
+                    &mut &recording_cpu,
                     scene,
                     &[Mat4::IDENTITY],
                     &[],

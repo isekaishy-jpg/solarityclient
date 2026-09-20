@@ -8,6 +8,7 @@ use solarity_rendering::{TerrainSceneUniform, WorldFrameScene, WorldModelSceneUn
 #[allow(unsafe_code)] // The hidden test surface transfers to the renderer.
 fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
 -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let _lock = SDL_TEST_LOCK.lock().map_err(|_| "SDL lock poisoned")?;
     let (mut root, mut group, wdt, map) = fixture_files();
     put(&mut root, 20, 1);
@@ -296,6 +297,7 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
         .with_m2_instance_scenes(visible.instance_scenes);
         renderer.request_frame_capture()?;
         renderer.present_world_frame(
+            &mut &recording_cpu,
             scene,
             visible.bone_transforms,
             &[],

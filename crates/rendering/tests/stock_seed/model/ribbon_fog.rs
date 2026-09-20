@@ -5,6 +5,7 @@ use super::*;
 #[test]
 #[allow(unsafe_code)] // The hidden SDL surface transfers to the renderer.
 fn ribbon_fog_matches_native_serial_state_and_pixels() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("Ribbon.blp", 1)?;
     let materials = bytes.len();
     for flags in [5u16, 7] {
@@ -187,6 +188,7 @@ fn ribbon_fog_matches_native_serial_state_and_pixels() -> Result<(), Box<dyn Err
             );
             renderer.request_frame_capture()?;
             renderer.present_world_frame(
+                &mut &recording_cpu,
                 scene,
                 &[Mat4::IDENTITY],
                 &[],

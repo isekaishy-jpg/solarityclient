@@ -40,7 +40,6 @@ mod bindings;
 mod ground_detail;
 mod instances;
 mod low_detail;
-mod shadow;
 use bindings::WorldCommandBindings;
 use low_detail::record_low_detail;
 
@@ -132,7 +131,8 @@ pub(super) struct RecordContext<'a> {
 }
 
 pub(super) fn record(
-    context: RecordContext<'_>,
+    context: &RecordContext<'_>,
+    shadows_recorded: bool,
 ) -> Result<(usize, super::fog::SubmissionFog), VulkanError> {
     let begin =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -143,7 +143,7 @@ pub(super) fn record(
             .begin_command_buffer(context.command_buffer, &begin)
     }
     .map_err(|source| VulkanError::operation("begin world command buffer", source))?;
-    if let Some(pool) = context.gpu_queries {
+    if let Some(pool) = context.gpu_queries.filter(|_| !shadows_recorded) {
         // SAFETY: The owning slot has retired. Reset is outside rendering and
         // precedes every timestamp write in this submitted command buffer.
         unsafe {
@@ -161,11 +161,10 @@ pub(super) fn record(
             );
         }
     }
-    shadow::record_primary(&context)?;
     context
         .glare_slot
         .reset(context.device, context.command_buffer);
-    timestamp(&context, 1);
+    timestamp(context, 1);
     if !context.liquid_draws.is_empty() {
         context
             .liquid_resources
@@ -176,7 +175,7 @@ pub(super) fn record(
             .cloud_resources
             .record_upload(context.device, context.command_buffer);
     }
-    transition_attachments(&context);
+    transition_attachments(context);
     let color = vk::RenderingAttachmentInfo::default()
         .image_view(context.image_view)
         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -275,11 +274,11 @@ pub(super) fn record(
                 .device
                 .cmd_set_scissor(context.command_buffer, 0, &[sky_scissor]);
         }
-        record_sky_models(&context, false, &mut bindings)?;
-        record_celestials(&context, &mut bindings);
-        record_sky(&context, &mut bindings);
-        record_clouds(&context, &mut bindings);
-        record_sky_models(&context, true, &mut bindings)?;
+        record_sky_models(context, false, &mut bindings)?;
+        record_celestials(context, &mut bindings);
+        record_sky(context, &mut bindings);
+        record_clouds(context, &mut bindings);
+        record_sky_models(context, true, &mut bindings)?;
         // SAFETY: WDL and subsequent world queues share the original scissor.
         unsafe {
             context
@@ -287,8 +286,8 @@ pub(super) fn record(
                 .cmd_set_scissor(context.command_buffer, 0, &[scissor]);
         }
     }
-    let low_detail_draw_count = record_low_detail(&context, viewport, scissor, &mut bindings)?;
-    timestamp(&context, 2);
+    let low_detail_draw_count = record_low_detail(context, viewport, scissor, &mut bindings)?;
+    timestamp(context, 2);
     // 79A870 restores the ordinary world interval after horizon/sky work.
     let world_viewport = vk::Viewport {
         max_depth: context.depth_maximum,
@@ -301,20 +300,20 @@ pub(super) fn record(
             .cmd_set_viewport(context.command_buffer, 0, &[world_viewport]);
     }
     for draw in context.terrain_draws.iter().copied() {
-        record_terrain(&context, draw, &mut bindings)?;
+        record_terrain(context, draw, &mut bindings)?;
     }
-    timestamp(&context, 3);
+    timestamp(context, 3);
     for (index, draw) in context.world_model_draws.iter().copied().enumerate() {
-        record_world_model(&context, index, draw, &mut bindings)?;
+        record_world_model(context, index, draw, &mut bindings)?;
     }
-    timestamp(&context, 4);
+    timestamp(context, 4);
     // 4F9154 dispatches 7984A0 before the ordinary liquid/M2 scene queues.
-    ground_detail::record_ground_detail(&context, &mut bindings)?;
-    timestamp(&context, 5);
-    record_liquid_queue(&context, LiquidQueue::Opaque, &mut bindings)?;
-    timestamp(&context, 6);
-    record_m2_scene_elements(&context, &mut bindings)?;
-    record_underwater(&context, &mut bindings);
+    ground_detail::record_ground_detail(context, &mut bindings)?;
+    timestamp(context, 5);
+    record_liquid_queue(context, LiquidQueue::Opaque, &mut bindings)?;
+    timestamp(context, 6);
+    record_m2_scene_elements(context, &mut bindings)?;
+    record_underwater(context, &mut bindings);
     context.glare.record(
         context.glare_slot,
         context.device,
@@ -323,7 +322,7 @@ pub(super) fn record(
     );
     // SAFETY: The single matching world rendering scope is active.
     unsafe { context.device.cmd_end_rendering(context.command_buffer) };
-    timestamp(&context, 7);
+    timestamp(context, 7);
     if let Some((glow, settings)) = context.glow {
         glow.record(
             context.device,
@@ -335,14 +334,14 @@ pub(super) fn record(
             settings,
         )?;
     }
-    timestamp(&context, 8);
+    timestamp(context, 8);
     if let Some(ui) = context.ui {
-        transition_to_ui_overlay(&context);
+        transition_to_ui_overlay(context);
         record_loaded_overlay(ui)?;
     }
-    timestamp(&context, 9);
-    transition_to_present(&context);
-    timestamp(&context, 10);
+    timestamp(context, 9);
+    transition_to_present(context);
+    timestamp(context, 10);
     // SAFETY: Every bound resource outlives slot fence retirement.
     unsafe { context.device.end_command_buffer(context.command_buffer) }
         .map_err(|source| VulkanError::operation("end world command buffer", source))?;
@@ -1174,7 +1173,7 @@ fn instance_scene(
     }
 }
 
-fn dynamic_offset(index: usize, stride: u64) -> Result<u32, VulkanError> {
+pub(super) fn dynamic_offset(index: usize, stride: u64) -> Result<u32, VulkanError> {
     (index as u64)
         .checked_mul(stride)
         .and_then(|value| u32::try_from(value).ok())
@@ -1260,17 +1259,22 @@ pub(super) fn submit_and_present(
     image_index: u32,
     profile: bool,
     gpu_sample: bool,
+    shadows: &super::recording::ShadowSubmission,
 ) -> Result<Option<WorldSubmitTimings>, VulkanError> {
     let waits = [vk::SemaphoreSubmitInfo::default()
         .semaphore(slot.image_available())
         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
-    let commands = [vk::CommandBufferSubmitInfo::default().command_buffer(slot.command_buffer())];
+    let mut commands = [vk::CommandBufferSubmitInfo::default(); 5];
+    for (entry, command) in commands.iter_mut().zip(&shadows.commands[..shadows.count]) {
+        *entry = entry.command_buffer(*command);
+    }
+    commands[shadows.count] = commands[shadows.count].command_buffer(slot.command_buffer());
     let signals = [vk::SemaphoreSubmitInfo::default()
         .semaphore(present_semaphore)
         .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
     let submit = vk::SubmitInfo2::default()
         .wait_semaphore_infos(&waits)
-        .command_buffer_infos(&commands)
+        .command_buffer_infos(&commands[..shadows.count + 1])
         .signal_semaphore_infos(&signals);
     slot.reset_fence(context.device)?;
     let queue_submit_started = profile.then(std::time::Instant::now);

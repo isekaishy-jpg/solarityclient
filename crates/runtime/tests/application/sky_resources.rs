@@ -17,6 +17,7 @@ use solarity_rendering::{
 #[allow(unsafe_code)]
 fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
 -> Result<(), Box<dyn std::error::Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let _lock = crate::test_support::SDL_TEST_LOCK
         .lock()
         .map_err(|_| "SDL lock poisoned")?;
@@ -88,6 +89,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
             let scene = world_scene(camera).with_sky_models(frame);
             renderer.request_frame_capture()?;
             let report = renderer.present_world_frame(
+                &mut &recording_cpu,
                 scene,
                 &vec![Mat4::from_translation(Vec3::splat(5000.)); prefix],
                 &[],
@@ -181,6 +183,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         let count = frame.draw_count();
         renderer.request_frame_capture()?;
         let report = renderer.present_world_frame(
+            &mut &recording_cpu,
             world_scene(camera).with_sky_models(frame),
             &[Mat4::IDENTITY; 5],
             &[],
@@ -210,6 +213,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         sky.prepare_model_input(&mut renderer, camera, 201000, input, 0, &mut random)?;
     renderer.request_frame_capture()?;
     renderer.present_world_frame(
+        &mut &recording_cpu,
         world_scene(camera).with_sky_models(frame),
         &[],
         &[],
@@ -234,6 +238,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
     );
     renderer.request_frame_capture()?;
     renderer.present_world_frame(
+        &mut &recording_cpu,
         world_scene(camera).with_sky_models(unlit),
         &[],
         &[],

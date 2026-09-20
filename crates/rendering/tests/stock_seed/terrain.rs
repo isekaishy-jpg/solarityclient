@@ -64,6 +64,7 @@ mod shadow;
 /// The 145-vertex MCNK grid becomes 256 stock fan triangles with no holes.
 #[test]
 fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let map_table = map_table();
     let wdt = terrain_wdt()?;
     let grass = solid_raw3_blp(2, 2, 0xFF00_FF00);
@@ -359,6 +360,7 @@ fn terrain_chunk_mesh_preserves_staggered_topology() -> Result<(), Box<dyn Error
         ),
     );
     let frame = renderer.present_world_frame(
+        &mut &recording_cpu,
         world_scene,
         &[],
         &[draw],

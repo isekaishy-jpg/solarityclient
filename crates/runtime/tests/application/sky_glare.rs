@@ -16,6 +16,7 @@ use solarity_rendering::{
 #[allow(unsafe_code)] // SDL transfers the hidden surface to the Vulkan renderer.
 fn installed_sunburst_washes_out_disc_and_fades_with_clouds()
 -> Result<(), Box<dyn std::error::Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let _lock = crate::test_support::SDL_TEST_LOCK
         .lock()
         .map_err(|_| "SDL lock poisoned")?;
@@ -74,7 +75,19 @@ fn installed_sunburst_washes_out_disc_and_fades_with_clouds()
             if step == 15 {
                 renderer.request_frame_capture()?;
             }
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+            renderer.present_world_frame(
+                &mut &recording_cpu,
+                scene,
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )?;
             if step == 15 {
                 let capture = renderer
                     .take_captured_frame()?

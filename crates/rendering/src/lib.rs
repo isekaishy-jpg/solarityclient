@@ -18,6 +18,7 @@ mod ui;
 mod weather;
 mod world_text;
 
+pub use device::{WorldFrameExecution, WorldRecordingCompletion};
 pub use model::M2BonePaletteSource;
 
 pub use weather::{

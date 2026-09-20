@@ -2339,6 +2339,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame(
         &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
         scene: WorldFrameScene<'_>,
         bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
@@ -2352,6 +2353,7 @@ impl VulkanRenderer {
     ) -> Result<WorldFrameReport, VulkanError> {
         self.with_swapchain_retry(|renderer| {
             renderer.present_world_frame_internal(
+                execution,
                 scene,
                 bone_transforms,
                 terrain_draws,
@@ -2382,6 +2384,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui(
         &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
         scene: WorldFrameScene<'_>,
         bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
@@ -2398,6 +2401,7 @@ impl VulkanRenderer {
     ) -> Result<WorldFrameReport, VulkanError> {
         self.with_swapchain_retry(|renderer| {
             renderer.present_world_frame_internal(
+                execution,
                 scene,
                 bone_transforms,
                 terrain_draws,
@@ -2427,6 +2431,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui_layers(
         &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
         scene: WorldFrameScene<'_>,
         bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
@@ -2444,6 +2449,7 @@ impl VulkanRenderer {
     ) -> Result<WorldFrameReport, VulkanError> {
         self.with_swapchain_retry(|renderer| {
             renderer.present_world_frame_internal(
+                execution,
                 scene,
                 bone_transforms,
                 terrain_draws,
@@ -2469,6 +2475,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui_and_glow(
         &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
         scene: WorldFrameScene<'_>,
         bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
@@ -2486,6 +2493,7 @@ impl VulkanRenderer {
     ) -> Result<WorldFrameReport, VulkanError> {
         self.with_swapchain_retry(|renderer| {
             renderer.present_world_frame_internal(
+                execution,
                 scene,
                 bone_transforms,
                 terrain_draws,
@@ -2515,6 +2523,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn present_world_frame_with_ui_layers_and_glow(
         &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
         scene: WorldFrameScene<'_>,
         bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
@@ -2533,6 +2542,7 @@ impl VulkanRenderer {
     ) -> Result<WorldFrameReport, VulkanError> {
         self.with_swapchain_retry(|renderer| {
             renderer.present_world_frame_internal(
+                execution,
                 scene,
                 bone_transforms,
                 terrain_draws,
@@ -2557,6 +2567,7 @@ impl VulkanRenderer {
     #[allow(clippy::too_many_arguments)]
     fn present_world_frame_internal(
         &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
         scene: WorldFrameScene<'_>,
         bone_transforms: &(impl crate::M2BonePaletteSource + ?Sized),
         terrain_draws: &[TerrainPreparedDraw],
@@ -2737,6 +2748,7 @@ impl VulkanRenderer {
                 ui_texture_sets: &self.ui_texture_sets,
                 glow: glow.map(|settings| (&self.glow, settings)),
             },
+            execution,
             descriptor_layouts,
             scene,
             bone_transforms,

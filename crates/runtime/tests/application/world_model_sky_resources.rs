@@ -8,6 +8,7 @@ use std::error::Error;
 #[allow(unsafe_code)] // Hidden SDL window transfers surface ownership to Vulkan.
 fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result<(), Box<dyn Error>>
 {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let mut model = game_object_models::model_with_animations(&[0])?;
     let vertices = u32::from_le_bytes(model[0x40..0x44].try_into()?) as usize;
     for (i, point) in [[5f32, -4., -4.], [5., 4., -4.], [5., 0., 4.]]
@@ -98,8 +99,19 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
         let scene = world_scene(camera)
             .with_sky_models(frame)
             .with_sky_window(visible.then_some(solarity_rendering::WorldSkyWindow::FULL));
-        let report =
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(
             report.sky_model_draw_count(),
             if !visible {
@@ -191,6 +203,7 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
         assert_eq!(frame.draw_count(), expected_draws, "global step {step}");
         renderer.request_frame_capture()?;
         let report = renderer.present_world_frame(
+            &mut &recording_cpu,
             world_scene(camera).with_sky_models(frame),
             &vec![Mat4::IDENTITY; prefix],
             &[],

@@ -1372,6 +1372,7 @@ impl RuntimeGlueModelScene {
             .map_err(RuntimeTerrainFrameError::from)?;
         if strength > 0.0 || (gamma - 1.0).abs() > 0.0001 {
             renderer.present_world_frame_with_ui_layers_and_glow(
+                &mut wait.recording(cpu),
                 scene,
                 visible.bone_transforms,
                 &[],
@@ -1390,6 +1391,7 @@ impl RuntimeGlueModelScene {
             )?;
         } else {
             renderer.present_world_frame_with_ui_layers(
+                &mut wait.recording(cpu),
                 scene,
                 visible.bone_transforms,
                 &[],

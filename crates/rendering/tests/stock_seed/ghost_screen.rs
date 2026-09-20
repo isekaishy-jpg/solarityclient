@@ -45,6 +45,7 @@ pub(super) fn scene() -> WorldFrameScene<'static> {
 
 #[test]
 fn ghost_screen_matches_native_blur_and_composite() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -93,7 +94,19 @@ fn ghost_screen_matches_native_blur_and_composite() -> Result<(), Box<dyn Error>
         );
         let frame = scene().with_sky(WorldSkyFrame::new(&sky, camera));
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            frame,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         let baseline = renderer.take_captured_frame()?.ok_or("base capture")?;
         if let Some(path) = &export {
             std::fs::write(
@@ -117,6 +130,7 @@ fn ghost_screen_matches_native_blur_and_composite() -> Result<(), Box<dyn Error>
             let expected = &fixture[offset + 16 + size..offset + 16 + size * 2];
             renderer.request_frame_capture()?;
             renderer.present_world_frame(
+                &mut &recording_cpu,
                 frame.with_screen_effect(Some(WorldFrameScreenEffect::ghost(glow))),
                 &[],
                 &[],
@@ -163,6 +177,7 @@ fn ghost_screen_matches_native_blur_and_composite() -> Result<(), Box<dyn Error>
         let draws = [renderer.prepare_ui_draw(mesh, pipeline, None, &plan, 0)?];
         renderer.request_frame_capture()?;
         renderer.present_world_frame_with_ui(
+            &mut &recording_cpu,
             frame.with_screen_effect(Some(WorldFrameScreenEffect::ghost(1.))),
             &[],
             &[],
@@ -181,7 +196,19 @@ fn ghost_screen_matches_native_blur_and_composite() -> Result<(), Box<dyn Error>
         let middle = ((height / 2 * width + width / 2) * 4) as usize;
         assert_eq!(&overlay.rgba8()[middle..middle + 4], &[255, 0, 0, 255]);
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            frame,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         let restored = renderer.take_captured_frame()?.ok_or("restored capture")?;
         assert_eq!(restored.rgba8(), baseline.rgba8());
     }

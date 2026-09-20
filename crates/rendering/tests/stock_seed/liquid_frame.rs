@@ -30,6 +30,7 @@ mod low_detail;
 #[test]
 #[allow(unsafe_code)] // SDL transfers the hidden test surface to Vulkan ownership.
 fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let black = crate::model::solid_raw3_blp(1, 1, &[0]);
     let fixture = Fixture::new(&[FixtureFile {
         path: "Black.blp",
@@ -159,8 +160,19 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
                 LiquidFrame::new(&draws, &river, &ocean, &wmo, 0).with_texture_filtering(filtering),
             );
         renderer.request_frame_capture()?;
-        let report =
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(report.liquid_draw_count(), count + 2);
         let capture = renderer
             .take_captured_frame()?
@@ -205,6 +217,7 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
     let draws = [base];
     renderer.request_frame_capture()?;
     renderer.present_world_frame(
+        &mut &recording_cpu,
         scene().with_liquids(LiquidFrame::new(&draws, &depth, &depth, &depth, 0)),
         &[],
         &[],
@@ -241,6 +254,7 @@ fn liquid_frames_update_depth_images_blend_and_retire_meshes() -> Result<(), Box
 #[allow(unsafe_code)] // SDL transfers the hidden test surface to Vulkan ownership.
 fn water_ripple_frames_preserve_native_passes_depth_bias_and_no_mip_sampling()
 -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let green =
         crate::model::solid_raw3_blp(8, 8, &[0xff00_ff00, 0xffff_0000, 0xffff_0000, 0xffff_0000]);
     let blue =
@@ -352,8 +366,19 @@ fn water_ripple_frames_preserve_native_passes_depth_bias_and_no_mip_sampling()
             )
             .with_ripples(frame);
         renderer.request_frame_capture()?;
-        let report =
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(report.ripple_draw_count(), frame.draw_count());
         let capture = renderer
             .take_captured_frame()?
@@ -408,6 +433,7 @@ fn water_ripple_frames_preserve_native_passes_depth_bias_and_no_mip_sampling()
 #[allow(unsafe_code)] // SDL transfers the hidden test surface to Vulkan ownership.
 fn underwater_particle_frames_preserve_native_blend_depth_mips_and_slot_reuse()
 -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let green_bytes = crate::model::solid_raw3_blp(1, 1, &[0x8000_ff00]);
     let blue_bytes = crate::model::solid_raw3_blp(1, 1, &[0x8000_00ff]);
     let mip_bytes = crate::model::solid_raw3_blp(
@@ -542,8 +568,19 @@ fn underwater_particle_frames_preserve_native_blend_depth_mips_and_slot_reuse()
             .with_ripples(ripple)
             .with_underwater_particles(particles);
         renderer.request_frame_capture()?;
-        let report =
-            renderer.present_world_frame(scene, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            scene,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(report.underwater_draw_count(), particles.draw_count());
         let capture = renderer
             .take_captured_frame()?
@@ -588,6 +625,7 @@ fn underwater_particle_frames_preserve_native_blend_depth_mips_and_slot_reuse()
 #[allow(unsafe_code)] // SDL transfers the hidden surface to Vulkan ownership.
 fn sky_frames_cover_background_reuse_slots_and_preserve_world_depth() -> Result<(), Box<dyn Error>>
 {
+    let recording_cpu = crate::support::recording_cpu()?;
     use solarity_rendering::{WorldCamera, WorldSkyDome, WorldSkyFrame};
     let _sdl_test = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
@@ -639,8 +677,19 @@ fn sky_frames_cover_background_reuse_slots_and_preserve_world_depth() -> Result<
             frame = frame.with_liquids(LiquidFrame::new(&draws, &depth, &depth, &depth, 0));
         }
         renderer.request_frame_capture()?;
-        let report =
-            renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        let report = renderer.present_world_frame(
+            &mut &recording_cpu,
+            frame,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         assert_eq!(report.sky_draw_count(), 1);
         let capture = renderer
             .take_captured_frame()?
@@ -667,7 +716,19 @@ fn sky_frames_cover_background_reuse_slots_and_preserve_world_depth() -> Result<
     dome.update_colors(colors, Vec3::new(96., 128., 160.) / 255., 0.5, 0., camera);
     let frame = scene().with_sky(WorldSkyFrame::new(&dome, camera));
     renderer.request_frame_capture()?;
-    renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+    renderer.present_world_frame(
+        &mut &recording_cpu,
+        frame,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    )?;
     let capture = renderer
         .take_captured_frame()?
         .ok_or("missing sky gradient capture")?;
@@ -690,6 +751,7 @@ fn sky_frames_cover_background_reuse_slots_and_preserve_world_depth() -> Result<
 #[test]
 #[allow(unsafe_code)] // SDL transfers the hidden surface to Vulkan ownership.
 fn cloud_frames_sample_native_pixels_blend_and_reuse_slots() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     use solarity_rendering::{
         WorldCamera, WorldCloudDome, WorldCloudFrame, WorldCloudLighting, WorldClouds,
         WorldSkyDome, WorldSkyFrame,
@@ -743,7 +805,19 @@ fn cloud_frames_sample_native_pixels_blend_and_reuse_slots() -> Result<(), Box<d
             .with_sky(WorldSkyFrame::new(&sky, camera))
             .with_clouds(cloud_frame);
         renderer.request_frame_capture()?;
-        renderer.present_world_frame(frame, &[], &[], &[], &[], &[], &[], &[], &[], &[])?;
+        renderer.present_world_frame(
+            &mut &recording_cpu,
+            frame,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )?;
         let capture = renderer
             .take_captured_frame()?
             .ok_or("missing cloud capture")?;

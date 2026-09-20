@@ -107,6 +107,7 @@ fn gx_blend(state: M2MaterialState) -> u32 {
 #[test]
 #[allow(unsafe_code)] // The hidden SDL surface transfers to the renderer.
 fn faded_particle_pixels_keep_native_alpha_test_blend_and_depth() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("Effect.blp", 1)?;
     let offset = m2_array_offset(&bytes, 0x128)?;
     let flags = 0x0002_0019u32; // Unlit, unfogged, ordinary head card.
@@ -256,6 +257,7 @@ fn faded_particle_pixels_keep_native_alpha_test_blend_and_depth() -> Result<(), 
             .with_scene_order(0);
         renderer.request_frame_capture()?;
         renderer.present_world_frame(
+            &mut &recording_cpu,
             scene,
             &[],
             &[],

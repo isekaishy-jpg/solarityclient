@@ -107,6 +107,7 @@ fn world_model_fog_passes_match_original_callbacks() -> Result<(), Box<dyn Error
 #[test]
 #[allow(unsafe_code)] // The hidden SDL surface transfers solely to Vulkan.
 fn world_model_fog_pixels_match_original_physical_passes() -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     let rows = native_rows()?;
     let _lock = crate::support::sdl_test_lock();
     let sdl = sdl3::init()?;
@@ -261,7 +262,19 @@ fn world_model_fog_pixels_match_original_physical_passes() -> Result<(), Box<dyn
                 )?
                 .with_outdoor_fog_color(Vec3::new(0.2, 0.4, 0.6));
             renderer.request_frame_capture()?;
-            renderer.present_world_frame(scene, &[], &[], &[draw], &[], &[], &[], &[], &[], &[])?;
+            renderer.present_world_frame(
+                &mut &recording_cpu,
+                scene,
+                &[],
+                &[],
+                &[draw],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )?;
             let capture = renderer.take_captured_frame()?.ok_or("WMO fog capture")?;
             let pixel = rgba8_pixel(capture.rgba8(), 64, 32, 32);
             for (actual, expected) in pixel.iter().zip(&native[index][17..21]) {

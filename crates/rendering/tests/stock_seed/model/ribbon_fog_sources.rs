@@ -11,6 +11,7 @@ use solarity_rendering::{
 #[allow(unsafe_code)] // The hidden SDL surface transfers to the renderer.
 fn ribbon_inherits_fog_from_mesh_particle_and_world_model_submissions() -> Result<(), Box<dyn Error>>
 {
+    let recording_cpu = crate::support::recording_cpu()?;
     let mut bytes = render_m2_bytes("Ribbon.blp", 1)?;
     let materials = bytes.len();
     for flags in [5u16, 7] {
@@ -342,6 +343,7 @@ fn ribbon_inherits_fog_from_mesh_particle_and_world_model_submissions() -> Resul
         // Reset to native modulation-white so a missing publication cannot pass
         // merely because the preceding source left the same scene color behind.
         renderer.present_world_frame(
+            &mut &recording_cpu,
             scene,
             &bones,
             &[],
@@ -355,6 +357,7 @@ fn ribbon_inherits_fog_from_mesh_particle_and_world_model_submissions() -> Resul
         )?;
         renderer.request_frame_capture()?;
         renderer.present_world_frame(
+            &mut &recording_cpu,
             scene,
             &bones,
             &[],

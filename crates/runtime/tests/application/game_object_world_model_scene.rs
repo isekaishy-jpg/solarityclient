@@ -341,6 +341,7 @@ fn capture(
     time: f32,
     random: &mut CrtRand,
 ) -> Result<solarity_rendering::CapturedFrame, Box<dyn Error>> {
+    let recording_cpu = crate::frame_cpu_support::executor()?;
     let visible = frame.prepare_visible_draws(
         renderer,
         &crate::frame_cpu_support::executor()?,
@@ -386,6 +387,7 @@ fn capture(
     );
     renderer.request_frame_capture()?;
     renderer.present_world_frame(
+        &mut &recording_cpu,
         scene,
         visible.bone_transforms,
         &[],

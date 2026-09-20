@@ -24,6 +24,7 @@ pub(super) fn compare_receivers(
     casters: &[M2PreparedDraw],
     bones: &[Mat4],
 ) -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     for unified in [false, true] {
         for shader in 0_u32..=6 {
             // Ordinary MapObj's final effect-table entry is null; only MapObjU
@@ -124,6 +125,7 @@ pub(super) fn compare_receivers(
                 });
                 renderer.request_frame_capture()?;
                 renderer.present_world_frame(
+                    &mut &recording_cpu,
                     frame_scene,
                     bones,
                     &[],
@@ -164,6 +166,7 @@ pub(super) fn compare_environment_casters(
     center: Vec3,
     eye: Vec3,
 ) -> Result<(), Box<dyn Error>> {
+    let recording_cpu = crate::support::recording_cpu()?;
     for blend in [0_u32, 1, 2] {
         for alpha in [223_u32, 224] {
             let model_name = format!("Caster{blend}_{alpha}.wmo");
@@ -270,6 +273,7 @@ pub(super) fn compare_environment_casters(
                                 .with_casters(&[], &casters);
                         renderer.request_frame_capture()?;
                         renderer.present_world_frame(
+                            &mut &recording_cpu,
                             scene
                                 .with_primary_shadows(WorldPrimaryShadowFrame::new(primary, &[]))
                                 .with_environment_shadows(environment),

@@ -7,6 +7,9 @@ use solarity_asset::AssetPath;
 /// A failure to establish or stop the required Vulkan 1.3 presentation stack.
 #[derive(Debug, Error)]
 pub enum VulkanError {
+    /// Required renderer CPU work failed admission or completion.
+    #[error(transparent)]
+    Cpu(#[from] solarity_cpu::CpuError),
     /// The Vulkan loader could not be opened on this system.
     #[error("failed to load Vulkan: {message}")]
     Load {

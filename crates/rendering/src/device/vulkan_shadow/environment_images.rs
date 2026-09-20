@@ -39,7 +39,7 @@ impl EnvironmentShadowImages {
             .texture_size()
             .filter(|_| quality.shader_mode() > 1)
             .ok_or(VulkanError::M2ShadowResourcesUnavailable)?;
-        let result = (|| {
+        let result: Result<(), VulkanError> = (|| {
             for pair in &mut self.colors {
                 for color in pair
                     .iter_mut()
