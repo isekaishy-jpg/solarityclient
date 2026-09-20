@@ -13,6 +13,9 @@ impl M2PlacementStorage {
         }
         self.lineage.push(lineage);
         self.entries.push(placement);
+        if !lineage.is_static {
+            self.link_owner(self.entries.len() - 1);
+        }
     }
 
     /// Retains native scene order and the old metadata index of each survivor.
@@ -51,6 +54,7 @@ impl M2PlacementStorage {
             retained
         });
         self.lineage.truncate(write);
+        self.rebuild_owners();
     }
 
     /// Transfers selected instances without rebuilding storage for the scenery
@@ -87,6 +91,7 @@ impl M2PlacementStorage {
             })
             .collect::<Vec<_>>();
         self.lineage.truncate(write);
+        self.rebuild_owners();
         removed_indices.into_iter().zip(removed).collect()
     }
 
@@ -144,6 +149,7 @@ impl M2PlacementStorage {
                 .skip(first)
                 .filter_map(|(index, slot)| (!slot.is_static).then_some(index)),
         );
+        self.rebuild_owners();
     }
 }
 

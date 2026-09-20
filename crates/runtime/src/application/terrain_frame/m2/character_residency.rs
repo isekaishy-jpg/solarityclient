@@ -169,12 +169,11 @@ impl M2Frame {
         let Some(animation) = animation else {
             return false;
         };
-        self.placements.iter().any(|placement| {
-            placement.owner == body_owner
-                && placement
-                    .unit_animation
-                    .as_ref()
-                    .is_some_and(|previous| Rc::ptr_eq(previous, animation))
+        self.placements.owner_indices(body_owner).any(|index| {
+            self.placements[index]
+                .unit_animation
+                .as_ref()
+                .is_some_and(|previous| Rc::ptr_eq(previous, animation))
         })
     }
 
@@ -183,18 +182,17 @@ impl M2Frame {
         guid: u64,
         attachment: &ResidentPlayerAttachment,
     ) -> Option<usize> {
-        self.placements.iter().position(|placement| {
-            placement.owner
-                == (M2GpuPlacementOwner::UnitItem {
-                    guid,
-                    point: attachment.point(),
-                })
-                && self
-                    .sources
-                    .get(placement.source_index)
+        self.placements
+            .owner_indices(M2GpuPlacementOwner::UnitItem {
+                guid,
+                point: attachment.point(),
+            })
+            .find(|&index| {
+                self.sources
+                    .get(self.placements[index].source_index)
                     .and_then(Option::as_ref)
                     .is_some_and(|source| source.model.path() == attachment.model().path())
-        })
+            })
     }
 }
 
@@ -236,12 +234,11 @@ pub(super) fn prepare_mount_gpu(
     // or equipment change does not replace that independent CM2Model.
     let retained = same_unit
         .then(|| {
-            frame.placements.iter().position(|placement| {
-                placement.owner == owner
-                    && placement
-                        .mount_key
-                        .as_ref()
-                        .is_some_and(|key| key.is_same_model_as(mount.key()))
+            frame.placements.owner_indices(owner).find(|&index| {
+                frame.placements[index]
+                    .mount_key
+                    .as_ref()
+                    .is_some_and(|key| key.is_same_model_as(mount.key()))
             })
         })
         .flatten();
@@ -494,7 +491,8 @@ pub(super) fn prepare_unit_equipment_gpu(
                 if matches!(identity, Some(M2UnitItemIdentity::NpcVirtual { .. })) {
                     // 7310A0 moves an existing component from hand to sheath
                     // (or back), preserving the model and its attached effects.
-                    frame.placements.iter().position(|placement| {
+                    frame.placements.dynamic_indices().iter().copied().find(|&index| {
+                        let placement = &frame.placements[index];
                         matches!(placement.owner, M2GpuPlacementOwner::UnitItem { guid, .. } if guid == input.guid)
                             && placement.item_identity.zip(identity).is_some_and(|(old, new)| old.same_component(new))
                             && frame.sources.get(placement.source_index).and_then(Option::as_ref)
@@ -542,7 +540,8 @@ pub(super) fn prepare_unit_equipment_gpu(
                 },
             );
             if unchanged_visuals {
-                for (index, placement) in frame.placements.iter().enumerate() {
+                for &index in frame.placements.dynamic_indices() {
+                    let placement = &frame.placements[index];
                     if let M2GpuPlacementOwner::UnitItemVisual {
                         guid,
                         item_point,

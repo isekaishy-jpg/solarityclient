@@ -170,10 +170,6 @@ impl M2Frame {
                 placement.ground_placement = None;
                 placement.entity_opacity = None;
                 placement.unit_presentation = None;
-                placement.owner = M2GpuPlacementOwner::Retired(RetiredModelKey {
-                    serial,
-                    member: index,
-                });
                 placement.retirement = Some(Box::new(RetiredM2Placement {
                     group: Rc::clone(&hierarchy),
                     original_owner: owner,
@@ -182,6 +178,13 @@ impl M2Frame {
                     parent,
                     attachments: Vec::new(),
                 }));
+                self.placements.rename_dynamic_owner(
+                    index,
+                    M2GpuPlacementOwner::Retired(RetiredModelKey {
+                        serial,
+                        member: index,
+                    }),
+                );
             }
             for (member, mut attachments) in requests {
                 attachments.sort_unstable();

@@ -6,12 +6,14 @@
 
 mod access;
 mod mutation;
+mod owners;
 
 #[cfg(test)]
 #[path = "../../../../../tests/application/placement_storage.rs"]
 mod tests;
 
 use super::{M2GpuPlacement, M2GpuPlacementOwner};
+use std::collections::HashMap;
 
 /// Static owners never change model, transform or attachment family in place.
 /// New residency constructs a new record; source-slot remapping is independent.
@@ -21,6 +23,7 @@ pub(super) struct PlacementLineage {
     source_index: usize,
     pub is_static: bool,
     pub is_effect: bool,
+    next_owner: Option<usize>,
 }
 
 impl PlacementLineage {
@@ -31,6 +34,7 @@ impl PlacementLineage {
             source_index: placement.source_index,
             is_static: matches!(placement.owner, M2GpuPlacementOwner::Static(_)),
             is_effect: placement.unit_effect.is_some(),
+            next_owner: None,
         }
     }
 }
@@ -41,6 +45,7 @@ pub(super) struct M2PlacementStorage {
     entries: Vec<M2GpuPlacement>,
     lineage: Vec<PlacementLineage>,
     dynamic_indices: Vec<usize>,
+    owners: HashMap<M2GpuPlacementOwner, (usize, usize)>,
     /// Sticky until complete publication; ordinary dynamic changes cannot reset it.
     static_layout_dirty: bool,
 }
@@ -51,6 +56,7 @@ impl Default for M2PlacementStorage {
             entries: Vec::new(),
             lineage: Vec::new(),
             dynamic_indices: Vec::new(),
+            owners: HashMap::new(),
             static_layout_dirty: true,
         }
     }
@@ -123,11 +129,14 @@ impl From<Vec<M2GpuPlacement>> for M2PlacementStorage {
             .filter_map(|(index, slot)| (!slot.is_static).then_some(index))
             .collect();
         let static_layout_dirty = true;
-        Self {
+        let mut storage = Self {
             entries,
             lineage,
             dynamic_indices,
+            owners: HashMap::new(),
             static_layout_dirty,
-        }
+        };
+        storage.rebuild_owners();
+        storage
     }
 }

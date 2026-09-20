@@ -16,6 +16,7 @@ impl M2PlacementStorage {
         self.entries.clear();
         self.lineage.clear();
         self.dynamic_indices.clear();
+        self.owners.clear();
         self.static_layout_dirty = true;
     }
 
@@ -142,4 +143,52 @@ fn assert_journal(storage: &M2PlacementStorage) {
             .then_some(index))
             .collect::<Vec<_>>()
     );
+    for &index in storage.dynamic_indices() {
+        let owner = storage.entries[index].owner;
+        assert_eq!(
+            storage.owner_indices(owner).collect::<Vec<_>>(),
+            storage
+                .entries
+                .iter()
+                .enumerate()
+                .filter_map(|(index, placement)| (placement.owner == owner).then_some(index))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Owner lookup remains current before rendering publishes, including duplicate
+/// owners, in-place retirement and a new lifetime reusing the same gameplay ID.
+#[test]
+fn owners_follow_mutations_before_render_publication() {
+    let mut storage = M2PlacementStorage::from(fixtures::placement_fixture(2048, 10));
+    storage.published_from(0);
+    let body = M2GpuPlacementOwner::CreatureBody { guid: 5 };
+    let duplicate = storage.owner_indices(body).collect::<Vec<_>>();
+    assert_eq!(duplicate.len(), 2);
+    let replacement = M2GpuPlacementOwner::CreatureBody { guid: 100 };
+    storage.rename_dynamic_owner(duplicate[0], replacement);
+    assert_eq!(
+        storage.owner_indices(body).collect::<Vec<_>>(),
+        [duplicate[1]]
+    );
+    storage.rename_dynamic_owner(duplicate[1], replacement);
+    assert!(storage.owner_indices(body).next().is_none());
+    assert_eq!(
+        storage.owner_indices(replacement).collect::<Vec<_>>(),
+        duplicate
+    );
+    storage.push(fixtures::placement(body));
+    assert_eq!(storage.owner_indices(body).next(), Some(storage.len() - 1));
+    storage.rename_dynamic_owner(duplicate[0], body);
+    assert_eq!(storage.owner_indices(body).next(), Some(duplicate[0]));
+    storage.rename_dynamic_owner(duplicate[1], body);
+    assert!(storage.owner_indices(replacement).next().is_none());
+    assert_journal(&storage);
+    let removed = storage.extract_from(duplicate[0], |index, _| index == duplicate[0]);
+    assert_eq!(removed.len(), 1);
+    assert_journal(&storage);
+    storage.retain_dynamic(|placement| placement.owner != body);
+    assert!(storage.owner_indices(body).next().is_none());
+    assert_journal(&storage);
 }
