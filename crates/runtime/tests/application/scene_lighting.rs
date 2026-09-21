@@ -4,6 +4,8 @@ use super::*;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK, game_object_models};
 use solarity_asset::ResourceLease;
 
+use crate::frame_cpu_support::continuation_support as late_continuation_support;
+
 #[path = "interior_scene_lighting.rs"]
 mod interior;
 #[path = "scene_lighting_overlap.rs"]
@@ -290,10 +292,13 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
         [M2LocalLightState::disabled(); 4],
     );
     let exterior = M2DirectionalLight::new(-Vec3::Z, Vec3::splat(0.1), Vec3::splat(0.2));
+    let cpu = crate::frame_cpu_support::executor()?;
+    verify_late_pose_dependency(&cpu, frame.sources[1].as_ref().ok_or("light source")?)?;
     for now in [1., 251., 751.] {
+        let consumed = frame.late_pose.consumed();
         let visible = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
-            &crate::frame_cpu_support::executor()?,
+            &cpu,
             &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
@@ -340,6 +345,11 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
                 );
             }
         }
+        assert_eq!(
+            frame.late_pose.consumed() - consumed,
+            2,
+            "both late light bones are consumed from workers"
+        );
         assert_eq!(
             frame.scene_lighting.points().points().len(),
             if now < 500. { 2 } else { 0 }
@@ -393,4 +403,49 @@ impl scene_lighting::SceneLighting {
         self.begin_finish(None, None, base, exterior)?;
         self.finish_pending(&mut crate::application::frame_pipeline::FrameWait::Offline)
     }
+}
+
+/// A discovered dependency returns main immediately even when every worker is occupied.
+fn verify_late_pose_dependency(
+    cpu: &solarity_cpu::CpuExecutor,
+    source: &M2GpuSource,
+) -> Result<(), Box<dyn Error>> {
+    use crate::application::frame_pipeline::FrameWait;
+    use solarity_rendering::M2BoneTransforms;
+    let mut late = preparation::poses::LatePose::default();
+    let clock = M2AnimationClock::new(0, 251., 251.);
+    let view = Mat4::from_rotation_z(0.3);
+    let overrides = M2BonePoseOverrides {
+        model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+        ..Default::default()
+    };
+    for palette in [false, true] {
+        let held = late_continuation_support::HeldFrameWorkers::new(cpu)?;
+        late.start(cpu, 2, source, clock, view, overrides, &[0], palette)?;
+        let suspended = !late.is_ready();
+        held.release()?;
+        assert!(suspended, "pending numeric work did not run or block main");
+        late.finish(&mut FrameWait::Offline)?;
+        let mut serial = solarity_rendering::M2BoneSamples::default();
+        serial.recompose(source.model.animations(), clock, view, overrides, &[0])?;
+        if palette {
+            let mut output = M2BonePose::default();
+            assert!(late.take(2, &source.model, clock, view, overrides, &mut output)?);
+            assert_eq!(output.bone_transform(0), serial.bone_transform(0));
+        } else {
+            let mut output = solarity_rendering::M2BoneSamples::default();
+            assert!(late.take_samples(
+                2,
+                &source.model,
+                clock,
+                view,
+                overrides,
+                &[0],
+                &mut output
+            )?);
+            assert_eq!(output.bone_transform(0), serial.bone_transform(0));
+        }
+        late.release_model();
+    }
+    Ok(())
 }

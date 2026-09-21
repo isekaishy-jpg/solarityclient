@@ -78,3 +78,28 @@ fn benchmark_placement_accounting() {
         );
     }
 }
+
+#[test]
+fn suspended_placement_records_one_transaction_after_publication() {
+    let mut work = Work {
+        sources: std::collections::HashSet::new(),
+        epoch: u64::MAX,
+        ..Work::default()
+    };
+    let mut placement = work.placement();
+    placement.admitted = true;
+    placement.callback_owner = true;
+    placement.palette = true;
+    let state = placement.pause();
+    assert_eq!(work.visited, 0);
+    let mut placement = work.resume_placement(Some(state));
+    placement.batch_hit = true;
+    placement.cpu_output = true;
+    placement.geometry_pending = true;
+    drop(placement);
+    assert_eq!(work.visited, 1);
+    assert_eq!(work.callback_owner, 1);
+    assert_eq!(work.batch_hits, 1);
+    assert_eq!(work.cpu_outputs, 1);
+    assert_eq!(work.palettes_without_draws, 0);
+}

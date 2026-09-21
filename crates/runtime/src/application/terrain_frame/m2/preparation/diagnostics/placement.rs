@@ -2,8 +2,8 @@
 
 use super::Work;
 
-pub(in super::super) struct Placement<'a> {
-    work: &'a mut Work,
+#[derive(Clone, Copy, Default)]
+pub(in super::super) struct PlacementState {
     pub(in super::super) admitted: bool,
     pub(in super::super) visible: bool,
     pub(in super::super) primary_shadow: bool,
@@ -21,26 +21,37 @@ pub(in super::super) struct Placement<'a> {
     pub(in super::super) cpu_output: bool,
 }
 
+pub(in super::super) struct Placement<'a> {
+    work: &'a mut Work,
+    state: PlacementState,
+    record: bool,
+}
+impl std::ops::Deref for Placement<'_> {
+    type Target = PlacementState;
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+impl std::ops::DerefMut for Placement<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
+}
 impl<'a> Placement<'a> {
     pub(in super::super) fn new(work: &'a mut Work) -> Self {
+        Self::resume(work, PlacementState::default())
+    }
+    pub(in super::super) fn resume(work: &'a mut Work, state: PlacementState) -> Self {
         Self {
             work,
-            admitted: false,
-            visible: false,
-            primary_shadow: false,
-            environment_shadow: false,
-            light_owner: false,
-            callback_owner: false,
-            particle_owner: false,
-            palette: false,
-            batch_hit: false,
-            mesh_output: false,
-            geometry_pending: false,
-            shadow_output: false,
-            particle_output: false,
-            ribbon_output: false,
-            cpu_output: false,
+            state,
+            record: true,
         }
+    }
+    /// A readiness pause is still the same logical placement transaction.
+    pub(in super::super) fn pause(mut self) -> PlacementState {
+        self.record = false;
+        self.state
     }
 }
 
@@ -55,7 +66,7 @@ impl Placement<'_> {
 
 impl Drop for Placement<'_> {
     fn drop(&mut self) {
-        if self.work.epoch == 0 {
+        if !self.record || self.work.epoch == 0 {
             return;
         }
         let reasons = u64::from(self.admitted)

@@ -1,7 +1,7 @@
 //! Sampled demand/output accounting; no per-placement recorder traffic.
 
 mod placement;
-pub(super) use placement::Placement;
+pub(super) use placement::{Placement, PlacementState};
 
 #[cfg(test)]
 #[path = "../../../../../../tests/application/m2_work_accounting.rs"]
@@ -41,6 +41,13 @@ impl Work {
                 0
             },
             ..Self::default()
+        }
+    }
+
+    pub(super) fn resume_placement(&mut self, state: Option<PlacementState>) -> Placement<'_> {
+        match state {
+            Some(state) => Placement::resume(self, state),
+            None => self.placement(),
         }
     }
 

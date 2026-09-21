@@ -19,6 +19,23 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Current-clock bone demands discovered during ordered placement traversal now
+use the existing CPU pose kernel through a saved placement continuation. Clock
+selection, callbacks, RNG and event-window consumption run once; publication
+resumes after the worker result is ready and its source, clock, view and overrides
+match. Render consumers reuse a full worker palette; other CPU consumers request
+only named bones. Existing native frame waits service the dependency, and the
+reusable job releases its source after frame completion or abandonment.
+
+Formatting and runtime Clippy with warnings denied pass. Runtime validation
+passes 471 library tests and 68 stock-seed integration tests (28 existing ignores),
+including held-worker suspension, sparse/full pose parity, animated offscreen
+light result consumption and exactly-once placement accounting. Evidence is in
+ignored `target/late-pose-final2.log`. Late dependencies remain ordered one at a
+time; expired-variation event samples and callback-time sampling still run on
+the main owner. Broader graph, memory and source cutover work and performance
+qualification remain open. Build 174 remains installed; no FPS gain is claimed.
+
 Retained M2 generations now charge the existing CPU Result allowances once for
 their decoded geometry, primary SKIN, collision/hierarchy buffers and nested
 animation, material, light, ribbon and particle tracks. Runtime binds the shared
@@ -73,8 +90,8 @@ carry frame reservations. Publication checks the source generation, clock, view,
 overrides and exact named demand before swapping the result into the ordered
 owner. Sampling an event window leaves its consumption cursor untouched. The
 offscreen equipped-NPC and moving-camera serial comparisons exercise this path;
-attachment inputs discovered later in traversal and callback-time sampling
-remain to be connected.
+attachment inputs discovered later in traversal are connected by the placement
+continuation above; callback-time sampling remains to be connected.
 Formatting, runtime Clippy with warnings denied, and all 468 runtime tests pass
 (27 existing ignored). The three offscreen mount populations consume worker
 samples while retaining callback/RNG behavior. Validation is recorded in ignored

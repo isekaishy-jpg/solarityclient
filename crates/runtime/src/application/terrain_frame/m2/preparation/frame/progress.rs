@@ -77,6 +77,7 @@ impl PendingM2Frame<'_> {
             .unwrap_or_else(|| unreachable!("pending frame retains its owner"));
         if !self.admission.complete
             && let Err(error) = frame.admit_visible_draws(
+                cpu,
                 self.view,
                 &mut self.admission,
                 random,
@@ -248,7 +249,9 @@ impl PendingM2Frame<'_> {
             .unwrap_or_else(|| unreachable!("pending frame retains its owner"));
         match self.stage {
             FrameStage::Admission => {
-                if let Some(index) = frame.frame_work.next_index() {
+                if self.admission.pending.is_some() {
+                    frame.late_pose.wait(wait)?;
+                } else if let Some(index) = frame.frame_work.next_index() {
                     frame.spatial_batch.wait_for(index, wait)?;
                     frame.pose_batch.wait_for_root(index, wait)?;
                 }

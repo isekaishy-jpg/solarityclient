@@ -14,7 +14,7 @@ pub(super) struct PoseJob {
     pub(super) measurement: solarity_cpu::WorkMeasurement,
     placement: usize,
     trace: solarity_profiling::TraceContext,
-    model: ResourceLease<DecodedM2Model>,
+    model: Option<ResourceLease<DecodedM2Model>>,
     orientation: Vec<bool>,
     clock: M2AnimationClock,
     view: Mat4,
@@ -35,11 +35,25 @@ impl PoseJob {
         cpu: &solarity_cpu::CpuExecutor,
     ) -> Result<(), solarity_cpu::CpuError> {
         if self.sparse {
-            self.samples
-                .reserve_cpu_storage(cpu.storage(), self.model.animations().bones().len())
+            self.samples.reserve_cpu_storage(
+                cpu.storage(),
+                self.model
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("prepared pose retains model"))
+                    .animations()
+                    .bones()
+                    .len(),
+            )
         } else {
-            self.pose
-                .reserve_cpu_storage(cpu.storage(), self.model.animations().bones().len())
+            self.pose.reserve_cpu_storage(
+                cpu.storage(),
+                self.model
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("prepared pose retains model"))
+                    .animations()
+                    .bones()
+                    .len(),
+            )
         }
     }
 
@@ -69,7 +83,12 @@ impl PoseJob {
     ) -> solarity_cpu::JobOutcome {
         context.diagnostic_value(
             "m2.pose.bones",
-            self.model.animations().bones().len() as u64,
+            self.model
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("prepared pose retains model"))
+                .animations()
+                .bones()
+                .len() as u64,
         );
         context.diagnostic_value("m2.pose.named_only", u64::from(self.sparse));
         self.sample();
@@ -87,7 +106,7 @@ impl PoseJob {
             measurement: solarity_cpu::WorkMeasurement::default(),
             placement: 0,
             trace: solarity_profiling::TraceContext::default(),
-            model,
+            model: Some(model),
             orientation: Vec::new(),
             clock: M2AnimationClock::new(0, 0., 0.),
             view: Mat4::IDENTITY,
@@ -100,6 +119,11 @@ impl PoseJob {
             sparse: false,
             result: None,
         }
+    }
+
+    pub(super) fn release_model(&mut self) {
+        self.model = None;
+        self.result = None;
     }
 
     pub(super) fn placement(&self) -> usize {
@@ -120,8 +144,12 @@ impl PoseJob {
     ) {
         self.placement = placement;
         self.trace = solarity_profiling::TraceContext::capture().fork("m2.pose.request");
-        if !ResourceLease::ptr_eq(&self.model, &source.model) {
-            self.model = ResourceLease::clone(&source.model);
+        if self
+            .model
+            .as_ref()
+            .is_none_or(|model| !ResourceLease::ptr_eq(model, &source.model))
+        {
+            self.model = Some(ResourceLease::clone(&source.model));
         }
         self.orientation
             .clone_from(&source.model_oriented_billboard_bones);
@@ -153,7 +181,10 @@ impl PoseJob {
         };
         self.result = Some(if self.sparse {
             self.samples.recompose(
-                self.model.animations(),
+                self.model
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("prepared pose retains model"))
+                    .animations(),
                 self.clock,
                 self.view,
                 overrides,
@@ -161,7 +192,10 @@ impl PoseJob {
             )
         } else {
             self.pose.recompose_with_overrides(
-                self.model.animations(),
+                self.model
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("prepared pose retains model"))
+                    .animations(),
                 self.clock,
                 self.view,
                 overrides,
@@ -227,7 +261,9 @@ impl PoseJob {
         view: Mat4,
         overrides: M2BonePoseOverrides<'_>,
     ) -> bool {
-        ResourceLease::ptr_eq(&self.model, model)
+        self.model
+            .as_ref()
+            .is_some_and(|selected| ResourceLease::ptr_eq(selected, model))
             && self.clock == clock
             && self.view == view
             && self.fingers == overrides.finger_pose

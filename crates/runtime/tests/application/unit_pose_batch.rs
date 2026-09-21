@@ -322,6 +322,8 @@ fn benchmark_moving_unit_pose_batch() -> Result<(), Box<dyn Error>> {
             let tick = (frame * 11 + index * 17) as f32;
             let sequence = job
                 .model
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("benchmark source"))
                 .animations()
                 .sequence_for_variation(if index % 2 == 0 { 0 } else { 4 }, 0)
                 .ok_or("benchmark sequence")?;
@@ -341,7 +343,10 @@ fn benchmark_moving_unit_pose_batch() -> Result<(), Box<dyn Error>> {
             } else {
                 for job in &jobs {
                     serial.recompose_with_overrides(
-                        job.model.animations(),
+                        job.model
+                            .as_ref()
+                            .unwrap_or_else(|| unreachable!("benchmark source"))
+                            .animations(),
                         job.clock,
                         job.view,
                         overrides(job),
@@ -355,7 +360,10 @@ fn benchmark_moving_unit_pose_batch() -> Result<(), Box<dyn Error>> {
         }
         for job in &jobs {
             serial.recompose_with_overrides(
-                job.model.animations(),
+                job.model
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("benchmark source"))
+                    .animations(),
                 job.clock,
                 job.view,
                 overrides(job),

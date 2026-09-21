@@ -527,6 +527,7 @@ pub(in crate::application) struct M2Frame {
     bone_samples_scratch: M2BoneSamples,
     bone_demand: preparation::demand::CpuBoneDemand,
     pose_batch: preparation::poses::PoseBatch,
+    late_pose: preparation::poses::LatePose,
     spatial_batch: preparation::spatial::SpatialBatch,
     receiver_frame: preparation::receivers::ReceiverFrame,
     /// Reused only between shadow and ordinary draws of the current placement.
@@ -661,6 +662,7 @@ impl M2Frame {
             bone_samples_scratch: M2BoneSamples::default(),
             bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
+            late_pose: preparation::poses::LatePose::default(),
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),
@@ -817,6 +819,7 @@ impl M2Frame {
             bone_samples_scratch: M2BoneSamples::default(),
             bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
+            late_pose: preparation::poses::LatePose::default(),
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),

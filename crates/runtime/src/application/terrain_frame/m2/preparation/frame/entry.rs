@@ -19,13 +19,15 @@ impl M2Frame {
         let geometry = self.finish_geometry(&mut FrameWait::Offline);
         self.restore_geometry_states();
         let poses = self.pose_batch.finish(&mut FrameWait::Offline);
+        let late_poses = self.late_pose.finish(&mut FrameWait::Offline);
+        self.late_pose.release_model();
         let spatial = self.spatial_batch.finish(&mut FrameWait::Offline);
         let lighting = if self.scene_lighting.has_pending() {
             self.scene_lighting.finish_pending(&mut FrameWait::Offline)
         } else {
             Ok(())
         };
-        for error in [finalization, geometry, poses, spatial, lighting]
+        for error in [finalization, geometry, poses, late_poses, spatial, lighting]
             .into_iter()
             .filter_map(Result::err)
         {
@@ -195,6 +197,7 @@ impl M2Frame {
             )?;
         }
         frame.admit_visible_draws(
+            cpu,
             pending.view,
             &mut pending.admission,
             random,
