@@ -55,6 +55,9 @@ impl<T> CpuTask<T> {
     /// finish. The handle retains its result and can be joined normally.
     pub fn cancel(&self) {
         self.control.0.cancel();
+        if let Some(dispatch) = self.dispatch.upgrade() {
+            dispatch.resume_cancelled(&self.service);
+        }
     }
 
     /// Changes queued demand without repeating work or touching domain state.
@@ -105,6 +108,14 @@ impl<T> CpuTask<T> {
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.control.0.finished.load(Ordering::Acquire)
+    }
+}
+
+impl<T> Drop for CpuTask<T> {
+    fn drop(&mut self) {
+        if !self.is_finished() {
+            self.cancel();
+        }
     }
 }
 

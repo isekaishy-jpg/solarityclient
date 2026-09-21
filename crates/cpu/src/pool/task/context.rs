@@ -48,6 +48,11 @@ impl TaskControl {
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }
+
+    /// Read under dispatch metadata when deciding whether suspension is still allowed.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
 }
 
 /// Dropping a consumer requests withdrawal without detaching executor ownership.

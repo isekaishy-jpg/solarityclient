@@ -31,6 +31,14 @@ impl Dispatch {
         let mut retirement = super::service::ServiceQueue::default();
         let mut speculative = super::service::ServiceQueue::default();
         let mut sleepers = crate::storage::StorageVec::default();
+        let mut parked = crate::storage::StorageVec::default();
+        parked.reserve(
+            budget,
+            CpuStorageClass::Required,
+            CpuStorageKind::Metadata,
+            capacity,
+        )?;
+        parked.resize_with(capacity, super::parking::ParkedService::default);
         sleepers.reserve(
             budget,
             CpuStorageClass::Frame,
@@ -62,7 +70,9 @@ impl Dispatch {
                 speculative,
                 sleepers,
                 stopping: false,
+                suspension_closed: false,
                 active_bulk: 0,
+                parked,
             }),
             ready: Condvar::new(),
             queued: AtomicU8::new(0),

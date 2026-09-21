@@ -128,8 +128,11 @@ impl Dispatch {
 
     /// Closes the durable sleep predicate after the admission owners drain.
     pub(crate) fn stop(&self) {
-        self.lock().stopping = true;
-        self.ready.notify_all();
+        let mut queues = self.lock();
+        queues.stopping = true;
+        queues.resume_shutdown();
+        self.publish_queued(&queues);
+        self.notify_ready(queues);
     }
 }
 
@@ -198,7 +201,14 @@ impl Dispatch {
                 queues.service(previous).push_back(work);
             }
         }
+        let demand = queues.parked.iter().find_map(|slot| {
+            slot.demand()
+                .filter(|(candidate, _)| Arc::ptr_eq(candidate, identity))
+        });
         self.publish_queued(&queues);
         self.notify_ready(queues);
+        if let Some((identity, interest)) = demand {
+            super::parking::follow_demand(&identity, &interest);
+        }
     }
 }

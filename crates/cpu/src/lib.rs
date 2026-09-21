@@ -28,8 +28,8 @@ pub use environment::is_worker as is_worker_thread;
 pub use pool::{
     CpuError, CpuExecutionPlan, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService,
     CpuServiceControl, CpuServiceDemand, CpuServiceExecution, CpuServiceInterest, CpuTask,
-    CpuTaskPermit, FrameBatch, FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority,
-    JobOutcome, LoadBatch,
+    CpuTaskDependency, CpuTaskPermit, CpuTaskStep, FrameBatch, FrameBatchPlan, FrameGraphTemplate,
+    FrameJob, FramePriority, JobOutcome, LoadBatch,
 };
 pub use random::BlizzardRand;
 pub use reciprocal::reciprocal_sqrt_estimate;

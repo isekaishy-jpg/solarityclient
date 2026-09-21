@@ -8,7 +8,7 @@ use crate::pool::{
 };
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{Arc, atomic::AtomicU8},
+    sync::Arc,
     time::Instant,
 };
 
@@ -34,7 +34,7 @@ impl CpuTaskPermit<'_> {
             pool,
             lease,
             notifier,
-            service,
+            identity,
             execution,
             control,
         } = self;
@@ -43,7 +43,6 @@ impl CpuTaskPermit<'_> {
         let epoch = solarity_profiling::generation();
         let queued = (epoch != 0).then(Instant::now);
         let trace = solarity_profiling::TraceContext::capture().fork("cpu.job");
-        let identity = Arc::new(AtomicU8::new(service as u8));
         pool.push(
             Work::Once(
                 Arc::clone(&identity),

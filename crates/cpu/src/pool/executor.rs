@@ -266,6 +266,7 @@ impl CpuExecutor {
         self.epochs.stop()?;
         self.state.close_admission()?;
         self.load_epochs.stop()?;
+        self.dispatch.close_suspension();
         self.state.stop_and_wait()?;
         self.frame_state.stop_and_wait()?;
         self.dispatch.stop();
@@ -284,6 +285,7 @@ impl Drop for CpuExecutor {
         let _stopped = self.epochs.stop();
         let _load_closed = self.state.close_admission();
         let _load_stopped = self.load_epochs.stop();
+        self.dispatch.close_suspension();
         let _shutdown_result = self.state.stop_and_wait();
         let _frame_shutdown = self.frame_state.stop_and_wait();
         self.dispatch.stop();

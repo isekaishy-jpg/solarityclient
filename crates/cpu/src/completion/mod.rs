@@ -4,8 +4,8 @@ mod product;
 mod readiness;
 mod ready_queue;
 pub use product::{ProductOutcome, ProductPublisher, SharedProduct};
+pub(crate) use readiness::{Binding, PrioritySink, ReadySink, Subscription};
 pub use readiness::{CompletionPort, CompletionProducer, ReadyToken};
-pub(crate) use readiness::{PrioritySink, ReadySink, Subscription};
 pub use ready_queue::{MainReadyQueue, ReadyContinuation};
 
 /// Runtime-owned wake signal for a coordinator that may be parked.

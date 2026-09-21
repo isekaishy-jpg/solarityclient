@@ -6,14 +6,14 @@ impl Dispatch {
     /// Reserved service workers guarantee a turn at kernel boundaries. Other
     /// flexible capacity prefers frames; indivisible services share the bulk cap.
     pub(super) fn worker(
-        &self,
+        self: &std::sync::Arc<Self>,
         index: usize,
         flexible: bool,
         service_reserved: bool,
         environment: crate::environment::WorkerEnvironment,
     ) {
         let mut worker = super::WorkerLane {
-            owner: std::ptr::from_ref(self).addr(),
+            owner: std::ptr::from_ref(self.as_ref()).addr(),
             index,
             environment,
             execution: crate::CpuServiceExecution::Finite,
@@ -96,12 +96,19 @@ impl Dispatch {
             if service {
                 let mut queues = self.lock();
                 queues.active_bulk -= usize::from(bulk);
-                if let Some(work) = resumed {
-                    let queued = crate::pool::observation::SampleTime::now();
-                    queues
-                        .service(work.service())
-                        .push_back(super::QueuedWork::new(work, queued));
-                }
+                let binding = match resumed {
+                    Some(super::Continuation::Ready(work)) => {
+                        let queued = crate::pool::observation::SampleTime::now();
+                        queues
+                            .service(work.service())
+                            .push_back(super::QueuedWork::new(work, queued));
+                        None
+                    }
+                    Some(super::Continuation::Waiting(work, dependency)) => {
+                        queues.park(work, dependency)
+                    }
+                    None => None,
+                };
                 self.publish_queued(&queues);
                 let wake_service = self.flexible_workers > 1
                     && (!queues.required.is_empty()
@@ -114,6 +121,13 @@ impl Dispatch {
                     self.notify_ready(queues);
                 } else {
                     drop(queues);
+                }
+                // Readiness publication may already have won the race. Binding
+                // replays that durable result outside the dispatch lock.
+                if let Some((binding, serial, index)) = binding {
+                    self.follow_parked_demand(serial, index);
+                    let sink: std::sync::Arc<dyn crate::completion::ReadySink> = self.clone();
+                    binding.bind(std::sync::Arc::downgrade(&sink), serial, index);
                 }
             } else {
                 debug_assert!(resumed.is_none());

@@ -2,6 +2,7 @@
 
 mod cost;
 mod observation;
+mod parking;
 mod queues;
 mod service;
 mod startup;
@@ -37,8 +38,33 @@ pub(crate) enum WorkClass {
 /// One owned finite service operation with resumable domain-defined boundaries.
 /// Implementations stay private to the pool; no domain callback runs under queues.
 pub(crate) trait ServiceStep: Send {
-    /// Returns true only when the same owned operation needs another ready turn.
-    fn step(&mut self, worker: WorkerLane) -> bool;
+    /// Runs a domain turn outside dispatch locks.
+    fn step(&mut self, worker: WorkerLane) -> ServiceTurn;
+    /// Metadata-only withdrawal never invokes the domain or destroys captures.
+    fn cancel(&self);
+    /// Prevents cancellation racing a new suspension from losing its wake.
+    fn is_cancelled(&self) -> bool;
+    /// Cold readiness state stays inside the existing service allocation rather
+    /// than widening every frame runner in the shared ready queues.
+    fn retain_dependency(
+        &mut self,
+        dependency: crate::CpuTaskDependency,
+    ) -> crate::completion::Binding;
+    /// Clones scheduling metadata only; never accesses domain captures.
+    fn dependency_demand(&self) -> Option<crate::CpuServiceInterest>;
+}
+
+/// Internal terminal, runnable and externally gated service transitions.
+pub(crate) enum ServiceTurn {
+    Finished,
+    Ready,
+    Waiting(crate::CpuTaskDependency),
+}
+
+/// A yielded operation retains its existing admission and owned captures.
+pub(super) enum Continuation {
+    Ready(Work),
+    Waiting(Work, crate::CpuTaskDependency),
 }
 
 /// Physical execution identity selects scratch only, never gameplay RNG or job order.
@@ -69,14 +95,23 @@ pub(crate) enum Work {
 
 impl Work {
     /// Runs outside every scheduler lock.
-    fn run(self, flexible: bool, worker: WorkerLane) -> Option<Self> {
+    fn run(self, flexible: bool, worker: WorkerLane) -> Option<Continuation> {
         match self {
             Self::Once(_, _, operation) => operation(worker),
-            Self::Sliced(identity, execution, mut operation) => {
-                if operation.step(worker) {
-                    return Some(Self::Sliced(identity, execution, operation));
+            Self::Sliced(identity, execution, mut operation) => match operation.step(worker) {
+                ServiceTurn::Finished => {}
+                ServiceTurn::Ready => {
+                    return Some(Continuation::Ready(Self::Sliced(
+                        identity, execution, operation,
+                    )));
                 }
-            }
+                ServiceTurn::Waiting(dependency) => {
+                    return Some(Continuation::Waiting(
+                        Self::Sliced(identity, execution, operation),
+                        dependency,
+                    ));
+                }
+            },
             Self::Retained(operation) | Self::Loading(_, operation) => {
                 operation.run(flexible, worker)
             }
@@ -98,7 +133,7 @@ impl Work {
     /// Loading kernels can contain foreign asset calls; frame kernels are finite.
     fn execution(&self) -> crate::CpuServiceExecution {
         match self {
-            Self::Once(_, execution, _) | Self::Sliced(_, execution, _) => *execution,
+            Self::Once(_, execution, _) | Self::Sliced(_, execution, ..) => *execution,
             Self::Loading(..) => crate::CpuServiceExecution::Bulk,
             Self::Retained(..) | Self::Priority(..) => crate::CpuServiceExecution::Finite,
         }
@@ -148,7 +183,10 @@ struct Queues {
     speculative: service::ServiceQueue,
     sleepers: crate::storage::StorageVec<SleepingWorker>,
     stopping: bool,
+    suspension_closed: bool,
     active_bulk: usize,
+    // One slot per logical admission, not per worker or discovered source.
+    parked: crate::storage::StorageVec<parking::ParkedService>,
 }
 
 /// The pool owns all handles; no task creates or detaches a thread.
