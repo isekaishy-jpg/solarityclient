@@ -484,6 +484,34 @@ and `git diff --check` passed after a field-name shorthand cleanup.
 Logs: `target/model-reservation-rendering-tests.log`,
 `target/model-reservation-runtime-tests.log`, `target/model-reservation-clippy.log`.
 
+The namespace-control batch admits the fixed M2/WMO/BLP authority allocations,
+their two retirement signals and the shared storage binding in one configuration
+transaction. Every control registers its exact backing size during namespace
+construction; the bounded five-slot census needs no growable metadata table.
+Configuration refusal leaves every control unbound and releases the temporary
+reservation so startup may retry. Separate charges follow actual control lifetimes,
+including independent service clones and a signal retained by cache observers.
+Observers now retain only the signal allocation, mark namespace disappearance
+explicitly, and prune dead registrations during subscription or notification.
+They cannot pin source/cache owners or leave a weak allocation uncharged. The
+existing release queue remains allocation-free on warmed final-consumer delivery.
+Texture collection now also relinquishes this cache's namespace-service handle
+when no local texture entry belongs to that namespace. Reader/producer/other-cache
+owners remain independent, and external texture snapshots survive this cleanup.
+Catalog descriptor/path clones, canonical source keys, errors and other nested
+payload allocations remain outside this fixed-control adoption. No new packaged
+client build or live performance comparison accompanies this source batch.
+
+Namespace-control validation passed all 235 asset tests with one existing ignore.
+Coverage includes all-or-nothing startup refusal/retry, concurrent binding,
+independent M2/WMO/BLP clone lifetimes, observer-held signal charges and
+allocation-free dead-observer cleanup. Existing source publication, release-ticket,
+retirement, cross-cache texture sharing and external-snapshot tests pass. Payload
+census fixtures now distinguish their Result bytes from live namespace Metadata;
+all charges still return after their actual owners retire. All-target/all-feature
+asset/runtime Clippy with warnings denied, formatting and `git diff --check` passed.
+Logs: `target/source-controls-tests.log`, `target/source-controls-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
@@ -1787,7 +1815,7 @@ an operation has a context parameter. The requirements below remain in scope.
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
-  Remaining catalog/service root controls, canonical key and error allocations,
+  Remaining catalog descriptors/path clones, canonical key and error allocations,
   payload Arc allocations retained by weak observers, and encoded source paths still need
   admission/accounting. M2/WMO cache tables, entry arrays, release slots/watchers and
   cached consumer controls now retain metadata admission; namespace pending slots/tables,

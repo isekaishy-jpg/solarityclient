@@ -111,7 +111,11 @@ fn registration_pressure_does_not_publish_an_owner_or_maintenance_observer()
 -> Result<(), Box<dyn Error>> {
     let (service, budget) = service()?;
     let cache = M2ModelCache::new();
-    let hold = budget.reserve(CpuStorageClass::Required, CpuStorageKind::Scratch, 65536)?;
+    let hold = budget.reserve(
+        CpuStorageClass::Required,
+        CpuStorageKind::Scratch,
+        65536 - budget.snapshot().used(CpuStorageClass::Required),
+    )?;
     assert!(service.register(&cache.core).is_err());
     assert!(!service.take_changed());
     assert_eq!(service.next_collection_delay_ms(), None);

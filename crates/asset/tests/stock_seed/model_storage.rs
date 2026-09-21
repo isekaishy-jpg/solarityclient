@@ -70,14 +70,21 @@ fn decoded_storage_counts_nested_keys_and_releases_uncached_generations()
         256 * (size_of::<u32>() + size_of::<glam::Vec3>())
     );
     let class = solarity_cpu::CpuStorageClass::Required;
+    let kind = solarity_cpu::CpuStorageKind::Result;
     assert_eq!(
-        budget.snapshot().used(class),
+        budget.snapshot().bytes(class, kind),
         small.resident_storage_bytes() + large.resident_storage_bytes()
     );
     let retained = large.resident_storage_bytes();
     drop(small);
-    assert_eq!(budget.snapshot().used(class), retained);
+    assert_eq!(budget.snapshot().bytes(class, kind), retained);
     drop(large);
+    assert_eq!(budget.snapshot().bytes(class, kind), 0);
+    assert!(
+        budget.snapshot().used(class) > 0,
+        "the mounted namespace retains its controls"
+    );
+    drop(store);
     assert_eq!(budget.snapshot().used(class), 0);
     Ok(())
 }

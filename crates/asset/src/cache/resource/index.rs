@@ -76,7 +76,7 @@ impl<K: Eq + Hash + Clone, T> ResourceCache<K, T> {
     /// Registers a namespace maintenance observer at the first load boundary.
     pub(crate) fn subscribe(
         &self,
-        watcher: &Arc<std::sync::atomic::AtomicBool>,
+        watcher: &super::super::source_storage::RetirementSignal,
     ) -> Result<(), AssetError> {
         self.releases.subscribe(watcher)
     }

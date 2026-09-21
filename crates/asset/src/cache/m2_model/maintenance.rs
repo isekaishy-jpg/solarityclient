@@ -1,24 +1,21 @@
 //! Namespace-owned cache maintenance is finite work for the application's CPU pool.
 
+use super::super::source_storage::{ControlOwner, RetirementSignal, SourceStorage};
 use super::ModelCacheCore;
 use crate::{AssetError, AssetReadBudget, AssetStorageVec};
 use solarity_cpu::{CpuService, CpuStorageClass, CpuStorageKind};
 use std::{
     fmt,
     ops::ControlFlow,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex, atomic::Ordering},
 };
 
 /// Registry ownership prevents an expired cache's final payload drop on the frame thread.
-#[derive(Default)]
 pub(super) struct Registry {
     owners: Mutex<OwnerIndex>,
-    changed: Arc<AtomicBool>,
+    changed: RetirementSignal,
     pub(super) requests: Mutex<super::requests::RequestIndex>,
-    storage: Arc<std::sync::OnceLock<solarity_cpu::CpuStorageBudget>>,
+    control: ControlOwner,
 }
 
 /// Stable slots let maintenance keep a finite cursor without copying the owner list.
@@ -94,8 +91,14 @@ impl OwnerIndex {
 }
 
 /// Shared by catalog clones; no worker, timer or thread is created by this service.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct M2CacheService(pub(super) Arc<Registry>);
+
+impl Default for M2CacheService {
+    fn default() -> Self {
+        Self::with_storage(Arc::default())
+    }
+}
 
 impl fmt::Debug for M2CacheService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -104,12 +107,12 @@ impl fmt::Debug for M2CacheService {
 }
 
 impl M2CacheService {
-    pub(crate) fn with_storage(
-        storage: Arc<std::sync::OnceLock<solarity_cpu::CpuStorageBudget>>,
-    ) -> Self {
+    pub(crate) fn with_storage(storage: Arc<SourceStorage>) -> Self {
         Self(Arc::new(Registry {
-            storage,
-            ..Registry::default()
+            owners: Mutex::new(OwnerIndex::default()),
+            changed: RetirementSignal::new(&storage),
+            requests: Mutex::default(),
+            control: ControlOwner::for_arc::<Registry>(&storage),
         }))
     }
     /// Binds namespace source ownership to the application storage budget.
@@ -117,7 +120,8 @@ impl M2CacheService {
     /// the class; retained models and textures keep separate payload charges.
     /// Configure before the first cache load; offline tools may leave it unconfigured.
     /// # Errors
-    /// Rejects repeated configuration or an already active source cache.
+    /// Rejects repeated configuration, an already active source cache, or insufficient
+    /// required metadata capacity for the namespace controls. Refusal permits retry.
     pub fn configure_storage(
         &self,
         budget: solarity_cpu::CpuStorageBudget,
@@ -135,14 +139,11 @@ impl M2CacheService {
         if owners.len != 0 {
             return Err(crate::AssetError::SourceStorageConfigured);
         }
-        self.0
-            .storage
-            .set(budget)
-            .map_err(|_| crate::AssetError::SourceStorageConfigured)
+        self.0.control.configure(budget)
     }
 
     pub(crate) fn storage(&self) -> Option<&solarity_cpu::CpuStorageBudget> {
-        self.0.storage.get()
+        self.0.control.budget()
     }
 
     /// First namespace use registers the cache and its durable release-change signal.

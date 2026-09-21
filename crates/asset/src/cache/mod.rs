@@ -5,6 +5,7 @@
 
 mod resource;
 mod source_dependency;
+mod source_storage;
 mod types;
 
 mod blp_preparation;

@@ -1,5 +1,6 @@
 //! Namespace texture requests publish once and suspend consumers through typed readiness.
 use super::source_dependency::{SourceDependency, SourceSlot};
+use super::source_storage::{ControlOwner, SourceStorage};
 use crate::{
     AssetError, AssetNamespaceId, AssetReadBudget, AssetResourceKey, AssetStore, BlpTextureSource,
 };
@@ -48,21 +49,17 @@ pub type BlpLoadDependency = SourceDependency<BlpTextureSource, BlpLoadError>;
 struct State {
     ready: crate::AssetStorageMap<AssetResourceKey, crate::texture::BlpTextureWeak>,
     pending: crate::AssetStorageMap<AssetResourceKey, Arc<Slot>>,
-    storage: Arc<std::sync::OnceLock<CpuStorageBudget>>,
-}
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            ready: crate::AssetStorageMap::metadata(),
-            pending: crate::AssetStorageMap::metadata(),
-            storage: Arc::default(),
-        }
-    }
+    control: ControlOwner,
 }
 /// Cloned catalogs share authority without sharing mutable archive handles.
 /// Ready entries are weak: cache/consumer owners retain the actual payload charge.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct BlpCacheService(Arc<Mutex<State>>);
+impl Default for BlpCacheService {
+    fn default() -> Self {
+        Self::with_storage(Arc::default())
+    }
+}
 impl std::fmt::Debug for BlpCacheService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlpCacheService").finish_non_exhaustive()
@@ -91,10 +88,11 @@ pub struct BlpLoadProducer {
     finished: bool,
 }
 impl BlpCacheService {
-    pub(crate) fn with_storage(storage: Arc<std::sync::OnceLock<CpuStorageBudget>>) -> Self {
+    pub(crate) fn with_storage(storage: Arc<SourceStorage>) -> Self {
         Self(Arc::new(Mutex::new(State {
-            storage,
-            ..State::default()
+            ready: crate::AssetStorageMap::metadata(),
+            pending: crate::AssetStorageMap::metadata(),
+            control: ControlOwner::for_arc::<Mutex<State>>(&storage),
         })))
     }
 
@@ -126,7 +124,7 @@ impl BlpCacheService {
                 service,
             )?));
         }
-        let storage = state.storage.get().cloned();
+        let storage = state.control.budget().cloned();
         let budget = storage
             .clone()
             .map(|storage| AssetReadBudget::for_service(storage, CpuService::Required));
@@ -164,8 +162,8 @@ impl BlpCacheService {
             return Ok(existing);
         }
         let budget = state
-            .storage
-            .get()
+            .control
+            .budget()
             .cloned()
             .map(|storage| AssetReadBudget::for_service(storage, CpuService::Required));
         state

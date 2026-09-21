@@ -6,7 +6,7 @@ use std::{
     error::Error,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicU32, AtomicUsize, Ordering},
     },
 };
 
@@ -252,7 +252,7 @@ fn qualified_release_notifies_idle_maintenance_without_allocation() -> Result<()
     let clock = Arc::new(AtomicU32::new(0));
     let mut cache =
         ResourceCache::with_retention(ResourceCacheClock::from_milliseconds(Arc::clone(&clock)));
-    let changed = Arc::new(AtomicBool::new(false));
+    let changed = crate::cache::source_storage::RetirementSignal::new(&Arc::default());
     cache.subscribe(&changed)?;
     let value = cache.insert(1u32, 42u32)?;
     changed.store(false, Ordering::Release);
@@ -349,7 +349,7 @@ fn cache_and_release_registration_refusal_are_retryable() -> Result<(), Box<dyn 
         65536 - budget.snapshot().used(Class::Required),
     )?;
     assert!(releases.register().is_err());
-    let watcher = Arc::new(AtomicBool::new(false));
+    let watcher = crate::cache::source_storage::RetirementSignal::new(&Arc::default());
     assert!(releases.subscribe(&watcher).is_err());
     assert!(!watcher.load(Ordering::Acquire));
     releases.notify(first);

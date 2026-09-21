@@ -118,14 +118,18 @@ impl BlpTextureCache {
     /// Releases entries held only by the cache and returns the removal count.
     ///
     /// Texture users that still hold an [`Arc`] survive collection. No guessed
-    /// age, capacity, or quality-specific eviction policy is introduced.
+    /// age, capacity, or quality-specific eviction policy is introduced. Empty
+    /// namespace handles retire here; readers and pending producers retain their own.
     pub fn collect_unused(&mut self) -> usize {
         let before = self.textures.len();
         self.textures
             .retain(|_path, texture| Arc::strong_count(texture) > 1);
-        for service in self.services.values() {
+        self.services.retain(|namespace, service| {
             service.collect_unused();
-        }
+            self.textures
+                .keys()
+                .any(|key| key.namespace() == *namespace)
+        });
         before - self.textures.len()
     }
 }

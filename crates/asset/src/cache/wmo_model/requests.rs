@@ -2,14 +2,12 @@
 
 use super::super::resource::{ResourceCache, ResourceLease};
 use super::super::source_dependency::{SourceDependency, SourceSlot};
+use super::super::source_storage::{ControlOwner, RetirementSignal, SourceStorage};
 use crate::{AssetError, AssetNamespaceId, AssetResourceKey, AssetStore, DecodedWorldModel};
 use solarity_cpu::{
     CpuError, CpuService, CpuServiceControl, CpuServiceInterest, CpuStorageBudget, CpuStorageClass,
 };
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex, atomic::Ordering};
 use thiserror::Error;
 
 /// Source failures remain separate from scheduler cancellation and producer abandonment.
@@ -44,8 +42,8 @@ pub type WmoLoadDependency = SourceDependency<ResourceLease<DecodedWorldModel>, 
 struct State {
     models: Mutex<ResourceCache<AssetResourceKey, DecodedWorldModel>>,
     pending: Mutex<crate::AssetStorageMap<AssetResourceKey, Arc<Slot>>>,
-    changed: Arc<AtomicBool>,
-    storage: Arc<std::sync::OnceLock<CpuStorageBudget>>,
+    changed: RetirementSignal,
+    control: ControlOwner,
 }
 
 /// Catalog clones share identity; rediscovery creates another service and archive namespace.
@@ -58,13 +56,13 @@ impl Default for WmoCacheService {
     }
 }
 impl WmoCacheService {
-    pub(crate) fn with_storage(storage: Arc<std::sync::OnceLock<CpuStorageBudget>>) -> Self {
-        let changed = Arc::new(AtomicBool::new(false));
+    pub(crate) fn with_storage(storage: Arc<SourceStorage>) -> Self {
+        let changed = RetirementSignal::new(&storage);
         let models = ResourceCache::default();
         Self(Arc::new(State {
             models: Mutex::new(models),
             pending: Mutex::new(crate::AssetStorageMap::metadata()),
-            storage,
+            control: ControlOwner::for_arc::<State>(&storage),
             changed,
         }))
     }
@@ -121,7 +119,7 @@ impl WmoCacheService {
                 .models
                 .lock()
                 .unwrap_or_else(|_| unreachable!("WMO cache metadata cannot panic"));
-            models.admit(self.0.storage.get())?;
+            models.admit(self.0.control.budget())?;
             models.subscribe(&self.0.changed)?;
             models.get(key)?
         };
@@ -136,12 +134,12 @@ impl WmoCacheService {
         }
         let budget = self
             .0
-            .storage
-            .get()
+            .control
+            .budget()
             .cloned()
             .map(|storage| crate::AssetReadBudget::for_service(storage, CpuService::Required));
         let capacity = pending.len() + 1;
-        let slot = Slot::new(self.0.storage.get())?;
+        let slot = Slot::new(self.0.control.budget())?;
         pending.reserve(budget.as_ref(), capacity)?;
         pending.insert(budget.as_ref(), key.clone(), Arc::clone(&slot))?;
         Ok(WmoLoad::Producer(WmoLoadProducer {

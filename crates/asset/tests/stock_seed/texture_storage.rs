@@ -43,7 +43,7 @@ fn authored_mip_capacity_survives_direct_clones_and_store_teardown() -> Result<(
         let charged = source.resident_bytes();
         assert!(charged > 16, "source metadata and payload remain owned");
         assert_eq!(
-            budget.snapshot().used(Class::Required),
+            budget.snapshot().bytes(Class::Required, Kind::Result),
             charged,
             "encoded input has retired"
         );
@@ -119,7 +119,8 @@ fn merged_speculative_texture_promotes_once_and_retries_after_pressure()
         "upload snapshot pins the inner owner"
     );
     drop(snapshot);
-    assert!(budget.snapshot().bytes(Class::Required, Kind::Metadata) > 0);
+    // An empty cache no longer retains an otherwise dead namespace authority.
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Metadata), 0);
     cache.collect_unused();
     assert_eq!(budget.snapshot().used(Class::Required), 0);
     assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
@@ -158,7 +159,7 @@ fn texture_admission_and_parse_failure_release_inputs_without_caching_failure()
     let mut cache = BlpTextureCache::new();
     let path = AssetPath::new("Textures/Test.blp")?;
     // The archive input fits; the separate parsed-payload reservation cannot.
-    let blocked_bytes = (1 << 20) - bytes.len() - 16;
+    let blocked_bytes = (1 << 20) - budget.snapshot().used(Class::Required) - bytes.len() - 16;
     let blocker = budget.reserve(Class::Required, Kind::Result, blocked_bytes)?;
     assert!(matches!(
         cache.load(&mut store, &path),
@@ -210,7 +211,7 @@ fn cached_offline_source_adopts_namespace_admission_without_reparsing() -> Resul
     let admitted = cache.load(&mut store, &path)?;
     assert!(Arc::ptr_eq(&offline, &admitted));
     assert_eq!(
-        budget.snapshot().used(Class::Required),
+        budget.snapshot().bytes(Class::Required, Kind::Result),
         offline.resident_bytes()
     );
     drop((offline, admitted, cache, store));

@@ -241,7 +241,10 @@ fn configured_namespace_charges_default_mpq_and_loose_reads_with_scoped_override
     let required_bytes = required.admitted_bytes() + loose.admitted_bytes();
     assert!(required_bytes >= required.len() + loose.len());
     assert_eq!(
-        budget.snapshot().used(CpuStorageClass::Required),
+        budget.snapshot().bytes(
+            CpuStorageClass::Required,
+            solarity_cpu::CpuStorageKind::Result
+        ),
         required_bytes
     );
     let policy = AssetReadBudget::for_service(budget.clone(), CpuService::Speculative);
@@ -255,7 +258,10 @@ fn configured_namespace_charges_default_mpq_and_loose_reads_with_scoped_override
     );
     let restored = a.read(&path)?.into_bytes();
     assert_eq!(
-        budget.snapshot().used(CpuStorageClass::Required),
+        budget.snapshot().bytes(
+            CpuStorageClass::Required,
+            solarity_cpu::CpuStorageKind::Result
+        ),
         required_bytes + restored.admitted_bytes()
     );
     drop((a, b, required, loose, optional, optional_loose, restored));

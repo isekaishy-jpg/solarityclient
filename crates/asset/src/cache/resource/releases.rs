@@ -1,10 +1,8 @@
 //! Pre-registered intrusive indices make last-release delivery allocation-free.
 
-use std::sync::{
-    Arc, Mutex, MutexGuard, Weak,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Mutex, MutexGuard, atomic::Ordering};
 
+use super::super::source_storage::{RetirementSignal, SignalObserver};
 use super::ResourceCacheClock;
 use crate::{AssetError, AssetReadBudget, AssetStorageVec};
 
@@ -31,7 +29,7 @@ struct State {
     free: Option<usize>,
     head: Option<usize>,
     tail: Option<usize>,
-    watchers: AssetStorageVec<Weak<AtomicBool>>,
+    watchers: AssetStorageVec<SignalObserver>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -79,17 +77,13 @@ impl Releases {
     }
 
     /// Registry notification is an atomic state change, never a domain callback.
-    pub(super) fn subscribe(&self, watcher: &Arc<AtomicBool>) -> Result<(), AssetError> {
+    pub(super) fn subscribe(&self, watcher: &RetirementSignal) -> Result<(), AssetError> {
         let mut state = self.lock();
-        if state
-            .watchers
-            .iter()
-            .any(|old| old.as_ptr() == Arc::as_ptr(watcher))
-        {
+        if state.watchers.iter().any(|old| old.matches(watcher)) {
             return Ok(());
         }
-        state.watchers.retain(|old| old.strong_count() != 0);
-        state.watchers.push(None, Arc::downgrade(watcher))?;
+        state.watchers.retain(|old| old.is_alive());
+        state.watchers.push(None, watcher.observer())?;
         watcher.store(true, Ordering::Release);
         Ok(())
     }
@@ -247,11 +241,10 @@ impl Releases {
 
 impl State {
     /// Release observers receive correctness state even while profiling is disabled.
-    fn changed(&self) {
+    fn changed(&mut self) {
+        self.watchers.retain(|watcher| watcher.is_alive());
         for watcher in &self.watchers {
-            if let Some(watcher) = watcher.upgrade() {
-                watcher.store(true, Ordering::Release);
-            }
+            watcher.notify();
         }
     }
     /// Unlinks in constant time, including a terminal release racing collection.
