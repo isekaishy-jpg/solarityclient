@@ -82,11 +82,16 @@ impl ArchiveCatalog {
         // without building a memory-heavy map of every file in every archive.
         descriptors.sort_by_key(|descriptor| std::cmp::Reverse(descriptor.priority()));
 
+        let storage = std::sync::Arc::default();
         Ok(Self {
             namespace: super::AssetNamespaceId::issue()?,
-            model_cache_service: crate::M2CacheService::default(),
-            world_model_cache_service: crate::WmoCacheService::default(),
-            texture_cache_service: crate::BlpCacheService::default(),
+            model_cache_service: crate::M2CacheService::with_storage(std::sync::Arc::clone(
+                &storage,
+            )),
+            world_model_cache_service: crate::WmoCacheService::with_storage(std::sync::Arc::clone(
+                &storage,
+            )),
+            texture_cache_service: crate::BlpCacheService::with_storage(storage),
             data_root,
             locale,
             existing_locales,

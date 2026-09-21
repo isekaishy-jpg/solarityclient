@@ -81,10 +81,14 @@ fn merged_speculative_texture_promotes_once_and_retries_after_pressure()
     let source = worker.with_read_budget(&policy, |store| prepared.load(store, &path))?;
     let charged = source.resident_bytes();
     assert_eq!(budget.snapshot().used(Class::Speculative), charged);
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     let mut cache = BlpTextureCache::new();
     assert_eq!(cache.merge(prepared), 1);
-    let blocker = budget.reserve(Class::Required, Kind::Result, 1 << 20)?;
+    let blocker = budget.reserve(
+        Class::Required,
+        Kind::Result,
+        (1 << 20) - budget.snapshot().used(Class::Required),
+    )?;
     assert!(matches!(
         cache.load(&mut main, &path),
         Err(AssetError::ReadAdmission { .. })
@@ -96,20 +100,29 @@ fn merged_speculative_texture_promotes_once_and_retries_after_pressure()
     let required = cache.load(&mut main, &path)?;
     assert!(Arc::ptr_eq(&required, &source));
     assert_eq!(budget.snapshot().used(Class::Speculative), 0);
-    assert_eq!(budget.snapshot().used(Class::Required), charged);
+    assert_eq!(
+        budget.snapshot().bytes(Class::Required, Kind::Result),
+        charged
+    );
     let optional = worker.with_read_budget(&policy, |store| cache.load(store, &path))?;
     assert!(Arc::ptr_eq(&optional, &source));
-    assert_eq!(budget.snapshot().used(Class::Required), charged);
+    assert_eq!(
+        budget.snapshot().bytes(Class::Required, Kind::Result),
+        charged
+    );
     let snapshot = (*source).clone();
     drop((source, required, optional, worker, main));
     assert_eq!(cache.collect_unused(), 1);
     assert_eq!(
-        budget.snapshot().used(Class::Required),
+        budget.snapshot().bytes(Class::Required, Kind::Result),
         charged,
         "upload snapshot pins the inner owner"
     );
     drop(snapshot);
+    assert!(budget.snapshot().bytes(Class::Required, Kind::Metadata) > 0);
+    cache.collect_unused();
     assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     Ok(())
 }
 
@@ -152,22 +165,28 @@ fn texture_admission_and_parse_failure_release_inputs_without_caching_failure()
         Err(AssetError::ReadAdmission { .. })
     ));
     assert!(cache.is_empty());
-    assert_eq!(budget.snapshot().used(Class::Required), blocked_bytes);
+    assert_eq!(
+        budget.snapshot().bytes(Class::Required, Kind::Result),
+        blocked_bytes
+    );
     drop(blocker);
     assert!(matches!(
         cache.load(&mut store, &AssetPath::new("Textures/Bad.blp")?),
         Err(AssetError::TextureDecode { .. })
     ));
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     assert!(matches!(
         cache.load(&mut store, &AssetPath::new("Textures/Oversized.blp")?),
         Err(AssetError::ReadAdmission { .. })
     ));
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     let source = cache.load(&mut store, &path)?;
     assert_eq!(source.decode_mip(0)?.rgba8(), &[0x12, 0x34, 0x56, 0xff]);
     drop((source, cache));
+    assert!(budget.snapshot().bytes(Class::Required, Kind::Metadata) > 0);
+    drop(store);
     assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     Ok(())
 }
 

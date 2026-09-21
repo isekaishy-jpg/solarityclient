@@ -58,7 +58,7 @@ fn admission_failure_precedes_decode_and_is_published_to_joiners() -> Result<(),
     let M2Load::Producer(producer) = store.model_cache_service().request(&key)? else {
         return Err("missing producer".into());
     };
-    let joined = producer.subscribe();
+    let joined = producer.subscribe()?;
     let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 4096, 0));
     let policy = AssetReadBudget::for_service(budget.clone(), CpuService::Speculative);
     let error = producer

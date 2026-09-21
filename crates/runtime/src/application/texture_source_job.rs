@@ -32,7 +32,7 @@ impl SharedTextureSources {
             let key = AssetResourceKey::new(store.namespace(), path.clone());
             match store
                 .texture_cache_service()
-                .request_for(&key, self.service.service())
+                .request_for(&key, self.service.service())?
             {
                 BlpLoad::Ready(source) => source,
                 BlpLoad::Pending(request) => {
@@ -54,7 +54,7 @@ impl SharedTextureSources {
                             return Err(error);
                         }
                     };
-                    let demand = producer.subscribe_for(CpuService::Speculative);
+                    let (producer, demand) = producer.subscribe_owned(CpuService::Speculative)?;
                     assert!(
                         demand.bind_service(priority.control()),
                         "one admitted texture producer binds its demand"

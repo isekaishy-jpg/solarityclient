@@ -14,6 +14,7 @@ mod terrain;
 mod texture;
 mod world;
 mod world_model;
+pub use storage::{AssetStorageMap, AssetStorageVec};
 
 pub use archive::{
     ArchiveDescriptor, ArchiveKind, ArchivePriority, AssetError, AssetPath, AssetPathViolation,

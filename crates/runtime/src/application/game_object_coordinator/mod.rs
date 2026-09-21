@@ -449,6 +449,14 @@ impl RuntimeGameObjectPresentation {
                 self.model_wait = None;
                 None
             };
+            let (model, model_demand) = match model {
+                Some(GameObjectM2Input::Producer(producer)) => {
+                    let (producer, demand) =
+                        producer.subscribe_owned(solarity_cpu::CpuService::Required)?;
+                    (Some(GameObjectM2Input::Producer(producer)), Some(demand))
+                }
+                ready => (ready, None),
+            };
             let source = if let Some(worker) = self.worker.take() {
                 GameObjectWorkerSource::Ready(worker)
             } else {
@@ -458,10 +466,6 @@ impl RuntimeGameObjectPresentation {
                         .ok_or(RuntimeGameObjectError::MissingWorkerCatalog)?
                         .clone(),
                 )
-            };
-            let model_demand = match &model {
-                Some(GameObjectM2Input::Producer(producer)) => Some(producer.subscribe()),
-                _ => None,
             };
             let task_request = request.clone();
             let task = if request.kind == RuntimeGameObjectResourceKind::WorldModel {

@@ -134,14 +134,14 @@ fn exercise_shared_primary(abandon: bool) -> Result<(), Box<dyn Error>> {
     else {
         return Err("producer".into());
     };
-    let observer = producer.subscribe();
+    let observer = producer.subscribe()?;
     let skin_key = solarity_asset::AssetResourceKey::new(
         catalog.namespace(),
         solarity_asset::AssetPath::new("Character/Human/Male/Skin.blp")?,
     );
     let solarity_asset::BlpLoad::Producer(skin_producer) = catalog
         .texture_cache_service()
-        .request_for(&skin_key, solarity_cpu::CpuService::Speculative)
+        .request_for(&skin_key, solarity_cpu::CpuService::Speculative)?
     else {
         return Err("skin producer".into());
     };
@@ -336,7 +336,7 @@ fn local_world_withdrawal_and_reused_guid_reject_the_previous_request() -> Resul
     else {
         return Err("producer".into());
     };
-    let observer = producer.subscribe();
+    let observer = producer.subscribe()?;
     let mut presentation = unit_presentation(&fixture)?.with_glue_worker_catalog(catalog.clone());
     let mut world = world()?;
     let original = world.object_identity(7).ok_or("identity")?;

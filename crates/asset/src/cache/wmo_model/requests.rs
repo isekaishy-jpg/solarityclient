@@ -6,12 +6,9 @@ use crate::{AssetError, AssetNamespaceId, AssetResourceKey, AssetStore, DecodedW
 use solarity_cpu::{
     CpuError, CpuService, CpuServiceControl, CpuServiceInterest, CpuStorageBudget, CpuStorageClass,
 };
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use thiserror::Error;
 
@@ -46,8 +43,9 @@ pub type WmoLoadDependency = SourceDependency<ResourceLease<DecodedWorldModel>, 
 /// Pending authority and ready residency have distinct lifetimes and locks.
 struct State {
     models: Mutex<ResourceCache<AssetResourceKey, DecodedWorldModel>>,
-    pending: Mutex<HashMap<AssetResourceKey, Arc<Slot>>>,
+    pending: Mutex<crate::AssetStorageMap<AssetResourceKey, Arc<Slot>>>,
     changed: Arc<AtomicBool>,
+    storage: Arc<std::sync::OnceLock<CpuStorageBudget>>,
 }
 
 /// Catalog clones share identity; rediscovery creates another service and archive namespace.
@@ -56,12 +54,18 @@ pub struct WmoCacheService(Arc<State>);
 
 impl Default for WmoCacheService {
     fn default() -> Self {
+        Self::with_storage(Arc::default())
+    }
+}
+impl WmoCacheService {
+    pub(crate) fn with_storage(storage: Arc<std::sync::OnceLock<CpuStorageBudget>>) -> Self {
         let changed = Arc::new(AtomicBool::new(false));
         let models = ResourceCache::default();
         models.subscribe(&changed);
         Self(Arc::new(State {
             models: Mutex::new(models),
-            pending: Mutex::new(HashMap::new()),
+            pending: Mutex::new(crate::AssetStorageMap::metadata()),
+            storage,
             changed,
         }))
     }
@@ -125,10 +129,18 @@ impl WmoCacheService {
             return Ok(WmoLoad::Pending(WmoLoadRequest::new(
                 Arc::clone(slot),
                 service,
-            )));
+            )?));
         }
-        let slot = Arc::new(Slot::default());
-        pending.insert(key.clone(), Arc::clone(&slot));
+        let budget = self
+            .0
+            .storage
+            .get()
+            .cloned()
+            .map(|storage| crate::AssetReadBudget::for_service(storage, CpuService::Required));
+        let capacity = pending.len() + 1;
+        let slot = Slot::new(self.0.storage.get())?;
+        pending.reserve(budget.as_ref(), capacity)?;
+        pending.insert(budget.as_ref(), key.clone(), Arc::clone(&slot))?;
         Ok(WmoLoad::Producer(WmoLoadProducer {
             service: self.clone(),
             key: key.clone(),
@@ -179,9 +191,9 @@ impl WmoCacheService {
 
 impl WmoLoadRequest {
     /// Register this consumer's independent live scheduling interest.
-    fn new(slot: Arc<Slot>, service: CpuService) -> Self {
-        let interest = slot.demand.subscribe(service);
-        Self { slot, interest }
+    fn new(slot: Arc<Slot>, service: CpuService) -> Result<Self, AssetError> {
+        let interest = slot.subscribe(service)?;
+        Ok(Self { slot, interest })
     }
     /// Connects the original admitted producer's scheduling identity exactly once.
     #[must_use]
@@ -217,9 +229,27 @@ impl WmoLoadRequest {
 }
 
 impl WmoLoadProducer {
+    /// Admits the producer's consumer before input transfer, publishing refusal to all joiners.
+    /// # Errors
+    /// Returns the same shared admission error delivered to existing consumers.
+    pub fn subscribe_owned(
+        self,
+        service: CpuService,
+    ) -> Result<(Self, WmoLoadRequest), WmoLoadError> {
+        match self.subscribe_for(service) {
+            Ok(request) => Ok((self, request)),
+            Err(error) => {
+                let error = WmoLoadError::Asset(Arc::new(error));
+                self.fail(error.clone());
+                Err(error)
+            }
+        }
+    }
+
     /// Pins and binds the producer owner's interest before decoding starts.
-    #[must_use]
-    pub fn subscribe_for(&self, service: CpuService) -> WmoLoadRequest {
+    /// # Errors
+    /// Returns metadata admission failure before creating a consumer or producer.
+    pub fn subscribe_for(&self, service: CpuService) -> Result<WmoLoadRequest, AssetError> {
         WmoLoadRequest::new(Arc::clone(&self.slot), service)
     }
     /// Drives the finite source steps for callers without an executor continuation.

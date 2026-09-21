@@ -4232,6 +4232,7 @@ name = "solarity-asset"
 version = "0.0.3-alpha"
 dependencies = [
  "glam",
+ "hashbrown 0.17.1",
  "solarity-cpu",
  "solarity-profiling",
  "thiserror 2.0.20",
@@ -4386,7 +4387,6 @@ version = "0.0.3-alpha"
 dependencies = [
  "freetype-rs",
  "glam",
- "hashbrown 0.17.1",
  "mlua",
  "quick-xml 0.42.0",
  "solarity-asset",

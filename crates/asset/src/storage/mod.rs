@@ -10,3 +10,8 @@ mod io_unit_container;
 mod lmem_pool;
 mod new_zerofill;
 mod stpl;
+mod table;
+pub use table::AssetStorageMap;
+
+mod vector;
+pub use vector::AssetStorageVec;

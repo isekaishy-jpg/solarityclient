@@ -42,10 +42,11 @@ impl M2CacheService {
             .requests
             .lock()
             .unwrap_or_else(|_| unreachable!("model request metadata cannot panic"));
-        Ok(index
+        index
             .pending
             .get(&key)
-            .map(|slot| M2LoadRequest::new(Arc::clone(slot), service)))
+            .map(|slot| M2LoadRequest::new(Arc::clone(slot), service))
+            .transpose()
     }
 
     /// Joins namespace/path identity before any archive work or CPU input transfer.
@@ -97,10 +98,17 @@ impl M2CacheService {
             return Ok(M2Load::Pending(M2LoadRequest::new(
                 Arc::clone(slot),
                 service,
-            )));
+            )?));
         }
-        let slot = Arc::new(Slot::default());
-        index.pending.insert(key.clone(), Arc::clone(&slot));
+        let budget = self.storage().cloned().map(|storage| {
+            crate::AssetReadBudget::for_service(storage, solarity_cpu::CpuService::Required)
+        });
+        let capacity = index.pending.len() + 1;
+        let slot = Slot::new(self.storage())?;
+        index.pending.reserve(budget.as_ref(), capacity)?;
+        index
+            .pending
+            .insert(budget.as_ref(), key.clone(), Arc::clone(&slot))?;
         Ok(M2Load::Producer(M2LoadProducer {
             service: self.clone(),
             key,

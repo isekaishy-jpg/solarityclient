@@ -308,6 +308,39 @@ denied. Logs are `target/ui-storage-tests.log`, `target/ui-storage-stock-font.lo
 and `target/ui-storage-clippy-final.log`. Build 176 remains installed; no additional
 client package or FPS comparison was produced.
 
+The next source-metadata batch connects namespace M2/WMO/BLP pending tables,
+request slots, shared demand owners, logical consumer registrations, dependency
+publisher owners/listeners and BLP weak-ready indices to storage admission. Catalog
+clones share the same configured source budget. Namespace control metadata uses
+Required admission independently of speculative payload classification; typed
+readiness edges and their listener storage use the requested edge class. Lookup
+of ready resources still avoids new request ownership. Offline catalogs without
+storage configuration retain their explicit unmetered behavior.
+
+The admitted table/vector implementations now live with asset storage and serve
+both these source owners and the existing font/atlas paths. Retained capacity stays
+charged; growth admits old plus new allocations. Weak dependency registrations
+also pin the owner allocation charge until the final weak reference retires.
+Producer-consumer admission happens before worker input transfer and publishes
+its exact shared failure to joined consumers. Failed joins leave existing demand
+and producer identity intact. This does not finish source residency accounting:
+resource-cache release indices, canonical key allocations, complete decoded graphs,
+other nested resource owners and complete phase headroom remain open.
+
+Source-metadata validation covers 1,164 distinct CPU/asset/UI/runtime tests with
+33 existing ignores. The grouped run passed 1,161; its three failures were prior
+assertions that treated all bytes as payload or expected a zero-budget effect
+request to reach decoding. The four texture-storage tests and focused effect
+refusal test pass after distinguishing charged weak-index metadata and the new
+earlier admission boundary. Production source was unchanged for these reruns.
+New pressure tests cover all three source authorities, failed joins/retries, shared
+producer-refusal identity, weak registration lifetime and final consumer disposal.
+Formatting and all-target/all-feature CPU/asset/UI/runtime Clippy pass with warnings
+denied. Logs are `target/source-metadata-tests.log`,
+`target/source-metadata-texture-final.log`, `target/source-metadata-effect-final.log`
+and `target/source-metadata-clippy-final.log`. No client package or FPS comparison
+was produced; Build 176 remains installed.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
@@ -1611,7 +1644,9 @@ an operation has a context parameter. The requirements below remain in scope.
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
-  Request metadata and remaining encoded source paths still need admission/accounting;
+  Remaining release/lease indices, canonical key and error allocations, and encoded
+  source paths still need admission/accounting; namespace pending slots/tables,
+  demand consumers and typed source listeners now retain metadata charges;
   connected worker source buffers now retain reservations through ownership transfer.
   Stock-evidenced animation demand and
   retention, derived cache invalidation, byte-budgeted residency and GPU retirement

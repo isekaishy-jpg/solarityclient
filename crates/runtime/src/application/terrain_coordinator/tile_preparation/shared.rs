@@ -205,7 +205,8 @@ impl SharedTerrainSources {
                         return Err(error.into());
                     }
                 };
-                let demand = producer.subscribe_for(solarity_cpu::CpuService::Speculative);
+                let (producer, demand) =
+                    producer.subscribe_owned(solarity_cpu::CpuService::Speculative)?;
                 assert!(
                     demand.bind_service(priority.control()),
                     "one admitted WMO producer binds its source demand"

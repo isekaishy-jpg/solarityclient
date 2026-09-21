@@ -5,15 +5,37 @@ use crate::{AssetStore, DecodedM2Model};
 use std::sync::Arc;
 
 impl M2LoadProducer {
+    /// Admits the producer's consumer before input transfer, publishing refusal to all joiners.
+    /// # Errors
+    /// Returns the same shared admission error delivered to existing consumers.
+    pub fn subscribe_owned(
+        self,
+        service: solarity_cpu::CpuService,
+    ) -> Result<(Self, M2LoadRequest), M2LoadError> {
+        match self.subscribe_for(service) {
+            Ok(request) => Ok((self, request)),
+            Err(error) => {
+                let error = M2LoadError::Asset(Arc::new(error));
+                self.fail(error.clone());
+                Err(error)
+            }
+        }
+    }
+
     /// Registers another consumer without transferring the producer obligation.
-    #[must_use]
-    pub fn subscribe(&self) -> M2LoadRequest {
+    /// # Errors
+    /// Returns metadata admission failure before creating a consumer or producer.
+    pub fn subscribe(&self) -> Result<M2LoadRequest, crate::AssetError> {
         self.subscribe_for(solarity_cpu::CpuService::Required)
     }
 
     /// Registers the producer owner's selected or speculative interest before dispatch.
-    #[must_use]
-    pub fn subscribe_for(&self, service: solarity_cpu::CpuService) -> M2LoadRequest {
+    /// # Errors
+    /// Returns metadata admission failure before creating a consumer or producer.
+    pub fn subscribe_for(
+        &self,
+        service: solarity_cpu::CpuService,
+    ) -> Result<M2LoadRequest, crate::AssetError> {
         M2LoadRequest::new(Arc::clone(&self.slot), service)
     }
 

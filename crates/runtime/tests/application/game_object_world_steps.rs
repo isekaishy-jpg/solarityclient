@@ -269,7 +269,8 @@ fn model_material_dependencies_preserve_source_failure_and_withdrawal() -> Resul
             let BlpLoad::Producer(producer) = catalog.texture_cache_service().request_for(
                 &AssetResourceKey::new(catalog.namespace(), AssetPath::new("Textures/Shared.blp")?),
                 CpuService::Required,
-            ) else {
+            )?
+            else {
                 return Err("texture producer".into());
             };
             let mut producer = Some(producer);

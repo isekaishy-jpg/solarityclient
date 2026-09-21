@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 impl M2LoadRequest {
     /// Registers one consumer before returning its independently cloneable request handle.
-    pub(super) fn new(slot: Arc<Slot>, service: CpuService) -> Self {
-        let interest = slot.demand.subscribe(service);
-        Self { slot, interest }
+    pub(super) fn new(slot: Arc<Slot>, service: CpuService) -> Result<Self, crate::AssetError> {
+        let interest = slot.subscribe(service)?;
+        Ok(Self { slot, interest })
     }
 
     /// Changes this consumer's CPU demand without overriding any other registered owner.

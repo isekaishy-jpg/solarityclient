@@ -147,7 +147,7 @@ fn glue_joins_pending_source_and_only_publishes_latest_selection() -> Result<(),
     let M2Load::Producer(producer) = service.request(&source_key(&current, &catalog)?)? else {
         return Err("new producer".into());
     };
-    let observer = producer.subscribe();
+    let observer = producer.subscribe()?;
     let (cpu, notifications) = executor(8)?;
     current.synchronize_character_selection_async(Some(&selection(1)), &cpu)?;
     assert!(current.glue_character.is_none());
@@ -211,7 +211,7 @@ fn glue_withdrawal_does_not_cancel_another_source_consumer() -> Result<(), Box<d
     else {
         return Err("new producer".into());
     };
-    let observer = producer.subscribe();
+    let observer = producer.subscribe()?;
     let (cpu, notifications) = executor(8)?;
     first.synchronize_character_selection_async(Some(&selection(1)), &cpu)?;
     second.synchronize_character_selection_async(Some(&selection(2)), &cpu)?;
@@ -380,7 +380,7 @@ fn glue_pet_joins_pending_source_and_keeps_publication_transactional() -> Result
     let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
         return Err("pending pet producer".into());
     };
-    let observer = producer.subscribe();
+    let observer = producer.subscribe()?;
     let (cpu, notifications) = executor(8)?;
     current.synchronize_character_selection_async(Some(&requested), &cpu)?;
     assert!(
@@ -431,7 +431,7 @@ fn glue_atlas_dependency_preserves_output_failure_and_withdrawal() -> Result<(),
         );
         let BlpLoad::Producer(producer) = catalog
             .texture_cache_service()
-            .request_for(&key, CpuService::Speculative)
+            .request_for(&key, CpuService::Speculative)?
         else {
             return Err("texture producer".into());
         };
@@ -439,7 +439,7 @@ fn glue_atlas_dependency_preserves_output_failure_and_withdrawal() -> Result<(),
         let demand = producer
             .as_ref()
             .ok_or("producer")?
-            .subscribe_for(CpuService::Speculative);
+            .subscribe_for(CpuService::Speculative)?;
         let (cpu, notifications) = executor(8)?;
         let monitor = cpu.try_reserve_for(CpuService::Speculative)?;
         let control = monitor.service_control();

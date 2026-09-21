@@ -93,7 +93,7 @@ fn withdrawn_effect_consumer_releases_its_dependency_without_abandoning_producer
     let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
         return Err("expected source producer".into());
     };
-    let observer = producer.subscribe();
+    let observer = producer.subscribe()?;
     let cpu = executor()?;
     let permit = cpu.try_reserve()?;
     let shared = SharedTerrainSources {

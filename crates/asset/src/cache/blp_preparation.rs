@@ -156,7 +156,7 @@ pub(super) fn load(
         .clone();
     let result = match store
         .texture_cache_service()
-        .request_for(&key, service.service())
+        .request_for(&key, service.service())?
     {
         BlpLoad::Ready(source) => Ok(source),
         BlpLoad::Pending(request) => {
@@ -184,7 +184,7 @@ pub(super) fn load(
                     return Err(error.into());
                 }
             };
-            let demand = producer.subscribe_for(CpuService::Speculative);
+            let (producer, demand) = producer.subscribe_owned(CpuService::Speculative)?;
             assert!(
                 demand.bind_service(priority.control()),
                 "one admitted texture producer binds demand"

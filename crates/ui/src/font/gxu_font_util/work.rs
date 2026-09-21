@@ -188,12 +188,12 @@ impl FontCache {
         let cached = self.faces.get(face)?;
         let mut values = crate::font::storage::FontBuffer::default();
         if let Err(error) = values.reserve(cached.advances.policy(), text.chars().count()) {
-            return Some(Err(error));
+            return Some(Err(error.into()));
         }
         for character in text.chars() {
             let advance = *cached.advances.get(&(height, mode, character))?;
             if let Err(error) = values.push(cached.advances.policy(), advance) {
-                return Some(Err(error));
+                return Some(Err(error.into()));
             }
         }
         Some(Ok(values))

@@ -54,7 +54,7 @@ fn exercise_shared_primary(lifecycle: SourceLifecycle) -> Result<(), Box<dyn Err
     let solarity_asset::M2Load::Producer(producer) = service.request(&key)? else {
         return Err("new source needs a producer".into());
     };
-    let observer = producer.subscribe();
+    let observer = producer.subscribe()?;
     let mut presentation = unit_presentation(&fixture)?.with_glue_worker_catalog(catalog.clone());
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(0),

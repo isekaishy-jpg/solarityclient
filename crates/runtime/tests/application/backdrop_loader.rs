@@ -258,7 +258,8 @@ fn backdrop_texture_steps_share_failure_and_cancel_without_stock_substitution()
                 AssetPath::new("Textures/Backdrop.blp")?,
             ),
             CpuService::Required,
-        ) else {
+        )?
+        else {
             return Err("texture producer".into());
         };
         let mut producer = Some(producer);

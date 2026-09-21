@@ -294,7 +294,7 @@ fn game_object_source_wait_survives_world_withdrawal_without_blocking_a_worker()
         kind: RuntimeGameObjectResourceKind::M2,
         path,
     };
-    owner.model_wait = Some((request.clone(), producer.subscribe()));
+    owner.model_wait = Some((request.clone(), producer.subscribe()?));
     owner.start_model_dependency(&cpu, request)?;
     owner.disconnect();
     drop(producer);

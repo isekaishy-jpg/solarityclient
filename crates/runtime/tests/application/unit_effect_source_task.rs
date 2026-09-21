@@ -98,7 +98,7 @@ fn abandoned_effect_producer_wakes_the_bank_and_returns_its_original_failure()
     Ok(())
 }
 
-/// A refused retained model charge must fail the bank, never omit its authored effects.
+/// Namespace metadata refusal must fail the bank before decoding, never omit authored effects.
 #[test]
 fn effect_source_storage_refusal_preserves_the_pipeline_failure() -> Result<(), Box<dyn Error>> {
     let fixture = unit_models::fixture_with_water_effects(17)?;
@@ -121,10 +121,14 @@ fn effect_source_storage_refusal_preserves_the_pipeline_failure() -> Result<(), 
         Arc::new(EnvironmentalDamageCatalog::default()),
         shared,
     ));
-    assert!(
-        matches!(task.join()?, Err(RuntimeTerrainError::SharedModel(solarity_asset::M2LoadError::Asset(error)))
-        if matches!(&*error, solarity_asset::AssetError::SourceStorage(solarity_cpu::CpuError::StorageAtCapacity { .. })))
-    );
+    assert!(matches!(
+        task.join()?,
+        Err(RuntimeTerrainError::Asset(
+            solarity_asset::AssetError::SourceStorage(
+                solarity_cpu::CpuError::StorageAtCapacity { .. }
+            )
+        ))
+    ));
     assert_eq!(
         cpu.storage().snapshot().bytes(
             solarity_cpu::CpuStorageClass::Required,

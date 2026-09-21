@@ -9,7 +9,6 @@ publish = false
 solarity-profiling.workspace = true
 freetype-rs.workspace = true
 glam.workspace = true
-hashbrown.workspace = true
 mlua.workspace = true
 quick-xml.workspace = true
 solarity-asset.workspace = true

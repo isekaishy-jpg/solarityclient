@@ -41,7 +41,7 @@ fn pending_model_consumers_share_exact_decode_and_survive_other_consumer_release
     let M2Load::Producer(producer) = sources.request(&key)? else {
         return Err("first request did not own production".into());
     };
-    let cancelled = producer.subscribe();
+    let cancelled = producer.subscribe()?;
     let alias = AssetResourceKey::new(
         catalog.namespace(),
         AssetPath::new("Creature/Solarity/Shared.mdx")?,
@@ -76,7 +76,7 @@ fn model_request_failure_is_shared_and_abandoned_producer_wakes_consumers()
     let M2Load::Producer(producer) = sources.request(&key)? else {
         return Err("missing producer".into());
     };
-    let joined = producer.subscribe();
+    let joined = producer.subscribe()?;
     let original = producer.load(&mut AssetStore::mount(catalog)?);
     let delivered = joined.poll().ok_or("missing terminal error")?;
     let (Err(M2LoadError::Asset(original)), Err(M2LoadError::Asset(delivered))) =
@@ -88,7 +88,7 @@ fn model_request_failure_is_shared_and_abandoned_producer_wakes_consumers()
     let M2Load::Producer(producer) = sources.request(&key)? else {
         return Err("failure was persistently cached".into());
     };
-    let joined = producer.subscribe();
+    let joined = producer.subscribe()?;
     let worker_consumer = joined.clone();
     let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
         {
@@ -125,7 +125,7 @@ fn model_producer_rejects_a_reader_from_another_namespace() -> Result<(), Box<dy
     let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
         return Err("missing producer".into());
     };
-    let joined = producer.subscribe();
+    let joined = producer.subscribe()?;
     assert!(matches!(
         producer.load(&mut AssetStore::mount(other)?),
         Err(M2LoadError::Namespace { .. })
@@ -151,7 +151,7 @@ fn required_model_join_promotes_and_release_restores_prewarm() -> Result<(), Box
     let M2Load::Producer(producer) = sources.request(&key)? else {
         return Err("missing producer".into());
     };
-    let prewarm = producer.subscribe_for(solarity_cpu::CpuService::Speculative);
+    let prewarm = producer.subscribe_for(solarity_cpu::CpuService::Speculative)?;
     let mut store = AssetStore::mount(catalog)?;
     let mut cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
         {
@@ -208,7 +208,7 @@ fn shared_model_readiness_drives_loading_and_late_subscribers() -> Result<(), Bo
     let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
         return Err("missing producer".into());
     };
-    let request = producer.subscribe();
+    let request = producer.subscribe()?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         {
             let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
@@ -283,7 +283,7 @@ fn abandoned_model_dependency_returns_owned_input_without_running_it() -> Result
     let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
         return Err("missing producer".into());
     };
-    let request = producer.subscribe();
+    let request = producer.subscribe()?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         {
             let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
@@ -332,7 +332,7 @@ fn model_dependency_registration_races_abandonment_without_lost_readiness()
         let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
             return Err("missing producer".into());
         };
-        let request = producer.subscribe();
+        let request = producer.subscribe()?;
         let ready = std::sync::Barrier::new(2);
         let dependency = std::thread::scope(|scope| {
             let registration = scope.spawn(|| {

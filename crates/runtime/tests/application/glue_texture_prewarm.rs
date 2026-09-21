@@ -79,10 +79,10 @@ fn configured_texture_join_releases_worker_and_cancellation_keeps_other_consumer
     let path = AssetPath::new("fixture.blp")?;
     let key = AssetResourceKey::new(catalog.namespace(), path.clone());
     let service = catalog.texture_cache_service();
-    let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Required) else {
+    let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Required)? else {
         return Err("producer".into());
     };
-    let witness = producer.subscribe_for(CpuService::Required);
+    let witness = producer.subscribe_for(CpuService::Required)?;
     let cpu = pool()?;
     let permit = cpu.try_reserve_for(CpuService::Speculative)?;
     let shared = SharedTextureSources {

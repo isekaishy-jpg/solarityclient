@@ -10,7 +10,7 @@ use super::super::resource::ResourceLease;
 use super::{M2CacheService, ModelCacheCore};
 use crate::{AssetError, AssetNamespaceId, AssetResourceKey, DecodedM2Model};
 use solarity_cpu::CpuServiceInterest;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Pipeline failure remains distinct from malformed or missing stock source data.
@@ -42,10 +42,17 @@ type Outcome = Result<ResourceLease<DecodedM2Model>, M2LoadError>;
 type Slot = super::super::source_dependency::SourceSlot<ResourceLease<DecodedM2Model>, M2LoadError>;
 
 /// The table owns pending producers only; successful source retention uses the normal cache.
-#[derive(Default)]
 pub(super) struct RequestIndex {
     core: Option<Arc<ModelCacheCore>>,
-    pending: HashMap<AssetResourceKey, Arc<Slot>>,
+    pending: crate::AssetStorageMap<AssetResourceKey, Arc<Slot>>,
+}
+impl Default for RequestIndex {
+    fn default() -> Self {
+        Self {
+            core: None,
+            pending: crate::AssetStorageMap::metadata(),
+        }
+    }
 }
 
 /// Admission distinguishes reuse, an existing producer and a new producer obligation.

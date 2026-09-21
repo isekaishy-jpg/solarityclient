@@ -37,7 +37,7 @@ impl<T: Send + 'static> AppearanceTask<T> {
         let (model, demand) = match load {
             M2Load::Ready(model) => (ModelInput::Ready(model), None),
             M2Load::Producer(producer) => {
-                let demand = producer.subscribe();
+                let (producer, demand) = producer.subscribe_owned(CpuService::Required)?;
                 assert!(
                     demand.bind_service(control.clone()),
                     "one producer binds each source task"

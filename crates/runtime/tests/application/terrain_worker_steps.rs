@@ -375,7 +375,7 @@ fn terrain_shared_model_gate_preserves_source_identity_failure_and_withdrawal()
         else {
             return Err("fixture source already produced".into());
         };
-        let observer = producer.subscribe();
+        let observer = producer.subscribe()?;
         let mut cpu = test_cpu()?;
         let permit = cpu.try_reserve()?;
         let shared = super::super::tile_preparation::SharedTerrainSources {
@@ -466,11 +466,11 @@ fn terrain_shared_texture_gate_preserves_worker_bank_and_cancellation() -> Resul
         );
         let BlpLoad::Producer(producer) = catalog
             .texture_cache_service()
-            .request_for(&key, CpuService::Required)
+            .request_for(&key, CpuService::Required)?
         else {
             return Err("producer".into());
         };
-        let observer = producer.subscribe_for(CpuService::Required);
+        let observer = producer.subscribe_for(CpuService::Required)?;
         let mut cpu = test_cpu()?;
         let permit = cpu.try_reserve()?;
         let shared = super::super::tile_preparation::SharedTerrainSources {

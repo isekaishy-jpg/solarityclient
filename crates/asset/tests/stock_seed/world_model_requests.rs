@@ -106,7 +106,7 @@ fn shared_world_model_failure_abandonment_and_namespace_are_terminal() -> Result
     let WmoLoad::Producer(producer) = service.request_for(&key, CpuService::Required)? else {
         return Err("missing producer".into());
     };
-    let request = producer.subscribe_for(CpuService::Required);
+    let request = producer.subscribe_for(CpuService::Required)?;
     let mut cpu = pool()?;
     let edge = request.dependency(cpu.storage(), CpuStorageClass::Required)?;
     let Err(WmoLoadError::Asset(original)) =
@@ -121,7 +121,7 @@ fn shared_world_model_failure_abandonment_and_namespace_are_terminal() -> Result
     let WmoLoad::Producer(producer) = service.request_for(&key, CpuService::Required)? else {
         return Err("failure was incorrectly cached".into());
     };
-    let request = producer.subscribe_for(CpuService::Required);
+    let request = producer.subscribe_for(CpuService::Required)?;
     let edge = request.dependency(cpu.storage(), CpuStorageClass::Required)?;
     drop(producer);
     assert!(matches!(edge.poll(), Some(Err(WmoLoadError::Abandoned))));
@@ -148,7 +148,7 @@ fn world_model_steps_publish_only_after_group_validation() -> Result<(), Box<dyn
     let WmoLoad::Producer(mut producer) = service.request_for(&key, CpuService::Required)? else {
         return Err("producer".into());
     };
-    let request = producer.subscribe_for(CpuService::Required);
+    let request = producer.subscribe_for(CpuService::Required)?;
     let mut reader = AssetStore::mount(catalog.clone())?;
     assert!(producer.step(&mut reader)?.is_none()); // Root only.
     assert!(request.poll().is_none());
@@ -165,7 +165,7 @@ fn world_model_steps_publish_only_after_group_validation() -> Result<(), Box<dyn
     let WmoLoad::Producer(mut producer) = service.request_for(&key, CpuService::Required)? else {
         return Err("new producer".into());
     };
-    let request = producer.subscribe_for(CpuService::Required);
+    let request = producer.subscribe_for(CpuService::Required)?;
     assert!(producer.step(&mut reader)?.is_none());
     drop(producer);
     assert!(matches!(request.poll(), Some(Err(WmoLoadError::Abandoned))));

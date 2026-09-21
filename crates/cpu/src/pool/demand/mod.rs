@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, atomic::AtomicU8};
 #[derive(Default)]
 struct State {
     values: Mutex<Values>,
+    _memory: Option<crate::ByteReservation>,
 }
 
 /// Lock order is demand metadata then dispatch queues; dispatch never acquires demand state.
@@ -23,6 +24,7 @@ struct Values {
 struct Interest {
     state: Arc<State>,
     service: AtomicU8,
+    _memory: Option<crate::ByteReservation>,
 }
 
 /// Independent consumers combine their strongest live service requirement.

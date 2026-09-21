@@ -5,6 +5,36 @@ use super::{CpuServiceDemand, CpuServiceInterest, Interest};
 use std::sync::{Arc, atomic::AtomicU8};
 
 impl CpuServiceDemand {
+    /// Admits a shared demand owner before allocating its control metadata.
+    /// # Errors
+    /// Returns byte pressure without creating or binding demand.
+    pub fn admitted(budget: &crate::CpuStorageBudget) -> Result<Self, crate::CpuError> {
+        let memory = budget.reserve(
+            crate::CpuStorageClass::Required,
+            crate::CpuStorageKind::Metadata,
+            size_of::<super::State>() + 2 * size_of::<usize>(),
+        )?;
+        Ok(Self(Arc::new(super::State {
+            values: Default::default(),
+            _memory: Some(memory),
+        })))
+    }
+
+    /// Admits one logical consumer; cloned handles share the same allocation charge.
+    /// # Errors
+    /// Returns byte pressure before changing live producer demand.
+    pub fn subscribe_admitted(
+        &self,
+        service: CpuService,
+        budget: &crate::CpuStorageBudget,
+    ) -> Result<CpuServiceInterest, crate::CpuError> {
+        let memory = budget.reserve(
+            crate::CpuStorageClass::Required,
+            crate::CpuStorageKind::Metadata,
+            size_of::<Interest>() + 2 * size_of::<usize>(),
+        )?;
+        Ok(self.subscribe_inner(service, Some(memory)))
+    }
     /// Strongest currently registered consumer; an empty owner has no resource demand.
     #[must_use]
     pub fn strongest(&self) -> Option<CpuService> {
@@ -25,6 +55,14 @@ impl CpuServiceDemand {
     /// Registers a logical consumer; cloning its returned handle shares that registration.
     #[must_use]
     pub fn subscribe(&self, service: CpuService) -> CpuServiceInterest {
+        self.subscribe_inner(service, None)
+    }
+
+    fn subscribe_inner(
+        &self,
+        service: CpuService,
+        memory: Option<crate::ByteReservation>,
+    ) -> CpuServiceInterest {
         let mut values = self
             .0
             .values
@@ -35,6 +73,7 @@ impl CpuServiceDemand {
         CpuServiceInterest(Arc::new(Interest {
             state: Arc::clone(&self.0),
             service: AtomicU8::new(service as u8),
+            _memory: memory,
         }))
     }
 

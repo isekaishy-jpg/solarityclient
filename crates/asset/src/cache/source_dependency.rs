@@ -11,16 +11,45 @@ pub(super) struct SourceSlot<T, E> {
     pub(super) result: Mutex<Option<Result<T, E>>>,
     pub(super) ready: Condvar,
     pub(super) demand: CpuServiceDemand,
-    listeners: Mutex<Vec<Weak<DependencyOwner<T, E>>>>,
+    listeners: Mutex<crate::AssetStorageVec<Listener<T, E>>>,
+    budget: Option<CpuStorageBudget>,
+    _memory: Option<solarity_cpu::ByteReservation>,
 }
 
-impl<T, E> Default for SourceSlot<T, E> {
-    fn default() -> Self {
-        Self {
+impl<T, E> SourceSlot<T, E> {
+    pub(super) fn new(budget: Option<&CpuStorageBudget>) -> Result<Arc<Self>, CpuError> {
+        let memory = budget
+            .map(|budget| {
+                budget.reserve(
+                    CpuStorageClass::Required,
+                    solarity_cpu::CpuStorageKind::Metadata,
+                    size_of::<Self>() + 2 * size_of::<usize>(),
+                )
+            })
+            .transpose()?;
+        Ok(Arc::new(Self {
             result: Mutex::new(None),
             ready: Condvar::new(),
-            demand: CpuServiceDemand::default(),
-            listeners: Mutex::new(Vec::new()),
+            demand: budget
+                .map(CpuServiceDemand::admitted)
+                .transpose()?
+                .unwrap_or_default(),
+            listeners: Mutex::new(crate::AssetStorageVec::metadata()),
+            budget: budget.cloned(),
+            _memory: memory,
+        }))
+    }
+
+    pub(super) fn subscribe(
+        &self,
+        service: solarity_cpu::CpuService,
+    ) -> Result<CpuServiceInterest, crate::AssetError> {
+        match &self.budget {
+            Some(budget) => self
+                .demand
+                .subscribe_admitted(service, budget)
+                .map_err(Into::into),
+            None => Ok(self.demand.subscribe(service)),
         }
     }
 }
@@ -36,6 +65,13 @@ pub struct SourceDependency<T, E> {
 /// Registration pins the publisher until the domain has made a durable result available.
 struct DependencyOwner<T, E> {
     producer: Mutex<Option<ProductPublisher<T, E>>>,
+    _memory: Arc<solarity_cpu::ByteReservation>,
+}
+
+/// Weak registration also pins its allocation charge until the weak Arc retires.
+struct Listener<T, E> {
+    owner: Weak<DependencyOwner<T, E>>,
+    _memory: Arc<solarity_cpu::ByteReservation>,
 }
 
 impl<T, E> DependencyOwner<T, E> {
@@ -62,8 +98,16 @@ impl<T: Clone, E: Clone> SourceSlot<T, E> {
         abandoned: fn() -> E,
     ) -> Result<SourceDependency<T, E>, CpuError> {
         let (producer, product) = SharedProduct::new(1, budget, class)?;
+        let memory = Arc::new(budget.reserve(
+            class,
+            solarity_cpu::CpuStorageKind::Metadata,
+            size_of::<DependencyOwner<T, E>>()
+                + size_of::<solarity_cpu::ByteReservation>()
+                + 4 * size_of::<usize>(),
+        )?);
         let owner = Arc::new(DependencyOwner {
             producer: Mutex::new(Some(producer)),
+            _memory: Arc::clone(&memory),
         });
         let mut listeners = self
             .listeners
@@ -75,8 +119,20 @@ impl<T: Clone, E: Clone> SourceSlot<T, E> {
             .unwrap_or_else(|_| unreachable!("source result metadata cannot panic"))
             .clone();
         if outcome.is_none() {
-            listeners.retain(|listener| listener.strong_count() != 0);
-            listeners.push(Arc::downgrade(&owner));
+            listeners.retain(|listener| listener.owner.strong_count() != 0);
+            let policy = crate::AssetReadBudget::for_class(budget.clone(), class);
+            listeners
+                .push(
+                    Some(&policy),
+                    Listener {
+                        owner: Arc::downgrade(&owner),
+                        _memory: memory,
+                    },
+                )
+                .map_err(|error| match error {
+                    crate::AssetError::SourceStorage(error) => error,
+                    _ => unreachable!("typed storage only reports CPU admission"),
+                })?;
         }
         drop(listeners);
         if let Some(outcome) = outcome {
@@ -99,14 +155,14 @@ impl<T: Clone, E: Clone> SourceSlot<T, E> {
             .as_ref()
             .unwrap_or_else(|| unreachable!("dependencies follow source publication"))
             .clone();
-        let listeners = std::mem::take(
+        let mut listeners = std::mem::take(
             &mut *self
                 .listeners
                 .lock()
                 .unwrap_or_else(|_| unreachable!("source dependency metadata cannot panic")),
         );
-        for listener in listeners {
-            if let Some(owner) = listener.upgrade() {
+        for listener in listeners.drain() {
+            if let Some(owner) = listener.owner.upgrade() {
                 owner.complete(outcome.clone());
             }
         }
@@ -137,3 +193,7 @@ impl<T: Clone, E: Clone> SourceDependency<T, E> {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/cache/source_dependency.rs"]
+mod tests;

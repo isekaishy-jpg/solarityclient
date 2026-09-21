@@ -136,10 +136,11 @@ fn ui_sources_join_publish_abandon_and_withdraw_without_occupying_the_worker()
         let paths = missing_paths(&plan()?, |_| false);
         let key = AssetResourceKey::new(catalog.namespace(), paths[1].clone());
         let service = catalog.texture_cache_service();
-        let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Speculative) else {
+        let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Speculative)?
+        else {
             return Err("producer".into());
         };
-        let witness = producer.subscribe_for(CpuService::Speculative);
+        let witness = producer.subscribe_for(CpuService::Speculative)?;
         let cpu = pool()?;
         let permit = cpu.try_reserve_for(CpuService::Required)?;
         let shared = SharedTextureSources {
@@ -210,7 +211,7 @@ fn ui_sources_report_the_first_authored_error_before_a_later_pending_source()
     let key = AssetResourceKey::new(catalog.namespace(), paths[1].clone());
     let BlpLoad::Producer(_producer) = catalog
         .texture_cache_service()
-        .request_for(&key, CpuService::Speculative)
+        .request_for(&key, CpuService::Speculative)?
     else {
         return Err("producer".into());
     };

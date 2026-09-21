@@ -25,27 +25,33 @@ fn encoded_and_decoded_source_charges_compose_across_publication() -> Result<(),
     let encoded = store
         .with_read_budget(&required, |store| store.read(key.path()))?
         .into_bytes();
-    let encoded_charge = budget.snapshot().used(Class::Required);
+    let encoded_charge = budget.snapshot().bytes(Class::Required, Kind::Result);
     assert!(encoded_charge >= encoded.len());
     let M2Load::Producer(producer) = sources.request_for(&key, CpuService::Speculative)? else {
         return Err("missing producer".into());
     };
-    let request = producer.subscribe_for(CpuService::Speculative);
+    let request = producer.subscribe_for(CpuService::Speculative)?;
     let speculative =
         solarity_asset::AssetReadBudget::for_service(budget.clone(), CpuService::Speculative);
     let model = producer.load_admitted(&mut store, &speculative)?;
     let decoded_charge = model.resident_storage_bytes();
-    assert_eq!(budget.snapshot().used(Class::Required), encoded_charge);
+    assert_eq!(
+        budget.snapshot().bytes(Class::Required, Kind::Result),
+        encoded_charge
+    );
     assert_eq!(budget.snapshot().used(Class::Speculative), decoded_charge);
     drop(encoded);
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     request.set_service(CpuService::Required);
     let delivered = request.poll().ok_or("missing published source")??;
     assert!(ResourceLease::ptr_eq(&model, &delivered));
     assert_eq!(budget.snapshot().used(Class::Speculative), 0);
-    assert_eq!(budget.snapshot().used(Class::Required), decoded_charge);
+    assert_eq!(
+        budget.snapshot().bytes(Class::Required, Kind::Result),
+        decoded_charge
+    );
     drop((request, model, delivered, store, sources));
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     Ok(())
 }
 
@@ -65,7 +71,7 @@ fn speculative_model_charge_promotes_once_and_refused_consumption_can_retry()
     let M2Load::Producer(producer) = sources.request_for(&key, CpuService::Speculative)? else {
         return Err("missing producer".into());
     };
-    let request = producer.subscribe_for(CpuService::Speculative);
+    let request = producer.subscribe_for(CpuService::Speculative)?;
     let edges = CpuStorageBudget::new(CpuStoragePlan::new(1 << 20, 0, 0));
     let dependency = request.dependency(&edges, Class::Frame)?;
     let mut store = AssetStore::mount(catalog)?;
@@ -75,8 +81,12 @@ fn speculative_model_charge_promotes_once_and_refused_consumption_can_retry()
         budget.snapshot().bytes(Class::Speculative, Kind::Result),
         bytes
     );
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
-    let blocker = budget.reserve(Class::Required, Kind::Result, 1 << 20)?;
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
+    let blocker = budget.reserve(
+        Class::Required,
+        Kind::Result,
+        (1 << 20) - budget.snapshot().used(Class::Required),
+    )?;
     request.set_service(CpuService::Required);
     assert!(
         matches!(dependency.poll(), Some(Err(M2LoadError::Asset(error))) if matches!(&*error, AssetError::SourceStorage(CpuError::StorageAtCapacity { class: Class::Required, .. })))
@@ -86,21 +96,27 @@ fn speculative_model_charge_promotes_once_and_refused_consumption_can_retry()
     let delivered = dependency.poll().ok_or("missing result")??;
     assert!(ResourceLease::ptr_eq(&model, &delivered));
     assert_eq!(budget.snapshot().used(Class::Speculative), 0);
-    assert_eq!(budget.snapshot().used(Class::Required), bytes);
+    assert_eq!(
+        budget.snapshot().bytes(Class::Required, Kind::Result),
+        bytes
+    );
     let M2Load::Ready(reused) = sources.request(&key)? else {
         return Err("generation was not retained".into());
     };
     assert!(ResourceLease::ptr_eq(&model, &reused));
-    assert_eq!(budget.snapshot().used(Class::Required), bytes);
+    assert_eq!(
+        budget.snapshot().bytes(Class::Required, Kind::Result),
+        bytes
+    );
     drop((model, delivered, reused, request, dependency));
     assert_eq!(
-        budget.snapshot().used(Class::Required),
+        budget.snapshot().bytes(Class::Required, Kind::Result),
         bytes,
         "qualified cache-only retention stays charged"
     );
     drop(store);
     drop(sources);
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
     Ok(())
 }
 
@@ -111,7 +127,7 @@ fn refused_model_payload_is_shared_failure_without_poisoning_source_identity()
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let sources = catalog.model_cache_service();
-    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 0, 0));
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 1 << 20, 0));
     sources.configure_storage(budget.clone())?;
     assert!(matches!(
         sources.configure_storage(budget.clone()),
@@ -124,10 +140,15 @@ fn refused_model_payload_is_shared_failure_without_poisoning_source_identity()
     let M2Load::Producer(producer) = sources.request(&key)? else {
         return Err("missing producer".into());
     };
-    let request = producer.subscribe();
+    let request = producer.subscribe()?;
+    let hold = budget.reserve(
+        Class::Required,
+        Kind::Scratch,
+        (1 << 20) - budget.snapshot().used(Class::Required),
+    )?;
     let mut store = AssetStore::mount(catalog)?;
     let Err(M2LoadError::Asset(original)) = producer.load(&mut store) else {
-        return Err("payload bypassed zero budget".into());
+        return Err("payload bypassed exhausted budget".into());
     };
     let Some(Err(M2LoadError::Asset(delivered))) = request.poll() else {
         return Err("missing shared failure".into());
@@ -143,7 +164,8 @@ fn refused_model_payload_is_shared_failure_without_poisoning_source_identity()
             ..
         }
     ));
-    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    assert_eq!(budget.snapshot().bytes(Class::Required, Kind::Result), 0);
+    drop(hold);
     assert!(
         matches!(sources.request(&key)?, M2Load::Producer(_)),
         "refusal installs no successful source or negative-cache entry"

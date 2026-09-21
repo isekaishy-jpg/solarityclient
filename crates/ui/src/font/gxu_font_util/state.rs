@@ -554,7 +554,7 @@ impl FontSystemState {
             )
         {
             self.native_faces.clear();
-            return Err(error);
+            return Err(error.into());
         }
         Ok(())
     }

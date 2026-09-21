@@ -13,6 +13,11 @@ pub struct AssetReadBudget {
 }
 
 impl AssetReadBudget {
+    /// Binds typed domain storage to an explicit frame or service byte class.
+    #[must_use]
+    pub fn for_class(storage: CpuStorageBudget, class: CpuStorageClass) -> Self {
+        Self { storage, class }
+    }
     /// Binds source input ownership to the service's current demand class.
     /// Required retirement drains cannot borrow speculative admission headroom.
     #[must_use]

@@ -59,7 +59,7 @@ fn detail_dependency_yields_worker_then_publishes_complete_texture_and_mesh()
         catalog.texture_cache_service().request_for(
             &AssetResourceKey::new(catalog.namespace(), AssetPath::new("Ground/Grass.blp")?),
             solarity_cpu::CpuService::Required,
-        )
+        )?
     else {
         return Err("texture producer".into());
     };

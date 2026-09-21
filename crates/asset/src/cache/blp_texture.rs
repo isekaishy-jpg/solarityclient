@@ -62,7 +62,7 @@ impl BlpTextureCache {
         let service = store.texture_cache_service().clone();
         let texture = match service.ready(&key) {
             Some(texture) => texture,
-            None => service.publish_ready(key, BlpTextureSource::load(store, path)?),
+            None => service.publish_ready(key, BlpTextureSource::load(store, path)?)?,
         };
         self.adopt(store, texture)
     }

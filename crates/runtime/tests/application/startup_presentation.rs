@@ -58,7 +58,7 @@ fn startup_presentation_preserves_fixed_slots_and_only_authored_fallbacks()
     assert!(matches!(
         catalog
             .texture_cache_service()
-            .request_for(&key, CpuService::Required),
+            .request_for(&key, CpuService::Required)?,
         BlpLoad::Ready(_)
     ));
     Ok(())
@@ -79,11 +79,11 @@ fn startup_presentation_shared_source_publish_abandon_cancel_and_admission_error
         let key = AssetResourceKey::new(catalog.namespace(), AssetPath::new(PATHS[1])?);
         let BlpLoad::Producer(producer) = catalog
             .texture_cache_service()
-            .request_for(&key, CpuService::Speculative)
+            .request_for(&key, CpuService::Speculative)?
         else {
             return Err("producer".into());
         };
-        let witness = producer.subscribe_for(CpuService::Speculative);
+        let witness = producer.subscribe_for(CpuService::Speculative)?;
         let cpu = pool()?;
         let permit = cpu.try_reserve_for(CpuService::Required)?;
         let shared = SharedTextureSources {

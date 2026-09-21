@@ -78,9 +78,14 @@ impl GlueBackdropLoader {
                 }
             }
         };
-        let model_demand = match &model {
-            BackdropModel::Producer(producer) => Some(producer.subscribe_for(service)),
-            BackdropModel::Ready(_) => None,
+        let (model, model_demand) = match model {
+            BackdropModel::Producer(producer) => {
+                let (producer, demand) = producer
+                    .subscribe_owned(service)
+                    .map_err(|error| Arc::new(RuntimeGlueModelError::from(error)))?;
+                (BackdropModel::Producer(producer), Some(demand))
+            }
+            ready => (ready, None),
         };
         let assets = self
             .assets

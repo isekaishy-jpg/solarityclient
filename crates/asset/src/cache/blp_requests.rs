@@ -6,10 +6,7 @@ use crate::{
 use solarity_cpu::{
     CpuError, CpuService, CpuServiceControl, CpuServiceInterest, CpuStorageBudget, CpuStorageClass,
 };
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 /// Shared source failures are distinct from scheduler cancellation and abandonment.
@@ -48,10 +45,19 @@ type Slot = SourceSlot<BlpTextureSource, BlpLoadError>;
 /// Each consumer owns a typed outcome and its own admitted readiness/demand edge.
 pub type BlpLoadDependency = SourceDependency<BlpTextureSource, BlpLoadError>;
 
-#[derive(Default)]
 struct State {
-    ready: HashMap<AssetResourceKey, crate::texture::BlpTextureWeak>,
-    pending: HashMap<AssetResourceKey, Arc<Slot>>,
+    ready: crate::AssetStorageMap<AssetResourceKey, crate::texture::BlpTextureWeak>,
+    pending: crate::AssetStorageMap<AssetResourceKey, Arc<Slot>>,
+    storage: Arc<std::sync::OnceLock<CpuStorageBudget>>,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            ready: crate::AssetStorageMap::metadata(),
+            pending: crate::AssetStorageMap::metadata(),
+            storage: Arc::default(),
+        }
+    }
 }
 /// Cloned catalogs share authority without sharing mutable archive handles.
 /// Ready entries are weak: cache/consumer owners retain the actual payload charge.
@@ -85,34 +91,57 @@ pub struct BlpLoadProducer {
     finished: bool,
 }
 impl BlpCacheService {
+    pub(crate) fn with_storage(storage: Arc<std::sync::OnceLock<CpuStorageBudget>>) -> Self {
+        Self(Arc::new(Mutex::new(State {
+            storage,
+            ..State::default()
+        })))
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.0
             .lock()
             .unwrap_or_else(|_| unreachable!("texture request metadata cannot panic"))
     }
     /// Claims or joins exact namespace/path identity before archive access.
-    #[must_use]
-    pub fn request_for(&self, key: &AssetResourceKey, service: CpuService) -> BlpLoad {
+    /// # Errors
+    /// Returns metadata admission failure before creating a consumer or producer.
+    pub fn request_for(
+        &self,
+        key: &AssetResourceKey,
+        service: CpuService,
+    ) -> Result<BlpLoad, AssetError> {
         let mut state = self.lock();
         if let Some(source) = state
             .ready
             .get(key)
             .and_then(crate::texture::BlpTextureWeak::upgrade)
         {
-            return BlpLoad::Ready(source);
+            return Ok(BlpLoad::Ready(source));
         }
         state.ready.remove(key);
         if let Some(slot) = state.pending.get(key) {
-            return BlpLoad::Pending(BlpLoadRequest::new(Arc::clone(slot), service));
+            return Ok(BlpLoad::Pending(BlpLoadRequest::new(
+                Arc::clone(slot),
+                service,
+            )?));
         }
-        let slot = Arc::new(Slot::default());
-        state.pending.insert(key.clone(), Arc::clone(&slot));
-        BlpLoad::Producer(BlpLoadProducer {
+        let storage = state.storage.get().cloned();
+        let budget = storage
+            .clone()
+            .map(|storage| AssetReadBudget::for_service(storage, CpuService::Required));
+        let capacity = state.pending.len() + 1;
+        let slot = Slot::new(storage.as_ref())?;
+        state.pending.reserve(budget.as_ref(), capacity)?;
+        state
+            .pending
+            .insert(budget.as_ref(), key.clone(), Arc::clone(&slot))?;
+        Ok(BlpLoad::Producer(BlpLoadProducer {
             service: self.clone(),
             key: key.clone(),
             slot,
             finished: false,
-        })
+        }))
     }
     pub(super) fn ready(&self, key: &AssetResourceKey) -> Option<BlpTextureSource> {
         self.lock()
@@ -125,17 +154,24 @@ impl BlpCacheService {
         &self,
         key: AssetResourceKey,
         source: BlpTextureSource,
-    ) -> BlpTextureSource {
+    ) -> Result<BlpTextureSource, AssetError> {
         let mut state = self.lock();
         if let Some(existing) = state
             .ready
             .get(&key)
             .and_then(crate::texture::BlpTextureWeak::upgrade)
         {
-            return existing;
+            return Ok(existing);
         }
-        state.ready.insert(key, source.downgrade());
-        source
+        let budget = state
+            .storage
+            .get()
+            .cloned()
+            .map(|storage| AssetReadBudget::for_service(storage, CpuService::Required));
+        state
+            .ready
+            .insert(budget.as_ref(), key, source.downgrade())?;
+        Ok(source)
     }
     /// Drops only expired weak index metadata; live payloads and pending work are untouched.
     pub fn collect_unused(&self) {
@@ -143,9 +179,9 @@ impl BlpCacheService {
     }
 }
 impl BlpLoadRequest {
-    fn new(slot: Arc<Slot>, service: CpuService) -> Self {
-        let interest = slot.demand.subscribe(service);
-        Self { slot, interest }
+    fn new(slot: Arc<Slot>, service: CpuService) -> Result<Self, AssetError> {
+        let interest = slot.subscribe(service)?;
+        Ok(Self { slot, interest })
     }
     /// Binds the unique producer's admitted scheduling identity once.
     #[must_use]
@@ -180,9 +216,27 @@ impl BlpLoadRequest {
     }
 }
 impl BlpLoadProducer {
+    /// Admits the producer's consumer before input transfer, publishing refusal to all joiners.
+    /// # Errors
+    /// Returns the same shared admission error delivered to existing consumers.
+    pub fn subscribe_owned(
+        self,
+        service: CpuService,
+    ) -> Result<(Self, BlpLoadRequest), BlpLoadError> {
+        match self.subscribe_for(service) {
+            Ok(request) => Ok((self, request)),
+            Err(error) => {
+                let error = BlpLoadError::Asset(Arc::new(error));
+                self.fail(error.clone());
+                Err(error)
+            }
+        }
+    }
+
     /// Captures the producer owner's independent interest before worker admission.
-    #[must_use]
-    pub fn subscribe_for(&self, service: CpuService) -> BlpLoadRequest {
+    /// # Errors
+    /// Returns metadata admission failure before creating a consumer or producer.
+    pub fn subscribe_for(&self, service: CpuService) -> Result<BlpLoadRequest, AssetError> {
         BlpLoadRequest::new(Arc::clone(&self.slot), service)
     }
     /// Decodes outside all metadata locks and publishes the original result once.
@@ -199,7 +253,7 @@ impl BlpLoadProducer {
                 .with_read_budget(budget, |store| {
                     BlpTextureSource::load(store, self.key.path())
                 })
-                .map(|source| self.service.publish_ready(self.key.clone(), source))
+                .and_then(|source| self.service.publish_ready(self.key.clone(), source))
                 .and_then(|source| {
                     source.admit(budget)?;
                     Ok(source)

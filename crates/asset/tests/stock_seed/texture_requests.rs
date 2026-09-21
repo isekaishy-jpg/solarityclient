@@ -42,10 +42,10 @@ fn shared_texture_dependency_releases_worker_and_retains_one_payload_charge()
     catalog
         .model_cache_service()
         .configure_storage(cpu.storage().clone())?;
-    let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Speculative) else {
+    let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Speculative)? else {
         return Err("producer".into());
     };
-    let BlpLoad::Pending(request) = service.request_for(&key, CpuService::Required) else {
+    let BlpLoad::Pending(request) = service.request_for(&key, CpuService::Required)? else {
         return Err("join".into());
     };
     let dependency = request.dependency(cpu.storage(), Class::Required)?;
@@ -90,7 +90,7 @@ fn shared_texture_dependency_releases_worker_and_retains_one_payload_charge()
     assert_eq!(b.collect_unused(), 1);
     assert!(
         matches!(
-            service.request_for(&key, CpuService::Required),
+            service.request_for(&key, CpuService::Required)?,
             BlpLoad::Ready(_)
         ),
         "worker snapshots retain ready payloads after cache collection"
@@ -104,7 +104,7 @@ fn shared_texture_dependency_releases_worker_and_retains_one_payload_charge()
         0
     );
     assert!(matches!(
-        service.request_for(&key, CpuService::Required),
+        service.request_for(&key, CpuService::Required)?,
         BlpLoad::Producer(_)
     ));
     Ok(())
@@ -119,10 +119,10 @@ fn shared_texture_failure_abandonment_and_namespace_preserve_retry() -> Result<(
     let policy = AssetReadBudget::for_service(cpu.storage().clone(), CpuService::Required);
     let mut reader = AssetStore::mount(first.clone())?;
     let missing = AssetResourceKey::new(first.namespace(), AssetPath::new("Textures/Missing.blp")?);
-    let BlpLoad::Producer(producer) = service.request_for(&missing, CpuService::Required) else {
+    let BlpLoad::Producer(producer) = service.request_for(&missing, CpuService::Required)? else {
         return Err("producer".into());
     };
-    let request = producer.subscribe_for(CpuService::Required);
+    let request = producer.subscribe_for(CpuService::Required)?;
     let edge = request.dependency(cpu.storage(), Class::Required)?;
     let Err(BlpLoadError::Asset(original)) = producer.load(&mut reader, &policy) else {
         return Err("failure".into());
@@ -131,15 +131,15 @@ fn shared_texture_failure_abandonment_and_namespace_preserve_retry() -> Result<(
         return Err("shared failure".into());
     };
     assert!(Arc::ptr_eq(&original, &delivered));
-    let BlpLoad::Producer(producer) = service.request_for(&missing, CpuService::Required) else {
+    let BlpLoad::Producer(producer) = service.request_for(&missing, CpuService::Required)? else {
         return Err("retry".into());
     };
-    let abandoned = producer.subscribe_for(CpuService::Required);
+    let abandoned = producer.subscribe_for(CpuService::Required)?;
     let edge = abandoned.dependency(cpu.storage(), Class::Required)?;
     drop(producer);
     assert!(matches!(edge.poll(), Some(Err(BlpLoadError::Abandoned))));
     let key = AssetResourceKey::new(first.namespace(), AssetPath::new("Textures/Shared.blp")?);
-    let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Required) else {
+    let BlpLoad::Producer(producer) = service.request_for(&key, CpuService::Required)? else {
         return Err("source producer".into());
     };
     let mut other = AssetStore::mount(catalog(&fixture)?)?;
@@ -148,7 +148,7 @@ fn shared_texture_failure_abandonment_and_namespace_preserve_retry() -> Result<(
         Err(BlpLoadError::Namespace { .. })
     ));
     assert!(matches!(
-        service.request_for(&key, CpuService::Required),
+        service.request_for(&key, CpuService::Required)?,
         BlpLoad::Producer(_)
     ));
     Ok(())
@@ -173,8 +173,8 @@ fn concurrent_texture_claims_have_one_producer() -> Result<(), Box<dyn Error>> {
         tasks
             .into_iter()
             .map(|task| task.join().unwrap_or_else(|_| panic!("claim panicked")))
-            .collect::<Vec<_>>()
-    });
+            .collect::<Result<Vec<_>, _>>()
+    })?;
     assert_eq!(
         requests
             .iter()
@@ -203,7 +203,7 @@ fn texture_construction_replays_exact_failure_then_shared_source() -> Result<(),
     let key = AssetResourceKey::new(catalog.namespace(), AssetPath::new("Textures/Shared.blp")?);
     let BlpLoad::Producer(producer) = catalog
         .texture_cache_service()
-        .request_for(&key, CpuService::Required)
+        .request_for(&key, CpuService::Required)?
     else {
         return Err("producer".into());
     };
@@ -274,7 +274,7 @@ fn texture_construction_abandonment_and_unwind_restore_cache() -> Result<(), Box
     let key = AssetResourceKey::new(catalog.namespace(), AssetPath::new("Textures/Shared.blp")?);
     let BlpLoad::Producer(producer) = catalog
         .texture_cache_service()
-        .request_for(&key, CpuService::Required)
+        .request_for(&key, CpuService::Required)?
     else {
         return Err("producer".into());
     };
@@ -308,5 +308,100 @@ fn texture_construction_abandonment_and_unwind_restore_cache() -> Result<(), Box
     }));
     assert!(panic.is_err());
     assert!(cache.load(&mut reader, key.path()).is_ok());
+    Ok(())
+}
+
+#[test]
+fn namespace_request_metadata_is_admitted_across_m2_wmo_and_blp() -> Result<(), Box<dyn Error>> {
+    use solarity_asset::{AssetError, M2Load, M2LoadError, WmoLoad, WmoLoadError};
+    use solarity_cpu::{CpuError, CpuStorageBudget, CpuStorageKind};
+    let fixture = fixture()?;
+    let catalog = catalog(&fixture)?;
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 65536, 0));
+    catalog
+        .model_cache_service()
+        .configure_storage(budget.clone())?;
+    macro_rules! exercise {
+        ($service:expr, $load:ident, $error:ident, $path:literal) => {{
+            let service = $service;
+            let key = AssetResourceKey::new(catalog.namespace(), AssetPath::new($path)?);
+            let $load::Producer(producer) = service.request_for(&key, CpuService::Speculative)?
+            else {
+                return Err("new key did not claim its producer".into());
+            };
+            let request = producer.subscribe_for(CpuService::Required)?;
+            let before = budget.snapshot().used(Class::Required);
+            assert!(before > 0);
+            let hold = budget.reserve(Class::Required, CpuStorageKind::Scratch, 65536 - before)?;
+            assert!(matches!(
+                service.request_for(&key, CpuService::Required),
+                Err(AssetError::SourceStorage(
+                    CpuError::StorageAtCapacity { .. }
+                ))
+            ));
+            let absent = AssetResourceKey::new(
+                catalog.namespace(),
+                AssetPath::new(concat!("Other/", $path))?,
+            );
+            assert!(service.request_for(&absent, CpuService::Required).is_err());
+            drop(hold);
+            assert_eq!(budget.snapshot().used(Class::Required), before);
+            let $load::Pending(joined) = service.request_for(&key, CpuService::Required)? else {
+                return Err("refusal replaced the existing producer".into());
+            };
+            drop(producer);
+            assert!(matches!(request.poll(), Some(Err($error::Abandoned))));
+            assert!(matches!(joined.poll(), Some(Err($error::Abandoned))));
+            drop(joined);
+            let $load::Producer(producer) = service.request_for(&absent, CpuService::Required)?
+            else {
+                return Err("failed admission left a producer behind".into());
+            };
+            let observer = producer.subscribe_for(CpuService::Required)?;
+            let hold = budget.reserve(
+                Class::Required,
+                CpuStorageKind::Scratch,
+                65536 - budget.snapshot().used(Class::Required),
+            )?;
+            let Err($error::Asset(original)) = producer.subscribe_owned(CpuService::Required)
+            else {
+                return Err("producer consumer bypassed metadata pressure".into());
+            };
+            let Some(Err($error::Asset(delivered))) = observer.poll() else {
+                return Err("producer admission did not publish its exact failure".into());
+            };
+            assert!(Arc::ptr_eq(&original, &delivered));
+            drop((hold, observer));
+            request
+        }};
+    }
+    let m2 = exercise!(
+        catalog.model_cache_service(),
+        M2Load,
+        M2LoadError,
+        "Model.m2"
+    );
+    let wmo = exercise!(
+        catalog.world_model_cache_service(),
+        WmoLoad,
+        WmoLoadError,
+        "Model.wmo"
+    );
+    let blp = exercise!(
+        catalog.texture_cache_service(),
+        BlpLoad,
+        BlpLoadError,
+        "Texture.blp"
+    );
+    assert_eq!(
+        budget
+            .snapshot()
+            .bytes(Class::Required, CpuStorageKind::Result),
+        0
+    );
+    drop(catalog);
+    assert!(budget.snapshot().used(Class::Required) > 0);
+    drop((m2, wmo, blp));
+    assert_eq!(budget.snapshot().used(Class::Required), 0);
     Ok(())
 }

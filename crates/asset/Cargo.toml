@@ -9,6 +9,7 @@ publish = false
 solarity-cpu.workspace = true
 solarity-profiling.workspace = true
 glam.workspace = true
+hashbrown.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 wow-adt.workspace = true

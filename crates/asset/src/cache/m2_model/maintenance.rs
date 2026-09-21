@@ -16,7 +16,7 @@ pub(super) struct Registry {
     owners: Mutex<Vec<Arc<ModelCacheCore>>>,
     changed: Arc<AtomicBool>,
     pub(super) requests: Mutex<super::requests::RequestIndex>,
-    storage: std::sync::OnceLock<solarity_cpu::CpuStorageBudget>,
+    storage: Arc<std::sync::OnceLock<solarity_cpu::CpuStorageBudget>>,
 }
 
 /// Shared by catalog clones; no worker, timer or thread is created by this service.
@@ -30,6 +30,14 @@ impl fmt::Debug for M2CacheService {
 }
 
 impl M2CacheService {
+    pub(crate) fn with_storage(
+        storage: Arc<std::sync::OnceLock<solarity_cpu::CpuStorageBudget>>,
+    ) -> Self {
+        Self(Arc::new(Registry {
+            storage,
+            ..Registry::default()
+        }))
+    }
     /// Binds namespace source ownership to the application storage budget.
     /// Mounted readers use it for required inputs unless a loading scope overrides
     /// the class; retained models and textures keep separate payload charges.
