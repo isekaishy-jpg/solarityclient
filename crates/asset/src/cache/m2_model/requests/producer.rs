@@ -28,9 +28,21 @@ impl M2LoadProducer {
                 actual: store.namespace(),
             })
         } else {
-            DecodedM2Model::load_primary_profile(store, self.key.path())
-                .map(Arc::new)
-                .map_err(|error| M2LoadError::Asset(Arc::new(error)))
+            DecodedM2Model::load_primary_profile_with_class(store, self.key.path(), || {
+                match self
+                    .slot
+                    .demand
+                    .strongest()
+                    .unwrap_or(self.requested_service)
+                {
+                    solarity_cpu::CpuService::Speculative => {
+                        solarity_cpu::CpuStorageClass::Speculative
+                    }
+                    _ => solarity_cpu::CpuStorageClass::Required,
+                }
+            })
+            .map(Arc::new)
+            .map_err(|error| M2LoadError::Asset(Arc::new(error)))
         };
         // Keep the decoded owner outside the locked admission call, including failure.
         let result =

@@ -205,3 +205,12 @@ fn decode_spline_scalar(
         read_f32(path, bytes, offset + 8, field)?,
     ))
 }
+
+impl M2Camera {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.position.heap_bytes()
+            + self.target_position.heap_bytes()
+            + self.roll_radians.heap_bytes()
+    }
+}

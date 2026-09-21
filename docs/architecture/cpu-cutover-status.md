@@ -19,6 +19,29 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Retained M2 generations now charge the existing CPU Result allowances once for
+their decoded geometry, primary SKIN, collision/hierarchy buffers and nested
+animation, material, light, ribbon and particle tracks. Runtime binds the shared
+source authority to its executor budget before model loading. Speculative
+sources use their separate allowance; required consumers atomically transfer
+the charge before consumption. Refusal preserves the original speculative
+generation and allows retry. Cache-only retention keeps its charge until the
+qualified release deadline, with no change to that policy.
+
+The accounting measures owned capacities, including unused Vec slots. Shared
+canonical path strings, cache/request metadata, allocator overhead and temporary
+encoded/decode scratch remain outside this generation charge. Other source
+domains and complete working-set admission remain open.
+
+Validation exposed a startup stack overflow on the default test thread. The
+process's large service owner is now boxed instead of being copied inline
+through application startup results; the unchanged startup/shutdown test passes
+without increasing the stack limit. Formatting, workspace Clippy with warnings
+denied, all 1,686 workspace unit/integration tests (33 existing ignores) and six
+doc tests pass. Logs are ignored `target/model-storage-final2.log` and the
+preceding failure/reproduction logs. Build 174 remains installed; this source
+has no measured FPS result yet.
+
 The unit pose batch now includes mounted riders and vehicle descendants whose
 transforms have already been resolved by ordered callbacks. Camera demand uses
 the model's bounds; shadow demand uses its attachment root. Exact generation,

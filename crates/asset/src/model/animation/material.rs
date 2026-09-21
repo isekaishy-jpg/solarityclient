@@ -86,3 +86,24 @@ impl M2TextureTransform {
         &self.scale
     }
 }
+
+impl M2ColorAnimation {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.color.heap_bytes() + self.alpha.heap_bytes()
+    }
+}
+
+impl M2TextureWeight {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.weight.heap_bytes()
+    }
+}
+
+impl M2TextureTransform {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.translation.heap_bytes() + self.rotation.heap_bytes() + self.scale.heap_bytes()
+    }
+}

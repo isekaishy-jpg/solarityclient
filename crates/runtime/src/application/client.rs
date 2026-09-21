@@ -232,7 +232,9 @@ impl StartupReport {
 
 /// The sole owner of cross-crate concrete service wiring.
 pub struct ClientApplication {
-    services: ClientServices,
+    // The process owner is large; startup and Result propagation must not copy
+    // its complete service state through each caller's stack frame.
+    services: Box<ClientServices>,
     report: StartupReport,
 }
 
@@ -282,7 +284,7 @@ impl ClientApplication {
         let glue = services.glue_report();
 
         Ok(Self {
-            services,
+            services: Box::new(services),
             report: StartupReport {
                 archive_count,
                 addon_count,

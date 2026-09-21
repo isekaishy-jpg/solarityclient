@@ -226,8 +226,9 @@ impl ClientServices {
         };
         let catalog =
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
+        let model_sources = catalog.model_cache_service();
         let model_cache_maintenance = model_cache_maintenance::RuntimeModelCacheMaintenance::new(
-            catalog.model_cache_service(),
+            model_sources.clone(),
             catalog.world_model_cache_service(),
         );
         let archive_count = catalog.descriptors().len();
@@ -405,6 +406,7 @@ impl ClientServices {
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
         let cpu =
             CpuExecutor::with_notifier(configuration.cpu_pool(), platform.coordinator_notifier())?;
+        model_sources.configure_storage(cpu.storage().clone())?;
         let capabilities = solarity_cpu::CpuCapabilities::discover();
         tracing::info!(
             protected_workers = cpu.frame_worker_count(),

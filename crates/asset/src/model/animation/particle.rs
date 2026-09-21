@@ -888,3 +888,38 @@ fn decode_vec3_array(
         .map(|index| decode_vec3(path, bytes, array.offset + index * 12, field))
         .collect()
 }
+
+impl<T> M2ParticleLifetimeTrack<T> {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        vector_bytes(&self.timestamps) + vector_bytes(&self.values)
+    }
+}
+
+impl M2ParticleEmitter {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        self.emission_speed.heap_bytes()
+            + self.speed_variation.heap_bytes()
+            + self.vertical_range.heap_bytes()
+            + self.horizontal_range.heap_bytes()
+            + self.lifespan.heap_bytes()
+            + self.emission_rate.heap_bytes()
+            + self.emission_area_width.heap_bytes()
+            + self.emission_area_length.heap_bytes()
+            + self.z_source.heap_bytes()
+            + self.color.heap_bytes()
+            + self.alpha.heap_bytes()
+            + self.scale.heap_bytes()
+            + self.head_uv_animation.heap_bytes()
+            + self.tail_uv_animation.heap_bytes()
+            + self.enabled.heap_bytes()
+            + vector_bytes(&self.spline_points)
+            + match &self.gravity {
+                M2ParticleGravity::Scalar(track) => track.heap_bytes(),
+                M2ParticleGravity::Compressed(track) => track.heap_bytes(),
+            }
+    }
+}

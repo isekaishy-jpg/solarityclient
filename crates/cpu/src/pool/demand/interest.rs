@@ -5,6 +5,12 @@ use super::{CpuServiceInterest, Interest};
 use std::sync::atomic::Ordering;
 
 impl CpuServiceInterest {
+    /// This consumer's current requirement, independent of other owners.
+    #[must_use]
+    pub fn service(&self) -> CpuService {
+        CpuService::from_raw(self.0.service.load(Ordering::Acquire))
+    }
+
     /// Changes only this logical consumer; other owners retain their own requirements.
     pub fn set_service(&self, service: CpuService) {
         let mut values = self

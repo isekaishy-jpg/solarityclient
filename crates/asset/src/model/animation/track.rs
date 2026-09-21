@@ -253,3 +253,16 @@ fn empty_channel<T>() -> M2TrackChannel<T> {
         values: Vec::new(),
     }
 }
+
+impl<T> M2Track<T> {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        vector_bytes(&self.channels)
+            + self
+                .channels
+                .iter()
+                .map(|channel| vector_bytes(&channel.timestamps_ms) + vector_bytes(&channel.values))
+                .sum::<usize>()
+    }
+}

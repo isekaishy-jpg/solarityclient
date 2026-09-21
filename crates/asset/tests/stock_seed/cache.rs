@@ -47,6 +47,11 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let budget =
+        solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(0, 1 << 20, 0));
+    catalog
+        .model_cache_service()
+        .configure_storage(budget.clone())?;
     let mut store = AssetStore::mount(catalog)?;
     let path = AssetPath::new("Creature/Solarity/Cached.m2")?;
     let clock = Arc::new(AtomicU32::new(0));
@@ -56,6 +61,13 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
     let first = cache.load(&mut store, &path)?;
     let second = cache.load(&mut store, &path)?;
 
+    let charged = first.resident_storage_bytes();
+    assert_eq!(
+        budget
+            .snapshot()
+            .used(solarity_cpu::CpuStorageClass::Required),
+        charged
+    );
     assert!(ResourceLease::ptr_eq(&first, &second));
     assert_eq!(first.name(), Some("HdModel"));
     assert_eq!(first.skins()[0].bone_count_max(), 512);
@@ -68,10 +80,22 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
     clock.store(9_999, Ordering::Release);
     assert_eq!(cache.collect_unused(), 0);
     assert!(weak.is_alive());
+    assert_eq!(
+        budget
+            .snapshot()
+            .used(solarity_cpu::CpuStorageClass::Required),
+        charged
+    );
     clock.store(10_000, Ordering::Release);
     assert_eq!(cache.collect_unused(), 1);
     assert!(cache.is_empty());
     assert!(weak.upgrade().is_none());
+    assert_eq!(
+        budget
+            .snapshot()
+            .used(solarity_cpu::CpuStorageClass::Required),
+        0
+    );
     Ok(())
 }
 

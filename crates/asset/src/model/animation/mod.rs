@@ -1243,3 +1243,84 @@ fn read_bytes<const N: usize>(
         .and_then(|value| value.try_into().ok())
         .ok_or_else(|| model_decode(path, format!("{field} is truncated")))
 }
+
+impl M2AnimationSet {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        vector_bytes(&self.global_sequence_durations_ms)
+            + vector_bytes(&self.sequences)
+            + vector_bytes(&self.animation_lookup)
+            + vector_bytes(&self.sequence_available)
+            + vector_bytes(&self.key_bone_lookup)
+            + vector_bytes(&self.attachment_lookup)
+            + vector_bytes(&self.camera_lookup)
+            + vector_bytes(&self.bones)
+            + self
+                .bones
+                .iter()
+                .map(|bone| {
+                    bone.translation.heap_bytes()
+                        + bone.rotation.heap_bytes()
+                        + bone.scale.heap_bytes()
+                })
+                .sum::<usize>()
+            + vector_bytes(&self.attachments)
+            + self
+                .attachments
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.colors)
+            + self
+                .colors
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.texture_weights)
+            + self
+                .texture_weights
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.texture_transforms)
+            + self
+                .texture_transforms
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.cameras)
+            + self
+                .cameras
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.events)
+            + self
+                .events
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.lights)
+            + self
+                .lights
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.ribbons)
+            + self
+                .ribbons
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.particles)
+            + self
+                .particles
+                .iter()
+                .map(|value| value.heap_bytes())
+                .sum::<usize>()
+            + vector_bytes(&self.hierarchy.order)
+            + vector_bytes(&self.hierarchy.fingers)
+            + vector_bytes(&self.hierarchy.identity_locals)
+    }
+}

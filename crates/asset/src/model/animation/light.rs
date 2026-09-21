@@ -232,3 +232,16 @@ fn float_track(
         path, bytes, offset, field, globals, sequences, payloads, 4, read_f32,
     )
 }
+
+impl M2Light {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.ambient_color.heap_bytes()
+            + self.ambient_intensity.heap_bytes()
+            + self.diffuse_color.heap_bytes()
+            + self.diffuse_intensity.heap_bytes()
+            + self.attenuation_start.heap_bytes()
+            + self.attenuation_end.heap_bytes()
+            + self.visibility.heap_bytes()
+    }
+}

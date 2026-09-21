@@ -283,3 +283,18 @@ fn decode_u16_array(
         .map(|index| read_u16(path, bytes, array.offset + index * 2, field))
         .collect()
 }
+
+impl M2RibbonEmitter {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        self.color.heap_bytes()
+            + self.alpha.heap_bytes()
+            + self.height_above.heap_bytes()
+            + self.height_below.heap_bytes()
+            + self.texture_slot.heap_bytes()
+            + self.visibility.heap_bytes()
+            + vector_bytes(&self.texture_indices)
+            + vector_bytes(&self.material_indices)
+    }
+}

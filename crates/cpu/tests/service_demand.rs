@@ -86,3 +86,19 @@ fn demand_registered_before_binding_applies_only_current_consumers() -> Result<(
     cpu.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn resource_admission_observes_current_consumer_demand() {
+    let demand = CpuServiceDemand::default();
+    assert_eq!(demand.strongest(), None);
+    let prewarm = demand.subscribe(CpuService::Speculative);
+    let selected = demand.subscribe(CpuService::Required);
+    assert_eq!(demand.strongest(), Some(CpuService::Required));
+    assert_eq!(selected.service(), CpuService::Required);
+    let clone = selected.clone();
+    selected.set_service(CpuService::Speculative);
+    assert_eq!(clone.service(), CpuService::Speculative);
+    assert_eq!(demand.strongest(), Some(CpuService::Speculative));
+    drop((selected, clone, prewarm));
+    assert_eq!(demand.strongest(), None);
+}
