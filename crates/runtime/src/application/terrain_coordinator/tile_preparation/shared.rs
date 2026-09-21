@@ -71,6 +71,30 @@ impl SharedTerrainSources {
     pub(in crate::application) fn read_budget(&self) -> solarity_asset::AssetReadBudget {
         solarity_asset::AssetReadBudget::for_service(self.budget.clone(), self.service.service())
     }
+    /// Texture consumers retain their local cache pins while sharing pending decode authority.
+    pub(in crate::application) fn texture(
+        &self,
+        path: &AssetPath,
+        pending: &mut Option<solarity_asset::BlpLoadDependency>,
+        store: &mut AssetStore,
+        cache: &mut solarity_asset::BlpTextureCache,
+    ) -> Result<
+        ControlFlow<std::sync::Arc<solarity_asset::BlpTextureSource>, CpuTaskDependency>,
+        RuntimeTerrainError,
+    > {
+        let shared = crate::application::texture_source_job::SharedTextureSources {
+            budget: self.budget.clone(),
+            service: self.service.clone(),
+        };
+        match shared.load(store, path, pending)? {
+            ControlFlow::Continue(edge) => Ok(ControlFlow::Continue(edge)),
+            ControlFlow::Break(source) => Ok(ControlFlow::Break(
+                store
+                    .with_read_budget(&shared.read_budget(), |store| cache.adopt(store, source))?,
+            )),
+        }
+    }
+
     /// Joins one namespace model. A new producer decodes in this admitted bulk
     /// turn; an existing producer supplies a readiness edge instead of a worker wait.
     pub(in crate::application) fn model(

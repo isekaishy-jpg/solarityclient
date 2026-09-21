@@ -16,3 +16,5 @@ mod tga;
 pub use block_compression::{BlpBlockCompression, BlpBlockMip};
 pub use blp::DecodedBlpTexture;
 pub use texture_source::BlpTextureSource;
+
+pub(crate) use texture_source::BlpTextureWeak;

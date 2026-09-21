@@ -40,6 +40,7 @@ mod sky_resources;
 mod sound_coordinator;
 mod terrain_coordinator;
 mod terrain_frame;
+mod texture_source_job;
 pub(crate) mod ui_frame;
 mod underwater_particles;
 mod unit_animation;

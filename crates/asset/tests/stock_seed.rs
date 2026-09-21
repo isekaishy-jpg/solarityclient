@@ -58,6 +58,8 @@ mod support;
 mod terrain;
 #[path = "stock_seed/texture.rs"]
 mod texture;
+#[path = "stock_seed/texture_requests.rs"]
+mod texture_requests;
 #[path = "stock_seed/texture_storage.rs"]
 mod texture_storage;
 #[path = "stock_seed/world.rs"]

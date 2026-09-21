@@ -25,7 +25,10 @@ use crate::application::ui_frame::PreparedUiFrame;
 
 pub(super) struct TextureCompletion {
     pub(super) store: AssetStore,
-    pub(super) sources: Vec<(AssetPath, Result<BlpTextureSource, AssetError>)>,
+    pub(super) sources: Vec<(
+        AssetPath,
+        Result<BlpTextureSource, solarity_asset::BlpLoadError>,
+    )>,
 }
 
 struct MinimapSlot {
@@ -376,11 +379,18 @@ impl RuntimeMinimapScene {
         };
         // Refusal above leaves the reusable reader owned here. Taking it into a
         // rejected closure would destroy the mounted archive bank on main.
-        self.pending = Some(permit.submit_steps_with_context(texture_loading::prepare(
-            self.archive_catalog.clone(),
-            self.worker_store.take(),
-            paths,
-        )));
+        let shared = crate::application::texture_source_job::SharedTextureSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        self.pending = Some(
+            permit.submit_resumable_with_context(texture_loading::prepare(
+                self.archive_catalog.clone(),
+                self.worker_store.take(),
+                paths,
+                shared,
+            )),
+        );
         Ok(())
     }
 
@@ -405,7 +415,8 @@ impl RuntimeMinimapScene {
                 Ok(source) => sources.push((path, source)),
                 Err(error) => {
                     self.failed.insert(path);
-                    if !matches!(error, AssetError::AssetNotFound { .. }) {
+                    if !matches!(&error, solarity_asset::BlpLoadError::Asset(error) if matches!(&**error, AssetError::AssetNotFound { .. }))
+                    {
                         return Err(error.into());
                     }
                 }

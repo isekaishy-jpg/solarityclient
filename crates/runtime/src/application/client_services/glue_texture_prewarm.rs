@@ -5,9 +5,10 @@
 mod tests;
 
 use super::ClientServices;
-use crate::application::{ApplicationError, archive_job::prepare_archive};
+use crate::application::texture_source_job::SharedTextureSources;
+use crate::application::{ApplicationError, archive_job::prepare_archive_resumable};
 use solarity_asset::{ArchiveCatalog, AssetError, AssetPath, BlpTextureCache};
-use solarity_cpu::{CpuError, CpuTask};
+use solarity_cpu::{CpuError, CpuTask, CpuTaskStep, JobContext};
 use std::ops::ControlFlow;
 
 /// Completed immutable sources and the existing per-path speculative diagnostics.
@@ -30,24 +31,40 @@ pub(super) enum ConfiguredGlueTexturePrewarmJob {
 pub(super) fn prepare_configured_glue_textures(
     catalog: ArchiveCatalog,
     paths: Vec<AssetPath>,
-    budget: solarity_asset::AssetReadBudget,
-) -> impl FnMut() -> ControlFlow<Result<ConfiguredGlueTexturePrewarm, AssetError>> {
+    shared: SharedTextureSources,
+) -> impl FnMut(&JobContext<'_>) -> CpuTaskStep<Result<ConfiguredGlueTexturePrewarm, AssetError>> {
     let mut paths = paths.into_iter();
     let mut cache = BlpTextureCache::new();
     let mut failures = Vec::new();
-    prepare_archive(catalog, move |store| {
-        let _profile = solarity_profiling::profile!("runtime.glue_texture.source_step");
-        let Some(path) = paths.next() else {
-            return ControlFlow::Break(Ok(ConfiguredGlueTexturePrewarm {
+    let mut pending = None;
+    let mut operation = prepare_archive_resumable(catalog, move |store| {
+        let Some(path) = paths.as_slice().first().cloned() else {
+            return CpuTaskStep::Complete(Ok(ConfiguredGlueTexturePrewarm {
                 cache: std::mem::take(&mut cache),
                 failures: std::mem::take(&mut failures),
             }));
         };
-        if let Err(error) = store.with_read_budget(&budget, |store| cache.load(store, &path)) {
+        let result = match shared.load(store, &path, &mut pending) {
+            Ok(ControlFlow::Continue(edge)) => return CpuTaskStep::Wait(edge),
+            Ok(ControlFlow::Break(source)) => store
+                .with_read_budget(&shared.read_budget(), |store| cache.adopt(store, source))
+                .map(|_| ())
+                .map_err(solarity_asset::BlpLoadError::from),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
             failures.push(format!("failed to prewarm Glue texture {path}: {error}"));
         }
-        ControlFlow::Continue(())
-    })
+        paths.next();
+        CpuTaskStep::Continue
+    });
+    move |context| {
+        context.diagnostic_value("glue.texture.source_step", 1);
+        if context.is_cancelled() {
+            return CpuTaskStep::Complete(Err(CpuError::JobCancelled.into()));
+        }
+        operation()
+    }
 }
 
 impl ClientServices {
@@ -77,18 +94,12 @@ impl ClientServices {
                     .try_reserve_for(solarity_cpu::CpuService::Speculative)
                 {
                     Ok(permit) => {
-                        let task = permit.submit_steps_with_context(
-                            crate::application::archive_job::contextual(
-                                "glue.texture.source_step",
-                                prepare_configured_glue_textures(
-                                    catalog,
-                                    paths,
-                                    solarity_asset::AssetReadBudget::for_service(
-                                        self.cpu.storage().clone(),
-                                        solarity_cpu::CpuService::Speculative,
-                                    ),
-                                ),
-                            ),
+                        let shared = SharedTextureSources {
+                            budget: self.cpu.storage().clone(),
+                            service: permit.service_control(),
+                        };
+                        let task = permit.submit_resumable_with_context(
+                            prepare_configured_glue_textures(catalog, paths, shared),
                         );
                         self.pending_glue_texture_prewarm =
                             Some(ConfiguredGlueTexturePrewarmJob::Running(task));

@@ -44,6 +44,7 @@ impl AssetStore {
         let namespace = catalog.namespace();
         let model_cache_service = catalog.model_cache_service();
         let world_model_cache_service = catalog.world_model_cache_service();
+        let texture_cache_service = catalog.texture_cache_service();
         let identity = crate::file_stack::namespace::next_identity()?;
         let data_root = catalog.data_root().clone();
         let locale = catalog.locale();
@@ -57,6 +58,7 @@ impl AssetStore {
                 namespace,
                 model_cache_service,
                 world_model_cache_service,
+                texture_cache_service,
                 data_root,
                 locale,
                 existing_locales,

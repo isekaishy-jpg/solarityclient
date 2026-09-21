@@ -81,7 +81,9 @@ fn failed_tile_returns_archive_bank_for_the_next_generation() -> Result<(), Box<
     )?;
     assert!(matches!(
         failed.result,
-        Err(super::RuntimeTerrainError::Asset(_))
+        Err(super::RuntimeTerrainError::SharedTexture(
+            solarity_asset::BlpLoadError::Asset(_)
+        ))
     ));
     let worker = failed
         .worker
@@ -447,6 +449,95 @@ fn terrain_shared_model_gate_preserves_source_identity_failure_and_withdrawal()
                 ))
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn terrain_shared_texture_gate_preserves_worker_bank_and_cancellation() -> Result<(), Box<dyn Error>>
+{
+    use solarity_asset::{AssetPath, AssetReadBudget, AssetResourceKey, BlpLoad, BlpLoadError};
+    use solarity_cpu::CpuService;
+    for terminal in ["success", "abandoned", "cancelled"] {
+        let (_fixture, catalog, definition) = fixture()?;
+        let key = AssetResourceKey::new(
+            catalog.namespace(),
+            AssetPath::new("tileset/fixture/grass_s.blp")?,
+        );
+        let BlpLoad::Producer(producer) = catalog
+            .texture_cache_service()
+            .request_for(&key, CpuService::Required)
+        else {
+            return Err("producer".into());
+        };
+        let observer = producer.subscribe_for(CpuService::Required);
+        let mut cpu = test_cpu()?;
+        let permit = cpu.try_reserve()?;
+        let shared = super::super::tile_preparation::SharedTerrainSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let mut steps = terrain_steps(
+            TerrainWorkerSource::Catalog(catalog.clone()),
+            definition,
+            request(21)?,
+            true,
+            shared,
+        );
+        let (suspended, observed) = mpsc::channel();
+        let task = permit.submit_resumable_with_context(move |context| {
+            let step = steps(context);
+            if matches!(step, CpuTaskStep::Wait(_)) {
+                let _ = suspended.send(());
+            }
+            step
+        });
+        let parked = observed.recv_timeout(std::time::Duration::from_secs(15));
+        if parked.is_err() {
+            task.cancel();
+        }
+        parked?;
+        assert_eq!(cpu.try_submit(|| 17)?.join()?, 17);
+        assert!(!task.is_finished());
+        match terminal {
+            "success" => {
+                let source = producer.load(
+                    &mut AssetStore::mount(catalog)?,
+                    &AssetReadBudget::for_service(cpu.storage().clone(), CpuService::Required),
+                )?;
+                let done = task.join()?;
+                assert!(done.worker.is_some());
+                let tile = done.result?.ok_or("resident")?.tile.ok_or("tile")?;
+                let delivered = tile.textures.first().ok_or("texture")?;
+                assert_eq!(
+                    delivered.decode_mip(0)?.rgba8(),
+                    source.decode_mip(0)?.rgba8()
+                );
+                assert_eq!(delivered.namespace(), source.namespace());
+                assert_eq!(delivered.path(), key.path());
+            }
+            "abandoned" => {
+                drop(producer);
+                let done = task.join()?;
+                assert!(done.worker.is_some());
+                assert!(matches!(
+                    done.result,
+                    Err(super::RuntimeTerrainError::SharedTexture(
+                        BlpLoadError::Abandoned
+                    ))
+                ));
+            }
+            "cancelled" => {
+                task.cancel();
+                let done = task.join()?;
+                assert!(done.worker.is_some());
+                assert!(done.result?.is_none());
+                assert!(observer.poll().is_none());
+                drop(producer);
+            }
+            _ => unreachable!(),
+        }
+        cpu.shutdown()?;
     }
     Ok(())
 }

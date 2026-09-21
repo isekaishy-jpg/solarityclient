@@ -19,6 +19,37 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Catalog clones now share BLP pending-request authority and a weak published-source
+index. Unique producers publish the original source or shared failure; abandonment
+wakes every joined consumer and permits retry. Independent demand and typed CPU
+readiness edges release workers while waiting. Source bytes and their charge remain
+owned by consumers/cache banks; the shared index does not pin them. Local cache
+owners use independent outer pins, so cross-bank sharing does not prevent unused
+entry collection. Their ordinary collection also trims expired shared weak metadata.
+
+Glue configured texture prewarm, celestial textures, minimap sources and ADT
+material texture stages now join these requests on the existing resumable workers.
+The cursor, reader and private output survive suspension; cancellation releases a
+consumer without abandoning another producer. Ordinary synchronous texture caches
+reuse and publish canonical ready payloads too. Their cold calls still cannot join
+a pending request: remaining synchronous material/body/liquid construction must be
+converted to resumable consumers before claiming all-domain BLP single production.
+Direct low-level `BlpTextureSource::load` remains an explicit uncached decode API.
+No worker waits on a source condition variable, and no source decode holds a cache
+metadata lock. Individual BLP parsing remains an indivisible codec operation.
+
+Validation covers 795 distinct passing asset/runtime tests and 29 existing ignores.
+Formatting and all-target/all-feature Clippy passed. Two new fixture assertions
+were corrected: required-pool metadata is separate from source result bytes, and
+specular ADT loading requests the authored `_s.blp` variant. Production source was
+unchanged after the grouped compile. Focused reruns pass both corrected fixtures;
+all remaining runtime integration executables from that compile pass as well.
+Evidence is ignored `target/blp-requests-final2.log`, `target/blp-requests-resume.log`,
+`target/blp-requests-runtime-finish.log` and the verified artifact inventory
+`target/blp-runtime-artifacts.json`. No live performance comparison or package was
+produced. Synchronous material/body/liquid source construction, including its
+admission-versus-authored-failure handling, remains part of the next integration.
+
 Parsed BLP source ownership now retains a single byte reservation through cache
 merges, source clones and worker upload snapshots. Parsing preadmits authored mip
 ranges and RAW3 dimension-based allocation, then reconciles retained vector

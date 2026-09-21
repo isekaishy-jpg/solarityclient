@@ -491,19 +491,19 @@ impl ClientServices {
             None
         } else {
             match cpu.try_reserve_for(solarity_cpu::CpuService::Speculative) {
-                Ok(permit) => Some(ConfiguredGlueTexturePrewarmJob::Running(
-                    permit.submit_steps_with_context(crate::application::archive_job::contextual(
-                        "glue.texture.source_step",
-                        prepare_configured_glue_textures(
+                Ok(permit) => {
+                    let shared = super::texture_source_job::SharedTextureSources {
+                        budget: cpu.storage().clone(),
+                        service: permit.service_control(),
+                    };
+                    Some(ConfiguredGlueTexturePrewarmJob::Running(
+                        permit.submit_resumable_with_context(prepare_configured_glue_textures(
                             ui_texture_catalog,
                             configured_texture_paths,
-                            solarity_asset::AssetReadBudget::for_service(
-                                cpu.storage().clone(),
-                                solarity_cpu::CpuService::Speculative,
-                            ),
-                        ),
-                    )),
-                )),
+                            shared,
+                        )),
+                    ))
+                }
                 Err(CpuError::AtCapacity { limit }) => {
                     tracing::warn!(
                         max_in_flight = limit.get(),

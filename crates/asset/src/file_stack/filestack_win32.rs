@@ -51,6 +51,7 @@ pub struct ArchiveCatalog {
     namespace: super::AssetNamespaceId,
     model_cache_service: crate::M2CacheService,
     world_model_cache_service: crate::WmoCacheService,
+    texture_cache_service: crate::BlpCacheService,
     data_root: ClientDataRoot,
     locale: Locale,
     existing_locales: Vec<Locale>,
@@ -85,6 +86,7 @@ impl ArchiveCatalog {
             namespace: super::AssetNamespaceId::issue()?,
             model_cache_service: crate::M2CacheService::default(),
             world_model_cache_service: crate::WmoCacheService::default(),
+            texture_cache_service: crate::BlpCacheService::default(),
             data_root,
             locale,
             existing_locales,
@@ -104,6 +106,12 @@ impl ArchiveCatalog {
     #[must_use]
     pub fn model_cache_service(&self) -> crate::M2CacheService {
         self.model_cache_service.clone()
+    }
+
+    /// Shared pending and published texture authority for this archive selection.
+    #[must_use]
+    pub fn texture_cache_service(&self) -> crate::BlpCacheService {
+        self.texture_cache_service.clone()
     }
 
     /// Root/group requests share exactly this immutable archive namespace.

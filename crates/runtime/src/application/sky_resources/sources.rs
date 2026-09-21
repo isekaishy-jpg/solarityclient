@@ -172,13 +172,14 @@ impl RuntimeSkyResources {
                     Err(CpuError::AtCapacity { .. }) => return Ok(()),
                     Err(error) => return Err(error.into()),
                 };
-                let budget = solarity_asset::AssetReadBudget::for_service(
-                    cpu.storage().clone(),
-                    solarity_cpu::CpuService::Required,
-                );
+                let shared = crate::application::texture_source_job::SharedTextureSources {
+                    budget: cpu.storage().clone(),
+                    service: permit.service_control(),
+                };
                 let mut sources: CelestialSources = Default::default();
                 let mut next = 0;
-                let operation = crate::application::archive_job::prepare_archive(
+                let mut pending = None;
+                let mut operation = crate::application::archive_job::prepare_archive_resumable(
                     self.catalog.clone(),
                     move |store| {
                         let Some(name) = [
@@ -190,28 +191,32 @@ impl RuntimeSkyResources {
                         ]
                         .get(next)
                         .copied() else {
-                            return ControlFlow::Break(Ok(std::mem::take(&mut sources)));
+                            return CpuTaskStep::Complete(Ok(std::mem::take(&mut sources)));
                         };
                         let path = match AssetPath::new(name) {
                             Ok(path) => path,
-                            Err(error) => return ControlFlow::Break(Err(error)),
+                            Err(error) => return CpuTaskStep::Complete(Err(error)),
                         };
-                        match store
-                            .with_read_budget(&budget, |store| BlpTextureSource::load(store, &path))
-                        {
-                            Ok(source) => sources[next] = Some(source),
+                        match shared.load(store, &path, &mut pending) {
+                            Ok(ControlFlow::Continue(edge)) => return CpuTaskStep::Wait(edge),
+                            Ok(ControlFlow::Break(source)) => sources[next] = Some(source),
                             Err(error) => {
                                 tracing::warn!(texture = %path, %error, "celestial texture request failed; using stock green texture")
                             }
                         }
                         next += 1;
-                        ControlFlow::Continue(())
+                        CpuTaskStep::Continue
                     },
                 );
-                self.celestial_request =
-                    CelestialRequest::Running(permit.submit_steps_with_context(
-                        crate::application::archive_job::contextual("sky.texture_step", operation),
-                    ));
+                self.celestial_request = CelestialRequest::Running(
+                    permit.submit_resumable_with_context(move |context| {
+                        context.diagnostic_value("sky.texture_step", 1);
+                        if context.is_cancelled() {
+                            return CpuTaskStep::Complete(Err(CpuError::JobCancelled.into()));
+                        }
+                        operation()
+                    }),
+                );
             }
             CelestialRequest::Running(task) if task.is_finished() => {
                 let CelestialRequest::Running(task) =

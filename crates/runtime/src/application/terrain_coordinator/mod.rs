@@ -81,6 +81,9 @@ pub enum RuntimeTerrainError {
     /// A shared root/group request preserves its original archive or producer failure.
     #[error(transparent)]
     SharedWorldModel(#[from] solarity_asset::WmoLoadError),
+    /// A shared terrain texture failed before ordered material publication.
+    #[error(transparent)]
+    SharedTexture(#[from] solarity_asset::BlpLoadError),
     /// The active ECS world lost a required player invariant.
     #[error(transparent)]
     World(#[from] WorldStateError),

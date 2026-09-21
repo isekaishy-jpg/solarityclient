@@ -7,10 +7,14 @@ mod resource;
 mod source_dependency;
 mod types;
 
+mod blp_requests;
 mod blp_texture;
 mod m2_model;
 mod wmo_model;
 
+pub use blp_requests::{
+    BlpCacheService, BlpLoad, BlpLoadDependency, BlpLoadError, BlpLoadProducer, BlpLoadRequest,
+};
 pub use blp_texture::BlpTextureCache;
 pub use m2_model::{
     M2CacheCollection, M2CacheService, M2Load, M2LoadDependency, M2LoadError, M2LoadProducer,

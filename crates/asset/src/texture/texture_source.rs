@@ -1,7 +1,7 @@
 //! Immutable parsed BLP sources retained in their authored compression.
 
 use crate::{ArchiveDescriptor, AssetError, AssetNamespaceId, AssetPath, AssetStore};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use super::{
     block_compression::{BlpBlockCompression, BlpBlockMip},
@@ -18,6 +18,18 @@ pub struct BlpTextureSource {
     data: Arc<SourceData>,
 }
 
+/// The namespace index observes payload lifetime without retaining its bytes.
+#[derive(Clone)]
+pub(crate) struct BlpTextureWeak(Weak<SourceData>);
+impl BlpTextureWeak {
+    pub(crate) fn upgrade(&self) -> Option<BlpTextureSource> {
+        self.0.upgrade().map(|data| BlpTextureSource { data })
+    }
+    pub(crate) fn is_alive(&self) -> bool {
+        self.0.strong_count() != 0
+    }
+}
+
 #[derive(Debug)]
 struct SourceData {
     namespace: AssetNamespaceId,
@@ -30,6 +42,10 @@ struct SourceData {
 }
 
 impl BlpTextureSource {
+    pub(crate) fn downgrade(&self) -> BlpTextureWeak {
+        BlpTextureWeak(Arc::downgrade(&self.data))
+    }
+
     /// Resolves stock archive precedence and parses all authored BLP mip data.
     ///
     /// # Errors
@@ -222,6 +238,20 @@ impl BlpTextureSource {
     #[must_use]
     pub fn resident_bytes(&self) -> usize {
         self.data.resident_bytes
+    }
+
+    /// Applies a consumer's explicit source admission without duplicating a shared charge.
+    /// Required consumers promote ownership; speculative consumers never demote it.
+    /// # Errors
+    /// Returns admission pressure while preserving the source and its current charge.
+    pub fn admit(&self, policy: &crate::AssetReadBudget) -> Result<(), AssetError> {
+        self.data
+            .storage
+            .admit_for(Some(policy), self.resident_bytes())
+            .map_err(|source| AssetError::ReadAdmission {
+                asset: self.path().clone(),
+                source,
+            })
     }
 
     /// Admits a retained source when a CPU upload consumes it as required work.

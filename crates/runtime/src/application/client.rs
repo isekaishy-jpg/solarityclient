@@ -44,6 +44,9 @@ pub enum ApplicationError {
     /// Client archive discovery, mount, or validation failed.
     #[error(transparent)]
     Asset(#[from] AssetError),
+    /// A shared texture source failed outside the owning domain's missing-asset policy.
+    #[error(transparent)]
+    SharedTexture(#[from] solarity_asset::BlpLoadError),
     /// AddOn discovery or TOC metadata validation failed.
     #[error(transparent)]
     AddonCatalog(#[from] AddonCatalogError),

@@ -39,6 +39,7 @@ pub struct AssetStore {
     pub(super) identity: u64,
     pub(super) model_cache_service: crate::M2CacheService,
     pub(super) world_model_cache_service: crate::WmoCacheService,
+    pub(super) texture_cache_service: crate::BlpCacheService,
     pub(super) namespace: crate::file_stack::AssetNamespaceId,
     pub(in crate::file_stack) data_root: crate::archive::ClientDataRoot,
     pub(super) locale: Locale,
@@ -79,6 +80,12 @@ impl AssetStore {
     pub fn model_cache_service(&self) -> &crate::M2CacheService {
         &self.model_cache_service
     }
+    /// Borrows the namespace's shared texture producer and ready-source authority.
+    #[must_use]
+    pub fn texture_cache_service(&self) -> &crate::BlpCacheService {
+        &self.texture_cache_service
+    }
+
     /// Borrow the namespace's shared root/group producer authority.
     #[must_use]
     pub fn world_model_cache_service(&self) -> &crate::WmoCacheService {

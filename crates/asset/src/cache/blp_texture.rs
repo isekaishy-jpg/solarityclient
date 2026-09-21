@@ -13,6 +13,7 @@ use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, BlpTextureSourc
 #[derive(Default)]
 pub struct BlpTextureCache {
     textures: HashMap<AssetResourceKey, Arc<BlpTextureSource>>,
+    services: HashMap<crate::AssetNamespaceId, crate::BlpCacheService>,
 }
 
 impl BlpTextureCache {
@@ -54,9 +55,35 @@ impl BlpTextureCache {
             return Ok(Arc::clone(texture));
         }
 
-        let texture = Arc::new(BlpTextureSource::load(store, path)?);
-        self.textures.insert(key, Arc::clone(&texture));
-        Ok(texture)
+        let service = store.texture_cache_service().clone();
+        let texture = match service.ready(&key) {
+            Some(texture) => texture,
+            None => service.publish_ready(key, BlpTextureSource::load(store, path)?),
+        };
+        self.adopt(store, texture)
+    }
+
+    /// Retains an already published source under this cache owner's local consumer pin.
+    /// Separate caches share the payload, not their cache-only Arc reference counts.
+    /// # Errors
+    /// Returns source admission pressure before changing the cache.
+    pub fn adopt(
+        &mut self,
+        store: &AssetStore,
+        source: BlpTextureSource,
+    ) -> Result<Arc<BlpTextureSource>, AssetError> {
+        let key = AssetResourceKey::new(source.namespace(), source.path().clone());
+        if let Some(existing) = self.textures.get(&key) {
+            existing.admit_for(store)?;
+            return Ok(Arc::clone(existing));
+        }
+        source.admit_for(store)?;
+        self.services
+            .entry(store.namespace())
+            .or_insert_with(|| store.texture_cache_service().clone());
+        Ok(Arc::clone(
+            self.textures.entry(key).or_insert_with(|| Arc::new(source)),
+        ))
     }
 
     /// Adopts immutable sources prepared by another single-threaded cache.
@@ -65,6 +92,7 @@ impl BlpTextureCache {
     /// generation cannot replace a source already selected by this owner.
     pub fn merge(&mut self, prepared: Self) -> usize {
         let before = self.textures.len();
+        self.services.extend(prepared.services);
         for (path, texture) in prepared.textures {
             self.textures.entry(path).or_insert(texture);
         }
@@ -91,6 +119,9 @@ impl BlpTextureCache {
         let before = self.textures.len();
         self.textures
             .retain(|_path, texture| Arc::strong_count(texture) > 1);
+        for service in self.services.values() {
+            service.collect_unused();
+        }
         before - self.textures.len()
     }
 }

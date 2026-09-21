@@ -20,6 +20,7 @@ pub use archive::{
     ClientDataRoot, Locale,
 };
 pub use cache::{
+    BlpCacheService, BlpLoad, BlpLoadDependency, BlpLoadError, BlpLoadProducer, BlpLoadRequest,
     BlpTextureCache, M2CacheCollection, M2CacheService, M2Load, M2LoadDependency, M2LoadError,
     M2LoadProducer, M2LoadRequest, M2ModelCache, ResourceCacheClock, ResourceLease, ResourceWeak,
     WmoCacheService, WmoLoad, WmoLoadDependency, WmoLoadError, WmoLoadProducer, WmoLoadRequest,

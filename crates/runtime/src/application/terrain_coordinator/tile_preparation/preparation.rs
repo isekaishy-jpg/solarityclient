@@ -63,6 +63,7 @@ pub(in super::super) struct TilePreparation {
     stage: Option<TileStage>,
     shared: Option<SharedTerrainSources>,
     suspension: Option<solarity_cpu::CpuTaskDependency>,
+    pending_texture: Option<solarity_asset::BlpLoadDependency>,
 }
 
 impl TilePreparation {
@@ -83,6 +84,7 @@ impl TilePreparation {
             stage: Some(TileStage::Mesh),
             shared: None,
             suspension: None,
+            pending_texture: None,
         })
     }
 
@@ -133,7 +135,23 @@ impl TilePreparation {
             TileStage::Textures(mesh, mut textures) => {
                 // MTEX indices and error precedence are authored table order.
                 if let Some(path) = mesh.textures().get(textures.len()) {
-                    textures.push(texture_cache.load(store, path)?);
+                    if let Some(shared) = &self.shared {
+                        match shared.texture(
+                            path,
+                            &mut self.pending_texture,
+                            store,
+                            texture_cache,
+                        )? {
+                            ControlFlow::Break(source) => textures.push(source),
+                            ControlFlow::Continue(edge) => {
+                                self.suspension = Some(edge);
+                                self.stage = Some(TileStage::Textures(mesh, textures));
+                                return Ok(ControlFlow::Continue(self));
+                            }
+                        }
+                    } else {
+                        textures.push(texture_cache.load(store, path)?);
+                    }
                 }
                 if textures.len() == mesh.textures().len() {
                     TileStage::GroundDetail(mesh, textures)
