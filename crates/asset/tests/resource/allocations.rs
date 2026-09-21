@@ -55,7 +55,7 @@ impl Drop for Window {
 }
 
 /// Measures only the synchronous operation on this thread, including its final drops.
-pub(super) fn count<T>(operation: impl FnOnce() -> T) -> (T, usize) {
+pub(crate) fn count<T>(operation: impl FnOnce() -> T) -> (T, usize) {
     CALLS.set(0);
     ACTIVE.set(true);
     let window = Window;

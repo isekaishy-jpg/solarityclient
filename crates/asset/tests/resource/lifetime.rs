@@ -1,7 +1,6 @@
 //! Resource lifetime tests use owned payloads and controlled consumer boundaries.
 
-#[path = "allocations.rs"]
-mod allocations;
+use crate::test_allocations as allocations;
 
 use std::{
     error::Error,

@@ -78,6 +78,7 @@ impl M2CacheService {
                     ResourceCacheClock::monotonic(),
                 )),
                 owned: AtomicBool::new(true),
+                memory: std::sync::OnceLock::new(),
             });
             self.register(&core)?;
             index.core = Some(core);

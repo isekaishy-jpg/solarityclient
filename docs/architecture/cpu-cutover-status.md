@@ -368,6 +368,33 @@ all-feature CPU/asset/UI/runtime Clippy passes with warnings denied, alongside
 formatting and diff checks. Evidence is `target/resource-control-tests.log`,
 `target/resource-control-cache-final.log` and `target/resource-control-clippy.log`.
 
+The next retirement batch admits M2 owner-registry capacity, per-cache namespace
+membership and cache-core allocations. Registration reserves its index capacity
+before subscribing/publishing an owner; failed admission leaves the namespace
+retryable. Cores retain their charge through cache, registry and collection owners.
+Registry slots reuse their admitted capacity after an owner closes.
+
+Maintenance now keeps a bounded cursor and at most one active core instead of
+allocating active/orphaned snapshot vectors. Each step examines one owner slot,
+retiring up to sixteen expired sources or one closed owner outside metadata locks.
+Concurrent registrations and overlapping/cancelled passes preserve the durable
+change/deadline contract. Capacity follows peak simultaneous cache ownership;
+collection does not need fresh byte admission to release memory under pressure.
+Catalog/service root controls, canonical keys, decoded graphs and the remaining
+phase working sets are still separate accounting work. No new client package.
+
+Owner-retirement validation passes all 231 asset tests (one existing ignore) and
+all three runtime cache-maintenance tests. The new asset regressions cover zero
+allocation at full byte pressure, overlapping/cancelled passes, free-slot reuse,
+later registrations and refusal before owner publication. The real decoded-model
+runtime fixture now fills required storage while a service permit owns the exact
+task-control headroom; after task capacity returns, cleanup succeeds without an
+additional snapshot reservation and preserves the stock release deadline. Task
+admission still requires its existing control reservation; this does not claim
+complete connected-phase headroom. All-target/all-feature asset/UI/runtime Clippy,
+formatting and diff checks pass. Logs: `target/owner-retirement-asset-tests.log`,
+`target/owner-retirement-runtime-tests.log`, `target/owner-retirement-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
@@ -1671,7 +1698,7 @@ an operation has a context parameter. The requirements below remain in scope.
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
-  Remaining owner-registry/maintenance snapshots, canonical key and error allocations,
+  Remaining catalog/service root controls, canonical key and error allocations,
   payload Arc allocations retained by weak observers, and encoded source paths still need
   admission/accounting. M2/WMO cache tables, entry arrays, release slots/watchers and
   cached consumer controls now retain metadata admission; namespace pending slots/tables,

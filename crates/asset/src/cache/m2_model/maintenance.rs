@@ -1,6 +1,8 @@
 //! Namespace-owned cache maintenance is finite work for the application's CPU pool.
 
 use super::ModelCacheCore;
+use crate::{AssetError, AssetReadBudget, AssetStorageVec};
+use solarity_cpu::{CpuService, CpuStorageClass, CpuStorageKind};
 use std::{
     fmt,
     ops::ControlFlow,
@@ -13,10 +15,82 @@ use std::{
 /// Registry ownership prevents an expired cache's final payload drop on the frame thread.
 #[derive(Default)]
 pub(super) struct Registry {
-    owners: Mutex<Vec<Arc<ModelCacheCore>>>,
+    owners: Mutex<OwnerIndex>,
     changed: Arc<AtomicBool>,
     pub(super) requests: Mutex<super::requests::RequestIndex>,
     storage: Arc<std::sync::OnceLock<solarity_cpu::CpuStorageBudget>>,
+}
+
+/// Stable slots let maintenance keep a finite cursor without copying the owner list.
+/// Empty slots are reused, so capacity follows peak simultaneous cache ownership.
+struct OwnerIndex {
+    entries: AssetStorageVec<OwnerSlot>,
+    free: Option<usize>,
+    len: usize,
+}
+struct OwnerSlot {
+    core: Option<Arc<ModelCacheCore>>,
+    next_free: Option<usize>,
+}
+impl Default for OwnerIndex {
+    fn default() -> Self {
+        Self {
+            entries: AssetStorageVec::metadata(),
+            free: None,
+            len: 0,
+        }
+    }
+}
+enum OwnerVisit {
+    Active(Arc<ModelCacheCore>),
+    Closed(Arc<ModelCacheCore>),
+    Empty,
+}
+impl OwnerIndex {
+    fn reserve_one(&mut self, policy: Option<&AssetReadBudget>) -> Result<(), AssetError> {
+        if self.free.is_none() {
+            self.entries.reserve_one(policy)?;
+        } else {
+            // A previously offline registry must still adopt its retained allocation.
+            self.entries.reserve(policy, self.entries.len())?;
+        }
+        Ok(())
+    }
+    fn insert_reserved(&mut self, core: Arc<ModelCacheCore>) {
+        if let Some(index) = self.free {
+            self.free = self.entries[index].next_free;
+            self.entries[index] = OwnerSlot {
+                core: Some(core),
+                next_free: None,
+            };
+        } else {
+            self.entries.push_reserved(OwnerSlot {
+                core: Some(core),
+                next_free: None,
+            });
+        }
+        self.len += 1;
+    }
+    /// Only metadata moves under the registry lock; final owner disposal belongs to the caller.
+    fn visit(&mut self, index: usize) -> OwnerVisit {
+        let Some(slot) = self.entries.get_mut(index) else {
+            return OwnerVisit::Empty;
+        };
+        let Some(core) = &slot.core else {
+            return OwnerVisit::Empty;
+        };
+        if core.owned.load(Ordering::Acquire) {
+            return OwnerVisit::Active(Arc::clone(core));
+        }
+        let core = slot
+            .core
+            .take()
+            .unwrap_or_else(|| unreachable!("observed registered owner"));
+        slot.next_free = self.free;
+        self.free = Some(index);
+        self.len -= 1;
+        OwnerVisit::Closed(core)
+    }
 }
 
 /// Shared by catalog clones; no worker, timer or thread is created by this service.
@@ -58,7 +132,7 @@ impl M2CacheService {
             .owners
             .lock()
             .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"));
-        if !owners.is_empty() {
+        if owners.len != 0 {
             return Err(crate::AssetError::SourceStorageConfigured);
         }
         self.0
@@ -72,17 +146,36 @@ impl M2CacheService {
     }
 
     /// First namespace use registers the cache and its durable release-change signal.
-    pub(super) fn register(&self, core: &Arc<ModelCacheCore>) -> Result<(), crate::AssetError> {
+    pub(super) fn register(&self, core: &Arc<ModelCacheCore>) -> Result<(), AssetError> {
+        let policy = self
+            .storage()
+            .cloned()
+            .map(|storage| AssetReadBudget::for_service(storage, CpuService::Required));
+        let mut owners = self
+            .0
+            .owners
+            .lock()
+            .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"));
+        owners.reserve_one(policy.as_ref())?;
         {
             let mut cache = core.lock();
+            if core.memory.get().is_none()
+                && let Some(storage) = self.storage()
+            {
+                let memory = storage.reserve(
+                    CpuStorageClass::Required,
+                    CpuStorageKind::Metadata,
+                    size_of::<ModelCacheCore>() + 2 * size_of::<usize>(),
+                )?;
+                core.memory
+                    .set(memory)
+                    .unwrap_or_else(|_| unreachable!("core admission holds its cache lock"));
+            }
             cache.admit(self.storage())?;
             cache.subscribe(&self.0.changed)?;
         }
-        self.0
-            .owners
-            .lock()
-            .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"))
-            .push(Arc::clone(core));
+        // No fallible allocation follows observer registration.
+        owners.insert_reserved(Arc::clone(core));
         self.0.changed.store(true, Ordering::Release);
         Ok(())
     }
@@ -105,7 +198,9 @@ impl M2CacheService {
             .lock()
             .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"));
         owners
+            .entries
             .iter()
+            .filter_map(|slot| slot.core.as_ref())
             .filter_map(|core| {
                 if core.owned.load(Ordering::Acquire) {
                     core.lock().next_delay_ms()
@@ -116,67 +211,86 @@ impl M2CacheService {
             .min()
     }
 
-    /// Starts finite cleanup on the admitted worker, retaining all owners through its steps.
+    /// Starts finite cleanup without allocating or detaching an unbounded list of owners.
+    /// Later registrations are covered by the durable change signal and a subsequent pass.
     #[must_use]
     pub fn begin_collection(&self) -> M2CacheCollection {
-        let mut owners = self
+        let limit = self
             .0
             .owners
             .lock()
-            .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"));
-        let active = owners
-            .iter()
-            .filter(|core| core.owned.load(Ordering::Acquire))
-            .cloned()
-            .collect();
-        let mut orphaned = Vec::new();
-        let mut index = 0;
-        while index < owners.len() {
-            if owners[index].owned.load(Ordering::Acquire) {
-                index += 1;
-            } else {
-                orphaned.push(owners.swap_remove(index));
-            }
-        }
+            .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"))
+            .entries
+            .len();
         M2CacheCollection {
-            active,
-            orphaned,
+            active: None,
+            service: self.clone(),
             cursor: 0,
+            limit,
         }
     }
 }
 
-/// Each turn destroys at most sixteen detached sources, or one closed cache owner.
-/// One source/closed owner may still have an indivisible allocator destructor.
+/// Each turn inspects one registered slot and destroys at most sixteen detached sources,
+/// or one closed cache owner. A source/closed owner can have an indivisible destructor.
+/// No temporary owner list or new byte reservation is needed to make cleanup progress.
 pub struct M2CacheCollection {
-    active: Vec<Arc<ModelCacheCore>>,
-    orphaned: Vec<Arc<ModelCacheCore>>,
+    active: Option<Arc<ModelCacheCore>>,
+    service: M2CacheService,
     cursor: usize,
+    limit: usize,
 }
 
 impl M2CacheCollection {
     /// Advances outside scheduler/registry locks and yields between finite owner batches.
     pub fn step(&mut self) -> ControlFlow<()> {
-        if let Some(owner) = self.orphaned.pop() {
-            drop(owner);
-            return ControlFlow::Continue(());
-        }
-        let Some(core) = self.active.get(self.cursor) else {
+        if self.cursor >= self.limit {
             return ControlFlow::Break(());
-        };
+        }
+        if self.active.is_none() {
+            let owner = self
+                .service
+                .0
+                .owners
+                .lock()
+                .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"))
+                .visit(self.cursor);
+            match owner {
+                OwnerVisit::Active(core) => self.active = Some(core),
+                OwnerVisit::Closed(core) => {
+                    drop(core);
+                    return self.advance();
+                }
+                OwnerVisit::Empty => return self.advance(),
+            }
+        }
+        let core = self
+            .active
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("selected live owner"));
         let now = core.lock().collection_time();
         for _ in 0..16 {
             let retired = core.lock().take_unused(now);
             let Some(retired) = retired else {
-                self.cursor += 1;
-                return if self.cursor == self.active.len() {
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                };
+                return self.advance();
             };
             drop(retired);
         }
         ControlFlow::Continue(())
     }
+
+    fn advance(&mut self) -> ControlFlow<()> {
+        // Drop this pass's owner outside every metadata lock.
+        self.active = None;
+        self.cursor += 1;
+        if self.cursor == self.limit {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/cache/model_maintenance.rs"]
+mod tests;

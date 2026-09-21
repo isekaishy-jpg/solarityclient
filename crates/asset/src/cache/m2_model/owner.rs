@@ -4,12 +4,9 @@ use super::super::resource::{ResourceCache, ResourceCacheClock, ResourceLease};
 use super::{M2ModelCache, ModelCacheCore};
 use crate::model::canonical_model_path;
 use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedM2Model};
-use std::{
-    collections::HashSet,
-    sync::{
-        Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc, Mutex, MutexGuard,
+    atomic::{AtomicBool, Ordering},
 };
 
 impl ModelCacheCore {
@@ -41,8 +38,9 @@ impl M2ModelCache {
             core: Arc::new(ModelCacheCore {
                 models: Mutex::new(ResourceCache::with_retention(clock)),
                 owned: AtomicBool::new(true),
+                memory: std::sync::OnceLock::new(),
             }),
-            namespaces: HashSet::new(),
+            namespaces: crate::AssetStorageMap::metadata(),
         }
     }
 
@@ -79,9 +77,15 @@ impl M2ModelCache {
         if let Some(model) = store.model_cache_service().ready(&key)? {
             return Ok(model);
         }
-        if !self.namespaces.contains(&store.namespace()) {
-            store.model_cache_service().register(&self.core)?;
-            self.namespaces.insert(store.namespace());
+        if !self.namespaces.contains_key(&store.namespace()) {
+            let service = store.model_cache_service();
+            let policy = service.storage().cloned().map(|storage| {
+                crate::AssetReadBudget::for_service(storage, solarity_cpu::CpuService::Required)
+            });
+            self.namespaces
+                .reserve(policy.as_ref(), self.namespaces.len() + 1)?;
+            service.register(&self.core)?;
+            self.namespaces.insert_reserved(store.namespace(), ());
         }
         if let Some(model) = self.core.lock().get(&key)? {
             return Ok(model);

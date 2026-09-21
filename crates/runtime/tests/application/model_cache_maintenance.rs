@@ -48,6 +48,8 @@ fn idle_model_retirement_preserves_sources_under_saturation() -> Result<(), Box<
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let sources = catalog.model_cache_service();
+    let mut cpu = pool()?;
+    sources.configure_storage(cpu.storage().clone())?;
     let mut maintenance =
         RuntimeModelCacheMaintenance::new(sources.clone(), catalog.world_model_cache_service());
     let mut store = AssetStore::mount(catalog)?;
@@ -57,7 +59,6 @@ fn idle_model_retirement_preserves_sources_under_saturation() -> Result<(), Box<
     let model = cache.load(&mut store, &AssetPath::new("World/Retired.m2")?)?;
     let weak = ResourceLease::downgrade(&model);
     drop(model);
-    let mut cpu = pool()?;
     let now = Instant::now();
     maintenance.service_at(&cpu, now)?;
     assert!(maintenance.pending.is_none());
@@ -67,6 +68,17 @@ fn idle_model_retirement_preserves_sources_under_saturation() -> Result<(), Box<
     assert!(maintenance.pending.is_none());
     assert!(weak.is_alive());
     let occupied = cpu.try_reserve()?;
+    // Leave exactly the occupied service controls as headroom for retirement admission.
+    // The collection itself must not allocate another required-byte snapshot.
+    let held_bytes = cpu.storage().reserve(
+        solarity_cpu::CpuStorageClass::Required,
+        solarity_cpu::CpuStorageKind::Scratch,
+        (64 << 20)
+            - cpu
+                .storage()
+                .snapshot()
+                .used(solarity_cpu::CpuStorageClass::Required),
+    )?;
     clock.store(10_000, Ordering::Release);
     maintenance.service_at(&cpu, now + Duration::from_secs(10))?;
     assert!(maintenance.pending.is_none());
@@ -86,6 +98,7 @@ fn idle_model_retirement_preserves_sources_under_saturation() -> Result<(), Box<
         maintenance.pending.is_none(),
         "empty cache must not keep scheduling cleanup"
     );
+    drop(held_bytes);
     cpu.shutdown()?;
     Ok(())
 }

@@ -3,6 +3,10 @@
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("solarity-asset requires a 64-bit target for full-size and HD client data");
 
+#[cfg(test)]
+#[path = "../tests/resource/allocations.rs"]
+mod test_allocations;
+
 mod archive;
 mod cache;
 mod database;
