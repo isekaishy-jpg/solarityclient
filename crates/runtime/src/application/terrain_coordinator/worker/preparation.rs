@@ -2,11 +2,16 @@
 
 use super::super::{
     ResidentGlobalWorldModel, ResidentTerrainMap, RuntimeTerrainError, TerrainRequest,
-    load_low_detail, movement::ResidentMovementScene, streaming::ResidentTileLookup,
-    tile_preparation::TilePreparation,
+    load_low_detail,
+    m2_residency::ResidentM2SceneBuilder,
+    movement::ResidentMovementScene,
+    streaming::ResidentTileLookup,
+    tile_preparation::{SharedTerrainSources, TilePreparation},
+    world_model_residency::WorldModelPreparation,
 };
 use super::{TerrainWorkerCompletion, TerrainWorkerSource, TerrainWorkerState};
 use solarity_asset::{AssetMount, AssetStore, MapDefinition, TerrainMap};
+use solarity_cpu::CpuTaskStep;
 use std::ops::ControlFlow;
 
 /// Each state owns everything needed by the next complete asset operation.
@@ -17,6 +22,14 @@ enum TerrainStage {
     LowDetail(TerrainMap),
     Content(TerrainMap),
     Tile(TerrainMap, Box<TilePreparation>),
+    Global(TerrainMap, Box<GlobalPreparation>),
+}
+
+/// Global WMO admission retains its nested M2 builder across readiness edges.
+struct GlobalPreparation {
+    models: Box<WorldModelPreparation>,
+    m2: ResidentM2SceneBuilder,
+    dependency: Option<solarity_cpu::CpuTaskDependency>,
 }
 
 /// The same admitted task and captures survive every service turn.
@@ -25,14 +38,30 @@ pub(in crate::application::terrain_coordinator) fn terrain_steps(
     definition: MapDefinition,
     request: TerrainRequest,
     specular_textures: bool,
-) -> impl FnMut(&solarity_cpu::JobContext<'_>) -> ControlFlow<TerrainWorkerCompletion> + Send {
+    shared: SharedTerrainSources,
+) -> impl FnMut(&solarity_cpu::JobContext<'_>) -> CpuTaskStep<TerrainWorkerCompletion> + Send {
     let mut stage = Some(TerrainStage::Start(source));
-    let mut worker = None;
+    let mut worker: Option<Box<TerrainWorkerState>> = None;
     move |context| {
-        let current = stage.take().unwrap_or_else(|| {
+        let mut current = stage.take().unwrap_or_else(|| {
             unreachable!("a completed terrain task cannot execute another step")
         });
         if context.is_cancelled() {
+            // Consumer withdrawal cannot abandon a shared root already claimed
+            // by this task. Drain that finite producer without building the tile.
+            if let Some(bank) = worker.as_mut() {
+                let retired = match &mut current {
+                    TerrainStage::Tile(_, tile) => tile.retire_source_step(&mut bank.assets),
+                    TerrainStage::Global(_, global) => {
+                        global.models.retire_source_step(&mut bank.assets)
+                    }
+                    _ => true,
+                };
+                if !retired {
+                    stage = Some(current);
+                    return CpuTaskStep::Continue;
+                }
+            }
             // A not-yet-started reused bank belongs to this task too. Partial
             // mounting/decoding is retired here on the worker, never published.
             match current {
@@ -43,7 +72,7 @@ pub(in crate::application::terrain_coordinator) fn terrain_steps(
                 worker.collect_unused();
             }
             context.diagnostic_value("terrain.worker.withdrawn", 1);
-            return ControlFlow::Break(TerrainWorkerCompletion {
+            return CpuTaskStep::Complete(TerrainWorkerCompletion {
                 worker: worker.take(),
                 result: Ok(None),
             });
@@ -54,10 +83,16 @@ pub(in crate::application::terrain_coordinator) fn terrain_steps(
             &definition,
             request,
             specular_textures,
+            &shared,
         ) {
-            Ok(ControlFlow::Continue(next)) => {
+            Ok(ControlFlow::Continue(mut next)) => {
+                let dependency = match &mut next {
+                    TerrainStage::Tile(_, tile) => tile.take_dependency(),
+                    TerrainStage::Global(_, global) => global.dependency.take(),
+                    _ => None,
+                };
                 stage = Some(next);
-                ControlFlow::Continue(())
+                dependency.map_or(CpuTaskStep::Continue, CpuTaskStep::Wait)
             }
             result => {
                 if let Some(worker) = worker.as_mut() {
@@ -67,7 +102,7 @@ pub(in crate::application::terrain_coordinator) fn terrain_steps(
                     ControlFlow::Break(resident) => Some(resident),
                     ControlFlow::Continue(_) => unreachable!("continuations return above"),
                 });
-                ControlFlow::Break(TerrainWorkerCompletion {
+                CpuTaskStep::Complete(TerrainWorkerCompletion {
                     worker: worker.take(),
                     result,
                 })
@@ -83,6 +118,7 @@ fn advance(
     definition: &MapDefinition,
     request: TerrainRequest,
     specular_textures: bool,
+    shared: &SharedTerrainSources,
 ) -> Result<ControlFlow<ResidentTerrainMap, TerrainStage>, RuntimeTerrainError> {
     let stage = match stage {
         TerrainStage::Start(TerrainWorkerSource::Catalog(catalog)) => {
@@ -127,20 +163,14 @@ fn advance(
         }
         TerrainStage::Content(terrain) => {
             if let Some(placement) = terrain.global_world_model() {
-                // WMO preparation still owns its nested decode/registration order.
-                let global_world_model = ResidentGlobalWorldModel::prepare(
-                    placement,
-                    &mut worker.textures,
-                    &mut worker.models,
-                    &mut worker.world_models,
-                    &mut worker.liquid_assets,
-                    &mut worker.assets,
-                )?;
-                return Ok(ControlFlow::Break(resident(
-                    worker,
+                let models = WorldModelPreparation::for_global(placement);
+                return Ok(ControlFlow::Continue(TerrainStage::Global(
                     terrain,
-                    None,
-                    Some(global_world_model),
+                    Box::new(GlobalPreparation {
+                        models,
+                        m2: ResidentM2SceneBuilder::new(),
+                        dependency: None,
+                    }),
                 )));
             }
             if !terrain.tile(request.tile).exists() {
@@ -151,7 +181,10 @@ fn advance(
                 });
             }
             let decoded = terrain.load_tile(&mut worker.assets, request.tile)?;
-            TerrainStage::Tile(terrain, TilePreparation::new(decoded, specular_textures))
+            TerrainStage::Tile(
+                terrain,
+                TilePreparation::with_shared_sources(decoded, specular_textures, shared.clone()),
+            )
         }
         TerrainStage::Tile(terrain, pending) => {
             match pending.advance(
@@ -172,6 +205,29 @@ fn advance(
                     )));
                 }
             }
+        }
+        TerrainStage::Global(terrain, mut pending) => {
+            if pending.models.advance(
+                &mut worker.world_models,
+                &mut worker.models,
+                &mut worker.textures,
+                &mut pending.m2,
+                &mut worker.liquid_assets,
+                &mut worker.assets,
+                Some(shared),
+                &mut pending.dependency,
+            )? {
+                let (models, collision, liquids) = pending.models.finish();
+                let global =
+                    ResidentGlobalWorldModel::from_models(pending.m2, models, collision, liquids);
+                return Ok(ControlFlow::Break(resident(
+                    worker,
+                    terrain,
+                    None,
+                    Some(global),
+                )));
+            }
+            TerrainStage::Global(terrain, pending)
         }
         TerrainStage::Start(_) | TerrainStage::Mount(_) => {
             unreachable!("mount stages return before decoding")

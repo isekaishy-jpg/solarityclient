@@ -1,6 +1,6 @@
 //! Shared lifetime and path lookup for decoded build-12340 WMO generations.
 
-use super::resource::{ResourceCache, ResourceLease};
+use super::super::resource::{ResourceCache, ResourceLease};
 
 use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, DecodedWorldModel};
 

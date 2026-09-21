@@ -465,10 +465,22 @@ impl RuntimeGameObjectPresentation {
                 _ => None,
             };
             let task_request = request.clone();
-            let task = permit.submit_with_context(move |context| {
-                context.diagnostic_value("game_object.prepare.direct", 1);
-                prepare_on_worker(source, &task_request, model)
-            });
+            let task = if request.kind == RuntimeGameObjectResourceKind::WorldModel {
+                let shared = super::terrain_coordinator::SharedTerrainSources {
+                    budget: cpu.storage().clone(),
+                    service: permit.service_control(),
+                };
+                permit.submit_resumable_with_context(worker::world_model_steps(
+                    source,
+                    task_request,
+                    shared,
+                ))
+            } else {
+                permit.submit_with_context(move |context| {
+                    context.diagnostic_value("game_object.prepare.direct", 1);
+                    prepare_on_worker(source, &task_request, model)
+                })
+            };
             if let Some(demand) = &model_demand {
                 assert!(
                     demand.bind_service(task.service_control()),

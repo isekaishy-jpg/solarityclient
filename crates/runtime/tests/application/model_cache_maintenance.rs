@@ -48,7 +48,8 @@ fn idle_model_retirement_preserves_sources_under_saturation() -> Result<(), Box<
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let sources = catalog.model_cache_service();
-    let mut maintenance = RuntimeModelCacheMaintenance::new(sources.clone());
+    let mut maintenance =
+        RuntimeModelCacheMaintenance::new(sources.clone(), catalog.world_model_cache_service());
     let mut store = AssetStore::mount(catalog)?;
     let clock = Arc::new(AtomicU32::new(0));
     let mut cache =
@@ -96,7 +97,10 @@ fn closed_cache_waits_for_worker_maintenance_and_preserves_live_consumers()
     let fixture = fixture()?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let mut maintenance = RuntimeModelCacheMaintenance::new(catalog.model_cache_service());
+    let mut maintenance = RuntimeModelCacheMaintenance::new(
+        catalog.model_cache_service(),
+        catalog.world_model_cache_service(),
+    );
     let clone_service = catalog.clone().model_cache_service();
     let independent =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?
@@ -123,6 +127,47 @@ fn closed_cache_waits_for_worker_maintenance_and_preserves_live_consumers()
     assert_eq!(clone_service.next_collection_delay_ms(), None);
     drop(model);
     assert!(!weak.is_alive());
+    cpu.shutdown()?;
+    Ok(())
+}
+
+/// A shared WMO release survives admission refusal and retires on the worker without later loading.
+#[test]
+fn shared_world_model_retirement_survives_pool_capacity() -> Result<(), Box<dyn Error>> {
+    use crate::test_support::game_object_world_models;
+    use solarity_asset::{AssetResourceKey, WmoLoad};
+    use solarity_cpu::CpuService;
+    let fixture = ClientFixture::with_common_files(&[
+        ("World/Attached.wmo", &game_object_world_models::root()),
+        ("World/Attached_000.wmo", &game_object_world_models::group()),
+    ])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let sources = catalog.world_model_cache_service();
+    let key = AssetResourceKey::new(catalog.namespace(), AssetPath::new("World/Attached.wmo")?);
+    let mut maintenance =
+        RuntimeModelCacheMaintenance::new(catalog.model_cache_service(), sources.clone());
+    let WmoLoad::Producer(producer) = sources.request_for(&key, CpuService::Required)? else {
+        return Err("root producer".into());
+    };
+    let source = producer.load(&mut AssetStore::mount(catalog)?)?;
+    let weak = ResourceLease::downgrade(&source);
+    drop(source);
+    let mut cpu = pool()?;
+    let occupied = cpu.try_reserve()?;
+    maintenance.service(&cpu)?;
+    assert!(maintenance.pending.is_none());
+    assert!(weak.is_alive());
+    drop(occupied);
+    maintenance.service(&cpu)?;
+    maintenance
+        .pending
+        .take()
+        .ok_or("release was lost under pressure")?
+        .join()?;
+    assert!(!weak.is_alive());
+    maintenance.service(&cpu)?;
+    assert!(maintenance.pending.is_none());
     cpu.shutdown()?;
     Ok(())
 }

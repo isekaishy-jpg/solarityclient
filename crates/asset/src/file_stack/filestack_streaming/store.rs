@@ -38,6 +38,7 @@ impl AssetRead {
 pub struct AssetStore {
     pub(super) identity: u64,
     pub(super) model_cache_service: crate::M2CacheService,
+    pub(super) world_model_cache_service: crate::WmoCacheService,
     pub(super) namespace: crate::file_stack::AssetNamespaceId,
     pub(in crate::file_stack) data_root: crate::archive::ClientDataRoot,
     pub(super) locale: Locale,
@@ -47,8 +48,13 @@ pub struct AssetStore {
 
 impl AssetStore {
     /// Joins maintenance without sharing mutable archive-reader state.
-    pub(crate) fn model_cache_service(&self) -> &crate::M2CacheService {
+    pub fn model_cache_service(&self) -> &crate::M2CacheService {
         &self.model_cache_service
+    }
+    /// Borrow the namespace's shared root/group producer authority.
+    #[must_use]
+    pub fn world_model_cache_service(&self) -> &crate::WmoCacheService {
+        &self.world_model_cache_service
     }
 
     /// Identifies this immutable mounted provider lifetime for retained caches.

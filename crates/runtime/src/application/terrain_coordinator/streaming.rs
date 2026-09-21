@@ -233,11 +233,16 @@ impl RuntimeTerrainCoordinator {
             let source = self.take_worker_source()?;
             let request = TerrainRequest { map_id, tile };
             let specular_textures = self.specular_textures;
-            let task = permit.submit_steps_with_context(terrain_steps(
+            let shared = super::tile_preparation::SharedTerrainSources {
+                budget: cpu.storage().clone(),
+                service: permit.service_control(),
+            };
+            let task = permit.submit_resumable_with_context(terrain_steps(
                 source,
                 definition,
                 request,
                 specular_textures,
+                shared,
             ));
             self.pending_stream = Some(PendingTerrainGeneration {
                 request,

@@ -262,6 +262,36 @@ impl ResidentM2SceneBuilder {
         )
     }
 
+    /// A shared MODD source enters the same transform/collision registration as
+    /// a synchronous load, after the containing MODF owner has been admitted.
+    pub(super) fn add_world_model_doodad_model(
+        &mut self,
+        owner: &TerrainWorldModelPlacement,
+        doodad_index: usize,
+        doodad: &WorldModelDoodad,
+        model: ResourceLease<DecodedM2Model>,
+        textures: &mut BlpTextureCache,
+        store: &mut AssetStore,
+    ) -> Result<(), RuntimeTerrainError> {
+        let outer = adt_placement_transform(
+            Vec3::from_array(owner.position()),
+            Vec3::from_array(owner.rotation()),
+            1.0,
+        )?;
+        self.add_model(
+            model,
+            outer * world_model_doodad_transform(doodad)?,
+            ResidentM2Owner::WorldModelDoodad {
+                world_model_unique_id: owner.unique_id(),
+                doodad_index,
+            },
+            u16::from(doodad.flags()),
+            doodad.color(),
+            textures,
+            store,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn add(
         &mut self,
@@ -278,14 +308,62 @@ impl ResidentM2SceneBuilder {
         // scene by that returned canonical identity so an ADT `.m2` and WMO
         // MODN `.mdx` reference still share one generation.
         let model = cache.load(store, path)?;
+        self.add_model(model, transform, owner, flags, color, texture_cache, store)
+    }
+
+    /// Consumes shared primary-model readiness without repeating archive decode.
+    /// Placement/collision order is identical to synchronous MDDF registration.
+    pub(super) fn add_terrain_doodad_model(
+        &mut self,
+        placement: &TerrainDoodadPlacement,
+        model: ResourceLease<DecodedM2Model>,
+        textures: &mut BlpTextureCache,
+        store: &mut AssetStore,
+    ) -> Result<(), RuntimeTerrainError> {
+        let transform = adt_placement_transform(
+            Vec3::from_array(placement.position()),
+            Vec3::from_array(placement.rotation()),
+            placement.scale(),
+        )?;
+        self.add_model(
+            model,
+            transform,
+            ResidentM2Owner::TerrainDoodad {
+                unique_id: placement.unique_id(),
+            },
+            placement.flags(),
+            [u8::MAX; 4],
+            textures,
+            store,
+        )
+    }
+
+    /// Shared and synchronous consumers converge before derived source preparation.
+    #[allow(clippy::too_many_arguments)] // Authored placement fields remain explicit.
+    fn add_model(
+        &mut self,
+        model: ResourceLease<DecodedM2Model>,
+        transform: Mat4,
+        owner: ResidentM2Owner,
+        flags: u16,
+        color: [u8; 4],
+        texture_cache: &mut BlpTextureCache,
+        store: &mut AssetStore,
+    ) -> Result<(), RuntimeTerrainError> {
         let source_index = if let Some(index) = self.source_indices.get(model.path()) {
             *index
         } else {
             let index = self.scene.sources.len();
+            let path = model.path().clone();
             self.scene
                 .sources
-                .push(ResidentM2Source::load(path, cache, texture_cache, store)?);
-            self.source_indices.insert(model.path().clone(), index);
+                .push(ResidentM2Source::from_model_with_lights(
+                    model,
+                    texture_cache,
+                    store,
+                    M2LocalLightCount::Four,
+                )?);
+            self.source_indices.insert(path, index);
             index
         };
         let model = ResourceLease::clone(self.scene.sources[source_index].model());

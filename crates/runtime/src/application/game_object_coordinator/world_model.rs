@@ -70,6 +70,14 @@ impl GameObjectWorldModelSource {
         Ok(Self { root, doodads })
     }
 
+    /// Publishes only a complete root and its ordered default-set doodads.
+    pub(super) fn from_prepared(
+        root: ResidentWorldModelSource,
+        doodads: Vec<GameObjectWorldModelDoodad>,
+    ) -> Self {
+        Self { root, doodads }
+    }
+
     pub(in crate::application) const fn root(&self) -> &ResidentWorldModelSource {
         &self.root
     }

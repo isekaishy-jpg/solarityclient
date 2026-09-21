@@ -4,6 +4,7 @@
 //! cache policy distinct from archive access and format decoding.
 
 mod resource;
+mod source_dependency;
 mod types;
 
 mod blp_texture;
@@ -16,4 +17,7 @@ pub use m2_model::{
     M2LoadRequest, M2ModelCache,
 };
 pub use resource::{ResourceCacheClock, ResourceLease, ResourceWeak};
-pub use wmo_model::WmoModelCache;
+pub use wmo_model::{
+    WmoCacheService, WmoLoad, WmoLoadDependency, WmoLoadError, WmoLoadProducer, WmoLoadRequest,
+    WmoModelCache,
+};

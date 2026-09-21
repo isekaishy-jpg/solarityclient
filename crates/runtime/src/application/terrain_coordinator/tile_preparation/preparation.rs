@@ -1,6 +1,7 @@
-//! Complete ADT generations assembled through ordered, resumable asset stages.
+//! Ordered tile material, query and placed-source preparation.
 
-use std::{collections::HashMap, ops::ControlFlow, sync::Arc};
+use super::{SharedTerrainSources, doodads::DoodadCursor};
+use std::{ops::ControlFlow, sync::Arc};
 
 use solarity_asset::{
     AssetStore, BlpTextureCache, BlpTextureSource, DecodedTerrainTile, M2ModelCache,
@@ -8,13 +9,12 @@ use solarity_asset::{
 use solarity_rendering::TerrainTileMeshPlan;
 use solarity_systems::{TerrainCollisionMesh, TerrainLiquidMesh};
 
-use super::{
+use super::super::{
     ResidentTerrainTile, RuntimeTerrainError,
-    ground_detail::{GroundDetailAssetCache, ResidentGroundDetailTile},
+    ground_detail::{GroundDetailAssetCache, GroundDetailPreparation, ResidentGroundDetailTile},
     m2_residency::ResidentM2SceneBuilder,
     movement::ResidentMovementReferences,
-    same_doodad_placement,
-    world_model_residency::{ResidentWorldModelCache, prepare_world_models},
+    world_model_residency::{ResidentWorldModelCache, WorldModelPreparation},
 };
 use crate::application::liquid::{
     LiquidAssetCache, ResidentTerrainLiquidBatch, prepare_terrain_liquids,
@@ -40,35 +40,74 @@ enum TileStage {
     Mesh,
     Textures(Arc<TerrainTileMeshPlan>, Vec<Arc<BlpTextureSource>>),
     GroundDetail(Arc<TerrainTileMeshPlan>, Vec<Arc<BlpTextureSource>>),
+    GroundDetailSources(
+        Arc<TerrainTileMeshPlan>,
+        Vec<Arc<BlpTextureSource>>,
+        GroundDetailPreparation,
+    ),
     Collision(TileSurface),
     Liquid(TileSurface, TerrainCollisionMesh),
     LiquidAssets(TileSurface, TerrainCollisionMesh, TerrainLiquidMesh),
     Doodads(Box<TileInputs>, ResidentM2SceneBuilder, DoodadCursor),
-    WorldModels(Box<TileInputs>, ResidentM2SceneBuilder),
+    WorldModels(
+        Box<TileInputs>,
+        ResidentM2SceneBuilder,
+        Box<WorldModelPreparation>,
+    ),
 }
 
 /// One allocation retains the continuation across every texture and doodad turn.
-pub(super) struct TilePreparation {
+pub(in super::super) struct TilePreparation {
     decoded: Arc<DecodedTerrainTile>,
     specular_textures: bool,
     stage: Option<TileStage>,
+    shared: Option<SharedTerrainSources>,
+    suspension: Option<solarity_cpu::CpuTaskDependency>,
 }
 
 impl TilePreparation {
+    /// A cancelled tile releases consumers immediately and drains only an owned
+    /// shared WMO producer. Partial terrain remains private throughout retirement.
+    pub(in super::super) fn retire_source_step(&mut self, store: &mut AssetStore) -> bool {
+        match self.stage.as_mut() {
+            Some(TileStage::WorldModels(_, _, models)) => models.retire_source_step(store),
+            _ => true,
+        }
+    }
+
     /// Decoding is complete, but none of this tile is ready for publication yet.
-    pub(super) fn new(decoded: DecodedTerrainTile, specular_textures: bool) -> Box<Self> {
+    pub(in super::super) fn new(decoded: DecodedTerrainTile, specular_textures: bool) -> Box<Self> {
         Box::new(Self {
             decoded: Arc::new(decoded),
             specular_textures,
             stage: Some(TileStage::Mesh),
+            shared: None,
+            suspension: None,
         })
+    }
+
+    /// Runtime loading joins namespace-owned sources; synchronous tools keep
+    /// their explicit local cache execution contract through `new`.
+    pub(in super::super) fn with_shared_sources(
+        decoded: DecodedTerrainTile,
+        specular_textures: bool,
+        shared: SharedTerrainSources,
+    ) -> Box<Self> {
+        let mut pending = Self::new(decoded, specular_textures);
+        pending.shared = Some(shared);
+        pending
+    }
+
+    /// The owned continuation keeps the typed source lease; only readiness moves.
+    pub(in super::super) fn take_dependency(&mut self) -> Option<solarity_cpu::CpuTaskDependency> {
+        self.suspension.take()
     }
 
     /// Performs one complete operation; callers may drive this synchronously or
     /// return the same owned continuation to the CPU service queue. No asset
     /// request is polled or joined while holding a worker slot.
     #[allow(clippy::too_many_arguments)] // Independent private caches retain their existing owners.
-    pub(super) fn advance(
+    pub(in super::super) fn advance(
         mut self: Box<Self>,
         ground_detail_assets: &mut GroundDetailAssetCache,
         liquid_assets: &mut LiquidAssetCache,
@@ -102,17 +141,27 @@ impl TilePreparation {
                     TileStage::Textures(mesh, textures)
                 }
             }
-            TileStage::GroundDetail(mesh, textures) => {
-                let ground_detail = Arc::new(ground_detail_assets.prepare(
-                    tile,
+            TileStage::GroundDetail(mesh, textures) => TileStage::GroundDetailSources(
+                mesh,
+                textures,
+                ground_detail_assets.begin(tile, store)?,
+            ),
+            TileStage::GroundDetailSources(mesh, textures, mut preparation) => {
+                if !preparation.advance(
+                    ground_detail_assets,
                     model_cache,
                     texture_cache,
                     store,
-                )?);
+                    self.shared.as_ref(),
+                    &mut self.suspension,
+                )? {
+                    self.stage = Some(TileStage::GroundDetailSources(mesh, textures, preparation));
+                    return Ok(ControlFlow::Continue(self));
+                }
                 TileStage::Collision(TileSurface {
                     mesh,
                     textures,
-                    ground_detail,
+                    ground_detail: Arc::new(preparation.finish()),
                 })
             }
             TileStage::Collision(surface) => {
@@ -136,25 +185,38 @@ impl TilePreparation {
                 )
             }
             TileStage::Doodads(inputs, mut builder, mut cursor) => {
-                if cursor.advance(tile, &mut builder, model_cache, texture_cache, store)? {
-                    TileStage::WorldModels(inputs, builder)
+                let finished = cursor.advance(
+                    tile,
+                    &mut builder,
+                    model_cache,
+                    texture_cache,
+                    store,
+                    self.shared.as_ref(),
+                    &mut self.suspension,
+                )?;
+                if finished {
+                    TileStage::WorldModels(inputs, builder, WorldModelPreparation::for_tile(tile))
                 } else {
                     TileStage::Doodads(inputs, builder, cursor)
                 }
             }
-            TileStage::WorldModels(inputs, mut builder) => {
+            TileStage::WorldModels(inputs, mut builder, mut pending) => {
                 // Stock 0x007c6150 registration follows MCRF first-reference order.
                 // Keep the existing WMO routine and selected MODD traversal intact.
-                let (world_models, world_model_collision, world_model_liquid) =
-                    prepare_world_models(
-                        tile,
-                        world_model_cache,
-                        model_cache,
-                        texture_cache,
-                        &mut builder,
-                        liquid_assets,
-                        store,
-                    )?;
+                if !pending.advance(
+                    world_model_cache,
+                    model_cache,
+                    texture_cache,
+                    &mut builder,
+                    liquid_assets,
+                    store,
+                    self.shared.as_ref(),
+                    &mut self.suspension,
+                )? {
+                    self.stage = Some(TileStage::WorldModels(inputs, builder, pending));
+                    return Ok(ControlFlow::Continue(self));
+                }
+                let (world_models, world_model_collision, world_model_liquid) = pending.finish();
                 let (m2_scene, m2_collision) = builder.finish();
                 let movement_references =
                     ResidentMovementReferences::prepare(Some(tile), &m2_scene, &world_models);
@@ -183,61 +245,5 @@ impl TilePreparation {
         };
         self.stage = Some(next);
         Ok(ControlFlow::Continue(self))
-    }
-}
-
-/// Retains MDDF table order and duplicate validation across placement boundaries.
-struct DoodadCursor {
-    referenced: Vec<bool>,
-    next: usize,
-    placements: HashMap<u32, usize>,
-}
-
-impl DoodadCursor {
-    /// Strict ADT decoding has already validated every MCRF index.
-    fn new(tile: &DecodedTerrainTile) -> Self {
-        let mut referenced = vec![false; tile.doodads().len()];
-        for reference in tile
-            .chunks()
-            .iter()
-            .flat_map(|chunk| chunk.doodad_references())
-        {
-            referenced[*reference as usize] = true;
-        }
-        Self {
-            referenced,
-            next: 0,
-            placements: HashMap::new(),
-        }
-    }
-
-    /// Adds at most one referenced placement; true means all MDDF entries finished.
-    fn advance(
-        &mut self,
-        tile: &DecodedTerrainTile,
-        builder: &mut ResidentM2SceneBuilder,
-        models: &mut M2ModelCache,
-        textures: &mut BlpTextureCache,
-        store: &mut AssetStore,
-    ) -> Result<bool, RuntimeTerrainError> {
-        while self.next < tile.doodads().len() {
-            let index = self.next;
-            self.next += 1;
-            if !self.referenced[index] {
-                continue;
-            }
-            let placement = &tile.doodads()[index];
-            if let Some(previous) = self.placements.insert(placement.unique_id(), index) {
-                if !same_doodad_placement(&tile.doodads()[previous], placement) {
-                    return Err(RuntimeTerrainError::ConflictingDoodadPlacement {
-                        unique_id: placement.unique_id(),
-                    });
-                }
-            } else {
-                builder.add_terrain_doodad(placement, models, textures, store)?;
-            }
-            return Ok(self.next == tile.doodads().len());
-        }
-        Ok(true)
     }
 }

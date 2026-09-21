@@ -1,21 +1,25 @@
 //! Cache deadlines admit finite cleanup without polling every model or blocking main.
 
-use solarity_asset::M2CacheService;
+use solarity_asset::{M2CacheService, WmoCacheService};
 use solarity_cpu::{CpuError, CpuExecutor, CpuService, CpuTask};
 use std::time::{Duration, Instant};
 
 /// Runtime owns the deadline and task; assets own qualification and release clocks.
 pub(super) struct RuntimeModelCacheMaintenance {
     sources: M2CacheService,
+    world_models: WmoCacheService,
+    world_models_dirty: bool,
     pending: Option<CpuTask<()>>,
     deadline: Option<Instant>,
 }
 
 impl RuntimeModelCacheMaintenance {
     /// Catalog clones and their mounted stores publish into this one namespace service.
-    pub(super) fn new(sources: M2CacheService) -> Self {
+    pub(super) fn new(sources: M2CacheService, world_models: WmoCacheService) -> Self {
         Self {
             sources,
+            world_models,
+            world_models_dirty: false,
             pending: None,
             deadline: None,
         }
@@ -58,7 +62,10 @@ impl RuntimeModelCacheMaintenance {
                 .next_collection_delay_ms()
                 .map(|delay| now + Duration::from_millis(u64::from(delay)));
         }
-        if self.deadline.is_none_or(|deadline| now < deadline) {
+        if self.world_models.take_changed() {
+            self.world_models_dirty = self.world_models.has_pending_retirement();
+        }
+        if !self.world_models_dirty && self.deadline.is_none_or(|deadline| now < deadline) {
             return Ok(());
         }
         let permit = match cpu.try_reserve_for(CpuService::Retirement) {
@@ -67,15 +74,24 @@ impl RuntimeModelCacheMaintenance {
             Err(error) => return Err(error),
         };
         let sources = self.sources.clone();
+        let world_models = self.world_models.clone();
+        let mut models_complete = false;
         let mut collection = None;
         self.pending = Some(permit.submit_steps_with_context(move |context| {
             // Cache release is mandatory even if its consumer withdraws.
-            context.diagnostic_value("assets.m2_cache.retirement_step", 1);
-            let _profile = solarity_profiling::profile!("assets.m2_cache.retire");
-            let collection = collection.get_or_insert_with(|| sources.begin_collection());
-            collection.step()
+            if !models_complete {
+                context.diagnostic_value("assets.m2_cache.retirement_step", 1);
+                let _profile = solarity_profiling::profile!("assets.m2_cache.retire");
+                let collection = collection.get_or_insert_with(|| sources.begin_collection());
+                models_complete = collection.step().is_break();
+                return std::ops::ControlFlow::Continue(());
+            }
+            context.diagnostic_value("assets.wmo_cache.retirement_step", 1);
+            let _profile = solarity_profiling::profile!("assets.wmo_cache.retire");
+            world_models.collect_step()
         }));
         self.deadline = None;
+        self.world_models_dirty = false;
         Ok(())
     }
 }

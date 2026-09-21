@@ -370,6 +370,7 @@ impl TerrainDoodadPlacement {
 }
 
 /// One MODF WMO placement with its resolved root-WMO path.
+#[derive(Clone)]
 pub struct TerrainWorldModelPlacement {
     path: AssetPath,
     unique_id: u32,

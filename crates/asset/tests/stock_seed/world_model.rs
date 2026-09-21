@@ -1140,3 +1140,6 @@ fn world_model_rejects_broken_portal_tables_before_spatial_queries() -> Result<(
     }
     Ok(())
 }
+
+#[path = "world_model_requests.rs"]
+mod shared_requests;

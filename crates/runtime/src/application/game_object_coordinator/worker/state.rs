@@ -1,7 +1,7 @@
 //! Bounded worker ownership shared by every visible GameObject resource.
 
-use super::world_model::GameObjectWorldModelSource;
-use super::{
+use super::super::world_model::GameObjectWorldModelSource;
+use super::super::{
     GameObjectResource, ResourceRequest, RuntimeGameObjectError, RuntimeGameObjectResourceKind,
 };
 use crate::application::liquid::LiquidAssetCache;
@@ -14,26 +14,26 @@ use solarity_asset::{
 use std::sync::Arc;
 
 /// A worker receives useful producer work or an already published immutable model.
-pub(super) enum GameObjectM2Input {
+pub(in super::super) enum GameObjectM2Input {
     Ready(ResourceLease<DecodedM2Model>),
     Producer(M2LoadProducer),
 }
 
-pub(super) enum GameObjectWorkerSource {
+pub(in super::super) enum GameObjectWorkerSource {
     Catalog(ArchiveCatalog),
     Ready(Box<GameObjectWorkerState>),
 }
 
-pub(super) struct GameObjectWorkerState {
-    assets: AssetStore,
-    textures: BlpTextureCache,
+pub(in super::super) struct GameObjectWorkerState {
+    pub(super) assets: AssetStore,
+    pub(super) textures: BlpTextureCache,
     models: M2ModelCache,
-    world_models: ResidentWorldModelCache,
-    liquid_assets: LiquidAssetCache,
+    pub(super) world_models: ResidentWorldModelCache,
+    pub(super) liquid_assets: LiquidAssetCache,
 }
 
 impl GameObjectWorkerState {
-    fn mount(catalog: ArchiveCatalog) -> Result<Self, Arc<AssetError>> {
+    pub(super) fn mount(catalog: ArchiveCatalog) -> Result<Self, Arc<AssetError>> {
         Ok(Self {
             assets: AssetStore::mount(catalog).map_err(Arc::new)?,
             textures: BlpTextureCache::new(),
@@ -78,18 +78,18 @@ impl GameObjectWorkerState {
         }
     }
 
-    fn collect_unused(&mut self) {
+    pub(super) fn collect_unused(&mut self) {
         self.textures.collect_unused();
         self.world_models.collect_unused();
     }
 }
 
-pub(super) struct GameObjectWorkerCompletion {
-    pub(super) worker: Option<Box<GameObjectWorkerState>>,
-    pub(super) result: Result<GameObjectResource, RuntimeGameObjectError>,
+pub(in super::super) struct GameObjectWorkerCompletion {
+    pub(in super::super) worker: Option<Box<GameObjectWorkerState>>,
+    pub(in super::super) result: Result<GameObjectResource, RuntimeGameObjectError>,
 }
 
-pub(super) fn prepare_on_worker(
+pub(in super::super) fn prepare_on_worker(
     source: GameObjectWorkerSource,
     request: &ResourceRequest,
     model: Option<GameObjectM2Input>,

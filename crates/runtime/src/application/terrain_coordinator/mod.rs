@@ -7,6 +7,7 @@ pub(in crate::application) mod m2_residency;
 mod movement;
 mod streaming;
 mod tile_preparation;
+pub(in crate::application) use tile_preparation::{PendingWorldModel, SharedTerrainSources};
 mod worker;
 pub(in crate::application) mod world_model_residency;
 
@@ -74,6 +75,12 @@ pub enum RuntimeTerrainError {
     /// A required client asset or table failed strict decoding.
     #[error(transparent)]
     Asset(#[from] AssetError),
+    /// A shared source producer failed before this tile could consume its result.
+    #[error(transparent)]
+    SharedModel(#[from] solarity_asset::M2LoadError),
+    /// A shared root/group request preserves its original archive or producer failure.
+    #[error(transparent)]
+    SharedWorldModel(#[from] solarity_asset::WmoLoadError),
     /// The active ECS world lost a required player invariant.
     #[error(transparent)]
     World(#[from] WorldStateError),
@@ -373,11 +380,16 @@ impl RuntimeTerrainCoordinator {
         };
         let source = self.take_worker_source()?;
         let specular_textures = self.specular_textures;
-        let task = permit.submit_steps_with_context(terrain_steps(
+        let shared = tile_preparation::SharedTerrainSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let task = permit.submit_resumable_with_context(terrain_steps(
             source,
             definition,
             request,
             specular_textures,
+            shared,
         ));
         self.pending = Some(PendingTerrainGeneration {
             request,
@@ -575,11 +587,16 @@ impl RuntimeTerrainCoordinator {
         };
         let source = self.take_worker_source()?;
         let specular_textures = self.specular_textures;
-        let task = permit.submit_steps_with_context(terrain_steps(
+        let shared = tile_preparation::SharedTerrainSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let task = permit.submit_resumable_with_context(terrain_steps(
             source,
             definition,
             request,
             specular_textures,
+            shared,
         ));
         self.pending = Some(PendingTerrainGeneration {
             request,
@@ -1331,17 +1348,32 @@ impl ResidentGlobalWorldModel {
             liquid_assets,
             store,
         )?;
+        Ok(Self::from_models(
+            m2_builder,
+            world_models,
+            world_model_collision,
+            world_model_liquid,
+        ))
+    }
+
+    /// Global-WMO dependency steps converge at the same whole-generation publication.
+    fn from_models(
+        m2_builder: ResidentM2SceneBuilder,
+        world_models: ResidentWorldModelScene,
+        world_model_collision: WorldModelCollisionScene,
+        world_model_liquid: WorldModelLiquidScene,
+    ) -> Self {
         let (m2_scene, m2_collision) = m2_builder.finish();
         let movement_references =
             ResidentMovementReferences::prepare(None, &m2_scene, &world_models);
-        Ok(Self {
+        Self {
             movement_references,
             m2_scene: Arc::new(m2_scene),
             m2_collision,
             world_model_collision,
             world_model_liquid,
             world_models,
-        })
+        }
     }
 }
 

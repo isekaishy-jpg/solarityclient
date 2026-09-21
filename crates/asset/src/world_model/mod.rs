@@ -8,7 +8,7 @@ mod map_obj;
 mod map_obj_doodad;
 mod map_obj_fog;
 mod map_obj_group;
-mod map_obj_read;
+pub(crate) mod map_obj_read;
 mod map_obj_spatial;
 
 pub use map_obj::{DecodedWorldModel, WorldModelBlendMode, WorldModelMaterial, WorldModelShader};

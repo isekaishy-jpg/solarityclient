@@ -760,6 +760,62 @@ findings claimed yet.
   terminal completion clears it before releasing admission. Shutdown still visits
   owners outside the registry lock, and the identity cell is reused across epochs.
 
+## Discovered dependency suspension and ordered terrain sources
+
+The follow-up to Build 173 adds owned service suspension for dependencies
+found during loading. Waiting services retain their existing admission and
+captures while releasing the worker and bulk allowance. Source completion,
+consumer cancellation and shutdown resume the same operation without polling.
+Shared-source urgency follows live consumer demand while it is suspended.
+The executor closes external suspension before draining logical admission.
+
+Runtime MDDF loading and nested MODD loading in both ADT and global-WMO scenes
+now join the shared M2 request authority. WMO registration yields between
+MODF owners and selected MODD resources while preserving stock traversal and
+whole-generation publication. Tile preparation and WMO residency now have
+folder-backed facades and focused preparation/cache/source/material modules.
+The dependency state stays in the service allocation, preserving the compact
+frame queue record. Disabled dependency timing takes no clock reading.
+
+The focused scheduler and archive-backed terrain tests pass. Final workspace
+checks and packaging are recorded in the
+[discovered dependency report](cpu-discovered-dependencies.md). This closes a
+loading suspension gap. The subsequent changes below connect world recording
+and WMO/ground-detail source authority. Main-thread M2 admission, other
+unconverted consumers and complete cache/working-set accounting remain required. No frame-rate gain is claimed.
+
+## Parallel world recording and shared scene sources
+
+World command recording now runs as owned contiguous command ranges on the CPU
+executor, with independent secondary command pools and frame-slot fence lifetime.
+Main records postprocessing/UI while those ranges run, then submits the original
+ordered world and compositor streams. Numeric command capture reserves its full
+bound before dispatch. This closes the previously serial world-recording/UI
+boundary; it does not move ordered gameplay callbacks or queue submission.
+The renderer source passed 1,668 workspace tests and the 896-frame, 300-NPC replay;
+reviewed before/after captures preserve geometry and compositor output. Details
+and measurement limitations are in [world recording](cpu-world-recording.md).
+
+WMO root/group requests now share namespace authority across terrain and
+GameObjects. GameObject default-set doodads and terrain ground-detail models
+join shared M2 dependencies. Those continuations retain source order and publish
+only complete consumers. Source completion, failure and withdrawal are tested on
+one worker. WMO release notifications join bounded worker maintenance; a change
+bit is checked against actual pending releases so empty caches cannot schedule
+cleanup every frame. Ground-detail and GameObject worker code now have folder
+facades. See [discovered dependencies](cpu-discovered-dependencies.md).
+
+The first full shared-WMO suite exposed two empty-cache maintenance assertions;
+the unnecessary scheduling was corrected. The complete shared-WMO/ground-detail
+source then passed 1,674 tests, with zero failures and 33 ignored, plus workspace
+Clippy. Further changes yield WMO producers between root/group decode stages and
+use deferred staging retirement for generated stock textures. The final combined source passes 1,676 workspace tests (zero failures, 33 ignored),
+formatting and workspace Clippy. The optimized candidate completes 1,792 crowded
+frames across 1/2/4/8 workers and an 896-frame F10 capture. The paired earlier
+binary also completes, but the candidate is slower overall in that pair; no
+frame-time gain is claimed. See the [qualification report](cpu-world-recording.md#combined-source-qualification).
+Numbered packaging is pending; Build 173 remains the installed package.
+
 ## Still required for the complete cutover
 
 On 2026-09-20 the user directed that the next turn complete this CPU cutover and
@@ -828,16 +884,18 @@ an operation has a context parameter. The requirements below remain in scope.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
 - Extend cross-domain overlap beyond the connected ground-detail/WMO and
-  terrain/liquid consumers, including UI/rendering and phase-specific M2 demand.
+  terrain/liquid consumers, including phase-specific M2 demand. World command recording now overlaps
+  main-owned UI/compositor recording.
   Ordered receiver callbacks, receiver-uniform completion for M2 draws and
   end-of-frame state reclamation still have barriers.
 - Extend pending-request authority beyond runtime audio, Glue backdrops and
   creation/selection primary M2s, asynchronous top-level GameObject M2s and
-  local/NPC/remote-player primary M2s. Terrain, Glue attachments
-  and pets, population attachments/mounts, nested WMO doodads, effects
+  local/NPC/remote-player primary M2s. Terrain MDDF/MODD/ground detail and GameObject WMO sources are now connected.
+  Glue attachments and pets, population attachments/mounts, effects
   and sky sources still use their existing local decode caches.
-  WMO and other source domains need shared pending authority, cross-resource I/O
-  dependencies and the remaining domain-wide shared result leases. M2/WMO sources
+  Other source domains still need shared pending authority, cross-resource I/O
+  dependencies and the remaining domain-wide shared result leases. WMO requests
+  now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
   Request metadata and encoded payload budgets still need admission/accounting.

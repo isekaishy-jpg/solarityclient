@@ -300,3 +300,7 @@ pub(crate) fn bootstrap_texture_blp() -> Vec<u8> {
     bytes.extend_from_slice(&0xFF00_FF00_u32.to_le_bytes());
     bytes
 }
+
+#[path = "../../support/game_object_world_models.rs"]
+#[allow(dead_code)]
+pub(crate) mod game_object_world_models;

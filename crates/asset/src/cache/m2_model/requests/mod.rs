@@ -9,11 +9,8 @@ mod service;
 use super::super::resource::ResourceLease;
 use super::{M2CacheService, ModelCacheCore};
 use crate::{AssetError, AssetNamespaceId, AssetResourceKey, DecodedM2Model};
-use solarity_cpu::{CpuServiceDemand, CpuServiceInterest};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Condvar, Mutex},
-};
+use solarity_cpu::CpuServiceInterest;
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 
 /// Pipeline failure remains distinct from malformed or missing stock source data.
@@ -41,14 +38,8 @@ pub enum M2LoadError {
 /// One immutable outcome contains tracked external source ownership.
 type Outcome = Result<ResourceLease<DecodedM2Model>, M2LoadError>;
 
-/// Only result metadata is synchronized; archive work never borrows this lock.
-#[derive(Default)]
-struct Slot {
-    result: Mutex<Option<Outcome>>,
-    ready: Condvar,
-    demand: CpuServiceDemand,
-    dependencies: Mutex<Vec<std::sync::Weak<readiness::DependencyOwner>>>,
-}
+/// M2 demand uses the common typed readiness bridge without sharing cache policy.
+type Slot = super::super::source_dependency::SourceSlot<ResourceLease<DecodedM2Model>, M2LoadError>;
 
 /// The table owns pending producers only; successful source retention uses the normal cache.
 #[derive(Default)]

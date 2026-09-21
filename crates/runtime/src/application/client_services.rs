@@ -228,6 +228,7 @@ impl ClientServices {
             ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
         let model_cache_maintenance = model_cache_maintenance::RuntimeModelCacheMaintenance::new(
             catalog.model_cache_service(),
+            catalog.world_model_cache_service(),
         );
         let archive_count = catalog.descriptors().len();
         let sound_catalog = catalog.clone();
