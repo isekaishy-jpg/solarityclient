@@ -174,7 +174,7 @@ impl UiLayoutPlan {
     ///
     /// Returns [`UiLayoutError::Layout`] for invalid booleans, finite numbers,
     /// point names, structures, or `$parent` references.
-    pub fn from_tree(tree: &UiObjectTree<'_>) -> Result<Self, UiLayoutError> {
+    pub fn from_tree(tree: &UiObjectTree) -> Result<Self, UiLayoutError> {
         let mut plan = Self {
             nodes: Vec::with_capacity(tree.nodes().len()),
             layers: Vec::new(),
@@ -243,7 +243,7 @@ impl UiLayoutPlan {
 }
 
 fn parse_layer(
-    source: &UiElementLayer<'_>,
+    source: &UiElementLayer,
     parent_context: Option<&str>,
     allow_dynamic_parent: bool,
     anchors: &mut Vec<UiAnchor>,

@@ -224,8 +224,13 @@ impl FontDefinition {
 }
 
 /// Globally named fonts constructed in built-in XML load order.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct FontCatalog {
+    data: std::sync::Arc<FontCatalogData>,
+}
+
+#[derive(Clone, Default)]
+struct FontCatalogData {
     definitions: Vec<FontDefinition>,
     by_name: HashMap<String, usize>,
 }
@@ -239,10 +244,7 @@ impl FontCatalog {
     /// or a parent that has not already been defined. Forward-searching for an
     /// inheritance target would change stock load-order behavior.
     pub fn from_bundle(bundle: &UiBundle) -> Result<Self, FontError> {
-        let mut catalog = Self {
-            definitions: Vec::new(),
-            by_name: HashMap::new(),
-        };
+        let mut catalog = Self::default();
         for (action_index, action) in bundle.actions().iter().enumerate() {
             let UiLoadAction::XmlElement {
                 resource_index,
@@ -277,21 +279,23 @@ impl FontCatalog {
     /// Returns definitions in construction order.
     #[must_use]
     pub fn definitions(&self) -> &[FontDefinition] {
-        &self.definitions
+        &self.data.definitions
     }
 
     /// Finds a global font by its case-sensitive XML name.
     #[must_use]
     pub fn definition(&self, name: &str) -> Option<&FontDefinition> {
-        self.by_name
+        self.data
+            .by_name
             .get(name)
-            .and_then(|index| self.definitions.get(*index))
+            .and_then(|index| self.data.definitions.get(*index))
     }
 
     /// Finds the font constructed by one expanded XML action.
     #[must_use]
     pub fn definition_for_action(&self, action_index: usize) -> Option<&FontDefinition> {
-        self.definitions
+        self.data
+            .definitions
             .iter()
             .find(|definition| definition.action_index == action_index)
     }
@@ -307,15 +311,16 @@ impl FontCatalog {
             return Ok(());
         }
         let definition = self.parse_definition(action_index, path, document, element)?;
-        if self.by_name.contains_key(definition.name()) {
+        if self.data.by_name.contains_key(definition.name()) {
             return Err(definition_error(
                 path,
                 format!("duplicate font name {}", definition.name()),
             ));
         }
-        let index = self.definitions.len();
-        self.by_name.insert(definition.name.clone(), index);
-        self.definitions.push(definition);
+        let index = self.data.definitions.len();
+        let data = std::sync::Arc::make_mut(&mut self.data);
+        data.by_name.insert(definition.name.clone(), index);
+        data.definitions.push(definition);
         Ok(())
     }
 

@@ -168,7 +168,7 @@ impl UiTextureStatePlan {
     ///
     /// Returns [`UiTextureError::Resolution`] when the tree and declaration plan
     /// do not describe the same object arena or the compact index overflows.
-    pub fn resolve(tree: &UiObjectTree<'_>, plan: &UiTexturePlan) -> Result<Self, UiTextureError> {
+    pub fn resolve(tree: &UiObjectTree, plan: &UiTexturePlan) -> Result<Self, UiTextureError> {
         let mut node_states = vec![None; tree.nodes().len()];
         let texture_count = tree
             .nodes()

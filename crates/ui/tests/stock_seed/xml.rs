@@ -220,3 +220,22 @@ fn mount(fixture: &Fixture) -> Result<AssetStore, Box<dyn Error>> {
     let catalog = ArchiveCatalog::discover(root, Locale::EnUs)?;
     Ok(AssetStore::mount(catalog)?)
 }
+
+/// Shared arena ownership preserves both element addresses and structural equality.
+#[test]
+fn shared_xml_arena_retains_elements_after_the_original_document_retires()
+-> Result<(), Box<dyn Error>> {
+    let document = solarity_ui::XmlDocument::parse(
+        &solarity_asset::AssetPath::new("Interface/Test.xml")?,
+        "<Ui><Frame/><Frame/></Ui>",
+    )?;
+    let shared = document.clone();
+    assert!(std::ptr::eq(document.root(), shared.root()));
+    assert_eq!(document.element(1), document.element(2));
+    drop(document);
+    assert_eq!(
+        shared.element(1).map(solarity_ui::XmlElement::name),
+        Some("Frame")
+    );
+    Ok(())
+}

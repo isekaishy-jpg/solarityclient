@@ -22,12 +22,12 @@ pub(in crate::script) fn snapshot(object: &Table) -> mlua::Result<MinimapWidgetS
 pub(super) fn initialize(
     lua: &Lua,
     object: &Table,
-    node: &crate::UiObjectNode<'_>,
+    node: &crate::UiObjectNode,
 ) -> mlua::Result<()> {
     initialize_path(lua, object, xml_player_texture(node).as_deref())
 }
 
-pub(in crate::script) fn xml_player_texture(node: &crate::UiObjectNode<'_>) -> Option<String> {
+pub(in crate::script) fn xml_player_texture(node: &crate::UiObjectNode) -> Option<String> {
     node.layers()
         .iter()
         .rev()

@@ -252,7 +252,7 @@ impl UiTexturePlan {
     ///
     /// Returns [`UiTextureError::Texture`] for unsupported extensions, blend
     /// modes, non-finite coordinates, or invalid archive paths.
-    pub fn from_tree(tree: &UiObjectTree<'_>) -> Result<Self, UiTextureError> {
+    pub fn from_tree(tree: &UiObjectTree) -> Result<Self, UiTextureError> {
         let mut plan = Self {
             nodes: Vec::with_capacity(tree.nodes().len()),
             layers: Vec::new(),
@@ -293,9 +293,7 @@ impl UiTexturePlan {
     }
 }
 
-fn parse_layer(
-    source: &crate::UiElementLayer<'_>,
-) -> Result<Option<UiTextureLayer>, UiTextureError> {
+fn parse_layer(source: &crate::UiElementLayer) -> Result<Option<UiTextureLayer>, UiTextureError> {
     let path = source.source_path();
     let document = source.document();
     let element = source.element();

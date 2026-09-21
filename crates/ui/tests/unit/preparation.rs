@@ -138,6 +138,8 @@ fn worker_startup_and_live_publications_match_serial_lua_geometry_and_meshes()
         FixtureFile { path: "Fonts/Test.ttf", bytes: include_bytes!("../fixtures/tooltip_fixture.ttf") },
         FixtureFile { path: "Interface/GlueXML/Test.xml", bytes: br#"<Ui>
 <Font name="TestFont" font="Fonts\Test.ttf"><FontHeight><AbsValue val="16"/></FontHeight></Font>
+<Frame name="Shared" virtual="true"><Scripts><OnShow>self:SetID(17)</OnShow></Scripts></Frame>
+<Frame name="AliasA" inherits="Shared"/><Frame name="AliasB" inherits="Shared"/>
 <Frame name="Root"><Size x="600" y="500"/><Anchors><Anchor point="CENTER"/></Anchors>
 <Layers><Layer><FontString name="Label" inherits="TestFont" text="abc"><Size x="100" y="30"/><Anchors><Anchor point="TOPLEFT"/></Anchors></FontString>
 <Texture name="Texture"><Size x="100" y="50"/><Anchors><Anchor point="BOTTOMLEFT"/></Anchors><Color r="1" g="0.5" b="0.2"/></Texture></Layer></Layers>
@@ -146,14 +148,27 @@ fn worker_startup_and_live_publications_match_serial_lua_geometry_and_meshes()
 <SimpleHTML name="Document" font="TestFont"><Size x="180" y="20"/><Anchors><Anchor point="BOTTOMRIGHT"/></Anchors><Scripts><OnLoad>self:SetText("abc")</OnLoad></Scripts></SimpleHTML></Frames>
 <Scripts><OnUpdate>if COMMAND then HOST_CHECK(); local command = COMMAND; COMMAND = nil; assert(loadstring(command))() end</OnUpdate></Scripts>
 </Frame></Ui>"# },
+        FixtureFile { path: "Interface/AddOns/Main/Main.toc", bytes: b"## Interface: 30300\nMain.xml\n" },
+        FixtureFile { path: "Interface/AddOns/Main/Main.xml", bytes: br#"<Ui>
+<Frame name="AddonTemplate" inherits="Shared" virtual="true"/>
+<Frame name="AddonInstance" parent="Root" inherits="AddonTemplate"><Scripts><OnLoad>
+HOST_CHECK(); assert(LoadAddOn("Nested") == 1); self:SetID(23)
+</OnLoad></Scripts></Frame></Ui>"# },
+        FixtureFile { path: "Interface/AddOns/Nested/Nested.toc", bytes: b"## Interface: 30300\nNested.lua\n" },
+        FixtureFile { path: "Interface/AddOns/Nested/Nested.lua", bytes: b"HOST_CHECK(); assert(AddonInstance); NESTED_LOADED = true" },
     ])?;
+    for name in ["Main", "Nested"] {
+        fixture.write_loose_file(format!("Interface/AddOns/{name}/fixture-presence"), b"")?;
+    }
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
     let cpu = pool()?;
     let host = host(&cpu, catalog.clone())?;
     let start = |fonts| -> Result<GlueManager, Box<dyn Error>> {
         let assets = AssetStoreHandle::new(AssetStore::mount(catalog.clone())?);
+        let addons = crate::AddonCatalog::discover(&mut assets.borrow_mut())?;
         let environment = UiScriptEnvironment::new(1280, 720, false)?
+            .with_addon_load_state(crate::UiAddonLoadState::from_catalog(&addons))
             .with_shared_asset_store(assets.clone())
             .with_font_system(fonts);
         let manager =
@@ -187,6 +202,8 @@ fn worker_startup_and_live_publications_match_serial_lua_geometry_and_meshes()
     assert!(host.completed.get() >= 2);
     let initial = host.completed.get();
     for command in [
+        "assert(AliasA:GetScript('OnShow') == AliasB:GetScript('OnShow')); local object = CreateFrame('Frame', 'TemplateInstance', Root, 'Shared'); object:GetScript('OnShow')(object); assert(object:GetID() == 17)",
+        "assert(LoadAddOn('Main') == 1); assert(NESTED_LOADED and AddonInstance:GetID() == 23 and AddonInstance:GetParent() == Root)",
         "Document:SetText('abcdef')",
         "Label:SetText('abcdef'); Entry:SetText('abcde'); Entry:SetCursorPosition(2); Entry:HighlightText(1, 3)",
         "Root:SetWidth(520); Label:SetPoint('TOPLEFT', Root, 'TOPLEFT', 11, -7)",

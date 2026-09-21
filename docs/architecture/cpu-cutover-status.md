@@ -238,6 +238,45 @@ panic. Evidence is `target/ui-preparation-tests.log`,
 `target/ui-preparation-stock.log`, `target/ui-preparation-clippy-final.log` and
 `target/ui-preparation-ui-final.log`. No FPS comparison was performed.
 
+The next declaration batch replaces borrowed XML layers with shared immutable
+arenas and owned element indices. One required worker operation constructs fonts,
+object inheritance, layout, frame/texture/backdrop/animation plans, callback code,
+dynamic templates and initial SimpleHTML documents. Main binds compiled functions
+into its Lua state, consumes HTML errors at the original initialization boundary,
+and executes authored actions in order. Callback aliases and debug source labels
+survive transfer; no Lua function or registry key crosses the worker boundary.
+Validated file and inline chunks retain their compiled bytecode for execution,
+avoiding another source compilation on the live Lua owner.
+
+Dynamic SimpleHTML parsing/wrapping now borrows its native plan through the same
+worker host; unchanged documents avoid admission. Height writes and scroll-range
+callbacks remain on main after all document preparation completes. AddOn reads,
+source validation and per-action font/object/template preparation also use that
+host. A declaration is published at its original action boundary before Lua
+execution, so nested LoadAddOn observes the completed prefix. Worker compilation
+uses a temporary Lua state with no authored code execution; the existing callback,
+private-table, dependency and event behavior remains owned by the live Lua state.
+
+This closes those identified declaration and SimpleHTML preparation paths. It does
+not close all-domain decoded/nested byte accounting, retention/trim, warmed loan
+storage, finite bulk-step policy or remaining native publication qualification.
+The XML/font arenas are shared, but prepared bytecode and other new decoded
+allocations still require the broader residency accounting. Build 176 remains
+installed; no additional client package or FPS comparison is part of this batch.
+
+Declaration validation passes the grouped UI/runtime suite (794 tests, 32 existing
+ignores). After preserving XML element value equality independently of its new
+arena index, the final UI suite passes all 202 tests with one existing ignore:
+795 distinct passes across the batch. Final all-target/all-feature UI/runtime
+Clippy passes with warnings denied, and formatting is clean. Coverage includes
+shared XML survival, callback alias/global/debug-source preservation after the
+compiling Lua state retires, single-worker/one-slot startup and live parity,
+dynamic templates, nested AddOn loading and SimpleHTML mutations. A test-only
+error-propagation cleanup is checked again with the focused callback fixture.
+Evidence is `target/ui-declarations-tests.log`,
+`target/ui-declarations-ui-final.log`, `target/ui-declarations-clippy-final.log`
+and `target/ui-declarations-callback-final.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

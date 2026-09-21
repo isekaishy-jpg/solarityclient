@@ -235,7 +235,7 @@ impl UiSimpleHtmlNode {
 }
 
 /// Arena-aligned static state for every authored `SimpleHTML` object.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct UiSimpleHtmlPlan {
     nodes: std::sync::Arc<Vec<Option<UiSimpleHtmlNode>>>,
 }
@@ -247,7 +247,7 @@ impl UiSimpleHtmlPlan {
         }
     }
 
-    pub(crate) fn requires_asset_store(tree: &UiObjectTree<'_>) -> bool {
+    pub(crate) fn requires_asset_store(tree: &UiObjectTree) -> bool {
         tree.nodes().iter().any(|object| {
             object.kind() == UiObjectKind::SimpleHtml
                 && object.layers().iter().any(|layer| {
@@ -267,7 +267,7 @@ impl UiSimpleHtmlPlan {
     /// Returns the first locale read, UTF-8/XML parse, font, or declaration
     /// error. No operating-system font or alternate locale is substituted.
     pub fn resolve(
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         regions: &UiRegionStatePlan,
         fonts: &FontCatalog,
         assets: &mut AssetStore,
@@ -285,7 +285,7 @@ impl UiSimpleHtmlPlan {
 
     /// Uses the mounted UI's persistent font cache for paragraph measurement.
     pub(crate) fn resolve_with_system(
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         regions: &UiRegionStatePlan,
         fonts: &FontCatalog,
         assets: &mut AssetStore,
@@ -358,6 +358,11 @@ impl UiSimpleHtmlPlan {
     #[must_use]
     pub fn node(&self, object_index: usize) -> Option<&UiSimpleHtmlNode> {
         self.nodes.get(object_index).and_then(Option::as_ref)
+    }
+
+    pub(crate) fn text_changed(&self, object_index: usize, text: Option<&str>) -> bool {
+        self.node(object_index)
+            .is_some_and(|node| node.dynamic_text.as_deref() != text)
     }
 
     /// Replaces one document through stock `SimpleHTML:SetText` semantics.
@@ -433,7 +438,7 @@ impl UiSimpleHtmlPlan {
 }
 
 /// Finds the viewport that clips this retained scroll child.
-fn nearest_scroll_frame(tree: &UiObjectTree<'_>, object_index: usize) -> Option<usize> {
+fn nearest_scroll_frame(tree: &UiObjectTree, object_index: usize) -> Option<usize> {
     let mut descendant = object_index;
     let mut parent = tree.nodes().get(object_index)?.parent();
     while let Some(index) = parent {
@@ -456,7 +461,7 @@ struct HtmlFontStyle {
 }
 
 fn font_styles(
-    object: &crate::UiObjectNode<'_>,
+    object: &crate::UiObjectNode,
     fonts: &FontCatalog,
     label: &str,
 ) -> Result<[Option<HtmlFontStyle>; 4], UiSimpleHtmlError> {

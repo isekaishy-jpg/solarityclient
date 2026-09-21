@@ -46,7 +46,7 @@ pub(crate) enum StatusBarXmlOperation {
 pub(crate) struct StatusBarConfig(pub Vec<StatusBarXmlOperation>);
 
 impl StatusBarConfig {
-    pub fn from_node(object: &crate::UiObjectNode<'_>) -> Self {
+    pub fn from_node(object: &crate::UiObjectNode) -> Self {
         use StatusBarXmlOperation as Op;
         let attribute = |element: &crate::XmlElement, name: &str| {
             element

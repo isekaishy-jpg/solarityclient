@@ -37,14 +37,29 @@ pub enum XmlContent {
 }
 
 /// One element in an owned document arena.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct XmlElement {
+    index: usize,
     name: String,
     attributes: Vec<XmlAttribute>,
     content: Vec<XmlContent>,
 }
 
+// Arena location is ownership metadata, not part of XML value equality.
+impl PartialEq for XmlElement {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.attributes == other.attributes
+            && self.content == other.content
+    }
+}
+impl Eq for XmlElement {}
+
 impl XmlElement {
+    pub(crate) const fn index(&self) -> usize {
+        self.index
+    }
+
     /// Returns the qualified element name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -67,11 +82,15 @@ impl XmlElement {
 /// An owned, arena-backed stock UI XML document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct XmlDocument {
-    elements: Vec<XmlElement>,
+    elements: std::sync::Arc<Vec<XmlElement>>,
     root: usize,
 }
 
 impl XmlDocument {
+    pub(crate) fn shares_arena(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.elements, &other.elements)
+    }
+
     /// Parses a UTF-8 GlueXML or FrameXML source file.
     ///
     /// # Errors
@@ -142,7 +161,10 @@ impl XmlDocument {
             return Err(xml_error(path, "document ended with open elements"));
         }
         let root = root.ok_or_else(|| xml_error(path, "document has no root element"))?;
-        Ok(Self { elements, root })
+        Ok(Self {
+            elements: std::sync::Arc::new(elements),
+            root,
+        })
     }
 
     /// Returns the document root.
@@ -189,6 +211,7 @@ fn push_element(
 
     let index = elements.len();
     elements.push(XmlElement {
+        index,
         name: start.name().as_ref().to_owned(),
         attributes,
         content: Vec::new(),

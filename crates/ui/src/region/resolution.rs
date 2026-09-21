@@ -126,7 +126,7 @@ impl UiRegionStatePlan {
     ///
     /// Returns [`UiLayoutError::Resolution`] for mismatched arenas, missing or
     /// self-referential anchor targets, invalid scale, and ownership cycles.
-    pub fn resolve(tree: &UiObjectTree<'_>, layout: &UiLayoutPlan) -> Result<Self, UiLayoutError> {
+    pub fn resolve(tree: &UiObjectTree, layout: &UiLayoutPlan) -> Result<Self, UiLayoutError> {
         if layout.node_count() != tree.nodes().len() {
             return Err(resolution_error(
                 "layout plan and object tree have different node counts",
@@ -291,7 +291,7 @@ impl UiRegionStatePlan {
 }
 
 fn resolve_effective_state(
-    tree: &UiObjectTree<'_>,
+    tree: &UiObjectTree,
     local: &[UiRegionState],
     index: usize,
     resolved: &mut [Option<UiRegionState>],

@@ -200,7 +200,54 @@ pub struct UiRuntimeTemplatePlan {
 
 pub(super) const TEMPLATE_REGISTRY: &str = "solarity.ui.runtime_templates";
 
+pub(crate) struct PreparedRuntimeTemplatePlan {
+    templates: Vec<UiRuntimeTemplate>,
+    deferred_templates: Vec<UiDeferredRuntimeTemplate>,
+    nodes: Vec<UiRuntimeTemplateNode>,
+    functions: super::prepared::PreparedFunctions,
+}
+
+impl PreparedRuntimeTemplatePlan {
+    pub(crate) fn bind(
+        self,
+        lua: &Lua,
+        bank: &mut super::prepared::BindFunctions,
+    ) -> Result<UiRuntimeTemplatePlan, UiScriptError> {
+        let Self {
+            templates,
+            deferred_templates,
+            nodes,
+            functions,
+        } = self;
+        Ok(UiRuntimeTemplatePlan {
+            templates,
+            deferred_templates,
+            nodes,
+            functions: bank.bind(lua, functions)?,
+        })
+    }
+}
+
 impl UiRuntimeTemplatePlan {
+    pub(crate) fn into_prepared(
+        self,
+        lua: &Lua,
+        bank: &mut super::prepared::ExportFunctions,
+    ) -> Result<PreparedRuntimeTemplatePlan, UiScriptError> {
+        let Self {
+            templates,
+            deferred_templates,
+            nodes,
+            functions,
+        } = self;
+        Ok(PreparedRuntimeTemplatePlan {
+            templates,
+            deferred_templates,
+            nodes,
+            functions: bank.export(lua, functions)?,
+        })
+    }
+
     /// Expands every virtual template into an owned dynamic construction plan.
     ///
     /// # Errors
@@ -208,7 +255,7 @@ impl UiRuntimeTemplatePlan {
     /// Returns [`UiScriptError::Template`] when template construction, layout,
     /// callback compilation, or registry retention fails.
     pub fn from_catalog(
-        catalog: &UiObjectCatalog<'_>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
         lua: &Lua,
     ) -> Result<Self, UiScriptError> {
@@ -218,7 +265,7 @@ impl UiRuntimeTemplatePlan {
     }
 
     pub(crate) fn for_action(
-        catalog: &UiObjectCatalog<'_>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
         lua: &Lua,
         action_index: usize,
@@ -229,10 +276,10 @@ impl UiRuntimeTemplatePlan {
     }
 
     fn from_selected(
-        catalog: &UiObjectCatalog<'_>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
         lua: &Lua,
-        selected: impl Fn(&crate::UiObjectDefinition<'_>) -> bool,
+        selected: impl Fn(&crate::UiObjectDefinition) -> bool,
     ) -> Result<Self, UiScriptError> {
         let mut plan = Self {
             templates: Vec::new(),
@@ -684,7 +731,7 @@ impl Default for InitialFont {
     }
 }
 
-fn initial_font(node: &crate::UiObjectNode<'_>, fonts: &FontCatalog) -> InitialFont {
+fn initial_font(node: &crate::UiObjectNode, fonts: &FontCatalog) -> InitialFont {
     if !matches!(
         node.kind(),
         UiObjectKind::FontString | UiObjectKind::EditBox | UiObjectKind::ScrollingMessageFrame
@@ -850,7 +897,7 @@ struct InitialButton {
     highlight_font: Option<String>,
 }
 
-fn initial_button(node: &crate::UiObjectNode<'_>) -> InitialButton {
+fn initial_button(node: &crate::UiObjectNode) -> InitialButton {
     if !matches!(
         node.kind(),
         UiObjectKind::Button | UiObjectKind::CheckButton
@@ -920,7 +967,7 @@ struct InitialTexture {
 }
 
 fn initial_texture(
-    tree: &UiObjectTree<'_>,
+    tree: &UiObjectTree,
     textures: &UiTextureStatePlan,
     index: usize,
 ) -> Result<InitialTexture, &'static str> {
@@ -975,7 +1022,7 @@ fn attribute<'a>(element: &'a crate::XmlElement, name: &str) -> Option<&'a str> 
         .map(|attribute| attribute.value())
 }
 
-pub(super) fn slider_orientation(object: &crate::UiObjectNode<'_>) -> String {
+pub(super) fn slider_orientation(object: &crate::UiObjectNode) -> String {
     object
         .layers()
         .iter()
@@ -1039,7 +1086,7 @@ struct ResolvedLocalRegion {
 }
 
 fn resolve_local_region(
-    tree: &UiObjectTree<'_>,
+    tree: &UiObjectTree,
     layout: &UiLayoutPlan,
     node_index: usize,
     first_node: usize,

@@ -103,7 +103,7 @@ pub enum UiInheritanceTarget {
 }
 
 /// One named root declaration retaining its original XML subtree.
-pub struct UiObjectDefinition<'bundle> {
+pub struct UiObjectDefinition {
     action_index: usize,
     kind: UiObjectKind,
     name: String,
@@ -111,12 +111,12 @@ pub struct UiObjectDefinition<'bundle> {
     parent_name: Option<String>,
     inherited_from: Vec<UiInheritanceTarget>,
     resolved_layers: Vec<usize>,
-    source_path: &'bundle AssetPath,
-    document: &'bundle XmlDocument,
-    element: &'bundle XmlElement,
+    source_path: AssetPath,
+    document: XmlDocument,
+    element: usize,
 }
 
-impl<'bundle> UiObjectDefinition<'bundle> {
+impl UiObjectDefinition {
     /// Returns the expanded bundle action that registers this declaration.
     #[must_use]
     pub const fn action_index(&self) -> usize {
@@ -161,32 +161,34 @@ impl<'bundle> UiObjectDefinition<'bundle> {
 
     /// Returns the XML asset containing this declaration.
     #[must_use]
-    pub const fn source_path(&self) -> &'bundle AssetPath {
-        self.source_path
+    pub const fn source_path(&self) -> &AssetPath {
+        &self.source_path
     }
 
     /// Returns the owning document used to resolve child arena indices.
     #[must_use]
-    pub const fn document(&self) -> &'bundle XmlDocument {
-        self.document
+    pub const fn document(&self) -> &XmlDocument {
+        &self.document
     }
 
     /// Returns the original root XML element.
     #[must_use]
-    pub const fn element(&self) -> &'bundle XmlElement {
-        self.element
+    pub fn element(&self) -> &XmlElement {
+        self.document
+            .element(self.element)
+            .unwrap_or_else(|| unreachable!("retained XML element"))
     }
 }
 
 /// Ordered global templates and live root declarations for one UI bundle.
-pub struct UiObjectCatalog<'bundle> {
-    definitions: Vec<UiObjectDefinition<'bundle>>,
+pub struct UiObjectCatalog {
+    definitions: Vec<UiObjectDefinition>,
     by_name: HashMap<String, usize>,
     template_indices: Vec<usize>,
     root_indices: Vec<usize>,
 }
 
-impl<'bundle> UiObjectCatalog<'bundle> {
+impl UiObjectCatalog {
     /// Registers every non-font XML action in exact expanded load order.
     ///
     /// # Errors
@@ -195,10 +197,7 @@ impl<'bundle> UiObjectCatalog<'bundle> {
     /// names, invalid booleans, duplicate globals, or unavailable inheritance
     /// targets. Object parents must be earlier virtual declarations; a
     /// `FontString` may additionally inherit an earlier global font object.
-    pub fn from_bundle(
-        bundle: &'bundle UiBundle,
-        fonts: &FontCatalog,
-    ) -> Result<Self, UiObjectError> {
+    pub fn from_bundle(bundle: &UiBundle, fonts: &FontCatalog) -> Result<Self, UiObjectError> {
         let mut catalog = Self {
             definitions: Vec::new(),
             by_name: HashMap::new(),
@@ -242,13 +241,13 @@ impl<'bundle> UiObjectCatalog<'bundle> {
 
     /// Returns all object declarations in registration order.
     #[must_use]
-    pub fn definitions(&self) -> &[UiObjectDefinition<'bundle>] {
+    pub fn definitions(&self) -> &[UiObjectDefinition] {
         &self.definitions
     }
 
     /// Returns a named declaration.
     #[must_use]
-    pub fn definition(&self, name: &str) -> Option<&UiObjectDefinition<'bundle>> {
+    pub fn definition(&self, name: &str) -> Option<&UiObjectDefinition> {
         self.by_name
             .get(name)
             .and_then(|index| self.definitions.get(*index))
@@ -256,19 +255,19 @@ impl<'bundle> UiObjectCatalog<'bundle> {
 
     /// Returns a declaration by its stable registration index.
     #[must_use]
-    pub fn definition_at(&self, index: usize) -> Option<&UiObjectDefinition<'bundle>> {
+    pub fn definition_at(&self, index: usize) -> Option<&UiObjectDefinition> {
         self.definitions.get(index)
     }
 
     /// Iterates virtual template declarations in registration order.
-    pub fn templates(&self) -> impl ExactSizeIterator<Item = &UiObjectDefinition<'bundle>> {
+    pub fn templates(&self) -> impl ExactSizeIterator<Item = &UiObjectDefinition> {
         self.template_indices
             .iter()
             .map(|index| &self.definitions[*index])
     }
 
     /// Iterates live root declarations in registration order.
-    pub fn roots(&self) -> impl ExactSizeIterator<Item = &UiObjectDefinition<'bundle>> {
+    pub fn roots(&self) -> impl ExactSizeIterator<Item = &UiObjectDefinition> {
         self.root_indices
             .iter()
             .map(|index| &self.definitions[*index])
@@ -277,9 +276,9 @@ impl<'bundle> UiObjectCatalog<'bundle> {
     fn register(
         &mut self,
         action_index: usize,
-        path: &'bundle AssetPath,
-        document: &'bundle XmlDocument,
-        element: &'bundle XmlElement,
+        path: &AssetPath,
+        document: &XmlDocument,
+        element: &XmlElement,
         fonts: &FontCatalog,
     ) -> Result<(), UiObjectError> {
         let authored_kind = UiObjectKind::from_element_name(element.name()).ok_or_else(|| {
@@ -343,9 +342,9 @@ impl<'bundle> UiObjectCatalog<'bundle> {
             parent_name: attribute(element, "parent").map(str::to_owned),
             inherited_from,
             resolved_layers,
-            source_path: path,
-            document,
-            element,
+            source_path: path.clone(),
+            document: document.clone(),
+            element: element.index(),
         };
         self.by_name.insert(name, index);
         self.definitions.push(definition);

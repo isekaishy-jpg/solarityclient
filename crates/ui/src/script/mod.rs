@@ -9,13 +9,16 @@ mod handlers;
 mod model_intent;
 mod movement_intent;
 mod network_intent;
+pub(crate) mod prepared;
 mod process_intent;
 mod runtime_state;
 mod simple_script;
 mod status;
 mod templates;
 
+pub(crate) use handlers::PreparedScriptPlan;
 pub(crate) use simple_script::UiSoundSuppression;
+pub(crate) use templates::PreparedRuntimeTemplatePlan;
 
 pub use clock::UiClientClock;
 pub use handlers::{UiScriptBinding, UiScriptHandler, UiScriptNode, UiScriptPlan, UiScriptTarget};

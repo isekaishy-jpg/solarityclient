@@ -304,7 +304,7 @@ fn object_tree_rejects_unknown_draw_band() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn last_draw_layer(node: &solarity_ui::UiObjectNode<'_>) -> Option<UiDrawLayer> {
+fn last_draw_layer(node: &solarity_ui::UiObjectNode) -> Option<UiDrawLayer> {
     node.layers()
         .iter()
         .filter_map(|layer| layer.draw_layer())

@@ -1,5 +1,6 @@
 //! Persistent ownership of the built-in login and character UI.
 
+mod declarations;
 mod preparation;
 mod publication;
 mod refresh;

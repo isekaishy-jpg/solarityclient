@@ -137,9 +137,14 @@ impl UiManifest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LuaSource {
     source: std::sync::Arc<solarity_asset::AssetText>,
+    compiled: std::sync::Arc<Vec<u8>>,
 }
 
 impl LuaSource {
+    pub(crate) fn compiled(&self) -> &[u8] {
+        &self.compiled
+    }
+
     /// Returns the source text exactly as decoded from the archive.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -198,12 +203,14 @@ pub enum UiLoadAction {
         path: AssetPath,
         /// Lua 5.1 source text.
         source: String,
+        /// Compiled stock Lua code, bound only when ordered execution reaches it.
+        compiled: std::sync::Arc<Vec<u8>>,
     },
 }
 
 /// A completely resolved built-in UI manifest and its ordered resources.
 pub struct UiBundle {
-    sources: std::rc::Rc<UiSourceImage>,
+    sources: std::sync::Arc<UiSourceImage>,
     lua: Lua,
 }
 
@@ -229,7 +236,7 @@ impl UiBundle {
     pub fn load(store: &mut AssetStore, kind: UiManifestKind) -> Result<Self, UiLoadError> {
         let (sources, lua) = UiSourceImage::load(store, kind)?;
         Ok(Self {
-            sources: std::rc::Rc::new(sources),
+            sources: std::sync::Arc::new(sources),
             lua,
         })
     }
@@ -237,7 +244,7 @@ impl UiBundle {
     /// Admits worker-validated declarations into a new, main-thread Lua owner.
     pub(crate) fn from_prepared_sources(sources: UiSourceImage) -> Self {
         Self {
-            sources: std::rc::Rc::new(sources),
+            sources: std::sync::Arc::new(sources),
             lua: Lua::new(),
         }
     }
@@ -271,11 +278,11 @@ impl UiBundle {
     pub const fn lua(&self) -> &Lua {
         &self.lua
     }
-    pub(crate) fn source_image(&self) -> std::rc::Rc<UiSourceImage> {
+    pub(crate) fn source_image(&self) -> std::sync::Arc<UiSourceImage> {
         self.sources.clone()
     }
 
-    pub(crate) fn from_source_image(lua: &Lua, sources: std::rc::Rc<UiSourceImage>) -> Self {
+    pub(crate) fn from_source_image(lua: &Lua, sources: std::sync::Arc<UiSourceImage>) -> Self {
         Self {
             sources,
             lua: lua.clone(),
@@ -286,7 +293,7 @@ impl UiBundle {
 impl UiSourceImage {
     /// Reads and validates declarations without executing any authored callbacks.
     /// The temporary validator belongs to this thread; only owned sources cross
-    /// a worker boundary. Execution still compiles into the final owner's Lua.
+    /// a worker boundary. Execution binds the retained bytecode into the final owner's Lua.
     pub(crate) fn load(
         store: &mut AssetStore,
         kind: UiManifestKind,
@@ -408,12 +415,13 @@ impl<'a> UiBundleLoader<'a> {
     fn load_lua(&mut self, path: &AssetPath) -> Result<(), UiLoadError> {
         let bytes = self.read_source(path)?;
         let source = decode_text(path, bytes)?;
-        compile_lua(&self.lua, path, path.as_str(), &source)?;
+        let compiled = compile_lua(&self.lua, path, path.as_str(), &source)?.dump(false);
         let resource_index = self.resources.len();
         self.resources.push(UiResource {
             path: path.clone(),
             content: UiResourceContent::Lua(LuaSource {
                 source: std::sync::Arc::new(source),
+                compiled: std::sync::Arc::new(compiled),
             }),
         });
         self.actions
@@ -476,10 +484,24 @@ impl<'a> UiBundleLoader<'a> {
                         self.load_lua(&path)?;
                     }
                     if let Some(source) = source {
-                        compile_lua(&self.lua, owner, owner.as_str(), &source)?;
+                        let validated = compile_lua(&self.lua, owner, owner.as_str(), &source)?;
+                        // Keep validation failures at their original source label, while
+                        // successful built-in execution retains its <inline> debug label.
+                        let compiled = if self.addon_source {
+                            validated.dump(false)
+                        } else {
+                            compile_lua(
+                                &self.lua,
+                                owner,
+                                &format!("{}:<inline>", owner.as_str()),
+                                &source,
+                            )?
+                            .dump(false)
+                        };
                         self.actions.push(UiLoadAction::InlineLua {
                             path: owner.clone(),
                             source,
+                            compiled: std::sync::Arc::new(compiled),
                         });
                     }
                 }
@@ -623,15 +645,19 @@ fn resolve_directive_path(
     AssetPath::new(components.join("\\")).map_err(|error| directive_error(owner, error.to_string()))
 }
 
-fn compile_lua(lua: &Lua, path: &AssetPath, label: &str, source: &str) -> Result<(), UiLoadError> {
+fn compile_lua(
+    lua: &Lua,
+    path: &AssetPath,
+    label: &str,
+    source: &str,
+) -> Result<mlua::Function, UiLoadError> {
     lua.load(source)
         .set_name(label)
         .into_function()
         .map_err(|error| UiLoadError::Lua {
             path: path.clone(),
             message: error.to_string(),
-        })?;
-    Ok(())
+        })
 }
 
 fn directive_error(path: &AssetPath, message: impl Into<String>) -> UiLoadError {

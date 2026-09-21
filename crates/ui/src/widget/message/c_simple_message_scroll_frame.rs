@@ -28,7 +28,7 @@ impl Default for MessageConfig {
 }
 
 impl MessageConfig {
-    pub(crate) fn from_node(node: &UiObjectNode<'_>) -> Self {
+    pub(crate) fn from_node(node: &UiObjectNode) -> Self {
         let mut config = Self::default();
         for layer in node.layers() {
             for attribute in layer.element().attributes() {

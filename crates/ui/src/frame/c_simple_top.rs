@@ -87,31 +87,33 @@ impl UiObjectBatch {
 }
 
 /// One XML layer contributing properties and nested objects to an instance.
-#[derive(Clone, Copy)]
-pub struct UiElementLayer<'bundle> {
-    source_path: &'bundle AssetPath,
-    document: &'bundle XmlDocument,
-    element: &'bundle XmlElement,
+#[derive(Clone)]
+pub struct UiElementLayer {
+    source_path: AssetPath,
+    document: XmlDocument,
+    element: usize,
     draw_layer: Option<UiDrawLayer>,
 }
 
-impl<'bundle> UiElementLayer<'bundle> {
+impl UiElementLayer {
     /// Returns the XML asset containing this layer.
     #[must_use]
     pub const fn source_path(&self) -> &AssetPath {
-        self.source_path
+        &self.source_path
     }
 
     /// Returns the owning XML document.
     #[must_use]
     pub const fn document(&self) -> &XmlDocument {
-        self.document
+        &self.document
     }
 
     /// Returns the contributing XML element.
     #[must_use]
-    pub const fn element(&self) -> &XmlElement {
-        self.element
+    pub fn element(&self) -> &XmlElement {
+        self.document
+            .element(self.element)
+            .unwrap_or_else(|| unreachable!("retained XML layer"))
     }
 
     /// Returns the enclosing stock draw band for a layered region declaration.
@@ -120,15 +122,15 @@ impl<'bundle> UiElementLayer<'bundle> {
         self.draw_layer
     }
 
-    fn same_source(self, other: Self) -> bool {
+    fn same_source(&self, other: &Self) -> bool {
         self.source_path == other.source_path
-            && std::ptr::eq(self.document, other.document)
-            && std::ptr::eq(self.element, other.element)
+            && self.document.shares_arena(&other.document)
+            && self.element == other.element
     }
 }
 
 /// One instantiated frame, region, or widget in the complete UI object arena.
-pub struct UiObjectNode<'bundle> {
+pub struct UiObjectNode {
     name: Option<String>,
     name_context: Option<String>,
     kind: UiObjectKind,
@@ -137,10 +139,10 @@ pub struct UiObjectNode<'bundle> {
     children: Vec<usize>,
     construction_parent: Option<usize>,
     construction_children: Vec<usize>,
-    layers: Vec<UiElementLayer<'bundle>>,
+    layers: Vec<UiElementLayer>,
 }
 
-impl<'bundle> UiObjectNode<'bundle> {
+impl UiObjectNode {
     /// Returns the expanded global name when this object has one.
     #[must_use]
     pub fn name(&self) -> Option<&str> {
@@ -205,14 +207,14 @@ impl<'bundle> UiObjectNode<'bundle> {
 
     /// Returns unique inherited and concrete XML layers in application order.
     #[must_use]
-    pub fn layers(&self) -> &[UiElementLayer<'bundle>] {
+    pub fn layers(&self) -> &[UiElementLayer] {
         &self.layers
     }
 }
 
 /// Complete nested UI object arena with expanded global names.
-pub struct UiObjectTree<'bundle> {
-    nodes: Vec<UiObjectNode<'bundle>>,
+pub struct UiObjectTree {
+    nodes: Vec<UiObjectNode>,
     by_name: HashMap<String, usize>,
     top_level: Vec<usize>,
     batches: Vec<UiObjectBatch>,
@@ -220,7 +222,7 @@ pub struct UiObjectTree<'bundle> {
     dynamic_root: Option<usize>,
 }
 
-impl<'bundle> UiObjectTree<'bundle> {
+impl UiObjectTree {
     /// Instantiates every live declaration, inherited nested child, and region.
     ///
     /// # Errors
@@ -230,7 +232,7 @@ impl<'bundle> UiObjectTree<'bundle> {
     /// collisions. Names created inside an earlier template instance are
     /// registered before later roots resolve explicit `parent` attributes.
     pub fn from_catalog(
-        catalog: &UiObjectCatalog<'bundle>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
     ) -> Result<Self, UiObjectError> {
         let mut tree = Self {
@@ -256,9 +258,9 @@ impl<'bundle> UiObjectTree<'bundle> {
     }
 
     pub(crate) fn from_definition(
-        catalog: &UiObjectCatalog<'bundle>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
-        definition: &UiObjectDefinition<'bundle>,
+        definition: &UiObjectDefinition,
     ) -> Result<Self, UiObjectError> {
         let mut tree = Self {
             nodes: Vec::new(),
@@ -296,7 +298,7 @@ impl<'bundle> UiObjectTree<'bundle> {
 
     /// Returns all objects in construction order.
     #[must_use]
-    pub fn nodes(&self) -> &[UiObjectNode<'bundle>] {
+    pub fn nodes(&self) -> &[UiObjectNode] {
         &self.nodes
     }
 
@@ -323,7 +325,7 @@ impl<'bundle> UiObjectTree<'bundle> {
 
     /// Finds an expanded global object name.
     #[must_use]
-    pub fn node(&self, name: &str) -> Option<&UiObjectNode<'bundle>> {
+    pub fn node(&self, name: &str) -> Option<&UiObjectNode> {
         self.by_name
             .get(name)
             .and_then(|index| self.nodes.get(*index))
@@ -337,9 +339,9 @@ impl<'bundle> UiObjectTree<'bundle> {
 
     fn instantiate_root(
         &mut self,
-        catalog: &UiObjectCatalog<'bundle>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
-        definition: &UiObjectDefinition<'bundle>,
+        definition: &UiObjectDefinition,
     ) -> Result<usize, UiObjectError> {
         let layers = definition_layers(catalog, definition)?;
         // Root template properties apply before the concrete declaration, so
@@ -347,7 +349,7 @@ impl<'bundle> UiObjectTree<'bundle> {
         // it. OptionsFrameTemplate relies on this to sit above GlueParent.
         let requested_parent = layers
             .iter()
-            .filter_map(|layer| attribute(layer.element, "parent"))
+            .filter_map(|layer| attribute(layer.element(), "parent"))
             .next_back()
             .filter(|name| !name.is_empty())
             .map(str::to_owned);
@@ -375,19 +377,19 @@ impl<'bundle> UiObjectTree<'bundle> {
 
     fn instantiate_element(
         &mut self,
-        catalog: &UiObjectCatalog<'bundle>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
         structural_parent: usize,
-        layer: UiElementLayer<'bundle>,
+        layer: UiElementLayer,
         authored_kind: UiObjectKind,
         role: UiObjectRole,
     ) -> Result<(), UiObjectError> {
         let parent_name = self.nodes[structural_parent].name_context.as_deref();
-        let name = attribute(layer.element, "name")
-            .map(|value| expand_parent_name(layer.source_path, value, parent_name))
+        let name = attribute(layer.element(), "name")
+            .map(|value| expand_parent_name(layer.source_path(), value, parent_name))
             .transpose()?;
-        let requested_parent = attribute(layer.element, "parent")
-            .map(|value| expand_parent_name(layer.source_path, value, parent_name))
+        let requested_parent = attribute(layer.element(), "parent")
+            .map(|value| expand_parent_name(layer.source_path(), value, parent_name))
             .transpose()?;
         let unresolved_parent = requested_parent
             .as_ref()
@@ -400,17 +402,17 @@ impl<'bundle> UiObjectTree<'bundle> {
 
         let mut layers = Vec::new();
         let mut kind = authored_kind;
-        if let Some(parents) = attribute(layer.element, "inherits") {
+        if let Some(parents) = attribute(layer.element(), "inherits") {
             for template_name in parents.split(',').map(str::trim) {
                 if let Some(template) = catalog.definition(template_name) {
                     if !template.virtual_object() {
                         return Err(object_error(
-                            layer.source_path,
+                            layer.source_path(),
                             format!("nested object inherits non-virtual object {template_name}"),
                         ));
                     }
                     kind = inherited_object_kind(
-                        layer.source_path,
+                        layer.source_path(),
                         name.as_deref().unwrap_or("<unnamed>"),
                         authored_kind,
                         kind,
@@ -424,14 +426,14 @@ impl<'bundle> UiObjectTree<'bundle> {
                     // contribute no XML object layer here.
                 } else {
                     return Err(UiObjectError::UnavailableTemplate {
-                        path: layer.source_path.clone(),
+                        path: layer.source_path().clone(),
                         object: name.clone().unwrap_or_else(|| "<unnamed>".to_owned()),
                         template: template_name.to_owned(),
                     });
                 }
             }
         }
-        layers.push(layer);
+        layers.push(layer.clone());
         let (node_index, first_new_layer) = self.create_or_merge(
             name,
             kind,
@@ -442,7 +444,7 @@ impl<'bundle> UiObjectTree<'bundle> {
         )?;
         if let Some(parent_name) = unresolved_parent {
             self.pending_parents
-                .push((node_index, parent_name, layer.source_path.clone()));
+                .push((node_index, parent_name, layer.source_path().clone()));
         }
         self.instantiate_new_layers(catalog, fonts, node_index, first_new_layer)
     }
@@ -454,7 +456,7 @@ impl<'bundle> UiObjectTree<'bundle> {
         role: UiObjectRole,
         parent: Option<usize>,
         construction_parent: Option<usize>,
-        layers: Vec<UiElementLayer<'bundle>>,
+        layers: Vec<UiElementLayer>,
     ) -> Result<(usize, usize), UiObjectError> {
         let existing_sibling = name.as_deref().and_then(|candidate| {
             let siblings = parent.map_or(self.top_level.as_slice(), |parent_index| {
@@ -472,7 +474,7 @@ impl<'bundle> UiObjectTree<'bundle> {
                 if !node
                     .layers
                     .iter()
-                    .any(|existing| existing.same_source(layer))
+                    .any(|existing| existing.same_source(&layer))
                 {
                     node.layers.push(layer);
                 }
@@ -511,38 +513,43 @@ impl<'bundle> UiObjectTree<'bundle> {
 
     fn instantiate_new_layers(
         &mut self,
-        catalog: &UiObjectCatalog<'bundle>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
         node_index: usize,
         first_new_layer: usize,
     ) -> Result<(), UiObjectError> {
         let layers = self.nodes[node_index].layers[first_new_layer..].to_vec();
         for layer in layers {
-            self.scan_descendants(catalog, fonts, node_index, layer, layer.element, None)?;
+            let element = layer.element().index();
+            self.scan_descendants(catalog, fonts, node_index, layer, element, None)?;
         }
         Ok(())
     }
 
     fn scan_descendants(
         &mut self,
-        catalog: &UiObjectCatalog<'bundle>,
+        catalog: &UiObjectCatalog,
         fonts: &FontCatalog,
         parent: usize,
-        layer: UiElementLayer<'bundle>,
-        element: &'bundle XmlElement,
+        layer: UiElementLayer,
+        element_index: usize,
         role_override: Option<UiObjectRole>,
     ) -> Result<(), UiObjectError> {
+        let document = layer.document().clone();
+        let element = document
+            .element(element_index)
+            .unwrap_or_else(|| unreachable!("retained XML descendant"));
         for content in element.content() {
             let XmlContent::Element(index) = content else {
                 continue;
             };
-            let child = layer.document.element(*index).ok_or_else(|| {
-                object_error(layer.source_path, "XML child index is outside the arena")
+            let child = document.element(*index).ok_or_else(|| {
+                object_error(layer.source_path(), "XML child index is outside the arena")
             })?;
             // The direct FontString element configures the native message
             // font. It is not a separately registered child region.
             if self.nodes[parent].kind == UiObjectKind::ScrollingMessageFrame
-                && std::ptr::eq(element, layer.element)
+                && std::ptr::eq(element, layer.element())
                 && child.name() == "FontString"
             {
                 continue;
@@ -553,9 +560,9 @@ impl<'bundle> UiObjectTree<'bundle> {
                     fonts,
                     parent,
                     UiElementLayer {
-                        source_path: layer.source_path,
-                        document: layer.document,
-                        element: child,
+                        source_path: layer.source_path().clone(),
+                        document: layer.document().clone(),
+                        element: child.index(),
                         draw_layer: layer.draw_layer,
                     },
                     kind,
@@ -564,11 +571,11 @@ impl<'bundle> UiObjectTree<'bundle> {
             } else {
                 let descendant_layer = if child.name().eq_ignore_ascii_case("Layer") {
                     UiElementLayer {
-                        draw_layer: Some(parse_draw_layer(layer.source_path, child)?),
-                        ..layer
+                        draw_layer: Some(parse_draw_layer(layer.source_path(), child)?),
+                        ..layer.clone()
                     }
                 } else {
-                    layer
+                    layer.clone()
                 };
                 // ScrollChild is a structural XML wrapper, not a runtime
                 // object. Its sole nested frame occupies a semantic slot on
@@ -583,7 +590,7 @@ impl<'bundle> UiObjectTree<'bundle> {
                     fonts,
                     parent,
                     descendant_layer,
-                    child,
+                    child.index(),
                     descendant_role,
                 )?;
             }
@@ -618,10 +625,10 @@ impl<'bundle> UiObjectTree<'bundle> {
     }
 }
 
-fn definition_layers<'bundle>(
-    catalog: &UiObjectCatalog<'bundle>,
-    definition: &UiObjectDefinition<'bundle>,
-) -> Result<Vec<UiElementLayer<'bundle>>, UiObjectError> {
+fn definition_layers(
+    catalog: &UiObjectCatalog,
+    definition: &UiObjectDefinition,
+) -> Result<Vec<UiElementLayer>, UiObjectError> {
     definition
         .resolved_layers()
         .iter()
@@ -633,9 +640,9 @@ fn definition_layers<'bundle>(
                 )
             })?;
             Ok(UiElementLayer {
-                source_path: layer.source_path(),
-                document: layer.document(),
-                element: layer.element(),
+                source_path: layer.source_path().clone(),
+                document: layer.document().clone(),
+                element: layer.element().index(),
                 draw_layer: None,
             })
         })

@@ -434,8 +434,8 @@ impl UiScriptEventDispatch {
 }
 
 /// Resolved, mutually aligned plans consumed by ordered Lua construction.
-pub struct UiScriptRuntimePlan<'plan, 'bundle> {
-    tree: &'plan UiObjectTree<'bundle>,
+pub struct UiScriptRuntimePlan<'plan> {
+    tree: &'plan UiObjectTree,
     animations: &'plan UiAnimationPlan,
     frames: &'plan UiFrameStatePlan,
     regions: &'plan UiRegionStatePlan,
@@ -444,11 +444,11 @@ pub struct UiScriptRuntimePlan<'plan, 'bundle> {
     texture_states: &'plan UiTextureStatePlan,
 }
 
-impl<'plan, 'bundle> UiScriptRuntimePlan<'plan, 'bundle> {
+impl<'plan> UiScriptRuntimePlan<'plan> {
     /// Groups the typed plans that must describe the same UI object arena.
     #[must_use]
     pub const fn new(
-        tree: &'plan UiObjectTree<'bundle>,
+        tree: &'plan UiObjectTree,
         animations: &'plan UiAnimationPlan,
         frames: &'plan UiFrameStatePlan,
         regions: &'plan UiRegionStatePlan,
@@ -689,6 +689,13 @@ impl UiScriptEnvironment {
         self.font_system = Some(system);
         self
     }
+
+    pub(crate) fn preparation_font_system(&self) -> Result<crate::FontSystem, crate::FontError> {
+        self.font_system
+            .clone()
+            .map_or_else(crate::FontSystem::new, Ok)
+    }
+
     /// Installs Glue's native model consumer before its startup Lua executes.
     pub(crate) fn record_model_actions(&self) {
         self.model_intent.borrow_mut().start_recording();
@@ -1204,8 +1211,17 @@ impl UiScriptRuntime {
     /// the registry and metatable objects.
     pub fn new(
         bundle: &UiBundle,
-        plan: &UiScriptRuntimePlan<'_, '_>,
+        plan: &UiScriptRuntimePlan<'_>,
         environment: UiScriptEnvironment,
+    ) -> Result<Self, UiScriptError> {
+        Self::new_prepared(bundle, plan, environment, None)
+    }
+
+    pub(crate) fn new_prepared(
+        bundle: &UiBundle,
+        plan: &UiScriptRuntimePlan<'_>,
+        environment: UiScriptEnvironment,
+        initial_html: Option<Result<crate::UiSimpleHtmlPlan, crate::UiSimpleHtmlError>>,
     ) -> Result<Self, UiScriptError> {
         let lua = bundle.lua();
         plan.templates
@@ -1324,6 +1340,7 @@ impl UiScriptRuntime {
             font_definitions.clone(),
             lua.registry_value(&font_metatable)
                 .map_err(|error| execution_error("AddOn font metatable", error))?,
+            text_measurement.font_system(),
         )
         .map_err(|error| execution_error("AddOn loader", error))?;
         let animation_metatables = create_animation_metatables(lua)
@@ -1352,7 +1369,9 @@ impl UiScriptRuntime {
                 Ok((f64::from(state.width()), f64::from(state.height())))
             })
             .collect::<Result<Vec<_>, UiScriptError>>()?;
-        let simple_html = if let Some(assets) = environment.assets() {
+        let simple_html = if let Some(prepared) = initial_html {
+            prepared?
+        } else if let Some(assets) = environment.assets() {
             crate::UiSimpleHtmlPlan::resolve_with_system(
                 plan.tree,
                 plan.regions,
@@ -1557,7 +1576,7 @@ impl UiScriptRuntime {
     pub fn execute_next(
         &mut self,
         bundle: &UiBundle,
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         scripts: &UiScriptPlan,
     ) -> Result<bool, UiScriptError> {
         let Some(action) = bundle.actions().get(self.next_action) else {
@@ -1600,17 +1619,19 @@ impl UiScriptRuntime {
                 };
                 bundle
                     .lua()
-                    .load(source.as_str())
+                    .load(source.compiled())
+                    .set_mode(mlua::chunk::ChunkMode::Binary)
                     .set_name(resource.path().as_str())
                     .exec()
                     .map_err(|error| execution_error(resource.path().as_str(), error))?;
                 self.executed_chunks += 1;
             }
-            UiLoadAction::InlineLua { path, source } => {
+            UiLoadAction::InlineLua { path, compiled, .. } => {
                 let label = format!("{}:<inline>", path.as_str());
                 bundle
                     .lua()
-                    .load(source)
+                    .load(compiled.as_slice())
+                    .set_mode(mlua::chunk::ChunkMode::Binary)
                     .set_name(&label)
                     .exec()
                     .map_err(|error| execution_error(&label, error))?;
@@ -1629,7 +1650,7 @@ impl UiScriptRuntime {
     pub fn execute_all(
         &mut self,
         bundle: &UiBundle,
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         scripts: &UiScriptPlan,
     ) -> Result<(), UiScriptError> {
         while self.execute_next(bundle, tree, scripts)? {}
@@ -1673,29 +1694,58 @@ impl UiScriptRuntime {
         assets: &mut AssetStore,
         logical_height: u32,
     ) -> Result<bool, UiScriptError> {
-        let mut changes = Vec::new();
+        let mut requests = Vec::new();
         for (object_index, object) in live.objects().iter().enumerate() {
             if object.kind != UiObjectKind::SimpleHtml {
                 continue;
             }
             let width = geometry
                 .region(object_index)
-                .ok_or_else(|| UiScriptError::Plan {
-                    message: format!("SimpleHTML object {object_index} has no resolved geometry"),
-                })?
-                .logical_bounds()
-                .width();
-            if let Some((height, clip_object)) = self.simple_html.refresh_text(
-                object_index,
-                object.simple_html_text.as_deref(),
-                width,
-                fonts,
-                assets,
-                (logical_height, self.text_measurement.font_system()),
-            )? {
-                changes.push((object_index, f64::from(height), clip_object));
+                .map(|region| region.logical_bounds().width());
+            if width.is_none() {
+                // Preserve the first error after any earlier document mutations.
+                requests.push((object_index, None, None));
+                break;
+            }
+            if self
+                .simple_html
+                .text_changed(object_index, object.simple_html_text.as_deref())
+            {
+                requests.push((object_index, width, object.simple_html_text.clone()));
             }
         }
+        if requests.is_empty() {
+            return Ok(false);
+        }
+        let fonts = fonts.clone();
+        let changes = self
+            .font_system()
+            .prepare(
+                assets,
+                &mut self.simple_html,
+                move |html, font_system, assets| {
+                    let mut changes = Vec::with_capacity(requests.len());
+                    for (object_index, width, text) in requests {
+                        let width = width.ok_or_else(|| UiScriptError::Plan {
+                            message: format!(
+                                "SimpleHTML object {object_index} has no resolved geometry"
+                            ),
+                        })?;
+                        if let Some((height, clip_object)) = html.refresh_text(
+                            object_index,
+                            text.as_deref(),
+                            width,
+                            &fonts,
+                            assets,
+                            (logical_height, font_system.clone()),
+                        )? {
+                            changes.push((object_index, f64::from(height), clip_object));
+                        }
+                    }
+                    Ok::<_, UiScriptError>(changes)
+                },
+            )
+            .map_err(|error| UiScriptError::SimpleHtml(crate::UiSimpleHtmlError::from(error)))??;
         if changes.is_empty() {
             return Ok(false);
         }
@@ -2883,7 +2933,7 @@ impl UiScriptRuntime {
     fn execute_batch(
         &mut self,
         lua: &Lua,
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         scripts: &UiScriptPlan,
         batch: UiObjectBatch,
     ) -> Result<(), UiScriptError> {
@@ -2905,7 +2955,7 @@ impl UiScriptRuntime {
     fn execute_object(
         &mut self,
         lua: &Lua,
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         scripts: &UiScriptPlan,
         batch: UiObjectBatch,
         node_index: usize,
@@ -2957,7 +3007,7 @@ impl UiScriptRuntime {
     fn register_object(
         &mut self,
         lua: &Lua,
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         scripts: &UiScriptPlan,
         node_index: usize,
     ) -> Result<(), UiScriptError> {
@@ -3613,7 +3663,7 @@ impl UiScriptRuntime {
     fn execute_load_handler(
         &mut self,
         lua: &Lua,
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         node_index: usize,
     ) -> Result<(), UiScriptError> {
         let object = tree
@@ -4846,7 +4896,7 @@ fn register_frame_attribute_methods(lua: &Lua, methods: &Table) -> mlua::Result<
 }
 
 /// Applies inherited and concrete XML `<Attributes>` in declaration order.
-fn initial_frame_attributes(lua: &Lua, object: &UiObjectNode<'_>) -> mlua::Result<Table> {
+fn initial_frame_attributes(lua: &Lua, object: &UiObjectNode) -> mlua::Result<Table> {
     let attributes = lua.create_table()?;
     for layer in object.layers() {
         for content in layer.element().content() {
@@ -9011,7 +9061,7 @@ fn event_table(object: &Table) -> mlua::Result<Table> {
     object.raw_get(events_key())
 }
 
-pub(super) fn initial_font_draw_order(node: &UiObjectNode<'_>) -> (&'static str, i16) {
+pub(super) fn initial_font_draw_order(node: &UiObjectNode) -> (&'static str, i16) {
     let mut layer = UiDrawLayer::Artwork;
     let mut sublevel = 0;
     for source in node.layers() {
@@ -9027,7 +9077,7 @@ pub(super) fn initial_font_draw_order(node: &UiObjectNode<'_>) -> (&'static str,
     (draw_layer_name(layer), sublevel)
 }
 
-fn tree_font_strings(tree: &UiObjectTree<'_>, fonts: &FontCatalog) -> Vec<InitialFont> {
+fn tree_font_strings(tree: &UiObjectTree, fonts: &FontCatalog) -> Vec<InitialFont> {
     tree.nodes()
         .iter()
         .map(|node| {
@@ -9186,7 +9236,7 @@ fn stock_xml_bool(value: &str) -> Option<bool> {
     }
 }
 
-fn tree_buttons(tree: &UiObjectTree<'_>) -> Vec<InitialButton> {
+fn tree_buttons(tree: &UiObjectTree) -> Vec<InitialButton> {
     tree.nodes()
         .iter()
         .map(|node| {
@@ -9270,7 +9320,7 @@ fn apply_font_justification(initial: &mut InitialFont, definition: &FontDefiniti
 }
 
 fn tree_textures(
-    tree: &UiObjectTree<'_>,
+    tree: &UiObjectTree,
     textures: &UiTextureStatePlan,
 ) -> Result<Vec<InitialTexture>, UiScriptError> {
     tree.nodes()

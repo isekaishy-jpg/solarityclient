@@ -23,11 +23,12 @@ use super::{
 
 pub(super) fn install(
     lua: &Lua,
-    sources: Rc<UiSourceImage>,
+    sources: std::sync::Arc<UiSourceImage>,
     environment: &UiScriptEnvironment,
     arena: DynamicArenaState,
     fonts: Rc<RefCell<HashMap<String, FontDefinition>>>,
     font_metatable: Table,
+    font_system: crate::FontSystem,
 ) -> mlua::Result<()> {
     let loader = Loader {
         sources: RefCell::new(sources),
@@ -39,6 +40,7 @@ pub(super) fn install(
         arena,
         fonts,
         font_metatable,
+        font_system,
     };
     lua.globals().raw_set(
         "LoadAddOn",
@@ -62,7 +64,7 @@ pub(super) fn install(
 }
 
 struct Loader {
-    sources: RefCell<Rc<UiSourceImage>>,
+    sources: RefCell<std::sync::Arc<UiSourceImage>>,
     assets: Option<AssetStoreHandle>,
     state: UiAddonLoadState,
     cvars: UiCVarRegistry,
@@ -71,6 +73,7 @@ struct Loader {
     arena: DynamicArenaState,
     fonts: Rc<RefCell<HashMap<String, FontDefinition>>>,
     font_metatable: Table,
+    font_system: crate::FontSystem,
 }
 
 impl Loader {
@@ -175,10 +178,15 @@ impl Loader {
             mlua::Error::runtime("LoadAddOn requires the mounted client asset store")
         })?;
         let sources = self.sources.borrow().clone();
-        let module = sources
-            .load_addon(&mut assets.borrow_mut(), lua, addon)
+        let addon_definition = addon.clone();
+        let module = self
+            .font_system
+            .prepare(&mut assets.borrow_mut(), &mut (), move |_, _, assets| {
+                sources.load_addon(assets, &Lua::new(), &addon_definition)
+            })
+            .map_err(script_error)?
             .map_err(script_error)?;
-        let module = UiBundle::from_source_image(lua, Rc::new(module));
+        let module = UiBundle::from_source_image(lua, std::sync::Arc::new(module));
         let private = lua.create_table()?;
         for action in module.actions() {
             match action {
@@ -189,12 +197,16 @@ impl Loader {
                     let UiResourceContent::Lua(source) = resource.content() else {
                         return Err(mlua::Error::runtime("AddOn Lua action refers to XML"));
                     };
-                    lua.load(source.as_str())
+                    lua.load(source.compiled())
+                        .set_mode(mlua::chunk::ChunkMode::Binary)
                         .set_name(resource.path().as_str())
                         .call::<()>((addon.name(), private.clone()))?;
                 }
-                UiLoadAction::InlineLua { path, source } => {
-                    lua.load(source).set_name(path.as_str()).exec()?;
+                UiLoadAction::InlineLua { path, compiled, .. } => {
+                    lua.load(compiled.as_slice())
+                        .set_mode(mlua::chunk::ChunkMode::Binary)
+                        .set_name(path.as_str())
+                        .exec()?;
                 }
                 UiLoadAction::XmlElement {
                     resource_index,
@@ -203,15 +215,47 @@ impl Loader {
                     let resource = module
                         .resource(*resource_index)
                         .ok_or_else(|| mlua::Error::runtime("AddOn XML resource is unavailable"))?;
-                    let next = Rc::new(
-                        self.sources
-                            .borrow()
-                            .append_declaration(resource, *element_index),
-                    );
-                    let declarations = UiBundle::from_source_image(lua, next.clone());
-                    let action_index = declarations.actions().len() - 1;
-                    let fonts = FontCatalog::from_bundle(&declarations).map_err(script_error)?;
-                    let catalog = UiObjectCatalog::from_bundle(&declarations, &fonts)
+                    let resource = resource.clone();
+                    let element_index = *element_index;
+                    let sources = self.sources.borrow().clone();
+                    let (next, action_index, fonts, catalog, prepared) = self
+                        .font_system
+                        .prepare(&mut assets.borrow_mut(), &mut (), move |_, _, _| {
+                            let next = std::sync::Arc::new(
+                                sources.append_declaration(&resource, element_index),
+                            );
+                            let lua = Lua::new();
+                            let declarations = UiBundle::from_source_image(&lua, next.clone());
+                            let action_index = declarations.actions().len() - 1;
+                            let fonts = FontCatalog::from_bundle(&declarations)?;
+                            let catalog = UiObjectCatalog::from_bundle(&declarations, &fonts)?;
+                            // Original source/font publication precedes a template error.
+                            let prepared = if fonts.definition_for_action(action_index).is_some() {
+                                Ok(None)
+                            } else {
+                                UiRuntimeTemplatePlan::for_action(
+                                    &catalog,
+                                    &fonts,
+                                    &lua,
+                                    action_index,
+                                )
+                                .and_then(|plan| {
+                                    plan.into_prepared(
+                                        &lua,
+                                        &mut crate::script::prepared::ExportFunctions::default(),
+                                    )
+                                })
+                                .map(Some)
+                            };
+                            Ok::<_, crate::GlueError>((
+                                next,
+                                action_index,
+                                fonts,
+                                catalog,
+                                prepared,
+                            ))
+                        })
+                        .map_err(script_error)?
                         .map_err(script_error)?;
                     *self.sources.borrow_mut() = next;
                     if let Some(font) = fonts.definition_for_action(action_index) {
@@ -224,9 +268,13 @@ impl Loader {
                         .iter()
                         .find(|definition| definition.action_index() == action_index)
                     {
-                        let plan =
-                            UiRuntimeTemplatePlan::for_action(&catalog, &fonts, lua, action_index)
-                                .map_err(script_error)?;
+                        let plan = prepared
+                            .map_err(script_error)?
+                            .ok_or_else(|| {
+                                mlua::Error::runtime("AddOn template plan is unavailable")
+                            })?
+                            .bind(lua, &mut crate::script::prepared::BindFunctions::default())
+                            .map_err(script_error)?;
                         let descriptors = plan.descriptors(lua)?;
                         let descriptor: Table = descriptors.raw_get(definition.name())?;
                         if definition.virtual_object() {

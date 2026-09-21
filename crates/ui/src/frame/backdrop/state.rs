@@ -132,7 +132,7 @@ impl UiBackdropStatePlan {
     ///
     /// Returns [`UiFrameError::Resolution`] when declaration and object arenas
     /// differ or a compact state index exceeds `u32`.
-    pub fn resolve(tree: &UiObjectTree<'_>, plan: &UiBackdropPlan) -> Result<Self, UiFrameError> {
+    pub fn resolve(tree: &UiObjectTree, plan: &UiBackdropPlan) -> Result<Self, UiFrameError> {
         let mut node_states = vec![None; tree.nodes().len()];
         let mut states = Vec::with_capacity(plan.layer_count());
         for (node_index, node_state) in node_states.iter_mut().enumerate() {

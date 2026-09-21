@@ -7,11 +7,9 @@ use crate::glue::pointer::UiPointerPlan;
 use crate::glue::{GlueError, GlueStartupReport};
 use crate::startup::{StartupBudget, StartupTask};
 use crate::{
-    FontCatalog, UiAnimationPlan, UiBackdropPlan, UiBackdropStatePlan, UiBundle, UiEventArgument,
-    UiEventPayload, UiFramePlan, UiGlyphAtlasPlan, UiLayoutPlan, UiManifestKind, UiObjectCatalog,
-    UiObjectTree, UiPresentationPlan, UiRegionGeometryPlan, UiRegionStatePlan, UiRenderPlan,
-    UiRuntimeTemplatePlan, UiScriptEnvironment, UiScriptPlan, UiScriptRuntime, UiScriptRuntimePlan,
-    UiScrollFramePlan, UiTexturePlan, UiTextureStatePlan,
+    UiBundle, UiEventArgument, UiEventPayload, UiGlyphAtlasPlan, UiManifestKind,
+    UiPresentationPlan, UiRegionGeometryPlan, UiRenderPlan, UiScriptEnvironment, UiScriptRuntime,
+    UiScriptRuntimePlan, UiScrollFramePlan,
 };
 
 /// Immutable Glue declarations and character choices prepared without live Lua or RNG ownership.
@@ -135,44 +133,40 @@ impl GlueManager {
             environment.record_model_actions();
         }
         let logical_extent = environment.logical_extent();
-        let fonts = {
-            let _profile = solarity_profiling::profile!("ui.startup.fonts");
-            FontCatalog::from_bundle(&bundle)?
-        };
+        let font_system = environment.preparation_font_system()?;
+        let environment = environment.with_font_system(font_system.clone());
+        let sources = bundle.source_image();
+        let super::declarations::PreparedDeclarations {
+            fonts,
+            tree,
+            frames,
+            regions,
+            scripts,
+            templates,
+            textures,
+            texture_states,
+            backdrops,
+            animations,
+            simple_html,
+        } = font_system.prepare(
+            &mut assets.borrow_mut(),
+            &mut (),
+            move |_, fonts, assets| {
+                let lua = mlua::Lua::new();
+                let bundle = UiBundle::from_source_image(&lua, sources);
+                super::declarations::PreparedDeclarations::load(
+                    &bundle,
+                    fonts,
+                    assets,
+                    logical_extent.1,
+                )
+            },
+        )??;
         budget.checkpoint().await;
-        let catalog = {
-            let _profile = solarity_profiling::profile!("ui.startup.catalog");
-            UiObjectCatalog::from_bundle(&bundle, &fonts)?
-        };
-        budget.checkpoint().await;
-        let tree = {
-            let _profile = solarity_profiling::profile!("ui.startup.object_tree");
-            UiObjectTree::from_catalog(&catalog, &fonts)?
-        };
-        budget.checkpoint().await;
-        let frame_plan = UiFramePlan::from_tree(&tree)?;
-        let frames = frame_plan.resolve(&tree)?;
-        let layout = UiLayoutPlan::from_tree(&tree)?;
-        let regions = {
-            let _profile = solarity_profiling::profile!("ui.startup.regions");
-            UiRegionStatePlan::resolve(&tree, &layout)?
-        };
-        budget.checkpoint().await;
-        let scripts = UiScriptPlan::from_tree(&tree, bundle.lua())?;
-        let templates = {
-            let _profile = solarity_profiling::profile!("ui.startup.templates");
-            UiRuntimeTemplatePlan::from_catalog(&catalog, &fonts, bundle.lua())?
-        };
-        budget.checkpoint().await;
-        let textures = UiTexturePlan::from_tree(&tree)?;
-        let texture_states = UiTextureStatePlan::resolve(&tree, &textures)?;
-        let backdrop_plan = UiBackdropPlan::from_tree(&tree)?;
-        let backdrops = UiBackdropStatePlan::resolve(&tree, &backdrop_plan)?;
-        let animations = {
-            let _profile = solarity_profiling::profile!("ui.startup.animations");
-            UiAnimationPlan::from_tree(&tree)?
-        };
-        budget.checkpoint().await;
+        let mut functions = crate::script::prepared::BindFunctions::default();
+        let scripts = scripts.bind(bundle.lua(), &mut functions)?;
+        let templates = templates.bind(bundle.lua(), &mut functions)?;
+        drop(functions);
         let media_intent = environment.media_intent();
         let network = environment.network();
         let process = environment.process();
@@ -188,7 +182,12 @@ impl GlueManager {
         );
         let mut runtime = {
             let _profile = solarity_profiling::profile!("ui.startup.runtime");
-            UiScriptRuntime::new(&bundle, &runtime_plan, environment.clone())?
+            UiScriptRuntime::new_prepared(
+                &bundle,
+                &runtime_plan,
+                environment.clone(),
+                Some(simple_html),
+            )?
         };
         budget.checkpoint().await;
         while runtime.execute_next(&bundle, &tree, &scripts)? {

@@ -240,7 +240,7 @@ impl UiAnimationPlan {
     ///
     /// Returns [`UiAnimationError`] for malformed hierarchy, names, numbers,
     /// loop modes, smoothing modes, or duplicate global animation names.
-    pub fn from_tree(tree: &UiObjectTree<'_>) -> Result<Self, UiAnimationError> {
+    pub fn from_tree(tree: &UiObjectTree) -> Result<Self, UiAnimationError> {
         let mut plan = Self {
             groups: Vec::new(),
             animations: Vec::new(),

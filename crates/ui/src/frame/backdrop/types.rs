@@ -115,7 +115,7 @@ impl UiBackdropPlan {
     ///
     /// Returns [`UiFrameError::Property`] for malformed paths, booleans,
     /// numeric values, colors, or unsupported blend modes.
-    pub fn from_tree(tree: &UiObjectTree<'_>) -> Result<Self, UiFrameError> {
+    pub fn from_tree(tree: &UiObjectTree) -> Result<Self, UiFrameError> {
         let mut plan = Self {
             nodes: Vec::with_capacity(tree.nodes().len()),
             layers: Vec::new(),
@@ -162,7 +162,7 @@ impl UiBackdropPlan {
 }
 
 fn parse_backdrop(
-    source: &UiElementLayer<'_>,
+    source: &UiElementLayer,
     element: &XmlElement,
 ) -> Result<UiBackdropLayer, UiFrameError> {
     let path = source.source_path();

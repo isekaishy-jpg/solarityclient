@@ -278,7 +278,54 @@ pub struct UiScriptPlan {
     declaration_count: usize,
 }
 
+pub(crate) struct PreparedScriptPlan {
+    nodes: Vec<UiScriptNode>,
+    bindings: Vec<UiScriptBinding>,
+    declaration_count: usize,
+    functions: super::prepared::PreparedFunctions,
+}
+
+impl PreparedScriptPlan {
+    pub(crate) fn bind(
+        self,
+        lua: &Lua,
+        bank: &mut super::prepared::BindFunctions,
+    ) -> Result<UiScriptPlan, UiScriptError> {
+        let Self {
+            nodes,
+            bindings,
+            declaration_count,
+            functions,
+        } = self;
+        Ok(UiScriptPlan {
+            nodes,
+            bindings,
+            declaration_count,
+            functions: bank.bind(lua, functions)?,
+        })
+    }
+}
+
 impl UiScriptPlan {
+    pub(crate) fn into_prepared(
+        self,
+        lua: &Lua,
+        bank: &mut super::prepared::ExportFunctions,
+    ) -> Result<PreparedScriptPlan, UiScriptError> {
+        let Self {
+            nodes,
+            bindings,
+            declaration_count,
+            functions,
+        } = self;
+        Ok(PreparedScriptPlan {
+            nodes,
+            bindings,
+            declaration_count,
+            functions: bank.export(lua, functions)?,
+        })
+    }
+
     /// Applies stock handler replacement and compiles exact callback wrappers.
     ///
     /// Identical inherited XML handler elements share one Lua function. Each
@@ -289,7 +336,7 @@ impl UiScriptPlan {
     ///
     /// Returns [`UiScriptError`] for a callback unsupported by its concrete
     /// widget, a wrapper compilation failure, or a compact-index overflow.
-    pub fn from_tree(tree: &UiObjectTree<'_>, lua: &Lua) -> Result<Self, UiScriptError> {
+    pub fn from_tree(tree: &UiObjectTree, lua: &Lua) -> Result<Self, UiScriptError> {
         let mut plan = Self {
             nodes: Vec::with_capacity(tree.nodes().len()),
             bindings: Vec::new(),

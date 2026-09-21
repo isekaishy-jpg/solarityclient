@@ -333,7 +333,7 @@ impl UiFramePlan {
     ///
     /// Returns [`UiFrameError::Property`] for unknown strata or malformed
     /// integer and boolean attributes.
-    pub fn from_tree(tree: &UiObjectTree<'_>) -> Result<Self, UiFrameError> {
+    pub fn from_tree(tree: &UiObjectTree) -> Result<Self, UiFrameError> {
         let mut plan = Self {
             nodes: Vec::with_capacity(tree.nodes().len()),
             layers: Vec::new(),
@@ -379,7 +379,7 @@ impl UiFramePlan {
     ///
     /// Returns [`UiFrameError::Resolution`] for parent cycles, non-frame
     /// parents, index mismatches, or a frame-level overflow.
-    pub fn resolve(&self, tree: &UiObjectTree<'_>) -> Result<UiFrameStatePlan, UiFrameError> {
+    pub fn resolve(&self, tree: &UiObjectTree) -> Result<UiFrameStatePlan, UiFrameError> {
         if self.nodes.len() != tree.nodes().len() {
             return Err(UiFrameError::Resolution {
                 message: "frame plan and object tree have different node counts".to_owned(),
@@ -413,7 +413,7 @@ impl UiFramePlan {
 
     fn resolve_node(
         &self,
-        tree: &UiObjectTree<'_>,
+        tree: &UiObjectTree,
         index: usize,
         resolved: &mut [Option<UiFrameState>],
         visiting: &mut [bool],
