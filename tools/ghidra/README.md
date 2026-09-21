@@ -506,3 +506,19 @@ It does not measure live cache occupancy or execute the resource destructor.
 ```text
 python -B tools/ghidra/model_cache_lifetime_oracle.py <path-to-Wow.exe> target/model-cache-lifetime.json
 ```
+
+
+## Pending animation requests and completion consumers
+
+`animation_request_oracle.py` executes original build-12340 variation prefetch,
+pending-consumer reuse/alias lookup, and completion dispatch. It requires Unicorn
+2.1.4 and the fingerprinted locally owned `Wow.exe`:
+
+```text
+python -B tools/ghidra/animation_request_oracle.py <path-to-Wow.exe> target/animation-request-native.json
+```
+
+The 39 cases retain native request/control-flow decisions while intercepting the
+explicit I/O, allocation, payload-publication and final channel-application
+boundaries. See [the evidence report](../../docs/architecture/animation-request-evidence.md)
+for the exact covered behavior and the remaining late-readiness research scope.
