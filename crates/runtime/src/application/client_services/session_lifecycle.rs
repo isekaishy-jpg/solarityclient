@@ -65,12 +65,14 @@ impl ClientServices {
         self.world_ui = None;
         self.world_ui_construction = None;
         self.loading_screen = None;
+        let fonts = self.trim_retired_ui_fonts();
         leaving
             .map(|_| ())
             .and(profile)
             .and(camera)
             .and(sound)
             .and(frame.map(|_| ()))
+            .and(fonts)
     }
 
     /// Ends both realm phases while retaining the process-owned Glue environment.

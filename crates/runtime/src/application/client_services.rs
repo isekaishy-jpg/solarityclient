@@ -2095,6 +2095,7 @@ impl ClientServices {
                 UiGlueNetworkAction::EnterWorld { guid } => {
                     self.world_ui = None;
                     self.world_ui_construction = None;
+                    self.trim_retired_ui_fonts()?;
                     let display_extent = self.platform.logical_extent();
                     let character_location = self
                         .world
@@ -3591,6 +3592,18 @@ impl ClientServices {
         Ok(())
     }
 
+    fn trim_retired_ui_fonts(&self) -> Result<(), ApplicationError> {
+        match self.font_system.trim_unused(&mut self.assets.borrow_mut()) {
+            // Cleanup is optional at this boundary. An admitted required font
+            // operation also trims before retrying its own byte-pressure failure.
+            Err(solarity_ui::FontError::Asset(solarity_asset::AssetError::SourceStorage(
+                solarity_cpu::CpuError::AtCapacity { .. }
+                | solarity_cpu::CpuError::StorageAtCapacity { .. },
+            ))) => Ok(()),
+            result => result.map_err(GlueError::from).map_err(Into::into),
+        }
+    }
+
     fn publish_world_failure(&mut self, error: RuntimeWorldError) -> Result<(), ApplicationError> {
         if matches!(
             &error,
@@ -3604,6 +3617,7 @@ impl ClientServices {
         self.loading_screen = None;
         self.world_ui = None;
         self.world_ui_construction = None;
+        self.trim_retired_ui_fonts()?;
         self.character_screen_published = false;
         self.character_directory_published = false;
         if let Some(selected) = &self.selected_realm {

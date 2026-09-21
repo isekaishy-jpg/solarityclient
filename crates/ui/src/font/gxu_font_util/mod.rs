@@ -209,7 +209,7 @@ impl FontSystem {
             );
         }
         self.measure_character_advances_26_6(store, path, pixel_height, text, rasterization)
-            .map(|values| values.into_iter().fold(0_i64, i64::saturating_add))
+            .map(|values| values.iter().copied().fold(0_i64, i64::saturating_add))
     }
 
     pub(crate) fn measure_character_advances_26_6(
@@ -219,7 +219,7 @@ impl FontSystem {
         pixel_height: u32,
         text: &str,
         rasterization: FontRasterization,
-    ) -> Result<Vec<i64>, FontError> {
+    ) -> Result<crate::font::storage::FontBuffer<i64>, FontError> {
         match &self.owner {
             Owner::Local(state) => state.borrow_mut().measure_character_advances_26_6(
                 store,
@@ -232,7 +232,13 @@ impl FontSystem {
                 if let Some(value) = worker.cached(store.namespace(), |cache| {
                     cache.advances(path, pixel_height, text, rasterization)
                 })? {
-                    return Ok(value);
+                    match value {
+                        Ok(value) => return Ok(value),
+                        Err(FontError::Asset(solarity_asset::AssetError::SourceStorage(
+                            solarity_cpu::CpuError::StorageAtCapacity { .. },
+                        ))) => (),
+                        Err(error) => return Err(error),
+                    }
                 }
                 match worker.execute(
                     store.namespace(),
@@ -323,6 +329,21 @@ impl FontSystem {
                 }
             }
         }
+    }
+
+    /// Reclaims cache-only coverage, scalar metrics and unused encoded faces.
+    /// Atlas-held glyphs retain both their bytes and shared lookup identity.
+    /// # Errors
+    /// Returns worker admission or native servicing failures without serial cleanup.
+    pub fn trim_unused(&self, assets: &mut AssetStore) -> Result<(), FontError> {
+        match &self.owner {
+            Owner::Local(state) => state.borrow_mut().trim_unused(),
+            Owner::Worker(worker) => match worker.execute(assets.namespace(), Request::Trim)? {
+                Reply::Prepared => (),
+                _ => unreachable!("typed font trim reply"),
+            },
+        }
+        Ok(())
     }
 
     /// Returns distinct retained archive-backed faces.

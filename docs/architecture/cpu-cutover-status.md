@@ -277,6 +277,37 @@ Evidence is `target/ui-declarations-tests.log`,
 `target/ui-declarations-ui-final.log`, `target/ui-declarations-clippy-final.log`
 and `target/ui-declarations-callback-final.log`.
 
+The next connected batch admits shared font coverage, cache table backing storage,
+measured-advance buffers, atlas pixels, page storage, placement/metric tables and
+upload journals against the existing required byte authority. Reservations follow
+the actual storage owners through worker loans and retained glyph clones. Growth
+admits the complete replacement while the old allocation remains charged. The
+pinned hashbrown 0.17.1 table layout supplies a conservative preallocation bound;
+its public allocation size reconciles the retained charge. Atlas table and journal
+growth is admitted before published pixels, coordinates or revisions change.
+
+Worker cleanup on world-UI retirement releases cache-only coverage, metrics and
+unused font sources. Atlas-pinned coverage stays in the common lookup, so trimming
+does not create a second rasterization cache or invalidate live glyph identities.
+Pure font operations trim and retry once on byte pressure; arbitrary UI/Lua
+preparation is never replayed. Cleanup defers if scheduler admission is exhausted.
+This is not complete phase headroom: task admission can still fail before a font
+worker can trim. FreeType internal allocations, XML/Lua/bytecode ownership, layout
+quads, other nested resource allocations and complete working-set admission remain
+required. Offline fixtures can explicitly run without an asset read budget.
+
+Font/atlas storage validation passes 1,021 grouped asset/UI/runtime tests, with
+33 existing ignores. The stock worker-font parity test also passes from that
+fresh executable against local build-12340 archives: 1,022 distinct passes and
+32 remaining ignores. Five new regressions cover hash-table allocation bounds,
+old-plus-new growth refusal, pressure trimming with exact retry, cache pins after
+executor retirement and unchanged atlas publication on denied admission. Existing
+single-slot UI and font parity tests pass with the worker byte policy enabled.
+Formatting and all-target/all-feature asset/UI/runtime Clippy pass with warnings
+denied. Logs are `target/ui-storage-tests.log`, `target/ui-storage-stock-font.log`
+and `target/ui-storage-clippy-final.log`. Build 176 remains installed; no additional
+client package or FPS comparison was produced.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
@@ -1547,7 +1578,9 @@ an operation has a context parameter. The requirements below remain in scope.
   geometry job records, final frame streams and owned full skeletal palettes now
   adopt it. Dispatched live effect simulation and named CPU bone samples now carry
   reservations as well. Encoded buffers now carry admission in connected worker
-  readers. Other resident effect owners, remaining source readers, decoded buffers
+  readers. Shared font coverage/cache tables and CPU atlas pages/journals now retain
+  admission, with pin-preserving worker trimming. FreeType internals, UI declarations,
+  bytecode and layout buffers remain open. Other resident effect owners, remaining source readers, decoded buffers
   and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, remaining GPU upload waits

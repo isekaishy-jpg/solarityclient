@@ -4,8 +4,8 @@ use super::{
     FontError, GlyphKey, LineFontKey, RasterizedGlyph, UiRuntimeText, edit_box_caret_metrics,
 };
 use crate::FontRasterization;
+use crate::font::storage::CacheMap;
 use solarity_asset::AssetPath;
-use std::collections::HashMap;
 
 /// Supplies controlled advances without depending on an installed font face.
 fn glyph(advance: i64) -> RasterizedGlyph {
@@ -49,9 +49,9 @@ fn edit_box_caret_uses_password_cell_and_utf8_cursor_boundary() -> Result<(), Fo
         pixel_height: 12,
         rasterization: FontRasterization::Antialiased,
     };
-    let mut glyphs = HashMap::new();
-    glyphs.insert(GlyphKey::new(&font, '*'), glyph(7));
-    glyphs.insert(GlyphKey::new(&font, ' '), glyph(3));
+    let mut glyphs = CacheMap::default();
+    glyphs.insert(None, GlyphKey::new(&font, '*'), glyph(7))?;
+    glyphs.insert(None, GlyphKey::new(&font, ' '), glyph(3))?;
     let text = UiRuntimeText {
         content: "éx".to_owned(),
         face,

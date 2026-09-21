@@ -65,7 +65,8 @@ impl AssetStore {
     }
     /// A scoped demand class overrides the namespace's required-read default.
     /// Offline catalogs without configured storage remain explicitly unmetered.
-    pub(crate) fn effective_read_budget(&self) -> Option<crate::AssetReadBudget> {
+    #[must_use]
+    pub fn effective_read_budget(&self) -> Option<crate::AssetReadBudget> {
         self.read_budget.clone().or_else(|| {
             self.model_cache_service.storage().map(|storage| {
                 crate::AssetReadBudget::for_service(

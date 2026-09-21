@@ -8,9 +8,9 @@ use super::*;
 pub struct UiNativeTextAtlas {
     identity: u64,
     page: UiGlyphAtlasPage,
-    glyphs: HashMap<GlyphKey, RasterizedGlyph>,
-    placements: HashMap<GlyphKey, AtlasPlacement>,
-    metrics: HashMap<LineFontKey, FontMetrics>,
+    glyphs: CacheMap<GlyphKey, RasterizedGlyph>,
+    placements: CacheMap<GlyphKey, AtlasPlacement>,
+    metrics: CacheMap<LineFontKey, FontMetrics>,
     native_font: LineFontKey,
 }
 
@@ -52,24 +52,30 @@ impl UiNativeTextAtlas {
             .collect::<Vec<_>>();
         keys.sort_by_key(|key| key.character);
         let mut system = FontSystem::new()?;
-        let glyphs = keys
-            .iter()
-            .map(|key| {
-                system
-                    .rasterize(
-                        assets,
-                        &key.face,
-                        key.pixel_height,
-                        key.character,
-                        key.rasterization,
-                    )
-                    .map(|glyph| (key.clone(), glyph))
-            })
-            .collect::<Result<HashMap<_, _>, _>>()?;
-        let (extent, placements) = pack(&keys, &glyphs)?;
-        let rgba8 = compose_atlas(extent, &keys, &glyphs, &placements)?;
+        let budget = assets.effective_read_budget();
+        let mut glyphs = CacheMap::default();
+        glyphs.reserve(budget.as_ref(), keys.len())?;
+        for key in &keys {
+            let glyph = system.rasterize(
+                assets,
+                &key.face,
+                key.pixel_height,
+                key.character,
+                key.rasterization,
+            )?;
+            glyphs.insert(budget.as_ref(), key.clone(), glyph)?;
+        }
+        let (extent, placements) = pack(&keys, &glyphs, budget.as_ref())?;
+        let rgba8 = compose_atlas(
+            extent,
+            &keys,
+            &glyphs,
+            &placements,
+            assets.effective_read_budget().as_ref(),
+        )?;
         let ascender_26_6 = system.ascender_26_6(assets, &font.face, font.pixel_height)?;
-        let metrics = HashMap::from([(font.clone(), FontMetrics { ascender_26_6 })]);
+        let mut metrics = CacheMap::default();
+        metrics.insert(budget.as_ref(), font.clone(), FontMetrics { ascender_26_6 })?;
         let identity = next_identity();
         let next_row = placements
             .iter()

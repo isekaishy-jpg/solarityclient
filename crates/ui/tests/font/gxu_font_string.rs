@@ -1,6 +1,6 @@
 //! Private font-layout invariants exercised outside production sources.
 
-use std::collections::HashMap;
+use crate::font::storage::CacheMap;
 
 use super::{
     FontError, LocalGlyphQuad, compose_atlas, group_live_quads, replace_live_object_quads,
@@ -10,16 +10,20 @@ use super::{
 /// coordinates and texels, including the solid caret sample at the page origin.
 #[test]
 fn coverage_growth_preserves_old_pages_and_uploads_only_new_rectangles() -> Result<(), FontError> {
-    let mut pages = vec![super::UiGlyphAtlasPage::packed(
-        7,
-        (8, 8),
-        {
-            let mut bytes = vec![0; 8 * 8 * 4];
-            bytes[..4].fill(255);
-            bytes
-        },
-        1,
-    )];
+    let mut pages = crate::font::storage::FontBuffer::default();
+    pages.push(
+        None,
+        super::UiGlyphAtlasPage::packed(
+            7,
+            (8, 8),
+            {
+                let mut bytes = crate::font::storage::FontBuffer::zeroed(None, 8 * 8 * 4)?;
+                bytes[..4].fill(255);
+                bytes
+            },
+            1,
+        ),
+    )?;
     let glyph = super::RasterizedGlyph {
         width: 4,
         height: 4,
@@ -28,11 +32,11 @@ fn coverage_growth_preserves_old_pages_and_uploads_only_new_rectangles() -> Resu
         advance_x_26_6: 4 * 64,
         coverage: vec![137; 16].into(),
     };
-    let first = super::coverage::insert(&mut pages, &glyph)?;
+    let first = super::coverage::insert(&mut pages, &glyph, None)?;
     let original = pages[0].rgba8().to_vec();
     let revision = pages[0].revision();
     for _ in 0..20_000 {
-        super::coverage::insert(&mut pages, &glyph)?;
+        super::coverage::insert(&mut pages, &glyph, None)?;
     }
     assert!(pages.len() > 2);
     assert_eq!(first.page, 0);
@@ -171,8 +175,14 @@ fn growing_glyph_owner_preserves_other_owners_retained_capacity() {
 
 #[test]
 fn atlas_reserves_opaque_padding_texel_for_text_primitives() -> Result<(), FontError> {
-    let pixels = compose_atlas((1, 1), &[], &HashMap::new(), &HashMap::new())?;
-    assert_eq!(pixels, [255; 4]);
+    let pixels = compose_atlas(
+        (1, 1),
+        &[],
+        &CacheMap::default(),
+        &CacheMap::default(),
+        None,
+    )?;
+    assert_eq!(&*pixels, &[255; 4]);
     Ok(())
 }
 
@@ -211,4 +221,62 @@ fn word_wrap_preserves_exact_fit_after_screen_coordinate_subtraction() {
         std::slice::from_ref(&word)
     );
     assert_eq!(wrap(&word, resolved_width - 1. / 64., true).len(), 2);
+}
+
+#[test]
+fn atlas_byte_pressure_preserves_published_pixels_revisions_and_page_identity()
+-> Result<(), FontError> {
+    use solarity_asset::AssetReadBudget;
+    use solarity_cpu::{
+        CpuService, CpuStorageBudget, CpuStorageClass, CpuStorageKind, CpuStoragePlan,
+    };
+    let storage = CpuStorageBudget::new(CpuStoragePlan::new(0, 4096, 0));
+    let budget = AssetReadBudget::for_service(storage.clone(), CpuService::Required);
+    let mut pixels = crate::font::storage::FontBuffer::zeroed(Some(&budget), 8 * 8 * 4)?;
+    pixels[..4].fill(255);
+    let mut pages = crate::font::storage::FontBuffer::default();
+    pages.push(
+        Some(&budget),
+        super::UiGlyphAtlasPage::packed(42, (8, 8), pixels, 1),
+    )?;
+    let glyph = super::RasterizedGlyph {
+        width: 4,
+        height: 4,
+        bearing_x: 0,
+        bearing_y: 4,
+        advance_x_26_6: 256,
+        coverage: vec![137; 16].into(),
+    };
+    let original = pages[0].rgba8().to_vec();
+    let used = storage.snapshot().used(CpuStorageClass::Required);
+    let hold = storage
+        .reserve(
+            CpuStorageClass::Required,
+            CpuStorageKind::Scratch,
+            4096 - used,
+        )
+        .map_err(solarity_asset::AssetError::from)?;
+    assert!(super::coverage::insert(&mut pages, &glyph, Some(&budget)).is_err());
+    assert_eq!(pages[0].rgba8(), original);
+    assert_eq!(pages[0].revision(), 1);
+    assert_eq!(pages[0].identity(), 42);
+    assert_eq!(pages[0].changes_since(1).count(), 0);
+    drop(hold);
+    super::coverage::insert(&mut pages, &glyph, Some(&budget))?;
+    let published = pages[0].rgba8().to_vec();
+    let used = storage.snapshot().used(CpuStorageClass::Required);
+    let large = super::RasterizedGlyph {
+        width: 16,
+        height: 16,
+        coverage: vec![255; 256].into(),
+        ..glyph
+    };
+    assert!(super::coverage::insert(&mut pages, &large, Some(&budget)).is_err());
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].rgba8(), published);
+    assert_eq!(pages[0].revision(), 2);
+    assert_eq!(storage.snapshot().used(CpuStorageClass::Required), used);
+    drop(pages);
+    assert_eq!(storage.snapshot().used(CpuStorageClass::Required), 0);
+    Ok(())
 }

@@ -10,7 +10,8 @@ pub use coverage::UiGlyphAtlasPage;
 
 use live_layout::{layout_live_quads, layout_live_quads_for_objects};
 
-use std::collections::{HashMap, HashSet};
+use crate::font::storage::CacheMap;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use solarity_asset::{AssetPath, AssetStore};
@@ -99,16 +100,16 @@ impl UiGlyphQuad {
 #[derive(Debug, Default, PartialEq)]
 pub struct UiGlyphAtlasPlan {
     identity: u64,
-    pages: Vec<UiGlyphAtlasPage>,
+    pages: crate::font::storage::FontBuffer<UiGlyphAtlasPage>,
     coverage_revision: u64,
     html_quads: Vec<LocalGlyphQuad>,
     html_runs: Vec<LocalGlyphRun>,
     live_quads: Vec<Vec<LocalGlyphQuad>>,
     text_origins: Vec<Option<TextOrigin>>,
     edit_box_layouts: Vec<Option<EditBoxTextLayout>>,
-    glyphs: HashMap<GlyphKey, RasterizedGlyph>,
-    placements: HashMap<GlyphKey, AtlasPlacement>,
-    metrics: HashMap<LineFontKey, FontMetrics>,
+    glyphs: CacheMap<GlyphKey, RasterizedGlyph>,
+    placements: CacheMap<GlyphKey, AtlasPlacement>,
+    metrics: CacheMap<LineFontKey, FontMetrics>,
 }
 
 /// One archive-backed font and material contract for native text overlays.
@@ -256,7 +257,9 @@ impl UiGlyphAtlasPlan {
                 .then(left.character.cmp(&right.character))
         });
         let mut keys = Vec::with_capacity(requested_keys.len());
-        let mut glyphs = HashMap::with_capacity(requested_keys.len());
+        let budget = assets.effective_read_budget();
+        let mut glyphs = CacheMap::default();
+        glyphs.reserve(budget.as_ref(), requested_keys.len())?;
         let rasterized = system.rasterize_batch(
             assets,
             requested_keys
@@ -277,11 +280,17 @@ impl UiGlyphAtlasPlan {
                 Err(FontError::Glyph { .. }) if !required.contains(&key) => continue,
                 Err(error) => return Err(error),
             };
-            glyphs.insert(key.clone(), glyph);
+            glyphs.insert(budget.as_ref(), key.clone(), glyph)?;
             keys.push(key);
         }
-        let (extent, placements) = pack(&keys, &glyphs)?;
-        let rgba8 = compose_atlas(extent, &keys, &glyphs, &placements)?;
+        let (extent, placements) = pack(&keys, &glyphs, budget.as_ref())?;
+        let rgba8 = compose_atlas(
+            extent,
+            &keys,
+            &glyphs,
+            &placements,
+            assets.effective_read_budget().as_ref(),
+        )?;
         let html_layout = layout_quads(
             html,
             live,
@@ -294,10 +303,10 @@ impl UiGlyphAtlasPlan {
             &placements,
             extent,
         )?;
-        let mut metrics = HashMap::new();
+        let mut metrics = CacheMap::default();
         for key in keys.iter().map(GlyphKey::font).collect::<HashSet<_>>() {
             let ascender_26_6 = system.ascender_26_6(assets, &key.face, key.pixel_height)?;
-            metrics.insert(key, FontMetrics { ascender_26_6 });
+            metrics.insert(budget.as_ref(), key, FontMetrics { ascender_26_6 })?;
         }
         let live_layout = live.map_or(Ok(LiveTextLayout::default()), |live| {
             layout_live_quads(
@@ -316,9 +325,14 @@ impl UiGlyphAtlasPlan {
             .map(|(key, place)| place.y + glyphs[key].height() + GLYPH_PADDING * 2)
             .max()
             .unwrap_or(GLYPH_PADDING);
+        let mut pages = crate::font::storage::FontBuffer::default();
+        pages.push(
+            assets.effective_read_budget().as_ref(),
+            UiGlyphAtlasPage::packed(identity, extent, rgba8, next_row),
+        )?;
         Ok(Self {
             identity,
-            pages: vec![UiGlyphAtlasPage::packed(identity, extent, rgba8, next_row)],
+            pages,
             coverage_revision: 1,
             html_quads: html_layout.quads,
             html_runs: html_layout.runs,
@@ -983,7 +997,7 @@ struct AtlasPlacement {
     y: u32,
 }
 
-type PackedAtlas = ((u32, u32), HashMap<GlyphKey, AtlasPlacement>);
+type PackedAtlas = ((u32, u32), CacheMap<GlyphKey, AtlasPlacement>);
 
 fn font_definition<'a>(
     fonts: &'a FontCatalog,
@@ -1285,7 +1299,8 @@ const fn hex_nibble(byte: u8) -> u8 {
 
 fn pack(
     keys: &[GlyphKey],
-    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
+    glyphs: &CacheMap<GlyphKey, RasterizedGlyph>,
+    budget: Option<&solarity_asset::AssetReadBudget>,
 ) -> Result<PackedAtlas, FontError> {
     let widest = keys
         .iter()
@@ -1297,11 +1312,13 @@ fn pack(
     let mut x = GLYPH_PADDING;
     let mut y = GLYPH_PADDING;
     let mut row_height = 0_u32;
-    let mut placements = HashMap::with_capacity(keys.len());
+    let mut placements = CacheMap::default();
+    placements.reserve(budget, keys.len())?;
     for key in keys {
         let glyph = &glyphs[key];
         if glyph.width() == 0 || glyph.height() == 0 {
             placements.insert(
+                budget,
                 key.clone(),
                 AtlasPlacement {
                     x: 0,
@@ -1309,7 +1326,7 @@ fn pack(
                     page: 0,
                     extent: (0, 0),
                 },
-            );
+            )?;
             continue;
         }
         let padded_width = glyph.width().saturating_add(GLYPH_PADDING * 2);
@@ -1321,6 +1338,7 @@ fn pack(
             row_height = 0;
         }
         placements.insert(
+            budget,
             key.clone(),
             AtlasPlacement {
                 x,
@@ -1328,7 +1346,7 @@ fn pack(
                 page: 0,
                 extent: (0, 0),
             },
-        );
+        )?;
         x = x.checked_add(padded_width).ok_or_else(atlas_overflow)?;
         row_height = row_height.max(glyph.height());
     }
@@ -1346,15 +1364,16 @@ fn pack(
 fn compose_atlas(
     extent: (u32, u32),
     keys: &[GlyphKey],
-    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
-    placements: &HashMap<GlyphKey, AtlasPlacement>,
-) -> Result<Vec<u8>, FontError> {
+    glyphs: &CacheMap<GlyphKey, RasterizedGlyph>,
+    placements: &CacheMap<GlyphKey, AtlasPlacement>,
+    budget: Option<&solarity_asset::AssetReadBudget>,
+) -> Result<crate::font::storage::FontBuffer<u8>, FontError> {
     let byte_count = u64::from(extent.0)
         .checked_mul(u64::from(extent.1))
         .and_then(|pixels| pixels.checked_mul(4))
         .and_then(|bytes| usize::try_from(bytes).ok())
         .ok_or_else(atlas_overflow)?;
-    let mut rgba8 = vec![0; byte_count];
+    let mut rgba8 = crate::font::storage::FontBuffer::zeroed(budget, byte_count)?;
     // The first padding texel is dedicated solid coverage for retained text
     // material primitives such as the stock EditBox insertion block.
     rgba8[..4].copy_from_slice(&[255; 4]);
@@ -1387,8 +1406,8 @@ fn layout_quads(
     assets: &mut AssetStore,
     pixels_per_ui_unit: f64,
     system: &mut FontSystem,
-    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
-    placements: &HashMap<GlyphKey, AtlasPlacement>,
+    glyphs: &CacheMap<GlyphKey, RasterizedGlyph>,
+    placements: &CacheMap<GlyphKey, AtlasPlacement>,
     _extent: (u32, u32),
 ) -> Result<HtmlGlyphLayout, FontError> {
     let mut layout = HtmlGlyphLayout::default();

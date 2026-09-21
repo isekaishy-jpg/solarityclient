@@ -7,11 +7,16 @@ use solarity_asset::AssetPath;
 pub(super) fn glyph_from_slot<T: std::borrow::Borrow<[u8]>>(
     path: &AssetPath,
     face: &Face<T>,
+    budget: Option<&solarity_asset::AssetReadBudget>,
 ) -> Result<RasterizedGlyph, FontError> {
     let slot = face.glyph();
     let bitmap = slot.bitmap();
     let width = u32::try_from(bitmap.width()).map_err(|error| bitmap_error(path, error))?;
     let height = u32::try_from(bitmap.rows()).map_err(|error| bitmap_error(path, error))?;
+    let bytes = usize::try_from(u64::from(width) * u64::from(height)).map_err(|_| {
+        solarity_asset::AssetError::from(solarity_cpu::CpuError::StorageSizeOverflow)
+    })?;
+    let memory = crate::font::i_gxu_font_glyph::GlyphCoverage::reserve(budget, bytes)?;
     let coverage = if width == 0 || height == 0 {
         Vec::new()
     } else {
@@ -43,7 +48,7 @@ pub(super) fn glyph_from_slot<T: std::borrow::Borrow<[u8]>>(
         // Stock truncates the signed 26.6 horizontal metric to whole pixels
         // and adds one pixel before retaining it for string layout.
         advance_x_26_6: (i64::from(slot.metrics().horiAdvance) / 64 + 1) * 64,
-        coverage: coverage.into(),
+        coverage: crate::font::i_gxu_font_glyph::GlyphCoverage::admitted(coverage, memory)?,
     })
 }
 
@@ -55,7 +60,14 @@ fn copy_gray_bitmap(
     height: usize,
 ) -> Result<Vec<u8>, FontError> {
     validate_bitmap_size(path, source, pitch, width, height)?;
-    let mut coverage = Vec::with_capacity(width.saturating_mul(height));
+    let bytes = width
+        .checked_mul(height)
+        .ok_or(solarity_cpu::CpuError::StorageSizeOverflow)
+        .map_err(solarity_asset::AssetError::from)?;
+    let mut coverage = Vec::new();
+    coverage
+        .try_reserve_exact(bytes)
+        .map_err(|_| solarity_asset::AssetError::from(solarity_cpu::CpuError::StorageAllocation))?;
     for row in source.chunks_exact(pitch).take(height) {
         coverage.extend_from_slice(&row[..width]);
     }
@@ -71,7 +83,14 @@ fn copy_mono_bitmap(
 ) -> Result<Vec<u8>, FontError> {
     let packed_width = width.div_ceil(8);
     validate_bitmap_size(path, source, pitch, packed_width, height)?;
-    let mut coverage = Vec::with_capacity(width.saturating_mul(height));
+    let bytes = width
+        .checked_mul(height)
+        .ok_or(solarity_cpu::CpuError::StorageSizeOverflow)
+        .map_err(solarity_asset::AssetError::from)?;
+    let mut coverage = Vec::new();
+    coverage
+        .try_reserve_exact(bytes)
+        .map_err(|_| solarity_asset::AssetError::from(solarity_cpu::CpuError::StorageAllocation))?;
     for row in source.chunks_exact(pitch).take(height) {
         for column in 0..width {
             let mask = 0x80_u8 >> (column % 8);

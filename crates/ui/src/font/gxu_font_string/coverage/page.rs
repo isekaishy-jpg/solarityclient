@@ -1,6 +1,7 @@
 //! One stable RGBA coverage image and its append-only upload journal.
 
 use super::super::{FontError, GLYPH_PADDING, RasterizedGlyph, atlas_overflow};
+use crate::font::storage::FontBuffer;
 use std::sync::Arc;
 
 /// A page grows only into unused texels. Its lifetime token lets GPU owners
@@ -9,9 +10,9 @@ use std::sync::Arc;
 pub struct UiGlyphAtlasPage {
     identity: u64,
     extent: (u32, u32),
-    rgba8: Vec<u8>,
+    rgba8: FontBuffer<u8>,
     revision: u64,
-    changes: Vec<(u64, [u32; 4])>,
+    changes: FontBuffer<(u64, [u32; 4])>,
     cursor: [u32; 3],
     lifetime: Arc<()>,
 }
@@ -21,7 +22,7 @@ impl UiGlyphAtlasPage {
     pub(in super::super) fn packed(
         identity: u64,
         extent: (u32, u32),
-        rgba8: Vec<u8>,
+        rgba8: FontBuffer<u8>,
         next_row: u32,
     ) -> Self {
         Self {
@@ -29,19 +30,23 @@ impl UiGlyphAtlasPage {
             extent,
             rgba8,
             revision: 1,
-            changes: Vec::new(),
+            changes: FontBuffer::default(),
             cursor: [GLYPH_PADDING, next_row, 0],
             lifetime: Arc::new(()),
         }
     }
 
-    pub(super) fn empty(identity: u64, extent: (u32, u32)) -> Result<Self, FontError> {
+    pub(super) fn empty(
+        identity: u64,
+        extent: (u32, u32),
+        budget: Option<&solarity_asset::AssetReadBudget>,
+    ) -> Result<Self, FontError> {
         let bytes = u64::from(extent.0)
             .checked_mul(u64::from(extent.1))
             .and_then(|pixels| pixels.checked_mul(4))
             .and_then(|bytes| usize::try_from(bytes).ok())
             .ok_or_else(atlas_overflow)?;
-        let mut rgba8 = vec![0; bytes];
+        let mut rgba8 = FontBuffer::zeroed(budget, bytes)?;
         rgba8[..4].copy_from_slice(&[255; 4]);
         Ok(Self::packed(identity, extent, rgba8, GLYPH_PADDING))
     }
@@ -75,6 +80,7 @@ impl UiGlyphAtlasPage {
         {
             return Ok(None);
         }
+        self.changes.reserve_one(self.rgba8.policy())?;
         for row in 0..glyph.height() {
             for column in 0..glyph.width() {
                 let destination = (((y + row) * self.extent.0 + x + column) * 4) as usize;
@@ -89,8 +95,10 @@ impl UiGlyphAtlasPage {
         }
         self.cursor = [x + padded_width, y, height.max(glyph.height())];
         self.revision += 1;
-        self.changes
-            .push((self.revision, [x, y, glyph.width(), glyph.height()]));
+        self.changes.push(
+            self.rgba8.policy(),
+            (self.revision, [x, y, glyph.width(), glyph.height()]),
+        )?;
         Ok(Some((x, y)))
     }
 

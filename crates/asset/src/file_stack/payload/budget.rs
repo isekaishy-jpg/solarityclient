@@ -24,11 +24,15 @@ impl AssetReadBudget {
         Self { storage, class }
     }
 
-    pub(crate) fn storage(&self) -> &CpuStorageBudget {
+    /// Shared ledger for decoded allocations accompanying an admitted read.
+    #[must_use]
+    pub fn storage(&self) -> &CpuStorageBudget {
         &self.storage
     }
 
-    pub(crate) fn class(&self) -> CpuStorageClass {
+    /// Demand class retained by decoded source products.
+    #[must_use]
+    pub fn class(&self) -> CpuStorageClass {
         self.class
     }
 

@@ -133,16 +133,24 @@ impl UiGlyphAtlasPlan {
                 .collect(),
         )?;
         for (character, glyph) in characters.into_iter().zip(glyphs) {
-            match glyph.and_then(|glyph| self.install_glyph(GlyphKey::new(font, character), glyph))
-            {
+            match glyph.and_then(|glyph| {
+                self.install_glyph(
+                    GlyphKey::new(font, character),
+                    glyph,
+                    assets.effective_read_budget().as_ref(),
+                )
+            }) {
                 // As in initial packing, optional stock prewarm coverage may be
                 // absent. Required text below still reports a missing glyph.
                 Err(FontError::Glyph { .. }) => (),
                 result => result?,
             }
         }
-        self.metrics
-            .insert(font.clone(), FontMetrics { ascender_26_6 });
+        self.metrics.insert(
+            assets.effective_read_budget().as_ref(),
+            font.clone(),
+            FontMetrics { ascender_26_6 },
+        )?;
         Ok(())
     }
 
@@ -163,20 +171,36 @@ impl UiGlyphAtlasPlan {
             key.character,
             key.rasterization,
         )?;
-        self.install_glyph(key, glyph)
+        self.install_glyph(key, glyph, assets.effective_read_budget().as_ref())
     }
 
     fn install_glyph(
         &mut self,
         key: GlyphKey,
         glyph: crate::RasterizedGlyph,
+        budget: Option<&solarity_asset::AssetReadBudget>,
     ) -> Result<(), FontError> {
         if self.glyphs.contains_key(&key) {
             return Ok(());
         }
-        let placement = coverage::insert(&mut self.pages, &glyph)?;
-        self.placements.insert(key.clone(), placement);
-        self.glyphs.insert(key, glyph);
+        // Admit both lookup tables before touching published pixels or revisions.
+        self.placements.reserve(
+            budget,
+            self.placements
+                .len()
+                .checked_add(1)
+                .ok_or_else(super::atlas_overflow)?,
+        )?;
+        self.glyphs.reserve(
+            budget,
+            self.glyphs
+                .len()
+                .checked_add(1)
+                .ok_or_else(super::atlas_overflow)?,
+        )?;
+        let placement = coverage::insert(&mut self.pages, &glyph, budget)?;
+        self.placements.insert(budget, key.clone(), placement)?;
+        self.glyphs.insert(budget, key, glyph)?;
         self.coverage_revision += 1;
         Ok(())
     }

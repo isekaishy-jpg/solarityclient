@@ -32,6 +32,7 @@ impl FontGlyphRequest {
 type Preparation = Box<dyn FnOnce(&mut super::FontSystem, &mut AssetStore) + Send>;
 
 pub(super) enum Request {
+    Trim,
     Preparation(Preparation),
     Glyph(FontGlyphRequest),
     Glyphs(Vec<FontGlyphRequest>),
@@ -57,7 +58,7 @@ pub(super) enum Reply {
     Prepared,
     Glyph(RasterizedGlyph),
     Glyphs(Vec<Result<RasterizedGlyph, FontError>>),
-    Advances(Vec<i64>),
+    Advances(crate::font::storage::FontBuffer<i64>),
     Metric(i64),
 }
 
@@ -68,7 +69,9 @@ impl Request {
         store: &mut AssetStore,
     ) -> Result<Reply, FontError> {
         match self {
-            Self::Preparation(_) => unreachable!("preparation owns a worker-local font system"),
+            Self::Preparation(_) | Self::Trim => {
+                unreachable!("preparation and trim have dedicated owners")
+            }
             Self::Glyph(key) => state
                 .rasterize(store, &key.face, key.height, key.character, key.mode)
                 .map(Reply::Glyph),
@@ -133,6 +136,10 @@ impl FontWork {
             });
         }
         let mut cache = self.cache.lock().map_err(|_| unavailable())?;
+        if matches!(self.request, Request::Trim) {
+            cache.trim_unused();
+            return Ok(FontWorkOutput(Reply::Prepared));
+        }
         let mut state = FontSystemState::new()?;
         state.cache = std::mem::take(&mut *cache);
         if let Request::Preparation(operation) = self.request {
@@ -177,10 +184,18 @@ impl FontCache {
         height: u32,
         text: &str,
         mode: FontRasterization,
-    ) -> Option<Vec<i64>> {
+    ) -> Option<Result<crate::font::storage::FontBuffer<i64>, FontError>> {
         let cached = self.faces.get(face)?;
-        text.chars()
-            .map(|character| cached.advances.get(&(height, mode, character)).copied())
-            .collect()
+        let mut values = crate::font::storage::FontBuffer::default();
+        if let Err(error) = values.reserve(cached.advances.policy(), text.chars().count()) {
+            return Some(Err(error));
+        }
+        for character in text.chars() {
+            let advance = *cached.advances.get(&(height, mode, character))?;
+            if let Err(error) = values.push(cached.advances.policy(), advance) {
+                return Some(Err(error));
+            }
+        }
+        Some(Ok(values))
     }
 }

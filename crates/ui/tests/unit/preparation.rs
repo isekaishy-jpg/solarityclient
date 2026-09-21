@@ -27,16 +27,19 @@ impl FontWorkExecutor for Host {
     fn execute(&self, work: FontWork) -> Result<FontWorkOutput, FontError> {
         assert!(!solarity_cpu::is_worker_thread());
         let reader = self.reader.clone();
+        let budget = solarity_asset::AssetReadBudget::for_service(
+            self.cpu.storage().clone(),
+            solarity_cpu::CpuService::Required,
+        );
         let task = self
             .cpu
             .try_submit_prepared(move || {
                 move |_: &solarity_cpu::JobContext<'_>| {
                     assert!(solarity_cpu::is_worker_thread());
-                    work.run(
-                        &mut reader
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner),
-                    )
+                    reader
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .with_read_budget(&budget, |reader| work.run(reader))
                 }
             })
             .map_err(AssetError::from)?;
@@ -275,4 +278,60 @@ fn compare(worker: &GlueManager, serial: &GlueManager) {
         worker.render_plan().mesh().object_indices(),
         serial.render_plan().mesh().object_indices()
     );
+}
+
+#[test]
+fn worker_cache_trim_preserves_pinned_identity_and_charges_until_final_release()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuStorageClass, CpuStorageKind};
+    let fixture = Fixture::new(&[FixtureFile {
+        path: "Fonts/Shared.ttf",
+        bytes: include_bytes!("../fixtures/tooltip_fixture.ttf"),
+    }])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let cpu = pool()?;
+    let budget = cpu.storage().clone();
+    let baseline = budget
+        .snapshot()
+        .bytes(CpuStorageClass::Required, CpuStorageKind::Result);
+    let host = host(&cpu, catalog.clone())?;
+    let mut fonts = FontSystem::with_executor(host.clone());
+    let mut store = AssetStore::mount(catalog)?;
+    let path = solarity_asset::AssetPath::new("Fonts/Shared.ttf")?;
+    let mode = crate::FontRasterization::Antialiased;
+    let pinned = fonts.rasterize(&mut store, &path, 16, 'A', mode)?;
+    drop(fonts.rasterize(&mut store, &path, 64, 'A', mode)?);
+    fonts.measure_line_width_26_6(&mut store, &path, 16, "AAA", mode)?;
+    let before = budget.snapshot().used(CpuStorageClass::Required);
+    fonts.trim_unused(&mut store)?;
+    assert_eq!(fonts.cached_glyph_count(), 1);
+    assert!(budget.snapshot().used(CpuStorageClass::Required) < before);
+    let completed = host.completed.get();
+    let (release, wait) = mpsc::channel();
+    let blocker = cpu.try_submit(move || wait.recv())?;
+    let cached = fonts.rasterize(&mut store, &path, 16, 'A', mode)?;
+    assert_eq!(cached.coverage().as_ptr(), pinned.coverage().as_ptr());
+    assert_eq!(host.completed.get(), completed);
+    release.send(())?;
+    blocker.join()??;
+    drop(cached);
+    drop(fonts);
+    drop(host);
+    drop(cpu);
+    assert!(
+        budget
+            .snapshot()
+            .bytes(CpuStorageClass::Required, CpuStorageKind::Result)
+            > baseline
+    );
+    assert!(!pinned.coverage().is_empty());
+    drop(pinned);
+    assert_eq!(
+        budget
+            .snapshot()
+            .bytes(CpuStorageClass::Required, CpuStorageKind::Result),
+        baseline
+    );
+    Ok(())
 }

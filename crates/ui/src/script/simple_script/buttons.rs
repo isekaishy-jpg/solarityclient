@@ -313,7 +313,7 @@ impl TextMeasurement {
                 .map_err(|error| mlua::Error::runtime(error.to_string()))?;
             let measured = line
                 .chars()
-                .zip(advances)
+                .zip(advances.iter().copied())
                 .map(|(character, advance)| MeasuredCharacter {
                     character,
                     advance: advance as f64 / 64.0 / glyph_pixels_per_ui_unit,

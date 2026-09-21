@@ -1,6 +1,6 @@
 //! Live text shaping and sparse owner updates over immutable glyph coverage.
 
-use std::collections::HashMap;
+use crate::font::storage::CacheMap;
 
 use super::{
     AtlasPlacement, EditBoxTextLayout, FontError, FontMetrics, GlyphKey, LineFontKey,
@@ -50,9 +50,9 @@ pub(super) fn layout_live_quads(
     live: &UiRuntimeObjectPlan,
     geometry: &UiRegionGeometryPlan,
     pixels_per_ui_unit: f64,
-    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
-    placements: &HashMap<GlyphKey, AtlasPlacement>,
-    metrics: &HashMap<LineFontKey, FontMetrics>,
+    glyphs: &CacheMap<GlyphKey, RasterizedGlyph>,
+    placements: &CacheMap<GlyphKey, AtlasPlacement>,
+    metrics: &CacheMap<LineFontKey, FontMetrics>,
     extent: (u32, u32),
 ) -> Result<LiveTextLayout, FontError> {
     let mut edit_boxes = vec![None; live.objects().len()];
@@ -84,9 +84,9 @@ pub(super) fn layout_live_quads_for_objects(
     live: &UiRuntimeObjectPlan,
     geometry: &UiRegionGeometryPlan,
     pixels_per_ui_unit: f64,
-    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
-    placements: &HashMap<GlyphKey, AtlasPlacement>,
-    metrics: &HashMap<LineFontKey, FontMetrics>,
+    glyphs: &CacheMap<GlyphKey, RasterizedGlyph>,
+    placements: &CacheMap<GlyphKey, AtlasPlacement>,
+    metrics: &CacheMap<LineFontKey, FontMetrics>,
     extent: (u32, u32),
     object_indices: impl IntoIterator<Item = usize>,
 ) -> Result<TargetedTextLayout, FontError> {
@@ -118,9 +118,9 @@ fn layout_text_objects(
     live: &UiRuntimeObjectPlan,
     geometry: &UiRegionGeometryPlan,
     pixels_per_ui_unit: f64,
-    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
-    placements: &HashMap<GlyphKey, AtlasPlacement>,
-    metrics: &HashMap<LineFontKey, FontMetrics>,
+    glyphs: &CacheMap<GlyphKey, RasterizedGlyph>,
+    placements: &CacheMap<GlyphKey, AtlasPlacement>,
+    metrics: &CacheMap<LineFontKey, FontMetrics>,
     extent: (u32, u32),
     object_indices: impl IntoIterator<Item = usize>,
     mut publish: impl FnMut(usize, Option<TextOrigin>, Option<EditBoxTextLayout>),
@@ -527,7 +527,7 @@ fn offset_live_quad(source: &LocalGlyphQuad, offset: [f32; 2], color: [f32; 4]) 
 fn edit_box_caret_metrics(
     text: &UiRuntimeText,
     font: &LineFontKey,
-    glyphs: &HashMap<GlyphKey, RasterizedGlyph>,
+    glyphs: &CacheMap<GlyphKey, RasterizedGlyph>,
     pixels_per_ui_unit: f64,
     available_width: f64,
 ) -> (f64, f64) {

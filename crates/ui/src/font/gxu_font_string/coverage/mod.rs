@@ -11,8 +11,9 @@ use super::{
 /// Inserts new coverage into the current page or admits one additional page.
 /// Existing rectangles never move or change, including while prior draws run.
 pub(super) fn insert(
-    pages: &mut Vec<UiGlyphAtlasPage>,
+    pages: &mut crate::font::storage::FontBuffer<UiGlyphAtlasPage>,
     glyph: &RasterizedGlyph,
+    budget: Option<&solarity_asset::AssetReadBudget>,
 ) -> Result<AtlasPlacement, FontError> {
     if glyph.width() == 0 || glyph.height() == 0 {
         return Ok(AtlasPlacement {
@@ -39,7 +40,7 @@ pub(super) fn insert(
             .ok_or_else(super::atlas_overflow)
     };
     let extent = (dimension(glyph.width())?, dimension(glyph.height())?);
-    let mut page = UiGlyphAtlasPage::empty(next_identity(), extent)?;
+    let mut page = UiGlyphAtlasPage::empty(next_identity(), extent, budget)?;
     let (x, y) = page.insert(glyph)?.ok_or_else(super::atlas_overflow)?;
     let placement = AtlasPlacement {
         x,
@@ -47,6 +48,6 @@ pub(super) fn insert(
         extent,
         page: pages.len(),
     };
-    pages.push(page);
+    pages.push(budget, page)?;
     Ok(placement)
 }
