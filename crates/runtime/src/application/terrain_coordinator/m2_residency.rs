@@ -429,6 +429,7 @@ fn prepare_textures(
             })? {
                 M2HardcodedTextureSource::Archive(path) => match cache.load(store, path) {
                     Ok(texture) => Ok(ResidentM2Texture::Authored(texture)),
+                    Err(source) if source.is_source_pipeline_error() => Err(source.into()),
                     Err(source) => {
                         tracing::warn!(
                             model = %model.path(),

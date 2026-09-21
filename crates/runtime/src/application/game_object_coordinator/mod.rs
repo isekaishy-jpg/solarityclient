@@ -50,7 +50,6 @@ use crate::random::CrtRand;
 use transport::GameObjectTransportBehavior;
 use worker::{
     GameObjectM2Input, GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState,
-    prepare_on_worker,
 };
 pub(in crate::application) use world_model::{
     GameObjectWorldModelSource, GameObjectWorldModelState,
@@ -476,17 +475,15 @@ impl RuntimeGameObjectPresentation {
                     shared,
                 ))
             } else {
-                let budget = cpu.storage().clone();
-                let service = permit.service_control();
-                permit.submit_with_context(move |context| {
-                    context.diagnostic_value("game_object.prepare.direct", 1);
-                    prepare_on_worker(
-                        source,
-                        &task_request,
-                        model,
-                        &solarity_asset::AssetReadBudget::for_service(budget, service.service()),
-                    )
-                })
+                let shared = super::terrain_coordinator::SharedTerrainSources {
+                    budget: cpu.storage().clone(),
+                    service: permit.service_control(),
+                };
+                permit.submit_resumable_with_context(worker::model_steps(
+                    source,
+                    model.unwrap_or_else(|| unreachable!("M2 dispatch owns source input")),
+                    shared,
+                ))
             };
             if let Some(demand) = &model_demand {
                 assert!(

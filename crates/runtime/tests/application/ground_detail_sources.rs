@@ -55,6 +55,14 @@ fn detail_dependency_yields_worker_then_publishes_complete_texture_and_mesh()
     else {
         return Err("source producer".into());
     };
+    let solarity_asset::BlpLoad::Producer(texture_producer) =
+        catalog.texture_cache_service().request_for(
+            &AssetResourceKey::new(catalog.namespace(), AssetPath::new("Ground/Grass.blp")?),
+            solarity_cpu::CpuService::Required,
+        )
+    else {
+        return Err("texture producer".into());
+    };
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         CpuExecutionPlan::new(0, 1, 1, 1)?,
         NonZeroUsize::new(3).ok_or("capacity")?,
@@ -69,6 +77,7 @@ fn detail_dependency_yields_worker_then_publishes_complete_texture_and_mesh()
         ids: vec![1],
         next: 0,
         pending: None,
+        pending_texture: None,
         resident: ResidentGroundDetailTile {
             catalog: Some(effects),
             ..Default::default()
@@ -107,9 +116,20 @@ fn detail_dependency_yields_worker_then_publishes_complete_texture_and_mesh()
     });
     observed.recv_timeout(std::time::Duration::from_secs(5))?;
     assert_eq!(cpu.try_submit(|| 41)?.join()?, 41);
-    let mut reader = AssetStore::mount(catalog)?;
+    let mut reader = AssetStore::mount(catalog.clone())?;
     let source = cpu
         .try_submit(move || producer.load(&mut reader))?
+        .join()??;
+    observed.recv_timeout(std::time::Duration::from_secs(5))?;
+    assert!(!task.is_finished());
+    assert_eq!(cpu.try_submit(|| 42)?.join()?, 42);
+    let mut reader = AssetStore::mount(catalog)?;
+    let policy = solarity_asset::AssetReadBudget::for_service(
+        cpu.storage().clone(),
+        solarity_cpu::CpuService::Required,
+    );
+    let _texture = cpu
+        .try_submit(move || texture_producer.load(&mut reader, &policy))?
         .join()??;
     let resident = task.join()??;
     assert!(resident.models.contains_key(&1));

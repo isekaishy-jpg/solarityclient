@@ -19,6 +19,27 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Terrain MDDF/MODD, WMO materials and liquids, terrain liquids, ground detail,
+sky models, unit effects, and primary/nested GameObject M2 materials now join
+shared texture readiness on their existing admitted operations. Private builders
+retain decoded inputs and WMO geometry plans through suspension. Successful
+sources remain cached; failed authored source outcomes retain their exact shared
+error across retries. Admission, readiness and producer failures propagate instead
+of becoming stock missing-texture images. The GameObject primary-model and
+material waits use one resumable task and return the same bank on withdrawal.
+
+This is a construction boundary, not a new executor or a calibrated microstep
+policy. A resumed private builder can replay its cached prefix. Individual decode,
+shader and geometry operations remain indivisible. Character/body/equipment and
+login backdrop construction still require integration; all-domain single production
+and the complete CPU cutover are not yet claimed. Grouped validation for this
+batch is recorded in `target/material-cutover-validation.log`, with its final
+focused rerun in `target/material-cutover-finish.log` and the remaining freshly
+built integration executables in `target/material-cutover-integration.log`.
+The earlier immediate GameObject cancellation assertion now awaits the retirement
+turn while keeping the independent source producer unpublished; consumer
+withdrawal must return its bank without waiting for that producer.
+
 Catalog clones now share BLP pending-request authority and a weak published-source
 index. Unique producers publish the original source or shared failure; abandonment
 wakes every joined consumer and permits retry. Independent demand and typed CPU
@@ -32,7 +53,7 @@ material texture stages now join these requests on the existing resumable worker
 The cursor, reader and private output survive suspension; cancellation releases a
 consumer without abandoning another producer. Ordinary synchronous texture caches
 reuse and publish canonical ready payloads too. Their cold calls still cannot join
-a pending request: remaining synchronous material/body/liquid construction must be
+a pending request: remaining synchronous character/body/equipment and backdrop construction must be
 converted to resumable consumers before claiming all-domain BLP single production.
 Direct low-level `BlpTextureSource::load` remains an explicit uncached decode API.
 No worker waits on a source condition variable, and no source decode holds a cache
@@ -47,8 +68,8 @@ all remaining runtime integration executables from that compile pass as well.
 Evidence is ignored `target/blp-requests-final2.log`, `target/blp-requests-resume.log`,
 `target/blp-requests-runtime-finish.log` and the verified artifact inventory
 `target/blp-runtime-artifacts.json`. No live performance comparison or package was
-produced. Synchronous material/body/liquid source construction, including its
-admission-versus-authored-failure handling, remains part of the next integration.
+produced. That earlier batch left material/body/liquid integration open; the connected
+material consumers listed above supersede that limitation.
 
 Parsed BLP source ownership now retains a single byte reservation through cache
 merges, source clones and worker upload snapshots. Parsing preadmits authored mip

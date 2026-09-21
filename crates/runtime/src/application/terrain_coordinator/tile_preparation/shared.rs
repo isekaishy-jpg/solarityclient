@@ -71,6 +71,17 @@ impl SharedTerrainSources {
     pub(in crate::application) fn read_budget(&self) -> solarity_asset::AssetReadBudget {
         solarity_asset::AssetReadBudget::for_service(self.budget.clone(), self.service.service())
     }
+    /// Private material construction may suspend without publishing partial scene state.
+    pub(in crate::application) fn materials<T, E: From<solarity_asset::AssetError>>(
+        &self,
+        pending: &mut solarity_asset::BlpTexturePreparation,
+        cache: &mut solarity_asset::BlpTextureCache,
+        store: &mut AssetStore,
+        operation: impl FnOnce(&mut solarity_asset::BlpTextureCache, &mut AssetStore) -> Result<T, E>,
+    ) -> Result<ControlFlow<T, CpuTaskDependency>, E> {
+        pending.run(cache, store, &self.budget, &self.service, operation)
+    }
+
     /// Texture consumers retain their local cache pins while sharing pending decode authority.
     pub(in crate::application) fn texture(
         &self,

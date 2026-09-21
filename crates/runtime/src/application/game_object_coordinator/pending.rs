@@ -1,107 +1,26 @@
-//! Shared-source continuations retain the mounted bank across readiness failure.
-
+//! Primary and material source waits retain one owned GameObject bank.
 use super::{
     GameObjectM2Input, GameObjectWorkerCompletion, GameObjectWorkerSource, PendingGeneration,
-    ResourceRequest, RuntimeGameObjectError, RuntimeGameObjectPresentation, prepare_on_worker,
+    ResourceRequest, RuntimeGameObjectError, RuntimeGameObjectPresentation,
 };
-use solarity_asset::M2LoadDependency;
-use solarity_cpu::{
-    CpuError, CpuExecutor, CpuService, CpuStorageClass, CpuTask, JobOutcome, LoadBatch,
-};
+use solarity_cpu::{CpuError, CpuExecutor, CpuService, CpuStorageClass, CpuTask};
 
-/// Direct producer work and dependent work share one main-owned publication path.
+/// Every source route uses the same resumable publication path.
 pub(super) enum PendingTask {
     Direct(CpuTask<GameObjectWorkerCompletion>),
-    Dependent(Box<DependentTask>),
-}
-/// The graph retains its source owner until ordered completion is consumed.
-pub(super) struct DependentTask {
-    batch: LoadBatch<DependentWork>,
-    jobs: Vec<DependentWork>,
-}
-/// Input and completion occupy the same owned slot through all terminal paths.
-struct DependentWork {
-    source: Option<GameObjectWorkerSource>,
-    request: ResourceRequest,
-    dependency: M2LoadDependency,
-    completion: Option<GameObjectWorkerCompletion>,
-    budget: solarity_asset::AssetReadBudget,
-}
-impl DependentWork {
-    /// Called only after shared decoding succeeds. No resource wait occurs here.
-    fn prepare(&mut self, context: &solarity_cpu::JobContext<'_>) -> JobOutcome {
-        // Keep the complete mounted source with its owner on early withdrawal.
-        if context.is_cancelled() {
-            return JobOutcome::Cancelled;
-        }
-        let model = self
-            .dependency
-            .poll()
-            .unwrap_or_else(|| unreachable!("source publication precedes readiness"));
-        let source = self
-            .source
-            .take()
-            .unwrap_or_else(|| unreachable!("admitted preparation owns its bank"));
-        let completion = match model {
-            Ok(model) => prepare_on_worker(
-                source,
-                &self.request,
-                Some(GameObjectM2Input::Ready(model)),
-                &self.budget,
-            ),
-            Err(error) => failed_completion(source, error.into()),
-        };
-        // Domain errors are published through the normal GameObject policy.
-        self.completion = Some(completion);
-        JobOutcome::Succeeded
-    }
-}
-/// Failure before useful work returns the mounted cache unchanged.
-fn failed_completion(
-    source: GameObjectWorkerSource,
-    error: RuntimeGameObjectError,
-) -> GameObjectWorkerCompletion {
-    GameObjectWorkerCompletion {
-        worker: match source {
-            GameObjectWorkerSource::Ready(worker) => Some(worker),
-            GameObjectWorkerSource::Catalog(_) => None,
-        },
-        result: Err(error),
-    }
 }
 impl PendingTask {
     pub(super) fn is_finished(&self) -> bool {
-        match self {
-            Self::Direct(task) => task.is_finished(),
-            Self::Dependent(task) => task.batch.is_finished(),
-        }
+        let Self::Direct(task) = self;
+        task.is_finished()
     }
-    /// A withdrawn consumer cannot start new derived work. Shared producer
-    /// priority belongs exclusively to its combined consumer-demand owner.
     pub(super) fn retire(&mut self) {
-        match self {
-            Self::Direct(_) => {}
-            Self::Dependent(task) => task.batch.cancel(),
-        }
+        let Self::Direct(task) = self;
+        task.cancel();
     }
-    /// Reclaims every input before mapping scheduler or source failure to publication.
     pub(super) fn join(self) -> Result<GameObjectWorkerCompletion, CpuError> {
-        match self {
-            Self::Direct(task) => task.join(),
-            Self::Dependent(mut task) => {
-                let result = task.batch.reclaim(&mut task.jobs);
-                let mut work = task.jobs.pop().ok_or(CpuError::CompletionLost)?;
-                if let Some(completion) = work.completion {
-                    return Ok(completion);
-                }
-                let error = match work.dependency.poll() {
-                    Some(Err(error)) => error.into(),
-                    _ => result.err().unwrap_or(CpuError::CompletionLost).into(),
-                };
-                let source = work.source.take().ok_or(CpuError::CompletionLost)?;
-                Ok(failed_completion(source, error))
-            }
-        }
+        let Self::Direct(task) = self;
+        task.join()
     }
 }
 impl PendingGeneration {
@@ -142,6 +61,11 @@ impl RuntimeGameObjectPresentation {
             .unwrap_or_else(|| unreachable!("observed model dependency exists"))
             .1
             .clone();
+        let permit = match cpu.try_reserve() {
+            Ok(permit) => permit,
+            Err(CpuError::AtCapacity { .. }) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
         let dependency = waiting.dependency(cpu.storage(), CpuStorageClass::Required)?;
         let source = if let Some(worker) = self.worker.take() {
             GameObjectWorkerSource::Ready(worker)
@@ -153,35 +77,20 @@ impl RuntimeGameObjectPresentation {
                     .clone(),
             )
         };
-        let ready = dependency.readiness();
-        let mut jobs = vec![DependentWork {
-            source: Some(source),
-            request: request.clone(),
-            dependency,
-            completion: None,
-            budget: solarity_asset::AssetReadBudget::for_service(
-                cpu.storage().clone(),
-                CpuService::Required,
-            ),
-        }];
-        let mut batch = LoadBatch::with_context(CpuService::Required, DependentWork::prepare);
-        if let Err(error) = batch.start_after(cpu, &mut jobs, &[ready]) {
-            let mut work = jobs
-                .pop()
-                .unwrap_or_else(|| unreachable!("admission refusal preserves input"));
-            if let Some(GameObjectWorkerSource::Ready(worker)) = work.source.take() {
-                self.worker = Some(worker);
-            }
-            return match error {
-                CpuError::AtCapacity { .. } => Ok(()),
-                error => Err(error.into()),
-            };
-        }
+        let shared = crate::application::terrain_coordinator::SharedTerrainSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let task = permit.submit_resumable_with_context(super::worker::model_steps(
+            source,
+            GameObjectM2Input::Waiting(dependency),
+            shared,
+        ));
         self.model_wait = None;
         self.pending = Some(PendingGeneration {
             request,
             eligible: true,
-            task: PendingTask::Dependent(Box::new(DependentTask { batch, jobs })),
+            task: PendingTask::Direct(task),
             model_demand: Some(waiting),
         });
         Ok(())

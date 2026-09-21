@@ -191,3 +191,122 @@ fn concurrent_texture_claims_have_one_producer() -> Result<(), Box<dyn Error>> {
     );
     Ok(())
 }
+
+/// Replaying a private builder retains exact failed prefixes and suspends without a worker.
+#[test]
+fn texture_construction_replays_exact_failure_then_shared_source() -> Result<(), Box<dyn Error>> {
+    use solarity_asset::{AssetError, BlpTexturePreparation};
+    use std::{ops::ControlFlow, sync::mpsc, time::Duration};
+    let fixture = fixture()?;
+    let catalog = catalog(&fixture)?;
+    let cpu = pool()?;
+    let key = AssetResourceKey::new(catalog.namespace(), AssetPath::new("Textures/Shared.blp")?);
+    let BlpLoad::Producer(producer) = catalog
+        .texture_cache_service()
+        .request_for(&key, CpuService::Required)
+    else {
+        return Err("producer".into());
+    };
+    let mut reader = AssetStore::mount(catalog.clone())?;
+    let mut cache = BlpTextureCache::new();
+    let mut preparation = BlpTexturePreparation::default();
+    let permit = cpu.try_reserve()?;
+    let service = permit.service_control();
+    let budget = cpu.storage().clone();
+    let mut original = None;
+    let (notice, observed) = mpsc::channel();
+    let task = permit.submit_resumable_with_context(move |_| {
+        let result = preparation.run(
+            &mut cache,
+            &mut reader,
+            &budget,
+            &service,
+            |cache, reader| {
+                let Err(AssetError::TextureRequest(BlpLoadError::Asset(error))) =
+                    cache.load(reader, &AssetPath::new("Textures/Missing.blp")?)
+                else {
+                    panic!("authored failure stays shared");
+                };
+                assert!(!error.is_source_pipeline_error());
+                if let Some(first) = &original {
+                    assert!(Arc::ptr_eq(first, &error));
+                } else {
+                    original = Some(error);
+                }
+                cache.load(reader, key.path())
+            },
+        );
+        match result {
+            Ok(ControlFlow::Continue(edge)) => {
+                let _ = notice.send(());
+                CpuTaskStep::Wait(edge)
+            }
+            Ok(ControlFlow::Break(source)) => CpuTaskStep::Complete(Ok::<_, AssetError>(source)),
+            Err(error) => CpuTaskStep::Complete(Err(error)),
+        }
+    });
+    observed.recv_timeout(Duration::from_secs(5))?;
+    assert!(!task.is_finished());
+    assert_eq!(cpu.try_submit(|| 29)?.join()?, 29);
+    let mut reader = AssetStore::mount(catalog)?;
+    let policy = AssetReadBudget::for_service(cpu.storage().clone(), CpuService::Required);
+    let source = cpu
+        .try_submit(move || producer.load(&mut reader, &policy))?
+        .join()??;
+    let result = task.join()??;
+    assert_eq!(result.decode_mip(0)?.rgba8(), source.decode_mip(0)?.rgba8());
+    Ok(())
+}
+
+/// A dropped producer is a pipeline failure; its consumer can then reuse the cache normally.
+#[test]
+fn texture_construction_abandonment_and_unwind_restore_cache() -> Result<(), Box<dyn Error>> {
+    use solarity_asset::{AssetError, BlpTexturePreparation};
+    use std::ops::ControlFlow;
+    let fixture = fixture()?;
+    let catalog = catalog(&fixture)?;
+    let cpu = pool()?;
+    let permit = cpu.try_reserve()?;
+    let service = permit.service_control();
+    let mut reader = AssetStore::mount(catalog.clone())?;
+    let mut cache = BlpTextureCache::new();
+    let mut preparation = BlpTexturePreparation::default();
+    let key = AssetResourceKey::new(catalog.namespace(), AssetPath::new("Textures/Shared.blp")?);
+    let BlpLoad::Producer(producer) = catalog
+        .texture_cache_service()
+        .request_for(&key, CpuService::Required)
+    else {
+        return Err("producer".into());
+    };
+    let ControlFlow::Continue(edge) = preparation.run(
+        &mut cache,
+        &mut reader,
+        cpu.storage(),
+        &service,
+        |cache, reader| cache.load(reader, key.path()),
+    )?
+    else {
+        return Err("suspension".into());
+    };
+    drop(edge);
+    drop(producer);
+    let Err(error @ AssetError::TextureRequest(BlpLoadError::Abandoned)) = preparation.run(
+        &mut cache,
+        &mut reader,
+        cpu.storage(),
+        &service,
+        |cache, reader| cache.load(reader, key.path()),
+    ) else {
+        return Err("original abandonment".into());
+    };
+    assert!(error.is_source_pipeline_error());
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<ControlFlow<(), _>, AssetError> =
+            preparation.run(&mut cache, &mut reader, cpu.storage(), &service, |_, _| {
+                panic!("private builder panic")
+            });
+    }));
+    assert!(panic.is_err());
+    assert!(cache.load(&mut reader, key.path()).is_ok());
+    Ok(())
+}

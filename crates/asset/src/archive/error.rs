@@ -29,6 +29,12 @@ pub enum AssetPathViolation {
 /// A failure at the public client-asset boundary.
 #[derive(Debug, Error)]
 pub enum AssetError {
+    /// Internal construction suspension; the owning texture preparation retains readiness.
+    #[error("texture construction awaits a shared source")]
+    TexturePending,
+    /// Preserves the exact shared source or producer failure through synchronous builders.
+    #[error(transparent)]
+    TextureRequest(#[from] crate::BlpLoadError),
     /// A source's byte ownership could not be admitted without exceeding its class budget.
     #[error("asset read admission failed for {asset}: {source}")]
     ReadAdmission {
@@ -219,4 +225,22 @@ pub enum AssetError {
         /// Parser or build-12340 structural validation context.
         message: String,
     },
+}
+
+impl AssetError {
+    /// Admission, readiness and producer failures must not become missing-texture fallbacks.
+    #[must_use]
+    pub fn is_source_pipeline_error(&self) -> bool {
+        match self {
+            Self::ReadAdmission { .. }
+            | Self::SourceStorage(_)
+            | Self::SourceStorageConfigured
+            | Self::TexturePending => true,
+            Self::TextureRequest(crate::BlpLoadError::Asset(error)) => {
+                error.is_source_pipeline_error()
+            }
+            Self::TextureRequest(_) => true,
+            _ => false,
+        }
+    }
 }

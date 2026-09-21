@@ -3,7 +3,7 @@ mod state;
 mod world;
 pub(super) use state::{
     GameObjectM2Input, GameObjectWorkerCompletion, GameObjectWorkerSource, GameObjectWorkerState,
-    prepare_on_worker,
+    model_steps,
 };
 pub(super) use world::world_model_steps;
 

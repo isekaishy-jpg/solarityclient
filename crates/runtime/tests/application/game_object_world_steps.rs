@@ -237,3 +237,156 @@ fn withdrawn_world_producer_finishes_joined_root_without_loading_doodads()
     cpu.shutdown()?;
     Ok(())
 }
+
+/// Primary and nested M2 materials suspend on the same BLP producer; terminal paths keep the bank.
+#[test]
+fn model_material_dependencies_preserve_source_failure_and_withdrawal() -> Result<(), Box<dyn Error>>
+{
+    use crate::application::terrain_coordinator::m2_residency::ResidentM2Texture;
+    use solarity_asset::{AssetReadBudget, BlpLoad, BlpLoadError};
+    use std::time::Duration;
+    for world_model in [false, true] {
+        for outcome in 0..3 {
+            let mut model = game_object_models::model_with_animations(&[0])?;
+            let texture = u32::from_le_bytes(model[0x54..0x58].try_into()?) as usize;
+            let path = b"Textures/Shared.blp\0";
+            let offset = model.len() as u32;
+            model[texture + 8..texture + 12].copy_from_slice(&(path.len() as u32).to_le_bytes());
+            model[texture + 12..texture + 16].copy_from_slice(&offset.to_le_bytes());
+            model.extend_from_slice(path);
+            let fixture = ClientFixture::with_common_files(&[
+                ("World/Attached.wmo", &game_object_world_models::root()),
+                ("World/Attached_000.wmo", &game_object_world_models::group()),
+                ("World/GameObject.m2", &model),
+                ("World/GameObject00.skin", &game_object_models::skin()?),
+                (
+                    "Textures/Shared.blp",
+                    &crate::test_support::bootstrap_texture_blp(),
+                ),
+            ])?;
+            let catalog =
+                ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+            let BlpLoad::Producer(producer) = catalog.texture_cache_service().request_for(
+                &AssetResourceKey::new(catalog.namespace(), AssetPath::new("Textures/Shared.blp")?),
+                CpuService::Required,
+            ) else {
+                return Err("texture producer".into());
+            };
+            let mut producer = Some(producer);
+            let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+                CpuExecutionPlan::new(0, 1, 1, 1)?,
+                NonZeroUsize::new(3).ok_or("capacity")?,
+                CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+            ))?;
+            let permit = cpu.try_reserve()?;
+            let shared = SharedTerrainSources {
+                budget: cpu.storage().clone(),
+                service: permit.service_control(),
+            };
+            let source = GameObjectWorkerSource::Ready(Box::new(
+                super::GameObjectWorkerState::mount(catalog.clone())?,
+            ));
+            let bank_address = match &source {
+                GameObjectWorkerSource::Ready(bank) => std::ptr::from_ref(bank.as_ref()) as usize,
+                _ => unreachable!(),
+            };
+            let (notice, observed) = mpsc::channel();
+            let task = if world_model {
+                let mut steps = world_model_steps(
+                    source,
+                    ResourceRequest {
+                        kind: RuntimeGameObjectResourceKind::WorldModel,
+                        path: AssetPath::new("World/Attached.wmo")?,
+                    },
+                    shared,
+                );
+                permit.submit_resumable_with_context(move |context| {
+                    let next = steps(context);
+                    if matches!(next, CpuTaskStep::Wait(_)) {
+                        let _ = notice.send(());
+                    }
+                    next
+                })
+            } else {
+                let M2Load::Producer(primary) =
+                    catalog
+                        .model_cache_service()
+                        .request(&AssetResourceKey::new(
+                            catalog.namespace(),
+                            AssetPath::new("World/GameObject.m2")?,
+                        ))?
+                else {
+                    return Err("primary producer".into());
+                };
+                let mut steps =
+                    super::model_steps(source, super::GameObjectM2Input::Producer(primary), shared);
+                permit.submit_resumable_with_context(move |context| {
+                    let next = steps(context);
+                    if matches!(next, CpuTaskStep::Wait(_)) {
+                        let _ = notice.send(());
+                    }
+                    next
+                })
+            };
+            observed.recv_timeout(Duration::from_secs(5))?;
+            assert!(!task.is_finished());
+            assert_eq!(cpu.try_submit(|| 31)?.join()?, 31);
+            match outcome {
+                0 => {
+                    let mut reader = AssetStore::mount(catalog)?;
+                    let policy =
+                        AssetReadBudget::for_service(cpu.storage().clone(), CpuService::Required);
+                    let producer = producer.take().ok_or("producer retained")?;
+                    cpu.try_submit(move || producer.load(&mut reader, &policy))?
+                        .join()??;
+                }
+                1 => {
+                    drop(producer.take());
+                }
+                _ => task.cancel(),
+            }
+            let completion = task.join()?;
+            assert_eq!(
+                std::ptr::from_ref(completion.worker.as_deref().ok_or("bank retained")?) as usize,
+                bank_address
+            );
+            match outcome {
+                0 => match completion.result? {
+                    GameObjectResource::M2(source) => assert!(matches!(
+                        source.textures(),
+                        [ResidentM2Texture::Authored(_)]
+                    )),
+                    GameObjectResource::WorldModel(source) => {
+                        assert_eq!(
+                            source.doodads().iter().map(|d| d.index).collect::<Vec<_>>(),
+                            [1, 0]
+                        );
+                        for doodad in source.doodads() {
+                            assert!(matches!(
+                                doodad.source.textures(),
+                                [ResidentM2Texture::Authored(_)]
+                            ));
+                        }
+                    }
+                },
+                1 => assert!(matches!(
+                    completion.result,
+                    Err(super::super::RuntimeGameObjectError::Resource(
+                        crate::application::RuntimeTerrainError::Asset(
+                            solarity_asset::AssetError::TextureRequest(BlpLoadError::Abandoned)
+                        )
+                    ))
+                )),
+                _ => assert!(matches!(
+                    completion.result,
+                    Err(super::super::RuntimeGameObjectError::Cpu(
+                        solarity_cpu::CpuError::JobCancelled
+                    ))
+                )),
+            }
+            drop(producer);
+            cpu.shutdown()?;
+        }
+    }
+    Ok(())
+}

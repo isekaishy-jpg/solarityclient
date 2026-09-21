@@ -14,6 +14,7 @@ use crate::{AssetError, AssetPath, AssetResourceKey, AssetStore, BlpTextureSourc
 pub struct BlpTextureCache {
     textures: HashMap<AssetResourceKey, Arc<BlpTextureSource>>,
     services: HashMap<crate::AssetNamespaceId, crate::BlpCacheService>,
+    pub(super) preparation: Option<super::blp_preparation::SourceTurn>,
 }
 
 impl BlpTextureCache {
@@ -55,6 +56,9 @@ impl BlpTextureCache {
             return Ok(Arc::clone(texture));
         }
 
+        if self.preparation.is_some() {
+            return super::blp_preparation::load(self, store, key);
+        }
         let service = store.texture_cache_service().clone();
         let texture = match service.ready(&key) {
             Some(texture) => texture,

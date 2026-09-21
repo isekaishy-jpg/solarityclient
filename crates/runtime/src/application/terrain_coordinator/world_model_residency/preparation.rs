@@ -82,6 +82,8 @@ struct ActivePlacement {
     doodads: Vec<usize>,
     next: usize,
     pending: Option<M2LoadDependency>,
+    model: Option<ResourceLease<solarity_asset::DecodedM2Model>>,
+    materials: solarity_asset::BlpTexturePreparation,
 }
 
 /// Whole WMO membership is private until all authored placements and nested
@@ -91,6 +93,7 @@ pub(in super::super) struct WorldModelPreparation {
     next: usize,
     active: Option<ActivePlacement>,
     pending_root: Option<super::super::PendingWorldModel>,
+    pending_source: Option<super::WorldModelSourcePreparation>,
     result: ResidentWorldModelScene,
     collision: WorldModelCollisionScene,
     liquids: WorldModelLiquidScene,
@@ -130,6 +133,7 @@ impl WorldModelPreparation {
             next: 0,
             active: None,
             pending_root: None,
+            pending_source: None,
             result: ResidentWorldModelScene::default(),
             collision: WorldModelCollisionScene::new(),
             liquids: WorldModelLiquidScene::new(),
@@ -161,19 +165,39 @@ impl WorldModelPreparation {
             if let Some(&doodad_index) = active.doodads.get(active.next) {
                 let doodad = &source.model().doodads()[doodad_index];
                 if let Some(shared) = shared {
-                    match shared.model(doodad.path(), &mut active.pending, store)? {
-                        ControlFlow::Break(model) => m2_builder.add_world_model_doodad_model(
-                            placement,
-                            doodad_index,
-                            doodad,
-                            model,
-                            texture_cache,
-                            store,
-                        )?,
-                        ControlFlow::Continue(dependency) => {
-                            *suspension = Some(dependency);
+                    if active.model.is_none() {
+                        match shared.model(doodad.path(), &mut active.pending, store)? {
+                            ControlFlow::Break(model) => active.model = Some(model),
+                            ControlFlow::Continue(edge) => {
+                                *suspension = Some(edge);
+                                return Ok(false);
+                            }
+                        }
+                    }
+                    let model = active
+                        .model
+                        .as_ref()
+                        .unwrap_or_else(|| unreachable!("MODD material inputs remain owned"));
+                    match shared.materials(
+                        &mut active.materials,
+                        texture_cache,
+                        store,
+                        |textures, store| {
+                            m2_builder.add_world_model_doodad_model(
+                                placement,
+                                doodad_index,
+                                doodad,
+                                model.clone(),
+                                textures,
+                                store,
+                            )
+                        },
+                    )? {
+                        ControlFlow::Continue(edge) => {
+                            *suspension = Some(edge);
                             return Ok(false);
                         }
+                        ControlFlow::Break(()) => active.model = None,
                     }
                 } else {
                     m2_builder.add_world_model_doodad(
@@ -213,21 +237,35 @@ impl WorldModelPreparation {
         } else {
             let index = self.result.sources.len();
             let source = if let Some(shared) = shared {
-                let model =
-                    match shared.world_model(placement.path(), &mut self.pending_root, store)? {
+                if self.pending_source.is_none() {
+                    let model = match shared.world_model(
+                        placement.path(),
+                        &mut self.pending_root,
+                        store,
+                    )? {
                         ControlFlow::Break(model) => model,
-                        ControlFlow::Continue(dependency) => {
-                            *suspension = dependency;
+                        ControlFlow::Continue(edge) => {
+                            *suspension = edge;
                             return Ok(false);
                         }
                     };
-                ResidentWorldModelSource::from_model(
-                    model,
-                    model_cache,
-                    texture_cache,
-                    liquid_assets,
-                    store,
-                )?
+                    self.pending_source =
+                        Some(super::WorldModelSourcePreparation::new(model, model_cache)?);
+                }
+                let pending = self
+                    .pending_source
+                    .as_mut()
+                    .unwrap_or_else(|| unreachable!("WMO material inputs remain owned"));
+                match pending.step(shared, texture_cache, liquid_assets, store)? {
+                    ControlFlow::Continue(edge) => {
+                        *suspension = Some(edge);
+                        return Ok(false);
+                    }
+                    ControlFlow::Break(source) => {
+                        self.pending_source = None;
+                        source
+                    }
+                }
             } else {
                 ResidentWorldModelSource::load(
                     placement.path(),
@@ -274,6 +312,8 @@ impl WorldModelPreparation {
             doodads,
             next: 0,
             pending: None,
+            model: None,
+            materials: Default::default(),
         });
         Ok(false)
     }

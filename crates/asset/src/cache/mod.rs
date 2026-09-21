@@ -7,11 +7,13 @@ mod resource;
 mod source_dependency;
 mod types;
 
+mod blp_preparation;
 mod blp_requests;
 mod blp_texture;
 mod m2_model;
 mod wmo_model;
 
+pub use blp_preparation::BlpTexturePreparation;
 pub use blp_requests::{
     BlpCacheService, BlpLoad, BlpLoadDependency, BlpLoadError, BlpLoadProducer, BlpLoadRequest,
 };

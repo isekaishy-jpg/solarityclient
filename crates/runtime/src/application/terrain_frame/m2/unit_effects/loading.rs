@@ -5,7 +5,7 @@ use crate::application::RuntimeTerrainError;
 use crate::application::terrain_coordinator::SharedTerrainSources;
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use solarity_asset::{
-    AssetError, AssetPath, AssetStore, BlpTextureCache, DecodedM2Model, EnvironmentalDamageCatalog,
+    AssetPath, AssetStore, BlpTextureCache, DecodedM2Model, EnvironmentalDamageCatalog,
     M2LoadDependency, M2LoadError, ResourceLease, SpellVisualEffectCatalog,
     SpellVisualEffectDefinition,
 };
@@ -21,6 +21,7 @@ pub(in crate::application) struct UnitEffectPreparation {
     pending: Option<M2LoadDependency>,
     model: Option<ResourceLease<DecodedM2Model>>,
     textures: BlpTextureCache,
+    materials: solarity_asset::BlpTexturePreparation,
     effects: PreparedUnitEffects,
 }
 
@@ -74,6 +75,7 @@ impl UnitEffectPreparation {
             pending: None,
             model: None,
             textures: BlpTextureCache::new(),
+            materials: Default::default(),
             effects,
         })
     }
@@ -93,14 +95,22 @@ impl UnitEffectPreparation {
             self.next += 1;
             return Ok(ControlFlow::Continue(None));
         };
-        if let Some(model) = self.model.take() {
-            match ResidentM2Source::from_model_with_lights(
-                model,
+        if let Some(model) = self.model.as_ref() {
+            match shared.materials(
+                &mut self.materials,
                 &mut self.textures,
                 store,
-                solarity_rendering::M2LocalLightCount::Four,
+                |textures, store| {
+                    ResidentM2Source::from_model_with_lights(
+                        model.clone(),
+                        textures,
+                        store,
+                        solarity_rendering::M2LocalLightCount::Four,
+                    )
+                },
             ) {
-                Ok(source) => self.effects.push(Some(ResidentUnitEffect {
+                Ok(ControlFlow::Continue(edge)) => return Ok(ControlFlow::Continue(Some(edge))),
+                Ok(ControlFlow::Break(source)) => self.effects.push(Some(ResidentUnitEffect {
                     kind: *kind,
                     definition: definition.clone(),
                     source,
@@ -108,6 +118,7 @@ impl UnitEffectPreparation {
                 Err(error) if !pipeline_failure(&error) => failed(definition, &path, &error),
                 Err(error) => return Err(error),
             }
+            self.model = None;
             self.next += 1;
             return Ok(ControlFlow::Continue(None));
         }
@@ -137,12 +148,7 @@ fn pipeline_failure(error: &RuntimeTerrainError) -> bool {
         RuntimeTerrainError::Cpu(_) | RuntimeTerrainError::SharedModel(_) => return true,
         _ => return false,
     };
-    matches!(
-        asset,
-        AssetError::ReadAdmission { .. }
-            | AssetError::SourceStorage(_)
-            | AssetError::SourceStorageConfigured
-    )
+    asset.is_source_pipeline_error()
 }
 
 /// The layer that omits a failed authored effect owns its existing diagnostic.

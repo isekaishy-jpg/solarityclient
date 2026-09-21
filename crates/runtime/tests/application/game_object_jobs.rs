@@ -236,8 +236,17 @@ fn game_object_source_wait_survives_world_withdrawal_without_blocking_a_worker()
     // the independently owned source producer. A replacement lifetime can rejoin.
     world.remove_object(20)?;
     owner.synchronize_async(Some(&world), &cpu)?;
-    assert!(owner.pending.is_none());
     assert!(owner.instances.is_empty());
+    // Resumable cancellation returns the bank on a retirement turn. It must
+    // finish while the independent source producer is still unpublished.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while owner.pending.is_some() {
+        if Instant::now() >= deadline {
+            return Err("withdrawn source consumer did not return its bank".into());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+        owner.synchronize_async(Some(&world), &cpu)?;
+    }
     assert_eq!(cpu.snapshot()?.in_flight(), 0);
     create_shared_model_object(&mut world)?;
     owner.synchronize_async(Some(&world), &cpu)?;

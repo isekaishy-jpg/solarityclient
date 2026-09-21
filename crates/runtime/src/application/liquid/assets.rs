@@ -251,6 +251,7 @@ impl LiquidAssetCache {
             let path = AssetPath::new(surface.replace("%d", &ordinal.to_string()))?;
             surfaces.push(match textures.load(store, &path) {
                 Ok(source) => ResidentLiquidSurface::Authored(source),
+                Err(error) if error.is_source_pipeline_error() => return Err(error.into()),
                 Err(error) => {
                     // Stock retains the failed ordinal in its 30-entry bank.
                     // For example, owned fast_a.17.blp is absent in build 12340.

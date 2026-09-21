@@ -18,6 +18,11 @@ struct Preparation {
     root: Option<ResidentWorldModelSource>,
     pending_root: Option<crate::application::terrain_coordinator::PendingWorldModel>,
     pending_doodad: Option<M2LoadDependency>,
+    pending_source: Option<
+        crate::application::terrain_coordinator::world_model_residency::WorldModelSourcePreparation,
+    >,
+    model: Option<solarity_asset::ResourceLease<solarity_asset::DecodedM2Model>>,
+    materials: solarity_asset::BlpTexturePreparation,
     indices: Vec<usize>,
     sources: HashMap<AssetPath, Arc<ResidentM2Source>>,
     doodads: Vec<GameObjectWorldModelDoodad>,
@@ -35,21 +40,31 @@ impl Preparation {
         RuntimeTerrainError,
     > {
         if self.root.is_none() {
-            let model = match shared.world_model(
-                &request.path,
-                &mut self.pending_root,
-                &mut worker.assets,
-            )? {
-                ControlFlow::Break(model) => model,
-                ControlFlow::Continue(edge) => return Ok(ControlFlow::Continue(edge)),
+            if self.pending_source.is_none() {
+                let model = match shared.world_model(
+                    &request.path,
+                    &mut self.pending_root,
+                    &mut worker.assets,
+                )? {
+                    ControlFlow::Break(model) => model,
+                    ControlFlow::Continue(edge) => return Ok(ControlFlow::Continue(edge)),
+                };
+                self.pending_source = Some(crate::application::terrain_coordinator::world_model_residency::WorldModelSourcePreparation::new(model, &mut worker.world_models)?);
+            }
+            let root = match self
+                .pending_source
+                .as_mut()
+                .unwrap_or_else(|| unreachable!("WMO material inputs remain owned"))
+                .step(
+                    shared,
+                    &mut worker.textures,
+                    &mut worker.liquid_assets,
+                    &mut worker.assets,
+                )? {
+                ControlFlow::Break(source) => source,
+                ControlFlow::Continue(edge) => return Ok(ControlFlow::Continue(Some(edge))),
             };
-            let root = ResidentWorldModelSource::from_model(
-                model,
-                &mut worker.world_models,
-                &mut worker.textures,
-                &mut worker.liquid_assets,
-                &mut worker.assets,
-            )?;
+            self.pending_source = None;
             self.indices = root.model().referenced_active_doodad_indices(0)?;
             self.root = Some(root);
             return Ok(ControlFlow::Continue(None));
@@ -72,17 +87,33 @@ impl Preparation {
         let source = if let Some(source) = self.sources.get(doodad.path()) {
             Arc::clone(source)
         } else {
-            let model =
+            if self.model.is_none() {
                 match shared.model(doodad.path(), &mut self.pending_doodad, &mut worker.assets)? {
-                    ControlFlow::Break(model) => model,
+                    ControlFlow::Break(model) => self.model = Some(model),
                     ControlFlow::Continue(edge) => return Ok(ControlFlow::Continue(Some(edge))),
-                };
-            let source = Arc::new(ResidentM2Source::from_model_with_lights(
-                model,
+                }
+            }
+            let model = self
+                .model
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("MODD material inputs remain owned"));
+            let source = match shared.materials(
+                &mut self.materials,
                 &mut worker.textures,
                 &mut worker.assets,
-                solarity_rendering::M2LocalLightCount::Four,
-            )?);
+                |textures, store| {
+                    ResidentM2Source::from_model_with_lights(
+                        model.clone(),
+                        textures,
+                        store,
+                        solarity_rendering::M2LocalLightCount::Four,
+                    )
+                },
+            )? {
+                ControlFlow::Break(source) => Arc::new(source),
+                ControlFlow::Continue(edge) => return Ok(ControlFlow::Continue(Some(edge))),
+            };
+            self.model = None;
             self.sources
                 .insert(doodad.path().clone(), Arc::clone(&source));
             source

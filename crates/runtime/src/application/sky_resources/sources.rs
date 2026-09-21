@@ -56,6 +56,14 @@ impl ModelRequest {
                     SkyM2Model::new(source, self.created_tick)
                 })),
                 Err(RuntimeTerrainError::Cpu(error)) => Err(error.into()),
+                Err(RuntimeTerrainError::Asset(error)) if error.is_source_pipeline_error() => {
+                    Err(M2LoadError::Asset(Arc::new(error)).into())
+                }
+                Err(RuntimeTerrainError::SharedModel(M2LoadError::Asset(error)))
+                    if error.is_source_pipeline_error() =>
+                {
+                    Err(M2LoadError::Asset(error).into())
+                }
                 Err(RuntimeTerrainError::SharedModel(error))
                     if !matches!(error, M2LoadError::Asset(_)) =>
                 {
@@ -96,26 +104,32 @@ fn model_steps(
     let mut pending = None;
     let mut model: Option<solarity_asset::ResourceLease<solarity_asset::DecodedM2Model>> = None;
     let mut textures = BlpTextureCache::new();
+    let mut materials = solarity_asset::BlpTexturePreparation::default();
     let mut operation =
         crate::application::archive_job::prepare_archive_resumable(catalog, move |store| {
-            if let Some(model) = model.take() {
+            if let Some(model) = model.as_ref() {
                 let lights = if authored_lights {
-                    light_count(&model)
+                    light_count(model)
                 } else {
                     M2LocalLightCount::Zero
                 };
-                return CpuTaskStep::Complete(
-                    store
-                        .with_read_budget(&shared.read_budget(), |store| {
-                            ResidentM2Source::from_model_with_lights(
-                                model,
-                                &mut textures,
-                                store,
-                                lights,
-                            )
-                        })
-                        .map(|source| (source, lights)),
-                );
+                return match shared.materials(
+                    &mut materials,
+                    &mut textures,
+                    store,
+                    |textures, store| {
+                        ResidentM2Source::from_model_with_lights(
+                            model.clone(),
+                            textures,
+                            store,
+                            lights,
+                        )
+                    },
+                ) {
+                    Ok(ControlFlow::Continue(edge)) => CpuTaskStep::Wait(edge),
+                    Ok(ControlFlow::Break(source)) => CpuTaskStep::Complete(Ok((source, lights))),
+                    Err(error) => CpuTaskStep::Complete(Err(error)),
+                };
             }
             match shared.model(&path, &mut pending, store) {
                 Ok(ControlFlow::Break(source)) => {
@@ -201,6 +215,10 @@ impl RuntimeSkyResources {
                             Ok(ControlFlow::Continue(edge)) => return CpuTaskStep::Wait(edge),
                             Ok(ControlFlow::Break(source)) => sources[next] = Some(source),
                             Err(error) => {
+                                let error = AssetError::TextureRequest(error);
+                                if error.is_source_pipeline_error() {
+                                    return CpuTaskStep::Complete(Err(error));
+                                }
                                 tracing::warn!(texture = %path, %error, "celestial texture request failed; using stock green texture")
                             }
                         }
@@ -228,6 +246,9 @@ impl RuntimeSkyResources {
                     Ok(sources) => {
                         self.sources = sources;
                         self.textures = [None; 5];
+                    }
+                    Err(error) if error.is_source_pipeline_error() => {
+                        return Err(M2LoadError::Asset(Arc::new(error)).into());
                     }
                     Err(error) => {
                         tracing::warn!(%error, "celestial archive request failed; using stock green textures")

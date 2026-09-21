@@ -13,6 +13,7 @@ pub(in super::super) struct GroundDetailPreparation {
     ids: Vec<u32>,
     next: usize,
     pending: Option<M2LoadDependency>,
+    pending_texture: Option<solarity_asset::BlpLoadDependency>,
     resident: ResidentGroundDetailTile,
 }
 impl GroundDetailAssetCache {
@@ -34,6 +35,7 @@ impl GroundDetailAssetCache {
                 ids: Vec::new(),
                 next: 0,
                 pending: None,
+                pending_texture: None,
                 resident: ResidentGroundDetailTile::default(),
             });
         }
@@ -57,6 +59,7 @@ impl GroundDetailAssetCache {
             ids,
             next: 0,
             pending: None,
+            pending_texture: None,
             resident: ResidentGroundDetailTile {
                 catalog: Some(catalog),
                 ..Default::default()
@@ -105,10 +108,20 @@ impl GroundDetailPreparation {
             .get(&id)
             .ok_or(GroundDetailError::MissingDoodad(id))?;
         if !self.resident.textures.contains_key(model.texture()) {
-            self.resident.textures.insert(
-                model.texture().clone(),
-                textures.load(store, model.texture())?,
-            );
+            let source = if let Some(shared) = shared {
+                match shared.texture(model.texture(), &mut self.pending_texture, store, textures)? {
+                    ControlFlow::Break(source) => source,
+                    ControlFlow::Continue(edge) => {
+                        *suspension = Some(edge);
+                        return Ok(false);
+                    }
+                }
+            } else {
+                textures.load(store, model.texture())?
+            };
+            self.resident
+                .textures
+                .insert(model.texture().clone(), source);
         }
         self.resident.models.insert(id, Arc::clone(model));
         self.next += 1;

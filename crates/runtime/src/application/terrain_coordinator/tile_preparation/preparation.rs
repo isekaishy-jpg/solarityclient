@@ -48,7 +48,7 @@ enum TileStage {
     Collision(TileSurface),
     Liquid(TileSurface, TerrainCollisionMesh),
     LiquidAssets(TileSurface, TerrainCollisionMesh, TerrainLiquidMesh),
-    Doodads(Box<TileInputs>, ResidentM2SceneBuilder, DoodadCursor),
+    Doodads(Box<TileInputs>, ResidentM2SceneBuilder, Box<DoodadCursor>),
     WorldModels(
         Box<TileInputs>,
         ResidentM2SceneBuilder,
@@ -64,6 +64,7 @@ pub(in super::super) struct TilePreparation {
     shared: Option<SharedTerrainSources>,
     suspension: Option<solarity_cpu::CpuTaskDependency>,
     pending_texture: Option<solarity_asset::BlpLoadDependency>,
+    liquid_materials: solarity_asset::BlpTexturePreparation,
 }
 
 impl TilePreparation {
@@ -85,6 +86,7 @@ impl TilePreparation {
             shared: None,
             suspension: None,
             pending_texture: None,
+            liquid_materials: Default::default(),
         })
     }
 
@@ -189,8 +191,25 @@ impl TilePreparation {
                 TileStage::LiquidAssets(surface, collision, TerrainLiquidMesh::prepare(tile)?)
             }
             TileStage::LiquidAssets(surface, collision, liquid) => {
-                let liquid_batches =
-                    prepare_terrain_liquids(tile, liquid_assets, texture_cache, store)?;
+                let liquid_batches = if let Some(shared) = &self.shared {
+                    match shared.materials(
+                        &mut self.liquid_materials,
+                        texture_cache,
+                        store,
+                        |textures, store| {
+                            prepare_terrain_liquids(tile, liquid_assets, textures, store)
+                        },
+                    )? {
+                        ControlFlow::Break(batches) => batches,
+                        ControlFlow::Continue(edge) => {
+                            self.suspension = Some(edge);
+                            self.stage = Some(TileStage::LiquidAssets(surface, collision, liquid));
+                            return Ok(ControlFlow::Continue(self));
+                        }
+                    }
+                } else {
+                    prepare_terrain_liquids(tile, liquid_assets, texture_cache, store)?
+                };
                 TileStage::Doodads(
                     Box::new(TileInputs {
                         surface,
@@ -199,7 +218,7 @@ impl TilePreparation {
                         liquid_batches,
                     }),
                     ResidentM2SceneBuilder::new(),
-                    DoodadCursor::new(tile),
+                    Box::new(DoodadCursor::new(tile)),
                 )
             }
             TileStage::Doodads(inputs, mut builder, mut cursor) => {

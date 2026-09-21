@@ -32,18 +32,6 @@ impl ResidentWorldModelSource {
         Self::from_prepared(model, plan, texture_cache, liquid_assets, store)
     }
 
-    /// Consumes the exact shared root/group result before preparing its materials and liquids.
-    pub(in crate::application) fn from_model(
-        model: ResourceLease<DecodedWorldModel>,
-        model_cache: &mut ResidentWorldModelCache,
-        texture_cache: &mut BlpTextureCache,
-        liquid_assets: &mut LiquidAssetCache,
-        store: &mut AssetStore,
-    ) -> Result<Self, RuntimeTerrainError> {
-        let (model, plan) = model_cache.prepare_model(model)?;
-        Self::from_prepared(model, plan, texture_cache, liquid_assets, store)
-    }
-
     /// Texture/liquid order remains identical for synchronous and dependency-driven loading.
     fn from_prepared(
         model: ResourceLease<DecodedWorldModel>,
@@ -80,5 +68,45 @@ impl ResidentWorldModelSource {
     /// Returns material stages in exact MOMT table order.
     pub(in crate::application) fn materials(&self) -> &[ResidentWorldModelMaterialTextures] {
         &self.materials
+    }
+}
+
+/// Retains the weak-cache geometry plan while ordered material sources suspend.
+pub(in crate::application) struct WorldModelSourcePreparation {
+    model: ResourceLease<DecodedWorldModel>,
+    plan: Arc<WorldModelMeshPlan>,
+    materials: solarity_asset::BlpTexturePreparation,
+}
+impl WorldModelSourcePreparation {
+    pub(in crate::application) fn new(
+        model: ResourceLease<DecodedWorldModel>,
+        cache: &mut ResidentWorldModelCache,
+    ) -> Result<Self, RuntimeTerrainError> {
+        let (model, plan) = cache.prepare_model(model)?;
+        Ok(Self {
+            model,
+            plan,
+            materials: Default::default(),
+        })
+    }
+    pub(in crate::application) fn step(
+        &mut self,
+        shared: &super::super::SharedTerrainSources,
+        textures: &mut BlpTextureCache,
+        liquids: &mut LiquidAssetCache,
+        store: &mut AssetStore,
+    ) -> Result<
+        std::ops::ControlFlow<ResidentWorldModelSource, solarity_cpu::CpuTaskDependency>,
+        RuntimeTerrainError,
+    > {
+        shared.materials(&mut self.materials, textures, store, |textures, store| {
+            ResidentWorldModelSource::from_prepared(
+                self.model.clone(),
+                Arc::clone(&self.plan),
+                textures,
+                liquids,
+                store,
+            )
+        })
     }
 }

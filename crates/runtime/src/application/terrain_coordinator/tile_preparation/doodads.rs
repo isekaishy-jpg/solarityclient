@@ -12,6 +12,11 @@ pub(super) struct DoodadCursor {
     next: usize,
     placements: HashMap<u32, usize>,
     pending: Option<(usize, solarity_asset::M2LoadDependency)>,
+    model: Option<(
+        usize,
+        solarity_asset::ResourceLease<solarity_asset::DecodedM2Model>,
+    )>,
+    materials: solarity_asset::BlpTexturePreparation,
 }
 
 impl DoodadCursor {
@@ -30,6 +35,8 @@ impl DoodadCursor {
             next: 0,
             placements: HashMap::new(),
             pending: None,
+            model: None,
+            materials: Default::default(),
         }
     }
 
@@ -51,7 +58,25 @@ impl DoodadCursor {
             let model = dependency.poll().unwrap_or_else(|| {
                 unreachable!("terrain source consumption follows dependency readiness")
             })?;
-            builder.add_terrain_doodad_model(&tile.doodads()[index], model, textures, store)?;
+            self.model = Some((index, model));
+        }
+        if let Some((index, model)) = self.model.as_ref() {
+            let shared = shared
+                .unwrap_or_else(|| unreachable!("shared material work retains its source service"));
+            match shared.materials(&mut self.materials, textures, store, |textures, store| {
+                builder.add_terrain_doodad_model(
+                    &tile.doodads()[*index],
+                    model.clone(),
+                    textures,
+                    store,
+                )
+            })? {
+                std::ops::ControlFlow::Continue(edge) => {
+                    *suspension = Some(edge);
+                    return Ok(false);
+                }
+                std::ops::ControlFlow::Break(()) => self.model = None,
+            }
             return Ok(self.next == tile.doodads().len());
         }
         while self.next < tile.doodads().len() {
@@ -83,7 +108,8 @@ impl DoodadCursor {
                             return Ok(false);
                         }
                     };
-                    builder.add_terrain_doodad_model(placement, model, textures, store)?;
+                    self.model = Some((index, model));
+                    return Ok(false);
                 } else {
                     builder.add_terrain_doodad(placement, models, textures, store)?;
                 }
