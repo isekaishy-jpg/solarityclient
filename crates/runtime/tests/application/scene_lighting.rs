@@ -413,6 +413,7 @@ fn verify_scene_pose_batch(
 ) -> Result<(), Box<dyn Error>> {
     use crate::application::frame_pipeline::FrameWait;
     use solarity_rendering::M2BoneTransforms;
+    sky::tests::verify_worker_batch(cpu, source)?;
     let mut poses = preparation::poses::ScenePoses::default();
     let mut wait = FrameWait::Offline;
     let view = Mat4::from_rotation_z(0.3);

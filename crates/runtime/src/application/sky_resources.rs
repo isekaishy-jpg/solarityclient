@@ -12,7 +12,7 @@ mod tests;
 
 use super::terrain_coordinator::m2_residency::ResidentM2Source;
 use super::terrain_frame::RuntimeTerrainFrameError;
-use super::terrain_frame::m2::sky::{SkyM2Model, sky_scene};
+use super::terrain_frame::m2::sky::{SkyBatch, SkyM2Model, sky_scene};
 use solarity_asset::{
     ArchiveCatalog, AssetError, AssetPath, BlpTextureCache, BlpTextureSource, LightCatalog,
     LightSkybox,
@@ -39,6 +39,7 @@ pub(super) struct RuntimeSkyResources {
     names: HashMap<String, Option<usize>>,
     bones: Vec<glam::Mat4>,
     skybox_draws: [Vec<M2PreparedDraw>; 4],
+    preparation: SkyBatch,
 }
 
 /// One canonical path owns its first phase flags even across name aliases.
@@ -96,6 +97,7 @@ impl RuntimeSkyResources {
             names: HashMap::new(),
             bones: Vec::new(),
             skybox_draws: std::array::from_fn(|_| Vec::new()),
+            preparation: SkyBatch::default(),
         })
     }
 
@@ -104,6 +106,7 @@ impl RuntimeSkyResources {
     pub(super) fn prepare_models(
         &mut self,
         cpu: &CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         renderer: &mut VulkanRenderer,
         camera: solarity_rendering::WorldCameraFrame,
         time_ms: u32,
@@ -115,6 +118,7 @@ impl RuntimeSkyResources {
     ) -> Result<(bool, solarity_rendering::WorldSkyModelFrame<'_>), RuntimeTerrainFrameError> {
         self.prepare_model_input(
             cpu,
+            wait,
             renderer,
             camera,
             time_ms,
@@ -142,6 +146,7 @@ impl RuntimeSkyResources {
     fn prepare_model_input(
         &mut self,
         cpu: &CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         renderer: &mut VulkanRenderer,
         camera: solarity_rendering::WorldCameraFrame,
         time_ms: u32,
@@ -178,63 +183,91 @@ impl RuntimeSkyResources {
         } else {
             0
         };
-        let bone_offset = u32::try_from(world_bone_count)
-            .map_err(|_| solarity_rendering::VulkanError::M2BoneTransformRange)?;
-        if let Some(stars) = &mut self.stars {
-            stars.prepare(
-                renderer,
-                camera,
-                time_ms,
-                if alpha > 1 {
-                    f32::from(alpha) * (1. / 255.)
-                } else {
-                    0.
-                },
-                bone_offset,
-                &self.animations,
-                random,
-            )?;
-        }
-        self.bones.clear();
-        self.bones
-            .extend_from_slice(self.stars.as_ref().map_or(&[], SkyM2Model::bones));
-        for entry in &mut self.skyboxes {
-            if let Some(model) = &mut entry.model {
-                model.advance(time_ms, &self.animations, random)?;
+        let preparation_result = (|| -> Result<(), RuntimeTerrainFrameError> {
+            for job in &mut self.preparation.jobs {
+                job.reset();
             }
-        }
-        for slot in slots {
-            if let Some(index) = slot.model {
-                let entry = &mut self.skyboxes[index];
-                if let Some(model) = &mut entry.model
-                    && let Some((offset, speed)) =
-                        entry
-                            .phase
-                            .update(true, model.primary_span(), input.realm_minute)
-                {
-                    model.synchronize_phase(offset, speed, time_ms, &self.animations, random)?;
+            let star_opacity = if alpha > 1 {
+                f32::from(alpha) * (1. / 255.)
+            } else {
+                0.
+            };
+            if let Some(stars) = &mut self.stars {
+                if star_opacity > 0. {
+                    stars.advance(time_ms, &self.animations, random)?;
+                }
+                stars.seed(
+                    renderer,
+                    camera,
+                    star_opacity,
+                    &mut self.preparation.jobs[0],
+                )?;
+            }
+            for entry in &mut self.skyboxes {
+                if let Some(model) = &mut entry.model {
+                    model.advance(time_ms, &self.animations, random)?;
                 }
             }
-        }
-        let mut scenes = [sky_scene(camera); 4];
-        for (slot_index, slot) in slots.into_iter().enumerate() {
-            self.skybox_draws[slot_index].clear();
-            // Readiness controls default-sky suppression separately. A resident
-            // owner at full global weight suppresses ordinary model submissions.
-            if !skybox::admits_slot(slot_index, global) {
-                continue;
+            for slot in slots {
+                if let Some(index) = slot.model {
+                    let entry = &mut self.skyboxes[index];
+                    if let Some(model) = &mut entry.model
+                        && let Some((offset, speed)) =
+                            entry
+                                .phase
+                                .update(true, model.primary_span(), input.realm_minute)
+                    {
+                        model.synchronize_phase(
+                            offset,
+                            speed,
+                            time_ms,
+                            &self.animations,
+                            random,
+                        )?;
+                    }
+                }
             }
-            if let Some(index) = slot.model
-                && let Some(model) = &mut self.skyboxes[index].model
-            {
-                let offset = world_bone_count
-                    .checked_add(self.bones.len())
-                    .and_then(|value| u32::try_from(value).ok())
-                    .ok_or(solarity_rendering::VulkanError::M2BoneTransformRange)?;
-                model.prepare_current(renderer, camera, slot.weight, offset)?;
-                self.bones.extend_from_slice(model.bones());
-                self.skybox_draws[slot_index].extend_from_slice(model.draws());
-                scenes[slot_index] = model.scene(camera);
+            for (slot_index, slot) in slots.iter().enumerate() {
+                if skybox::admits_slot(slot_index, global)
+                    && let Some(index) = slot.model
+                    && let Some(model) = &mut self.skyboxes[index].model
+                {
+                    model.seed(
+                        renderer,
+                        camera,
+                        slot.weight,
+                        &mut self.preparation.jobs[slot_index + 1],
+                    )?;
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = preparation_result {
+            for job in &mut self.preparation.jobs {
+                job.reset();
+            }
+            return Err(error);
+        }
+        self.preparation.run(cpu, wait)?;
+        self.bones.clear();
+        let mut scenes = [sky_scene(camera); 4];
+        for (index, job) in self.preparation.jobs.iter_mut().enumerate() {
+            let offset = world_bone_count
+                .checked_add(self.bones.len())
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or(solarity_rendering::VulkanError::M2BoneTransformRange)?;
+            self.bones.extend_from_slice(job.prepared.bones());
+            if index == 0 {
+                for draw in &mut job.prepared.draws {
+                    *draw = draw.relocate_bones(offset)?;
+                }
+            } else {
+                let slot = index - 1;
+                self.skybox_draws[slot].clear();
+                for draw in &job.prepared.draws {
+                    self.skybox_draws[slot].push(draw.relocate_bones(offset)?);
+                }
+                scenes[slot] = job.prepared.scene(camera);
             }
         }
         Ok((
@@ -242,7 +275,7 @@ impl RuntimeSkyResources {
             solarity_rendering::WorldSkyModelFrame::new(
                 sky_scene(camera),
                 &self.bones,
-                self.stars.as_ref().map_or(&[], SkyM2Model::draws),
+                &self.preparation.jobs[0].prepared.draws,
                 &[],
             )
             .with_glare_suppression(glare_suppression)

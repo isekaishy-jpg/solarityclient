@@ -176,3 +176,67 @@ fn installed_stars_follow_opacity_without_camera_translation()
     assert!(stars.bones().is_empty());
     Ok(())
 }
+
+/// Uses the animated light fixture's real immutable GPU generation for exact
+/// independent-slot parity, including differing opacity and translated cameras.
+pub(in crate::application::terrain_frame::m2) fn verify_worker_batch(
+    cpu: &solarity_cpu::CpuExecutor,
+    source: &M2GpuSource,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::application::frame_pipeline::FrameWait;
+    let mut batch = SkyBatch::default();
+    let mut expected = Vec::new();
+    for (index, job) in batch.jobs.iter_mut().enumerate() {
+        let eye = Vec3::new(index as f32 * 123., -50., 2.);
+        let camera = WorldCamera::stock(eye, eye + Vec3::X, Vec3::Z, 1000.).frame(1.)?;
+        let input = SkyInput {
+            source: Arc::clone(source),
+            camera,
+            clock: solarity_rendering::M2AnimationClock::new(
+                0,
+                index as f32 * 157.,
+                index as f32 * 157.,
+            ),
+            opacity: 1. - index as f32 * 0.17,
+        };
+        let mut serial = SkyPrepared::default();
+        serial.prepare(&input)?;
+        expected.push(serial);
+        job.input = Some(input);
+    }
+    let held = crate::frame_cpu_support::continuation_support::HeldFrameWorkers::new(cpu)?;
+    batch.batch.start(cpu, &mut batch.jobs)?;
+    let pending = !batch.batch.is_finished();
+    held.release()?;
+    assert!(
+        pending,
+        "sky submission must return while workers are occupied"
+    );
+    batch.finish(&mut FrameWait::Offline)?;
+    for (job, expected) in batch.jobs.iter().zip(&expected) {
+        assert!(
+            job.input.is_none(),
+            "source pins return on worker completion"
+        );
+        assert_eq!(job.prepared.bones(), expected.bones());
+        assert_eq!(job.prepared.draws, expected.draws);
+        assert_eq!(job.prepared.local_lights, expected.local_lights);
+    }
+    assert_ne!(
+        batch.jobs[0].prepared.bones(),
+        batch.jobs[4].prepared.bones()
+    );
+    assert_ne!(batch.jobs[0].prepared.draws, batch.jobs[4].prepared.draws);
+    // Reuse previously active slots without publishing old draws, light banks or pins.
+    for job in &mut batch.jobs {
+        job.reset();
+    }
+    batch.run(cpu, &mut FrameWait::Offline)?;
+    assert!(
+        batch
+            .jobs
+            .iter()
+            .all(|job| job.prepared.bones().is_empty() && job.prepared.draws.is_empty())
+    );
+    Ok(())
+}

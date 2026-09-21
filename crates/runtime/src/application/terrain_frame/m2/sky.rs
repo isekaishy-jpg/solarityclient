@@ -5,21 +5,17 @@ use glam::{Vec3, Vec4};
 
 #[cfg(test)]
 #[path = "../../../../tests/application/sky_models.rs"]
-mod tests;
+pub(super) mod tests;
 
 pub(in crate::application) struct SkyM2Model {
     resident: ResidentM2Source,
     gpu: Option<M2GpuSource>,
     playback: Option<M2Playback>,
-    pose: M2BonePose,
-    draws: Vec<M2PreparedDraw>,
-    transparent: Vec<(M2TransparentSortKey, M2PreparedDraw)>,
+    #[cfg(test)]
+    prepared: SkyPrepared,
     created_tick: u32,
     clock: Option<solarity_rendering::M2AnimationClock>,
     local_light_count: M2LocalLightCount,
-    local_lights: [solarity_rendering::M2LocalLightState; 4],
-    directional: Vec<solarity_rendering::M2DirectionalLight>,
-    points: Vec<solarity_rendering::M2PointLight>,
 }
 
 impl SkyM2Model {
@@ -37,14 +33,10 @@ impl SkyM2Model {
             created_tick,
             gpu: None,
             playback: None,
-            pose: M2BonePose::default(),
-            draws: Vec::new(),
-            transparent: Vec::new(),
+            #[cfg(test)]
+            prepared: SkyPrepared::default(),
             clock: None,
             local_light_count,
-            local_lights: [solarity_rendering::M2LocalLightState::disabled(); 4],
-            directional: Vec::new(),
-            points: Vec::new(),
         }
     }
 
@@ -123,6 +115,37 @@ impl SkyM2Model {
         Ok(())
     }
 
+    /// Captures only immutable numerical inputs after ordered scene advancement.
+    pub(in crate::application) fn seed(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+        camera: WorldCameraFrame,
+        opacity: f32,
+        job: &mut SkyJob,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        job.reset();
+        if opacity <= 0.0 {
+            return Ok(());
+        }
+        if self.gpu.is_none() {
+            self.gpu =
+                prepare_source_with_lights(renderer, &self.resident, self.local_light_count)?;
+        }
+        if let Some(source) = &self.gpu {
+            let clock = self
+                .clock
+                .ok_or(solarity_rendering::VulkanError::WorldFrameCapacity)?;
+            job.input = Some(SkyInput {
+                source: Arc::clone(source),
+                camera,
+                clock,
+                opacity,
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare(
         &mut self,
@@ -137,31 +160,98 @@ impl SkyM2Model {
         if opacity > 0. {
             self.advance(time_ms, animations, random)?;
         }
-        self.prepare_current(renderer, camera, opacity, bone_offset)
+        let mut job = SkyJob {
+            prepared: std::mem::take(&mut self.prepared),
+            ..Default::default()
+        };
+        self.seed(renderer, camera, opacity, &mut job)?;
+        job.execute();
+        self.prepared = job.prepared;
+        job.result.take().unwrap_or(Ok(()))?;
+        for draw in &mut self.prepared.draws {
+            *draw = draw.relocate_bones(bone_offset)?;
+        }
+        Ok(())
     }
 
-    pub(in crate::application) fn prepare_current(
-        &mut self,
-        renderer: &mut VulkanRenderer,
+    #[cfg(test)]
+    pub(in crate::application) fn bones(&self) -> &[Mat4] {
+        self.prepared.bones()
+    }
+    #[cfg(test)]
+    pub(in crate::application) fn draws(&self) -> &[M2PreparedDraw] {
+        &self.prepared.draws
+    }
+}
+
+/// Native sky models use the untranslated scene view and the reserved far range.
+pub(in crate::application) fn sky_scene(
+    camera: WorldCameraFrame,
+) -> solarity_rendering::M2SceneUniform {
+    let mut view = camera.view();
+    view.w_axis = Vec4::W;
+    let depth = Mat4::from_cols(
+        Vec4::X,
+        Vec4::Y,
+        Vec4::new(0., 0., 0.000_976_562_5, 0.),
+        Vec4::new(0., 0., 0.999_023_44, 1.),
+    );
+    solarity_rendering::M2SceneUniform::new(
+        depth * camera.projection(),
+        view,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Vec3::Z,
+        Vec4::ZERO,
+        Vec3::ZERO,
+        [solarity_rendering::M2LocalLightState::disabled(); 4],
+    )
+}
+
+/// Slot-owned output: aliasing skybox slots have independent opacity and offsets.
+pub(in crate::application) struct SkyPrepared {
+    pose: M2BonePose,
+    pub(in crate::application) draws: Vec<M2PreparedDraw>,
+    transparent: Vec<(M2TransparentSortKey, M2PreparedDraw)>,
+    local_lights: [solarity_rendering::M2LocalLightState; 4],
+    directional: Vec<solarity_rendering::M2DirectionalLight>,
+    points: Vec<solarity_rendering::M2PointLight>,
+}
+impl Default for SkyPrepared {
+    fn default() -> Self {
+        Self {
+            pose: M2BonePose::default(),
+            draws: Vec::new(),
+            transparent: Vec::new(),
+            local_lights: [solarity_rendering::M2LocalLightState::disabled(); 4],
+            directional: Vec::new(),
+            points: Vec::new(),
+        }
+    }
+}
+impl SkyPrepared {
+    pub(in crate::application) fn bones(&self) -> &[Mat4] {
+        if self.draws.is_empty() {
+            &[]
+        } else {
+            self.pose.transforms()
+        }
+    }
+    pub(in crate::application) fn scene(
+        &self,
         camera: WorldCameraFrame,
-        opacity: f32,
-        bone_offset: u32,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        self.draws.clear();
-        self.transparent.clear();
-        if opacity <= 0.0 {
-            return Ok(());
-        }
-        if self.gpu.is_none() {
-            self.gpu =
-                prepare_source_with_lights(renderer, &self.resident, self.local_light_count)?;
-        }
-        let Some(source) = &self.gpu else {
-            return Ok(());
-        };
-        let clock = self
-            .clock
-            .ok_or(solarity_rendering::VulkanError::WorldFrameCapacity)?;
+    ) -> solarity_rendering::M2SceneUniform {
+        sky_scene(camera).with_local_lights(self.local_lights)
+    }
+    fn prepare(&mut self, input: &SkyInput) -> Result<(), RuntimeTerrainFrameError> {
+        let SkyInput {
+            source,
+            camera,
+            clock,
+            opacity,
+        } = input;
+        let (clock, opacity) = (*clock, *opacity);
         let mut model_view = camera.view();
         model_view.w_axis = Vec4::W;
         self.pose.recompose_with_overrides(
@@ -224,7 +314,7 @@ impl SkyM2Model {
                 Vec4::ZERO,
                 Vec4::new(state.alpha_reference(opacity), 0., 0., 0.),
             );
-            let prepared = template.instantiate(material, bone_offset, 0)?;
+            let prepared = template.instantiate(material, 0, 0)?;
             if draw.transparent_sort_unit() || alpha == M2ElementAlphaState::Translucent {
                 let distance = section_distance_key(draw, &self.pose, model_view)?;
                 let primary = if source.model.skin_profile_count() >= 2 {
@@ -254,47 +344,80 @@ impl SkyM2Model {
             .extend(self.transparent.iter().map(|(_, draw)| *draw));
         Ok(())
     }
-
-    pub(in crate::application) fn bones(&self) -> &[Mat4] {
-        if self.draws.is_empty() {
-            &[]
-        } else {
-            self.pose.transforms()
-        }
+}
+struct SkyInput {
+    source: M2GpuSource,
+    camera: WorldCameraFrame,
+    clock: solarity_rendering::M2AnimationClock,
+    opacity: f32,
+}
+#[derive(Default)]
+pub(in crate::application) struct SkyJob {
+    input: Option<SkyInput>,
+    pub(in crate::application) prepared: SkyPrepared,
+    result: Option<Result<(), RuntimeTerrainFrameError>>,
+}
+impl SkyJob {
+    pub(in crate::application) fn reset(&mut self) {
+        self.input = None;
+        self.result = None;
+        self.prepared.draws.clear();
+        self.prepared.transparent.clear();
+        self.prepared.local_lights = [solarity_rendering::M2LocalLightState::disabled(); 4];
     }
-    pub(in crate::application) fn draws(&self) -> &[M2PreparedDraw] {
-        &self.draws
-    }
-
-    pub(in crate::application) fn scene(
-        &self,
-        camera: WorldCameraFrame,
-    ) -> solarity_rendering::M2SceneUniform {
-        sky_scene(camera).with_local_lights(self.local_lights)
+    fn execute(&mut self) {
+        self.result = Some(match self.input.take() {
+            Some(input) => self.prepared.prepare(&input),
+            None => Ok(()),
+        });
     }
 }
-
-/// Native sky models use the untranslated scene view and the reserved far range.
-pub(in crate::application) fn sky_scene(
-    camera: WorldCameraFrame,
-) -> solarity_rendering::M2SceneUniform {
-    let mut view = camera.view();
-    view.w_axis = Vec4::W;
-    let depth = Mat4::from_cols(
-        Vec4::X,
-        Vec4::Y,
-        Vec4::new(0., 0., 0.000_976_562_5, 0.),
-        Vec4::new(0., 0., 0.999_023_44, 1.),
-    );
-    solarity_rendering::M2SceneUniform::new(
-        depth * camera.projection(),
-        view,
-        Vec3::ZERO,
-        Vec3::ZERO,
-        Vec3::ZERO,
-        Vec3::Z,
-        Vec4::ZERO,
-        Vec3::ZERO,
-        [solarity_rendering::M2LocalLightState::disabled(); 4],
-    )
+/// Five fixed ordered consumers: stars, three ordinary slots, global skybox.
+pub(in crate::application) struct SkyBatch {
+    pub(in crate::application) jobs: Vec<SkyJob>,
+    batch: solarity_cpu::FrameBatch<SkyJob>,
+}
+impl Default for SkyBatch {
+    fn default() -> Self {
+        Self {
+            jobs: (0..5).map(|_| SkyJob::default()).collect(),
+            batch: solarity_cpu::FrameBatch::new(SkyJob::execute),
+        }
+    }
+}
+impl SkyBatch {
+    pub(in crate::application) fn run(
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        if self.jobs.iter().all(|job| job.input.is_none()) {
+            return Ok(());
+        }
+        let started = self.batch.start(cpu, &mut self.jobs);
+        if let Err(error) = started {
+            for job in &mut self.jobs {
+                job.input = None;
+            }
+            return Err(error.into());
+        }
+        self.finish(wait)
+    }
+    fn finish(
+        &mut self,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let ready = wait.before_reclaim(&self.batch);
+        let reclaimed = self.batch.reclaim(&mut self.jobs);
+        // Even a panic or native failure releases every retained source generation.
+        for job in &mut self.jobs {
+            job.input = None;
+        }
+        ready?;
+        reclaimed?;
+        for job in &mut self.jobs {
+            job.result.take().unwrap_or(Ok(()))?;
+        }
+        Ok(())
+    }
 }

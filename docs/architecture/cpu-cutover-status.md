@@ -19,6 +19,33 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Sky numeric preparation now uses the shared frame executor. Gradient colors,
+celestial meshes and the retained procedural-cloud simulation dispatch at the
+original sky-update point, ahead of world admission. The consumer services native
+input until that result is ready; an earlier frame exit still reclaims the same
+cloud/noise/timer state before the next frame. This moves existing state rather
+than reconstructing the simulation or changing its update frequency.
+
+Stars, three ordinary skybox slots and the global skybox prepare bone palettes,
+local lights, materials and transparent ordering as independent worker jobs.
+Alias slots retain distinct opacity/output buffers. Ordered publication relocates
+their palettes into the world frame; playback/RNG, GPU resource creation and scene
+slot selection remain on main. Source pins release after execution or cleanup,
+and an entirely empty sky-model phase submits no work.
+
+Validation covers exact animated pose/draw/light parity, occupied-worker
+submission, empty-slot reuse, cloud pixel/glare-alpha parity and abandoned-frame
+state restoration. The broad runtime run passed 475 tests; the new cloud test
+initially lacked a required global-light fixture row. After that test-only fixture
+correction, the focused cloud test and all 68 stock-seed integration tests passed:
+544 distinct passing tests, with the 28 existing suite ignores unchanged. Final
+formatting and runtime Clippy with warnings denied pass. Evidence is ignored
+`target/sky-cutover-final.log` and `target/sky-cutover-fixture-final.log`. Production
+source did not change after the broad run. Build 175 remains installed; no package
+or live performance result is claimed. Sky GPU upload, final publication waits,
+complete output-memory accounting and broader cost calibration remain within the
+open requirements below.
+
 Unit/mount event positions, rider callback transforms and attached-effect anchors
 now consume CPU worker bone samples. Independent callback inputs and independent
 vehicle parents dispatch as batches; initial seat targets, nested/changed parent
@@ -49,7 +76,7 @@ failure; production loading behavior is unchanged. Final evidence is ignored
 `target/scene-cutover-final3.log`. Build 175 remains installed; no new package or
 live performance result is claimed.
 
-Still open in the frame path: sky/portrait numeric preparation, renderer-side mip
+Still open in the frame path: portrait numeric preparation, renderer-side mip
 preparation/staging, the single current-placement late-pose dependency, receiver
 and final-publication barriers, and complete connected working-set admission.
 Requested animation loading, shared texture requests and the remaining resource

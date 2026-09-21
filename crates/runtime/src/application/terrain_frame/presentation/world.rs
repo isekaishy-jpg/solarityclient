@@ -81,12 +81,13 @@ impl TerrainFrame {
         let glare_lighting = renderer.world_glare_lighting();
         let ambient = glare_lighting.apply(light.ambient_color());
         let diffuse = glare_lighting.apply(light.diffuse_color());
-        self.sky.update(
+        let mut sky_update = self.sky.start(
+            cpu,
             environment,
             camera,
             liquid_time_ms,
             celestial_resources.colors,
-        );
+        )?;
         profile.mark("sky update");
         let fog = environment.fog();
         let (fog_start, fog_end) = fog.range();
@@ -401,6 +402,7 @@ impl TerrainFrame {
             .flatten();
         let (default_sky, sky_models) = sky_resources.prepare_models(
             cpu,
+            wait,
             renderer,
             camera,
             liquid_time_ms,
@@ -447,8 +449,9 @@ impl TerrainFrame {
         )? {
             scene = scene.with_low_detail(horizon);
         }
+        let sky = sky_update.finish(wait)?;
         if environment.sky_enabled() {
-            scene = scene.with_glare(self.sky.glare_frame(
+            scene = scene.with_glare(sky.glare_frame(
                 camera,
                 environment,
                 &celestial_resources,
@@ -457,12 +460,9 @@ impl TerrainFrame {
         }
         if default_sky {
             scene = scene
-                .with_celestials(
-                    self.sky
-                        .celestial_frame(camera, celestial_resources.textures),
-                )
-                .with_sky(self.sky.gradient_frame(camera))
-                .with_clouds(self.sky.cloud_frame(camera));
+                .with_celestials(sky.celestial_frame(camera, celestial_resources.textures))
+                .with_sky(sky.gradient_frame(camera))
+                .with_clouds(sky.cloud_frame(camera));
         }
         if let Some([river, ocean, world_model]) = &depths {
             scene = scene.with_liquids(

@@ -83,6 +83,7 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
         sky.settle_sources(&recording_cpu, Some((input, step * 1000)))?;
         let (default_sky, frame) = sky.prepare_model_input(
             &recording_cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             &mut renderer,
             camera,
             step * 1000,
@@ -200,6 +201,7 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
         sky.settle_sources(&recording_cpu, Some((input, step * 1000)))?;
         let (default_sky, frame) = sky.prepare_model_input(
             &recording_cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             &mut renderer,
             camera,
             step * 1000,

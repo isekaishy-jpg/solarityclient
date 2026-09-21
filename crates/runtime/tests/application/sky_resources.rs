@@ -77,6 +77,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
             sky.settle_sources(&recording_cpu, Some((input, time)))?;
             let (default_sky, frame) = sky.prepare_model_input(
                 &recording_cpu,
+                &mut crate::application::frame_pipeline::FrameWait::Offline,
                 &mut renderer,
                 camera,
                 time,
@@ -183,6 +184,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         sky.settle_sources(&recording_cpu, Some((input, 200000)))?;
         let (default_sky, frame) = sky.prepare_model_input(
             &recording_cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             &mut renderer,
             camera,
             200000,
@@ -227,6 +229,7 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
     sky.settle_sources(&recording_cpu, Some((input, 201000)))?;
     let (_, frame) = sky.prepare_model_input(
         &recording_cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
         &mut renderer,
         camera,
         201000,

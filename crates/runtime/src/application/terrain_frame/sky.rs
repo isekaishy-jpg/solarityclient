@@ -131,3 +131,70 @@ impl WorldSky {
         }
     }
 }
+
+/// Retained simulation moves intact to one worker while world admission proceeds.
+pub(super) struct WorldSkyPreparation {
+    jobs: Vec<SkyUpdateJob>,
+    batch: solarity_cpu::FrameBatch<SkyUpdateJob>,
+}
+struct SkyUpdateJob {
+    sky: WorldSky,
+    input: Option<(
+        RuntimeWorldEnvironmentFrame,
+        WorldCameraFrame,
+        u32,
+        [u32; 3],
+    )>,
+}
+impl WorldSkyPreparation {
+    pub(super) fn new() -> Self {
+        Self {
+            jobs: vec![SkyUpdateJob {
+                sky: WorldSky::new(),
+                input: None,
+            }],
+            batch: solarity_cpu::FrameBatch::new(|job| {
+                if let Some((environment, camera, time, colors)) = job.input.take() {
+                    job.sky.update(environment, camera, time, colors);
+                }
+            }),
+        }
+    }
+    pub(super) fn start(
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+        environment: RuntimeWorldEnvironmentFrame,
+        camera: WorldCameraFrame,
+        time: u32,
+        colors: [u32; 3],
+    ) -> Result<WorldSkyUpdate<'_>, super::RuntimeTerrainFrameError> {
+        self.jobs[0].input = Some((environment, camera, time, colors));
+        self.batch.start(cpu, &mut self.jobs)?;
+        Ok(WorldSkyUpdate { owner: self })
+    }
+}
+/// Every earlier world failure restores simulation ownership before returning.
+pub(super) struct WorldSkyUpdate<'a> {
+    owner: &'a mut WorldSkyPreparation,
+}
+impl WorldSkyUpdate<'_> {
+    pub(super) fn finish(
+        &mut self,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
+    ) -> Result<&WorldSky, super::RuntimeTerrainFrameError> {
+        let ready = wait.before_reclaim(&self.owner.batch);
+        let reclaimed = self.owner.batch.reclaim(&mut self.owner.jobs);
+        ready?;
+        reclaimed?;
+        Ok(&self.owner.jobs[0].sky)
+    }
+}
+impl Drop for WorldSkyUpdate<'_> {
+    fn drop(&mut self) {
+        let _ = self.owner.batch.reclaim(&mut self.owner.jobs);
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/application/sky_preparation.rs"]
+mod tests;
