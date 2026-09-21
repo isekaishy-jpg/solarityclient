@@ -24,6 +24,32 @@ texture-source and appearance/backdrop batches at `ff9751b1`. Its installed
 identity and artifact hash are verified. The user authorized this one fresh
 client package, then continued cutover source work without further test builds.
 
+The subsequent source batch moves missing blocking GlueXML and FrameXML textures
+onto required shared CPU service. One reader/cache bank survives UI generations;
+mounts yield between archives and source work yields between authored requests.
+Existing producers suspend the consumer through the same typed BLP readiness
+edge. The stock deduplicated source/mask order, nonblocking policy and first error
+remain authoritative. Already GPU-resident paths do not trigger source admission.
+Native servicing uses the renderer's existing readiness contract; errors/unwinds
+cancel and join the source consumer before returning. CPU decode inputs and
+Vulkan publication remain separately owned. Glyph preparation, UI geometry and
+other main-owned renderer boundaries remain outside this batch.
+
+Grouped source validation passes formatting, all-target/all-feature rendering and
+runtime Clippy with warnings denied, and 544 unit tests (27 existing ignores).
+The five new tests cover ordered textures/masks and nonblocking exclusions,
+reader/cache reuse, shared-source publication/abandonment/withdrawal, first-error
+precedence, and typed completion/native-error/unwind reclamation. One existing
+minimap fixture now supplies its immutable catalog to the UI reader owner.
+Evidence is `target/ui-sources-clippy-final.log` and `target/ui-sources-tests.log`.
+Build 176 remains installed; this UI batch is source-only.
+
+The next confirmed direct BLP source sites are the portrait alpha mask in
+`world_ui.rs`, the startup splash/wake textures in `water_ripples.rs`, and the
+startup underwater atlas in `underwater_particles.rs`. They still use the
+uncached synchronous API. These concrete consumers remain work, in addition to
+the complete cutover requirements below.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
@@ -77,8 +103,9 @@ material texture stages now join these requests on the existing resumable worker
 The cursor, reader and private output survive suspension; cancellation releases a
 consumer without abandoning another producer. Ordinary synchronous texture caches
 reuse and publish canonical ready payloads too. Their cold calls still cannot join
-a pending request: blocking UI texture lookups remain to be converted before
-claiming all-domain BLP single production. Appearance and backdrop consumers now
+a pending request. The live blocking UI path now uses the worker integration
+above; the synchronous API remains for explicit offline consumers. This does not
+claim all-domain BLP single production. Appearance and backdrop consumers now
 use the construction scopes described above.
 Direct low-level `BlpTextureSource::load` remains an explicit uncached decode API.
 No worker waits on a source condition variable, and no source decode holds a cache

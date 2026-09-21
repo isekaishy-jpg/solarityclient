@@ -498,7 +498,7 @@ impl ClientServices {
                     };
                     Some(ConfiguredGlueTexturePrewarmJob::Running(
                         permit.submit_resumable_with_context(prepare_configured_glue_textures(
-                            ui_texture_catalog,
+                            ui_texture_catalog.clone(),
                             configured_texture_paths,
                             shared,
                         )),
@@ -510,7 +510,7 @@ impl ClientServices {
                         "deferred configured Glue texture prewarm because workers are full"
                     );
                     Some(ConfiguredGlueTexturePrewarmJob::Deferred {
-                        catalog: ui_texture_catalog,
+                        catalog: ui_texture_catalog.clone(),
                         paths: configured_texture_paths,
                     })
                 }
@@ -518,7 +518,7 @@ impl ClientServices {
             }
         };
         let mut ui_textures = BlpTextureCache::new();
-        let mut ui_texture_residency = RuntimeUiResidency::new();
+        let mut ui_texture_residency = RuntimeUiResidency::new(ui_texture_catalog);
         let login_ui = if glue.media_intent().movie().is_some() {
             None
         } else {

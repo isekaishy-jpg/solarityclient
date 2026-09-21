@@ -211,7 +211,7 @@ impl WorldUiConstruction {
             corpse_marker: _,
         } = self;
         let mut texture_cache = BlpTextureCache::new();
-        let mut texture_residency = RuntimeUiResidency::new();
+        let mut texture_residency = RuntimeUiResidency::new(archive_catalog.clone());
         let frame = RuntimeUiFrame::prepare_frame(
             renderer,
             &manager,

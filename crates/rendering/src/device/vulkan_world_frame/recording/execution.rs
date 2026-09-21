@@ -75,6 +75,29 @@ impl<T: Send + 'static> RecordingReadiness for FrameBatch<T> {
 }
 
 impl<'a> WorldRecordingCompletion<'a> {
+    /// Reuses native readiness servicing while keeping the typed source result private.
+    pub(in crate::device) fn join_task<T>(
+        execution: &mut dyn WorldFrameExecution,
+        task: solarity_cpu::CpuTask<T>,
+    ) -> Result<T, VulkanError> {
+        task.set_service(solarity_cpu::CpuService::Required);
+        let pending = SourceCompletion {
+            task: std::cell::RefCell::new(Some(task)),
+            result: std::cell::RefCell::new(None),
+        };
+        let waited = execution.wait_for_recording(&WorldRecordingCompletion { batch: &pending });
+        if waited.is_err() {
+            pending.cancel();
+        }
+        pending.wait()?;
+        let result = pending
+            .result
+            .take()
+            .unwrap_or_else(|| unreachable!("source wait retains its typed result"));
+        waited?;
+        Ok(result?)
+    }
+
     /// Loading uses the same readiness-only native servicing contract as recording.
     pub(in crate::device) fn loading<T: Send + 'static>(
         batch: &'a solarity_cpu::LoadBatch<T>,
@@ -82,6 +105,43 @@ impl<'a> WorldRecordingCompletion<'a> {
         Self { batch }
     }
 }
+
+/// Offline waiting may consume a task channel, but never exposes its payload to
+/// the native coordinator. The guard also reclaims on a servicing unwind.
+struct SourceCompletion<T> {
+    task: std::cell::RefCell<Option<solarity_cpu::CpuTask<T>>>,
+    result: std::cell::RefCell<Option<Result<T, solarity_cpu::CpuError>>>,
+}
+impl<T> SourceCompletion<T> {
+    fn cancel(&self) {
+        if let Some(task) = self.task.borrow().as_ref() {
+            task.cancel();
+        }
+    }
+}
+impl<T> RecordingReadiness for SourceCompletion<T> {
+    fn is_ready(&self) -> bool {
+        self.task
+            .borrow()
+            .as_ref()
+            .is_none_or(|task| task.is_finished())
+    }
+    fn wait(&self) -> Result<(), VulkanError> {
+        if let Some(task) = self.task.take() {
+            *self.result.borrow_mut() = Some(task.join());
+        }
+        Ok(())
+    }
+}
+impl<T> Drop for SourceCompletion<T> {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.get_mut().take() {
+            task.cancel();
+            let _ = task.join();
+        }
+    }
+}
+
 impl<T: Send + 'static> RecordingReadiness for solarity_cpu::LoadBatch<T> {
     fn is_ready(&self) -> bool {
         self.is_finished()
@@ -90,3 +150,7 @@ impl<T: Send + 'static> RecordingReadiness for solarity_cpu::LoadBatch<T> {
         Ok(self.wait_until_finished()?)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/source_completion.rs"]
+mod source_tests;

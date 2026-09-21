@@ -27,6 +27,23 @@ impl PreparationExecution<'_> {
     }
 }
 impl<'a> GpuPreparation<'a> {
+    /// Shared application executor for source work required before GPU admission.
+    #[must_use]
+    pub fn executor(&mut self) -> &solarity_cpu::CpuExecutor {
+        self.execution.execution().executor()
+    }
+
+    /// Services native events while an owned source task prepares GPU inputs.
+    /// On a native failure or unwind, withdrawal and reclamation precede return.
+    /// # Errors
+    /// Returns native servicing or CPU completion failures.
+    pub fn join_source<T>(
+        &mut self,
+        task: solarity_cpu::CpuTask<T>,
+    ) -> Result<T, crate::VulkanError> {
+        crate::WorldRecordingCompletion::join_task(self.execution.execution(), task)
+    }
+
     /// Couples existing renderer and execution owners without allocating a pool.
     pub fn new(
         renderer: &'a mut VulkanRenderer,

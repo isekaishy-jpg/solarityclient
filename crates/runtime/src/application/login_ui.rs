@@ -1,5 +1,7 @@
 //! Startup join from retained GlueXML presentation into renderer resources.
 
+mod sources;
+
 use std::collections::HashMap;
 
 use solarity_asset::{AssetPath, BlpTextureCache};
@@ -7,9 +9,7 @@ use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, UiFrameReport, UiGlyphTextureHandle,
     VulkanRenderer,
 };
-use solarity_ui::{
-    FrameManager, GlueManager, UiGlyphAtlasPlan, UiRenderPlan, UiTextureAssetBindings,
-};
+use solarity_ui::{FrameManager, GlueManager, UiGlyphAtlasPlan, UiRenderPlan};
 
 use crate::application::ApplicationError;
 use crate::application::ui_frame::PreparedUiFrame;
@@ -21,8 +21,8 @@ pub(super) struct RuntimeUiFrame {
 }
 
 /// Sampled images retained across every pre-world UI mesh generation.
-#[derive(Default)]
 pub(super) struct RuntimeUiResidency {
+    sources: sources::UiTextureLoader,
     textures: HashMap<AssetPath, BlpTextureHandle>,
     glyph_textures: HashMap<u64, UiGlyphTextureHandle>,
     glyph_revisions: HashMap<u64, u64>,
@@ -30,8 +30,14 @@ pub(super) struct RuntimeUiResidency {
 }
 
 impl RuntimeUiResidency {
-    pub(super) fn new() -> Self {
-        Self::default()
+    pub(super) fn new(catalog: solarity_asset::ArchiveCatalog) -> Self {
+        Self {
+            sources: sources::UiTextureLoader::new(catalog),
+            textures: HashMap::new(),
+            glyph_textures: HashMap::new(),
+            glyph_revisions: HashMap::new(),
+            glyph_owners: HashMap::new(),
+        }
     }
 
     /// Synchronizes only coverage added since the last page publication.
@@ -173,8 +179,7 @@ impl RuntimeUiFrame {
             source,
             cache,
             Some(self.frame.mesh()),
-            &mut residency.textures,
-            &mut residency.glyph_textures,
+            residency,
         )?;
         self.frame = frame;
         Ok(())
@@ -198,14 +203,7 @@ impl RuntimeUiFrame {
         residency: &mut RuntimeUiResidency,
     ) -> Result<Self, ApplicationError> {
         residency.synchronize_glyphs(renderer, source.glyphs())?;
-        let frame = Self::prepare_source_with_resources(
-            renderer,
-            source,
-            cache,
-            None,
-            &mut residency.textures,
-            &mut residency.glyph_textures,
-        )?;
+        let frame = Self::prepare_source_with_resources(renderer, source, cache, None, residency)?;
         Ok(Self {
             frame,
             coverage: (
@@ -221,31 +219,23 @@ impl RuntimeUiFrame {
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
         retained_mesh: Option<solarity_rendering::UiMeshHandle>,
-        textures: &mut HashMap<AssetPath, BlpTextureHandle>,
-        glyph_textures: &mut HashMap<u64, UiGlyphTextureHandle>,
+        residency: &mut RuntimeUiResidency,
     ) -> Result<PreparedUiFrame, ApplicationError> {
         let started = std::time::Instant::now();
         let render_plan = source.render_plan();
         let mesh_plan = render_plan.mesh();
         let asset_started = std::time::Instant::now();
-        let bindings = source.load_blocking_render_textures(cache)?;
+        let texture_paths = sources::missing_paths(render_plan.texture_assets(), |path| {
+            residency.textures.contains_key(path)
+        });
+        let sources = residency.sources.load(renderer, cache, texture_paths)?;
         let asset_elapsed = asset_started.elapsed();
-        let mut texture_paths = Vec::new();
-        let mut texture_uploads = Vec::new();
-        for (request_index, request) in render_plan.texture_assets().requests().iter().enumerate() {
-            let Some(source) = bindings.source(request_index) else {
-                // Stock marks this source non-blocking. Its material batch remains
-                // absent until the streaming owner publishes a resident image.
-                continue;
-            };
-            if textures.contains_key(request.path()) {
-                continue;
-            }
-            // Build 12340's fixed-function UI path samples color bytes linearly;
-            // the BLP container itself carries no transfer-function metadata.
-            texture_paths.push(request.path().clone());
-            texture_uploads.push(BlpTextureUploadRequest::new(source, BlpColorSpace::Linear));
-        }
+        // Build 12340's fixed-function UI path samples color bytes linearly;
+        // the BLP container itself carries no transfer-function metadata.
+        let texture_uploads = sources
+            .iter()
+            .map(|source| BlpTextureUploadRequest::new(source, BlpColorSpace::Linear))
+            .collect::<Vec<_>>();
         let texture_count = texture_uploads.len();
         let upload_started = std::time::Instant::now();
         let uploaded = if texture_uploads.is_empty() {
@@ -254,8 +244,8 @@ impl RuntimeUiFrame {
             renderer.upload_blp_textures(&texture_uploads)?
         };
         let upload_elapsed = upload_started.elapsed();
-        for (path, handle) in texture_paths.into_iter().zip(uploaded) {
-            textures.insert(path, handle);
+        for (source, handle) in sources.into_iter().zip(uploaded) {
+            residency.textures.insert(source.path().clone(), handle);
         }
         let glyph_started = std::time::Instant::now();
         let glyph_elapsed = glyph_started.elapsed();
@@ -263,8 +253,8 @@ impl RuntimeUiFrame {
         let frame = PreparedUiFrame::prepare_pages(
             renderer,
             mesh_plan,
-            textures,
-            glyph_textures,
+            &residency.textures,
+            &residency.glyph_textures,
             retained_mesh,
         )?;
         let frame_elapsed = frame_started.elapsed();
@@ -318,10 +308,6 @@ impl RuntimeUiFrame {
 trait RuntimeUiSource {
     fn render_plan(&self) -> &UiRenderPlan;
     fn glyphs(&self) -> &UiGlyphAtlasPlan;
-    fn load_blocking_render_textures(
-        &self,
-        cache: &mut BlpTextureCache,
-    ) -> Result<UiTextureAssetBindings, solarity_ui::UiRenderError>;
 }
 
 impl RuntimeUiSource for GlueManager {
@@ -332,13 +318,6 @@ impl RuntimeUiSource for GlueManager {
     fn glyphs(&self) -> &UiGlyphAtlasPlan {
         self.glyphs()
     }
-
-    fn load_blocking_render_textures(
-        &self,
-        cache: &mut BlpTextureCache,
-    ) -> Result<UiTextureAssetBindings, solarity_ui::UiRenderError> {
-        self.load_blocking_render_textures(cache)
-    }
 }
 
 impl RuntimeUiSource for FrameManager {
@@ -348,12 +327,5 @@ impl RuntimeUiSource for FrameManager {
 
     fn glyphs(&self) -> &UiGlyphAtlasPlan {
         self.glyphs()
-    }
-
-    fn load_blocking_render_textures(
-        &self,
-        cache: &mut BlpTextureCache,
-    ) -> Result<UiTextureAssetBindings, solarity_ui::UiRenderError> {
-        self.load_blocking_render_textures(cache)
     }
 }

@@ -90,7 +90,7 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     let mut store = AssetStore::mount(catalog.clone())?;
     let maps = MapCatalog::load(&mut store)?;
     let map = TerrainMap::load(&mut store, maps.map(0).ok_or("missing map")?)?;
-    let mut scene = RuntimeMinimapScene::new(&mut store, catalog)?;
+    let mut scene = RuntimeMinimapScene::new(&mut store, catalog.clone())?;
     let mut manager = FrameManager::start_shared(
         AssetStoreHandle::new(store),
         UiScriptEnvironment::new(96, 96, false)?,
@@ -100,7 +100,7 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     let platform = SdlPlatform::start(WindowConfiguration::new(96, 96, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
     let mut cache = solarity_asset::BlpTextureCache::new();
-    let mut residency = RuntimeUiResidency::new();
+    let mut residency = RuntimeUiResidency::new(catalog);
     let mut ui = RuntimeUiFrame::prepare_frame(
         &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &manager,
