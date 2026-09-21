@@ -985,7 +985,10 @@ an operation has a context parameter. The requirements below remain in scope.
   Glue attachments/pets and population attachments/mounts/item visuals now join
   the same namespace source authority through resumable appearance tasks.
   Sky models and stars now join the same authority through resumable source tasks.
-  Effects still require their remaining shared-source connection.
+  Unit effect sources now join the same authority through a resumable operation.
+  Formatting, workspace Clippy and all 1,694 workspace tests pass, with zero
+  failures and 33 existing ignored tests; see
+  [the effect source report](unit-effect-source-cutover.md).
   Other source domains still need shared pending authority, cross-resource I/O
   dependencies and the remaining domain-wide shared result leases. WMO requests
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources

@@ -7,14 +7,14 @@ mod tests;
 use crate::application::unit_animation::UnitAnimationBehavior;
 use glam::{Mat4, Vec3};
 use solarity_asset::{
-    AssetStore, BlpTextureCache, EnvironmentalDamageCatalog, M2ModelAnimationMode, M2ModelCache,
-    SpellVisualEffectCatalog, SpellVisualEffectDefinition,
+    AssetStore, BlpTextureCache, DecodedM2Model, M2ModelAnimationMode, ResourceLease,
+    SpellVisualEffectDefinition,
 };
 use solarity_ecs::WorldObjectIdentity;
 use solarity_rendering::{M2ModelOrientation, M2SequenceStartPhase};
 use solarity_systems::UnitEffectScale;
 use solarity_systems::UnitWaterEffect;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -53,45 +53,30 @@ pub(in crate::application) struct ResidentUnitEffect {
     source: ResidentM2Source,
 }
 
+/// Charged completion records move from the worker through ordered GPU warmup.
+pub(in crate::application) type PreparedUnitEffects =
+    solarity_cpu::CpuBuffer<Option<ResidentUnitEffect>>;
+
 impl ResidentUnitEffect {
-    pub(in crate::application) fn load(
+    /// Builds textures and shader inputs only after the namespace model is ready.
+    pub(in crate::application) fn from_model(
+        kind: UnitEffectResource,
+        definition: SpellVisualEffectDefinition,
+        model: ResourceLease<DecodedM2Model>,
+        textures: &mut BlpTextureCache,
         store: &mut AssetStore,
-        environmental: &EnvironmentalDamageCatalog,
-    ) -> Result<Vec<Self>, RuntimeTerrainError> {
-        let catalog = SpellVisualEffectCatalog::load(store)?;
-        let mut models = M2ModelCache::new();
-        let mut textures = BlpTextureCache::new();
-        let mut effects = Vec::with_capacity(WATER_EFFECTS.len());
-        let visuals = environmental
-            .visual_kits()
-            .flat_map(|kit| kit.effects().map(|(_, id)| id))
-            .collect::<BTreeSet<_>>();
-        for kind in WATER_EFFECTS
-            .into_iter()
-            .map(UnitEffectResource::Water)
-            .chain(visuals.into_iter().map(UnitEffectResource::Visual))
-        {
-            let Some(definition) = (match kind {
-                UnitEffectResource::Water(water) => catalog.named(water.name()),
-                UnitEffectResource::Visual(id) => catalog.definition(id),
-            }) else {
-                continue;
-            };
-            let Some(path) = definition.model_path()? else {
-                continue;
-            };
-            match ResidentM2Source::load(&path, &mut models, &mut textures, store) {
-                Ok(source) => effects.push(Self {
-                    kind,
-                    definition: definition.clone(),
-                    source,
-                }),
-                Err(error) => {
-                    tracing::warn!(effect = definition.id(), %path, %error, "unit effect model request failed");
-                }
-            }
-        }
-        Ok(effects)
+    ) -> Result<Self, RuntimeTerrainError> {
+        let source = ResidentM2Source::from_model_with_lights(
+            model,
+            textures,
+            store,
+            solarity_rendering::M2LocalLightCount::Four,
+        )?;
+        Ok(Self {
+            kind,
+            definition,
+            source,
+        })
     }
 }
 
@@ -527,15 +512,17 @@ impl M2UnitEffectScene {
 
 /// Amortizes driver compilation before publishing the complete source bank.
 pub(in crate::application) struct M2UnitEffectWarmup {
-    pending: std::collections::VecDeque<ResidentUnitEffect>,
+    pending: PreparedUnitEffects,
+    next: usize,
     current: Option<M2GluePipelineWarmup>,
     sources: M2UnitEffectSources,
 }
 
 impl M2UnitEffectWarmup {
-    pub(in crate::application) fn new(effects: Vec<ResidentUnitEffect>) -> Self {
+    pub(in crate::application) fn new(effects: PreparedUnitEffects) -> Self {
         Self {
-            pending: effects.into(),
+            pending: effects,
+            next: 0,
             current: None,
             sources: M2UnitEffectSources::default(),
         }
@@ -547,9 +534,12 @@ impl M2UnitEffectWarmup {
         &mut self,
         renderer: &mut VulkanRenderer,
     ) -> Result<bool, RuntimeTerrainFrameError> {
-        let Some(effect) = self.pending.front() else {
+        let Some(slot) = self.pending.get(self.next) else {
             return Ok(true);
         };
+        let effect = slot
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("unconsumed effect source is present"));
         let warmup = self.current.get_or_insert_with(|| {
             M2GluePipelineWarmup::new(effect.source.cpu_source(), M2ModelOrientation::Authored)
         });
@@ -565,9 +555,10 @@ impl M2UnitEffectWarmup {
                 },
             );
         }
-        self.pending.pop_front();
+        self.pending.writer()[self.next] = None;
+        self.next += 1;
         self.current = None;
-        Ok(self.pending.is_empty())
+        Ok(self.next == self.pending.len())
     }
 
     pub(in crate::application) fn into_sources(self) -> M2UnitEffectSources {

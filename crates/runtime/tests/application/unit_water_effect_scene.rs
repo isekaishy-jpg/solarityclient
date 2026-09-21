@@ -1,8 +1,6 @@
 //! Real GPU sources and the authored-event bridge share the current parent pose.
 
-use super::super::super::unit_effects::{
-    M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding, UnitEffectRequest,
-};
+use super::super::super::unit_effects::{M2UnitEffectWarmup, UnitEffectBinding, UnitEffectRequest};
 use super::*;
 use solarity_systems::UnitWaterEffect;
 
@@ -13,14 +11,13 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
     let fixture = crate::test_support::unit_models::fixture_with_water_effects(17)?;
-    let mut store = AssetStore::mount(ArchiveCatalog::discover(
-        ClientDataRoot::new(fixture.data_root())?,
-        Locale::EnUs,
-    )?)?;
-    let mut warmup = M2UnitEffectWarmup::new(ResidentUnitEffect::load(
-        &mut store,
-        &solarity_asset::EnvironmentalDamageCatalog::default(),
-    )?);
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut warmup =
+        M2UnitEffectWarmup::new(crate::application::unit_effects::prepare_sources_for_test(
+            catalog,
+            Arc::new(solarity_asset::EnvironmentalDamageCatalog::default()),
+        )?);
     while !warmup.service_one(&mut renderer)? {}
     let mut presentation = unit_presentation(&fixture)?;
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
@@ -306,13 +303,11 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
     let mut renderer = renderer(&platform)?;
     for attachment in [17, 19, 34] {
         let fixture = crate::test_support::unit_models::fixture_with_water_effects(attachment)?;
-        let mut store = AssetStore::mount(ArchiveCatalog::discover(
-            ClientDataRoot::new(fixture.data_root())?,
-            Locale::EnUs,
-        )?)?;
-        let effects = ResidentUnitEffect::load(
-            &mut store,
-            &solarity_asset::EnvironmentalDamageCatalog::default(),
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let effects = crate::application::unit_effects::prepare_sources_for_test(
+            catalog,
+            Arc::new(solarity_asset::EnvironmentalDamageCatalog::default()),
         )?;
         assert_eq!(effects.len(), 5);
         let mut warmup = M2UnitEffectWarmup::new(effects);

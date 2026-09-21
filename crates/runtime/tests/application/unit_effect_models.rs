@@ -20,10 +20,8 @@ use crate::random::CrtRand;
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
 fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn Error>> {
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
-    let mut assets = AssetStore::mount(ArchiveCatalog::discover(
-        ClientDataRoot::new(root)?,
-        Locale::EnUs,
-    )?)?;
+    let catalog = ArchiveCatalog::discover(ClientDataRoot::new(root)?, Locale::EnUs)?;
+    let mut assets = AssetStore::mount(catalog.clone())?;
     let effects = SpellVisualEffectCatalog::load(&mut assets)?;
     let animations = AnimationDataCatalog::load(&mut assets)?;
     let mut models = M2ModelCache::new();
@@ -169,8 +167,7 @@ fn unit_effect_stock_models_prepare_simulate_and_retire() -> Result<(), Box<dyn 
 #[ignore = "requires SOLARITY_STOCK_DATA_ROOT with locally owned build-12340 archives"]
 fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Error>> {
     use super::unit_effects::{
-        M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding, UnitEffectRequest,
-        UnitEffectResource, WATER_EFFECTS,
+        M2UnitEffectWarmup, UnitEffectBinding, UnitEffectRequest, UnitEffectResource, WATER_EFFECTS,
     };
     use crate::configuration::{WindowConfiguration, WindowMode};
     use crate::platform::SdlPlatform;
@@ -182,12 +179,12 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
         .lock()
         .map_err(|_| "SDL test lock poisoned")?;
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
-    let mut assets = AssetStore::mount(ArchiveCatalog::discover(
-        ClientDataRoot::new(root)?,
-        Locale::EnUs,
-    )?)?;
+    let catalog = ArchiveCatalog::discover(ClientDataRoot::new(root)?, Locale::EnUs)?;
+    let mut assets = AssetStore::mount(catalog.clone())?;
     let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
-    let environmental = solarity_asset::EnvironmentalDamageCatalog::load(&mut assets)?;
+    let environmental = Arc::new(solarity_asset::EnvironmentalDamageCatalog::load(
+        &mut assets,
+    )?);
     assert_eq!(
         (0..6)
             .map(|kind| environmental.visual_kit(kind).map(|kit| kit.id()))
@@ -201,7 +198,10 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
             Some(1067)
         ]
     );
-    let sources = ResidentUnitEffect::load(&mut assets, &environmental)?;
+    let sources = crate::application::unit_effects::prepare_sources_for_test(
+        catalog,
+        Arc::clone(&environmental),
+    )?;
     assert_eq!(sources.len(), 9);
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = super::game_object_scene_tests::renderer(&platform)?;

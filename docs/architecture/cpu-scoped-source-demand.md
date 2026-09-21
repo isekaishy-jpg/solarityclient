@@ -34,8 +34,9 @@ suite used a separate Cargo target directory; its logs are in ignored
 `target/service-clippy.stderr.log`. Interrupted earlier runs are not evidence of
 a full-suite pass.
 
-This work remains isolated in `perf/cpu-service-composition` while another active
-run owns appearance/effect integration on `perf/critical-frame-work`. Integration
-and the complete combined checks remain outstanding. The change addresses
-scheduling-demand composition; it does not claim an FPS gain or completion of
-the CPU cutover.
+Merge `95d9353d` combines this work with shared appearance/sky sources and encoded
+source ownership in `perf/cpu-service-composition`. That combined Rust source
+passes full workspace formatting, Clippy and 1,692 tests, with 33 existing ignored
+tests. Later work on `perf/critical-frame-work` still requires integration. The
+change addresses scheduling-demand composition; it does not claim an FPS gain or
+completion of the CPU cutover.

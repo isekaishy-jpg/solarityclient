@@ -1,14 +1,14 @@
 //! Unit registration clocks and synchronous authored CEffect requests.
 
+use super::sources::Sources;
 use solarity_asset::{ResourceLease, ResourceWeak};
 use std::collections::HashMap;
-use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 use solarity_asset::{ArchiveCatalog, CreatureCatalog, DecodedM2Model, LiquidTypeCatalog};
-use solarity_cpu::{CpuExecutor, CpuTask};
+use solarity_cpu::CpuExecutor;
 use solarity_ecs::{ActiveWorld, ObjectFields, ObjectKind, WorldObjectIdentity};
 use solarity_rendering::VulkanRenderer;
 use solarity_systems::{
@@ -16,24 +16,14 @@ use solarity_systems::{
     resolve_unit_movement_speed_extended, unit_player_inebriation, unit_world_effect_factor,
 };
 
-use super::character_directory::RuntimeCharacterMetadata;
-use super::terrain_frame::RuntimeM2Event;
-use super::terrain_frame::m2::unit_effects::{
-    M2UnitEffectSources, M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding,
-    UnitEffectRequest, UnitEffectResource,
+use crate::application::character_directory::RuntimeCharacterMetadata;
+use crate::application::terrain_frame::RuntimeM2Event;
+use crate::application::terrain_frame::m2::unit_effects::{
+    M2UnitEffectSources, UnitEffectBinding, UnitEffectRequest, UnitEffectResource,
 };
-use super::unit_animation::UnitAnimationBehavior;
-use super::unit_water::UnitWaterSample;
-use super::{
-    ApplicationError, RuntimePlayerPresentation, RuntimeTerrainCoordinator, RuntimeTerrainError,
-};
-
-enum Sources {
-    Deferred(ArchiveCatalog),
-    Running(CpuTask<Result<Vec<ResidentUnitEffect>, RuntimeTerrainError>>),
-    Warming(Box<M2UnitEffectWarmup>),
-    Ready(Arc<M2UnitEffectSources>),
-}
+use crate::application::unit_animation::UnitAnimationBehavior;
+use crate::application::unit_water::UnitWaterSample;
+use crate::application::{ApplicationError, RuntimePlayerPresentation, RuntimeTerrainCoordinator};
 
 #[derive(Default)]
 struct UnitState {
@@ -46,7 +36,7 @@ struct UnitState {
     tint: solarity_systems::UnitModelTint,
 }
 
-pub(super) struct RuntimeUnitEffects {
+pub(in crate::application) struct RuntimeUnitEffects {
     sources: Option<Sources>,
     environmental: Arc<solarity_asset::EnvironmentalDamageCatalog>,
     world: Option<WorldObjectIdentity>,
@@ -54,7 +44,7 @@ pub(super) struct RuntimeUnitEffects {
 }
 
 impl RuntimeUnitEffects {
-    pub(super) fn new(
+    pub(in crate::application) fn new(
         catalog: ArchiveCatalog,
         environmental: Arc<solarity_asset::EnvironmentalDamageCatalog>,
     ) -> Self {
@@ -66,69 +56,28 @@ impl RuntimeUnitEffects {
         }
     }
 
-    /// Worker decoding and one driver pipeline per service tick precede callbacks.
-    pub(super) fn service_sources(
+    /// Source readiness and one driver pipeline per tick precede authored callbacks.
+    pub(in crate::application) fn service_sources(
         &mut self,
         cpu: &CpuExecutor,
         renderer: &mut VulkanRenderer,
     ) -> Result<(), ApplicationError> {
-        self.sources = Some(
-            match self
-                .sources
-                .take()
-                .ok_or(ApplicationError::UnitEffectPreparationFailed)?
-            {
-                Sources::Deferred(catalog) if cpu.can_admit_speculative()? => {
-                    match cpu.try_reserve() {
-                        Ok(permit) => {
-                            let environmental = Arc::clone(&self.environmental);
-                            let budget = solarity_asset::AssetReadBudget::for_service(
-                                cpu.storage().clone(),
-                                solarity_cpu::CpuService::Required,
-                            );
-                            Sources::Running(permit.submit_steps_with_context(
-                                super::archive_job::contextual(
-                                    "unit_effects.source_step",
-                                    super::archive_job::prepare_archive(catalog, move |store| {
-                                        ControlFlow::Break(
-                                            store.with_read_budget(&budget, |store| {
-                                                ResidentUnitEffect::load(store, &environmental)
-                                            }),
-                                        )
-                                    }),
-                                ),
-                            ))
-                        }
-                        Err(solarity_cpu::CpuError::AtCapacity { .. }) => {
-                            Sources::Deferred(catalog)
-                        }
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-                Sources::Running(task) if task.is_finished() => {
-                    Sources::Warming(Box::new(M2UnitEffectWarmup::new(task.join()??)))
-                }
-                Sources::Warming(mut warmup) => {
-                    if warmup.service_one(renderer)? {
-                        Sources::Ready(Arc::new(warmup.into_sources()))
-                    } else {
-                        Sources::Warming(warmup)
-                    }
-                }
-                state => state,
-            },
-        );
+        let source = self
+            .sources
+            .take()
+            .ok_or(ApplicationError::UnitEffectPreparationFailed)?;
+        self.sources = Some(source.service(cpu, renderer, &self.environmental)?);
         Ok(())
     }
 
-    pub(super) fn sources(&self) -> Option<Arc<M2UnitEffectSources>> {
+    pub(in crate::application) fn sources(&self) -> Option<Arc<M2UnitEffectSources>> {
         match &self.sources {
             Some(Sources::Ready(sources)) => Some(Arc::clone(sources)),
             _ => None,
         }
     }
 
-    pub(super) fn synchronize_world(&mut self, world: Option<&ActiveWorld>) {
+    pub(in crate::application) fn synchronize_world(&mut self, world: Option<&ActiveWorld>) {
         let identity = world.and_then(|world| {
             world
                 .local_player_guid()
@@ -144,7 +93,7 @@ impl RuntimeUnitEffects {
         });
     }
 
-    pub(super) fn record_sample(&mut self, sample: UnitWaterSample) {
+    pub(in crate::application) fn record_sample(&mut self, sample: UnitWaterSample) {
         let state = self.units.entry(sample.identity).or_default();
         state.position = sample.transform.position();
         state.surface = sample.liquid.map(|liquid| liquid.surface_height);
@@ -152,7 +101,7 @@ impl RuntimeUnitEffects {
     }
 
     /// 73DAB0 refreshes from the previous registration, before movement updates it.
-    pub(super) fn refresh_breaths(
+    pub(in crate::application) fn refresh_breaths(
         &mut self,
         world: Option<&ActiveWorld>,
         terrain: &mut RuntimeTerrainCoordinator,
@@ -173,7 +122,7 @@ impl RuntimeUnitEffects {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn synchronize_models(
+    pub(in crate::application) fn synchronize_models(
         &mut self,
         world: Option<&ActiveWorld>,
         player: &RuntimePlayerPresentation,
@@ -206,9 +155,9 @@ impl RuntimeUnitEffects {
         Ok(())
     }
 
-    pub(super) fn environmental_impact(
+    pub(in crate::application) fn environmental_impact(
         &mut self,
-        impact: &super::gameplay_coordinator::environmental_damage::RuntimeEnvironmentalDamageSnapshot,
+        impact: &crate::application::gameplay_coordinator::environmental_damage::RuntimeEnvironmentalDamageSnapshot,
         world: &ActiveWorld,
         player: &RuntimePlayerPresentation,
         creatures: &CreatureCatalog,
@@ -261,7 +210,7 @@ impl RuntimeUnitEffects {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn request(
+    pub(in crate::application) fn request(
         &self,
         event: &RuntimeM2Event,
         owner: &Rc<UnitAnimationBehavior>,
@@ -394,30 +343,5 @@ fn foot_contact(marker: [u8; 4]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn contact_markers_match_original_unit_dispatch() -> Result<(), Box<dyn std::error::Error>> {
-        let mut cases = 0;
-        let mut contacts = 0;
-        for line in include_str!("../../tests/fixtures/unit_effect_contacts.txt")
-            .lines()
-            .filter(|line| !line.starts_with('#'))
-        {
-            let mut fields = line.split_whitespace();
-            let hex = fields.next().ok_or("marker")?;
-            let mut marker = [0; 4];
-            for (i, byte) in marker.iter_mut().enumerate() {
-                *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)?;
-            }
-            let left = fields.next().ok_or("handler")?.parse::<i32>()?;
-            assert_eq!(super::foot_contact(marker), left >= 0, "{marker:?}");
-            if left >= 0 {
-                assert_eq!(i32::from(marker[2] == b'L'), left);
-                contacts += 1;
-            }
-            cases += 1;
-        }
-        assert_eq!((cases, contacts), (185, 40));
-        Ok(())
-    }
-}
+#[path = "../../../tests/application/unit_effect_markers.rs"]
+mod tests;

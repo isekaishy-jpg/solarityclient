@@ -1,8 +1,6 @@
 //! Mount event positions and body effect bindings have separate native owners.
 
-use super::super::super::unit_effects::{
-    M2UnitEffectWarmup, ResidentUnitEffect, UnitEffectBinding, UnitEffectRequest,
-};
+use super::super::super::unit_effects::{M2UnitEffectWarmup, UnitEffectBinding, UnitEffectRequest};
 use super::*;
 use solarity_systems::UnitWaterEffect;
 
@@ -15,14 +13,13 @@ fn mount_authored_effects_run_before_rider_callbacks_and_bind_body_attachments()
     for attachment in [17, 19] {
         let fixture =
             crate::test_support::unit_models::fixture_with_mount_water_effects(attachment)?;
-        let mut store = AssetStore::mount(ArchiveCatalog::discover(
-            ClientDataRoot::new(fixture.data_root())?,
-            Locale::EnUs,
-        )?)?;
-        let mut warmup = M2UnitEffectWarmup::new(ResidentUnitEffect::load(
-            &mut store,
-            &solarity_asset::EnvironmentalDamageCatalog::default(),
-        )?);
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let mut warmup =
+            M2UnitEffectWarmup::new(crate::application::unit_effects::prepare_sources_for_test(
+                catalog,
+                Arc::new(solarity_asset::EnvironmentalDamageCatalog::default()),
+            )?);
         while !warmup.service_one(&mut renderer)? {}
         let mut presentation = unit_presentation(&fixture)?;
         let mut world = ActiveWorld::enter(WorldBootstrap::new(
