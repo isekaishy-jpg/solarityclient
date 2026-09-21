@@ -19,6 +19,13 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+[Testing Build 174](testing-build174-continuations.md) is installed. It connects
+discovered-dependency suspension, shared terrain/GameObject/ground-detail sources,
+bounded WMO decoding and parallel world command recording. All 1,676 workspace
+tests pass with zero failures and 33 ignored, as do formatting and Clippy.
+The paired hidden replay is slower overall; this package establishes neither
+an FPS gain nor completion of the remaining cutover requirements.
+
 [Effect storage and native GPU waits](cpu-effect-storage-and-gpu-waits.md) connect
 particle/free-slot pools, fixed ribbon history and named-bone scratch to allocation
 ownership. World/Glue, UI/loading and cinematic acquisition use the existing GPU
@@ -814,7 +821,8 @@ formatting and workspace Clippy. The optimized candidate completes 1,792 crowded
 frames across 1/2/4/8 workers and an 896-frame F10 capture. The paired earlier
 binary also completes, but the candidate is slower overall in that pair; no
 frame-time gain is claimed. See the [qualification report](cpu-world-recording.md#combined-source-qualification).
-Numbered packaging is pending; Build 173 remains the installed package.
+[Build 174](testing-build174-continuations.md) packages and installs this source;
+its executable identity and hash are verified.
 
 ## Still required for the complete cutover
 
