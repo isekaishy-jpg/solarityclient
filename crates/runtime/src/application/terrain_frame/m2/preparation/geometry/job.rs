@@ -43,6 +43,8 @@ pub(super) struct GeometryJob {
 
 /// Immutable generation and camera inputs own every worker dependency.
 pub(super) struct GeometryContext {
+    /// Owned admission budget survives withdrawal until the worker returns state.
+    pub(super) storage: solarity_cpu::CpuStorageBudget,
     pub(super) source: super::super::super::M2GpuSource,
     pub(super) camera: solarity_rendering::WorldCameraFrame,
     pub(super) effect_scale: solarity_rendering::M2CameraEffectScale,

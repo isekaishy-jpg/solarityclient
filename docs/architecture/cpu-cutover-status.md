@@ -19,6 +19,20 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+After Build 174, geometry working-set preparation moves from ordered M2 traversal
+into the owned worker turn. Main still admits the request records, copied pose
+inputs and shared sorting lanes. The worker then admits its palette, packet and
+simulation buffers before advancing any effects; refusal returns unadvanced
+state through the existing ordered error/reclamation path. This distinguishes
+request admission from the numeric phase's working-set admission. It does not
+claim a complete connected-frame reservation or remove the remaining main-owned
+animation, attachment and receiver work. The moving-scene reference comparison,
+including a real worker with a refused memory budget, passes. Formatting,
+workspace Clippy with warnings denied, and all 1,676 workspace tests pass with
+zero failures and 33 ignored. Logs are in ignored
+`target/m2-worker-admission-{clippy,test}-all.*.log`. Build 174 remains installed;
+this source has no measured FPS result yet.
+
 [Testing Build 174](testing-build174-continuations.md) is installed. It connects
 discovered-dependency suspension, shared terrain/GameObject/ground-detail sources,
 bounded WMO decoding and parallel world command recording. All 1,676 workspace

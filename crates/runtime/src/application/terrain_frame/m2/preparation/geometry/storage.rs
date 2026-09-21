@@ -1,6 +1,6 @@
-//! Authored output bounds are admitted before placement simulation changes owner.
+//! Worker admission reserves palette, draw streams and effect state before simulation.
 
-use super::super::super::{M2GpuPlacement, M2GpuSource, RuntimeTerrainFrameError};
+use super::super::super::{M2GpuSource, RuntimeTerrainFrameError};
 use super::{GeometryInput, GeometryJob};
 use solarity_cpu::{CpuStorageBudget, CpuStorageClass as Class, CpuStorageKind as Kind};
 use solarity_rendering::{M2ParticleMeshPlan, VulkanError};
@@ -19,14 +19,14 @@ fn twice(value: usize) -> Result<usize, RuntimeTerrainFrameError> {
 
 impl GeometryJob {
     /// Declares packet and stream maxima from existing stock simulation capacities.
-    /// Failure leaves placement-owned pose/particle/ribbon state untouched.
+    /// The job already owns its input state. Failure returns that state without
+    /// advancing any effect. No worker waits for capacity held by another model.
     pub(super) fn reserve_outputs(
         &mut self,
         budget: &CpuStorageBudget,
         input: &GeometryInput,
-        placement: &M2GpuPlacement,
         source: &M2GpuSource,
-    ) -> Result<usize, RuntimeTerrainFrameError> {
+    ) -> Result<(), RuntimeTerrainFrameError> {
         let shadows = if (input.primary_shadow || input.environment_maps != 0)
             && source.mesh.is_some()
             && !input.shadow.retiring
@@ -38,7 +38,7 @@ impl GeometryJob {
         self.shadow_draws
             .reserve(budget, Class::Frame, Kind::Result, shadows)?;
         let Some(visible) = input.visible else {
-            return Ok(0);
+            return Ok(());
         };
         if source.particles.len() != source.model.animations().particles().len() {
             return Err(RuntimeTerrainFrameError::M2ParticleResourceCount {
@@ -49,13 +49,12 @@ impl GeometryJob {
         }
         let mut vertices = 0;
         let mut indices = 0;
-        let mut sorting = 0;
         for ((emitter, particle), resource) in source
             .model
             .animations()
             .particles()
             .iter()
-            .zip(&placement.particles)
+            .zip(&self.particles)
             .zip(&source.particles)
         {
             if particle.unsupported.is_some() {
@@ -69,7 +68,6 @@ impl GeometryJob {
                 M2ParticleMeshPlan::buffer_capacity(emitter, capacity)?;
             vertices = add(vertices, emitter_vertices)?;
             indices = add(indices, emitter_indices)?;
-            sorting = sorting.max(capacity);
         }
         let meshes = if source.mesh.is_some() && !visible.effect_retiring {
             twice(source.draws.len())?
@@ -79,7 +77,7 @@ impl GeometryJob {
         let mut ribbon_vertices = 0;
         let mut ribbon_draws = 0;
         if !visible.effect_retiring {
-            for (trail, passes) in placement.ribbons.iter().zip(&source.ribbons) {
+            for (trail, passes) in self.ribbons.iter().zip(&source.ribbons) {
                 if passes.is_empty() {
                     continue;
                 }
@@ -103,6 +101,34 @@ impl GeometryJob {
             .reserve(budget, Class::Frame, Kind::Result, ribbon_vertices)?;
         self.ribbon_draws
             .reserve(budget, Class::Frame, Kind::Result, ribbon_draws)?;
-        Ok(sorting)
+        Ok(())
+    }
+
+    /// Admission is a separate stage inside this owned worker turn. It completes
+    /// palette, bounded draw-stream and simulation storage growth before the
+    /// numeric kernel. Required growth reports a typed error rather than waiting
+    /// on other jobs, truncating particles, or doing an unbounded main-thread copy.
+    pub(super) fn admit_working_set(
+        &mut self,
+        budget: &CpuStorageBudget,
+        input: &GeometryInput,
+        source: &M2GpuSource,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        self.pose
+            .reserve_cpu_storage(budget, source.model.animations().bones().len())?;
+        self.reserve_outputs(budget, input, source)?;
+        if input.visible.is_some() {
+            for (particle, resource) in self.particles.iter_mut().zip(&source.particles) {
+                if particle.unsupported.is_none() {
+                    particle
+                        .simulation
+                        .reserve_cpu_storage(budget, resource.maximum_particles)?;
+                }
+            }
+            for trail in &mut self.ribbons {
+                trail.reserve_cpu_storage(budget)?;
+            }
+        }
+        Ok(())
     }
 }

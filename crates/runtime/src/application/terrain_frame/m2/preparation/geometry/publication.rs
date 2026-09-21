@@ -172,40 +172,26 @@ impl GeometryBatch {
         let job = batch.jobs[slot].job_mut();
         job.reuse_identity = Some(identity);
         job.reset();
-        let budget = batch
-            .storage
-            .as_ref()
-            .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget"));
-        if palette.is_some() {
-            job.pose
-                .reserve_cpu_storage(budget, source.model.animations().bones().len())?;
-        } else {
-            pose.reserve_cpu_storage(budget, source.model.animations().bones().len())?;
-        }
-        let sorting = job.reserve_outputs(
-            batch
-                .storage
-                .as_ref()
-                .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget")),
-            &input,
-            placement,
-            source,
-        )?;
-        if input.visible.is_some() {
-            // Simulation ownership must carry its complete physical working set.
-            // This admits storage only; stock still chooses the live pool limit
-            // from the current emitter sample on the worker.
-            for (particle, resource) in placement.particles.iter_mut().zip(&source.particles) {
-                if particle.unsupported.is_none() {
+        // Only the shared worker-lane bound is needed before dispatch. Per-model
+        // output and simulation allocations belong to the owned admission stage;
+        // they no longer walk emitter/mesh layouts on the coordinator.
+        let sorting = if input.visible.is_some() {
+            placement
+                .particles
+                .iter()
+                .zip(&source.particles)
+                .filter(|(particle, _)| particle.unsupported.is_none())
+                .map(|(particle, resource)| {
                     particle
                         .simulation
-                        .reserve_cpu_storage(budget, resource.maximum_particles)?;
-                }
-            }
-            for trail in &mut placement.ribbons {
-                trail.reserve_cpu_storage(budget)?;
-            }
-        }
+                        .capacity()
+                        .max(resource.maximum_particles)
+                })
+                .max()
+                .unwrap_or(0)
+        } else {
+            0
+        };
         batch
             .particle_scratch
             .as_mut()
@@ -214,6 +200,11 @@ impl GeometryBatch {
         batch.particle_scratch_peak = batch.particle_scratch_peak.max(sorting);
         job.input = Some(input);
         job.context = Some(super::GeometryContext {
+            storage: batch
+                .storage
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("geometry admission owns a storage budget"))
+                .clone(),
             source: std::sync::Arc::clone(source),
             camera,
             effect_scale,

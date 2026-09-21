@@ -423,6 +423,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
             100.,
         )
         .frame(1.)?;
+        assert_worker_admission_refusal(&cpu, candidate, camera)?;
         let mut abandoned = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
@@ -530,5 +531,78 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     );
     cpu.shutdown()?;
     renderer.shutdown()?;
+    Ok(())
+}
+
+/// Refused worker growth must return living effects without executing any of
+/// their next tick. This uses the actual worker entry, not only the byte helper.
+fn assert_worker_admission_refusal(
+    cpu: &CpuExecutor,
+    frame: &mut M2Frame,
+    camera: solarity_rendering::WorldCameraFrame,
+) -> Result<(), Box<dyn Error>> {
+    use super::job::{GeometryContext, GeometryJob};
+    use solarity_cpu::{
+        CpuStorageBudget, CpuStorageClass, CpuStoragePlan, CpuWorkerScratch, FrameBatch,
+    };
+
+    let input = frame
+        .geometry_batch
+        .jobs
+        .iter()
+        .filter_map(|owner| owner.job().input)
+        .find(|input| input.visible.is_some())
+        .ok_or("visible model for refusal")?;
+    let source = frame.sources[input.source_index].as_ref().ok_or("source")?;
+    let placement = &mut frame.placements[input.placement_index];
+    let particles: Vec<_> = placement
+        .particles
+        .iter()
+        .map(|particle| particle.simulation.particles().to_vec())
+        .collect();
+    let ribbons: Vec<Vec<_>> = placement
+        .ribbons
+        .iter()
+        .map(|ribbon| ribbon.sections().cloned().collect())
+        .collect();
+    let mut job = GeometryJob {
+        input: Some(input),
+        context: Some(GeometryContext {
+            storage: CpuStorageBudget::new(CpuStoragePlan::new(0, 0, 0)),
+            source: Arc::clone(source),
+            camera,
+            effect_scale: M2CameraEffectScale::EXTERNAL_CAMERA,
+            twinkle: Arc::clone(&frame.particle_twinkle),
+        }),
+        ..Default::default()
+    };
+    std::mem::swap(&mut job.particles, &mut placement.particles);
+    std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
+    let scratch = CpuWorkerScratch::new(cpu, CpuStorageClass::Frame)?;
+    let mut jobs = vec![(job, scratch)];
+    let mut batch = FrameBatch::with_context(
+        |(job, scratch): &mut (GeometryJob, CpuWorkerScratch<usize>), context| {
+            job.execute(context, scratch);
+            solarity_cpu::JobOutcome::Succeeded
+        },
+    );
+    batch.start(cpu, &mut jobs)?;
+    batch.reclaim(&mut jobs)?;
+    let (job, _) = &mut jobs[0];
+    assert!(matches!(
+        job.result.as_ref(),
+        Some(Err(RuntimeTerrainFrameError::Cpu(_)))
+    ));
+    assert!(job.visible_draws.is_empty());
+    assert!(job.particle_vertices.is_empty());
+    assert!(job.ribbon_vertices.is_empty());
+    for (before, after) in particles.iter().zip(&job.particles) {
+        assert_eq!(before.as_slice(), after.simulation.particles());
+    }
+    for (before, after) in ribbons.iter().zip(&job.ribbons) {
+        assert!(before.iter().eq(after.sections()));
+    }
+    std::mem::swap(&mut job.particles, &mut placement.particles);
+    std::mem::swap(&mut job.ribbons, &mut placement.ribbons);
     Ok(())
 }

@@ -23,6 +23,11 @@ impl GeometryJob {
             input.placement_index as u64 + 1,
             input.source_index as u64 + 1,
         );
+        // The admitted node owns only input/metadata until this stage succeeds.
+        // On refusal, ordinary ordered result handling restores the unadvanced
+        // effect state. Successful admission feeds the kernel on this same worker.
+        self.admit_working_set(&context.storage, &input, source)?;
+        profile.mark("working set admission");
         if self.palette.pending {
             self.pose.recompose_with_overrides(
                 source.model.animations(),
