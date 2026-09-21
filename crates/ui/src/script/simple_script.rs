@@ -635,6 +635,7 @@ pub struct UiScriptEnvironment {
     client_clock: crate::UiClientClock,
     cvars: UiCVarRegistry,
     assets: Option<AssetStoreHandle>,
+    font_system: Option<crate::FontSystem>,
     character_creation: Option<crate::UiCharacterCreationState>,
     media_intent: Rc<RefCell<UiGlueMediaIntent>>,
     model_intent: Rc<RefCell<UiModelBridge>>,
@@ -683,6 +684,11 @@ pub struct UiScriptEnvironment {
 }
 
 impl UiScriptEnvironment {
+    /// Shares the application's admitted font cache with Lua measurements and atlases.
+    pub fn with_font_system(mut self, system: crate::FontSystem) -> Self {
+        self.font_system = Some(system);
+        self
+    }
     /// Installs Glue's native model consumer before its startup Lua executes.
     pub(crate) fn record_model_actions(&self) {
         self.model_intent.borrow_mut().start_recording();
@@ -717,6 +723,7 @@ impl UiScriptEnvironment {
             client_clock: crate::UiClientClock::new(),
             cvars: UiCVarRegistry::stock_initial(),
             assets: None,
+            font_system: None,
             character_creation: None,
             media_intent: Rc::new(RefCell::new(UiGlueMediaIntent::default())),
             model_intent: Rc::new(RefCell::new(UiModelBridge::default())),
@@ -1274,6 +1281,7 @@ impl UiScriptRuntime {
             environment.assets(),
             font_definitions.clone(),
             environment.logical_extent().1,
+            environment.font_system.clone(),
         )
         .map_err(|error| {
             execution_error("text measurement", mlua::Error::runtime(error.to_string()))

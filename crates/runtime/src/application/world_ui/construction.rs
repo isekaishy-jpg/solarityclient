@@ -63,9 +63,11 @@ impl WorldUiConstruction {
         general_tab_name: String,
         sound_output_names: Option<Vec<String>>,
         sources: WorldUiSourceImage,
+        font_system: solarity_ui::FontSystem,
     ) -> Result<Self, ApplicationError> {
         let environment = UiScriptEnvironment::new(logical_extent.0, logical_extent.1, false)
             .map_err(GlueError::from)?
+            .with_font_system(font_system)
             .with_client_clock(solarity_ui::UiClientClock::from_source(
                 crate::platform::client_milliseconds,
             ));
@@ -285,6 +287,7 @@ impl RuntimeWorldUi {
             general_tab_name,
             sound_output_names,
             sources,
+            solarity_ui::FontSystem::new()?,
         )?;
         loop {
             if let Poll::Ready(result) = construction.advance(Duration::from_secs(60)) {

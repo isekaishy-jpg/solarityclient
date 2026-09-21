@@ -25,7 +25,7 @@ pub use batch::{
 };
 pub use demand::{CpuServiceDemand, CpuServiceInterest};
 pub use execution::CpuServiceExecution;
-pub use executor::CpuExecutor;
+pub use executor::{CpuExecutor, CpuServiceHandle};
 pub use permit::CpuTaskPermit;
 pub use plan::CpuExecutionPlan;
 pub use service::CpuService;

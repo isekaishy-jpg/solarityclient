@@ -27,9 +27,9 @@ pub use cost::{CostCalibration, JobCost, WorkMeasurement};
 pub use environment::is_worker as is_worker_thread;
 pub use pool::{
     CpuError, CpuExecutionPlan, CpuExecutor, CpuPoolConfig, CpuPoolSnapshot, CpuService,
-    CpuServiceControl, CpuServiceDemand, CpuServiceExecution, CpuServiceInterest, CpuServiceScope,
-    CpuTask, CpuTaskDependency, CpuTaskPermit, CpuTaskStep, FrameBatch, FrameBatchPlan,
-    FrameGraphTemplate, FrameJob, FramePriority, JobOutcome, LoadBatch,
+    CpuServiceControl, CpuServiceDemand, CpuServiceExecution, CpuServiceHandle, CpuServiceInterest,
+    CpuServiceScope, CpuTask, CpuTaskDependency, CpuTaskPermit, CpuTaskStep, FrameBatch,
+    FrameBatchPlan, FrameGraphTemplate, FrameJob, FramePriority, JobOutcome, LoadBatch,
 };
 pub use random::BlizzardRand;
 pub use reciprocal::reciprocal_sqrt_estimate;

@@ -76,8 +76,10 @@ impl SdlPlatform {
 
         let wake = crate::platform::wakeup::WakeBridge::new()?;
         Ok(Self {
-            wake,
-            event_pump,
+            input: std::rc::Rc::new(std::cell::RefCell::new(super::NativeInput {
+                wake,
+                event_pump,
+            })),
             window,
             total_physical_memory_bytes,
             text_input_active: false,

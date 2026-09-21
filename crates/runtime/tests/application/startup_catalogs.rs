@@ -126,6 +126,7 @@ fn startup_catalogs_complete_on_one_worker_and_one_admitted_slot() -> Result<(),
         &prepared.catalogs.addon_catalog,
         worker_random.clone(),
         ui.glue,
+        solarity_ui::FontSystem::new()?,
     )?;
     assert_eq!(worker.report(), serial.report());
     assert_eq!(worker.objects(), serial.objects());

@@ -88,11 +88,12 @@ impl TextMeasurement {
         assets: Option<AssetStoreHandle>,
         fonts: Rc<RefCell<HashMap<String, FontDefinition>>>,
         logical_height: u32,
+        system: Option<FontSystem>,
     ) -> Result<Self, crate::FontError> {
         Ok(Self {
             assets,
             fonts,
-            system: FontSystem::new()?,
+            system: system.map_or_else(FontSystem::new, Ok)?,
             pixels_per_ui_unit: f64::from(logical_height) / 768.0,
         })
     }

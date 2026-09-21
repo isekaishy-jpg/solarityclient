@@ -31,5 +31,5 @@ pub use event::{
     MouseMotionEvent, MouseWheelDirection, MouseWheelEvent, PlatformEvent, ScanCode,
     TextEditingEvent, TextInputEvent, TimedPlatformEvent, WindowEvent, WindowId,
 };
-pub(crate) use sdl_platform::SdlPlatform;
+pub(crate) use sdl_platform::{NativeInputHandle, SdlPlatform};
 pub use status::PlatformError;

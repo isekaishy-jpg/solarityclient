@@ -109,8 +109,24 @@ impl UiGlyphAtlasPlan {
         let ascender_26_6 =
             self.font_system
                 .ascender_26_6(assets, &font.face, font.pixel_height)?;
-        for character in (0x20..=0xff).filter_map(char::from_u32) {
-            match self.ensure_glyph(assets, GlyphKey::new(font, character)) {
+        let characters = (0x20..=0xff).filter_map(char::from_u32).collect::<Vec<_>>();
+        let glyphs = self.font_system.rasterize_batch(
+            assets,
+            characters
+                .iter()
+                .map(|&character| {
+                    crate::FontGlyphRequest::new(
+                        font.face.clone(),
+                        font.pixel_height,
+                        character,
+                        font.rasterization,
+                    )
+                })
+                .collect(),
+        )?;
+        for (character, glyph) in characters.into_iter().zip(glyphs) {
+            match glyph.and_then(|glyph| self.install_glyph(GlyphKey::new(font, character), glyph))
+            {
                 // As in initial packing, optional stock prewarm coverage may be
                 // absent. Required text below still reports a missing glyph.
                 Err(FontError::Glyph { .. }) => (),
@@ -134,6 +150,17 @@ impl UiGlyphAtlasPlan {
             key.character,
             key.rasterization,
         )?;
+        self.install_glyph(key, glyph)
+    }
+
+    fn install_glyph(
+        &mut self,
+        key: GlyphKey,
+        glyph: crate::RasterizedGlyph,
+    ) -> Result<(), FontError> {
+        if self.glyphs.contains_key(&key) {
+            return Ok(());
+        }
         let placement = coverage::insert(&mut self.pages, &glyph)?;
         self.placements.insert(key.clone(), placement);
         self.glyphs.insert(key, glyph);

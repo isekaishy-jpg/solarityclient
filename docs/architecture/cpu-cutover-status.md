@@ -160,14 +160,41 @@ Application startup/shutdown and the media owner's lifetime compile-fail tests
 also pass. Logs are `target/remaining-ui-sources-clippy.log`,
 `target/remaining-ui-sources-tests.log` and `target/remaining-ui-sources-stock.log`.
 
-The next confirmed UI boundary is retained post-Lua preparation in
-`c_glue_mgr/refresh.rs` and initial publication in `c_glue_mgr/startup.rs`.
-`UiRuntimeObjectPlan` is an owned snapshot, but `UiGlyphAtlasPlan` still retains
-the `FontSystem` shared with synchronous Lua text measurement through
-`Rc<RefCell<FontSystemState>>`. Its FreeType faces cannot be sent with that live
-owner. Eligible layout/coverage/render preparation must consume immutable inputs
-while preserving the common metric/glyph authority, geometry publication and
-ordered callbacks. This is remaining implementation, not a completed cutover.
+The next connected batch moves production Glue and FrameXML font misses onto the
+existing required CPU service. Live Lua measurement and atlas preparation share
+one plain glyph/metric cache across UI generations. Cache hits return without
+task admission; misses send an owned request to a retained archive reader with
+the same namespace and required read budget. Each task creates and retires its
+own FreeType library/faces on its worker, retaining charged encoded font bytes
+and plain coverage/metrics for subsequent calls. No native face crosses threads.
+Initial atlas coverage and western-repertoire expansion use ordered batches.
+
+A submission handle shares admission with the owning executor without retaining
+worker threads. Its factory transfers inputs only after admission succeeds;
+shutdown closes surviving handles. The font host uses weak, main-only access to
+the existing SDL input owner while awaiting completion. Native input is queued
+without dispatching Lua/gameplay; native errors cancel and reclaim the task.
+The weak handle cannot keep SDL alive after platform retirement. Admission,
+archive and font failures propagate without a main-thread decode fallback.
+
+Font requests and archive mounting remain indivisible bulk operations. Recreating
+native faces on misses trades cold setup cost for explicit thread ownership;
+there is no claimed performance gain. Glyph/map allocations still need complete
+accounting and residency policy. Retained post-Lua layout, atlas packing and
+render-packet preparation in `c_glue_mgr/refresh.rs` and initial publication in
+`c_glue_mgr/startup.rs` remain main-owned. Moving their immutable inputs while
+preserving geometry publication and ordered callbacks is still required, along
+with the full architecture requirements below. Build 176 remains installed.
+
+Grouped font validation passes formatting, all-target/all-feature CPU/UI/runtime
+Clippy with warnings denied, and 931 tests with 32 ignores. The new stock-font
+case then passes from the fresh runtime executable against build-12340 archives:
+932 distinct passing tests, 31 remaining ignores. Coverage includes exact glyphs
+and metrics in both raster modes, batched requests, warm hits under saturated
+admission, source-namespace rejection, native input preservation, retired input
+owners, shutdown and encoded-byte reclamation. Logs are
+`target/font-worker-clippy.log`, `target/font-worker-tests.log` and
+`target/font-worker-stock.log`. No client package or FPS comparison was run.
 
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared

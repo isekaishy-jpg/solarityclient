@@ -54,9 +54,10 @@ pub use feature::{
     UiActionBarState, UiActionBarStateError,
 };
 pub use font::{
-    FontCatalog, FontColor, FontDefinition, FontError, FontOutline, FontRasterization, FontShadow,
-    FontSystem, HorizontalJustification, RasterizedGlyph, UiGlyphAtlasPage, UiGlyphAtlasPlan,
-    UiGlyphQuad, UiNativeTextAtlas, UiNativeTextStyle, VerticalJustification,
+    FontCatalog, FontColor, FontDefinition, FontError, FontGlyphRequest, FontOutline,
+    FontRasterization, FontShadow, FontSystem, FontWork, FontWorkExecutor, FontWorkOutput,
+    HorizontalJustification, RasterizedGlyph, UiGlyphAtlasPage, UiGlyphAtlasPlan, UiGlyphQuad,
+    UiNativeTextAtlas, UiNativeTextStyle, VerticalJustification,
 };
 pub use frame::{
     UiBackdropFile, UiBackdropLayer, UiBackdropNode, UiBackdropPlan, UiBackdropState,

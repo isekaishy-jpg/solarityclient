@@ -23,7 +23,9 @@ pub(crate) use gxu_font_string::wrap_line;
 pub use gxu_font_string::{
     UiGlyphAtlasPage, UiGlyphAtlasPlan, UiGlyphQuad, UiNativeTextAtlas, UiNativeTextStyle,
 };
-pub use gxu_font_util::{FontRasterization, FontSystem};
+pub use gxu_font_util::{
+    FontGlyphRequest, FontRasterization, FontSystem, FontWork, FontWorkExecutor, FontWorkOutput,
+};
 pub use i_gxu_font_glyph::RasterizedGlyph;
 pub(crate) use pixel_size::{raster_pixel_height, text_pixel_height};
 pub use status::FontError;

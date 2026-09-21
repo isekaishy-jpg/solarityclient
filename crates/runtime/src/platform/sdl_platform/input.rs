@@ -10,7 +10,7 @@ impl SdlPlatform {
         loop {
             let event = {
                 let _profile = solarity_profiling::profile!("platform.sdl.poll");
-                self.event_pump.poll_event()
+                self.input.borrow_mut().event_pump.poll_event()
             };
             let event = event?;
             if let Some(event) = event_translation::translate(event) {

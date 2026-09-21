@@ -258,14 +258,22 @@ impl UiGlyphAtlasPlan {
         });
         let mut keys = Vec::with_capacity(requested_keys.len());
         let mut glyphs = HashMap::with_capacity(requested_keys.len());
-        for key in requested_keys {
-            let glyph = match system.rasterize(
-                assets,
-                &key.face,
-                key.pixel_height,
-                key.character,
-                key.rasterization,
-            ) {
+        let rasterized = system.rasterize_batch(
+            assets,
+            requested_keys
+                .iter()
+                .map(|key| {
+                    crate::FontGlyphRequest::new(
+                        key.face.clone(),
+                        key.pixel_height,
+                        key.character,
+                        key.rasterization,
+                    )
+                })
+                .collect(),
+        )?;
+        for (key, result) in requested_keys.into_iter().zip(rasterized) {
+            let glyph = match result {
                 Ok(glyph) => glyph,
                 Err(FontError::Glyph { .. }) if !required.contains(&key) => continue,
                 Err(error) => return Err(error),

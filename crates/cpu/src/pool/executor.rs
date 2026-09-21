@@ -31,7 +31,55 @@ pub struct CpuExecutor {
     pub(super) notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
 }
 
+/// Submission access to the existing required-service lane, without worker ownership.
+/// Owner shutdown closes admission even while cloned handles remain alive.
+#[derive(Clone)]
+pub struct CpuServiceHandle {
+    dispatch: Arc<Dispatch>,
+    state: Arc<SharedExecutorState>,
+    storage: crate::CpuStorageBudget,
+    notifier: Option<Arc<dyn crate::CoordinatorNotifier>>,
+}
+
+impl CpuServiceHandle {
+    /// Admits before invoking the main-thread factory that transfers owned inputs.
+    /// No unsubmitted permit escapes the call or can outlive executor shutdown.
+    /// # Errors
+    /// Reports capacity, byte admission or shutdown failure without invoking `prepare`.
+    pub fn try_submit_prepared<F, T>(
+        &self,
+        prepare: impl FnOnce() -> F,
+    ) -> Result<CpuTask<T>, CpuError>
+    where
+        F: FnOnce(&crate::JobContext<'_>) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let permit = CpuTaskPermit::new(
+            &self.dispatch,
+            self.state.reserve()?,
+            self.notifier.clone(),
+            CpuService::Required,
+            &self.storage,
+        )?;
+        Ok(permit.submit_with_context(prepare()))
+    }
+
+    /// Returns the same byte authority used by the owning executor.
+    pub fn storage(&self) -> &crate::CpuStorageBudget {
+        &self.storage
+    }
+}
+
 impl CpuExecutor {
+    /// Shares required-service admission without extending the worker lifetime.
+    pub fn service_handle(&self) -> CpuServiceHandle {
+        CpuServiceHandle {
+            dispatch: Arc::clone(&self.dispatch),
+            state: Arc::clone(&self.state),
+            storage: self.storage.clone(),
+            notifier: self.notifier.clone(),
+        }
+    }
     /// Weak identity prevents scratch bindings from matching a recycled executor address.
     pub(crate) fn worker_owner(&self) -> std::sync::Weak<Dispatch> {
         Arc::downgrade(&self.dispatch)

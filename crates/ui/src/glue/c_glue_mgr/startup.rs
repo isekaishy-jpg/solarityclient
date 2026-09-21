@@ -43,6 +43,7 @@ impl GlueManager {
     /// Publishes prepared sources into main-owned Lua, random and UI state.
     /// # Errors
     /// Returns the original environment, callback, layout or font failure.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_shared_with_sources(
         assets: AssetStoreHandle,
         logical_extent: (u32, u32),
@@ -51,12 +52,14 @@ impl GlueManager {
         addon_catalog: &crate::AddonCatalog,
         random: std::rc::Rc<std::cell::RefCell<solarity_cpu::BlizzardRand>>,
         sources: GlueUiSources,
+        font_system: crate::FontSystem,
     ) -> Result<Self, GlueError> {
         let creation =
             crate::UiCharacterCreationState::from_catalog(sources.character_creation, random);
         let environment =
             UiScriptEnvironment::new(logical_extent.0, logical_extent.1, sources.streaming_trial)?
                 .with_shared_asset_store(assets.clone())
+                .with_font_system(font_system)
                 .with_cvar_values(cvar_values)
                 .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog))
                 .with_character_creation_state(creation);

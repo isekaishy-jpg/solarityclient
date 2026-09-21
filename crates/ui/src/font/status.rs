@@ -6,6 +6,12 @@ use thiserror::Error;
 /// A failure while owning a stock font face or rasterizing a glyph.
 #[derive(Debug, Error)]
 pub enum FontError {
+    /// Worker preparation or its native readiness service could not complete.
+    #[error("font worker preparation failed: {message}")]
+    Execution {
+        /// Exact host or cache-lifetime failure.
+        message: String,
+    },
     /// The selected font asset could not be resolved or read.
     #[error(transparent)]
     Asset(#[from] AssetError),

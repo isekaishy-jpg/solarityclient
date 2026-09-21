@@ -1,19 +1,24 @@
 //! Native readiness and clock waits collect input without dispatching gameplay.
 
-use super::SdlPlatform;
+use super::{NativeInput, NativeInputHandle, SdlPlatform};
 use crate::platform::PlatformError;
 
 impl SdlPlatform {
     /// Surfaces producer-side native faults on every serviced frame.
     pub(crate) fn check_wait_health(&self) -> Result<(), PlatformError> {
-        self.wake.check()
+        self.input.borrow().wake.check()
     }
 
     /// Shares native notification ownership without exposing SDL to workers.
     pub(crate) fn coordinator_notifier(
         &self,
     ) -> std::sync::Arc<dyn solarity_cpu::CoordinatorNotifier> {
-        self.wake.notifier()
+        self.input.borrow().wake.notifier()
+    }
+
+    /// Gives main-only services weak access to the same native input owner.
+    pub(crate) fn input_handle(&self) -> NativeInputHandle {
+        NativeInputHandle(std::rc::Rc::downgrade(&self.input))
     }
 
     /// Parks idle/movie service until work, input or its next clock boundary.
@@ -21,14 +26,15 @@ impl SdlPlatform {
         &mut self,
         deadline: std::time::Instant,
     ) -> Result<crate::platform::wakeup::WakeReason, PlatformError> {
-        let ticket = self.wake.observe();
-        self.event_pump.pump_events();
+        let mut input = self.input.borrow_mut();
+        let ticket = input.wake.observe();
+        input.event_pump.pump_events();
         // SAFETY: SDL is live on its owning thread. This checks the entire queue
         // without removing events or invoking gameplay outside its cutoff.
         if unsafe { sdl3::sys::events::SDL_HasEvents(0, u32::MAX) } {
             return Ok(crate::platform::wakeup::WakeReason::Input);
         }
-        self.wake.wait(ticket, deadline)
+        input.wake.wait(ticket, deadline)
     }
 
     /// Keeps the presentation deadline while collecting native input into SDL's
@@ -37,10 +43,11 @@ impl SdlPlatform {
         &mut self,
         deadline: std::time::Instant,
     ) -> Result<(), PlatformError> {
+        let mut input = self.input.borrow_mut();
         while std::time::Instant::now() < deadline {
-            let ticket = self.wake.observe();
-            self.event_pump.pump_events();
-            self.wake.wait(ticket, deadline)?;
+            let ticket = input.wake.observe();
+            input.event_pump.pump_events();
+            input.wake.wait(ticket, deadline)?;
         }
         Ok(())
     }
@@ -51,6 +58,28 @@ impl SdlPlatform {
     /// the last predicate check so publication racing with native arm cannot
     /// lose its wake. No predicate or SDL callback runs under a wakeup lock.
     pub(crate) fn wait_until_ready<E: From<PlatformError>>(
+        &mut self,
+        ready: impl FnMut() -> Result<bool, E>,
+    ) -> Result<(), E> {
+        self.input.borrow_mut().wait_until_ready(ready)
+    }
+}
+
+impl NativeInputHandle {
+    pub(crate) fn wait_until_ready<E: From<PlatformError>>(
+        &self,
+        ready: impl FnMut() -> Result<bool, E>,
+    ) -> Result<(), E> {
+        let owner = self.0.upgrade().ok_or(PlatformError::InputUnavailable)?;
+        let mut input = owner
+            .try_borrow_mut()
+            .map_err(|_| PlatformError::InputUnavailable)?;
+        input.wait_until_ready(ready)
+    }
+}
+
+impl NativeInput {
+    fn wait_until_ready<E: From<PlatformError>>(
         &mut self,
         mut ready: impl FnMut() -> Result<bool, E>,
     ) -> Result<(), E> {

@@ -4,9 +4,9 @@ use crate::font::{FontError, RasterizedGlyph};
 use freetype::{Face, bitmap::PixelMode};
 use solarity_asset::AssetPath;
 
-pub(super) fn glyph_from_slot(
+pub(super) fn glyph_from_slot<T: std::borrow::Borrow<[u8]>>(
     path: &AssetPath,
-    face: &Face<solarity_asset::AssetBytes>,
+    face: &Face<T>,
 ) -> Result<RasterizedGlyph, FontError> {
     let slot = face.glyph();
     let bitmap = slot.bitmap();

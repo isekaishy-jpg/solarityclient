@@ -1,13 +1,19 @@
-//! Shared UI-thread font ownership and persistent archive-backed glyph coverage.
+//! Shared font cache; production cache misses execute through the CPU host.
 
 mod bitmap;
 mod state;
+mod work;
+pub use work::{FontGlyphRequest, FontWork, FontWorkExecutor, FontWorkOutput};
 
 use crate::font::{FontError, RasterizedGlyph};
-use solarity_asset::{AssetPath, AssetStore};
-use state::FontSystemState;
-use std::cell::RefCell;
-use std::rc::Rc;
+use solarity_asset::{AssetNamespaceId, AssetPath, AssetStore};
+use state::{FontCache, FontSystemState};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
+use work::{Reply, Request};
 
 /// Stock font smoothing mode selected by a font object's `monochrome` flag.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -18,11 +24,53 @@ pub enum FontRasterization {
     Monochrome,
 }
 
-/// Clones share one mounted-provider cache; layout and glyph consumers use the
-/// same faces, coverage and metrics. No global cache or cross-thread lock exists.
+#[derive(Clone)]
+enum Owner {
+    Local(Rc<RefCell<FontSystemState>>),
+    Worker(Rc<WorkerFontSystem>),
+}
+
+struct WorkerFontSystem {
+    cache: Arc<Mutex<FontCache>>,
+    executor: Rc<dyn FontWorkExecutor>,
+}
+
+impl WorkerFontSystem {
+    fn cached<T>(
+        &self,
+        namespace: AssetNamespaceId,
+        read: impl FnOnce(&FontCache) -> Option<T>,
+    ) -> Result<Option<T>, FontError> {
+        let cache = self.cache.lock().map_err(|_| work::unavailable())?;
+        Ok((cache.provider == Some(namespace))
+            .then(|| read(&cache))
+            .flatten())
+    }
+
+    fn execute(&self, namespace: AssetNamespaceId, request: Request) -> Result<Reply, FontError> {
+        self.executor
+            .execute(FontWork {
+                cache: Arc::clone(&self.cache),
+                namespace,
+                request,
+            })
+            .map(|result| result.0)
+    }
+
+    fn inspect<T>(&self, read: impl FnOnce(&FontCache) -> T) -> T {
+        let cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        read(&cache)
+    }
+}
+
+/// Clones share one namespace-aware glyph/metric authority. Production hosts keep
+/// Lua-facing ownership on main and send only plain cache data and owned requests.
 #[derive(Clone)]
 pub struct FontSystem {
-    state: Rc<RefCell<FontSystemState>>,
+    owner: Owner,
 }
 
 impl std::fmt::Debug for FontSystem {
@@ -35,31 +83,38 @@ impl std::fmt::Debug for FontSystem {
 }
 impl PartialEq for FontSystem {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.state, &other.state)
+        match (&self.owner, &other.owner) {
+            (Owner::Local(left), Owner::Local(right)) => Rc::ptr_eq(left, right),
+            (Owner::Worker(left), Owner::Worker(right)) => Rc::ptr_eq(left, right),
+            _ => false,
+        }
     }
 }
 
 impl FontSystem {
-    /// Initializes a scoped native owner; clones retain its useful common data.
+    /// Initializes a scoped native owner for worker-local preparation or offline use.
     /// # Errors
     /// Returns `FontError::Library` when FreeType initialization fails.
     pub fn new() -> Result<Self, FontError> {
         Ok(Self {
-            state: Rc::new(RefCell::new(FontSystemState::new()?)),
+            owner: Owner::Local(Rc::new(RefCell::new(FontSystemState::new()?))),
         })
     }
 
-    /// Loads a stock font face on demand and rasterizes one Unicode character.
-    ///
-    /// Each distinct archive path is read once and retained by FreeType. Pixel
-    /// height remains part of the glyph request because many stock font
-    /// objects share a face at different sizes.
-    ///
+    /// Uses the application's admitted worker service for all cache misses.
+    /// No FreeType object is constructed on this calling thread.
+    pub fn with_executor(executor: Rc<dyn FontWorkExecutor>) -> Self {
+        Self {
+            owner: Owner::Worker(Rc::new(WorkerFontSystem {
+                cache: Arc::new(Mutex::new(FontCache::default())),
+                executor,
+            })),
+        }
+    }
+
+    /// Returns exact archive-backed coverage, reusing the common warmed cache.
     /// # Errors
-    ///
-    /// Returns an asset, face, size, glyph, or bitmap error. The method never
-    /// substitutes an operating-system font when the selected stock face lacks
-    /// a glyph or cannot be decoded.
+    /// Returns admission, native servicing or the exact archive/font failure.
     pub fn rasterize(
         &mut self,
         store: &mut AssetStore,
@@ -68,20 +123,73 @@ impl FontSystem {
         character: char,
         rasterization: FontRasterization,
     ) -> Result<RasterizedGlyph, FontError> {
-        self.state
-            .borrow_mut()
-            .rasterize(store, path, pixel_height, character, rasterization)
+        match &self.owner {
+            Owner::Local(state) => {
+                state
+                    .borrow_mut()
+                    .rasterize(store, path, pixel_height, character, rasterization)
+            }
+            Owner::Worker(worker) => {
+                if let Some(value) = worker.cached(store.namespace(), |cache| {
+                    cache.glyph(path, pixel_height, character, rasterization)
+                })? {
+                    return Ok(value);
+                }
+                match worker.execute(
+                    store.namespace(),
+                    Request::Glyph(FontGlyphRequest::new(
+                        path.clone(),
+                        pixel_height,
+                        character,
+                        rasterization,
+                    )),
+                )? {
+                    Reply::Glyph(value) => Ok(value),
+                    _ => unreachable!("typed glyph reply"),
+                }
+            }
+        }
     }
 
-    /// Measures one line using build-12340's unfitted whole-pixel advances.
-    ///
-    /// Additional XML spacing and shadow extent remain string-object concerns,
-    /// so callers apply those after converting the returned 26.6-pixel value.
-    ///
+    /// Prepares an ordered atlas batch with one admitted miss operation.
+    /// Individual glyph failures retain their original ordered consumer semantics.
     /// # Errors
-    ///
-    /// Returns an asset, face, size, glyph, or kerning error without replacing
-    /// a missing stock glyph or font face.
+    /// Returns host admission/completion failures; per-glyph errors remain in the output.
+    pub fn rasterize_batch(
+        &mut self,
+        store: &mut AssetStore,
+        requests: Vec<FontGlyphRequest>,
+    ) -> Result<Vec<Result<RasterizedGlyph, FontError>>, FontError> {
+        let result = match &self.owner {
+            Owner::Local(state) => Request::Glyphs(requests).run(&mut state.borrow_mut(), store)?,
+            Owner::Worker(worker) => {
+                if requests.is_empty() {
+                    return Ok(Vec::new());
+                }
+                if let Some(values) = worker.cached(store.namespace(), |cache| {
+                    requests
+                        .iter()
+                        .map(|key| {
+                            cache
+                                .glyph(&key.face, key.height, key.character, key.mode)
+                                .map(Ok)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })? {
+                    return Ok(values);
+                }
+                worker.execute(store.namespace(), Request::Glyphs(requests))?
+            }
+        };
+        match result {
+            Reply::Glyphs(values) => Ok(values),
+            _ => unreachable!("typed glyph batch reply"),
+        }
+    }
+
+    /// Measures stock unfitted whole-pixel advances without changing text semantics.
+    /// # Errors
+    /// Returns the same failures as character-advance preparation.
     pub fn measure_line_width_26_6(
         &mut self,
         store: &mut AssetStore,
@@ -90,19 +198,19 @@ impl FontSystem {
         text: &str,
         rasterization: FontRasterization,
     ) -> Result<i64, FontError> {
-        self.state.borrow_mut().measure_line_width_26_6(
-            store,
-            path,
-            pixel_height,
-            text,
-            rasterization,
-        )
+        if let Owner::Local(state) = &self.owner {
+            return state.borrow_mut().measure_line_width_26_6(
+                store,
+                path,
+                pixel_height,
+                text,
+                rasterization,
+            );
+        }
+        self.measure_character_advances_26_6(store, path, pixel_height, text, rasterization)
+            .map(|values| values.into_iter().fold(0_i64, i64::saturating_add))
     }
 
-    /// Measures each scalar after selecting one stock face and size.
-    ///
-    /// FontString wrapping consumes the same unfitted advances as ordinary
-    /// line measurement without reopening or resizing the face per scalar.
     pub(crate) fn measure_character_advances_26_6(
         &mut self,
         store: &mut AssetStore,
@@ -111,37 +219,70 @@ impl FontSystem {
         text: &str,
         rasterization: FontRasterization,
     ) -> Result<Vec<i64>, FontError> {
-        self.state.borrow_mut().measure_character_advances_26_6(
-            store,
-            path,
-            pixel_height,
-            text,
-            rasterization,
-        )
+        match &self.owner {
+            Owner::Local(state) => state.borrow_mut().measure_character_advances_26_6(
+                store,
+                path,
+                pixel_height,
+                text,
+                rasterization,
+            ),
+            Owner::Worker(worker) => {
+                if let Some(value) = worker.cached(store.namespace(), |cache| {
+                    cache.advances(path, pixel_height, text, rasterization)
+                })? {
+                    return Ok(value);
+                }
+                match worker.execute(
+                    store.namespace(),
+                    Request::Advances {
+                        face: path.clone(),
+                        height: pixel_height,
+                        text: text.to_owned(),
+                        mode: rasterization,
+                    },
+                )? {
+                    Reply::Advances(value) => Ok(value),
+                    _ => unreachable!("typed advances reply"),
+                }
+            }
+        }
     }
 
-    /// Returns the build-12340 face ascender for one pixel height.
-    ///
+    /// Returns the build-12340 face ascender at the exact requested pixel height.
     /// # Errors
-    ///
-    /// Returns the same archive, face, or size failures as glyph loading and
-    /// rejects a face whose ascender and descender define no vertical span.
+    /// Returns host, archive, face or size failures without a substitute font.
     pub fn ascender_26_6(
         &mut self,
         store: &mut AssetStore,
         path: &AssetPath,
         pixel_height: u32,
     ) -> Result<i64, FontError> {
-        self.state
-            .borrow_mut()
-            .ascender_26_6(store, path, pixel_height)
+        match &self.owner {
+            Owner::Local(state) => state.borrow_mut().ascender_26_6(store, path, pixel_height),
+            Owner::Worker(worker) => {
+                if let Some(value) = worker.cached(store.namespace(), |cache| {
+                    cache.faces.get(path)?.ascenders.get(&pixel_height).copied()
+                })? {
+                    return Ok(value);
+                }
+                match worker.execute(
+                    store.namespace(),
+                    Request::Ascender {
+                        face: path.clone(),
+                        height: pixel_height,
+                    },
+                )? {
+                    Reply::Metric(value) => Ok(value),
+                    _ => unreachable!("typed ascender reply"),
+                }
+            }
+        }
     }
 
-    /// Returns hinted horizontal kerning for one adjacent character pair.
-    ///
+    /// Returns stock hinted horizontal kerning for one adjacent character pair.
     /// # Errors
-    ///
-    /// Returns an archive, face, size, glyph, or FreeType kerning failure.
+    /// Returns host, archive, face, size, glyph or FreeType kerning failures.
     pub fn kerning_x_26_6(
         &mut self,
         store: &mut AssetStore,
@@ -150,24 +291,67 @@ impl FontSystem {
         left: char,
         right: char,
     ) -> Result<i64, FontError> {
-        self.state
-            .borrow_mut()
-            .kerning_x_26_6(store, path, pixel_height, left, right)
+        match &self.owner {
+            Owner::Local(state) => {
+                state
+                    .borrow_mut()
+                    .kerning_x_26_6(store, path, pixel_height, left, right)
+            }
+            Owner::Worker(worker) => {
+                if let Some(value) = worker.cached(store.namespace(), |cache| {
+                    cache
+                        .faces
+                        .get(path)?
+                        .kerning
+                        .get(&(pixel_height, left, right))
+                        .copied()
+                })? {
+                    return Ok(value);
+                }
+                match worker.execute(
+                    store.namespace(),
+                    Request::Kerning {
+                        face: path.clone(),
+                        height: pixel_height,
+                        left,
+                        right,
+                    },
+                )? {
+                    Reply::Metric(value) => Ok(value),
+                    _ => unreachable!("typed kerning reply"),
+                }
+            }
+        }
     }
 
-    /// Returns the number of distinct archive-backed faces retained in memory.
-    #[must_use]
+    /// Returns distinct retained archive-backed faces.
     pub fn loaded_face_count(&self) -> usize {
-        self.state.borrow().loaded_face_count()
+        match &self.owner {
+            Owner::Local(state) => state.borrow().loaded_face_count(),
+            Owner::Worker(worker) => worker.inspect(|cache| cache.faces.len()),
+        }
     }
-
-    /// Number of retained font/size/mode/scalar coverage entries.
+    /// Returns retained face/size/mode/scalar coverage entries.
     pub fn cached_glyph_count(&self) -> usize {
-        self.state.borrow().glyph_count()
+        match &self.owner {
+            Owner::Local(state) => state.borrow().glyph_count(),
+            Owner::Worker(worker) => {
+                worker.inspect(|cache| cache.faces.values().map(|face| face.glyphs.len()).sum())
+            }
+        }
     }
-
-    /// Common coverage bytes, excluding atlas copies and shared glyph references.
+    /// Common coverage bytes, excluding atlas copies and shared references.
     pub fn cached_coverage_bytes(&self) -> usize {
-        self.state.borrow().coverage_bytes()
+        match &self.owner {
+            Owner::Local(state) => state.borrow().coverage_bytes(),
+            Owner::Worker(worker) => worker.inspect(|cache| {
+                cache
+                    .faces
+                    .values()
+                    .flat_map(|face| face.glyphs.values())
+                    .map(|glyph| glyph.coverage().len())
+                    .sum()
+            }),
+        }
     }
 }

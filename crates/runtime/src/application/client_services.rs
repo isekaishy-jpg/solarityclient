@@ -134,6 +134,7 @@ pub(crate) struct ClientServices {
     world_ui_construction: Option<WorldUiConstruction>,
     world_ui_sources: WorldUiSourcePreparation,
     world_ui_catalog: ArchiveCatalog,
+    font_system: solarity_ui::FontSystem,
     glue_model: RuntimeGlueModelScene,
     cinematic: RuntimeCinematicCoordinator,
     sound: RuntimeSoundCoordinator,
@@ -369,6 +370,11 @@ impl ClientServices {
             glue: glue_sources,
             sound: sound_sources,
         } = ui?;
+        let font_system = super::font_preparation::font_system(
+            &cpu,
+            platform.input_handle(),
+            ui_texture_catalog.clone(),
+        );
         let glue = GlueManager::start_shared_with_sources(
             assets.clone(),
             platform.logical_extent(),
@@ -377,6 +383,7 @@ impl ClientServices {
             &addon_catalog,
             blizzard_rand.clone(),
             glue_sources,
+            font_system.clone(),
         )?;
         let texture_filtering = glue
             .cvar_integer("textureFilteringMode")
@@ -617,6 +624,7 @@ impl ClientServices {
                 glue,
                 assets: assets.clone(),
                 world_ui_catalog,
+                font_system,
                 startup_profile,
                 character_profile: None,
                 cpu,
@@ -3220,6 +3228,7 @@ impl ClientServices {
             general_tab_name,
             self.sound.output_names(),
             sources,
+            self.font_system.clone(),
         )?;
         self.world_ui_construction = Some(construction);
         Ok(())

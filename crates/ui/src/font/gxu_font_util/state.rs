@@ -8,18 +8,33 @@ use solarity_asset::{AssetPath, AssetStore};
 use std::collections::HashMap;
 
 /// A mounted face owns all scalar coverage and native metric results for its sizes.
-struct CachedFace {
-    face: Face<solarity_asset::AssetBytes>,
-    glyphs: HashMap<(u32, FontRasterization, char), RasterizedGlyph>,
-    advances: HashMap<(u32, FontRasterization, char), i64>,
-    ascenders: HashMap<u32, i64>,
-    kerning: HashMap<(u32, char, char), i64>,
+#[derive(Clone)]
+struct FontBytes(std::sync::Arc<solarity_asset::AssetBytes>);
+impl std::borrow::Borrow<[u8]> for FontBytes {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_ref().as_ref()
+    }
 }
 
-/// Faces precede the library so their native allocations are released first.
+pub(super) struct CachedFace {
+    bytes: FontBytes,
+    pub(super) glyphs: HashMap<(u32, FontRasterization, char), RasterizedGlyph>,
+    pub(super) advances: HashMap<(u32, FontRasterization, char), i64>,
+    pub(super) ascenders: HashMap<u32, i64>,
+    pub(super) kerning: HashMap<(u32, char, char), i64>,
+}
+
+/// Plain cache data can travel between workers; no FreeType object is retained here.
+#[derive(Default)]
+pub(super) struct FontCache {
+    pub(super) faces: HashMap<AssetPath, CachedFace>,
+    pub(super) provider: Option<solarity_asset::AssetNamespaceId>,
+}
+
+/// Native faces precede the library and are created/retired on the executing thread.
 pub(super) struct FontSystemState {
-    faces: HashMap<AssetPath, CachedFace>,
-    provider: Option<solarity_asset::AssetNamespaceId>,
+    native_faces: HashMap<AssetPath, Face<FontBytes>>,
+    pub(super) cache: FontCache,
     library: Library,
 }
 
@@ -34,8 +49,8 @@ impl FontSystemState {
             message: error.to_string(),
         })?;
         Ok(Self {
-            faces: HashMap::new(),
-            provider: None,
+            native_faces: HashMap::new(),
+            cache: FontCache::default(),
             library,
         })
     }
@@ -63,7 +78,7 @@ impl FontSystemState {
             solarity_profiling::detail_profile!("ui.font.gxu_font_util.state.rasterize");
         self.ensure_face(store, path)?;
 
-        let Some(cached) = self.faces.get_mut(path) else {
+        let Some(cached) = self.cache.faces.get_mut(path) else {
             return Err(FontError::Face {
                 path: path.clone(),
                 message: "loaded face was not retained".to_owned(),
@@ -76,7 +91,7 @@ impl FontSystemState {
             }
             return Ok(glyph.clone());
         }
-        let face = &cached.face;
+        let face = &self.native_faces[path];
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
@@ -169,13 +184,13 @@ impl FontSystemState {
             "ui.font.gxu_font_util.state.measure_character_advances_26_6"
         );
         self.ensure_face(store, path)?;
-        let Some(cached) = self.faces.get_mut(path) else {
+        let Some(cached) = self.cache.faces.get_mut(path) else {
             return Err(FontError::Face {
                 path: path.clone(),
                 message: "loaded face was not retained".to_owned(),
             });
         };
-        let face = &cached.face;
+        let face = &self.native_faces[path];
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
@@ -234,14 +249,18 @@ impl FontSystemState {
         pixel_height: u32,
     ) -> Result<i64, FontError> {
         self.ensure_face(store, path)?;
-        let cached = self.faces.get_mut(path).ok_or_else(|| FontError::Face {
-            path: path.clone(),
-            message: "loaded face was not retained".to_owned(),
-        })?;
+        let cached = self
+            .cache
+            .faces
+            .get_mut(path)
+            .ok_or_else(|| FontError::Face {
+                path: path.clone(),
+                message: "loaded face was not retained".to_owned(),
+            })?;
         if let Some(&ascender) = cached.ascenders.get(&pixel_height) {
             return Ok(ascender);
         }
-        let face = &cached.face;
+        let face = &self.native_faces[path];
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
@@ -276,15 +295,19 @@ impl FontSystemState {
         right: char,
     ) -> Result<i64, FontError> {
         self.ensure_face(store, path)?;
-        let cached = self.faces.get_mut(path).ok_or_else(|| FontError::Face {
-            path: path.clone(),
-            message: "loaded face was not retained".to_owned(),
-        })?;
+        let cached = self
+            .cache
+            .faces
+            .get_mut(path)
+            .ok_or_else(|| FontError::Face {
+                path: path.clone(),
+                message: "loaded face was not retained".to_owned(),
+            })?;
         let key = (pixel_height, left, right);
         if let Some(&kerning) = cached.kerning.get(&key) {
             return Ok(kerning);
         }
-        let face = &cached.face;
+        let face = &self.native_faces[path];
         face.set_pixel_sizes(0, pixel_height)
             .map_err(|error| FontError::PixelSize {
                 path: path.clone(),
@@ -320,12 +343,13 @@ impl FontSystemState {
     /// Returns the number of distinct archive-backed faces retained in memory.
     #[must_use]
     pub fn loaded_face_count(&self) -> usize {
-        self.faces.len()
+        self.cache.faces.len()
     }
 
     /// Reports retained common coverage without counting shared clones twice.
     pub(super) fn coverage_bytes(&self) -> usize {
-        self.faces
+        self.cache
+            .faces
             .values()
             .flat_map(|face| face.glyphs.values())
             .map(|glyph| glyph.coverage().len())
@@ -333,37 +357,46 @@ impl FontSystemState {
     }
 
     pub(super) fn glyph_count(&self) -> usize {
-        self.faces.values().map(|face| face.glyphs.len()).sum()
+        self.cache
+            .faces
+            .values()
+            .map(|face| face.glyphs.len())
+            .sum()
     }
 
     fn ensure_face(&mut self, store: &mut AssetStore, path: &AssetPath) -> Result<(), FontError> {
         let _profile_scope =
             solarity_profiling::detail_profile!("ui.font.gxu_font_util.state.ensure_face");
-        if self.provider != Some(store.namespace()) {
-            self.faces.clear();
-            self.provider = Some(store.namespace());
+        if self.cache.provider != Some(store.namespace()) {
+            self.native_faces.clear();
+            self.cache.faces.clear();
+            self.cache.provider = Some(store.namespace());
         }
-        if self.faces.contains_key(path) {
+        if self.native_faces.contains_key(path) {
             return Ok(());
         }
-        let bytes = store.read(path)?.into_bytes();
+        let bytes = match self.cache.faces.get(path) {
+            Some(cached) => cached.bytes.clone(),
+            None => FontBytes(std::sync::Arc::new(store.read(path)?.into_bytes())),
+        };
         let face = self
             .library
-            .new_memory_face2(bytes, 0)
+            .new_memory_face2(bytes.clone(), 0)
             .map_err(|error| FontError::Face {
                 path: path.clone(),
                 message: error.to_string(),
             })?;
-        self.faces.insert(
-            path.clone(),
-            CachedFace {
-                face,
+        self.native_faces.insert(path.clone(), face);
+        self.cache
+            .faces
+            .entry(path.clone())
+            .or_insert_with(|| CachedFace {
+                bytes,
                 glyphs: HashMap::new(),
                 advances: HashMap::new(),
                 ascenders: HashMap::new(),
                 kerning: HashMap::new(),
-            },
-        );
+            });
         Ok(())
     }
 }

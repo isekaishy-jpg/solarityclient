@@ -5,6 +5,9 @@ use thiserror::Error;
 /// A failure while owning the primary SDL window and event source.
 #[derive(Debug, Error)]
 pub enum PlatformError {
+    /// Native readiness cannot borrow a retired or already borrowed input owner.
+    #[error("native input owner is unavailable")]
+    InputUnavailable,
     /// Native notification, timer or message waiting failed.
     #[error("failed to {operation}: Win32 error {code}")]
     NativeWait {
