@@ -14,7 +14,7 @@ use streams::FinalStreams;
 /// One retained operation owns outputs only between capture and explicit return.
 pub(super) struct Finalization {
     pending: FrameBatch<CpuOwnedCell<FinalizationJob>>,
-    retained: Vec<CpuOwnedCell<FinalizationJob>>,
+    retained: solarity_cpu::CpuBuffer<CpuOwnedCell<FinalizationJob>>,
     submitted: bool,
     owns_inputs: bool,
 }
@@ -23,7 +23,7 @@ impl Default for Finalization {
     fn default() -> Self {
         Self {
             pending: FrameBatch::with_context(FinalizationJob::execute),
-            retained: Vec::new(),
+            retained: solarity_cpu::CpuBuffer::default(),
             submitted: false,
             owns_inputs: false,
         }
@@ -33,7 +33,7 @@ impl Default for Finalization {
 /// Jobs and contiguous renderer streams move together, without borrowed packet views.
 #[derive(Default)]
 struct FinalizationJob {
-    jobs: Vec<GeometryOwner>,
+    jobs: solarity_cpu::CpuBuffer<GeometryOwner>,
     streams: FinalStreams,
     work: Work,
     sorting: solarity_cpu::CpuScratch<usize>,
@@ -82,7 +82,7 @@ impl FinalizationJob {
         let mut output = self.streams.output();
         {
             let _profile = solarity_profiling::profile!("m2.finalization.assembly");
-            for owner in &mut self.jobs {
+            for owner in self.jobs.iter_mut() {
                 output.publish(owner.job_mut(), &mut self.work)?;
             }
         }

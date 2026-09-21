@@ -140,6 +140,9 @@ impl<T> StorageVec<T> {
         );
         self.values.push(value);
     }
+    pub(crate) fn pop(&mut self) -> Option<T> {
+        self.values.pop()
+    }
     /// Metadata reset retains its allocation and accounting until explicit drop/growth.
     pub(crate) fn clear(&mut self) {
         self.values.clear();

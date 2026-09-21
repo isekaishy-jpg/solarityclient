@@ -344,3 +344,40 @@ fn worker_readiness_waits_reject_queued_frame_work_and_return_ownership()
     assert_eq!(jobs[0].value, 10);
     Ok(())
 }
+
+/// A full destination refuses before moving any worker-owned value and remains retryable.
+#[test]
+fn admitted_reclamation_preserves_inputs_on_destination_pressure() -> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuBuffer, CpuStorageClass, CpuStorageKind};
+    let cpu = executor()?;
+    let mut batch = FrameBatch::new(|value: &mut usize| *value += 10);
+    let mut input = vec![1, 2, 3];
+    batch.start(&cpu, &mut input)?;
+    let mut output = CpuBuffer::default();
+    output.reserve(
+        cpu.storage(),
+        CpuStorageClass::Frame,
+        CpuStorageKind::Result,
+        3,
+    )?;
+    output.push(99)?;
+    assert!(matches!(
+        batch.reclaim_into(&mut output.writer()),
+        Err(CpuError::OutputCapacity { .. })
+    ));
+    assert_eq!(&*output, &[99]);
+    output.clear();
+    let pointer = output.as_ptr();
+    let before = cpu.storage().snapshot().used(CpuStorageClass::Frame);
+    batch.reclaim_into(&mut output.writer())?;
+    assert_eq!(&*output, &[11, 12, 13]);
+    assert_eq!(output.as_ptr(), pointer);
+    assert_eq!(
+        cpu.storage().snapshot().used(CpuStorageClass::Frame),
+        before
+    );
+    assert_eq!(output.pop(), Some(13));
+    output.truncate(1);
+    assert_eq!(&*output, &[11]);
+    Ok(())
+}

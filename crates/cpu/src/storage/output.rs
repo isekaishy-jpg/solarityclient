@@ -71,6 +71,14 @@ impl<T> CpuBuffer<T> {
     pub fn drain(&mut self) -> impl ExactSizeIterator<Item = T> + '_ {
         self.values.drain(..)
     }
+    /// Returns the last value while retaining its admitted backing storage.
+    pub fn pop(&mut self) -> Option<T> {
+        self.values.pop()
+    }
+    /// Drops a suffix without changing retained allocation ownership.
+    pub fn truncate(&mut self, length: usize) {
+        self.values.writer().truncate(length);
+    }
     /// Appends one value to admitted storage.
     /// # Errors
     /// Exhausted capacity leaves all existing output unchanged.
@@ -96,6 +104,12 @@ impl<T> Deref for CpuBuffer<T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
         &self.values
+    }
+}
+
+impl<T> DerefMut for CpuBuffer<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        &mut self.values
     }
 }
 

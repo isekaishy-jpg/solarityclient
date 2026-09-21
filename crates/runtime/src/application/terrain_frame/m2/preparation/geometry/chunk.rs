@@ -90,11 +90,19 @@ impl GeometryChunk {
     }
 
     /// Ordered reclamation returns every model, including failed/unexecuted jobs.
-    pub(super) fn reclaim(&mut self, jobs: &mut Vec<GeometryOwner>) {
-        jobs.extend(self.jobs.drain());
+    pub(super) fn reclaim(
+        &mut self,
+        jobs: &mut impl solarity_cpu::OutputBuffer<GeometryOwner>,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        jobs.try_reserve_exact(self.jobs.len())?;
+        for job in self.jobs.drain() {
+            jobs.push(job)
+                .unwrap_or_else(|_| unreachable!("model return was preflighted"));
+        }
         self.scratch = None;
         self.estimated = Duration::ZERO;
         self.unknown = false;
+        Ok(())
     }
 }
 
@@ -117,12 +125,13 @@ impl GeometryBatch {
         let replacement = self.spare_chunks.pop().unwrap_or_default();
         let mut owned = Some(std::mem::replace(&mut self.staged, replacement));
         match self.pending.push_with_cost(&mut owned, cost) {
-            Ok(handle) => self.handles.push(handle),
+            Ok(_) => (),
             Err(error) => {
                 let retained =
                     owned.unwrap_or_else(|| unreachable!("refused chunk keeps its state"));
                 self.spare_chunks
-                    .push(std::mem::replace(&mut self.staged, retained));
+                    .push(std::mem::replace(&mut self.staged, retained))
+                    .unwrap_or_else(|_| unreachable!("admitted spare chunk capacity"));
                 return Err(error.into());
             }
         }

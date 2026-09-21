@@ -18,6 +18,15 @@ fn identity(generation: usize, visible: bool) -> GeometryReuseIdentity {
     }
 }
 
+fn owners(
+    budget: &CpuStorageBudget,
+    count: usize,
+) -> Result<solarity_cpu::CpuBuffer<GeometryOwner>, Box<dyn Error>> {
+    let mut jobs = solarity_cpu::CpuBuffer::default();
+    jobs.reserve(budget, Class::Frame, Kind::Metadata, count)?;
+    Ok(jobs)
+}
+
 /// One emitter crosses every ordinal while the same small models remain visible.
 /// Ordinal-based reuse exhausts this budget after the emitter visits a few slots.
 #[test]
@@ -27,12 +36,12 @@ fn moving_emitter_keeps_one_large_output_allocation() -> Result<(), Box<dyn Erro
         0,
         0,
     ));
-    let mut jobs = Vec::new();
+    let mut jobs = owners(&budget, 32)?;
     let mut reuse = GeometryReuse::default();
     let mut retained = 0;
     for frame in 0..256 {
         reuse.index(&mut jobs);
-        let mut completed = Vec::new();
+        let mut completed = owners(&budget, 32)?;
         for ordinal in 0..32 {
             let generation = (ordinal + frame) % 32;
             let identity = identity(generation, true);
@@ -45,7 +54,7 @@ fn moving_emitter_keeps_one_large_output_allocation() -> Result<(), Box<dyn Erro
                 Kind::Result,
                 if generation == 0 { 8192 } else { 4 },
             )?;
-            completed.push(std::mem::take(&mut jobs[slot]));
+            completed.push(std::mem::take(&mut jobs[slot]))?;
         }
         jobs.clear();
         reuse.clear();
@@ -71,7 +80,8 @@ fn changed_demand_and_generation_retire_unmatched_storage() -> Result<(), Box<dy
     job.job_mut()
         .particle_indices
         .reserve(&budget, Class::Frame, Kind::Result, 8192)?;
-    let mut jobs = vec![job];
+    let mut jobs = owners(&budget, 3)?;
+    jobs.push(job)?;
     let mut reuse = GeometryReuse::default();
     reuse.index(&mut jobs);
     let shadow = reuse.take(&identity(7, false), &mut jobs, &budget)?;
@@ -86,7 +96,7 @@ fn changed_demand_and_generation_retire_unmatched_storage() -> Result<(), Box<dy
     reuse.clear();
     assert_eq!(budget.snapshot().bytes(Class::Frame, Kind::Result), 0);
     assert_eq!(completed.len(), 2);
-    drop(completed);
+    drop((completed, jobs));
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }
@@ -95,11 +105,11 @@ fn changed_demand_and_generation_retire_unmatched_storage() -> Result<(), Box<dy
 #[test]
 fn duplicate_source_placements_reuse_each_slot_once() -> Result<(), Box<dyn Error>> {
     let budget = CpuStorageBudget::new(CpuStoragePlan::new(1 << 20, 0, 0));
-    let mut jobs = Vec::new();
+    let mut jobs = owners(&budget, 4)?;
     for _ in 0..3 {
         let mut owner = GeometryOwner::new(&budget)?;
         owner.job_mut().reuse_identity = Some(identity(7, true));
-        jobs.push(owner);
+        jobs.push(owner)?;
     }
     let mut reuse = GeometryReuse::default();
     reuse.index(&mut jobs);
@@ -115,13 +125,15 @@ fn duplicate_source_placements_reuse_each_slot_once() -> Result<(), Box<dyn Erro
 /// A failed executor rebind must not consume a reusable generation's list entry.
 #[test]
 fn rejected_record_transfer_preserves_the_reusable_owner() -> Result<(), Box<dyn Error>> {
-    let bytes = std::mem::size_of::<super::super::GeometryJob>();
+    let bytes =
+        std::mem::size_of::<super::super::GeometryJob>() + std::mem::size_of::<GeometryOwner>();
     let source = CpuStorageBudget::new(CpuStoragePlan::new(bytes, 0, 0));
     let denied = CpuStorageBudget::new(CpuStoragePlan::new(0, 0, 0));
     let mut owner = GeometryOwner::new(&source)?;
     owner.job_mut().reuse_identity = Some(identity(7, true));
     let address = std::ptr::from_ref(owner.job());
-    let mut jobs = vec![owner];
+    let mut jobs = owners(&source, 1)?;
+    jobs.push(owner)?;
     let mut reuse = GeometryReuse::default();
     reuse.index(&mut jobs);
     assert!(reuse.take(&identity(7, true), &mut jobs, &denied).is_err());

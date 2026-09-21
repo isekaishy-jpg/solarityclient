@@ -512,6 +512,32 @@ all charges still return after their actual owners retire. All-target/all-featur
 asset/runtime Clippy with warnings denied, formatting and `git diff --check` passed.
 Logs: `target/source-controls-tests.log`, `target/source-controls-clippy.log`.
 
+The retained-frame metadata batch moves geometry-owner arrays, spare/returned
+chunk arrays and the finalization-cell array into charged CPU buffers. The known
+geometry maximum admits model-return and chunk-return backing together before
+publishing the producer phase. The model array includes coexistence of unmatched
+prior jobs and new placeholders; its charge follows ownership into finalization.
+Typed fixed-writer reclamation preflights capacity and leaves all inputs in the
+closed batch on refusal, allowing a retry without losing simulation ownership.
+The unused per-chunk handle list is removed; phase readiness remains authoritative.
+The generation/demand reuse hash table still needs its own admitted backing.
+
+Working-set scopes no longer mint backing-allocation identities. Empty scopes,
+zero-byte transfers/releases and unchanged-capacity reconciliation skip accounting
+mutex acquisition, while every real byte change retains its original admission
+and ordering. This serves warmed geometry, finalization and shared source/UI
+consumers using the same storage layer. No live throughput or FPS claim follows
+from these source changes, and no new packaged client build is made.
+
+Grouped validation passes all 147 CPU tests and 124 M2 runtime tests, with 10
+existing runtime ignores. Coverage includes refusal before any return array grows,
+fixed-destination reclamation refusal/retry without input loss, preserved model
+reuse and finalization behavior, and 1,000 warmed connected-storage iterations
+with zero accounting-lock calls. All-target/all-feature CPU/runtime Clippy with
+warnings denied, formatting and `git diff --check` pass. Logs are
+`target/frame-metadata-cpu-tests.log`, `target/frame-metadata-runtime-tests.log`
+and `target/frame-metadata-clippy.log`. Build 176 remains installed.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

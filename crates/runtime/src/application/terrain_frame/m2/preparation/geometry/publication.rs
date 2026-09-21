@@ -25,20 +25,21 @@ impl M2Frame {
                 .iter()
                 .all(|owner| !owner.job().owns_effects)
         );
-        self.geometry_batch
-            .reuse
-            .index(&mut self.geometry_batch.jobs);
-        self.geometry_batch.active = 0;
-        self.geometry_batch.published_bones = 0;
-        self.geometry_batch.handles.clear();
-        self.geometry_batch.completion = None;
-        self.geometry_batch.storage = Some(cpu.storage().clone());
-        self.geometry_batch.prepare_scratch(cpu)?;
         let maximum = self
             .frame_work
             .remaining_count()
             .checked_add(self.unit_effects.pending_placement_count())
             .ok_or(VulkanError::WorldFrameCapacity)?;
+        self.geometry_batch
+            .prepare_metadata(cpu.storage(), maximum)?;
+        self.geometry_batch
+            .reuse
+            .index(&mut self.geometry_batch.jobs);
+        self.geometry_batch.active = 0;
+        self.geometry_batch.published_bones = 0;
+        self.geometry_batch.completion = None;
+        self.geometry_batch.storage = Some(cpu.storage().clone());
+        self.geometry_batch.prepare_scratch(cpu)?;
         self.geometry_batch
             .pending
             .begin(cpu, solarity_cpu::FrameBatchPlan::new(maximum, 0))?;
@@ -90,18 +91,28 @@ impl M2Frame {
             batch.reuse.clear();
             batch.pending.close();
             let readiness = wait.before_reclaim(&batch.pending);
-            let result = batch.pending.reclaim(&mut batch.returned_chunks);
+            let result = batch
+                .pending
+                .reclaim_into(&mut batch.returned_chunks.writer());
             batch.submitted = false;
             let used = batch.returned_chunks.len();
-            for mut chunk in batch.returned_chunks.drain(..) {
-                chunk.reclaim(&mut batch.jobs);
-                batch.spare_chunks.push(chunk);
+            for mut chunk in batch.returned_chunks.drain() {
+                chunk
+                    .reclaim(&mut batch.jobs.writer())
+                    .unwrap_or_else(|_| unreachable!("admitted model return capacity"));
+                batch
+                    .spare_chunks
+                    .push(chunk)
+                    .unwrap_or_else(|_| unreachable!("admitted chunk return capacity"));
             }
             // An abandoned admission can own a final group never sent to workers.
             // It follows the submitted prefix and returns effects without executing.
-            batch.staged.reclaim(&mut batch.jobs);
+            batch
+                .staged
+                .reclaim(&mut batch.jobs.writer())
+                .unwrap_or_else(|_| unreachable!("admitted staged model capacity"));
             batch.spare_chunks.truncate(used);
-            for job in &mut batch.jobs {
+            for job in batch.jobs.iter_mut() {
                 batch.calibration.record(job.job_mut());
             }
             readiness?;

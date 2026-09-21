@@ -19,7 +19,7 @@ fn unknown_and_large_draw_work_stay_indivisible_while_small_models_share_dispatc
     assert!(chunk.full());
     assert!(chunk.precedes(cost(1)));
     assert!(chunk.cost().duration().is_none());
-    chunk.reclaim(&mut returned);
+    chunk.reclaim(&mut returned)?;
     chunk.push(GeometryOwner::new(&budget)?, cost(60));
     assert!(!chunk.precedes(cost(40)));
     assert!(chunk.precedes(cost(41)));
@@ -27,13 +27,13 @@ fn unknown_and_large_draw_work_stay_indivisible_while_small_models_share_dispatc
     chunk.push(GeometryOwner::new(&budget)?, cost(40));
     assert!(chunk.full());
     assert_eq!(chunk.cost().duration(), Some(Duration::from_micros(100)));
-    chunk.reclaim(&mut returned);
+    chunk.reclaim(&mut returned)?;
     for _ in 0..MAX_MODELS {
         chunk.push(GeometryOwner::new(&budget)?, cost(1));
     }
     assert!(chunk.full());
     assert!(chunk.precedes(cost(1)));
-    chunk.reclaim(&mut returned);
+    chunk.reclaim(&mut returned)?;
     chunk.push(GeometryOwner::new(&budget)?, cost(2_000));
     assert!(chunk.full());
     assert!(chunk.precedes(cost(1)));

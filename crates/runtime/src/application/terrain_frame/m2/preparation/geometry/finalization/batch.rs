@@ -25,13 +25,16 @@ impl M2Frame {
             return Err(CpuError::BatchActive.into());
         }
         let counts = super::admission::OutputCounts::collect(&mut self.geometry_batch.jobs)?;
+        state
+            .retained
+            .reserve(cpu.storage(), Class::Frame, Kind::Metadata, 1)?;
         if state.retained.is_empty() {
             state.retained.push(CpuOwnedCell::new_with(
                 cpu.storage(),
                 Class::Frame,
                 Kind::Scratch,
                 FinalizationJob::default,
-            )?);
+            )?)?;
         }
         state.retained[0].transfer(cpu.storage(), Class::Frame, Kind::Scratch)?;
         // Reserve scheduler nodes/readiness before output growth can consume their headroom.
@@ -51,7 +54,7 @@ impl M2Frame {
             let state = &mut self.geometry_batch.finalization;
             state.pending.close();
             // No input was published: retiring this empty epoch cannot run domain work.
-            let _ = state.pending.reclaim(&mut state.retained);
+            let _ = state.pending.reclaim_into(&mut state.retained.writer());
             return Err(error);
         }
 
@@ -73,9 +76,9 @@ impl M2Frame {
         if let Err(error) = state.pending.push(&mut owned) {
             state.retained.push(
                 owned.unwrap_or_else(|| unreachable!("refused finalization keeps its input")),
-            );
+            )?;
             state.pending.close();
-            let _ = state.pending.reclaim(&mut state.retained);
+            let _ = state.pending.reclaim_into(&mut state.retained.writer());
             return Err(error.into());
         }
         state.pending.close();
@@ -122,7 +125,7 @@ impl M2Frame {
             Ok(())
         };
         let reclaimed = if was_submitted {
-            state.pending.reclaim(&mut state.retained)
+            state.pending.reclaim_into(&mut state.retained.writer())
         } else {
             Ok(())
         };
@@ -142,7 +145,7 @@ impl M2Frame {
         let result = job.result.take();
         job.first_pass = None;
         let state = &mut self.geometry_batch.finalization;
-        state.retained.push(cell);
+        state.retained.push(cell)?;
         state.owns_inputs = false;
         let output = result.transpose()?;
         readiness?;

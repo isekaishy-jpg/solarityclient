@@ -8,7 +8,17 @@ impl<T: Send + 'static> FrameBatch<T> {
     /// # Errors
     /// Reports terminal failure only after returning every input. Workers cannot
     /// reclaim unfinished work that might depend on their own occupied lane.
+    /// Destination allocation refusal keeps every input in the batch for retry.
     pub fn reclaim(&mut self, jobs: &mut Vec<T>) -> Result<(), CpuError> {
+        self.reclaim_into(jobs)
+    }
+
+    /// Returns inputs into an already admitted writer without growing its storage.
+    /// A Vec destination retains the ordinary fallible growth behavior.
+    /// # Errors
+    /// Insufficient destination capacity leaves every input in the closed batch for retry.
+    /// Terminal job failure is returned only after all inputs have been restored.
+    pub fn reclaim_into(&mut self, jobs: &mut impl crate::OutputBuffer<T>) -> Result<(), CpuError> {
         if !self.active {
             return Ok(());
         }
@@ -31,6 +41,7 @@ impl<T: Send + 'static> FrameBatch<T> {
             solarity_profiling::profile!("cpu.frame.reclaim")
         };
         profile.trace_owner(0, state.jobs.len() as u64);
+        jobs.try_reserve_exact(state.jobs.len())?;
         let result = state
             .nodes
             .iter()
@@ -39,12 +50,12 @@ impl<T: Send + 'static> FrameBatch<T> {
                 _ => unreachable!("closed drained graph has no unresolved predecessor"),
             })
             .map_or(Ok(()), Err);
-        jobs.extend(
-            state
-                .jobs
-                .drain(..)
-                .map(|job| job.unwrap_or_else(|| unreachable!("drained epoch owns every input"))),
-        );
+        for job in state.jobs.drain(..) {
+            jobs.push(job.unwrap_or_else(|| unreachable!("drained epoch owns every input")))
+                .unwrap_or_else(|_| {
+                    unreachable!("reclamation preflight admitted every returned input")
+                });
+        }
         state.clear();
         self.active = false;
         drop(state);

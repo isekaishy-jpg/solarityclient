@@ -6,6 +6,7 @@ mod finalization;
 mod input;
 mod job;
 mod meshes;
+mod metadata;
 mod output;
 mod owner;
 mod palette;
@@ -30,16 +31,15 @@ pub(in super::super) use input::{GeometryInput, VisibleGeometryInput};
 
 /// Retains only the current admitted job count, never historical model generations.
 pub(in super::super::super) struct GeometryBatch {
-    jobs: Vec<GeometryOwner>,
+    jobs: solarity_cpu::CpuBuffer<GeometryOwner>,
     finalization: finalization::Finalization,
     reuse: reuse::GeometryReuse,
     active: usize,
     published_bones: usize,
     staged: chunk::GeometryChunk,
-    spare_chunks: Vec<chunk::GeometryChunk>,
-    returned_chunks: Vec<chunk::GeometryChunk>,
+    spare_chunks: solarity_cpu::CpuBuffer<chunk::GeometryChunk>,
+    returned_chunks: solarity_cpu::CpuBuffer<chunk::GeometryChunk>,
     pending: solarity_cpu::FrameBatch<chunk::GeometryChunk>,
-    handles: Vec<solarity_cpu::FrameJob<chunk::GeometryChunk>>,
     submitted: bool,
     completion: Option<solarity_cpu::ReadyToken>,
     storage: Option<solarity_cpu::CpuStorageBudget>,
@@ -51,16 +51,15 @@ pub(in super::super::super) struct GeometryBatch {
 impl Default for GeometryBatch {
     fn default() -> Self {
         Self {
-            jobs: Vec::new(),
+            jobs: solarity_cpu::CpuBuffer::default(),
             finalization: finalization::Finalization::default(),
             reuse: reuse::GeometryReuse::default(),
             active: 0,
             published_bones: 0,
             staged: chunk::GeometryChunk::default(),
-            spare_chunks: Vec::new(),
-            returned_chunks: Vec::new(),
+            spare_chunks: solarity_cpu::CpuBuffer::default(),
+            returned_chunks: solarity_cpu::CpuBuffer::default(),
             pending: solarity_cpu::FrameBatch::with_context(chunk::GeometryChunk::execute),
-            handles: Vec::new(),
             submitted: false,
             completion: None,
             storage: None,

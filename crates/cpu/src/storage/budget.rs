@@ -10,6 +10,9 @@ use std::sync::{
 /// Process-wide opaque identity; it carries no global cache or domain ownership.
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+#[cfg(test)]
+thread_local! { static LEDGER_LOCKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 /// Short accounting transactions never execute allocation or domain destructors.
 struct Ledger {
     limits: [usize; 3],
@@ -62,6 +65,8 @@ impl CpuStorageBudget {
     }
     /// Accounting never calls user code, so poison indicates an internal defect.
     fn lock(&self) -> MutexGuard<'_, Ledger> {
+        #[cfg(test)]
+        LEDGER_LOCKS.with(|locks| locks.set(locks.get() + 1));
         self.ledger
             .lock()
             .unwrap_or_else(|_| unreachable!("storage accounting contains no user operation"))
@@ -80,7 +85,9 @@ impl CpuStorageBudget {
                 value.checked_add(1)
             })
             .map_err(|_| CpuError::EpochExhausted)?;
-        self.lock().add(class, kind, bytes)?;
+        if bytes != 0 {
+            self.lock().add(class, kind, bytes)?;
+        }
         Ok(ByteReservation {
             budget: self.clone(),
             class,
@@ -98,8 +105,19 @@ impl CpuStorageBudget {
         class: CpuStorageClass,
         bytes: usize,
     ) -> Result<CpuStorageReservation, CpuError> {
+        if bytes != 0 {
+            self.lock().add(class, CpuStorageKind::Scratch, bytes)?;
+        }
         Ok(CpuStorageReservation {
-            memory: self.reserve(class, CpuStorageKind::Scratch, bytes)?,
+            // A funding scope is not a backing allocation. Only its children issue
+            // allocation identities; warmed empty scopes need no global transaction.
+            memory: ByteReservation {
+                budget: self.clone(),
+                class,
+                kind: CpuStorageKind::Scratch,
+                bytes,
+                id: 0,
+            },
         })
     }
 
@@ -183,6 +201,9 @@ impl ByteReservation {
     /// # Errors
     /// Growth saturation leaves the previous reservation unchanged.
     pub fn resize(&mut self, bytes: usize) -> Result<(), CpuError> {
+        if bytes == self.bytes {
+            return Ok(());
+        }
         let mut ledger = self.budget.lock();
         if bytes >= self.bytes {
             ledger.add(self.class, self.kind, bytes - self.bytes)?;
@@ -204,6 +225,14 @@ impl ByteReservation {
         class: CpuStorageClass,
         kind: CpuStorageKind,
     ) -> Result<(), CpuError> {
+        if self.bytes == 0 {
+            if !Arc::ptr_eq(&self.budget.ledger, &destination.ledger) {
+                self.budget = destination.clone();
+            }
+            self.class = class;
+            self.kind = kind;
+            return Ok(());
+        }
         if Arc::ptr_eq(&self.budget.ledger, &destination.ledger) {
             if class == self.class && kind == self.kind {
                 return Ok(());
@@ -237,7 +266,9 @@ impl ByteReservation {
 }
 impl Drop for ByteReservation {
     fn drop(&mut self) {
-        self.budget.lock().remove(self.class, self.kind, self.bytes);
+        if self.bytes != 0 {
+            self.budget.lock().remove(self.class, self.kind, self.bytes);
+        }
     }
 }
 
@@ -301,6 +332,9 @@ impl CpuStorageReservation {
     }
     fn consume(&mut self, kind: CpuStorageKind, bytes: usize) -> Result<(), CpuError> {
         self.require(bytes)?;
+        if bytes == 0 {
+            return Ok(());
+        }
         if kind != self.memory.kind {
             let mut ledger = self.memory.budget.lock();
             ledger.remove(self.memory.class, self.memory.kind, bytes);
@@ -344,3 +378,7 @@ impl CpuStorageWorkingSet {
         self.peak
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/internal/storage_reuse.rs"]
+mod tests;

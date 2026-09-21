@@ -61,7 +61,7 @@ impl GeometryReuse {
     pub(super) fn take(
         &mut self,
         identity: &GeometryReuseIdentity,
-        jobs: &mut Vec<GeometryOwner>,
+        jobs: &mut solarity_cpu::CpuBuffer<GeometryOwner>,
         budget: &solarity_cpu::CpuStorageBudget,
     ) -> Result<usize, solarity_cpu::CpuError> {
         if let std::collections::hash_map::Entry::Occupied(mut head) =
@@ -78,7 +78,17 @@ impl GeometryReuse {
             return Ok(slot);
         }
         let slot = jobs.len();
-        jobs.push(GeometryOwner::new(budget)?);
+        if slot == jobs.capacity() {
+            jobs.reserve(
+                budget,
+                solarity_cpu::CpuStorageClass::Frame,
+                solarity_cpu::CpuStorageKind::Metadata,
+                slot.checked_add(1)
+                    .and_then(usize::checked_next_power_of_two)
+                    .ok_or(solarity_cpu::CpuError::StorageSizeOverflow)?,
+            )?;
+        }
+        jobs.push(GeometryOwner::new(budget)?)?;
         Ok(slot)
     }
 
