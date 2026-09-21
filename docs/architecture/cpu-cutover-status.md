@@ -426,6 +426,34 @@ all-feature UI/runtime Clippy, formatting and diff checks pass. Logs:
 `target/ui-handoff-runtime-tests.log`, `target/ui-handoff-clippy.log`.
 No client package, live FPS test or stock-data run was added.
 
+The next frame-admission batch reserves the connected M2 finalization working set
+before growing any renderer output vector. The shared CPU storage layer protects
+one checked sequential-peak allowance, then funds individual result/scratch allocations
+without competing for the same bytes a second time. Charges retain independent
+lifetimes and existing allocation identities across executor transfers; unused
+headroom returns when the admission scope ends. Freed old buffers return their
+capacity to the protected reservation for subsequent replacements, avoiding both
+an all-old-plus-all-new overestimate and races for released headroom. Actual replacement capacity is
+reconciled against that reservation before existing values move.
+
+Finalization plans all ten renderer streams plus ordering scratch, including
+retained-vector adoption, old-plus-new growth and executor rebinding. Scheduler
+nodes/readiness are admitted first, while geometry failures retain their ordered
+precedence. An infeasible output working set leaves stream capacities unchanged
+and retires its empty scheduler epoch. Publication starts only after the complete
+phase is funded. Geometry/simulation before finalization, source loading, UI and
+other connected phase working sets still need their own complete admission; this
+does not claim whole-frame transactional admission or a new client build.
+
+Grouped validation passed 144 CPU tests (including doc tests) and 123 M2 runtime
+tests, with ten existing runtime ignores. Coverage includes protected headroom
+under competing reservations, retained allocation identities across budget
+transfers, warm reuse at full capacity, sequential replacement recycling,
+whole-output refusal before growth, and existing moving-geometry parity.
+All-target/all-feature CPU/runtime Clippy with warnings denied, formatting and
+`git diff --check` passed. Logs: `target/frame-reservation-cpu-tests.log`,
+`target/frame-reservation-runtime-tests.log`, `target/frame-reservation-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

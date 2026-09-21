@@ -244,3 +244,132 @@ fn domain_writers_cannot_grow_and_draining_retains_their_charge() -> Result<(), 
     assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }
+
+#[test]
+fn connected_working_set_keeps_headroom_protected_until_all_allocations_are_funded()
+-> Result<(), Box<dyn Error>> {
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(128, 0, 0));
+    let mut working_set = budget.reserve_working_set(Class::Frame, 96)?;
+    let competitor = budget.reserve(Class::Frame, Kind::Scratch, 32)?;
+    assert!(budget.reserve(Class::Frame, Kind::Result, 1).is_err());
+    let mut output = working_set.reserve(Kind::Result, 64)?;
+    let scratch = working_set.reserve(Kind::Scratch, 16)?;
+    assert_eq!(working_set.remaining(), 16);
+    assert_eq!(budget.snapshot().used(Class::Frame), 128);
+    let identity = output.allocation_id();
+    output.resize_reserved(&mut working_set, 72)?;
+    assert_eq!(output.allocation_id(), identity);
+    assert_eq!(working_set.remaining(), 8);
+    assert!(output.resize_reserved(&mut working_set, 81).is_err());
+    assert_eq!(output.bytes(), 72);
+    assert_eq!(working_set.remaining(), 8);
+    assert!(budget.reserve(Class::Frame, Kind::Result, 1).is_err());
+    drop(working_set);
+    assert_eq!(budget.snapshot().used(Class::Frame), 120);
+    drop((output, scratch, competitor));
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}
+
+#[test]
+fn funded_transfer_preserves_allocation_identity_and_rejects_underestimated_adoption()
+-> Result<(), Box<dyn Error>> {
+    let original = CpuStorageBudget::new(CpuStoragePlan::new(32, 0, 0));
+    let destination = CpuStorageBudget::new(CpuStoragePlan::new(64, 0, 0));
+    let mut allocation = original.reserve(Class::Frame, Kind::Result, 32)?;
+    let identity = allocation.allocation_id();
+    let mut too_small = destination.reserve_working_set(Class::Frame, 31)?;
+    assert!(
+        allocation
+            .transfer_reserved(&mut too_small, Kind::Result)
+            .is_err()
+    );
+    assert_eq!(allocation.allocation_id(), identity);
+    assert_eq!(original.snapshot().used(Class::Frame), 32);
+    assert_eq!(too_small.remaining(), 31);
+    drop(too_small);
+    let mut admitted = destination.reserve_working_set(
+        Class::Frame,
+        allocation.admission_bytes(&destination, Class::Frame),
+    )?;
+    allocation.transfer_reserved(&mut admitted, Kind::Result)?;
+    assert_eq!(allocation.allocation_id(), identity);
+    assert_eq!(original.snapshot().used(Class::Frame), 0);
+    assert_eq!(admitted.remaining(), 0);
+    assert_eq!(allocation.admission_bytes(&destination, Class::Frame), 0);
+    assert_eq!(destination.snapshot().used(Class::Frame), 32);
+    drop((allocation, admitted));
+    assert_eq!(destination.snapshot().used(Class::Frame), 0);
+    Ok(())
+}
+
+#[test]
+fn connected_buffers_grow_from_reserved_capacity_and_warm_reuse_needs_no_headroom()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuBuffer, CpuScratch};
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(128, 0, 0));
+    let mut output = CpuBuffer::<u64>::default();
+    let mut sorting = CpuScratch::<usize>::default();
+    let bytes = output.reservation_bytes(&budget, Class::Frame, 8)?
+        + sorting.reservation_bytes(&budget, Class::Frame, 4)?;
+    let mut admitted = budget.reserve_working_set(Class::Frame, bytes)?;
+    let competitor = budget.reserve(Class::Frame, Kind::Scratch, 128 - bytes)?;
+    output.reserve_reserved(&mut admitted, Kind::Result, 8)?;
+    sorting.reserve_reserved(&mut admitted, 4)?;
+    output.extend_from_slice(&[17, 23])?;
+    assert_eq!(admitted.remaining(), 0);
+    let identity = output.as_ptr();
+    assert_eq!(output.reservation_bytes(&budget, Class::Frame, 8)?, 0);
+    assert_eq!(sorting.reservation_bytes(&budget, Class::Frame, 4)?, 0);
+    let mut warm = budget.reserve_working_set(Class::Frame, 0)?;
+    output.reserve_reserved(&mut warm, Kind::Result, 8)?;
+    sorting.reserve_reserved(&mut warm, 4)?;
+    assert_eq!(output.as_ptr(), identity);
+    assert_eq!(&*output, &[17, 23]);
+    assert_eq!(budget.snapshot().used(Class::Frame), 128);
+    drop((output, sorting, admitted, warm, competitor));
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}
+
+#[test]
+fn sequential_replacements_recycle_old_capacity_without_overreserving_the_phase()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuBuffer, CpuStorageWorkingSet};
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(160, 0, 0));
+    let mut first = CpuBuffer::<u64>::default();
+    let mut second = CpuBuffer::<u64>::default();
+    first.reserve(&budget, Class::Frame, Kind::Result, 4)?;
+    second.reserve(&budget, Class::Frame, Kind::Result, 4)?;
+    first.extend_from_slice(&[1, 2])?;
+    second.extend_from_slice(&[3, 4])?;
+    let mut plan = CpuStorageWorkingSet::default();
+    plan.include(
+        first.reservation_bytes(&budget, Class::Frame, 8)?,
+        first.replacement_credit(8),
+    )?;
+    plan.include(
+        second.reservation_bytes(&budget, Class::Frame, 8)?,
+        second.replacement_credit(8),
+    )?;
+    assert_eq!(
+        plan.bytes(),
+        96,
+        "reuse needs less than the sum of both replacement allocations"
+    );
+    let mut admitted = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+    first.reserve_reserved(&mut admitted, Kind::Result, 8)?;
+    assert!(
+        budget.reserve(Class::Frame, Kind::Scratch, 1).is_err(),
+        "retired capacity stays protected for the second output"
+    );
+    second.reserve_reserved(&mut admitted, Kind::Result, 8)?;
+    assert_eq!(&*first, &[1, 2]);
+    assert_eq!(&*second, &[3, 4]);
+    assert_eq!(admitted.remaining(), 32);
+    drop(admitted);
+    assert_eq!(budget.snapshot().used(Class::Frame), 128);
+    drop((first, second));
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}

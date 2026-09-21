@@ -9,7 +9,7 @@ mod scratch;
 mod types;
 mod worker_scratch;
 
-pub use budget::{ByteReservation, CpuStorageBudget};
+pub use budget::{ByteReservation, CpuStorageBudget, CpuStorageReservation, CpuStorageWorkingSet};
 pub(crate) use buffer::{StorageDeque, StorageVec};
 pub use cell::CpuOwnedCell;
 pub use output::{CpuBuffer, FixedWriter, OutputBuffer};

@@ -3,7 +3,8 @@
 use super::super::super::super::{M2Frame, RuntimeTerrainFrameError};
 use super::super::GeometryOwner;
 use solarity_cpu::{
-    ByteReservation, CpuError, CpuStorageBudget, CpuStorageClass as Class, CpuStorageKind as Kind,
+    ByteReservation, CpuError, CpuScratch, CpuStorageBudget, CpuStorageClass as Class,
+    CpuStorageKind as Kind, CpuStorageReservation, CpuStorageWorkingSet,
 };
 
 /// Charges follow the retained renderer vectors even while main owns the values.
@@ -23,7 +24,7 @@ pub(super) struct OutputMemory {
 
 /// Exact live output counts are immutable after the geometry phase is terminal.
 #[derive(Default)]
-struct OutputCounts {
+pub(super) struct OutputCounts {
     visible_draws: usize,
     shadow_draws: usize,
     environment_shadow_draws: usize,
@@ -38,7 +39,7 @@ struct OutputCounts {
 
 impl OutputCounts {
     /// Error precedence follows model order before optional capacity admission.
-    fn collect(jobs: &mut [GeometryOwner]) -> Result<Self, RuntimeTerrainFrameError> {
+    pub(super) fn collect(jobs: &mut [GeometryOwner]) -> Result<Self, RuntimeTerrainFrameError> {
         let mut counts = Self::default();
         for owner in jobs {
             let job = owner.job_mut();
@@ -86,77 +87,227 @@ fn add(total: &mut usize, count: usize) -> Result<(), CpuError> {
 }
 
 impl OutputMemory {
-    /// Rebinding/growth keeps every previous buffer valid if a later admission fails.
+    /// Proves the connected output/sorting working set before changing retained capacities.
     pub(super) fn prepare(
         &mut self,
         frame: &mut M2Frame,
         budget: &CpuStorageBudget,
-    ) -> Result<usize, RuntimeTerrainFrameError> {
-        let counts = OutputCounts::collect(&mut frame.geometry_batch.jobs)?;
+        sorting: &mut CpuScratch<usize>,
+        counts: OutputCounts,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let sorting_count = counts
+            .visible_draws
+            .max(counts.particle_draws)
+            .max(counts.ribbon_draws);
+        let mut working_set = CpuStorageWorkingSet::default();
+        working_set.include(
+            required_bytes(
+                &frame.visible_draws,
+                &self.visible_draws,
+                budget,
+                counts.visible_draws,
+            )?,
+            replacement_credit(&frame.visible_draws, counts.visible_draws)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.shadow_draws,
+                &self.shadow_draws,
+                budget,
+                counts.shadow_draws,
+            )?,
+            replacement_credit(&frame.shadow_draws, counts.shadow_draws)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.environment_shadow_draws,
+                &self.environment_shadow_draws,
+                budget,
+                counts.environment_shadow_draws,
+            )?,
+            replacement_credit(
+                &frame.environment_shadow_draws,
+                counts.environment_shadow_draws,
+            )?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.particle_draws,
+                &self.particle_draws,
+                budget,
+                counts.particle_draws,
+            )?,
+            replacement_credit(&frame.particle_draws, counts.particle_draws)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.ribbon_draws,
+                &self.ribbon_draws,
+                budget,
+                counts.ribbon_draws,
+            )?,
+            replacement_credit(&frame.ribbon_draws, counts.ribbon_draws)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.transparent_elements,
+                &self.transparent_elements,
+                budget,
+                counts.transparent_elements,
+            )?,
+            replacement_credit(&frame.transparent_elements, counts.transparent_elements)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.particle_vertices,
+                &self.particle_vertices,
+                budget,
+                counts.particle_vertices,
+            )?,
+            replacement_credit(&frame.particle_vertices, counts.particle_vertices)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.particle_indices,
+                &self.particle_indices,
+                budget,
+                counts.particle_indices,
+            )?,
+            replacement_credit(&frame.particle_indices, counts.particle_indices)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.ribbon_vertices,
+                &self.ribbon_vertices,
+                budget,
+                counts.ribbon_vertices,
+            )?,
+            replacement_credit(&frame.ribbon_vertices, counts.ribbon_vertices)?,
+        )?;
+        working_set.include(
+            required_bytes(
+                &frame.recoverable_errors,
+                &self.recoverable_errors,
+                budget,
+                counts.recoverable_errors,
+            )?,
+            replacement_credit(&frame.recoverable_errors, counts.recoverable_errors)?,
+        )?;
+        working_set.include(
+            sorting.reservation_bytes(budget, Class::Frame, sorting_count)?,
+            sorting.replacement_credit(sorting_count),
+        )?;
+        // Protect the exact sequential peak, recycling each freed old allocation
+        // before funding later streams. No competing producer can take that headroom.
+        let mut reservation = budget.reserve_working_set(Class::Frame, working_set.bytes())?;
         reserve(
             &mut frame.visible_draws,
             &mut self.visible_draws,
-            budget,
+            &mut reservation,
             counts.visible_draws,
         )?;
         reserve(
             &mut frame.shadow_draws,
             &mut self.shadow_draws,
-            budget,
+            &mut reservation,
             counts.shadow_draws,
         )?;
         reserve(
             &mut frame.environment_shadow_draws,
             &mut self.environment_shadow_draws,
-            budget,
+            &mut reservation,
             counts.environment_shadow_draws,
         )?;
         reserve(
             &mut frame.particle_draws,
             &mut self.particle_draws,
-            budget,
+            &mut reservation,
             counts.particle_draws,
         )?;
         reserve(
             &mut frame.ribbon_draws,
             &mut self.ribbon_draws,
-            budget,
+            &mut reservation,
             counts.ribbon_draws,
         )?;
         reserve(
             &mut frame.transparent_elements,
             &mut self.transparent_elements,
-            budget,
+            &mut reservation,
             counts.transparent_elements,
         )?;
         reserve(
             &mut frame.particle_vertices,
             &mut self.particle_vertices,
-            budget,
+            &mut reservation,
             counts.particle_vertices,
         )?;
         reserve(
             &mut frame.particle_indices,
             &mut self.particle_indices,
-            budget,
+            &mut reservation,
             counts.particle_indices,
         )?;
         reserve(
             &mut frame.ribbon_vertices,
             &mut self.ribbon_vertices,
-            budget,
+            &mut reservation,
             counts.ribbon_vertices,
         )?;
         reserve(
             &mut frame.recoverable_errors,
             &mut self.recoverable_errors,
-            budget,
+            &mut reservation,
             counts.recoverable_errors,
         )?;
-        Ok(counts
-            .visible_draws
-            .max(counts.particle_draws)
-            .max(counts.ribbon_draws))
+        sorting.reserve_reserved(&mut reservation, sorting_count)?;
+        Ok(())
+    }
+}
+
+/// Plans the actual retained allocation plus the complete replacement, preserving
+/// the existing geometric growth policy and charging foreign-executor adoption.
+fn required_bytes<T>(
+    values: &Vec<T>,
+    charge: &Option<ByteReservation>,
+    budget: &CpuStorageBudget,
+    additional: usize,
+) -> Result<usize, CpuError> {
+    let bytes = |capacity: usize| {
+        capacity
+            .checked_mul(size_of::<T>())
+            .ok_or(CpuError::StorageSizeOverflow)
+    };
+    let mut total = match charge {
+        Some(memory) => memory.admission_bytes(budget, Class::Frame),
+        None => bytes(values.capacity())?,
+    };
+    let required = values
+        .len()
+        .checked_add(additional)
+        .ok_or(CpuError::StorageSizeOverflow)?;
+    if required > values.capacity() {
+        add(
+            &mut total,
+            bytes(required.max(values.capacity().saturating_mul(2)))?,
+        )?;
+    }
+    Ok(total)
+}
+
+/// Only growth releases the old vector; retained capacity stays charged otherwise.
+fn replacement_credit<T>(values: &Vec<T>, additional: usize) -> Result<usize, CpuError> {
+    let required = values
+        .len()
+        .checked_add(additional)
+        .ok_or(CpuError::StorageSizeOverflow)?;
+    if required > values.capacity() {
+        values
+            .capacity()
+            .checked_mul(size_of::<T>())
+            .ok_or(CpuError::StorageSizeOverflow)
+    } else {
+        Ok(0)
     }
 }
 
@@ -165,7 +316,7 @@ impl OutputMemory {
 fn reserve<T>(
     values: &mut Vec<T>,
     charge: &mut Option<ByteReservation>,
-    budget: &CpuStorageBudget,
+    reservation: &mut CpuStorageReservation,
     additional: usize,
 ) -> Result<(), CpuError> {
     let bytes = |capacity: usize| {
@@ -174,9 +325,9 @@ fn reserve<T>(
             .ok_or(CpuError::StorageSizeOverflow)
     };
     if let Some(memory) = charge {
-        memory.transfer(budget, Class::Frame, Kind::Result)?;
+        memory.transfer_reserved(reservation, Kind::Result)?;
     } else if values.capacity() != 0 {
-        *charge = Some(budget.reserve(Class::Frame, Kind::Result, bytes(values.capacity())?)?);
+        *charge = Some(reservation.reserve(Kind::Result, bytes(values.capacity())?)?);
     }
     let required = values
         .len()
@@ -186,15 +337,17 @@ fn reserve<T>(
         return Ok(());
     }
     let capacity = required.max(values.capacity().saturating_mul(2));
-    let mut memory = budget.reserve(Class::Frame, Kind::Result, bytes(capacity)?)?;
+    let mut memory = reservation.reserve(Kind::Result, bytes(capacity)?)?;
     let mut replacement = Vec::new();
     replacement
         .try_reserve_exact(capacity)
         .map_err(|_| CpuError::StorageAllocation)?;
-    memory.resize(bytes(replacement.capacity())?)?;
+    memory.resize_reserved(reservation, bytes(replacement.capacity())?)?;
     replacement.append(values);
     drop(std::mem::replace(values, replacement));
-    *charge = Some(memory);
+    if let Some(retired) = charge.replace(memory) {
+        reservation.recycle(retired)?;
+    }
     Ok(())
 }
 

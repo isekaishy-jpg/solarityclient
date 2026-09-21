@@ -89,6 +89,20 @@ impl CpuStorageBudget {
             id,
         })
     }
+    /// Protects a connected working set before any of its individual allocations grow.
+    /// Unassigned capacity is scratch; each allocation takes its final purpose when funded.
+    /// # Errors
+    /// An infeasible total leaves all existing allocations and charges unchanged.
+    pub fn reserve_working_set(
+        &self,
+        class: CpuStorageClass,
+        bytes: usize,
+    ) -> Result<CpuStorageReservation, CpuError> {
+        Ok(CpuStorageReservation {
+            memory: self.reserve(class, CpuStorageKind::Scratch, bytes)?,
+        })
+    }
+
     /// Samples all categories together under the accounting lock.
     #[must_use]
     pub fn snapshot(&self) -> CpuStorageSnapshot {
@@ -119,6 +133,50 @@ impl ByteReservation {
     #[must_use]
     pub const fn bytes(&self) -> usize {
         self.bytes
+    }
+
+    /// Additional destination headroom needed to adopt this existing allocation.
+    #[must_use]
+    pub fn admission_bytes(&self, destination: &CpuStorageBudget, class: CpuStorageClass) -> usize {
+        if self.class == class && Arc::ptr_eq(&self.budget.ledger, &destination.ledger) {
+            0
+        } else {
+            self.bytes
+        }
+    }
+
+    /// Moves the same allocation identity using already protected destination capacity.
+    /// # Errors
+    /// Insufficient reserved capacity preserves the original allocation charge.
+    pub fn transfer_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        kind: CpuStorageKind,
+    ) -> Result<(), CpuError> {
+        if self.admission_bytes(&reservation.memory.budget, reservation.memory.class) == 0 {
+            return self.transfer(&reservation.memory.budget, reservation.memory.class, kind);
+        }
+        let mut replacement = reservation.reserve(kind, self.bytes)?;
+        replacement.id = self.id;
+        *self = replacement;
+        Ok(())
+    }
+
+    /// Reconciles capacity using protected headroom, without a second class admission.
+    /// # Errors
+    /// Refuses growth beyond the reserved working set without changing its byte count.
+    pub fn resize_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        bytes: usize,
+    ) -> Result<(), CpuError> {
+        self.transfer_reserved(reservation, self.kind)?;
+        if bytes <= self.bytes {
+            return self.resize(bytes);
+        }
+        reservation.consume(self.kind, bytes - self.bytes)?;
+        self.bytes = bytes;
+        Ok(())
     }
 
     /// Reconciles actual capacity. Callers free storage before shrinking the charge.
@@ -180,5 +238,109 @@ impl ByteReservation {
 impl Drop for ByteReservation {
     fn drop(&mut self) {
         self.budget.lock().remove(self.class, self.kind, self.bytes);
+    }
+}
+
+/// Exclusive, preadmitted capacity for a connected transaction's allocations.
+/// Splitting does not double-charge or expose protected headroom to competing work.
+/// Unused capacity returns on drop; funded allocations retain independent ownership.
+pub struct CpuStorageReservation {
+    memory: ByteReservation,
+}
+impl CpuStorageReservation {
+    /// Capacity still available to this transaction, already held against its class limit.
+    #[must_use]
+    pub const fn remaining(&self) -> usize {
+        self.memory.bytes
+    }
+
+    /// Funds one allocation while preserving the complete transaction's admission.
+    /// # Errors
+    /// Refuses an underestimated working set or exhausted allocation identities.
+    pub fn reserve(
+        &mut self,
+        kind: CpuStorageKind,
+        bytes: usize,
+    ) -> Result<ByteReservation, CpuError> {
+        self.require(bytes)?;
+        let id = NEXT_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .map_err(|_| CpuError::EpochExhausted)?;
+        self.consume(kind, bytes)?;
+        Ok(ByteReservation {
+            budget: self.memory.budget.clone(),
+            class: self.memory.class,
+            kind,
+            bytes,
+            id,
+        })
+    }
+    /// Reuses a retired allocation's charge as protected capacity for later replacements.
+    /// The caller must free its backing allocation before returning the charge.
+    /// # Errors
+    /// Foreign adoption can fail; normal same-transaction retirement needs no headroom.
+    pub fn recycle(&mut self, mut memory: ByteReservation) -> Result<(), CpuError> {
+        let kind = self.memory.kind;
+        memory.transfer_reserved(self, kind)?;
+        self.memory.bytes += memory.bytes;
+        memory.bytes = 0;
+        Ok(())
+    }
+
+    fn require(&self, bytes: usize) -> Result<(), CpuError> {
+        if bytes > self.memory.bytes {
+            return Err(CpuError::StorageAtCapacity {
+                class: self.memory.class,
+                requested: bytes,
+                available: self.memory.bytes,
+            });
+        }
+        Ok(())
+    }
+    fn consume(&mut self, kind: CpuStorageKind, bytes: usize) -> Result<(), CpuError> {
+        self.require(bytes)?;
+        if kind != self.memory.kind {
+            let mut ledger = self.memory.budget.lock();
+            ledger.remove(self.memory.class, self.memory.kind, bytes);
+            ledger.used[self.memory.class as usize][kind as usize] += bytes;
+        }
+        self.memory.bytes -= bytes;
+        Ok(())
+    }
+}
+
+/// Computes peak additional headroom in the exact allocation/retirement order.
+/// Retired old buffers fund later replacements without exposing their space to competitors.
+#[derive(Default)]
+pub struct CpuStorageWorkingSet {
+    live: usize,
+    peak: usize,
+}
+impl CpuStorageWorkingSet {
+    /// Includes one stage's admission followed by retirement of its old allocation.
+    /// # Errors
+    /// Reports overflow or an impossible retirement before issuing any reservation.
+    pub fn include(
+        &mut self,
+        admission_bytes: usize,
+        retired_bytes: usize,
+    ) -> Result<(), CpuError> {
+        let peak = self
+            .live
+            .checked_add(admission_bytes)
+            .ok_or(CpuError::StorageSizeOverflow)?;
+        let live = peak
+            .checked_sub(retired_bytes)
+            .ok_or(CpuError::StorageSizeOverflow)?;
+        self.peak = self.peak.max(peak);
+        self.live = live;
+        Ok(())
+    }
+    /// Additional bytes which must be protected before the first included stage starts.
+    #[must_use]
+    pub const fn bytes(&self) -> usize {
+        self.peak
     }
 }

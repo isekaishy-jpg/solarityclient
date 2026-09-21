@@ -24,6 +24,7 @@ impl M2Frame {
         if state.submitted || state.owns_inputs {
             return Err(CpuError::BatchActive.into());
         }
+        let counts = super::admission::OutputCounts::collect(&mut self.geometry_batch.jobs)?;
         if state.retained.is_empty() {
             state.retained.push(CpuOwnedCell::new_with(
                 cpu.storage(),
@@ -33,18 +34,26 @@ impl M2Frame {
             )?);
         }
         state.retained[0].transfer(cpu.storage(), Class::Frame, Kind::Scratch)?;
+        // Reserve scheduler nodes/readiness before output growth can consume their headroom.
+        state
+            .pending
+            .begin(cpu, solarity_cpu::FrameBatchPlan::new(1, 0))?;
         // The accounting owner can be reborrowed independently of the M2 fields.
         // Restore it before propagating a fallible admission result.
-        let mut memory = std::mem::take(&mut state.retained[0].value_mut().memory);
-        let admitted = memory.prepare(self, cpu.storage());
-        self.geometry_batch.finalization.retained[0]
-            .value_mut()
-            .memory = memory;
-        let sorting = admitted?;
-        self.geometry_batch.finalization.retained[0]
-            .value_mut()
-            .sorting
-            .reserve(cpu.storage(), Class::Frame, sorting)?;
+        let job = state.retained[0].value_mut();
+        let mut memory = std::mem::take(&mut job.memory);
+        let mut sorting = std::mem::take(&mut job.sorting);
+        let admitted = memory.prepare(self, cpu.storage(), &mut sorting, counts);
+        let job = self.geometry_batch.finalization.retained[0].value_mut();
+        job.memory = memory;
+        job.sorting = sorting;
+        if let Err(error) = admitted {
+            let state = &mut self.geometry_batch.finalization;
+            state.pending.close();
+            // No input was published: retiring this empty epoch cannot run domain work.
+            let _ = state.pending.reclaim(&mut state.retained);
+            return Err(error);
+        }
 
         let mut cell = self
             .geometry_batch
@@ -59,9 +68,17 @@ impl M2Frame {
         job.first_pass = Some(first_pass);
         job.result = None;
         let state = &mut self.geometry_batch.finalization;
-        state.retained.push(cell);
         state.owns_inputs = true;
-        state.pending.start(cpu, &mut state.retained)?;
+        let mut owned = Some(cell);
+        if let Err(error) = state.pending.push(&mut owned) {
+            state.retained.push(
+                owned.unwrap_or_else(|| unreachable!("refused finalization keeps its input")),
+            );
+            state.pending.close();
+            let _ = state.pending.reclaim(&mut state.retained);
+            return Err(error.into());
+        }
+        state.pending.close();
         state.submitted = true;
         Ok(())
     }

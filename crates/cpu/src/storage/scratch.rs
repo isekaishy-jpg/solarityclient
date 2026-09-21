@@ -1,6 +1,9 @@
 //! Typed temporary values cannot escape the synchronous scratch loan.
 
-use super::{CpuBuffer, CpuStorageBudget, CpuStorageClass, CpuStorageKind, FixedWriter};
+use super::{
+    CpuBuffer, CpuStorageBudget, CpuStorageClass, CpuStorageKind, CpuStorageReservation,
+    FixedWriter,
+};
 use crate::CpuError;
 
 /// A domain declares and admits its typed scratch before relinquishing inputs.
@@ -29,6 +32,36 @@ impl<T> CpuScratch<T> {
     ) -> Result<(), CpuError> {
         self.values
             .reserve(budget, class, CpuStorageKind::Scratch, capacity)
+    }
+
+    /// Plans this scratch allocation as part of a connected working set.
+    /// # Errors
+    /// Reports size overflow without changing retained capacity.
+    pub fn reservation_bytes(
+        &self,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+        capacity: usize,
+    ) -> Result<usize, CpuError> {
+        self.values.reservation_bytes(budget, class, capacity)
+    }
+
+    /// Capacity returned after replacement storage takes over the old scratch allocation.
+    #[must_use]
+    pub fn replacement_credit(&self, capacity: usize) -> usize {
+        self.values.replacement_credit(capacity)
+    }
+
+    /// Consumes capacity protected by the transaction's original admission.
+    /// # Errors
+    /// Reports insufficient reservation, size overflow or allocation failure.
+    pub fn reserve_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        capacity: usize,
+    ) -> Result<(), CpuError> {
+        self.values
+            .reserve_reserved(reservation, CpuStorageKind::Scratch, capacity)
     }
 
     /// Retained, charged element capacity independent of temporary live length.

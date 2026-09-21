@@ -1,6 +1,6 @@
 //! Capacity-owning domain buffers and nonallocating output writers.
 
-use super::{CpuStorageBudget, CpuStorageClass, CpuStorageKind, StorageVec};
+use super::{CpuStorageBudget, CpuStorageClass, CpuStorageKind, CpuStorageReservation, StorageVec};
 use crate::CpuError;
 use std::ops::{Deref, DerefMut};
 
@@ -29,6 +29,36 @@ impl<T> CpuBuffer<T> {
     ) -> Result<(), CpuError> {
         self.values.reserve(budget, class, kind, capacity)
     }
+    /// Plans additional headroom for retained storage adoption and peak-safe growth.
+    /// # Errors
+    /// Returns size overflow without changing values, capacity or admission.
+    pub fn reservation_bytes(
+        &self,
+        budget: &CpuStorageBudget,
+        class: CpuStorageClass,
+        capacity: usize,
+    ) -> Result<usize, CpuError> {
+        self.values.reservation_bytes(budget, class, capacity)
+    }
+
+    /// Capacity returned to the working set when this replacement frees its old buffer.
+    #[must_use]
+    pub fn replacement_credit(&self, capacity: usize) -> usize {
+        self.values.replacement_credit(capacity)
+    }
+
+    /// Grows from a connected working set admitted before any producer starts.
+    /// # Errors
+    /// Returns insufficient reserved capacity, size overflow or allocation failure.
+    pub fn reserve_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        kind: CpuStorageKind,
+        capacity: usize,
+    ) -> Result<(), CpuError> {
+        self.values.reserve_reserved(reservation, kind, capacity)
+    }
+
     /// Opens a writer that can use existing capacity but cannot allocate more.
     pub fn writer(&mut self) -> FixedWriter<'_, T> {
         self.values.writer()

@@ -1,6 +1,20 @@
 //! Renderer-vector adoption and replacement obey CPU old-plus-new accounting.
 
-use super::reserve;
+use super::{replacement_credit, required_bytes};
+use solarity_cpu::{ByteReservation, CpuError};
+
+fn reserve<T>(
+    values: &mut Vec<T>,
+    charge: &mut Option<ByteReservation>,
+    budget: &CpuStorageBudget,
+    additional: usize,
+) -> Result<(), CpuError> {
+    let mut reservation = budget.reserve_working_set(
+        Class::Frame,
+        required_bytes(values, charge, budget, additional)?,
+    )?;
+    super::reserve(values, charge, &mut reservation, additional)
+}
 use solarity_cpu::{CpuStorageBudget, CpuStorageClass as Class, CpuStoragePlan};
 use std::error::Error;
 
@@ -58,5 +72,69 @@ fn refused_executor_transfer_keeps_the_previous_storage_owner() -> Result<(), Bo
         original.snapshot().used(Class::Frame),
         values.capacity() * size_of::<u64>()
     );
+    Ok(())
+}
+
+#[test]
+fn connected_output_refusal_preserves_every_buffer_before_any_growth() -> Result<(), Box<dyn Error>>
+{
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(150, 0, 0));
+    let mut first = vec![1u64, 2, 3, 4];
+    let mut second = vec![5u64, 6, 7, 8];
+    let mut first_charge = None;
+    let mut second_charge = None;
+    reserve(&mut first, &mut first_charge, &budget, 0)?;
+    reserve(&mut second, &mut second_charge, &budget, 0)?;
+    let identities = (first.as_ptr(), second.as_ptr());
+    let capacities = (first.capacity(), second.capacity());
+    let mut working_set = solarity_cpu::CpuStorageWorkingSet::default();
+    working_set.include(
+        required_bytes(&first, &first_charge, &budget, 4)?,
+        replacement_credit(&first, 4)?,
+    )?;
+    working_set.include(
+        required_bytes(&second, &second_charge, &budget, 4)?,
+        replacement_credit(&second, 4)?,
+    )?;
+    let required = working_set.bytes();
+    // Each individual replacement fits; their connected working set does not.
+    assert!(budget.reserve_working_set(Class::Frame, required).is_err());
+    assert_eq!((first.as_ptr(), second.as_ptr()), identities);
+    assert_eq!((first.capacity(), second.capacity()), capacities);
+    assert_eq!(first, [1, 2, 3, 4]);
+    assert_eq!(second, [5, 6, 7, 8]);
+    assert_eq!(budget.snapshot().used(Class::Frame), 64);
+    let larger = CpuStorageBudget::new(CpuStoragePlan::new(256, 0, 0));
+    let mut working_set = solarity_cpu::CpuStorageWorkingSet::default();
+    working_set.include(
+        required_bytes(&first, &first_charge, &larger, 4)?,
+        replacement_credit(&first, 4)?,
+    )?;
+    working_set.include(
+        required_bytes(&second, &second_charge, &larger, 4)?,
+        replacement_credit(&second, 4)?,
+    )?;
+    let required = working_set.bytes();
+    let mut admitted = larger.reserve_working_set(Class::Frame, required)?;
+    let competing = larger.reserve(
+        Class::Frame,
+        solarity_cpu::CpuStorageKind::Scratch,
+        256 - required,
+    )?;
+    super::reserve(&mut first, &mut first_charge, &mut admitted, 4)?;
+    super::reserve(&mut second, &mut second_charge, &mut admitted, 4)?;
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    assert_eq!(admitted.remaining(), 32);
+    assert_eq!(first, [1, 2, 3, 4]);
+    assert_eq!(second, [5, 6, 7, 8]);
+    drop((
+        competing,
+        admitted,
+        first,
+        second,
+        first_charge,
+        second_charge,
+    ));
+    assert_eq!(larger.snapshot().used(Class::Frame), 0);
     Ok(())
 }
