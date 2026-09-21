@@ -19,6 +19,22 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+The cutover histories and paused effect-loader edits are consolidated on
+`perf/critical-frame-work`. This preserves encoded read admission, retained M2
+payload accounting, scoped service demand, late bone continuations and effect
+source suspension. Effect metadata and completion records remain charged through
+GPU warmup; abandoned producers and admission refusals propagate their original
+errors. Runtime world/event handling and renderer loading use separate modules.
+The two temporary cutover branches are retired after validation and publication;
+the full architecture requirements below remain open.
+
+Consolidated formatting and workspace Clippy with warnings denied pass. All
+1,706 workspace tests pass, with zero failures and 33 existing ignores, including
+doc tests. Evidence is in ignored `target/consolidation-clippy.stderr.log` and
+`target/consolidation-test-final.{stdout,stderr}.log`. The first test compilation
+exhausted disk space; removing the retired worktree's generated compiler cache
+allowed the complete rerun. No source change was needed for that interruption.
+
 Current-clock bone demands discovered during ordered placement traversal now
 use the existing CPU pose kernel through a saved placement continuation. Clock
 selection, callbacks, RNG and event-window consumption run once; publication
