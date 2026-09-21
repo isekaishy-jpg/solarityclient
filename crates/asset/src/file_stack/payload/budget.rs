@@ -24,6 +24,14 @@ impl AssetReadBudget {
         Self { storage, class }
     }
 
+    pub(crate) fn storage(&self) -> &CpuStorageBudget {
+        &self.storage
+    }
+
+    pub(crate) fn class(&self) -> CpuStorageClass {
+        self.class
+    }
+
     /// Admit the declared source size before the archive decoder allocates it.
     pub(crate) fn reserve(&self, bytes: u64) -> Result<ByteReservation, CpuError> {
         let bytes = usize::try_from(bytes).map_err(|_| CpuError::StorageSizeOverflow)?;

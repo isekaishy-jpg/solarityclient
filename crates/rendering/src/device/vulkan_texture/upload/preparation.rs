@@ -21,6 +21,9 @@ fn prepare_textures(
 ) -> Result<PreparedTextureBatch, BlpTextureUploadError> {
     let mut staging_byte_count = 0_usize;
     for (source, _color_space) in requests {
+        if let Some(budget) = budget {
+            source.admit_required(budget)?;
+        }
         staging_byte_count = align_up(
             staging_byte_count,
             texel_block_byte_count(source_storage(source)),
@@ -88,7 +91,8 @@ fn prepare_textures(
             (source.width(), source.height()),
             prepared.mips.len(),
             prepared.bytes.len(),
-        );
+        )
+        .with_namespace(source.namespace());
         prepared_textures.push((
             format,
             mip_levels,

@@ -30,7 +30,9 @@ impl fmt::Debug for M2CacheService {
 }
 
 impl M2CacheService {
-    /// Binds retained decoded generations to the application's required-result budget.
+    /// Binds namespace source ownership to the application storage budget.
+    /// Mounted readers use it for required inputs unless a loading scope overrides
+    /// the class; retained models and textures keep separate payload charges.
     /// Configure before the first cache load; offline tools may leave it unconfigured.
     /// # Errors
     /// Rejects repeated configuration or an already active source cache.

@@ -1,6 +1,6 @@
 //! Explicit color interpretation, typed identity, and allocation diagnostics.
 
-use solarity_asset::{AssetPath, BlpTextureSource};
+use solarity_asset::{AssetNamespaceId, AssetPath, BlpTextureSource};
 
 /// Caller-selected color interpretation for one stock texture role.
 ///
@@ -80,6 +80,7 @@ pub struct BlpTextureHandle {
 /// Observable dimensions and authored mip count of one live GPU image.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlpTextureResourceInfo {
+    namespace: Option<AssetNamespaceId>,
     path: AssetPath,
     source_kind: BlpTextureSourceKind,
     color_space: BlpColorSpace,
@@ -101,6 +102,7 @@ impl BlpTextureResourceInfo {
         upload_byte_count: usize,
     ) -> Self {
         Self {
+            namespace: None,
             path,
             source_kind,
             color_space,
@@ -109,6 +111,17 @@ impl BlpTextureResourceInfo {
             mip_count,
             upload_byte_count,
         }
+    }
+
+    pub(super) const fn with_namespace(mut self, namespace: AssetNamespaceId) -> Self {
+        self.namespace = Some(namespace);
+        self
+    }
+
+    /// Archive selection for authored images; built-in images have no archive namespace.
+    #[must_use]
+    pub const fn namespace(&self) -> Option<AssetNamespaceId> {
+        self.namespace
     }
 
     /// Returns whether pixels came from an archive or a stock built-in image.

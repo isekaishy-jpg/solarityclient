@@ -6,6 +6,7 @@
 mod block_compression;
 mod blp;
 mod dxt_source;
+mod source_storage;
 mod texture_blob;
 mod texture_cache;
 mod texture_int;

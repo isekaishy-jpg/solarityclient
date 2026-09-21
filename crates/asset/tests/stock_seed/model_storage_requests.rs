@@ -135,10 +135,13 @@ fn refused_model_payload_is_shared_failure_without_poisoning_source_identity()
     assert!(Arc::ptr_eq(&original, &delivered));
     assert!(matches!(
         &*original,
-        AssetError::SourceStorage(CpuError::StorageAtCapacity {
-            class: Class::Required,
+        AssetError::ReadAdmission {
+            source: CpuError::StorageAtCapacity {
+                class: Class::Required,
+                ..
+            },
             ..
-        })
+        }
     ));
     assert_eq!(budget.snapshot().used(Class::Required), 0);
     assert!(

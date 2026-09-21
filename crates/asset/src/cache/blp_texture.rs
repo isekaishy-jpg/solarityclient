@@ -50,6 +50,7 @@ impl BlpTextureCache {
     ) -> Result<Arc<BlpTextureSource>, AssetError> {
         let key = AssetResourceKey::new(store.namespace(), path.clone());
         if let Some(texture) = self.textures.get(&key) {
+            texture.admit_for(store)?;
             return Ok(Arc::clone(texture));
         }
 

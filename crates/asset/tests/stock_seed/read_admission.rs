@@ -216,3 +216,50 @@ fn handle_scope_and_utf8_source_keep_exact_allocation_ownership() -> Result<(), 
     assert_eq!(budget.snapshot().used(CpuStorageClass::Required), 0);
     Ok(())
 }
+
+#[test]
+fn configured_namespace_charges_default_mpq_and_loose_reads_with_scoped_overrides()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new(&[FixtureFile {
+        archive: "common.MPQ",
+        path: "Test/source.bin",
+        bytes: b"encoded payload",
+    }])?;
+    fixture.write_loose_file("Interface/AddOns/Test/source.lua", b"return 7")?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 4096, 4096));
+    catalog
+        .model_cache_service()
+        .configure_storage(budget.clone())?;
+    let mut a = AssetStore::mount(catalog.clone())?;
+    let mut b = AssetStore::mount(catalog)?;
+    let path = AssetPath::new("Test/source.bin")?;
+    let addon = AssetPath::new("Interface/AddOns/Test/source.lua")?;
+    let required = a.read(&path)?.into_bytes();
+    let loose = b.read_addon_file(&addon)?;
+    let required_bytes = required.admitted_bytes() + loose.admitted_bytes();
+    assert!(required_bytes >= required.len() + loose.len());
+    assert_eq!(
+        budget.snapshot().used(CpuStorageClass::Required),
+        required_bytes
+    );
+    let policy = AssetReadBudget::for_service(budget.clone(), CpuService::Speculative);
+    let optional = a
+        .with_read_budget(&policy, |store| store.read(&path))?
+        .into_bytes();
+    let optional_loose = b.with_read_budget(&policy, |store| store.read_addon_file(&addon))?;
+    assert_eq!(
+        budget.snapshot().used(CpuStorageClass::Speculative),
+        optional.admitted_bytes() + optional_loose.admitted_bytes()
+    );
+    let restored = a.read(&path)?.into_bytes();
+    assert_eq!(
+        budget.snapshot().used(CpuStorageClass::Required),
+        required_bytes + restored.admitted_bytes()
+    );
+    drop((a, b, required, loose, optional, optional_loose, restored));
+    assert_eq!(budget.snapshot().used(CpuStorageClass::Required), 0);
+    assert_eq!(budget.snapshot().used(CpuStorageClass::Speculative), 0);
+    Ok(())
+}

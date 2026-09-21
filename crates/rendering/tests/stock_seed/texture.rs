@@ -48,7 +48,7 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
     ])?;
     let catalog =
         ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
-    let mut store = AssetStore::mount(catalog)?;
+    let mut store = AssetStore::mount(catalog.clone())?;
     let paths = [
         AssetPath::new("Textures/DirectBc1.blp")?,
         AssetPath::new("Textures/DirectBc2.blp")?,
@@ -83,6 +83,13 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
     assert!(renderer.upload_blp_textures(&[])?.is_empty());
     assert_eq!(renderer.blp_texture_upload_submission_count(), 0);
     let cpu = crate::support::recording_cpu()?;
+    for source in &sources {
+        source.admit_required(cpu.storage())?;
+    }
+    let source_bytes = sources
+        .iter()
+        .map(BlpTextureSource::resident_bytes)
+        .sum::<usize>();
     let mut execution = TextureExecution {
         cpu: &cpu,
         reject: true,
@@ -100,7 +107,7 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
             solarity_cpu::CpuStorageClass::Required,
             solarity_cpu::CpuStorageKind::Result
         ),
-        0
+        source_bytes
     );
     execution.reject = false;
     let snapshot = cpu.storage().snapshot();
@@ -158,6 +165,7 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
             .blp_texture_info(handle)
             .ok_or("uploaded BC image is absent")?;
         assert_eq!(info.path(), source.path());
+        assert_eq!(info.namespace(), Some(source.namespace()));
         assert_eq!(info.source_kind(), BlpTextureSourceKind::Authored);
         assert_eq!(
             info.color_space(),
@@ -177,8 +185,34 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
     assert_ne!(offline, handles[4], "color-space identity remains distinct");
     assert_eq!(renderer.blp_texture_upload_submission_count(), 2);
     assert_eq!(execution.waits, waits + 1);
+    let mut alias = AssetStore::mount(catalog)?;
+    let same_selection = BlpTextureSource::load(&mut alias, &paths[0])?;
+    assert_eq!(
+        renderer.upload_blp_texture(&same_selection, BlpColorSpace::Srgb)?,
+        handles[0]
+    );
+    let mut rediscovered = AssetStore::mount(ArchiveCatalog::discover(
+        ClientDataRoot::new(fixture.data_root())?,
+        Locale::EnUs,
+    )?)?;
+    let new_selection = BlpTextureSource::load(&mut rediscovered, &paths[0])?;
+    let new_handle = solarity_rendering::GpuPreparation::offline(&mut renderer, &cpu)
+        .upload_blp_texture(&new_selection, BlpColorSpace::Srgb)?;
+    assert_ne!(
+        new_handle, handles[0],
+        "same path from a new archive selection is a distinct image"
+    );
+    assert_eq!(
+        renderer
+            .blp_texture_info(new_handle)
+            .ok_or("missing new selection")?
+            .namespace(),
+        Some(rediscovered.namespace())
+    );
+    assert_eq!(renderer.blp_texture_upload_submission_count(), 3);
     renderer.shutdown()?;
     drop(renderer);
+    drop((sources, same_selection, new_selection));
     assert_eq!(
         cpu.storage().snapshot().bytes(
             solarity_cpu::CpuStorageClass::Required,

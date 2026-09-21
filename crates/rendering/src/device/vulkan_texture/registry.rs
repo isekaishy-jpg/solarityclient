@@ -1,9 +1,9 @@
-//! Path/color-space deduplication and image lifetime ownership.
+//! Namespace/path/color-space deduplication and image lifetime ownership.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use solarity_asset::{AssetPath, BlpTextureSource};
+use solarity_asset::{AssetResourceKey, BlpTextureSource};
 
 use super::status::BlpTextureUploadError;
 use super::types::{
@@ -18,7 +18,7 @@ use super::upload::{
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum BlpTextureKey {
     Authored {
-        path: AssetPath,
+        source: AssetResourceKey,
         color_space: BlpColorSpace,
     },
     StockWorldModelGreen,
@@ -106,7 +106,10 @@ impl BlpTextureRegistry {
         let mut pending_requests = Vec::new();
         for request in requests {
             let key = BlpTextureKey::Authored {
-                path: request.source().path().clone(),
+                source: AssetResourceKey::new(
+                    request.source().namespace(),
+                    request.source().path().clone(),
+                ),
                 color_space: request.color_space(),
             };
             if self.handles.contains_key(&key) || pending_by_key.contains_key(&key) {
@@ -153,7 +156,10 @@ impl BlpTextureRegistry {
             .iter()
             .map(|request| {
                 let key = BlpTextureKey::Authored {
-                    path: request.source().path().clone(),
+                    source: AssetResourceKey::new(
+                        request.source().namespace(),
+                        request.source().path().clone(),
+                    ),
                     color_space: request.color_space(),
                 };
                 self.handles.get(&key).copied().ok_or_else(|| {

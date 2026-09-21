@@ -19,6 +19,34 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Parsed BLP source ownership now retains a single byte reservation through cache
+merges, source clones and worker upload snapshots. Parsing preadmits authored mip
+ranges and RAW3 dimension-based allocation, then reconciles retained vector
+capacities, palette and source metadata. Encoded input and parsed residence have
+separate lifetimes. Required cache hits and CPU uploads atomically promote an
+existing speculative charge; pressure preserves the source for retry. Unmetered
+offline sources acquire admission when consumed by a configured cache or upload.
+Configured namespace readers now apply the application required budget by default
+to MPQ and loose AddOn reads; explicit loading scopes retain their service class.
+GPU deduplication and diagnostics carry archive namespace alongside path and
+color space, including independently rediscovered catalogs with identical paths.
+
+This closes retained BLP source accounting and archive identity across the upload
+boundary. It does not establish shared pending BLP producer authority, account for
+third-party codec internals or every cache container, or complete the remaining
+resource-domain cutover. Source metadata shared with path keys is conservatively
+counted per generation. There is no new eviction timer or quality fallback.
+Regression coverage includes class promotion/refusal/retry, encoded and parsed
+release, last-clone lifetime, late offline admission, default/scoped archive and
+loose reads, and real Vulkan namespace/color-space identity. Build 175 remains
+installed; no package or performance comparison is part of this batch.
+
+The grouped asset/rendering/runtime validation passes formatting, Clippy with
+warnings denied across all targets/features, and 1,049 tests with zero failures
+and 29 existing ignores. All three doc-test suites complete. Evidence is ignored
+`target/blp-ownership-final.log`. The retained source/reader and Vulkan identity
+regressions run in that same pass.
+
 WMO ordinary and shadow packet preparation now use shared frame workers. GPU
 admission validates immutable surface templates and complete shadow ranges once.
 Frame snapshots pin the exact source generation, transforms, ordered portal
@@ -61,7 +89,8 @@ original mip decoding, BC preservation/padding, alignment and batch packing befo
 main admits the Vulkan transfer. Renderer deduplication precedes CPU submission;
 resident duplicates add no work. A conservative three-times-packed-byte reservation
 covers staging/decoded payload overlap and remains owned through staging retirement.
-It does not account for encoded cache residence or third-party codec internals.
+Retained parsed source accounting is described above; third-party codec internals
+remain outside this upload reservation.
 All runtime authored texture callers now use this path: M2 bodies, equipment,
 effects and sky models; WMO and ADT admission/streaming; ground detail and liquids;
 Glue, FrameXML and loading cards; ripples and underwater particles; and the

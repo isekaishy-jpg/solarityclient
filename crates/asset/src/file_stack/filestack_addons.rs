@@ -100,7 +100,7 @@ impl AssetStore {
         let install_root = install_root(&self.data_root)?;
         if let Some(loose_path) = find_relative_path(install_root, &relative)? {
             let charge = self
-                .read_budget
+                .effective_read_budget()
                 .as_ref()
                 .map(|budget| {
                     let size = fs::metadata(&loose_path)

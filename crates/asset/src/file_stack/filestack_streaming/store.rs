@@ -62,6 +62,19 @@ impl AssetStore {
         };
         operation(&mut *scope.store)
     }
+    /// A scoped demand class overrides the namespace's required-read default.
+    /// Offline catalogs without configured storage remain explicitly unmetered.
+    pub(crate) fn effective_read_budget(&self) -> Option<crate::AssetReadBudget> {
+        self.read_budget.clone().or_else(|| {
+            self.model_cache_service.storage().map(|storage| {
+                crate::AssetReadBudget::for_service(
+                    storage.clone(),
+                    solarity_cpu::CpuService::Required,
+                )
+            })
+        })
+    }
+
     /// Joins maintenance without sharing mutable archive-reader state.
     pub fn model_cache_service(&self) -> &crate::M2CacheService {
         &self.model_cache_service
@@ -128,8 +141,9 @@ impl AssetStore {
     pub fn read(&mut self, path: &AssetPath) -> Result<AssetRead, AssetError> {
         let _profile_scope =
             solarity_profiling::profile!("asset.file_stack.filestack_streaming.read");
+        let budget = self.effective_read_budget();
         for archive in &mut self.archives {
-            let Some(bytes) = archive.read_if_present(path, self.read_budget.as_ref())? else {
+            let Some(bytes) = archive.read_if_present(path, budget.as_ref())? else {
                 continue;
             };
 
