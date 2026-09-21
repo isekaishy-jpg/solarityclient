@@ -534,6 +534,7 @@ pub(in crate::application) struct M2Frame {
     spatial_batch: preparation::spatial::SpatialBatch,
     receiver_frame: preparation::receivers::ReceiverFrame,
     /// Reused only between shadow and ordinary draws of the current placement.
+    #[cfg(test)]
     material_pose_scratch: Vec<Option<M2MaterialPose>>,
     // Only the frozen serial oracle concatenates palettes; production borrows jobs.
     #[cfg(test)]
@@ -671,6 +672,7 @@ impl M2Frame {
             event_poses: preparation::poses::ScenePoses::default(),
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
+            #[cfg(test)]
             material_pose_scratch: Vec::new(),
             #[cfg(test)]
             bone_transforms: Vec::new(),
@@ -831,6 +833,7 @@ impl M2Frame {
             event_poses: preparation::poses::ScenePoses::default(),
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
+            #[cfg(test)]
             material_pose_scratch: Vec::new(),
             #[cfg(test)]
             bone_transforms: Vec::new(),

@@ -175,7 +175,7 @@ impl GeometryOutput<'_> {
             .extend_from_slice(&job.particle_indices)?;
         solarity_cpu::FixedWriter::new(self.ribbon_vertices)
             .extend_from_slice(&job.ribbon_vertices)?;
-        for error in job.recoverable_errors.drain(..) {
+        for error in job.recoverable_errors.drain() {
             solarity_cpu::FixedWriter::new(self.recoverable_errors).push(error)?;
         }
         Ok(())

@@ -22,7 +22,7 @@ pub(in super::super) struct ShadowInput {
 pub(in super::super) fn append_packets(
     source: &M2GpuSource,
     input: ShadowInput,
-    material_poses: &mut Vec<Option<M2MaterialPose>>,
+    material_poses: &mut [Option<M2MaterialPose>],
     mut destination: impl FnMut(M2PreparedDraw) -> Result<(), RuntimeTerrainFrameError>,
 ) -> Result<(), RuntimeTerrainFrameError> {
     let ShadowInput {
@@ -39,7 +39,7 @@ pub(in super::super) fn append_packets(
     if retiring {
         return Ok(());
     }
-    material_poses.resize(source.draws.len(), None);
+    debug_assert_eq!(material_poses.len(), source.draws.len());
     for (draw_index, resources) in source.draws.iter().enumerate() {
         let Some(resources) = resources else {
             continue;

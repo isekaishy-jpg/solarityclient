@@ -454,6 +454,36 @@ All-target/all-feature CPU/runtime Clippy with warnings denied, formatting and
 `git diff --check` passed. Logs: `target/frame-reservation-cpu-tests.log`,
 `target/frame-reservation-runtime-tests.log`, `target/frame-reservation-clippy.log`.
 
+The following model-admission batch extends connected reservations to each owned
+geometry job's skeletal arrays, shadow material samples, bounded draw streams, particle pools and ribbon
+history. All counts and adoption/growth requirements are computed before any of
+those buffers change. One protected sequential-peak reservation then funds them
+in the planned order, recycling retired allocations. Budget refusal occurs before
+palette allocation or simulation advancement; ordinary worker return still restores
+the placement's effect state. The bounded recoverable-error vector now owns a CPU
+charge, while the diagnostic strings themselves remain separately unaccounted.
+Shadow material samples now stay in an admitted per-model buffer instead of
+swapping an empty main-thread vector and growing it inside the numeric kernel.
+Named bone sampling reserves its ancestor mask and nested palette together, and
+render-pose overrides reserve transform/sequence copies together before transfer.
+Existing stock particle limits, RNG progression and address-derived twinkle relocation
+remain unchanged. This closes admission across these known per-model arrays; it
+is not aggregate admission across all incrementally discovered models. Nested
+diagnostic/source allocations and other domain phases remain open.
+No packaged build or live performance measurement accompanies this source batch.
+
+Model-admission validation passed 200 rendering tests and 123 M2 runtime tests,
+with ten existing runtime ignores. The pressure fixture permits the palette alone
+but refuses the complete model, verifying zero palette/material/output growth and
+unchanged particle/ribbon state. Named-sample refusal, protected shared pose/pool
+capacity, zero-headroom warm reuse and the existing stock effect/moving-frame
+parity tests pass. The serial oracle only moves vector sizing to its call site
+for the shadow packet helper's fixed-slice interface; sampling arithmetic is unchanged.
+All-target/all-feature rendering/runtime Clippy with warnings denied, formatting
+and `git diff --check` passed after a field-name shorthand cleanup.
+Logs: `target/model-reservation-rendering-tests.log`,
+`target/model-reservation-runtime-tests.log`, `target/model-reservation-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

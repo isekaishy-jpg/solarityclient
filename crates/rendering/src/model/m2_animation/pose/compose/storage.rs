@@ -2,7 +2,10 @@
 
 use super::{M2AnimationClock, M2BonePose};
 use glam::Mat4;
-use solarity_cpu::{ByteReservation, CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind};
+use solarity_cpu::{
+    ByteReservation, CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind,
+    CpuStorageReservation, CpuStorageWorkingSet,
+};
 
 /// One charge covers the three uniquely owned palette allocations, not model assets.
 pub(super) struct PoseMemory(ByteReservation);
@@ -51,13 +54,66 @@ impl M2BonePose {
         budget: &CpuStorageBudget,
         bones: usize,
     ) -> Result<(), CpuError> {
-        let class = CpuStorageClass::Frame;
+        let mut working_set = CpuStorageWorkingSet::default();
+        self.include_cpu_storage(budget, bones, &mut working_set)?;
+        let mut reservation =
+            budget.reserve_working_set(CpuStorageClass::Frame, working_set.bytes())?;
+        self.reserve_cpu_storage_reserved(&mut reservation, bones)
+    }
+
+    /// Adds adoption and replacement demand in allocation order without changing state.
+    /// # Errors
+    /// Reports checked capacity overflow before any allocation or simulation changes.
+    pub fn include_cpu_storage(
+        &self,
+        budget: &CpuStorageBudget,
+        bones: usize,
+        working_set: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
+        let retained = bytes(
+            self.transforms.capacity(),
+            self.local.capacity(),
+            self.sequence_clocks.capacity(),
+        )?;
+        let adoption = self.memory.as_ref().map_or(retained, |memory| {
+            memory.0.admission_bytes(budget, CpuStorageClass::Frame)
+        });
+        let (replacement, retired) = if bones <= self.transforms.capacity()
+            && bones <= self.local.capacity()
+            && bones <= self.sequence_clocks.capacity()
+        {
+            (0, 0)
+        } else {
+            (
+                bytes(
+                    bones.max(self.transforms.capacity()),
+                    bones.max(self.local.capacity()),
+                    bones.max(self.sequence_clocks.capacity()),
+                )?,
+                retained,
+            )
+        };
+        working_set.include(
+            adoption
+                .checked_add(replacement)
+                .ok_or(CpuError::StorageSizeOverflow)?,
+            retired,
+        )
+    }
+
+    /// Funds the retained arrays from a previously admitted connected working set.
+    /// # Errors
+    /// Reports insufficient reserved capacity or allocation failure before replacing values.
+    pub fn reserve_cpu_storage_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        bones: usize,
+    ) -> Result<(), CpuError> {
         let kind = CpuStorageKind::Result;
         if let Some(memory) = &mut self.memory {
-            memory.0.transfer(budget, class, kind)?;
+            memory.0.transfer_reserved(reservation, kind)?;
         } else {
-            self.memory = Some(PoseMemory(budget.reserve(
-                class,
+            self.memory = Some(PoseMemory(reservation.reserve(
                 kind,
                 bytes(
                     self.transforms.capacity(),
@@ -77,23 +133,25 @@ impl M2BonePose {
             bones.max(self.local.capacity()),
             bones.max(self.sequence_clocks.capacity()),
         ];
-        let mut memory = budget.reserve(
-            class,
-            kind,
-            bytes(capacities[0], capacities[1], capacities[2])?,
-        )?;
+        let mut memory =
+            reservation.reserve(kind, bytes(capacities[0], capacities[1], capacities[2])?)?;
         let transforms = copy_capacity(&self.transforms, capacities[0])?;
         let local = copy_capacity(&self.local, capacities[1])?;
         let sequences = copy_capacity(&self.sequence_clocks, capacities[2])?;
-        memory.resize(bytes(
-            transforms.capacity(),
-            local.capacity(),
-            sequences.capacity(),
-        )?)?;
+        memory.resize_reserved(
+            reservation,
+            bytes(
+                transforms.capacity(),
+                local.capacity(),
+                sequences.capacity(),
+            )?,
+        )?;
         self.transforms = transforms;
         self.local = local;
         self.sequence_clocks = sequences;
-        self.memory = Some(PoseMemory(memory));
+        if let Some(retired) = self.memory.replace(PoseMemory(memory)) {
+            reservation.recycle(retired.0)?;
+        }
         Ok(())
     }
 

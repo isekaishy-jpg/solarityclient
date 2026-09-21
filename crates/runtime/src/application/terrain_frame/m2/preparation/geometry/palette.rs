@@ -22,18 +22,25 @@ impl PaletteInput {
         let (transforms, sequences) = input.as_ref().map_or((0, 0), |input| {
             (input.bone_transforms.len(), input.bone_sequences.len())
         });
-        self.transforms.reserve(
-            budget,
-            solarity_cpu::CpuStorageClass::Frame,
-            solarity_cpu::CpuStorageKind::Scratch,
-            transforms,
+        use solarity_cpu::{
+            CpuStorageClass as Class, CpuStorageKind as Kind, CpuStorageWorkingSet,
+        };
+        let mut working_set = CpuStorageWorkingSet::default();
+        working_set.include(
+            self.transforms
+                .reservation_bytes(budget, Class::Frame, transforms)?,
+            self.transforms.replacement_credit(transforms),
         )?;
-        self.sequences.reserve(
-            budget,
-            solarity_cpu::CpuStorageClass::Frame,
-            solarity_cpu::CpuStorageKind::Scratch,
-            sequences,
+        working_set.include(
+            self.sequences
+                .reservation_bytes(budget, Class::Frame, sequences)?,
+            self.sequences.replacement_credit(sequences),
         )?;
+        let mut reservation = budget.reserve_working_set(Class::Frame, working_set.bytes())?;
+        self.transforms
+            .reserve_reserved(&mut reservation, Kind::Scratch, transforms)?;
+        self.sequences
+            .reserve_reserved(&mut reservation, Kind::Scratch, sequences)?;
         self.pending = input.is_some();
         self.transforms.clear();
         self.sequences.clear();

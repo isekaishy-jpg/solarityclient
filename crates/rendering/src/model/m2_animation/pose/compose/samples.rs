@@ -31,25 +31,49 @@ impl M2BoneSamples {
         budget: &solarity_cpu::CpuStorageBudget,
         bones: usize,
     ) -> Result<(), solarity_cpu::CpuError> {
-        use solarity_cpu::{CpuStorageClass, CpuStorageKind};
-        self.scratch.reserve_cpu_storage(budget, bones)?;
+        use solarity_cpu::{CpuError, CpuStorageClass, CpuStorageKind, CpuStorageWorkingSet};
         let class = CpuStorageClass::Frame;
         let kind = CpuStorageKind::Scratch;
-        if let Some(memory) = &mut self.memory {
-            memory.transfer(budget, class, kind)?;
+        let mut working_set = CpuStorageWorkingSet::default();
+        self.scratch
+            .include_cpu_storage(budget, bones, &mut working_set)?;
+        let adoption = self
+            .memory
+            .as_ref()
+            .map_or(self.required.capacity(), |memory| {
+                memory.admission_bytes(budget, class)
+            });
+        let (replacement, retired) = if bones > self.required.capacity() {
+            (bones, self.required.capacity())
         } else {
-            self.memory = Some(budget.reserve(class, kind, self.required.capacity())?);
+            (0, 0)
+        };
+        working_set.include(
+            adoption
+                .checked_add(replacement)
+                .ok_or(CpuError::StorageSizeOverflow)?,
+            retired,
+        )?;
+        let mut reservation = budget.reserve_working_set(class, working_set.bytes())?;
+        self.scratch
+            .reserve_cpu_storage_reserved(&mut reservation, bones)?;
+        if let Some(memory) = &mut self.memory {
+            memory.transfer_reserved(&mut reservation, kind)?;
+        } else {
+            self.memory = Some(reservation.reserve(kind, self.required.capacity())?);
         }
         if bones > self.required.capacity() {
-            let mut memory = budget.reserve(class, kind, bones)?;
+            let mut memory = reservation.reserve(kind, bones)?;
             let mut required = Vec::new();
             required
                 .try_reserve_exact(bones)
-                .map_err(|_| solarity_cpu::CpuError::StorageAllocation)?;
+                .map_err(|_| CpuError::StorageAllocation)?;
             required.extend_from_slice(&self.required);
-            memory.resize(required.capacity())?;
+            memory.resize_reserved(&mut reservation, required.capacity())?;
             self.required = required;
-            self.memory = Some(memory);
+            if let Some(retired) = self.memory.replace(memory) {
+                reservation.recycle(retired)?;
+            }
         }
         Ok(())
     }

@@ -567,10 +567,20 @@ fn assert_worker_admission_refusal(
         .iter()
         .map(|ribbon| ribbon.sections().cloned().collect())
         .collect();
+    // Leave enough space for the palette alone, but not the connected model.
+    // The former sequential admission allocated the palette before refusing outputs.
+    let mut palette_plan = solarity_cpu::CpuStorageWorkingSet::default();
+    let probe = CpuStorageBudget::new(CpuStoragePlan::new(usize::MAX, 0, 0));
+    M2BonePose::default().include_cpu_storage(
+        &probe,
+        source.model.animations().bones().len(),
+        &mut palette_plan,
+    )?;
+    let refused = CpuStorageBudget::new(CpuStoragePlan::new(palette_plan.bytes(), 0, 0));
     let mut job = GeometryJob {
         input: Some(input),
         context: Some(GeometryContext {
-            storage: CpuStorageBudget::new(CpuStoragePlan::new(0, 0, 0)),
+            storage: refused.clone(),
             source: Arc::clone(source),
             camera,
             effect_scale: M2CameraEffectScale::EXTERNAL_CAMERA,
@@ -595,6 +605,12 @@ fn assert_worker_admission_refusal(
         job.result.as_ref(),
         Some(Err(RuntimeTerrainFrameError::Cpu(_)))
     ));
+    assert_eq!(job.pose.allocated_bytes(), 0);
+    assert_eq!(job.visible_draws.capacity(), 0);
+    assert_eq!(job.material_poses.capacity(), 0);
+    assert_eq!(job.particle_vertices.capacity(), 0);
+    assert_eq!(job.ribbon_vertices.capacity(), 0);
+    assert_eq!(refused.snapshot().used(CpuStorageClass::Frame), 0);
     assert!(job.visible_draws.is_empty());
     assert!(job.particle_vertices.is_empty());
     assert!(job.ribbon_vertices.is_empty());

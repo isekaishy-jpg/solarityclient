@@ -64,7 +64,7 @@ impl GeometryJob {
                 if let Some(message) =
                     placement_particle.diagnostic(source.model.path(), particle_index)
                 {
-                    self.recoverable_errors.push(message);
+                    self.recoverable_errors.push(message)?;
                 }
                 continue;
             }

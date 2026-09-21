@@ -3,7 +3,7 @@
 use super::super::super::{M2Frame, M2GpuPlacement, RuntimeTerrainFrameError};
 use super::{GeometryBatch, GeometryInput};
 use crate::application::frame_pipeline::FrameWait;
-use solarity_rendering::{M2BonePose, M2BonePoseOverrides, M2MaterialPose};
+use solarity_rendering::{M2BonePose, M2BonePoseOverrides};
 use solarity_rendering::{M2CameraEffectScale, VulkanError, WorldCameraFrame};
 
 /// Ordered output prefix and capacity totals survive a coordinator yield.
@@ -149,7 +149,6 @@ impl GeometryBatch {
         input: GeometryInput,
         placement: &mut M2GpuPlacement,
         pose: &mut M2BonePose,
-        material_poses: &mut Vec<Option<M2MaterialPose>>,
         palette: Option<M2BonePoseOverrides<'_>>,
         source: &super::super::super::M2GpuSource,
         camera: WorldCameraFrame,
@@ -239,7 +238,6 @@ impl GeometryBatch {
         if !job.palette.pending {
             std::mem::swap(&mut job.pose, pose);
         }
-        std::mem::swap(&mut job.material_poses, material_poses);
         batch
             .staged
             .push(std::mem::take(&mut batch.jobs[slot]), cost);

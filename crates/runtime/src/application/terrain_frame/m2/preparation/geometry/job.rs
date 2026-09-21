@@ -24,7 +24,7 @@ pub(super) struct GeometryJob {
     pub(super) publishes_palette: bool,
     pub(super) pose: M2BonePose,
     pub(super) palette: super::palette::PaletteInput,
-    pub(super) material_poses: Vec<Option<M2MaterialPose>>,
+    pub(super) material_poses: solarity_cpu::CpuBuffer<Option<M2MaterialPose>>,
     pub(super) particles: Vec<M2ParticlePlacement>,
     pub(super) ribbons: Vec<M2RibbonTrail>,
     pub(super) shadow_draws: solarity_cpu::CpuBuffer<M2PreparedDraw>,
@@ -37,7 +37,7 @@ pub(super) struct GeometryJob {
     pub(super) ribbon_draws: solarity_cpu::CpuBuffer<M2RibbonPreparedDraw>,
     pub(super) particle_vertex_capacity: usize,
     pub(super) particle_index_capacity: usize,
-    pub(super) recoverable_errors: Vec<String>,
+    pub(super) recoverable_errors: solarity_cpu::CpuBuffer<String>,
     pub(super) result: Option<Result<(), RuntimeTerrainFrameError>>,
 }
 
@@ -76,6 +76,7 @@ impl GeometryJob {
     /// Clears output lengths while retaining storage for the next visible model.
     pub(super) fn reset(&mut self) {
         self.publishes_palette = false;
+        self.material_poses.clear();
         self.shadow_draws.clear();
         self.visible_draws.clear();
         self.transparent_elements.clear();

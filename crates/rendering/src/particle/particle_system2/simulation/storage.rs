@@ -2,7 +2,10 @@
 
 use super::{M2ParticleSimulation, M2ParticleSimulationError};
 use crate::particle::particle_system2::M2ParticleState;
-use solarity_cpu::{ByteReservation, CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind};
+use solarity_cpu::{
+    ByteReservation, CpuError, CpuStorageBudget, CpuStorageClass, CpuStorageKind,
+    CpuStorageReservation, CpuStorageWorkingSet,
+};
 
 /// Unique capacity charge retained after a worker returns the simulation.
 pub(super) struct ParticleMemory(ByteReservation);
@@ -52,19 +55,80 @@ impl M2ParticleSimulation {
         budget: &CpuStorageBudget,
         maximum: usize,
     ) -> Result<(), CpuError> {
-        let class = CpuStorageClass::Frame;
+        let mut working_set = CpuStorageWorkingSet::default();
+        self.include_cpu_storage(budget, maximum, &mut working_set)?;
+        let mut reservation =
+            budget.reserve_working_set(CpuStorageClass::Frame, working_set.bytes())?;
+        self.reserve_cpu_storage_reserved(&mut reservation, maximum)
+    }
+
+    /// Adds adoption and replacement demand in allocation order without changing state.
+    /// # Errors
+    /// Reports checked capacity overflow before any allocation or simulation changes.
+    pub fn include_cpu_storage(
+        &self,
+        budget: &CpuStorageBudget,
+        maximum: usize,
+        working_set: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
+        let maximum = maximum.max(self.capacity);
+        let retained = bytes(
+            self.particles.capacity(),
+            self.active_pool_slots.capacity(),
+            self.free_pool_slots.capacity(),
+        )?;
+        let adoption = self.memory.as_ref().map_or(retained, |memory| {
+            memory.0.admission_bytes(budget, CpuStorageClass::Frame)
+        });
+        let (replacement, retired) = if maximum <= self.particles.capacity()
+            && maximum <= self.active_pool_slots.capacity()
+            && maximum <= self.free_pool_slots.capacity()
+        {
+            (0, 0)
+        } else {
+            (
+                bytes(
+                    maximum.max(self.particles.capacity()),
+                    maximum.max(self.active_pool_slots.capacity()),
+                    maximum.max(self.free_pool_slots.capacity()),
+                )?,
+                retained,
+            )
+        };
+        working_set.include(
+            adoption
+                .checked_add(replacement)
+                .ok_or(CpuError::StorageSizeOverflow)?,
+            retired,
+        )
+    }
+
+    /// Funds the retained arrays from a previously admitted connected working set.
+    /// # Errors
+    /// Reports insufficient reserved capacity or allocation failure before replacing values.
+    pub fn reserve_cpu_storage_reserved(
+        &mut self,
+        reservation: &mut CpuStorageReservation,
+        maximum: usize,
+    ) -> Result<(), CpuError> {
         let kind = CpuStorageKind::Scratch;
         if let Some(memory) = &mut self.memory {
-            memory.0.transfer(budget, class, kind)?;
+            memory.0.transfer_reserved(reservation, kind)?;
         } else {
-            self.memory = Some(ParticleMemory(budget.reserve(
-                class,
+            self.memory = Some(ParticleMemory(reservation.reserve(
                 kind,
-                self.allocated_bytes(),
+                bytes(
+                    self.particles.capacity(),
+                    self.active_pool_slots.capacity(),
+                    self.free_pool_slots.capacity(),
+                )?,
             )?));
         }
         let maximum = maximum.max(self.capacity);
-        if maximum <= self.physical_capacity() {
+        if maximum <= self.particles.capacity()
+            && maximum <= self.active_pool_slots.capacity()
+            && maximum <= self.free_pool_slots.capacity()
+        {
             return Ok(());
         }
         let capacities = [
@@ -72,19 +136,15 @@ impl M2ParticleSimulation {
             maximum.max(self.active_pool_slots.capacity()),
             maximum.max(self.free_pool_slots.capacity()),
         ];
-        let mut memory = budget.reserve(
-            class,
-            kind,
-            bytes(capacities[0], capacities[1], capacities[2])?,
-        )?;
+        let mut memory =
+            reservation.reserve(kind, bytes(capacities[0], capacities[1], capacities[2])?)?;
         let mut particles = copy_capacity(&self.particles, capacities[0])?;
         let active = copy_capacity(&self.active_pool_slots, capacities[1])?;
         let free = copy_capacity(&self.free_pool_slots, capacities[2])?;
-        memory.resize(bytes(
-            particles.capacity(),
-            active.capacity(),
-            free.capacity(),
-        )?)?;
+        memory.resize_reserved(
+            reservation,
+            bytes(particles.capacity(), active.capacity(), free.capacity())?,
+        )?;
         if !particles.is_empty() {
             let old_phase = ((self.particles.as_ptr().addr() >> 5) & 0x7f) as u8;
             let new_phase = ((particles.as_ptr().addr() >> 5) & 0x7f) as u8;
@@ -95,7 +155,9 @@ impl M2ParticleSimulation {
         self.particles = particles;
         self.active_pool_slots = active;
         self.free_pool_slots = free;
-        self.memory = Some(ParticleMemory(memory));
+        if let Some(retired) = self.memory.replace(ParticleMemory(memory)) {
+            reservation.recycle(retired.0)?;
+        }
         Ok(())
     }
 

@@ -839,6 +839,7 @@ impl M2Frame {
                     shadow_color *= placement_color(pose.color.to_le_bytes());
                 }
                 shadow_color.w *= shadow_opacity;
+                self.material_pose_scratch.resize(source.draws.len(), None);
                 shadow::append_packets(
                     source,
                     shadow::ShadowInput {

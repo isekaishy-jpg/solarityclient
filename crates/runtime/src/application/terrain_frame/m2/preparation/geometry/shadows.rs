@@ -14,9 +14,19 @@ impl GeometryJob {
         if !input.primary_shadow && input.environment_maps == 0 {
             return Ok(());
         }
-        shadow::append_packets(source, input.shadow, &mut self.material_poses, |draw| {
-            self.shadow_draws.push(draw)?;
-            Ok(())
-        })
+        if source.mesh.is_some() && !input.shadow.retiring {
+            for _ in 0..source.draws.len() {
+                self.material_poses.push(None)?;
+            }
+        }
+        shadow::append_packets(
+            source,
+            input.shadow,
+            self.material_poses.writer().as_mut(),
+            |draw| {
+                self.shadow_draws.push(draw)?;
+                Ok(())
+            },
+        )
     }
 }

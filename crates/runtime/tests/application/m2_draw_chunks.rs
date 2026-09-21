@@ -49,7 +49,13 @@ fn refused_chunk_submission_keeps_every_unexecuted_model_and_its_charge()
     batch.staged.reserve(&budget)?;
     for marker in ["first", "second"] {
         let mut owner = GeometryOwner::new(&budget)?;
-        owner.job_mut().recoverable_errors.push(marker.to_owned());
+        owner.job_mut().recoverable_errors.reserve(
+            &budget,
+            CpuStorageClass::Frame,
+            CpuStorageKind::Result,
+            1,
+        )?;
+        owner.job_mut().recoverable_errors.push(marker.to_owned())?;
         batch.staged.push(owner, cost(10));
     }
     let charged = budget
@@ -59,8 +65,8 @@ fn refused_chunk_submission_keeps_every_unexecuted_model_and_its_charge()
     // No active producer: refusal must restore the staged group's exact ownership.
     assert!(batch.flush_staged().is_err());
     assert_eq!(batch.staged.jobs.len(), 2);
-    assert_eq!(batch.staged.jobs[0].job().recoverable_errors, ["first"]);
-    assert_eq!(batch.staged.jobs[1].job().recoverable_errors, ["second"]);
+    assert_eq!(&*batch.staged.jobs[0].job().recoverable_errors, &["first"]);
+    assert_eq!(&*batch.staged.jobs[1].job().recoverable_errors, &["second"]);
     assert_eq!(
         budget
             .snapshot()

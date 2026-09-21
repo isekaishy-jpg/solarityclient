@@ -879,7 +879,6 @@ impl M2Frame {
                     environment_maps,
                     visible: None,
                 };
-                self.material_pose_scratch.clear();
                 if !visible {
                     if shadow_admitted || environment_maps != 0 {
                         observed.geometry_pending = true;
@@ -887,7 +886,6 @@ impl M2Frame {
                             input,
                             &mut self.placements[placement_index],
                             &mut self.bone_pose_scratch,
-                            &mut self.material_pose_scratch,
                             deferred_palette.then_some(overrides),
                             source,
                             camera,
@@ -986,7 +984,6 @@ impl M2Frame {
                     input,
                     &mut self.placements[placement_index],
                     &mut self.bone_pose_scratch,
-                    &mut self.material_pose_scratch,
                     deferred_palette.then_some(overrides),
                     source,
                     camera,
