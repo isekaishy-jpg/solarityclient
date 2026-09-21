@@ -281,6 +281,7 @@ impl ClientServices {
             catalogs,
             addon_manifest,
             presentation,
+            ui,
         } = solarity_rendering::WorldRecordingCompletion::join_task(
             &mut super::frame_pipeline::FrameWait::Native(&mut platform).recording(&cpu),
             startup_sources,
@@ -364,14 +365,18 @@ impl ClientServices {
             debug_assert!(consumed);
         }
         tracing::info!(?initial_screen, "selected initial Glue screen");
-        let glue = GlueManager::start_shared_with_profile_and_random(
+        let startup_catalogs::PreparedStartupUi {
+            glue: glue_sources,
+            sound: sound_sources,
+        } = ui?;
+        let glue = GlueManager::start_shared_with_sources(
             assets.clone(),
             platform.logical_extent(),
-            false,
             initial_screen,
             startup_profile.cvar_values(),
             &addon_catalog,
             blizzard_rand.clone(),
+            glue_sources,
         )?;
         let texture_filtering = glue
             .cvar_integer("textureFilteringMode")
@@ -397,6 +402,7 @@ impl ClientServices {
             &glue,
             SoundOutputTarget::DefaultDevice,
             sound_catalog,
+            sound_sources,
         )?;
         // M2Initialize consumes these before any ordinary or Glue emitter is
         // constructed. The resulting table remains process-wide.

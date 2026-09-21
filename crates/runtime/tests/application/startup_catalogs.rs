@@ -28,12 +28,21 @@ fn pool(capacity: usize) -> Result<CpuExecutor, Box<dyn Error>> {
 }
 
 fn startup_fixture() -> Result<ClientFixture, Box<dyn Error>> {
+    let displays = empty_table(19);
+    let lookups = empty_table(3);
+    ClientFixture::with_common_files(&[
+        ("DBFilesClient/GameObjectDisplayInfo.dbc", &displays),
+        ("DBFilesClient/UISoundLookups.dbc", &lookups),
+    ])
+}
+
+fn empty_table(fields: u32) -> Vec<u8> {
     let mut displays = b"WDBC".to_vec();
-    for field in [0_u32, 19, 76, 1] {
+    for field in [0_u32, fields, fields * 4, 1] {
         displays.extend_from_slice(&field.to_le_bytes());
     }
     displays.push(0);
-    ClientFixture::with_common_files(&[("DBFilesClient/GameObjectDisplayInfo.dbc", &displays)])
+    displays
 }
 
 #[test]
@@ -60,7 +69,7 @@ fn startup_catalogs_complete_on_one_worker_and_one_admitted_slot() -> Result<(),
         .join()??;
     assert_eq!(
         calls.load(Ordering::Relaxed),
-        1 + archives + LOADS.len() + 1 + 4
+        1 + archives + LOADS.len() + 1 + 4 + 2
     );
     assert_eq!(prepared.catalog.namespace(), prepared.assets.namespace());
     assert_eq!(prepared.assets.archives().len(), archives);
@@ -88,6 +97,106 @@ fn startup_catalogs_complete_on_one_worker_and_one_admitted_slot() -> Result<(),
         "missing optional LoadingScreens retains stock startup policy"
     );
     assert!(prepared.presentation?.fps.is_none());
+    let ui = prepared.ui?;
+    ui.sound.engine?;
+    ui.sound.world?;
+    drop(cpu);
+    let assets = solarity_asset::AssetStoreHandle::new(prepared.assets);
+    let random = || {
+        std::rc::Rc::new(std::cell::RefCell::new(solarity_cpu::BlizzardRand::new(
+            123,
+        )))
+    };
+    let serial_random = random();
+    let worker_random = random();
+    let serial = solarity_ui::GlueManager::start_shared_with_profile_and_random(
+        assets.clone(),
+        (1280, 720),
+        false,
+        solarity_ui::GlueInitialScreen::Login,
+        &[],
+        &prepared.catalogs.addon_catalog,
+        serial_random.clone(),
+    )?;
+    let worker = solarity_ui::GlueManager::start_shared_with_sources(
+        assets,
+        (1280, 720),
+        solarity_ui::GlueInitialScreen::Login,
+        &[],
+        &prepared.catalogs.addon_catalog,
+        worker_random.clone(),
+        ui.glue,
+    )?;
+    assert_eq!(worker.report(), serial.report());
+    assert_eq!(worker.objects(), serial.objects());
+    assert!(worker.bundle().lua().globals().get::<bool>("GLUE_READY")?);
+    assert_eq!(
+        worker_random.borrow_mut().next_u32(),
+        serial_random.borrow_mut().next_u32()
+    );
+    Ok(())
+}
+
+#[test]
+fn startup_glue_and_sound_errors_stay_at_their_consumption_boundaries() -> Result<(), Box<dyn Error>>
+{
+    for bad_glue in [false, true] {
+        let fixture = startup_fixture()?;
+        let mut patch = wow_mpq::ArchiveBuilder::new()
+            .add_file_data(b"bad sound".to_vec(), "DBFilesClient/SoundEntries.dbc")
+            .add_file_data(
+                b"bad movement".to_vec(),
+                "DBFilesClient/CreatureSoundData.dbc",
+            );
+        if bad_glue {
+            patch = patch
+                .add_file_data(b"bad creation".to_vec(), "DBFilesClient/CharBaseInfo.dbc")
+                .add_file_data(b"bad xml".to_vec(), "Interface/GlueXML/Bootstrap.xml");
+        }
+        patch.build(fixture.data_root().join("patch.MPQ"))?;
+        let cpu = pool(1)?;
+        let permit = cpu.try_reserve_for(CpuService::Required)?;
+        let shared = SharedTextureSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let result = permit
+            .submit_resumable_with_context(prepare(
+                ClientDataRoot::new(fixture.data_root())?,
+                Locale::EnUs,
+                shared,
+                (1280, 720),
+            ))
+            .join()??;
+        result.presentation?;
+        if bad_glue {
+            let Err(solarity_ui::GlueError::Asset(AssetError::DatabaseDecode { path, .. })) =
+                result.ui
+            else {
+                return Err("creation metadata must fail before Glue XML".into());
+            };
+            assert_eq!(
+                path,
+                solarity_asset::AssetPath::new("DBFilesClient/CharBaseInfo.dbc")?
+            );
+        } else {
+            let sound = result.ui?.sound;
+            let Err(AssetError::DatabaseDecode { path, .. }) = sound.engine else {
+                return Err("engine source failure must remain deferred".into());
+            };
+            assert_eq!(
+                path,
+                solarity_asset::AssetPath::new("DBFilesClient/SoundEntries.dbc")?
+            );
+            let Err(AssetError::DatabaseDecode { path, .. }) = sound.world else {
+                return Err("world sound source failure must remain separate".into());
+            };
+            assert_eq!(
+                path,
+                solarity_asset::AssetPath::new("DBFilesClient/CreatureSoundData.dbc")?
+            );
+        }
+    }
     Ok(())
 }
 
@@ -249,6 +358,9 @@ fn stock_startup_catalogs_and_presentation_complete_on_one_slot() -> Result<(), 
     );
     assert!(prepared.catalogs.loading_screens.is_some());
     assert!(prepared.presentation?.fps.is_some());
+    let ui = prepared.ui?;
+    ui.sound.engine?;
+    ui.sound.world?;
     assert_eq!(cpu.try_submit(|| 42)?.join()?, 42);
     Ok(())
 }

@@ -6,6 +6,8 @@ mod scrolling;
 mod startup;
 mod transaction;
 
+pub use startup::GlueUiSources;
+
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;

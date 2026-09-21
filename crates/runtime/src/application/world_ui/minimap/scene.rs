@@ -86,11 +86,11 @@ impl RuntimeMinimapScene {
             && !self.request_deferred
     }
     pub(in crate::application::world_ui) fn new(
-        store: &mut AssetStore,
+        catalog: MinimapTextureCatalog,
         archive_catalog: ArchiveCatalog,
     ) -> Result<Self, AssetError> {
         Ok(Self {
-            catalog: MinimapTextureCatalog::load(store)?,
+            catalog,
             archive_catalog,
             worker_store: None,
             pending: None,

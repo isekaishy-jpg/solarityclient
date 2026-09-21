@@ -102,6 +102,18 @@ impl<'output> SoundEngine<'output> {
         settings: SoundEngineSettings,
     ) -> Result<Self, SoundEngineError> {
         let catalog = SpatialSoundCatalog::load(store)?;
+        Self::from_catalog(catalog, output, software_channel_count, settings)
+    }
+
+    /// Creates native voice/decoder ownership from immutable prepared sound tables.
+    /// # Errors
+    /// Returns decoder initialization or backend track-allocation failure.
+    pub fn from_catalog(
+        catalog: SpatialSoundCatalog,
+        output: &'output SoundOutput,
+        software_channel_count: SoundSoftwareChannelCount,
+        settings: SoundEngineSettings,
+    ) -> Result<Self, SoundEngineError> {
         let decoder = SoundDecoder::new()?;
         let Some(virtual_voice_capacity) = NonZeroU16::new(STOCK_VIRTUAL_VOICE_CAPACITY) else {
             return Err(SoundBackendError::VoiceCapacity.into());

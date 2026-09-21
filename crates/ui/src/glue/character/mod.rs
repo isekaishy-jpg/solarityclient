@@ -2,6 +2,8 @@
 
 mod types;
 
+pub(in crate::glue) use types::UiCharacterCreationCatalog;
+
 pub use types::{
     UiCharacterCreationError, UiCharacterCreationPreview, UiCharacterCreationRequest,
     UiCharacterCreationState, UiCharacterExpansion, UiCreationClassRoles,

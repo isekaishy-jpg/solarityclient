@@ -6,7 +6,10 @@ mod source_preparation_tests;
 
 use std::ops::ControlFlow;
 
-use solarity_asset::{ArchiveCatalog, AssetStore, SpellNameCatalog};
+use solarity_asset::{
+    ArchiveCatalog, AssetError, AssetStore, MapDifficultyCatalog, MinimapTextureCatalog,
+    SpellNameCatalog,
+};
 use solarity_cpu::{CpuError, CpuExecutor, CpuTask};
 use solarity_ui::{FrameUiSources, GlueError};
 
@@ -18,6 +21,28 @@ use crate::application::{ApplicationError, archive_job::prepare_archive};
 pub(in crate::application) struct WorldUiSourceImage {
     pub(super) spell_names: SpellNameCatalog,
     pub(super) frame: FrameUiSources,
+    pub(super) minimap: Result<MinimapTextureCatalog, AssetError>,
+    pub(super) transfer_messages: TransferMessages,
+}
+
+/// An optional packet path observes its exact prepared error only when requested.
+pub(super) struct TransferMessages(Result<MapDifficultyCatalog, std::sync::Arc<AssetError>>);
+
+impl TransferMessages {
+    pub(super) fn message(
+        &self,
+        map_id: u32,
+        reason: u8,
+        argument: Option<u8>,
+    ) -> Result<Option<&str>, super::RuntimeWorldUiError> {
+        let (8, Some(difficulty)) = (reason, argument) else {
+            return Ok(None);
+        };
+        let catalog = self.0.as_ref().map_err(|error| {
+            super::RuntimeWorldUiError::TransferMetadata(std::sync::Arc::clone(error))
+        })?;
+        Ok(catalog.message(map_id, u32::from(difficulty)))
+    }
 }
 
 impl WorldUiSourceImage {
@@ -26,7 +51,15 @@ impl WorldUiSourceImage {
         let _profile = solarity_profiling::profile!("runtime.world_ui.source_preparation");
         let spell_names = SpellNameCatalog::load(store)?;
         let frame = FrameUiSources::load(store)?;
-        Ok(Self { spell_names, frame })
+        let minimap = MinimapTextureCatalog::load(store);
+        let transfer_messages =
+            TransferMessages(MapDifficultyCatalog::load(store).map_err(std::sync::Arc::new));
+        Ok(Self {
+            spell_names,
+            frame,
+            minimap,
+            transfer_messages,
+        })
     }
 }
 

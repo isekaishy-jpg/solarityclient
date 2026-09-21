@@ -493,7 +493,7 @@ struct UiPreference {
     initialized: bool,
 }
 
-struct UiCharacterCreationCatalog {
+pub(in crate::glue) struct UiCharacterCreationCatalog {
     races: Vec<UiCreationRace>,
     classes: Vec<UiCreationClass>,
     combinations: Vec<(u8, u8)>,
@@ -501,7 +501,10 @@ struct UiCharacterCreationCatalog {
 }
 
 impl UiCharacterCreationCatalog {
-    fn load(store: &mut AssetStore, streaming_trial: bool) -> Result<Self, AssetError> {
+    pub(in crate::glue) fn load(
+        store: &mut AssetStore,
+        streaming_trial: bool,
+    ) -> Result<Self, AssetError> {
         let races = CharacterRaceCatalog::load(store)?;
         let classes = CharacterClassCatalog::load(store)?;
         let combinations = CharacterBaseCatalog::load(store)?;
@@ -618,8 +621,15 @@ impl UiCharacterCreationState {
         random: Rc<RefCell<BlizzardRand>>,
     ) -> Result<Self, AssetError> {
         let catalog = UiCharacterCreationCatalog::load(store, streaming_trial)?;
+        Ok(Self::from_catalog(catalog, random))
+    }
+
+    pub(in crate::glue) fn from_catalog(
+        catalog: UiCharacterCreationCatalog,
+        random: Rc<RefCell<BlizzardRand>>,
+    ) -> Self {
         let preferences = vec![[UiPreference::default(); 2]; catalog.races.len()];
-        Ok(Self {
+        Self {
             inner: Rc::new(RefCell::new(UiCharacterCreationInner {
                 catalog,
                 expansion: UiCharacterExpansion::ORIGINAL,
@@ -632,7 +642,7 @@ impl UiCharacterCreationState {
                 facing_degrees: 0.0,
             })),
             random,
-        })
+        }
     }
 
     /// Applies the authenticated account's expansion before creation is shown.

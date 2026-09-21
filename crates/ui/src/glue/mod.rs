@@ -16,7 +16,7 @@ mod survey_download_glue;
 mod types;
 
 pub use c_frame_mgr::{FrameManager, FramePublication, FrameStartup, FrameUiSources};
-pub use c_glue_mgr::GlueManager;
+pub use c_glue_mgr::{GlueManager, GlueUiSources};
 pub use character::{
     UiCharacterCreationError, UiCharacterCreationPreview, UiCharacterCreationRequest,
     UiCharacterCreationState, UiCharacterExpansion, UiCreationClassRoles,

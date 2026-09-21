@@ -97,6 +97,12 @@ pub(super) struct PreparedStartup {
     pub(super) addon_manifest: WorldAddonManifest,
     pub(super) presentation:
         Result<super::startup_presentation::PreparedStartupPresentation, solarity_ui::FontError>,
+    pub(super) ui: Result<PreparedStartupUi, solarity_ui::GlueError>,
+}
+
+pub(super) struct PreparedStartupUi {
+    pub(super) glue: solarity_ui::GlueUiSources,
+    pub(super) sound: crate::application::sound_coordinator::PreparedSoundSources,
 }
 
 enum Stage {
@@ -121,6 +127,8 @@ pub(super) fn prepare(
     let budget = shared.budget.clone();
     let mut presentation = super::startup_presentation::Preparation::new(shared, pixel_extent);
     let mut addon_manifest = None;
+    let mut presentation_result = None;
+    let mut glue = None;
     move |context| {
         context.diagnostic_value("startup.catalog.step", index as u64);
         if context.is_cancelled() {
@@ -166,26 +174,49 @@ pub(super) fn prepare(
                         stage = Some(Stage::Ready(assets));
                         return CpuTaskStep::Continue;
                     }
-                    match presentation.step(&mut assets) {
-                        CpuTaskStep::Continue => Ok(Stage::Ready(assets)),
-                        CpuTaskStep::Wait(edge) => {
-                            stage = Some(Stage::Ready(assets));
-                            return CpuTaskStep::Wait(edge);
+                    if presentation_result.is_none() {
+                        match presentation.step(&mut assets) {
+                            CpuTaskStep::Continue => {}
+                            CpuTaskStep::Wait(edge) => {
+                                stage = Some(Stage::Ready(assets));
+                                return CpuTaskStep::Wait(edge);
+                            }
+                            CpuTaskStep::Complete(result) => presentation_result = Some(result),
                         }
-                        CpuTaskStep::Complete(presentation) => {
-                            return CpuTaskStep::Complete(Ok(PreparedStartup {
-                                catalog: catalog
-                                    .take()
-                                    .unwrap_or_else(|| unreachable!("discovery precedes catalogs")),
-                                assets,
-                                catalogs: std::mem::take(&mut pending).finish(),
-                                addon_manifest: addon_manifest.take().unwrap_or_else(|| {
-                                    unreachable!("manifest precedes presentation")
-                                }),
-                                presentation,
-                            }));
-                        }
+                        stage = Some(Stage::Ready(assets));
+                        return CpuTaskStep::Continue;
                     }
+                    if glue.is_none() {
+                        glue = Some(assets.with_read_budget(&read_budget, |store| {
+                            solarity_ui::GlueUiSources::load(store, false)
+                        }));
+                        stage = Some(Stage::Ready(assets));
+                        return CpuTaskStep::Continue;
+                    }
+                    let ui = glue
+                        .take()
+                        .unwrap_or_else(|| unreachable!("Glue sources prepared"))
+                        .map(|glue| PreparedStartupUi {
+                            glue,
+                            sound: assets.with_read_budget(
+                                &read_budget,
+                                crate::application::sound_coordinator::PreparedSoundSources::load,
+                            ),
+                        });
+                    return CpuTaskStep::Complete(Ok(PreparedStartup {
+                        catalog: catalog
+                            .take()
+                            .unwrap_or_else(|| unreachable!("discovery precedes catalogs")),
+                        assets,
+                        catalogs: std::mem::take(&mut pending).finish(),
+                        addon_manifest: addon_manifest
+                            .take()
+                            .unwrap_or_else(|| unreachable!("manifest precedes presentation")),
+                        presentation: presentation_result
+                            .take()
+                            .unwrap_or_else(|| unreachable!("presentation prepared")),
+                        ui,
+                    }));
                 }
             }
         };

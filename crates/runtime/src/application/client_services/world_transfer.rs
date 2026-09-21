@@ -1,6 +1,5 @@
 //! Repeatable active-world transfer wiring on the presentation thread.
 
-use solarity_asset::MapDifficultyCatalog;
 use solarity_network::{WorldSessionError, WorldTransfer, WorldTransferTransport};
 
 use super::ClientServices;
@@ -127,14 +126,7 @@ impl ClientServices {
         else {
             return Ok(());
         };
-        let difficulty_message = if let (8, Some(difficulty)) = (reason, argument) {
-            MapDifficultyCatalog::load(&mut self.assets.borrow_mut())?
-                .message(map_id, u32::from(difficulty))
-                .map(str::to_owned)
-        } else {
-            None
-        };
-        ui.transfer_aborted(map_name, reason, argument, difficulty_message.as_deref())
+        ui.transfer_aborted(map_id, map_name, reason, argument)
     }
 
     /// Opens the packet-owned card without changing any active-world resources.

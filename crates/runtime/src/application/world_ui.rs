@@ -31,6 +31,9 @@ use crate::time::RealmClock;
 /// A world UI could not be formed from authoritative entry state.
 #[derive(Debug, Error)]
 pub enum RuntimeWorldUiError {
+    /// A transfer denial requested unavailable or malformed MapDifficulty metadata.
+    #[error(transparent)]
+    TransferMetadata(std::sync::Arc<solarity_asset::AssetError>),
     /// The live minimap cannot form a finite world-to-UI projection.
     #[error(transparent)]
     Minimap(#[from] solarity_rendering::MinimapViewError),
@@ -65,6 +68,7 @@ pub(super) struct RuntimeWorldUi {
     action_bar: UiActionBarState,
     action_slots: [u32; 144],
     spell_names: solarity_asset::SpellNameCatalog,
+    transfer_messages: startup::TransferMessages,
     /// Stock ChatFrame.cpp's monotonic line identifier for admitted messages.
     chat_line_id: u32,
     dirty: bool,
@@ -135,11 +139,12 @@ impl RuntimeWorldUi {
     /// Delivers the transfer handler's localized system chat event before card dismissal.
     pub(super) fn transfer_aborted(
         &mut self,
+        map_id: u32,
         map_name: &str,
         reason: u8,
         argument: Option<u8>,
-        difficulty_message: Option<&str>,
     ) -> Result<(), ApplicationError> {
+        let difficulty_message = self.transfer_messages.message(map_id, reason, argument)?;
         let format = if let Some(message) = difficulty_message.filter(|message| !message.is_empty())
         {
             Some(message.to_owned())

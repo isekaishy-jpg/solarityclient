@@ -26,11 +26,13 @@ mod loader;
 mod model;
 mod movement;
 mod output;
+mod startup;
 mod vocal;
 mod zone;
 
 use loader::RuntimeSoundLoader;
 pub(super) use movement::UnitSoundContext;
+pub(super) use startup::PreparedSoundSources;
 
 /// Live sound policy and publication of a resolved platform output selection.
 pub(super) trait SoundCvarSource {
@@ -222,6 +224,7 @@ impl RuntimeSoundCoordinator {
         glue: &GlueManager,
         target: SoundOutputTarget,
         catalog: ArchiveCatalog,
+        sources: PreparedSoundSources,
     ) -> Result<Self, RuntimeSoundError> {
         let policy = SoundPolicy::read(glue)?;
         let software_channel_count = software_channel_count(glue)?;
@@ -233,19 +236,19 @@ impl RuntimeSoundCoordinator {
             localized
         };
         let output = output::RuntimeSoundOutput::resolve(glue, target, default_name)?;
-        let engine = OwnedSoundEngine::load_configured(
-            &mut assets.borrow_mut(),
+        let engine = OwnedSoundEngine::from_prepared_catalog(
+            sources.engine,
             output.configuration(glue)?,
             software_channel_count,
             policy.settings,
         )?;
         output.publish(glue)?;
-        let movement_sounds = solarity_asset::MovementSoundCatalog::load(&mut assets.borrow_mut())?;
-        let zone = solarity_media::ZoneSoundService::new(solarity_asset::ZoneSoundCatalog::load(
-            &mut assets.borrow_mut(),
-        )?);
-        let zone_overrides =
-            solarity_asset::ZoneSoundOverrideCatalog::load(&mut assets.borrow_mut())?;
+        let startup::PreparedWorldSounds {
+            movement_sounds,
+            zones,
+            zone_overrides,
+        } = sources.world?;
+        let zone = solarity_media::ZoneSoundService::new(zones);
         Ok(Self {
             assets,
             engine,

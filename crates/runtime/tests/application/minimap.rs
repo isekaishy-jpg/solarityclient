@@ -90,7 +90,10 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     let mut store = AssetStore::mount(catalog.clone())?;
     let maps = MapCatalog::load(&mut store)?;
     let map = TerrainMap::load(&mut store, maps.map(0).ok_or("missing map")?)?;
-    let mut scene = RuntimeMinimapScene::new(&mut store, catalog.clone())?;
+    let mut scene = RuntimeMinimapScene::new(
+        solarity_asset::MinimapTextureCatalog::load(&mut store)?,
+        catalog.clone(),
+    )?;
     let mut manager = FrameManager::start_shared(
         AssetStoreHandle::new(store),
         UiScriptEnvironment::new(96, 96, false)?,

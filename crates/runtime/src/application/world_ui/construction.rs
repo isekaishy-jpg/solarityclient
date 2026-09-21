@@ -28,8 +28,9 @@ pub(in crate::application) const WORLD_UI_CONSTRUCTION_BUDGET: Duration = Durati
 /// workers retain their bounded queues, matching the former atomic load boundary.
 pub(in crate::application) struct WorldUiConstruction {
     phase: Option<WorldUiConstructionPhase>,
-    assets: AssetStoreHandle,
     archive_catalog: ArchiveCatalog,
+    minimap: Result<solarity_asset::MinimapTextureCatalog, solarity_asset::AssetError>,
+    transfer_messages: super::startup::TransferMessages,
     world: UiWorldState,
     zone: UiZoneState,
     action_bar: UiActionBarState,
@@ -122,8 +123,9 @@ impl WorldUiConstruction {
         );
         Ok(Self {
             phase: Some(WorldUiConstructionPhase::Scripts(startup)),
-            assets,
             archive_catalog,
+            minimap: sources.minimap,
+            transfer_messages: sources.transfer_messages,
             world,
             zone,
             action_bar,
@@ -201,8 +203,9 @@ impl WorldUiConstruction {
     ) -> Result<(RuntimeWorldUi, Vec<ApplicationError>), ApplicationError> {
         let Self {
             phase: _,
-            assets,
             archive_catalog,
+            minimap,
+            transfer_messages,
             world,
             zone,
             action_bar,
@@ -219,7 +222,7 @@ impl WorldUiConstruction {
             &mut texture_residency,
         )?;
         let player_portrait_requested = requests_player_portrait(&manager);
-        let minimap = RuntimeMinimapScene::new(&mut assets.borrow_mut(), archive_catalog)?;
+        let minimap = RuntimeMinimapScene::new(minimap?, archive_catalog)?;
         Ok((
             RuntimeWorldUi {
                 manager,
@@ -237,6 +240,7 @@ impl WorldUiConstruction {
                 action_bar,
                 action_slots: slots,
                 spell_names,
+                transfer_messages,
                 chat_line_id: 0,
                 dirty: false,
             },

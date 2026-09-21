@@ -58,6 +58,33 @@ impl OwnedSoundEngine {
         software_channel_count: SoundSoftwareChannelCount,
         settings: SoundEngineSettings,
     ) -> Result<Self, SoundEngineError> {
+        Self::create_configured(
+            || crate::SpatialSoundCatalog::load(store),
+            configuration,
+            software_channel_count,
+            settings,
+        )
+    }
+
+    /// Opens native output before consuming the worker's sound-table result.
+    /// Keeping the result deferred preserves output-error precedence.
+    /// # Errors
+    /// Returns output, prepared catalog, decoder or track allocation failures.
+    pub fn from_prepared_catalog(
+        catalog: Result<crate::SpatialSoundCatalog, solarity_asset::AssetError>,
+        configuration: SoundOutputConfiguration,
+        software_channel_count: SoundSoftwareChannelCount,
+        settings: SoundEngineSettings,
+    ) -> Result<Self, SoundEngineError> {
+        Self::create_configured(|| catalog, configuration, software_channel_count, settings)
+    }
+
+    fn create_configured(
+        catalog: impl FnOnce() -> Result<crate::SpatialSoundCatalog, solarity_asset::AssetError>,
+        configuration: SoundOutputConfiguration,
+        software_channel_count: SoundSoftwareChannelCount,
+        settings: SoundEngineSettings,
+    ) -> Result<Self, SoundEngineError> {
         let output = Rc::new(SoundOutput::open_configured(configuration)?);
         let output_pointer = Rc::as_ptr(&output);
         // SAFETY: `output_pointer` points into a stable shared allocation whose
@@ -68,7 +95,12 @@ impl OwnedSoundEngine {
         // a result type independent of it. They cannot extract/swap an engine
         // between owners or insert an engine borrowing a shorter-lived output.
         let output_reference = unsafe { &*output_pointer };
-        let engine = SoundEngine::load(store, output_reference, software_channel_count, settings)?;
+        let engine = SoundEngine::from_catalog(
+            catalog()?,
+            output_reference,
+            software_channel_count,
+            settings,
+        )?;
         Ok(Self {
             engine,
             _output: output,

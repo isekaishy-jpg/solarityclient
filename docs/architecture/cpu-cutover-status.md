@@ -123,6 +123,52 @@ keeping Lua, shared random state, SDL output ownership and event publication on
 main. Dynamic font/layout work and the other architecture requirements below
 remain separate unresolved work.
 
+The next connected source batch implements those four reader groups. The startup
+task's existing reader now prepares character-creation choices, validates expanded
+GlueXML and loads sound-engine, movement, zone and zone-override tables under its
+required read budget. Glue preparation and sound preparation each have a worker
+turn. Temporary Lua validation stays on the worker; `GlueUiSources` contains only
+immutable declarations and choices. Main attaches the same shared RNG and creates
+the live Lua environment before executing the original callbacks. Native voice
+and decoder ownership still start on main. Prepared sound failures remain split
+at their original boundaries: output creation precedes the engine catalog result,
+and device publication precedes movement/zone results. Presentation errors still
+precede Glue errors, which precede sound initialization.
+
+The world-UI source operation now also prepares minimap translation and transfer
+difficulty metadata. Minimap errors remain deferred until native UI publication.
+MapDifficulty errors are retained and only reported for the original reason-eight,
+present-difficulty packet arm; unrelated transfers do not fail due to an unused
+table. Repeated requests preserve the same shared source error. Runtime minimap
+construction and transfer handling no longer read archives on main. The existing
+FrameXML worker preparation, source order, missing-minimap-table fallback and
+packet event order remain unchanged. These decoded tables, Glue validation and
+sound table groups are still indivisible bulk steps; dynamic font/layout work and
+complete nested allocation/working-set accounting remain open. No additional
+client package or FPS comparison is authorized or produced by this batch.
+
+Grouped validation passes formatting, all-target/all-feature UI/media/runtime
+Clippy with warnings denied, and 885 tests with 34 ignores. The expanded stock
+startup test then passes from the freshly compiled runtime executable against
+the local build-12340 archives (886 distinct passes, 33 remaining ignores).
+It now consumes the prepared Glue and both sound-source results. Fixture coverage
+compares Glue object hierarchy, startup report, Lua execution and RNG state with
+the serial path after the preparing executor retires; verifies creation-table
+errors before invalid XML; keeps engine and world-sound failures separate; and
+checks minimap translation, exact transfer messages and deferred shared failures.
+Application startup/shutdown and the media owner's lifetime compile-fail tests
+also pass. Logs are `target/remaining-ui-sources-clippy.log`,
+`target/remaining-ui-sources-tests.log` and `target/remaining-ui-sources-stock.log`.
+
+The next confirmed UI boundary is retained post-Lua preparation in
+`c_glue_mgr/refresh.rs` and initial publication in `c_glue_mgr/startup.rs`.
+`UiRuntimeObjectPlan` is an owned snapshot, but `UiGlyphAtlasPlan` still retains
+the `FontSystem` shared with synchronous Lua text measurement through
+`Rc<RefCell<FontSystemState>>`. Its FreeType faces cannot be sent with that live
+owner. Eligible layout/coverage/render preparation must consume immutable inputs
+while preserving the common metric/glyph authority, geometry publication and
+ordered callbacks. This is remaining implementation, not a completed cutover.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

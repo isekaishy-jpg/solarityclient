@@ -1,6 +1,6 @@
 //! Initial retained object construction, separate from live UI updates.
 
-use solarity_asset::AssetStoreHandle;
+use solarity_asset::{AssetStore, AssetStoreHandle};
 
 use super::{GlueManager, build_live_hierarchy, synchronize_resolved_dimensions, transaction};
 use crate::glue::pointer::UiPointerPlan;
@@ -14,7 +14,61 @@ use crate::{
     UiScrollFramePlan, UiTexturePlan, UiTextureStatePlan,
 };
 
+/// Immutable Glue declarations and character choices prepared without live Lua or RNG ownership.
+pub struct GlueUiSources {
+    character_creation: crate::glue::character::UiCharacterCreationCatalog,
+    declarations: crate::xml::UiSourceImage,
+    streaming_trial: bool,
+}
+
+impl GlueUiSources {
+    /// Loads creation metadata, then validates GlueXML in authored source order.
+    /// The temporary Lua validator is retired on the preparing thread.
+    /// # Errors
+    /// Returns the original catalog, archive, XML or Lua compilation failure.
+    pub fn load(assets: &mut AssetStore, streaming_trial: bool) -> Result<Self, GlueError> {
+        let character_creation =
+            crate::glue::character::UiCharacterCreationCatalog::load(assets, streaming_trial)?;
+        let (declarations, _validator) =
+            crate::xml::UiSourceImage::load(assets, UiManifestKind::Glue)?;
+        Ok(Self {
+            character_creation,
+            declarations,
+            streaming_trial,
+        })
+    }
+}
+
 impl GlueManager {
+    /// Publishes prepared sources into main-owned Lua, random and UI state.
+    /// # Errors
+    /// Returns the original environment, callback, layout or font failure.
+    pub fn start_shared_with_sources(
+        assets: AssetStoreHandle,
+        logical_extent: (u32, u32),
+        initial_screen: crate::GlueInitialScreen,
+        cvar_values: &[(String, String)],
+        addon_catalog: &crate::AddonCatalog,
+        random: std::rc::Rc<std::cell::RefCell<solarity_cpu::BlizzardRand>>,
+        sources: GlueUiSources,
+    ) -> Result<Self, GlueError> {
+        let creation =
+            crate::UiCharacterCreationState::from_catalog(sources.character_creation, random);
+        let environment =
+            UiScriptEnvironment::new(logical_extent.0, logical_extent.1, sources.streaming_trial)?
+                .with_shared_asset_store(assets.clone())
+                .with_cvar_values(cvar_values)
+                .with_addon_load_state(crate::UiAddonLoadState::from_catalog(addon_catalog))
+                .with_character_creation_state(creation);
+        Self::start_prepared_owner(
+            assets,
+            environment,
+            UiManifestKind::Glue,
+            Some(initial_screen),
+            UiBundle::from_prepared_sources(sources.declarations),
+        )
+    }
+
     /// Constructs one independently owned active-world FrameXML runtime.
     pub(in crate::glue) async fn start_shared_frame(
         assets: AssetStoreHandle,
@@ -41,6 +95,16 @@ impl GlueManager {
         initial_screen: Option<crate::glue::GlueInitialScreen>,
     ) -> Result<Self, GlueError> {
         let bundle = UiBundle::load(&mut assets.borrow_mut(), manifest_kind)?;
+        Self::start_prepared_owner(assets, environment, manifest_kind, initial_screen, bundle)
+    }
+
+    fn start_prepared_owner(
+        assets: AssetStoreHandle,
+        environment: UiScriptEnvironment,
+        manifest_kind: UiManifestKind,
+        initial_screen: Option<crate::glue::GlueInitialScreen>,
+        bundle: UiBundle,
+    ) -> Result<Self, GlueError> {
         let _profile = solarity_profiling::profile!("ui.startup");
         StartupTask::new(move |budget| {
             Self::start_with_bundle(
