@@ -518,7 +518,9 @@ pending-consumer reuse/alias lookup, and completion dispatch. It requires Unicor
 python -B tools/ghidra/animation_request_oracle.py <path-to-Wow.exe> target/animation-request-native.json
 ```
 
-The 39 cases retain native request/control-flow decisions while intercepting the
-explicit I/O, allocation, payload-publication and final channel-application
-boundaries. See [the evidence report](../../docs/architecture/animation-request-evidence.md)
+The 135 cases retain native request/control-flow decisions while intercepting
+explicit I/O, allocation and payload-publication boundaries. Channel cases also
+execute the original timer/blend application with a controlled CRT roll, including
+late completion and clock wraparound.
+See [the evidence report](../../docs/architecture/animation-request-evidence.md)
 for the exact covered behavior and the remaining late-readiness research scope.

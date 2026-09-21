@@ -3,10 +3,12 @@
 The build-12340 instructions select variation requests, queue commands while the
 model is unready, and dispatch retained consumers when a source completes. The saved word at waiter +0x10
 is the timer offset (826B00 input), not the request wall-clock timestamp.
-Hooks supply allocation, animation-ID normalization, source I/O admission, decoded
-payload publication and final pose-channel application. No operating-system or
-client entry point executes. This does not establish interpolation while pending,
-blend clock behavior, missing-companion cleanup or payload retention policy.
+Hooks supply allocation, animation-ID normalization, source I/O admission and decoded
+payload publication. Dispatch-only cases also hook final channel application;
+channel cases execute original 826C40/826DD0/826B00 with a controlled CRT roll.
+No operating-system or client entry point executes. This does not establish
+sampling while pending, overlapping old blends, missing-companion cleanup or
+payload retention policy.
 """
 import argparse
 import json
@@ -108,7 +110,7 @@ def joined(alias):
     return {'alias': alias, 'joined_updates': observed}
 
 
-def completed(flags, admitted, original_offset, completion_time):
+def completed(flags, admitted, original_offset, completion_time, apply_channels=False):
     """Execute dispatch from a completed sequence to one retained model consumer."""
     uc = native.emulator()
     shared, request, waiter, model, body, bone_defs, bone_state, scene, sequences = [
@@ -125,6 +127,16 @@ def completed(flags, admitted, original_offset, completion_time):
     native.write_words(uc, body + 0x30, bone_defs)
     native.write_words(uc, bone_defs, 5)
     native.write_words(uc, sequences + 64, 17 | (3 << 16))
+    if apply_channels:
+        # A valid existing primary channel and no old blend. The incoming sequence
+        # has distinct duration/blend bounds so both application paths are visible.
+        native.write_words(uc, model + 0x10, 0x400001)
+        uc.mem_write(model + 0x14, b'\xff\xff')
+        native.write_words(uc, sequences + 64 + 4, 1000)
+        native.write_words(uc, sequences + 64 + 0x14, 2, 7, 250)
+        native.write_words(uc, bone_state + 0x48, 0, 100, 1100, 0x3f800000, 0x3f800000, 0, 1)
+        uc.mem_write(bone_state + 0x6c, b'\xff\xff')
+        native.write_words(uc, 0xd411c4, 0)
     calls = []
 
     def providers(machine, address, _size, _context):
@@ -137,10 +149,15 @@ def completed(flags, admitted, original_offset, completion_time):
             returned(machine, int(admitted), 8)
         elif address == 0x826c40:
             calls.append(['primary', *native.read_words(machine, sp + 4, 6)])
-            returned(machine, arguments=24)
+            if not apply_channels:
+                returned(machine, arguments=24)
         elif address == 0x826dd0:
             calls.append(['secondary', *native.read_words(machine, sp + 4, 5)])
-            returned(machine, arguments=20)
+            if not apply_channels:
+                returned(machine, arguments=20)
+        elif address == 0x88b867:
+            # The timer's authored repeat range consumes the stock CRT source.
+            returned(machine, 12345)
         elif address == 0x831bb0:
             calls.append(['withdraw', native.read_words(machine, sp + 4, 1)[0]])
             returned(machine, arguments=4)
@@ -172,8 +189,15 @@ def completed(flags, admitted, original_offset, completion_time):
         assert native.read_words(uc, waiter + 8, 1)[0] == 0
     assert native.read_words(uc, shared + 8, 1)[0] == 0
     assert calls[-2:] == [['detach', request], ['free', request]]
-    return {'flags': flags, 'admitted': admitted, 'original_offset': original_offset,
-            'completion_time': completion_time, 'calls': calls}
+    result = {'flags': flags, 'admitted': admitted, 'original_offset': original_offset,
+              'completion_time': completion_time, 'calls': calls}
+    if apply_channels:
+        result['channels'] = {
+            'primary': list(native.read_words(uc, bone_state + 0x48, 7)),
+            'secondary': list(native.read_words(uc, bone_state + 0x6c, 7)),
+            'blend': list(native.read_words(uc, bone_state + 0x9c, 3)),
+        }
+    return result
 
 
 def capture(executable, output):
@@ -191,6 +215,41 @@ def capture(executable, output):
     for flags in range(16):
         for admitted in (False, True):
             rows.append(completed(flags, admitted, 1000, 9000))
+    for flags in range(16):
+        for admitted in (False, True):
+            reference = None
+            for tick in (1000, 9000, 0xffffff00):
+                row = completed(flags, admitted, 123, tick, True)
+                channels = row['channels']
+                if not admitted or flags & 8:
+                    assert channels == {
+                        'primary': [0, 100, 1100, 0x3f800000, 0x3f800000, 0, 1],
+                        'secondary': [0xffff, 0, 0, 0, 0, 0, 0],
+                        'blend': [0, 0, 0],
+                    }
+                else:
+                    selected = 'primary' if flags & 2 else 'secondary'
+                    if reference is not None:
+                        # Delaying completion translates both timer bounds by the
+                        # same wrapping scene delta; speed/offset/repeat state stays.
+                        expected = reference['channels'][selected].copy()
+                        delta = tick - reference['completion_time']
+                        expected[1] = (expected[1] + delta) & 0xffffffff
+                        expected[2] = (expected[2] + delta) & 0xffffffff
+                        assert channels[selected] == expected
+                    if flags & 2:
+                        if flags & 1:
+                            assert channels['secondary'] == [
+                                0, 100, 1100, 0x3f800000, 0x3f800000, 0, 1]
+                            assert channels['blend'][0] == (tick + 250) & 0xffffffff
+                        else:
+                            assert channels['secondary'][0] == 0xffff
+                    else:
+                        assert channels['primary'] == [
+                            0, 100, 1100, 0x3f800000, 0x3f800000, 0, 1]
+                        assert channels['blend'][0] == (tick + 1000) & 0xffffffff
+                reference = row
+                rows.append(row)
     output.write_text(json.dumps({'image_sha256': 'aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8',
                                   'cases': rows}, indent=2) + '\n', encoding='utf-8')
     print(f'passed {len(rows)} native request/consumer cases')
