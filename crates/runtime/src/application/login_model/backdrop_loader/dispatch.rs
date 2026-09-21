@@ -1,12 +1,11 @@
 //! Pending source consumers remain outside the CPU queue until publication.
 
 use super::{
-    BackdropCompletion, BackdropModel, GlueBackdropLoader, PendingBackdrop, RuntimeGlueModelError,
-    WaitingModel,
+    BackdropModel, GlueBackdropLoader, PendingBackdrop, RuntimeGlueModelError, WaitingModel,
 };
 use solarity_asset::{AssetPath, AssetResourceKey, M2Load};
 use solarity_cpu::{CpuExecutor, CpuService};
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 impl GlueBackdropLoader {
     /// Joins model identity before dispatch; capacity is reserved before producer/input transfer.
@@ -83,20 +82,16 @@ impl GlueBackdropLoader {
             BackdropModel::Producer(producer) => Some(producer.subscribe_for(service)),
             BackdropModel::Ready(_) => None,
         };
-        let mut assets = self
+        let assets = self
             .assets
             .take()
             .ok_or_else(|| Arc::new(RuntimeGlueModelError::BackdropWorkerUnavailable))?;
         let result_path = worker_path.clone();
-        let task = permit.submit_with_context(move |context| {
-            context.diagnostic_value("glue.backdrop.archive_request", 1);
-            let started = Instant::now();
-            let result = assets.load(model);
-            tracing::info!(model = %worker_path,
-                elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
-                "completed Glue backdrop archive job");
-            BackdropCompletion { assets, result }
-        });
+        let shared = crate::application::terrain_coordinator::SharedTerrainSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let task = permit.submit_resumable_with_context(assets.steps(model, shared));
         if let Some(demand) = &model_demand {
             assert!(
                 demand.bind_service(task.service_control()),

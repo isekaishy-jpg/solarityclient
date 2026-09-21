@@ -227,3 +227,105 @@ fn separate_backdrops_join_one_model_without_occupying_waiting_workers()
     assert!(ResourceLease::ptr_eq(&produced, &second.model));
     Ok(())
 }
+
+/// Backdrop material waits release the sole worker and return the reader on every terminal path.
+#[test]
+fn backdrop_texture_steps_share_failure_and_cancel_without_stock_substitution()
+-> Result<(), Box<dyn Error>> {
+    use solarity_asset::{
+        AssetReadBudget, AssetResourceKey, AssetStore, BlpLoad, BlpLoadError, M2Load,
+    };
+    use solarity_cpu::{CpuService, CpuTaskStep};
+    use std::time::Duration;
+    for outcome in 0..3 {
+        let mut model = support::game_object_models::model_with_animations(&[0])?;
+        let texture = u32::from_le_bytes(model[0x54..0x58].try_into()?) as usize;
+        let name = b"Textures/Backdrop.blp\0";
+        let offset = model.len() as u32;
+        model[texture + 8..texture + 12].copy_from_slice(&(name.len() as u32).to_le_bytes());
+        model[texture + 12..texture + 16].copy_from_slice(&offset.to_le_bytes());
+        model.extend_from_slice(name);
+        let fixture = ClientFixture::with_common_files(&[
+            ("Backdrop.m2", &model),
+            ("Backdrop00.skin", &support::game_object_models::skin()?),
+            ("Textures/Backdrop.blp", &support::bootstrap_texture_blp()),
+        ])?;
+        let catalog =
+            ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+        let BlpLoad::Producer(producer) = catalog.texture_cache_service().request_for(
+            &AssetResourceKey::new(
+                catalog.namespace(),
+                AssetPath::new("Textures/Backdrop.blp")?,
+            ),
+            CpuService::Required,
+        ) else {
+            return Err("texture producer".into());
+        };
+        let mut producer = Some(producer);
+        let M2Load::Producer(primary) =
+            catalog
+                .model_cache_service()
+                .request(&AssetResourceKey::new(
+                    catalog.namespace(),
+                    AssetPath::new("Backdrop.m2")?,
+                ))?
+        else {
+            return Err("primary producer".into());
+        };
+        let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+            solarity_cpu::CpuExecutionPlan::new(0, 1, 1, 1)?,
+            NonZeroUsize::new(3).ok_or("capacity")?,
+            solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+        ))?;
+        let permit = cpu.try_reserve()?;
+        let shared = crate::application::terrain_coordinator::SharedTerrainSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let mut steps = super::BackdropArchiveOwner {
+            catalog: catalog.clone(),
+            state: None,
+        }
+        .steps(super::BackdropModel::Producer(primary), shared);
+        let (notice, observed) = mpsc::channel();
+        let task = permit.submit_resumable_with_context(move |context| {
+            let step = steps(context);
+            if matches!(step, CpuTaskStep::Wait(_)) {
+                let _ = notice.send(());
+            }
+            step
+        });
+        observed.recv_timeout(Duration::from_secs(5))?;
+        assert_eq!(cpu.try_submit(|| 19)?.join()?, 19);
+        assert!(!task.is_finished());
+        match outcome {
+            0 => {
+                let mut reader = AssetStore::mount(catalog)?;
+                let policy =
+                    AssetReadBudget::for_service(cpu.storage().clone(), CpuService::Required);
+                let source = producer.take().ok_or("producer")?;
+                cpu.try_submit(move || source.load(&mut reader, &policy))?
+                    .join()??;
+            }
+            1 => drop(producer.take()),
+            _ => task.cancel(),
+        }
+        let complete = task.join()?;
+        assert!(matches!(complete.assets.state, Some(Ok(_))));
+        match outcome {
+            0 => assert!(matches!(
+                complete.result?.textures.as_slice(),
+                [GlueM2Texture::Authored(_)]
+            )),
+            1 => assert!(
+                matches!(complete.result, Err(error) if matches!(error.as_ref(), RuntimeGlueModelError::Asset(AssetError::TextureRequest(BlpLoadError::Abandoned))))
+            ),
+            _ => assert!(
+                matches!(complete.result, Err(error) if matches!(error.as_ref(), RuntimeGlueModelError::Cpu(solarity_cpu::CpuError::JobCancelled)))
+            ),
+        }
+        drop(producer);
+        cpu.shutdown()?;
+    }
+    Ok(())
+}

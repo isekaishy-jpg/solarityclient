@@ -151,7 +151,7 @@ impl RuntimePlayerPresentation {
                 if worker_withdrawn.load(Ordering::Acquire) {
                     return Ok(None);
                 }
-                let result = prepare_glue_character(presentation, key, model);
+                let result = prepare_glue_character(presentation, key.clone(), model);
                 // Dispose superseded derived output on its worker, as the old coalesced
                 // step did. Main still rechecks the final completion/publication race.
                 if worker_withdrawn.load(Ordering::Acquire) {

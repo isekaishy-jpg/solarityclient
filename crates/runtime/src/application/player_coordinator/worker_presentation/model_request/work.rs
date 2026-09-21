@@ -13,7 +13,7 @@ type SourceProgress =
 
 /// Main selects immutable appearance inputs; the worker owns the preparation call.
 pub(super) type Prepare<T> = Box<
-    dyn FnOnce(
+    dyn FnMut(
             &mut RuntimePlayerPresentation,
             ResourceLease<DecodedM2Model>,
         ) -> Result<T, RuntimePlayerError>
@@ -37,7 +37,7 @@ pub(super) enum ModelInput {
 
 impl AppearanceBank {
     /// Source turns retain owned leases and suspend only on another producer.
-    /// Derived construction executes once after every selected source is ready.
+    /// Derived construction preserves its texture outcomes across discovered dependencies.
     pub(super) fn operation<T: Send + 'static>(
         self,
         model: ModelInput,
@@ -55,7 +55,8 @@ impl AppearanceBank {
         let mut primary = None;
         let mut plan = Some(sources);
         let mut sources = None;
-        let mut prepare = Some(prepare);
+        let mut prepare = prepare;
+        let mut materials = solarity_asset::BlpTexturePreparation::default();
         move |context| {
             context.diagnostic_value("appearance.sources.turn", 1);
             let current = bank
@@ -132,26 +133,36 @@ impl AppearanceBank {
                     edge.map_or(CpuTaskStep::Continue, CpuTaskStep::Wait)
                 }
                 Ok(ControlFlow::Break(())) => {
-                    let completion = bank
-                        .take()
-                        .unwrap_or_else(|| {
-                            unreachable!("admitted appearance retains its phase inputs")
-                        })
-                        .prepare(
-                            primary.take().unwrap_or_else(|| {
-                                unreachable!("admitted appearance retains its primary source")
-                            }),
-                            prepare.take().unwrap_or_else(|| {
-                                unreachable!("admitted appearance retains its phase inputs")
-                            }),
-                            &solarity_asset::AssetReadBudget::for_service(
-                                budget.clone(),
-                                service.service(),
-                            ),
-                        );
-                    // The final consumer has acquired its own leases before these pins leave.
-                    sources = None;
-                    CpuTaskStep::Complete(completion)
+                    let result = current.prepare(
+                        primary
+                            .as_ref()
+                            .unwrap_or_else(|| {
+                                unreachable!("appearance retains its primary source")
+                            })
+                            .clone(),
+                        &mut prepare,
+                        &mut materials,
+                        &budget,
+                        &service,
+                    );
+                    match result {
+                        Ok(ControlFlow::Continue(edge)) => CpuTaskStep::Wait(edge),
+                        result => {
+                            // Final output acquired its own leases before prerequisite pins leave.
+                            sources = None;
+                            let result = result.map(|flow| match flow {
+                                ControlFlow::Break(value) => value,
+                                ControlFlow::Continue(_) => {
+                                    unreachable!("suspension returned above")
+                                }
+                            });
+                            CpuTaskStep::Complete(
+                                bank.take()
+                                    .unwrap_or_else(|| unreachable!("appearance owns its bank"))
+                                    .complete(result),
+                            )
+                        }
+                    }
                 }
                 Err(error) => CpuTaskStep::Complete(
                     bank.take()
@@ -164,23 +175,43 @@ impl AppearanceBank {
         }
     }
 
-    /// Constructs derived products once, with every source still pinned by its phase.
+    /// Private construction can replay its cached prefix while ordered sources stay pinned.
     fn prepare<T>(
-        mut self,
+        &mut self,
         model: ResourceLease<DecodedM2Model>,
-        prepare: Prepare<T>,
-        budget: &solarity_asset::AssetReadBudget,
-    ) -> AppearanceCompletion<T> {
-        let result = with_worker_presentation(
-            self.catalog,
-            self.catalogs,
+        prepare: &mut Prepare<T>,
+        materials: &mut solarity_asset::BlpTexturePreparation,
+        budget: &solarity_cpu::CpuStorageBudget,
+        service: &solarity_cpu::CpuServiceControl,
+    ) -> Result<ControlFlow<T, solarity_cpu::CpuTaskDependency>, RuntimePlayerError> {
+        with_worker_presentation(
+            self.catalog.clone(),
+            self.catalogs.clone(),
             self.level,
             &mut self.cache,
             |presentation| {
                 let assets = presentation.assets.clone();
-                assets.with_read_budget(budget, || prepare(presentation, model))
+                assets.with_read_budget(
+                    &solarity_asset::AssetReadBudget::for_service(
+                        budget.clone(),
+                        service.service(),
+                    ),
+                    || {
+                        materials.run_owned(
+                            presentation,
+                            |owner| &mut owner.textures,
+                            budget,
+                            service,
+                            |presentation| prepare(presentation, model),
+                        )
+                    },
+                )
             },
-        );
+        )
+    }
+
+    fn complete<T>(mut self, result: Result<T, RuntimePlayerError>) -> AppearanceCompletion<T> {
+        self.cache.textures.collect_unused();
         AppearanceCompletion {
             cache: self.cache,
             result,
@@ -189,9 +220,6 @@ impl AppearanceBank {
 
     /// A cancelled or failed prerequisite leaves all worker-local caches owned.
     pub(super) fn failed<T>(self, error: RuntimePlayerError) -> AppearanceCompletion<T> {
-        AppearanceCompletion {
-            cache: self.cache,
-            result: Err(error),
-        }
+        self.complete(Err(error))
     }
 }

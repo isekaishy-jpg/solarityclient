@@ -1,43 +1,112 @@
-//! Worker-owned archive and texture preparation consume only ready or producer inputs.
-
+//! A backdrop retains its private bank through primary and material source turns.
 use super::super::load_glue_model_generation;
 use super::{
-    BackdropArchiveOwner, BackdropArchiveState, BackdropModel, BackdropResult, GlueBackdropAssets,
-    RuntimeGlueModelError,
+    BackdropArchiveOwner, BackdropArchiveState, BackdropCompletion, BackdropModel,
+    GlueBackdropAssets, RuntimeGlueModelError,
 };
-use solarity_asset::{AssetStore, BlpTextureCache, M2LoadError};
-use std::sync::Arc;
+use crate::application::terrain_coordinator::SharedTerrainSources;
+use solarity_asset::{AssetStore, BlpTextureCache, BlpTexturePreparation, M2LoadError};
+use solarity_cpu::{CpuError, CpuTaskStep, JobContext};
+use std::{ops::ControlFlow, sync::Arc};
 
 impl BackdropArchiveOwner {
-    /// Preserves exact precedence and remembers a failed mount instead of retrying it.
-    pub(super) fn load(&mut self, model: BackdropModel) -> BackdropResult {
-        let state = self.state.get_or_insert_with(|| {
-            AssetStore::mount(self.catalog.clone())
-                .map(|store| BackdropArchiveState {
-                    store,
-                    textures: BlpTextureCache::new(),
-                })
-                .map_err(Arc::new)
-        });
-        let state = match state {
-            Ok(state) => state,
-            Err(error) => {
-                let error = M2LoadError::Asset(Arc::clone(error));
-                if let BackdropModel::Producer(producer) = model {
-                    producer.fail(error.clone());
-                }
-                return Err(Arc::new(RuntimeGlueModelError::SharedModel(error)));
+    /// Selected/prewarm demand belongs to the existing operation, including suspended textures.
+    pub(super) fn steps(
+        self,
+        model: BackdropModel,
+        shared: SharedTerrainSources,
+    ) -> impl FnMut(&JobContext<'_>) -> CpuTaskStep<BackdropCompletion> + Send {
+        let mut owner = Some(self);
+        let mut input = Some(model);
+        let mut decoded = None;
+        let mut textures = BlpTexturePreparation::default();
+        move |context| {
+            context.diagnostic_value("glue.backdrop.archive_request", 1);
+            let assets = owner
+                .as_mut()
+                .unwrap_or_else(|| unreachable!("backdrop operation retains its bank"));
+            let result =
+                if context.is_cancelled() && !matches!(input, Some(BackdropModel::Producer(_))) {
+                    Err(Arc::new(RuntimeGlueModelError::from(
+                        CpuError::JobCancelled,
+                    )))
+                } else {
+                    if assets.state.is_none() {
+                        assets.state = Some(
+                            AssetStore::mount(assets.catalog.clone())
+                                .map(|store| BackdropArchiveState {
+                                    store,
+                                    textures: BlpTextureCache::new(),
+                                })
+                                .map_err(Arc::new),
+                        );
+                        return CpuTaskStep::Continue;
+                    }
+                    match assets
+                        .state
+                        .as_mut()
+                        .unwrap_or_else(|| unreachable!("backdrop mount has a terminal outcome"))
+                    {
+                        Err(error) => {
+                            let error = M2LoadError::Asset(Arc::clone(error));
+                            if let Some(BackdropModel::Producer(producer)) = input.take() {
+                                producer.fail(error.clone());
+                            }
+                            Err(Arc::new(RuntimeGlueModelError::SharedModel(error)))
+                        }
+                        Ok(state) => {
+                            if let Some(input) = input.take() {
+                                let model = match input {
+                                    BackdropModel::Ready(model) => Ok(model),
+                                    BackdropModel::Producer(producer) => producer
+                                        .load_admitted(&mut state.store, &shared.read_budget()),
+                                };
+                                match model {
+                                    Ok(model) => {
+                                        decoded = Some(model);
+                                        return CpuTaskStep::Continue;
+                                    }
+                                    Err(error) => {
+                                        return CpuTaskStep::Complete(BackdropCompletion {
+                                            assets: owner.take().unwrap_or_else(|| {
+                                                unreachable!("backdrop bank stays owned")
+                                            }),
+                                            result: Err(Arc::new(
+                                                RuntimeGlueModelError::SharedModel(error),
+                                            )),
+                                        });
+                                    }
+                                }
+                            }
+                            let model = decoded.as_ref().unwrap_or_else(|| {
+                                unreachable!("backdrop materials follow primary source")
+                            });
+                            match shared.materials(
+                                &mut textures,
+                                &mut state.textures,
+                                &mut state.store,
+                                |textures, store| {
+                                    load_glue_model_generation(model.clone(), textures, store)
+                                },
+                            ) {
+                                Ok(ControlFlow::Continue(edge)) => return CpuTaskStep::Wait(edge),
+                                Ok(ControlFlow::Break((model, textures))) => {
+                                    Ok(Arc::new(GlueBackdropAssets { model, textures }))
+                                }
+                                Err(error) => Err(Arc::new(error)),
+                            }
+                        }
+                    }
+                };
+            if let Some(Ok(state)) = &mut assets.state {
+                state.textures.collect_unused();
             }
-        };
-        let model = match model {
-            BackdropModel::Ready(model) => model,
-            BackdropModel::Producer(producer) => producer
-                .load(&mut state.store)
-                .map_err(|error| Arc::new(RuntimeGlueModelError::SharedModel(error)))?,
-        };
-        let (model, textures) =
-            load_glue_model_generation(model, &mut state.textures, &mut state.store)
-                .map_err(Arc::new)?;
-        Ok(Arc::new(GlueBackdropAssets { model, textures }))
+            CpuTaskStep::Complete(BackdropCompletion {
+                assets: owner
+                    .take()
+                    .unwrap_or_else(|| unreachable!("backdrop bank stays owned")),
+                result,
+            })
+        }
     }
 }

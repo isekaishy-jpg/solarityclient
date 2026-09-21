@@ -135,6 +135,16 @@ fn exercise_shared_primary(abandon: bool) -> Result<(), Box<dyn Error>> {
         return Err("producer".into());
     };
     let observer = producer.subscribe();
+    let skin_key = solarity_asset::AssetResourceKey::new(
+        catalog.namespace(),
+        solarity_asset::AssetPath::new("Character/Human/Male/Skin.blp")?,
+    );
+    let solarity_asset::BlpLoad::Producer(skin_producer) = catalog
+        .texture_cache_service()
+        .request_for(&skin_key, solarity_cpu::CpuService::Speculative)
+    else {
+        return Err("skin producer".into());
+    };
     let mut presentation = unit_presentation(&fixture)?.with_glue_worker_catalog(catalog.clone());
     let mut world = world()?;
     mount(&mut world, 102)?;
@@ -196,7 +206,18 @@ fn exercise_shared_primary(abandon: bool) -> Result<(), Box<dyn Error>> {
     let moved = WorldTransform::new(Vec3::new(3., 4., 5.), 0.75);
     world.update_transform(7, moved)?;
     world.set_local_player_view(PlayerViewState::new(8., 0.2, 0.3, 2))?;
-    let model = producer.load(&mut solarity_asset::AssetStore::mount(catalog)?)?;
+    let model = producer.load(&mut solarity_asset::AssetStore::mount(catalog.clone())?)?;
+    assert!(
+        presentation.resident_model().is_none(),
+        "shared body texture still gates publication"
+    );
+    let mut reader = solarity_asset::AssetStore::mount(catalog)?;
+    let policy = solarity_asset::AssetReadBudget::for_service(
+        cpu.storage().clone(),
+        solarity_cpu::CpuService::Required,
+    );
+    cpu.try_submit(move || skin_producer.load(&mut reader, &policy))?
+        .join()??;
     publish(&mut presentation, &world, &cpu, &mut renderer, &ready)?;
     assert!(solarity_asset::ResourceLease::ptr_eq(
         &model,

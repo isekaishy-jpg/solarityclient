@@ -415,3 +415,94 @@ fn glue_pet_joins_pending_source_and_keeps_publication_transactional() -> Result
     assert!(current.glue_worker_cache.is_some());
     Ok(())
 }
+
+/// Body atlas waits use the shared texture producer and preserve complete appearance publication.
+#[test]
+fn glue_atlas_dependency_preserves_output_failure_and_withdrawal() -> Result<(), Box<dyn Error>> {
+    use solarity_asset::{AssetError, AssetPath, AssetReadBudget, BlpLoad, BlpLoadError};
+    use solarity_cpu::CpuService;
+    for outcome in 0..3 {
+        let fixture = unit_models::fixture_with_equipment()?;
+        let catalog = catalog(&fixture)?;
+        let mut current = presentation(&catalog)?;
+        let key = AssetResourceKey::new(
+            catalog.namespace(),
+            AssetPath::new("Character/Human/Male/Skin.blp")?,
+        );
+        let BlpLoad::Producer(producer) = catalog
+            .texture_cache_service()
+            .request_for(&key, CpuService::Speculative)
+        else {
+            return Err("texture producer".into());
+        };
+        let mut producer = Some(producer);
+        let demand = producer
+            .as_ref()
+            .ok_or("producer")?
+            .subscribe_for(CpuService::Speculative);
+        let (cpu, notifications) = executor(8)?;
+        let monitor = cpu.try_reserve_for(CpuService::Speculative)?;
+        let control = monitor.service_control();
+        assert!(demand.bind_service(control.clone()));
+        current.synchronize_character_selection_async(Some(&selection(1)), &cpu)?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while control.service() != CpuService::Required {
+            if std::time::Instant::now() >= deadline {
+                return Err("appearance did not join texture readiness".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(cpu.try_submit(|| 43)?.join()?, 43);
+        assert!(current.glue_character.is_none());
+        match outcome {
+            0 => {
+                let mut reader = AssetStore::mount(catalog.clone())?;
+                let policy =
+                    AssetReadBudget::for_service(cpu.storage().clone(), CpuService::Required);
+                let source = producer.take().ok_or("producer")?;
+                cpu.try_submit(move || source.load(&mut reader, &policy))?
+                    .join()??;
+            }
+            1 => drop(producer.take()),
+            _ => {
+                current.synchronize_character_selection_async(None, &cpu)?;
+            }
+        }
+        wait(&current, &notifications)?;
+        match outcome {
+            0 => {
+                current.synchronize_character_selection_async(Some(&selection(1)), &cpu)?;
+                let resident = current
+                    .glue_character
+                    .as_ref()
+                    .ok_or("complete appearance")?;
+                let mut serial = presentation(&catalog)?;
+                serial.synchronize_character_selection(Some(&selection(1)))?;
+                let reference = serial.glue_character.as_ref().ok_or("serial appearance")?;
+                assert_eq!(resident.atlas.mips(), reference.atlas.mips());
+                assert_eq!(resident.geosets, reference.geosets);
+                assert_eq!(resident.attachments.len(), reference.attachments.len());
+            }
+            1 => assert!(matches!(
+                current.synchronize_character_selection_async(Some(&selection(1)), &cpu),
+                Err(RuntimePlayerError::CharacterTextureCompose(
+                    solarity_rendering::CharacterTextureComposeError::Asset(
+                        AssetError::TextureRequest(BlpLoadError::Abandoned)
+                    )
+                ))
+            )),
+            _ => {
+                current.synchronize_character_selection_async(None, &cpu)?;
+                assert!(current.glue_character.is_none());
+                assert!(
+                    demand.poll().is_none(),
+                    "consumer withdrawal cannot abandon source authority"
+                );
+            }
+        }
+        assert!(current.glue_worker_cache.is_some());
+        assert!(current.pending_glue_character.is_none());
+        drop(producer);
+    }
+    Ok(())
+}

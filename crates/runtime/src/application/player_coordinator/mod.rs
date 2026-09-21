@@ -1311,6 +1311,7 @@ struct ResidentPlayerModel {
     mount: Option<ResidentMountModel>,
 }
 
+#[derive(Clone)]
 struct DesiredPlayerModel {
     identity: WorldObjectIdentity,
     guid: u64,
@@ -1375,6 +1376,7 @@ struct CreatureModelKey {
     mount_key: Option<MountModelKey>,
 }
 
+#[derive(Clone)]
 struct DesiredCreatureModel {
     inputs: Option<CreatureAppearanceInputs>,
     key: CreatureModelKey,
@@ -2020,6 +2022,7 @@ fn prepare_hardcoded_texture(
     })? {
         M2HardcodedTextureSource::Archive(path) => match textures.load(assets, path) {
             Ok(texture) => Ok(ResidentHardcodedTexture::Authored(texture)),
+            Err(source) if source.is_source_pipeline_error() => Err(source.into()),
             Err(source) => {
                 tracing::warn!(
                     model = %model.path(),

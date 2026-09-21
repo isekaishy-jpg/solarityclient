@@ -310,7 +310,9 @@ impl RuntimePlayerPresentation {
                         },
                         catalog,
                         catalogs,
-                        move |presentation, model| presentation.prepare_creature(desired, model),
+                        move |presentation, model| {
+                            presentation.prepare_creature(desired.clone(), model)
+                        },
                     )?;
                 }
             } else {

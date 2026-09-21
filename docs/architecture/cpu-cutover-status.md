@@ -19,6 +19,25 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Character creation/selection, local and remote players, NPC appearances, their
+body/replacement/equipment/mount/pet textures, and login backdrops now join shared
+BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
+survive material suspension. Private presentation retries keep successful texture
+prefixes in their worker cache; terminal output, failure and withdrawal return that
+bank before publication. Atlas composition sees source errors in authored order.
+Hardcoded texture fallback excludes admission, readiness and producer failures.
+Backdrop shutdown cancels a suspended consumer while an already owned M2 producer
+still completes for its other consumers.
+
+This closes the remaining appearance/backdrop source integrations identified in
+the previous material batch. Private prefix replay and indivisible atlas/decode
+kernels remain; it does not close working-set accounting, remaining UI/renderer
+admission, step-cost policy or full cutover qualification. Grouped validation is
+recorded in `target/appearance-cutover-validation.log`: 800 passing asset/runtime
+tests, 29 existing ignores, clean formatting and all-target/all-feature Clippy.
+Both doc-test suites completed with zero cases. No FPS comparison or package was
+produced.
+
 Terrain MDDF/MODD, WMO materials and liquids, terrain liquids, ground detail,
 sky models, unit effects, and primary/nested GameObject M2 materials now join
 shared texture readiness on their existing admitted operations. Private builders
@@ -30,8 +49,8 @@ material waits use one resumable task and return the same bank on withdrawal.
 
 This is a construction boundary, not a new executor or a calibrated microstep
 policy. A resumed private builder can replay its cached prefix. Individual decode,
-shader and geometry operations remain indivisible. Character/body/equipment and
-login backdrop construction still require integration; all-domain single production
+shader and geometry operations remain indivisible. The appearance/backdrop integration above supersedes the remaining source paths
+from this earlier batch; all-domain single production
 and the complete CPU cutover are not yet claimed. Grouped validation for this
 batch is recorded in `target/material-cutover-validation.log`, with its final
 focused rerun in `target/material-cutover-finish.log` and the remaining freshly
@@ -53,8 +72,9 @@ material texture stages now join these requests on the existing resumable worker
 The cursor, reader and private output survive suspension; cancellation releases a
 consumer without abandoning another producer. Ordinary synchronous texture caches
 reuse and publish canonical ready payloads too. Their cold calls still cannot join
-a pending request: remaining synchronous character/body/equipment and backdrop construction must be
-converted to resumable consumers before claiming all-domain BLP single production.
+a pending request: blocking UI texture lookups remain to be converted before
+claiming all-domain BLP single production. Appearance and backdrop consumers now
+use the construction scopes described above.
 Direct low-level `BlpTextureSource::load` remains an explicit uncached decode API.
 No worker waits on a source condition variable, and no source decode holds a cache
 metadata lock. Individual BLP parsing remains an indivisible codec operation.

@@ -63,7 +63,7 @@ pub(in crate::application::player_coordinator) fn with_worker_presentation<T>(
     };
     let result = prepare(&mut presentation);
 
-    presentation.textures.collect_unused();
+    // The appearance operation collects only at completion; retries retain their source prefix.
     let assets = presentation.assets;
     let models = std::mem::take(&mut presentation.models);
     let textures = std::mem::take(&mut presentation.textures);

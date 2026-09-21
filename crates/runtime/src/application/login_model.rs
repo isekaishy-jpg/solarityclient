@@ -272,6 +272,7 @@ fn load_glue_model_generation(
         })? {
             M2HardcodedTextureSource::Archive(path) => match textures.load(store, path) {
                 Ok(texture) => texture_sources.push(GlueM2Texture::Authored(texture)),
+                Err(source) if source.is_source_pipeline_error() => return Err(source.into()),
                 Err(source) => {
                     tracing::warn!(
                         model = %model.path(),

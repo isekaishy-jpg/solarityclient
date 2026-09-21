@@ -141,7 +141,7 @@ impl RuntimePlayerPresentation {
                 },
                 catalog,
                 catalogs,
-                move |presentation, model| presentation.prepare_player(desired, inputs, model),
+                move |presentation, model| presentation.prepare_player(desired.clone(), inputs, model),
             )?;
             self.retain_local_pose(world)
         } else {

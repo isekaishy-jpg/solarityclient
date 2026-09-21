@@ -17,7 +17,7 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
         request: PopulationRequest<K>,
         catalog: ArchiveCatalog,
         catalogs: RuntimePlayerSharedCatalogs,
-        prepare: impl FnOnce(
+        prepare: impl FnMut(
             &mut RuntimePlayerPresentation,
             ResourceLease<DecodedM2Model>,
         ) -> Result<T, RuntimePlayerError>

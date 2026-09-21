@@ -14,7 +14,7 @@ impl<T: Send + 'static> AppearanceTask<T> {
         cpu: &CpuExecutor,
         request: AppearanceRequest,
         cache: &mut Option<AppearanceWorkerCache>,
-        prepare: impl FnOnce(
+        prepare: impl FnMut(
             &mut RuntimePlayerPresentation,
             ResourceLease<DecodedM2Model>,
         ) -> Result<T, RuntimePlayerError>

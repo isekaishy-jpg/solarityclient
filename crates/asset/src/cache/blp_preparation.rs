@@ -40,28 +40,45 @@ impl BlpTexturePreparation {
         service: &CpuServiceControl,
         operation: impl FnOnce(&mut BlpTextureCache, &mut AssetStore) -> Result<T, E>,
     ) -> Result<ControlFlow<T, CpuTaskDependency>, E> {
+        let policy = AssetReadBudget::for_service(budget.clone(), service.service());
+        self.run_owned(
+            &mut (cache, store),
+            |state| state.0,
+            budget,
+            service,
+            |(cache, store)| store.with_read_budget(&policy, |store| operation(cache, store)),
+        )
+    }
+
+    /// Runs construction through a private owner whose methods access its texture cache.
+    /// The caller retains that cache across suspension and scopes archive reads to the
+    /// supplied budget/service. Cache access must select the same bank for the entire call.
+    /// # Errors
+    /// Returns the original domain failure, preserving shared producer failures.
+    /// # Panics
+    /// Rejects nested construction on the same cache or resumption before readiness.
+    pub fn run_owned<O, T, E>(
+        &mut self,
+        owner: &mut O,
+        cache: fn(&mut O) -> &mut BlpTextureCache,
+        budget: &CpuStorageBudget,
+        service: &CpuServiceControl,
+        operation: impl FnOnce(&mut O) -> Result<T, E>,
+    ) -> Result<ControlFlow<T, CpuTaskDependency>, E> {
         assert!(
-            cache.preparation.is_none(),
+            cache(owner).preparation.is_none(),
             "one texture construction owns a cache turn"
         );
         let mut turn = self.turn.take().unwrap_or_default();
-        let policy = AssetReadBudget::for_service(budget.clone(), service.service());
-        if let Some((key, dependency)) = turn.pending.take() {
-            match dependency
-                .poll()
-                .unwrap_or_else(|| unreachable!("texture construction follows readiness"))
-            {
-                Ok(source) => {
-                    store.with_read_budget(&policy, |store| cache.adopt(store, source))?;
-                }
-                Err(error) => turn.failed.push((key, error)),
-            }
-        }
         turn.budget = Some(budget.clone());
         turn.service = Some(service.clone());
-        cache.preparation = Some(turn);
-        let scope = ConstructionScope { cache, owner: self };
-        let result = store.with_read_budget(&policy, |store| operation(scope.cache, store));
+        cache(owner).preparation = Some(turn);
+        let scope = ConstructionScope {
+            owner,
+            cache,
+            preparation: self,
+        };
+        let result = operation(scope.owner);
         drop(scope);
         let turn = self
             .turn
@@ -76,13 +93,14 @@ impl BlpTexturePreparation {
     }
 }
 /// Panic/error paths restore the caller's construction and never leak policy to later loads.
-struct ConstructionScope<'a> {
-    cache: &'a mut BlpTextureCache,
-    owner: &'a mut BlpTexturePreparation,
+struct ConstructionScope<'a, O> {
+    owner: &'a mut O,
+    cache: fn(&mut O) -> &mut BlpTextureCache,
+    preparation: &'a mut BlpTexturePreparation,
 }
-impl Drop for ConstructionScope<'_> {
+impl<O> Drop for ConstructionScope<'_, O> {
     fn drop(&mut self) {
-        self.owner.turn = self.cache.preparation.take();
+        self.preparation.turn = (self.cache)(self.owner).preparation.take();
     }
 }
 
@@ -91,6 +109,31 @@ pub(super) fn load(
     store: &mut AssetStore,
     key: AssetResourceKey,
 ) -> Result<Arc<BlpTextureSource>, AssetError> {
+    // Consume the published outcome at its original authored position. Prefix cache hits
+    // and retained failures are replayed before this edge, preserving first-error order.
+    if cache.preparation.as_ref().is_some_and(|turn| {
+        turn.suspension.is_none()
+            && turn
+                .pending
+                .as_ref()
+                .is_some_and(|(pending, _)| *pending == key)
+    }) {
+        let turn = cache
+            .preparation
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("construction owns readiness"));
+        let (_, dependency) = turn
+            .pending
+            .take()
+            .unwrap_or_else(|| unreachable!("matching dependency stays owned"));
+        match dependency
+            .poll()
+            .unwrap_or_else(|| unreachable!("texture construction follows readiness"))
+        {
+            Ok(source) => return cache.adopt(store, source),
+            Err(error) => turn.failed.push((key.clone(), error)),
+        }
+    }
     let turn = cache
         .preparation
         .as_ref()

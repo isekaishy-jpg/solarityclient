@@ -150,7 +150,7 @@ impl RuntimePlayerPresentation {
                             catalog,
                             catalogs,
                             move |presentation, model| {
-                                presentation.prepare_player(desired, inputs, model)
+                                presentation.prepare_player(desired.clone(), inputs, model)
                             },
                         )?;
                     }

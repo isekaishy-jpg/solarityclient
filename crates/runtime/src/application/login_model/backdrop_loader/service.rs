@@ -140,6 +140,7 @@ impl Drop for GlueBackdropLoader {
             if let Some(demand) = &pending.model_demand {
                 demand.set_service(CpuService::Required);
             }
+            pending.task.cancel();
             let _completed = pending.task.join();
         }
     }
