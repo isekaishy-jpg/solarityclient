@@ -19,6 +19,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+[Testing Build 176](testing-build176-texture-sources.md) packages the completed
+texture-source and appearance/backdrop batches at `ff9751b1`. Its installed
+identity and artifact hash are verified. The user authorized this one fresh
+client package, then continued cutover source work without further test builds.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
