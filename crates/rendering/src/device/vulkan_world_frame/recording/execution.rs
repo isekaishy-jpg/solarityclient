@@ -75,8 +75,12 @@ impl<T: Send + 'static> RecordingReadiness for FrameBatch<T> {
 }
 
 impl<'a> WorldRecordingCompletion<'a> {
-    /// Reuses native readiness servicing while keeping the typed source result private.
-    pub(in crate::device) fn join_task<T>(
+    /// Services native readiness while keeping the typed source result private.
+    /// Source startup can use this before a renderer exists. Native failure or
+    /// unwind requests withdrawal and reclaims the admitted operation.
+    /// # Errors
+    /// Returns native servicing or CPU completion failures.
+    pub fn join_task<T>(
         execution: &mut dyn WorldFrameExecution,
         task: solarity_cpu::CpuTask<T>,
     ) -> Result<T, VulkanError> {

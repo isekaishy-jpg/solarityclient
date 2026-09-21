@@ -8,6 +8,7 @@ mod glue_texture_prewarm;
 mod instrumentation;
 mod model_cache_maintenance;
 mod session_lifecycle;
+mod startup_catalogs;
 mod startup_presentation;
 pub(super) mod world_benchmark;
 mod world_camera;
@@ -29,18 +30,12 @@ use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 use glue_texture_prewarm::{ConfiguredGlueTexturePrewarmJob, prepare_configured_glue_textures};
-use solarity_asset::{
-    AnimationDataCatalog, ArchiveCatalog, AssetError, AssetPath, AssetStore, AssetStoreHandle,
-    BlpTextureCache, CharacterAppearanceCatalog, CharacterRaceCatalog, CharacterStartOutfitCatalog,
-    CreatureCatalog, CreatureFamilyCatalog, GameObjectDisplayCatalog,
-    HelmetGeosetVisibilityCatalog, ItemDefinitionCatalog, ItemDisplayCatalog, ItemVisualCatalog,
-    LightCatalog, LoadingScreenCatalog, MapCatalog, ParticleColorCatalog, VehicleCatalog,
-};
+use solarity_asset::{ArchiveCatalog, AssetPath, AssetStoreHandle, BlpTextureCache};
 use solarity_cpu::{CpuError, CpuExecutor};
 use solarity_media::SoundOutputTarget;
 use solarity_network::{
     AccountExpansion, CharacterCreation, CharacterRename, CharacterRenameError, RealmEntry,
-    WorldAddon, WorldAddonManifest,
+    WorldAddonManifest,
 };
 use solarity_rendering::{
     CharacterComponentTextureLevel, M2ParticleTwinkleTable, UiPreparedDraw, VulkanBootstrap,
@@ -49,7 +44,7 @@ use solarity_rendering::{
 };
 use solarity_systems::MountCameraGeometry;
 use solarity_ui::{
-    AddonCatalog, GlueError, GlueInitialScreen, GlueManager, GlueStartupReport, STANDARD_ADDON_CRC,
+    AddonCatalog, GlueError, GlueInitialScreen, GlueManager, GlueStartupReport,
     UiCharacterExpansion, UiEventArgument, UiEventPayload, UiGlueNetworkAction,
     UiGlueNetworkStatus, UiKeyboardModifiers, UiPointerButton, UiProcessAction,
 };
@@ -225,11 +220,103 @@ impl ClientServices {
         } else {
             GlueInitialScreen::Login
         };
-        let catalog =
-            ArchiveCatalog::discover(configuration.data_root().clone(), configuration.locale())?;
+        // SDL and the coordinator notifier are process-main prerequisites.
+        let mut platform = SdlPlatform::start(configuration.window())?;
+        let cpu =
+            CpuExecutor::with_notifier(configuration.cpu_pool(), platform.coordinator_notifier())?;
+        let permit = cpu.try_reserve_for(solarity_cpu::CpuService::Required)?;
+        let shared = super::texture_source_job::SharedTextureSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let startup_sources = permit.submit_resumable_with_context(startup_catalogs::prepare(
+            configuration.data_root().clone(),
+            configuration.locale(),
+            shared,
+            platform.pixel_extent(),
+        ));
+        let total_physical_memory_bytes = platform.total_physical_memory_bytes();
+        let input = InputControl::new(platform.window_id());
+        let renderer_result = (|| -> Result<VulkanRenderer, ApplicationError> {
+            let instance_extensions = platform.vulkan_instance_extensions()?;
+            let bootstrap = VulkanBootstrap::start(&instance_extensions)?;
+            // SAFETY: The bootstrap enabled SDL's exact extension list and remains
+            // live while SDL creates a surface for the owned window.
+            let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
+            // SAFETY: SDL created `surface` from this bootstrap's instance, and
+            // ownership transfers immediately to the rendering owner.
+            let vsync = startup_profile
+                .cvar_values()
+                .iter()
+                .rev()
+                .find(|(name, _value)| name.eq_ignore_ascii_case("gxVSync"))
+                .is_none_or(|(_name, value)| value.parse::<f64>().is_ok_and(|value| value != 0.0));
+            let present_mode = if vsync {
+                VulkanPresentMode::Synchronized
+            } else {
+                VulkanPresentMode::Uncapped
+            };
+            let mut renderer = unsafe {
+                bootstrap.attach_surface_with_present_mode(
+                    surface,
+                    platform.pixel_extent(),
+                    configuration.gpu_index(),
+                    present_mode,
+                )
+            }?;
+            renderer.configure_frame_waits(platform.coordinator_notifier())?;
+            renderer.configure_pipeline_cache(
+                &configuration
+                    .profile_root()
+                    .join("Cache")
+                    .join("vulkan-pipelines.bin"),
+            )?;
+            Ok(renderer)
+        })();
+        // Consume metadata errors in their original order before a Vulkan error.
+        // The typed result remains owned while native events are serviced.
+        let startup_catalogs::PreparedStartup {
+            catalog,
+            assets,
+            catalogs,
+            addon_manifest,
+            presentation,
+        } = solarity_rendering::WorldRecordingCompletion::join_task(
+            &mut super::frame_pipeline::FrameWait::Native(&mut platform).recording(&cpu),
+            startup_sources,
+        )?
+        .map_err(ApplicationError::from)?;
+        let startup_catalogs::StartupCatalogs {
+            spells,
+            environmental,
+            animations,
+            realm_metadata,
+            character_metadata,
+            creatures,
+            creature_families,
+            vehicles,
+            characters,
+            races,
+            helmet_visibility,
+            start_outfits,
+            item_definitions,
+            item_displays,
+            item_visuals,
+            particle_colors,
+            game_object_displays,
+            transport_paths,
+            addon_catalog,
+            maps,
+            area_triggers,
+            loading_screens,
+            lights,
+            weather,
+            screen_effects,
+            liquids,
+        } = catalogs;
         let model_sources = catalog.model_cache_service();
         let model_cache_maintenance = model_cache_maintenance::RuntimeModelCacheMaintenance::new(
-            model_sources.clone(),
+            model_sources,
             catalog.world_model_cache_service(),
         );
         let archive_count = catalog.descriptors().len();
@@ -237,116 +324,19 @@ impl ClientServices {
         let sound_catalog = catalog.clone();
         let backdrop_catalog = catalog.clone();
         let ui_texture_catalog = catalog.clone();
-        let presentation_catalog = catalog.clone();
         let player_catalog = catalog.clone();
         let transport_catalog = catalog.clone();
         let terrain_catalog = catalog.clone();
         let world_ui_catalog = catalog.clone();
-        let mut assets = AssetStore::mount(catalog.clone())?;
-        let spells = std::rc::Rc::new(solarity_asset::SpellEffectCatalog::load(&mut assets)?);
-        let environmental = Arc::new(solarity_asset::EnvironmentalDamageCatalog::load(
-            &mut assets,
-        )?);
-        let unit_effects = super::unit_effects::RuntimeUnitEffects::new(catalog, environmental);
-        let animations = Arc::new(AnimationDataCatalog::load(&mut assets)?);
-        let realm_metadata = RuntimeRealmMetadata::load(&mut assets)?;
-        let character_metadata = RuntimeCharacterMetadata::load(&mut assets)?;
-        let creatures = CreatureCatalog::load(&mut assets)?;
-        let creature_families = CreatureFamilyCatalog::load(&mut assets)?;
-        let vehicles = VehicleCatalog::load(&mut assets)?;
-        let characters = CharacterAppearanceCatalog::load(&mut assets)?;
-        let races = CharacterRaceCatalog::load(&mut assets)?;
-        let helmet_visibility = HelmetGeosetVisibilityCatalog::load(&mut assets)?;
-        let start_outfits = CharacterStartOutfitCatalog::load(&mut assets)?;
-        let item_definitions = ItemDefinitionCatalog::load(&mut assets)?;
-        let item_displays = ItemDisplayCatalog::load(&mut assets)?;
-        let item_visuals = ItemVisualCatalog::load(&mut assets)?;
-        let particle_colors = ParticleColorCatalog::load(&mut assets)?;
-        let game_object_displays = GameObjectDisplayCatalog::load(&mut assets)?;
-        let transport_paths = solarity_asset::TransportCatalog::load(&mut assets)?;
-        let addon_catalog = AddonCatalog::discover(&mut assets)?;
-        let maps = MapCatalog::load(&mut assets)?;
-        let area_triggers = super::area_triggers::RuntimeAreaTriggers::new(
-            &solarity_asset::AreaTriggerCatalog::load(&mut assets)?,
-        );
-        let loading_screens = match LoadingScreenCatalog::load(&mut assets) {
-            Ok(catalog) => Some(catalog),
-            Err(AssetError::AssetNotFound { .. }) => None,
-            Err(error) => return Err(error.into()),
-        };
+        let spells = Rc::new(spells);
+        let unit_effects =
+            super::unit_effects::RuntimeUnitEffects::new(catalog, Arc::new(environmental));
+        let animations = Arc::new(animations);
+        let character_metadata = character_metadata.publish();
+        let area_triggers = super::area_triggers::RuntimeAreaTriggers::new(&area_triggers);
         let loading_directory = LoadingScreenDirectory::new(&maps, loading_screens);
-        let lights = LightCatalog::load(&mut assets)?;
-        let weather = solarity_asset::WeatherCatalog::load(&mut assets)?;
-        let screen_effects = solarity_asset::ScreenEffectCatalog::load(&mut assets)?;
-        let liquids = solarity_asset::LiquidTypeCatalog::load(&mut assets)?;
-        let addon_manifest = WorldAddonManifest::new(
-            addon_catalog
-                .addons()
-                .iter()
-                .map(|addon| {
-                    WorldAddon::new(
-                        addon.name(),
-                        addon.is_initially_enabled(),
-                        if addon.is_signed() {
-                            STANDARD_ADDON_CRC
-                        } else {
-                            0
-                        },
-                        0,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        )?;
         let addon_count = addon_manifest.addons().len();
-        // SDL must be initialized by the process main thread before worker
-        // construction can make lifecycle mistakes harder to diagnose.
-        let mut platform = SdlPlatform::start(configuration.window())?;
-        let cpu =
-            CpuExecutor::with_notifier(configuration.cpu_pool(), platform.coordinator_notifier())?;
-        model_sources.configure_storage(cpu.storage().clone())?;
-        let permit = cpu.try_reserve_for(solarity_cpu::CpuService::Required)?;
-        let shared = super::texture_source_job::SharedTextureSources {
-            budget: cpu.storage().clone(),
-            service: permit.service_control(),
-        };
-        let presentation_sources = permit.submit_resumable_with_context(
-            startup_presentation::prepare(presentation_catalog, shared, platform.pixel_extent()),
-        );
-        let total_physical_memory_bytes = platform.total_physical_memory_bytes();
-        let input = InputControl::new(platform.window_id());
-        let instance_extensions = platform.vulkan_instance_extensions()?;
-        let bootstrap = VulkanBootstrap::start(&instance_extensions)?;
-        // SAFETY: The bootstrap enabled SDL's exact extension list and remains
-        // live while SDL creates a surface for the owned window.
-        let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
-        // SAFETY: SDL created `surface` from this bootstrap's instance, and
-        // ownership transfers immediately to the rendering owner.
-        let vsync = startup_profile
-            .cvar_values()
-            .iter()
-            .rev()
-            .find(|(name, _value)| name.eq_ignore_ascii_case("gxVSync"))
-            .is_none_or(|(_name, value)| value.parse::<f64>().is_ok_and(|value| value != 0.0));
-        let present_mode = if vsync {
-            VulkanPresentMode::Synchronized
-        } else {
-            VulkanPresentMode::Uncapped
-        };
-        let mut renderer = unsafe {
-            bootstrap.attach_surface_with_present_mode(
-                surface,
-                platform.pixel_extent(),
-                configuration.gpu_index(),
-                present_mode,
-            )
-        }?;
-        renderer.configure_frame_waits(platform.coordinator_notifier())?;
-        renderer.configure_pipeline_cache(
-            &configuration
-                .profile_root()
-                .join("Cache")
-                .join("vulkan-pipelines.bin"),
-        )?;
+        let mut renderer = renderer_result?;
         let assets = AssetStoreHandle::new(assets);
         let sky_resources = super::sky_resources::RuntimeSkyResources::load(
             sky_catalog,
@@ -355,11 +345,7 @@ impl ClientServices {
         )?;
         let developer_console =
             RuntimeDeveloperConsole::new(overlay_extent(platform.pixel_extent()));
-        let prepared = solarity_rendering::GpuPreparation::new(
-            &mut renderer,
-            &mut super::frame_pipeline::FrameWait::Native(&mut platform).recording(&cpu),
-        )
-        .join_source(presentation_sources)??;
+        let prepared = presentation?;
         let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, prepared.fps)?;
         let [splash, wake, underwater] = prepared.effects;
         let water_ripples = super::water_ripples::RuntimeWaterRipples::new([splash, wake]);

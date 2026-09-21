@@ -77,6 +77,52 @@ Build 176 remains installed. No additional client package or FPS comparison was
 performed. The next large confirmed source block is the metadata catalog loading
 in `ClientServices::start`, still before executor creation.
 
+The subsequent metadata batch replaces that main-thread block. SDL and the
+coordinator notifier are initialized on main, then one admitted startup operation
+discovers the archive namespace, configures source storage, opens one archive per
+turn and loads 26 ordered catalog groups. Encoded reads use required-byte admission.
+The same reader continues through AddOn manifest construction, fixed effect
+textures and FPS coverage while main initializes Vulkan. A complete typed bank
+returns the catalog namespace, mounted reader and prepared data; no partial
+catalogs enter the live application. Character metadata acquires its main-thread
+`Rc` only at publication. Startup accepts one worker and one admitted task slot.
+
+Catalog and manifest errors retain their original order and are consumed before
+a Vulkan initialization error; presentation failures remain a separate later
+outcome. Native servicing can consume the owned task without a successful renderer,
+including cancellation and reclamation on native failure. Withdrawal between
+turns drops private partial catalogs and the reader on the worker. Individual
+catalog decoders, archive discovery and font rasterization remain indivisible
+bulk operations; complete decoded-table/nested allocation accounting and dynamic
+UI work are still required. This supersedes the preceding metadata-source gap,
+without claiming the complete cutover or a measured performance gain.
+
+Metadata validation passes formatting and all-target/all-feature rendering/runtime
+Clippy with warnings denied. All 261 rendering tests passed in the grouped run;
+its runtime run exposed a missing GameObjectDisplayInfo table in the new fixture.
+After correcting only that fixture, all 589 runtime tests passed (30 ignored),
+including application composition startup/shutdown and the four new metadata
+cases. The stock startup test then passed explicitly against the local build-12340
+archives with one worker, one admitted slot and production byte limits: 851
+distinct passing tests, 29 remaining ignores across this validation. It compares
+realm/AddOn metadata against serial reads and verifies complete catalogs, optional
+loading-screen data and native FPS coverage. Evidence is
+`target/catalog-cutover-tests.log`, `target/catalog-cutover-runtime-final.log`,
+`target/catalog-cutover-stock-final.log`, `target/catalog-cutover-clippy.log` and
+`target/catalog-cutover-clippy-final.log`. Build 176 remains installed; no new
+client package or FPS comparison was performed.
+
+The follow-up source audit identifies concrete remaining main-thread readers:
+Glue character-creation catalogs and `UiBundle::load` in the Glue startup path;
+`SpatialSoundCatalog` inside sound-engine creation plus movement/zone/override
+catalogs in `RuntimeSoundCoordinator::start`; `MinimapTextureCatalog` during world
+UI publication; and `MapDifficultyCatalog` when presenting a transfer abort.
+World UI spell names and FrameXML declarations already prepare on workers.
+The next source batch should connect those readers to prepared inputs while
+keeping Lua, shared random state, SDL output ownership and event publication on
+main. Dynamic font/layout work and the other architecture requirements below
+remain separate unresolved work.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

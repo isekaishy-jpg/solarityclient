@@ -31,6 +31,37 @@ pub(crate) struct RuntimeCharacterMetadata {
     world_model_areas: solarity_asset::WorldModelAreaCatalog,
 }
 
+/// Immutable decoded selection inputs; only publication creates the main-thread Rc.
+pub(in crate::application) struct PreparedCharacterMetadata {
+    races: CharacterRaceCatalog,
+    classes: CharacterClassCatalog,
+    factions: CharacterFactionCatalog,
+    areas: AreaTableCatalog,
+    world_model_areas: solarity_asset::WorldModelAreaCatalog,
+}
+
+impl PreparedCharacterMetadata {
+    pub(in crate::application) fn load(store: &mut AssetStore) -> Result<Self, AssetError> {
+        Ok(Self {
+            races: CharacterRaceCatalog::load(store)?,
+            classes: CharacterClassCatalog::load(store)?,
+            factions: CharacterFactionCatalog::load(store)?,
+            areas: AreaTableCatalog::load(store)?,
+            world_model_areas: solarity_asset::WorldModelAreaCatalog::load(store)?,
+        })
+    }
+
+    pub(in crate::application) fn publish(self) -> RuntimeCharacterMetadata {
+        RuntimeCharacterMetadata {
+            races: self.races,
+            classes: self.classes,
+            factions: std::rc::Rc::new(self.factions),
+            areas: self.areas,
+            world_model_areas: self.world_model_areas,
+        }
+    }
+}
+
 impl RuntimeCharacterMetadata {
     pub(in crate::application) fn faction_catalog(&self) -> std::rc::Rc<CharacterFactionCatalog> {
         self.factions.clone()
@@ -160,15 +191,10 @@ impl RuntimeCharacterMetadata {
         })
     }
 
-    /// Loads selection metadata before the asset stack transfers into Glue.
+    /// Synchronous fixture entry into the same decoded inputs/publication boundary.
+    #[cfg(test)]
     pub(crate) fn load(store: &mut AssetStore) -> Result<Self, AssetError> {
-        Ok(Self {
-            races: CharacterRaceCatalog::load(store)?,
-            classes: CharacterClassCatalog::load(store)?,
-            factions: std::rc::Rc::new(CharacterFactionCatalog::load(store)?),
-            areas: AreaTableCatalog::load(store)?,
-            world_model_areas: solarity_asset::WorldModelAreaCatalog::load(store)?,
-        })
+        PreparedCharacterMetadata::load(store).map(PreparedCharacterMetadata::publish)
     }
 
     /// Reports whether all synchronous player facts queried by FrameXML OnLoad
