@@ -191,6 +191,21 @@ impl GeometryBatch {
             placement,
             source,
         )?;
+        if input.visible.is_some() {
+            // Simulation ownership must carry its complete physical working set.
+            // This admits storage only; stock still chooses the live pool limit
+            // from the current emitter sample on the worker.
+            for (particle, resource) in placement.particles.iter_mut().zip(&source.particles) {
+                if particle.unsupported.is_none() {
+                    particle
+                        .simulation
+                        .reserve_cpu_storage(budget, resource.maximum_particles)?;
+                }
+            }
+            for trail in &mut placement.ribbons {
+                trail.reserve_cpu_storage(budget)?;
+            }
+        }
         batch
             .particle_scratch
             .as_mut()

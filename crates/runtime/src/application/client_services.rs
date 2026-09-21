@@ -527,7 +527,9 @@ impl ClientServices {
                 super::frame_pipeline::FrameWait::Native(&mut platform)
                     .before_gpu_frame(&mut renderer, solarity_rendering::GpuFrameKind::Ui)
                     .map_err(RuntimeTerrainFrameError::from)?;
-                frame.present_with_overlay(&mut renderer, overlay)?;
+                frame.present_with_overlay(&mut renderer, overlay, &mut |pending| {
+                    super::frame_pipeline::FrameWait::Native(&mut platform).service_gpu(pending)
+                })?;
             }
             if let Some((camera, events)) = glue_model.drain_sound_events() {
                 sound.play_m2_events(&events, camera, &mut blizzard_rand.borrow_mut())?;
@@ -1211,7 +1213,14 @@ impl ClientServices {
             super::frame_pipeline::FrameWait::Native(&mut self.platform)
                 .before_gpu_frame(&mut self.renderer, solarity_rendering::GpuFrameKind::Ui)
                 .map_err(RuntimeTerrainFrameError::from)?;
-            loading.present(&mut self.renderer, &self.runtime_overlay_draws)?;
+            loading.present(
+                &mut self.renderer,
+                &self.runtime_overlay_draws,
+                &mut |pending| {
+                    super::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .service_gpu(pending)
+                },
+            )?;
             if let Some(fps) = self.fps.as_mut() {
                 fps.record_presented(&mut self.renderer, std::time::Instant::now())?;
             }
@@ -1713,7 +1722,14 @@ impl ClientServices {
             super::frame_pipeline::FrameWait::Native(&mut self.platform)
                 .before_gpu_frame(&mut self.renderer, solarity_rendering::GpuFrameKind::Ui)
                 .map_err(RuntimeTerrainFrameError::from)?;
-            frame.present_with_overlay(&mut self.renderer, &self.runtime_overlay_draws)?;
+            frame.present_with_overlay(
+                &mut self.renderer,
+                &self.runtime_overlay_draws,
+                &mut |pending| {
+                    super::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .service_gpu(pending)
+                },
+            )?;
         }
         profile.mark("model and UI present");
         if let Some((camera, events)) = self.glue_model.drain_sound_events() {

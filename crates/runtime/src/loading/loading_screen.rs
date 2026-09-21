@@ -160,10 +160,14 @@ impl RuntimeLoadingScreen {
         &mut self,
         renderer: &mut VulkanRenderer,
         overlay: &[UiPreparedDraw],
+        service_native: &mut impl FnMut(
+            &solarity_rendering::GpuCompletion<'_>,
+        ) -> Result<(), solarity_rendering::VulkanError>,
     ) -> Result<(), ApplicationError> {
         self.frame
             .replace_mesh(renderer, &self.plans[self.stage.index()])?;
-        self.frame.present_with_overlay(renderer, overlay)?;
+        self.frame
+            .present_with_overlay(renderer, overlay, service_native)?;
         self.presented = true;
         if self.current_ready {
             self.final_frame_presented = true;

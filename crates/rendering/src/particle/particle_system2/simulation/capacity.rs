@@ -87,6 +87,7 @@ impl M2ParticleSimulation {
         &mut self,
         required: usize,
     ) -> Result<(), M2ParticleSimulationError> {
+        self.check_cpu_storage(required)?;
         let old_base_phase = (!self.particles.is_empty())
             .then(|| ((self.particles.as_ptr().addr() >> 5) & 0x7f) as u8);
         self.particles

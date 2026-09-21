@@ -2,7 +2,10 @@
 
 #![allow(unsafe_code)]
 
+mod cinematic;
 mod frame_wait;
+mod presentation;
+mod ui;
 pub use frame_wait::GpuFrameKind;
 mod effect_draws;
 pub use effect_draws::M2EffectDrawCatalog;
@@ -25,9 +28,7 @@ use solarity_asset::{BlpTextureSource, DecodedBlpTexture, M2Material, M2Texture}
 use crate::device::vulkan_character_atlas::{
     CharacterAtlasTextureHandle, CharacterAtlasTextureRegistry, CharacterAtlasTextureResourceInfo,
 };
-use crate::device::vulkan_frame::{
-    CinematicFrameIdentity, FrameContext, FrameRenderer, FrameUiContext,
-};
+use crate::device::vulkan_frame::FrameRenderer;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameGlow};
 use crate::device::vulkan_m2_draw::{M2PreparedDraw, prepare_draw};
 use crate::device::vulkan_m2_frame::{M2FrameContext, M2FrameRenderer, M2FrameReport};
@@ -75,7 +76,7 @@ use crate::device::vulkan_texture::{
     BlpTextureUploadError, BlpTextureUploadRequest, TextureUploadContext,
 };
 use crate::device::vulkan_ui_draw::{UiPreparedDraw, prepare_draw as prepare_ui_draw};
-use crate::device::vulkan_ui_frame::{UiFrameContext, UiFrameRenderer, UiFrameReport};
+use crate::device::vulkan_ui_frame::UiFrameRenderer;
 use crate::device::vulkan_ui_glyph_texture::{
     UiGlyphTextureHandle, UiGlyphTextureRegistry, UiGlyphTextureResourceInfo,
 };
@@ -490,233 +491,6 @@ impl VulkanRenderer {
         self.present_rgba8((texture.width(), texture.height()), texture.rgba8())?;
         self.report.presented_texture_extent = Some((texture.width(), texture.height()));
         Ok(())
-    }
-
-    /// Fits and presents one tightly packed RGBA8 frame.
-    ///
-    /// This direct pixel boundary serves decoded cinematics without claiming a
-    /// texture-cache identity or retaining the caller's frame allocation.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VulkanError`] when the source extent or byte count is invalid,
-    /// or when staging, command submission, synchronization, or presentation
-    /// fails.
-    pub fn present_rgba8(
-        &mut self,
-        source_extent: (u32, u32),
-        rgba8: &[u8],
-    ) -> Result<(), VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_rgba8_once(source_extent, rgba8, None, None)
-        })
-    }
-
-    /// Presents one retained authored movie frame with linear hardware scaling.
-    ///
-    /// Repeated calls with the same identity reuse the device-local decoded
-    /// image while still presenting at the display's FIFO cadence.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VulkanError`] for malformed pixels or Vulkan failures.
-    pub fn present_cinematic_rgba8(
-        &mut self,
-        identity: CinematicFrameIdentity,
-        source_extent: (u32, u32),
-        rgba8: &[u8],
-    ) -> Result<(), VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_rgba8_once(source_extent, rgba8, Some(identity), None)
-        })
-    }
-
-    /// Fits one tightly packed RGBA8 frame and composites retained UI over it.
-    ///
-    /// This is the movie presentation boundary: decoded pixels retain the
-    /// direct transfer path while process-wide overlays are blended before the
-    /// acquired swapchain image enters presentation layout.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VulkanError`] for invalid source or logical extents, malformed
-    /// pixels, stale UI resources, or Vulkan presentation failures.
-    pub fn present_rgba8_with_ui(
-        &mut self,
-        source_extent: (u32, u32),
-        rgba8: &[u8],
-        logical_extent: [f32; 2],
-        draws: &[UiPreparedDraw],
-    ) -> Result<(), VulkanError> {
-        if logical_extent
-            .iter()
-            .any(|extent| !extent.is_finite() || *extent <= 0.0)
-        {
-            return Err(VulkanError::UiFrameExtent);
-        }
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_rgba8_once(source_extent, rgba8, None, Some((logical_extent, draws)))
-        })?;
-        self.report.presented_ui_draw_count = Some(draws.len());
-        Ok(())
-    }
-
-    /// Presents one retained authored movie frame and its process-wide UI.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VulkanError`] for invalid extents, malformed pixels, stale UI
-    /// resources, or Vulkan presentation failures.
-    pub fn present_cinematic_rgba8_with_ui(
-        &mut self,
-        identity: CinematicFrameIdentity,
-        source_extent: (u32, u32),
-        rgba8: &[u8],
-        logical_extent: [f32; 2],
-        draws: &[UiPreparedDraw],
-    ) -> Result<(), VulkanError> {
-        if logical_extent
-            .iter()
-            .any(|extent| !extent.is_finite() || *extent <= 0.0)
-        {
-            return Err(VulkanError::UiFrameExtent);
-        }
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_rgba8_once(
-                source_extent,
-                rgba8,
-                Some(identity),
-                Some((logical_extent, draws)),
-            )
-        })?;
-        self.report.presented_ui_draw_count = Some(draws.len());
-        Ok(())
-    }
-
-    fn present_rgba8_once(
-        &mut self,
-        source_extent: (u32, u32),
-        rgba8: &[u8],
-        identity: Option<CinematicFrameIdentity>,
-        ui: Option<([f32; 2], &[UiPreparedDraw])>,
-    ) -> Result<(), VulkanError> {
-        let allocator = self.allocator.as_ref().ok_or_else(|| {
-            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
-        })?;
-        let uploaded = self.cinematic_frames.present(FrameContext {
-            device: &self.device,
-            allocator,
-            capture: self
-                .capture
-                .as_ref()
-                .filter(|capture| !capture.captured)
-                .or_else(|| {
-                    self.video_capture
-                        .as_ref()
-                        .and_then(|video| video.pending())
-                }),
-            swapchain_loader: &self.swapchain_loader,
-            swapchain: self.swapchain,
-            swapchain_images: &self.swapchain_images,
-            image_views: &self.image_views,
-            graphics_queue: self.graphics_queue,
-            present_queue: self.present_queue,
-            graphics_queue_family: self.report.graphics_queue_family,
-            frame_extent: self.report.extent,
-            source_extent,
-            rgba8,
-            identity,
-            ui: ui.map(|(logical_extent, draws)| FrameUiContext {
-                logical_extent,
-                pipelines: &self.ui_pipelines,
-                meshes: &self.ui_meshes,
-                texture_sets: &self.ui_texture_sets,
-                draws,
-            }),
-        })?;
-        self.report.presented_source_reused = Some(!uploaded);
-        self.is_idle = false;
-        Ok(())
-    }
-
-    fn with_swapchain_retry<T>(
-        &mut self,
-        mut present: impl FnMut(&mut Self) -> Result<T, VulkanError>,
-    ) -> Result<T, VulkanError> {
-        self.collect_retired_terrain()?;
-        self.collect_released_resources()?;
-        if let Some(allocator) = self.allocator.as_ref() {
-            self.terrain_meshes
-                .retire_completed_transfers(&self.device, allocator)?;
-            self.terrain_materials
-                .retire_completed_transfers(&self.device, allocator)?;
-            self.m2_meshes
-                .retire_completed_transfers(&self.device, allocator)?;
-            self.world_model_meshes
-                .retire_completed_transfers(&self.device, allocator)?;
-            let texture_context = TextureUploadContext {
-                device: &self.device,
-                allocator,
-                graphics_queue: self.graphics_queue,
-                graphics_queue_family: self.report.graphics_queue_family,
-            };
-            self.ui_glyph_textures.retire_transfers(texture_context)?;
-            self.character_atlas_textures
-                .retire_completed_transfers(texture_context)?;
-            self.blp_textures
-                .retire_completed_transfers(texture_context)
-                .map_err(|error| VulkanError::operation("retire BLP staging", error))?;
-            self.ui_meshes.retire_transfers(MeshUploadContext {
-                device: &self.device,
-                allocator,
-                graphics_queue: self.graphics_queue,
-                graphics_queue_family: self.report.graphics_queue_family,
-            })?;
-            self.liquid_meshes.collect(&self.device, allocator)?;
-        }
-        let result = match present(self) {
-            Err(VulkanError::SwapchainOutOfDate) => {
-                self.recreate_swapchain()?;
-                if let (Some(video), Some(allocator)) =
-                    (self.video_capture.as_mut(), self.allocator.as_ref())
-                {
-                    video.resize(allocator, self.report.extent)?;
-                }
-                // Recreate waited for idle. A pending readback may have belonged
-                // to the failed present, and must match the replacement extent.
-                if self
-                    .capture
-                    .as_ref()
-                    .is_some_and(|capture| !capture.captured)
-                {
-                    let allocator = self.allocator.as_ref().ok_or_else(|| {
-                        VulkanError::operation(
-                            "access Vulkan allocator",
-                            "allocator is unavailable",
-                        )
-                    })?;
-                    if let Some(capture) = self.capture.take() {
-                        capture.destroy(allocator);
-                    }
-                    self.request_frame_capture()?;
-                }
-                present(self)
-            }
-            result => result,
-        };
-        let screenshot_selected = self
-            .capture
-            .as_ref()
-            .is_some_and(|capture| !capture.captured);
-        if !screenshot_selected && let Some(video) = self.video_capture.as_mut() {
-            video.submitted(&self.device, self.graphics_queue, result.is_ok())?;
-        }
-        if result.is_ok()
-            && let Some(capture) = self.capture.as_mut()
-        {
-            capture.captured = true;
-        }
-        result
     }
 
     /// Returns the previous world frame's native sun-glare lighting response.
@@ -1700,137 +1474,6 @@ impl VulkanRenderer {
         )
     }
 
-    /// Records and presents one complete ordered UI batch list.
-    ///
-    /// Logical extent is the coordinate space used when the immutable mesh was
-    /// prepared. It is independent from the physical swapchain extent so stock
-    /// UI geometry scales without rebuilding or special-casing HD textures.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VulkanError`] for an empty frame, invalid logical extent,
-    /// swapchain resource mismatch, command recording, submission, or present
-    /// failure.
-    pub fn present_ui(
-        &mut self,
-        logical_extent: [f32; 2],
-        draws: &[UiPreparedDraw],
-    ) -> Result<UiFrameReport, VulkanError> {
-        self.with_swapchain_retry(|renderer| renderer.present_ui_once(logical_extent, draws))
-    }
-
-    /// Presents one UI generation followed by an independently retained overlay.
-    ///
-    /// Both slices remain borrowed through command recording, avoiding a
-    /// per-frame concatenation allocation while preserving their exact order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VulkanError`] under the same conditions as [`Self::present_ui`].
-    pub fn present_ui_with_overlay(
-        &mut self,
-        logical_extent: [f32; 2],
-        draws: &[UiPreparedDraw],
-        overlay: &[UiPreparedDraw],
-    ) -> Result<UiFrameReport, VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_ui_with_overlay_once(logical_extent, draws, overlay)
-        })
-    }
-
-    /// Clears the current swapchain image to opaque black and presents it.
-    ///
-    /// This is the explicit handoff surface used between independently loaded
-    /// presentation domains, where retaining the previous frame would expose
-    /// stale cinematic or loading-screen contents.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`VulkanError`] for an invalid logical extent, swapchain
-    /// acquisition, command recording, submission, or presentation failure.
-    pub fn present_clear(&mut self, logical_extent: [f32; 2]) -> Result<(), VulkanError> {
-        self.with_swapchain_retry(|renderer| renderer.present_clear_once(logical_extent))
-    }
-
-    fn present_clear_once(&mut self, logical_extent: [f32; 2]) -> Result<(), VulkanError> {
-        let report = self.ui_frames.present_clear(
-            UiFrameContext {
-                device: &self.device,
-                capture: self
-                    .capture
-                    .as_ref()
-                    .filter(|capture| !capture.captured)
-                    .or_else(|| {
-                        self.video_capture
-                            .as_ref()
-                            .and_then(|video| video.pending())
-                    }),
-                swapchain_loader: &self.swapchain_loader,
-                swapchain: self.swapchain,
-                swapchain_images: &self.swapchain_images,
-                image_views: &self.image_views,
-                graphics_queue: self.graphics_queue,
-                present_queue: self.present_queue,
-                graphics_queue_family: self.report.graphics_queue_family,
-                extent: self.report.extent,
-                pipelines: &self.ui_pipelines,
-                meshes: &self.ui_meshes,
-                texture_sets: &self.ui_texture_sets,
-            },
-            logical_extent,
-        )?;
-        debug_assert_eq!(report.draw_count(), 0);
-        self.is_idle = false;
-        Ok(())
-    }
-
-    fn present_ui_once(
-        &mut self,
-        logical_extent: [f32; 2],
-        draws: &[UiPreparedDraw],
-    ) -> Result<UiFrameReport, VulkanError> {
-        self.present_ui_with_overlay_once(logical_extent, draws, &[])
-    }
-
-    fn present_ui_with_overlay_once(
-        &mut self,
-        logical_extent: [f32; 2],
-        draws: &[UiPreparedDraw],
-        overlay: &[UiPreparedDraw],
-    ) -> Result<UiFrameReport, VulkanError> {
-        let report = self.ui_frames.present_composite(
-            UiFrameContext {
-                device: &self.device,
-                capture: self
-                    .capture
-                    .as_ref()
-                    .filter(|capture| !capture.captured)
-                    .or_else(|| {
-                        self.video_capture
-                            .as_ref()
-                            .and_then(|video| video.pending())
-                    }),
-                swapchain_loader: &self.swapchain_loader,
-                swapchain: self.swapchain,
-                swapchain_images: &self.swapchain_images,
-                image_views: &self.image_views,
-                graphics_queue: self.graphics_queue,
-                present_queue: self.present_queue,
-                graphics_queue_family: self.report.graphics_queue_family,
-                extent: self.report.extent,
-                pipelines: &self.ui_pipelines,
-                meshes: &self.ui_meshes,
-                texture_sets: &self.ui_texture_sets,
-            },
-            logical_extent,
-            draws,
-            overlay,
-        )?;
-        self.is_idle = false;
-        self.report.presented_ui_draw_count = Some(report.draw_count());
-        Ok(report)
-    }
-
     /// Creates or retrieves the graphics pipeline for one exact M2 draw state.
     ///
     /// # Errors
@@ -2351,24 +1994,28 @@ impl VulkanRenderer {
         ribbon_vertices: &[crate::M2RibbonRenderVertex],
         ribbon_draws: &[M2RibbonPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_world_frame_internal(
-                execution,
-                scene,
-                bone_transforms,
-                terrain_draws,
-                world_model_draws,
-                m2_draws,
-                particle_vertices,
-                particle_indices,
-                particle_draws,
-                ribbon_vertices,
-                ribbon_draws,
-                crate::WorldScreenWindow::FULL,
-                None,
-                None,
-            )
-        })
+        self.with_swapchain_retry_context(
+            execution,
+            |renderer, execution| {
+                renderer.present_world_frame_internal(
+                    execution,
+                    scene,
+                    bone_transforms,
+                    terrain_draws,
+                    world_model_draws,
+                    m2_draws,
+                    particle_vertices,
+                    particle_indices,
+                    particle_draws,
+                    ribbon_vertices,
+                    ribbon_draws,
+                    crate::WorldScreenWindow::FULL,
+                    None,
+                    None,
+                )
+            },
+            |execution, pending| execution.wait_for_gpu(pending),
+        )
     }
 
     /// Presents the unified model/effect scene followed by a loaded UI pass.
@@ -2399,28 +2046,32 @@ impl VulkanRenderer {
         ui_logical_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_world_frame_internal(
-                execution,
-                scene,
-                bone_transforms,
-                terrain_draws,
-                world_model_draws,
-                m2_draws,
-                particle_vertices,
-                particle_indices,
-                particle_draws,
-                ribbon_vertices,
-                ribbon_draws,
-                screen_window,
-                Some(WorldUiOverlay {
-                    logical_extent: ui_logical_extent,
-                    draws: ui_draws,
-                    overlay: &[],
-                }),
-                None,
-            )
-        })
+        self.with_swapchain_retry_context(
+            execution,
+            |renderer, execution| {
+                renderer.present_world_frame_internal(
+                    execution,
+                    scene,
+                    bone_transforms,
+                    terrain_draws,
+                    world_model_draws,
+                    m2_draws,
+                    particle_vertices,
+                    particle_indices,
+                    particle_draws,
+                    ribbon_vertices,
+                    ribbon_draws,
+                    screen_window,
+                    Some(WorldUiOverlay {
+                        logical_extent: ui_logical_extent,
+                        draws: ui_draws,
+                        overlay: &[],
+                    }),
+                    None,
+                )
+            },
+            |execution, pending| execution.wait_for_gpu(pending),
+        )
     }
 
     /// Presents the unified model/effect scene followed by two borrowed UI layers.
@@ -2447,28 +2098,32 @@ impl VulkanRenderer {
         ui_draws: &[UiPreparedDraw],
         ui_overlay_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_world_frame_internal(
-                execution,
-                scene,
-                bone_transforms,
-                terrain_draws,
-                world_model_draws,
-                m2_draws,
-                particle_vertices,
-                particle_indices,
-                particle_draws,
-                ribbon_vertices,
-                ribbon_draws,
-                screen_window,
-                Some(WorldUiOverlay {
-                    logical_extent: ui_logical_extent,
-                    draws: ui_draws,
-                    overlay: ui_overlay_draws,
-                }),
-                None,
-            )
-        })
+        self.with_swapchain_retry_context(
+            execution,
+            |renderer, execution| {
+                renderer.present_world_frame_internal(
+                    execution,
+                    scene,
+                    bone_transforms,
+                    terrain_draws,
+                    world_model_draws,
+                    m2_draws,
+                    particle_vertices,
+                    particle_indices,
+                    particle_draws,
+                    ribbon_vertices,
+                    ribbon_draws,
+                    screen_window,
+                    Some(WorldUiOverlay {
+                        logical_extent: ui_logical_extent,
+                        draws: ui_draws,
+                        overlay: ui_overlay_draws,
+                    }),
+                    None,
+                )
+            },
+            |execution, pending| execution.wait_for_gpu(pending),
+        )
     }
 
     /// Presents a ModelFFX scene through stock glow/gamma before loaded UI.
@@ -2491,28 +2146,32 @@ impl VulkanRenderer {
         ui_logical_extent: [f32; 2],
         ui_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_world_frame_internal(
-                execution,
-                scene,
-                bone_transforms,
-                terrain_draws,
-                world_model_draws,
-                m2_draws,
-                particle_vertices,
-                particle_indices,
-                particle_draws,
-                ribbon_vertices,
-                ribbon_draws,
-                screen_window,
-                Some(WorldUiOverlay {
-                    logical_extent: ui_logical_extent,
-                    draws: ui_draws,
-                    overlay: &[],
-                }),
-                Some(glow),
-            )
-        })
+        self.with_swapchain_retry_context(
+            execution,
+            |renderer, execution| {
+                renderer.present_world_frame_internal(
+                    execution,
+                    scene,
+                    bone_transforms,
+                    terrain_draws,
+                    world_model_draws,
+                    m2_draws,
+                    particle_vertices,
+                    particle_indices,
+                    particle_draws,
+                    ribbon_vertices,
+                    ribbon_draws,
+                    screen_window,
+                    Some(WorldUiOverlay {
+                        logical_extent: ui_logical_extent,
+                        draws: ui_draws,
+                        overlay: &[],
+                    }),
+                    Some(glow),
+                )
+            },
+            |execution, pending| execution.wait_for_gpu(pending),
+        )
     }
 
     /// Presents ModelFFX glow followed by two borrowed UI draw layers.
@@ -2540,28 +2199,32 @@ impl VulkanRenderer {
         ui_draws: &[UiPreparedDraw],
         ui_overlay_draws: &[UiPreparedDraw],
     ) -> Result<WorldFrameReport, VulkanError> {
-        self.with_swapchain_retry(|renderer| {
-            renderer.present_world_frame_internal(
-                execution,
-                scene,
-                bone_transforms,
-                terrain_draws,
-                world_model_draws,
-                m2_draws,
-                particle_vertices,
-                particle_indices,
-                particle_draws,
-                ribbon_vertices,
-                ribbon_draws,
-                screen_window,
-                Some(WorldUiOverlay {
-                    logical_extent: ui_logical_extent,
-                    draws: ui_draws,
-                    overlay: ui_overlay_draws,
-                }),
-                Some(glow),
-            )
-        })
+        self.with_swapchain_retry_context(
+            execution,
+            |renderer, execution| {
+                renderer.present_world_frame_internal(
+                    execution,
+                    scene,
+                    bone_transforms,
+                    terrain_draws,
+                    world_model_draws,
+                    m2_draws,
+                    particle_vertices,
+                    particle_indices,
+                    particle_draws,
+                    ribbon_vertices,
+                    ribbon_draws,
+                    screen_window,
+                    Some(WorldUiOverlay {
+                        logical_extent: ui_logical_extent,
+                        draws: ui_draws,
+                        overlay: ui_overlay_draws,
+                    }),
+                    Some(glow),
+                )
+            },
+            |execution, pending| execution.wait_for_gpu(pending),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2693,6 +2356,7 @@ impl VulkanRenderer {
         }
         let report = self.world_frames.present(
             WorldFrameContext {
+                gpu_completion: self.gpu_completion.as_mut(),
                 device: &self.device,
                 allocator,
                 capture: self

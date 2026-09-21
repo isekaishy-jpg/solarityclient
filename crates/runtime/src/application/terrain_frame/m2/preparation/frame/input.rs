@@ -22,14 +22,16 @@ pub(super) struct FrameView {
 /// The placement cursor stays in M2Frame; this state prevents repeat publication
 /// of the effect tail when traversal resumes after an unfinished root palette.
 pub(super) struct FrameAdmission {
+    pub(super) storage: solarity_cpu::CpuStorageBudget,
     pub(super) work: super::super::diagnostics::Work,
     pub(super) effects_published: bool,
     pub(super) complete: bool,
 }
 
 impl FrameAdmission {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(storage: solarity_cpu::CpuStorageBudget) -> Self {
         Self {
+            storage,
             work: super::super::diagnostics::Work::new(),
             effects_published: false,
             complete: false,

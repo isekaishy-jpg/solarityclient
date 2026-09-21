@@ -2,6 +2,7 @@
 
 mod mesh;
 mod pose;
+mod storage;
 mod trail;
 mod vertex;
 

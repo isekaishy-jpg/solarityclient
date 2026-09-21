@@ -1,8 +1,24 @@
 //! Nested skeletal allocations remain charged across worker/result ownership.
 
 use solarity_cpu::{CpuStorageBudget, CpuStorageClass, CpuStoragePlan};
-use solarity_rendering::M2BonePose;
+use solarity_rendering::{M2BonePose, M2BoneSamples};
 use std::error::Error;
+
+/// Named sampling retains both its ancestor mask and nested palette scratch.
+#[test]
+fn named_samples_own_all_nested_capacity() -> Result<(), Box<dyn Error>> {
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(1 << 20, 1 << 20, 1 << 20));
+    let mut samples = M2BoneSamples::default();
+    samples.reserve_cpu_storage(&budget, 128)?;
+    let bytes = samples.allocated_bytes();
+    assert!(bytes > 128 * 128);
+    assert_eq!(budget.snapshot().used(CpuStorageClass::Frame), bytes);
+    samples.reserve_cpu_storage(&budget, 32)?;
+    assert_eq!(samples.allocated_bytes(), bytes);
+    drop(samples);
+    assert_eq!(budget.snapshot().used(CpuStorageClass::Frame), 0);
+    Ok(())
+}
 
 /// A pose carries its charge through swaps and drops it only with its actual arrays.
 #[test]

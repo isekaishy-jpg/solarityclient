@@ -9,8 +9,8 @@ mod types;
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::gpu_completion::{GpuCompletion, GpuCompletionService, acquire_image};
 use crate::device::vulkan_capture::FrameReadback;
-use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
 use crate::device::vulkan_ui_pipeline::UiPipelineRegistry;
@@ -24,6 +24,7 @@ pub use types::UiFrameReport;
 
 /// Borrowed renderer graph required to present one immutable UI generation.
 pub(in crate::device) struct UiFrameContext<'a> {
+    pub(in crate::device) gpu_completion: Option<&'a mut GpuCompletionService>,
     pub(in crate::device) device: &'a Device,
     pub(in crate::device) capture: Option<&'a FrameReadback>,
     pub(in crate::device) swapchain_loader: &'a ash::khr::swapchain::Device,
@@ -69,11 +70,12 @@ impl UiFrameRenderer {
         logical_extent: [f32; 2],
         draws: &[UiPreparedDraw],
         overlay: &[UiPreparedDraw],
+        service_native: &mut impl FnMut(&GpuCompletion<'_>) -> Result<(), VulkanError>,
     ) -> Result<UiFrameReport, VulkanError> {
         if draws.is_empty() && overlay.is_empty() {
             return Err(VulkanError::EmptyUiFrame);
         }
-        self.present_inner(context, logical_extent, draws, overlay)
+        self.present_inner(context, logical_extent, draws, overlay, service_native)
     }
 
     /// Clears and presents one swapchain image without requiring UI geometry.
@@ -82,15 +84,18 @@ impl UiFrameRenderer {
         context: UiFrameContext<'_>,
         logical_extent: [f32; 2],
     ) -> Result<UiFrameReport, VulkanError> {
-        self.present_inner(context, logical_extent, &[], &[])
+        self.present_inner(context, logical_extent, &[], &[], &mut |pending| {
+            pending.wait()
+        })
     }
 
     fn present_inner(
         &mut self,
-        context: UiFrameContext<'_>,
+        mut context: UiFrameContext<'_>,
         logical_extent: [f32; 2],
         draws: &[UiPreparedDraw],
         overlay: &[UiPreparedDraw],
+        service_native: &mut impl FnMut(&GpuCompletion<'_>) -> Result<(), VulkanError>,
     ) -> Result<UiFrameReport, VulkanError> {
         let _profile_scope =
             solarity_profiling::profile!("rendering.device.vulkan_ui_frame.mod.present_inner");
@@ -118,17 +123,13 @@ impl UiFrameRenderer {
                 timestamps = Some(slot.timestamps.ensure(context.device)?);
             }
             let _acquire_profile = solarity_profiling::profile!("rendering.ui.acquire_image");
-            // SAFETY: The swapchain and acquire semaphore remain live until
-            // this exact image is submitted and presented below.
-            unsafe {
-                context.swapchain_loader.acquire_next_image(
-                    context.swapchain,
-                    u64::MAX,
-                    slot.image_available(),
-                    vk::Fence::null(),
-                )
-            }
-            .map_err(|source| swapchain_error("acquire UI frame image", source))?
+            acquire_image(
+                context.swapchain_loader,
+                context.swapchain,
+                slot.image_available(),
+                context.gpu_completion.as_deref_mut(),
+                service_native,
+            )?
         };
         let present_semaphore = self.resources.present_semaphore(image_index)?;
         let image = context

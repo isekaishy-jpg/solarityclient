@@ -5,7 +5,7 @@ use std::sync::Arc;
 use solarity_cpu::CoordinatorNotifier;
 
 use super::VulkanRenderer;
-use crate::device::gpu_completion::GpuCompletionService;
+use crate::device::gpu_completion::{GpuCompletionService, HostOperation, HostOutput};
 use crate::device::{CinematicFrameIdentity, GpuCompletion, VulkanError};
 
 /// Independent presentation rings; waiting one never drains the other rings.
@@ -76,13 +76,44 @@ impl VulkanRenderer {
             ));
         }
         let device = self.device.clone();
+        let swapchain_loader = self.swapchain_loader.clone();
         self.gpu_completion = Some(GpuCompletionService::new(
-            move |fence| {
-                // SAFETY: wait_for_frame_slot keeps the renderer exclusively
-                // borrowed until host completion, including error/unwind drain.
-                // Submission has returned; reset/destroy cannot run concurrently.
-                // Renderer drop joins this thread before destroying the device.
-                unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }
+            move |operation| {
+                // SAFETY: The scoped wait/presentation keeps the renderer exclusively
+                // borrowed through host completion, including error/unwind drain.
+                // No reset, swapchain recreation, submission or destruction can
+                // access these handles concurrently. Drop joins before device teardown.
+                match operation {
+                    HostOperation::DeviceIdle => {
+                        let _profile =
+                            solarity_profiling::profile!("rendering.gpu_completion.device_idle");
+                        // SAFETY: The exclusive renderer borrow prevents queue
+                        // submission and resource teardown until this host call returns.
+                        unsafe { device.device_wait_idle() }.map(|()| HostOutput::Complete)
+                    }
+                    HostOperation::Fence(fence) => {
+                        unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }
+                            .map(|()| HostOutput::Complete)
+                    }
+                    HostOperation::Acquire {
+                        swapchain,
+                        semaphore,
+                    } => {
+                        let _profile =
+                            solarity_profiling::profile!("rendering.gpu_completion.acquire");
+                        // SAFETY: The same exclusive ownership above also retains
+                        // the current swapchain and this slot's acquire semaphore.
+                        unsafe {
+                            swapchain_loader.acquire_next_image(
+                                swapchain,
+                                u64::MAX,
+                                semaphore,
+                                ash::vk::Fence::null(),
+                            )
+                        }
+                        .map(|(index, suboptimal)| HostOutput::Acquired { index, suboptimal })
+                    }
+                }
             },
             notifier,
         )?);

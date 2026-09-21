@@ -26,14 +26,14 @@ impl EnvironmentShadowImages {
         depth_format: vk::Format,
         quality: WorldShadowQuality,
         cache_id: u64,
+        wait_idle: impl FnOnce() -> Result<(), VulkanError>,
     ) -> Result<(), VulkanError> {
         if self.quality == Some(quality) && self.cache_id == cache_id {
             return Ok(());
         }
-        // SAFETY: Quality transitions are rare. Retire every old descriptor user
+        // Quality transitions are rare. Retire every old descriptor user
         // before destroying shared images, including slots other than the next one.
-        unsafe { device.device_wait_idle() }
-            .map_err(|source| VulkanError::operation("retire environment shadow images", source))?;
+        wait_idle()?;
         self.destroy(device, allocator);
         let size = quality
             .texture_size()

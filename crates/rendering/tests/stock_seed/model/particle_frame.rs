@@ -77,7 +77,8 @@ fn retired_particle_emitters_drain_without_births_or_resetting_history()
         };
         let mut simulation = M2ParticleSimulation::new(0x0029_4823);
         assert_eq!(advance(&mut simulation, pose, 0.07)?.emitted(), 1);
-        let mut authored_gate = simulation.clone();
+        let mut authored_gate = M2ParticleSimulation::new(0x0029_4823);
+        assert_eq!(advance(&mut authored_gate, pose, 0.07)?.emitted(), 1);
         let original = simulation.particles()[0];
         let remainder = simulation.emission_remainder();
         assert_ne!(remainder, 0.0);

@@ -125,17 +125,13 @@ impl RuntimeCinematicCoordinator {
         let identity = CinematicFrameIdentity::new(active.generation, active.frame_index);
         wait.before_cinematic_source(renderer, source_extent, identity)?;
         wait.before_gpu_frame(renderer, solarity_rendering::GpuFrameKind::Cinematic)?;
-        if let Some((logical_extent, draws)) = overlay {
-            renderer.present_cinematic_rgba8_with_ui(
-                identity,
-                source_extent,
-                active.current.rgba8(),
-                logical_extent,
-                draws,
-            )?;
-        } else {
-            renderer.present_cinematic_rgba8(identity, source_extent, active.current.rgba8())?;
-        }
+        renderer.present_cinematic_serviced(
+            identity,
+            source_extent,
+            active.current.rgba8(),
+            overlay,
+            &mut |pending| wait.service_gpu(pending),
+        )?;
         active.presented_frame_index = Some(active.frame_index);
         Ok(RuntimeCinematicPoll::Presented)
     }

@@ -9,6 +9,7 @@ mod types;
 use ash::{Device, vk};
 
 use crate::device::VulkanError;
+use crate::device::gpu_completion::{GpuCompletion, GpuCompletionService, acquire_image};
 use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_ui_draw::UiPreparedDraw;
 use crate::device::vulkan_ui_mesh::UiMeshRegistry;
@@ -31,6 +32,7 @@ pub(super) struct FrameUiContext<'a> {
 
 /// Borrowed live Vulkan objects needed for one presentation.
 pub(super) struct FrameContext<'a> {
+    pub(super) gpu_completion: Option<&'a mut GpuCompletionService>,
     pub(super) device: &'a Device,
     pub(super) allocator: &'a vk_mem::Allocator,
     pub(super) capture: Option<&'a FrameReadback>,
@@ -71,7 +73,11 @@ impl FrameRenderer {
     }
 
     /// Uploads a changed authored frame and presents it without CPU resampling.
-    pub(super) fn present(&mut self, context: FrameContext<'_>) -> Result<bool, VulkanError> {
+    pub(super) fn present(
+        &mut self,
+        mut context: FrameContext<'_>,
+        service_native: &mut impl FnMut(&GpuCompletion<'_>) -> Result<(), VulkanError>,
+    ) -> Result<bool, VulkanError> {
         let _profile_scope =
             solarity_profiling::profile!("rendering.device.vulkan_frame.mod.present");
         validate_pixels(context.source_extent, context.rgba8)?;
@@ -102,16 +108,13 @@ impl FrameRenderer {
         let (image_index, _suboptimal) = {
             let slot = self.resources.slot_mut(slot_index)?;
             slot.wait_and_reset(context.device)?;
-            // SAFETY: The swapchain and semaphore stay live through submission.
-            unsafe {
-                context.swapchain_loader.acquire_next_image(
-                    context.swapchain,
-                    u64::MAX,
-                    slot.image_available(),
-                    vk::Fence::null(),
-                )
-            }
-            .map_err(|source| swapchain_error("acquire cinematic frame image", source))?
+            acquire_image(
+                context.swapchain_loader,
+                context.swapchain,
+                slot.image_available(),
+                context.gpu_completion.as_deref_mut(),
+                service_native,
+            )?
         };
         let present_semaphore = self.resources.present_semaphore(image_index)?;
         let image = context

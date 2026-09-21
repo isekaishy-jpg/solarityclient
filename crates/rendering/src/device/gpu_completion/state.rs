@@ -1,10 +1,11 @@
-//! Durable completion state retained through the last host access to a fence.
+//! Durable completion state retained through the last driver access to pinned handles.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 
 use ash::vk;
 
+use super::{HostOperation, HostOutput};
 use crate::device::VulkanError;
 
 /// Driver errors and backend panics both release the scoped host-wait owner.
@@ -14,17 +15,18 @@ pub(super) enum CompletionFailure {
     Panicked,
 }
 
-pub(super) type Outcome = Result<(), CompletionFailure>;
+pub(super) type Outcome = Result<HostOutput, CompletionFailure>;
 
 /// The single owned request carries its admitting frame to the driver-wait thread.
 pub(super) struct Request {
-    pub(super) fence: vk::Fence,
+    pub(super) operation: HostOperation,
     pub(super) trace: solarity_profiling::TraceContext,
 }
 
 /// Exactly one request may be active. Its caller drains before another begins.
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) operation: Option<HostOperation>,
     pub(super) request: Option<Request>,
     pub(super) outcome: Option<Outcome>,
     pub(super) stopping: bool,
@@ -83,16 +85,33 @@ impl GpuCompletion<'_> {
         self.shared.ready.load(Ordering::Acquire)
     }
 
-    /// Consumes the driver outcome only after it has stopped using the fence.
-    pub(super) fn finish(&self) -> Result<(), VulkanError> {
+    /// Consumes the driver outcome only after it has stopped using pinned handles.
+    pub(super) fn finish(&self) -> Result<HostOutput, VulkanError> {
+        let operation = self.shared.lock().operation.unwrap_or_else(|| {
+            unreachable!("a scoped GPU completion retains its operation identity")
+        });
         self.shared.drain().map_err(|failure| match failure {
-            CompletionFailure::Driver(source) => {
-                VulkanError::operation("wait for GPU frame slot", source)
-            }
+            CompletionFailure::Driver(source) => match operation {
+                HostOperation::Fence(_) | HostOperation::DeviceIdle => {
+                    VulkanError::operation(operation.name(), source)
+                }
+                HostOperation::Acquire { .. } => {
+                    crate::device::vulkan_frame::swapchain_error(operation.name(), source)
+                }
+            },
             CompletionFailure::Panicked => {
-                VulkanError::operation("wait for GPU frame slot", "completion backend panicked")
+                VulkanError::operation(operation.name(), "completion backend panicked")
             }
         })
+    }
+
+    /// Waits synchronously for an explicitly offline renderer. Native callers
+    /// service their platform wake bridge using `is_ready` instead.
+    ///
+    /// # Errors
+    /// Returns the original driver or host-backend failure after ownership drains.
+    pub fn wait(&self) -> Result<(), VulkanError> {
+        self.finish().map(|_| ())
     }
 }
 

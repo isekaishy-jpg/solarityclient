@@ -2,5 +2,6 @@
 
 mod capacity;
 mod state;
+mod storage;
 
 pub use state::{M2ParticleSimulation, M2ParticleSimulationError, M2ParticleSimulationReport};

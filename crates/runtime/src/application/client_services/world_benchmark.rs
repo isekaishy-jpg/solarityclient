@@ -390,7 +390,7 @@ impl ClientServices {
             self.loading_screen
                 .as_mut()
                 .ok_or(WorldBenchmarkError::State("missing loading card"))?
-                .present(&mut self.renderer, &[])?;
+                .present(&mut self.renderer, &[], &mut |pending| pending.wait())?;
             if terrain_ready && detail_ready {
                 break;
             }

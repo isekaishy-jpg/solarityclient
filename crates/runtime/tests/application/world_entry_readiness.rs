@@ -148,7 +148,7 @@ fn installed_world_entry_waits_for_camera_terrain_and_detail() -> Result<(), Box
         if !terrain_ready || !detail_ready {
             assert!(!loading.ready_to_complete());
         }
-        loading.present(&mut services.renderer, &[])?;
+        loading.present(&mut services.renderer, &[], &mut |pending| pending.wait())?;
         if loading.ready_to_complete() {
             assert!(terrain_ready && detail_ready);
             assert_eq!(services.terrain.resident_tile_count(), 49);

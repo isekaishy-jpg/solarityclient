@@ -222,9 +222,17 @@ impl PreparedUiFrame {
         &self,
         renderer: &mut VulkanRenderer,
         overlay: &[UiPreparedDraw],
+        service_native: &mut impl FnMut(
+            &solarity_rendering::GpuCompletion<'_>,
+        ) -> Result<(), VulkanError>,
     ) -> Result<UiFrameReport, ApplicationError> {
         renderer
-            .present_ui_with_overlay(self.logical_extent, &self.draws, overlay)
+            .present_ui_with_overlay_serviced(
+                self.logical_extent,
+                &self.draws,
+                overlay,
+                service_native,
+            )
             .map_err(ApplicationError::from)
     }
 

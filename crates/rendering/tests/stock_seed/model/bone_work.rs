@@ -45,6 +45,12 @@ fn empty_bone_locals_preserve_out_of_order_parents_and_changing_overrides()
     assert!(!model.animations().has_identity_bone_local(2));
     let mut pose = M2BonePose::default();
     let mut samples = M2BoneSamples::default();
+    let budget = solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(
+        1 << 20,
+        1 << 20,
+        1 << 20,
+    ));
+    samples.reserve_cpu_storage(&budget, model.animations().bones().len())?;
     for (time, extra) in [(500., 0.), (500., 3.), (750., 0.)] {
         let overrides = [(0, Mat4::from_translation(Vec3::Y * extra))];
         pose.recompose_with_overrides(

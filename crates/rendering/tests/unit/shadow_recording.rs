@@ -39,6 +39,9 @@ impl WorldFrameExecution for InterruptedWait<'_> {
     fn executor(&self) -> &CpuExecutor {
         self.cpu
     }
+    fn wait_for_gpu(&mut self, completion: &crate::GpuCompletion<'_>) -> Result<(), VulkanError> {
+        completion.wait()
+    }
     fn wait_for_recording(&mut self, _: &WorldRecordingCompletion<'_>) -> Result<(), VulkanError> {
         RELEASE.store(true, Ordering::Release);
         assert!(!self.unwind, "intentional native servicing unwind");

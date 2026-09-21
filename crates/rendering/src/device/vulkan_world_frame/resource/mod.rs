@@ -672,7 +672,11 @@ impl WorldFrameResources {
         self.slots.get(self.next_slot).map(|slot| slot.fence())
     }
 
-    pub(super) fn ensure(&mut self, context: FrameCreateContext<'_>) -> Result<(), VulkanError> {
+    pub(super) fn ensure(
+        &mut self,
+        context: FrameCreateContext<'_>,
+        wait_idle: impl FnOnce() -> Result<(), VulkanError>,
+    ) -> Result<(), VulkanError> {
         if !self.slots.is_empty()
             && self.slots.len() == context.slot_count
             && self.world_model_draw_capacity >= context.world_model_draw_capacity
@@ -735,10 +739,9 @@ impl WorldFrameResources {
         };
         let layout = FrameBufferLayout::new(&expanded)?;
         if self.slots.len() != expanded.slot_count || self.extent != expanded.extent {
-            // SAFETY: Surface changes invalidate depth and presentation resources.
-            unsafe { expanded.device.device_wait_idle() }.map_err(|source| {
-                VulkanError::operation("idle before world frame rebuild", source)
-            })?;
+            // Surface changes still retire every old depth/presentation user.
+            // The caller supplies the native or explicit offline wait policy.
+            wait_idle()?;
             self.destroy(expanded.device, expanded.allocator);
             let mut slots = Vec::with_capacity(expanded.slot_count);
             for _ in 0..expanded.slot_count {

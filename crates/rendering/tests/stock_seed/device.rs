@@ -9,7 +9,7 @@ use std::thread::{self, Thread};
 use solarity_rendering::{CinematicFrameIdentity, VulkanBootstrap, VulkanError};
 
 /// Mirrors a coalesced native wake without requiring a visible test window.
-struct GpuSignal(Thread);
+pub(super) struct GpuSignal(pub(super) Thread);
 
 impl solarity_cpu::CoordinatorNotifier for GpuSignal {
     fn notify(&self) {
@@ -18,7 +18,9 @@ impl solarity_cpu::CoordinatorNotifier for GpuSignal {
 }
 
 /// Uses durable completion and a coalesced wake; the deadline only detects hangs.
-fn service_gpu(completion: &solarity_rendering::GpuCompletion<'_>) -> Result<(), VulkanError> {
+pub(super) fn service_gpu(
+    completion: &solarity_rendering::GpuCompletion<'_>,
+) -> Result<(), VulkanError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !completion.is_ready() {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -55,23 +57,23 @@ fn cinematic_frame_reuses_the_authored_source_between_display_refreshes()
         .wait_for_frame_slot::<VulkanError>(solarity_rendering::GpuFrameKind::Cinematic, |_| {
             panic!("an unallocated frame ring must not enter native waiting")
         })?;
-    renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
+    renderer.present_cinematic_serviced(identity, (32, 16), &pixels, None, &mut service_gpu)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(false));
     renderer.wait_for_cinematic_source::<VulkanError>((32, 16), identity, |_| {
         panic!("unchanged movie pixels cannot drain unrelated slots")
     })?;
-    renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
+    renderer.present_cinematic_serviced(identity, (32, 16), &pixels, None, &mut service_gpu)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(true));
     let identity = CinematicFrameIdentity::new(7, 12);
     renderer.wait_for_cinematic_source((32, 16), identity, service_gpu)?;
-    renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
+    renderer.present_cinematic_serviced(identity, (32, 16), &pixels, None, &mut service_gpu)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(false));
     for _ in 0..16 {
         renderer.wait_for_frame_slot::<VulkanError>(
             solarity_rendering::GpuFrameKind::Cinematic,
             service_gpu,
         )?;
-        renderer.present_cinematic_rgba8(identity, (32, 16), &pixels)?;
+        renderer.present_cinematic_serviced(identity, (32, 16), &pixels, None, &mut service_gpu)?;
         assert_eq!(renderer.report().presented_source_reused(), Some(true));
     }
     // Replacing the source extent uses the same complete reader boundary. A
@@ -80,7 +82,7 @@ fn cinematic_frame_reuses_the_authored_source_between_display_refreshes()
     let identity = CinematicFrameIdentity::new(8, 0);
     renderer.wait_for_cinematic_source((16, 32), identity, service_gpu)?;
     renderer.request_frame_capture()?;
-    renderer.present_cinematic_rgba8(identity, (16, 32), &pixels)?;
+    renderer.present_cinematic_serviced(identity, (16, 32), &pixels, None, &mut service_gpu)?;
     assert_eq!(renderer.report().presented_source_reused(), Some(false));
     let capture = renderer.take_captured_frame()?.ok_or("movie capture")?;
     let (width, height) = capture.extent();

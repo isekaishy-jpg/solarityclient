@@ -25,6 +25,13 @@ impl WorldFrameExecution for RecordingWait<'_, '_> {
         self.cpu
     }
 
+    fn wait_for_gpu(
+        &mut self,
+        completion: &solarity_rendering::GpuCompletion<'_>,
+    ) -> Result<(), VulkanError> {
+        self.wait.service_gpu(completion)
+    }
+
     fn wait_for_recording(
         &mut self,
         completion: &WorldRecordingCompletion<'_>,

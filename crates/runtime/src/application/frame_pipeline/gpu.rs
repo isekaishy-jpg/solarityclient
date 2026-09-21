@@ -14,6 +14,21 @@ pub(in crate::application) enum GpuFrameWaitError {
 }
 
 impl FrameWait<'_> {
+    /// Services a renderer-owned host operation without dispatching gameplay events.
+    pub(in crate::application) fn service_gpu(
+        &mut self,
+        completion: &solarity_rendering::GpuCompletion<'_>,
+    ) -> Result<(), solarity_rendering::VulkanError> {
+        match self {
+            Self::Offline => completion.wait(),
+            Self::Native(platform) => platform
+                .wait_until_ready(|| Ok::<_, GpuFrameWaitError>(completion.is_ready()))
+                .map_err(|error| solarity_rendering::VulkanError::Operation {
+                    operation: "service GPU dependency",
+                    message: error.to_string(),
+                }),
+        }
+    }
     /// A new authored movie frame replaces one image shared by every slot. Drain
     /// those readers through the native bridge before the existing upload owner
     /// writes pixels; decoded timing and audio selection remain unchanged.

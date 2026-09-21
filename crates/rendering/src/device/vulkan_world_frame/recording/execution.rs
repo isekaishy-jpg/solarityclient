@@ -10,6 +10,12 @@ pub trait WorldFrameExecution {
     /// Existing application pool used by the required recording phase.
     fn executor(&self) -> &CpuExecutor;
 
+    /// Services platform events while the renderer retains a pending host operation.
+    /// The acquired image, semaphore and current camera remain renderer-owned.
+    /// # Errors
+    /// Returns native or GPU errors; the renderer drains host ownership on failure.
+    fn wait_for_gpu(&mut self, completion: &crate::GpuCompletion<'_>) -> Result<(), VulkanError>;
+
     /// Services the coordinator until recording is ready; payloads remain renderer-owned.
     /// An error still causes unconditional job reclamation before resources are released.
     /// # Errors
@@ -24,6 +30,9 @@ pub trait WorldFrameExecution {
 impl WorldFrameExecution for &CpuExecutor {
     fn executor(&self) -> &CpuExecutor {
         self
+    }
+    fn wait_for_gpu(&mut self, completion: &crate::GpuCompletion<'_>) -> Result<(), VulkanError> {
+        completion.wait()
     }
     fn wait_for_recording(
         &mut self,

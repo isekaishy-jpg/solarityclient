@@ -147,7 +147,7 @@ impl M2Frame {
                 world_lighting,
                 shadow_projection,
             },
-            admission: FrameAdmission::new(),
+            admission: FrameAdmission::new(cpu.storage().clone()),
             trace,
             stage: super::progress::FrameStage::Admission,
             publication: super::super::geometry::GeometryPublication::default(),

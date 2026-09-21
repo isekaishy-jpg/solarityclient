@@ -19,6 +19,14 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+[Effect storage and native GPU waits](cpu-effect-storage-and-gpu-waits.md) connect
+particle/free-slot pools, fixed ribbon history and named-bone scratch to allocation
+ownership. World/Glue, UI/loading and cinematic acquisition use the existing GPU
+completion thread, with native servicing at world resource/quality barriers and
+swapchain retirement. The current source retains stock simulation and camera order;
+formatting, workspace Clippy and all 1,659 tests pass (zero failures, 33 existing
+ignored). This does not complete the remaining architecture listed below.
+
 [Service execution and skeletal ownership](cpu-service-execution-cutover.md) now
 separate finite/bulk eligibility from request urgency, remove the one-runner loading
 graph restriction, and scale the default flexible capacity with configured compute
@@ -807,12 +815,15 @@ an operation has a context parameter. The requirements below remain in scope.
   complete required phase working set. Executor-wide scheduler metadata and typed
   result-page accounting now exist; model output, override buffers and retained
   geometry job records, final frame streams and owned full skeletal palettes now
-  adopt it. Live effect simulation, named CPU bone samples, ordinary asset buffers
+  adopt it. Dispatched live effect simulation and named CPU bone samples now carry
+  reservations as well. Other resident effect owners, ordinary asset buffers
   and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
-- Extend native servicing to loading dependencies, GPU upload/acquire/growth waits
-  and further useful main-ready continuations; world preparation and
-  presentation-slot waits and required shadow-recording joins are connected.
+- Extend native servicing to loading dependencies, remaining GPU upload waits
+  and further useful main-ready continuations. World preparation,
+  presentation-slot waits and required shadow-recording joins are connected;
+  world/Glue, UI/loading and cinematic acquisition, world resource/quality
+  retirement and native swapchain recreation now use the completion service.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
 - Extend cross-domain overlap beyond the connected ground-detail/WMO and

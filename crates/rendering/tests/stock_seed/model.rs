@@ -6,6 +6,8 @@ mod body_pose;
 mod bone_work;
 #[path = "model/effect_opacity.rs"]
 mod effect_opacity;
+#[path = "model/effect_storage.rs"]
+mod effect_storage;
 #[path = "model/file_filtering.rs"]
 mod file_filtering;
 #[path = "model/mesh_transfer.rs"]

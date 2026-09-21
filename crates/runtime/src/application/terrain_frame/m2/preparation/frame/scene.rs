@@ -73,6 +73,17 @@ impl M2Frame {
             self.compact_sources();
         }
         self.publish_placement_topology();
+        // Scene callbacks run before draw admission and may sample offscreen roots.
+        // Admit their shared named-bone scratch against all current source bounds.
+        self.bone_samples_scratch.reserve_cpu_storage(
+            cpu.storage(),
+            self.sources
+                .iter()
+                .flatten()
+                .map(|source| source.model.animations().bones().len())
+                .max()
+                .unwrap_or(0),
+        )?;
         frame_profile.mark("residency and topology");
         self.vehicle_passengers.prepare_timing(
             self.placements.as_mut_slice(),

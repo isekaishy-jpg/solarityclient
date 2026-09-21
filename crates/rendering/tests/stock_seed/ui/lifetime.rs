@@ -24,6 +24,9 @@ fn glyph_updates_mesh_growth_and_descriptor_retirement_preserve_pixels()
     let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
     // SAFETY: SDL transfers sole surface ownership; the window outlives the renderer.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
+    renderer.configure_frame_waits(std::sync::Arc::new(super::super::device::GpuSignal(
+        std::thread::current(),
+    )))?;
     let sampler = renderer.prepare_ui_sampler(UiSamplerInfo::new(
         UiTextureAddressMode::Clamp,
         UiTextureAddressMode::Clamp,
@@ -59,7 +62,12 @@ fn glyph_updates_mesh_growth_and_descriptor_retirement_preserve_pixels()
             };
             let draw = renderer.prepare_ui_draw(handle, pipeline, Some(set), &plan, 0)?;
             renderer.request_frame_capture()?;
-            renderer.present_ui([64.0; 2], &[draw])?;
+            renderer.present_ui_with_overlay_serviced(
+                [64.0; 2],
+                &[draw],
+                &[],
+                &mut super::super::device::service_gpu,
+            )?;
             let capture = renderer
                 .take_captured_frame()?
                 .ok_or("missing UI capture")?;
@@ -86,7 +94,12 @@ fn glyph_updates_mesh_growth_and_descriptor_retirement_preserve_pixels()
         renderer.replace_ui_mesh(handle, &plan)?;
         let draw = renderer.prepare_ui_draw(handle, pipeline, Some(set), &plan, 0)?;
         renderer.request_frame_capture()?;
-        renderer.present_ui([64.0; 2], &[draw])?;
+        renderer.present_ui_with_overlay_serviced(
+            [64.0; 2],
+            &[draw],
+            &[],
+            &mut super::super::device::service_gpu,
+        )?;
         let capture = renderer
             .take_captured_frame()?
             .ok_or("missing updated UI capture")?;

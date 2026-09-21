@@ -16,9 +16,50 @@ pub struct M2BoneSamples {
     scratch: M2BonePose,
     required: Vec<bool>,
     valid: bool,
+    /// Released after the ancestor-selection allocation and its pose scratch.
+    memory: Option<solarity_cpu::ByteReservation>,
 }
 
 impl M2BoneSamples {
+    /// Admits ancestor-selection storage and the complete reusable pose scratch.
+    /// This changes no selected bones or sampled values.
+    ///
+    /// # Errors
+    /// Reports byte pressure or allocation failure before sampling starts.
+    pub fn reserve_cpu_storage(
+        &mut self,
+        budget: &solarity_cpu::CpuStorageBudget,
+        bones: usize,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        use solarity_cpu::{CpuStorageClass, CpuStorageKind};
+        self.scratch.reserve_cpu_storage(budget, bones)?;
+        let class = CpuStorageClass::Frame;
+        let kind = CpuStorageKind::Scratch;
+        if let Some(memory) = &mut self.memory {
+            memory.transfer(budget, class, kind)?;
+        } else {
+            self.memory = Some(budget.reserve(class, kind, self.required.capacity())?);
+        }
+        if bones > self.required.capacity() {
+            let mut memory = budget.reserve(class, kind, bones)?;
+            let mut required = Vec::new();
+            required
+                .try_reserve_exact(bones)
+                .map_err(|_| solarity_cpu::CpuError::StorageAllocation)?;
+            required.extend_from_slice(&self.required);
+            memory.resize(required.capacity())?;
+            self.required = required;
+            self.memory = Some(memory);
+        }
+        Ok(())
+    }
+
+    /// Actual retained ancestor marks and nested skeletal working arrays.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        self.scratch.allocated_bytes() + self.required.capacity()
+    }
+
     /// Samples requested bones and every ancestor using the full-pose arithmetic.
     /// Replaces the complete prior request, including after model replacement.
     ///
@@ -36,6 +77,12 @@ impl M2BoneSamples {
             "rendering.model.m2_animation.pose.compose.samples.recompose"
         );
         self.valid = false;
+        if self.memory.is_some() && animations.bones().len() > self.required.capacity() {
+            return Err(M2BonePoseError::StorageCapacity {
+                requested: animations.bones().len(),
+                available: self.required.capacity(),
+            });
+        }
         self.required.resize(animations.bones().len(), false);
         self.required.fill(false);
         for &bone in bones {

@@ -10,6 +10,7 @@ mod recording;
 mod resource;
 pub use recording::{WorldFrameExecution, WorldRecordingCompletion};
 mod types;
+mod wait;
 
 use ash::{Device, vk};
 
@@ -17,7 +18,6 @@ use crate::WorldScreenWindow;
 use crate::device::VulkanError;
 use crate::device::vulkan_capture::FrameReadback;
 use crate::device::vulkan_detail::{DetailCreateContext, DetailPipeline, DetailRegistry};
-use crate::device::vulkan_frame::swapchain_error;
 use crate::device::vulkan_glow::{VulkanGlowRenderer, WorldFrameScreenEffect};
 use crate::device::vulkan_liquid::{LiquidFrameCreateContext, LiquidMeshRegistry, LiquidPipelines};
 use crate::device::vulkan_low_detail::{LowDetailPipelines, LowDetailRegistry};
@@ -53,6 +53,8 @@ use resource::{FrameCreateContext, WorldFrameResources};
 pub use types::{WorldFrameReport, WorldFrameScene, WorldSkyModelBatch, WorldSkyModelFrame};
 
 pub(in crate::device) struct WorldFrameContext<'a> {
+    pub(in crate::device) gpu_completion:
+        Option<&'a mut crate::device::gpu_completion::GpuCompletionService>,
     pub(in crate::device) device: &'a Device,
     pub(in crate::device) allocator: &'a vk_mem::Allocator,
     pub(in crate::device) capture: Option<&'a FrameReadback>,
@@ -148,7 +150,7 @@ impl WorldFrameRenderer {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::device) fn present(
         &mut self,
-        context: WorldFrameContext<'_>,
+        mut context: WorldFrameContext<'_>,
         execution: &mut impl WorldFrameExecution,
         descriptor_layouts: [vk::DescriptorSetLayout; 13],
         scene: WorldFrameScene<'_>,
@@ -310,36 +312,42 @@ impl WorldFrameRenderer {
                 context.depth_format,
                 frame.quality(),
                 frame.cache_id(),
+                || context.wait_idle(execution),
             )?;
         }
-        self.resources.ensure(FrameCreateContext {
-            device: context.device,
-            allocator: context.allocator,
-            descriptor_layouts,
-            graphics_queue_family: context.graphics_queue_family,
-            slot_count: context.swapchain_images.len(),
-            world_model_draw_capacity: world_model_draws
-                .len()
-                .checked_add(environment_wmo.len())
-                .ok_or(VulkanError::WorldFrameCapacity)?,
-            m2_draw_capacity: m2_draws
-                .len()
-                .checked_add(sky_draw_count)
-                .and_then(|count| count.checked_add(shadow_draws.len()))
-                .and_then(|count| count.checked_add(environment_m2.len()))
-                .ok_or(VulkanError::WorldFrameCapacity)?,
-            bone_capacity: bone_count,
-            m2_scene_capacity: scene.m2_instance_scenes().len(),
-            particle_vertex_capacity: particle_vertices
-                .len()
-                .max(scene.particle_vertex_capacity()),
-            particle_index_capacity: particle_indices.len().max(scene.particle_index_capacity()),
-            ribbon_vertex_capacity: ribbon_vertices.len(),
-            uniform_alignment: context.uniform_alignment,
-            storage_alignment: context.storage_alignment,
-            extent: context.extent,
-            depth_format: context.depth_format,
-        })?;
+        self.resources.ensure(
+            FrameCreateContext {
+                device: context.device,
+                allocator: context.allocator,
+                descriptor_layouts,
+                graphics_queue_family: context.graphics_queue_family,
+                slot_count: context.swapchain_images.len(),
+                world_model_draw_capacity: world_model_draws
+                    .len()
+                    .checked_add(environment_wmo.len())
+                    .ok_or(VulkanError::WorldFrameCapacity)?,
+                m2_draw_capacity: m2_draws
+                    .len()
+                    .checked_add(sky_draw_count)
+                    .and_then(|count| count.checked_add(shadow_draws.len()))
+                    .and_then(|count| count.checked_add(environment_m2.len()))
+                    .ok_or(VulkanError::WorldFrameCapacity)?,
+                bone_capacity: bone_count,
+                m2_scene_capacity: scene.m2_instance_scenes().len(),
+                particle_vertex_capacity: particle_vertices
+                    .len()
+                    .max(scene.particle_vertex_capacity()),
+                particle_index_capacity: particle_indices
+                    .len()
+                    .max(scene.particle_index_capacity()),
+                ribbon_vertex_capacity: ribbon_vertices.len(),
+                uniform_alignment: context.uniform_alignment,
+                storage_alignment: context.storage_alignment,
+                extent: context.extent,
+                depth_format: context.depth_format,
+            },
+            || context.wait_idle(execution),
+        )?;
         let ensure_elapsed = ensure_started
             .map(|started| started.elapsed())
             .unwrap_or_default();
@@ -522,16 +530,8 @@ impl WorldFrameRenderer {
                 .map(|started| started.elapsed())
                 .unwrap_or_default();
             let acquire_started = profile_enabled.then(std::time::Instant::now);
-            // SAFETY: Swapchain and acquire semaphore live through submission.
-            let acquired = unsafe {
-                context.swapchain_loader.acquire_next_image(
-                    context.swapchain,
-                    u64::MAX,
-                    slot.image_available(),
-                    vk::Fence::null(),
-                )
-            }
-            .map_err(|source| swapchain_error("acquire world frame image", source))?;
+            let semaphore = slot.image_available();
+            let acquired = context.acquire(execution, semaphore)?;
             (
                 acquired,
                 wait_write_elapsed,

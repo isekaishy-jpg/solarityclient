@@ -9,6 +9,7 @@ use ash::vk;
 use solarity_cpu::CoordinatorNotifier;
 
 use super::state::{CompletionFailure, GpuCompletion, Request, Shared};
+use super::{HostOperation, HostOutput};
 use crate::device::VulkanError;
 
 /// Rendering owns this thread and joins it before destroying its Vulkan device.
@@ -18,10 +19,10 @@ pub(in crate::device) struct GpuCompletionService {
 }
 
 impl GpuCompletionService {
-    /// The backend is a host fence wait, owned by this dedicated thread. It may
+    /// The backend is a Vulkan host operation owned by this dedicated thread. It may
     /// block; neither scheduler metadata locks nor general CPU jobs are involved.
     pub(in crate::device) fn new(
-        mut wait: impl FnMut(vk::Fence) -> Result<(), vk::Result> + Send + 'static,
+        mut wait: impl FnMut(HostOperation) -> Result<HostOutput, vk::Result> + Send + 'static,
         notifier: Arc<dyn CoordinatorNotifier>,
     ) -> Result<Self, VulkanError> {
         let shared = Arc::new(Shared::default());
@@ -49,7 +50,7 @@ impl GpuCompletionService {
                     let outcome = {
                         let _profile =
                             solarity_profiling::profile!("rendering.gpu_completion.host_wait");
-                        catch_unwind(AssertUnwindSafe(|| wait(request.fence)))
+                        catch_unwind(AssertUnwindSafe(|| wait(request.operation)))
                             .map_err(|_| CompletionFailure::Panicked)
                             .and_then(|result| result.map_err(CompletionFailure::Driver))
                     };
@@ -117,13 +118,86 @@ impl GpuCompletionService {
         fence: vk::Fence,
         service_native: impl FnOnce(&GpuCompletion<'_>) -> Result<(), E>,
     ) -> Result<(), E> {
+        match self.run(HostOperation::Fence(fence), service_native)? {
+            HostOutput::Complete => Ok(()),
+            HostOutput::Acquired { .. } => {
+                unreachable!("fence operations publish fence completion")
+            }
+        }
+    }
+
+    /// The renderer pins the swapchain and selected unsignaled acquire semaphore.
+    /// Native servicing cannot submit, recreate or destroy them while the driver
+    /// owns this request. Callback error/unwind still drains host acquisition.
+    pub(in crate::device) fn acquire<E: From<VulkanError>>(
+        &mut self,
+        swapchain: vk::SwapchainKHR,
+        semaphore: vk::Semaphore,
+        service_native: impl FnOnce(&GpuCompletion<'_>) -> Result<(), E>,
+    ) -> Result<(u32, bool), E> {
+        match self.run(
+            HostOperation::Acquire {
+                swapchain,
+                semaphore,
+            },
+            service_native,
+        )? {
+            HostOutput::Acquired { index, suboptimal } => Ok((index, suboptimal)),
+            HostOutput::Complete => unreachable!("image acquisition publishes an acquired image"),
+        }
+    }
+
+    /// Preserves an existing device-idle lifetime barrier while main services
+    /// native events. Exclusive renderer ownership excludes concurrent submission.
+    pub(in crate::device) fn idle<E: From<VulkanError>>(
+        &mut self,
+        service_native: impl FnOnce(&GpuCompletion<'_>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        match self.run(HostOperation::DeviceIdle, service_native)? {
+            HostOutput::Complete => Ok(()),
+            HostOutput::Acquired { .. } => {
+                unreachable!("device retirement does not acquire images")
+            }
+        }
+    }
+
+    /// One zero-timeout probe avoids dispatch when an image is already available.
+    /// Vulkan WSI guarantees NOT_READY leaves the semaphore/fence unaffected;
+    /// only that result transfers acquisition to the host thread. No polling loop
+    /// or additional image is introduced, and other driver failures stay terminal.
+    pub(in crate::device) fn acquire_when_pending<E: From<VulkanError>>(
+        &mut self,
+        swapchain: vk::SwapchainKHR,
+        semaphore: vk::Semaphore,
+        probe: impl FnOnce() -> Result<(u32, bool), vk::Result>,
+        service_native: impl FnOnce(&GpuCompletion<'_>) -> Result<(), E>,
+    ) -> Result<(u32, bool), E> {
+        self.check_health()?;
+        match probe() {
+            Ok(acquired) => Ok(acquired),
+            Err(vk::Result::NOT_READY) => self.acquire(swapchain, semaphore, service_native),
+            Err(error) => Err(crate::device::vulkan_frame::swapchain_error(
+                "acquire frame image",
+                error,
+            )
+            .into()),
+        }
+    }
+
+    /// One reusable request/result cell carries the selected typed host operation.
+    fn run<E: From<VulkanError>>(
+        &mut self,
+        operation: HostOperation,
+        service_native: impl FnOnce(&GpuCompletion<'_>) -> Result<(), E>,
+    ) -> Result<HostOutput, E> {
         self.check_health()?;
         let trace =
             solarity_profiling::TraceContext::capture().fork("rendering.gpu_completion.request");
         {
             let mut state = self.shared.lock();
             state.outcome = None;
-            state.request = Some(Request { fence, trace });
+            state.request = Some(Request { operation, trace });
+            state.operation = Some(operation);
             state.trace = trace;
             self.shared.ready.store(false, Ordering::Release);
         }
@@ -134,8 +208,9 @@ impl GpuCompletionService {
         let serviced = service_native(&completion);
         let completed = completion.finish();
         serviced?;
-        completed?;
-        Ok(self.check_health()?)
+        let completed = completed?;
+        self.check_health()?;
+        Ok(completed)
     }
 }
 

@@ -330,6 +330,10 @@ impl M2Frame {
                     continue;
                 };
                 let owner = placement.owner;
+                self.bone_samples_scratch.reserve_cpu_storage(
+                    &admission.storage,
+                    source.model.animations().bones().len(),
+                )?;
                 if solarity_profiling::TraceContext::capture().is_sampled()
                     && let Some(guid) = placement_owner_guid(placement.owner)
                 {

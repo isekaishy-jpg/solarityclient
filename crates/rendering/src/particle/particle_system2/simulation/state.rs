@@ -49,13 +49,13 @@ const SPHERE_AIM_THRESHOLD_SQUARED: f32 = f32::from_bits(0x3480_0000);
 const UNSUPPORTED_SIMULATION_FLAGS: u32 = 0x0000_0800;
 
 /// Placement-local stock particle storage, emission remainder, and PRNG.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct M2ParticleSimulation {
     /// Capacity growth relocates this array and preserves address-derived phases.
     pub(super) particles: Vec<M2ParticleState>,
     /// Parallel active-slot storage is reserved by the same capacity owner.
     pub(super) active_pool_slots: Vec<usize>,
-    free_pool_slots: Vec<usize>,
+    pub(super) free_pool_slots: Vec<usize>,
     next_pool_slot: usize,
     /// Grow-only stock limit; authored output reservation does not change it.
     pub(super) capacity: usize,
@@ -65,6 +65,8 @@ pub struct M2ParticleSimulation {
     random: M2ParticleRandom,
     previous_follow_position: Option<Vec3>,
     inherited_motion: InheritedEmitterMotion,
+    /// The charge follows the simulation through placement/worker ownership swaps.
+    pub(super) memory: Option<super::storage::ParticleMemory>,
 }
 
 /// Per-emitter history for build 12340's 30 ms inherited-motion sampler.
@@ -127,6 +129,7 @@ impl M2ParticleSimulation {
             random: M2ParticleRandom::new(seed),
             previous_follow_position: None,
             inherited_motion: InheritedEmitterMotion::default(),
+            memory: None,
         }
     }
 
@@ -811,6 +814,14 @@ pub enum M2ParticleSimulationError {
     /// The native allocator could not grow the stock particle pool.
     #[error("particle pool allocation failed")]
     Allocation,
+    /// Bound worker simulations may not grow past their admitted physical storage.
+    #[error("particle storage requires {requested} slots but only {available} were admitted")]
+    StorageCapacity {
+        /// Required stock live-pool capacity.
+        requested: usize,
+        /// Complete physical particle and slot-list capacity.
+        available: usize,
+    },
     /// A z-source emitter cannot aim from a coincident source point.
     #[error("particle z-source aim is degenerate")]
     DegenerateAim,

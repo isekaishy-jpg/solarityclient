@@ -118,7 +118,7 @@ pub enum M2RibbonTrailError {
 /// Mutable edge history owned by exactly one placed ribbon emitter.
 #[derive(Debug)]
 pub struct M2RibbonTrail {
-    sections: VecDeque<M2RibbonSection>,
+    pub(super) sections: VecDeque<M2RibbonSection>,
     previous: Option<M2RibbonControlPoint>,
     edge_rate: f32,
     edge_lifetime_seconds: f32,
@@ -128,6 +128,8 @@ pub struct M2RibbonTrail {
     texture_slot: u16,
     has_live_head: bool,
     has_advanced: bool,
+    /// Follows the fixed history allocation through every worker transfer.
+    pub(super) memory: Option<super::storage::RibbonMemory>,
 }
 
 impl M2RibbonTrail {
@@ -175,6 +177,7 @@ impl M2RibbonTrail {
             texture_slot: 0,
             has_live_head: false,
             has_advanced: false,
+            memory: None,
         })
     }
 
@@ -247,11 +250,10 @@ impl M2RibbonTrail {
             } else {
                 1.0
             };
-            self.sections
-                .push_back(interpolated_section(previous, control, pose, amount));
+            self.push_section(interpolated_section(previous, control, pose, amount));
         }
         self.emission_fraction = total.fract();
-        self.sections.push_back(section(control, pose));
+        self.push_section(section(control, pose));
         self.has_live_head = true;
         self.previous = Some(control);
         self.trim_capacity();
@@ -307,6 +309,16 @@ impl M2RibbonTrail {
         while self.sections.len() > self.capacity {
             self.sections.pop_front();
         }
+    }
+
+    /// No later calculation reads an edge older than the final stock window.
+    /// Evict before insertion so a long update cannot temporarily grow the ring
+    /// beyond its authored capacity and escape the admitted worker allocation.
+    fn push_section(&mut self, section: M2RibbonSection) {
+        if self.sections.len() == self.capacity {
+            self.sections.pop_front();
+        }
+        self.sections.push_back(section);
     }
 }
 

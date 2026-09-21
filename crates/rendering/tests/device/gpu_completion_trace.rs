@@ -1,6 +1,6 @@
 //! The driver wait retains its requesting frame while native service stays separate.
 
-use super::GpuCompletionService;
+use super::{GpuCompletionService, HostOutput};
 use crate::device::VulkanError;
 use ash::vk::{self, Handle};
 use solarity_cpu::CoordinatorNotifier;
@@ -37,7 +37,7 @@ fn gpu_host_wait_links_to_its_request_and_ready_consumption_does_not_drain()
             released
                 .recv()
                 .unwrap_or_else(|_| panic!("fixture releases host wait"));
-            Ok(())
+            Ok(HostOutput::Complete)
         },
         Arc::new(Signal(published)),
     )?;

@@ -291,8 +291,12 @@ impl RuntimeUiFrame {
         &self,
         renderer: &mut VulkanRenderer,
         overlay: &[solarity_rendering::UiPreparedDraw],
+        service_native: &mut impl FnMut(
+            &solarity_rendering::GpuCompletion<'_>,
+        ) -> Result<(), solarity_rendering::VulkanError>,
     ) -> Result<UiFrameReport, ApplicationError> {
-        self.frame.present_with_overlay(renderer, overlay)
+        self.frame
+            .present_with_overlay(renderer, overlay, service_native)
     }
 
     /// Returns the logical UI canvas used by the overlay shader.
