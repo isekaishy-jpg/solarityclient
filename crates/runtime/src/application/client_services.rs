@@ -484,6 +484,10 @@ impl ClientServices {
                         prepare_configured_glue_textures(
                             ui_texture_catalog,
                             configured_texture_paths,
+                            solarity_asset::AssetReadBudget::for_service(
+                                cpu.storage().clone(),
+                                solarity_cpu::CpuService::Speculative,
+                            ),
                         ),
                     )),
                 )),

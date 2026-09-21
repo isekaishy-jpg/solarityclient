@@ -842,7 +842,7 @@ fn decode_bones(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
 ) -> Result<Vec<M2Bone>, AssetError> {
     let array = array_ref(path, bytes, 0x2c, "bones")?;
     validate_array(path, bytes, array, 88, "bones")?;
@@ -914,7 +914,7 @@ fn decode_colors(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
 ) -> Result<Vec<M2ColorAnimation>, AssetError> {
     let array = array_ref(path, bytes, 0x48, "colors")?;
     validate_array(path, bytes, array, 40, "colors")?;
@@ -955,7 +955,7 @@ fn decode_texture_weights(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
 ) -> Result<Vec<M2TextureWeight>, AssetError> {
     let array = array_ref(path, bytes, 0x58, "texture weights")?;
     validate_array(path, bytes, array, 20, "texture weights")?;
@@ -983,7 +983,7 @@ fn decode_texture_transforms(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
 ) -> Result<Vec<M2TextureTransform>, AssetError> {
     let array = array_ref(path, bytes, 0x60, "texture transforms")?;
     validate_array(path, bytes, array, 60, "texture transforms")?;

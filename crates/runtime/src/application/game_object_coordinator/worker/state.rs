@@ -47,20 +47,28 @@ impl GameObjectWorkerState {
         &mut self,
         request: &ResourceRequest,
         model: Option<GameObjectM2Input>,
+        budget: &solarity_asset::AssetReadBudget,
     ) -> Result<GameObjectResource, RuntimeGameObjectError> {
-        match request.kind {
+        let Self {
+            assets,
+            textures,
+            models,
+            world_models,
+            liquid_assets,
+        } = self;
+        assets.with_read_budget(budget, |assets| match request.kind {
             RuntimeGameObjectResourceKind::M2 => {
                 let model = match model
                     .unwrap_or_else(|| unreachable!("M2 dispatch carries source work"))
                 {
                     GameObjectM2Input::Ready(model) => model,
-                    GameObjectM2Input::Producer(producer) => producer.load(&mut self.assets)?,
+                    GameObjectM2Input::Producer(producer) => producer.load(assets)?,
                 };
                 Ok(GameObjectResource::M2(
                     ResidentM2Source::from_model_with_lights(
                         model,
-                        &mut self.textures,
-                        &mut self.assets,
+                        textures,
+                        assets,
                         solarity_rendering::M2LocalLightCount::Four,
                     )?,
                 ))
@@ -68,14 +76,14 @@ impl GameObjectWorkerState {
             RuntimeGameObjectResourceKind::WorldModel => Ok(GameObjectResource::WorldModel(
                 GameObjectWorldModelSource::load(
                     &request.path,
-                    &mut self.world_models,
-                    &mut self.models,
-                    &mut self.textures,
-                    &mut self.liquid_assets,
-                    &mut self.assets,
+                    world_models,
+                    models,
+                    textures,
+                    liquid_assets,
+                    assets,
                 )?,
             )),
-        }
+        })
     }
 
     pub(super) fn collect_unused(&mut self) {
@@ -93,6 +101,7 @@ pub(in super::super) fn prepare_on_worker(
     source: GameObjectWorkerSource,
     request: &ResourceRequest,
     model: Option<GameObjectM2Input>,
+    budget: &solarity_asset::AssetReadBudget,
 ) -> GameObjectWorkerCompletion {
     let mut worker = match source {
         GameObjectWorkerSource::Catalog(catalog) => match GameObjectWorkerState::mount(catalog) {
@@ -110,7 +119,7 @@ pub(in super::super) fn prepare_on_worker(
         },
         GameObjectWorkerSource::Ready(worker) => worker,
     };
-    let result = worker.prepare(request, model);
+    let result = worker.prepare(request, model, budget);
     worker.collect_unused();
     GameObjectWorkerCompletion {
         worker: Some(worker),

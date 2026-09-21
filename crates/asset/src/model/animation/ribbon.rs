@@ -154,7 +154,7 @@ pub(super) fn decode_ribbons(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
     bone_count: usize,
 ) -> Result<Vec<M2RibbonEmitter>, AssetError> {
     let array = array_ref(path, bytes, 0x120, "ribbons")?;

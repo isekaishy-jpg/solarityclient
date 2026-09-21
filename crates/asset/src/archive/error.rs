@@ -29,6 +29,14 @@ pub enum AssetPathViolation {
 /// A failure at the public client-asset boundary.
 #[derive(Debug, Error)]
 pub enum AssetError {
+    /// A source's byte ownership could not be admitted without exceeding its class budget.
+    #[error("asset read admission failed for {asset}: {source}")]
+    ReadAdmission {
+        /// The exact selected archive path, with no lower-priority substitution.
+        asset: AssetPath,
+        /// The original pipeline admission failure.
+        source: solarity_cpu::CpuError,
+    },
     /// The process cannot issue another distinct immutable asset owner.
     #[error("asset identity space is exhausted")]
     IdentityExhausted,

@@ -61,11 +61,15 @@ impl WorldUiSourcePreparation {
             Err(error) => return Err(error.into()),
         };
         let catalog = catalog.clone();
+        let budget = solarity_asset::AssetReadBudget::for_service(
+            cpu.storage().clone(),
+            solarity_cpu::CpuService::Required,
+        );
         self.task = Some(permit.submit_steps_with_context(
             crate::application::archive_job::contextual(
                 "world_ui.source_step",
-                prepare_archive(catalog, |store| {
-                    ControlFlow::Break(WorldUiSourceImage::load(store))
+                prepare_archive(catalog, move |store| {
+                    ControlFlow::Break(store.with_read_budget(&budget, WorldUiSourceImage::load))
                 }),
             ),
         ));

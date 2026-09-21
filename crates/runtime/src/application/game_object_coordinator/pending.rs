@@ -25,6 +25,7 @@ struct DependentWork {
     request: ResourceRequest,
     dependency: M2LoadDependency,
     completion: Option<GameObjectWorkerCompletion>,
+    budget: solarity_asset::AssetReadBudget,
 }
 impl DependentWork {
     /// Called only after shared decoding succeeds. No resource wait occurs here.
@@ -42,9 +43,12 @@ impl DependentWork {
             .take()
             .unwrap_or_else(|| unreachable!("admitted preparation owns its bank"));
         let completion = match model {
-            Ok(model) => {
-                prepare_on_worker(source, &self.request, Some(GameObjectM2Input::Ready(model)))
-            }
+            Ok(model) => prepare_on_worker(
+                source,
+                &self.request,
+                Some(GameObjectM2Input::Ready(model)),
+                &self.budget,
+            ),
             Err(error) => failed_completion(source, error.into()),
         };
         // Domain errors are published through the normal GameObject policy.
@@ -155,6 +159,10 @@ impl RuntimeGameObjectPresentation {
             request: request.clone(),
             dependency,
             completion: None,
+            budget: solarity_asset::AssetReadBudget::for_service(
+                cpu.storage().clone(),
+                CpuService::Required,
+            ),
         }];
         let mut batch = LoadBatch::with_context(CpuService::Required, DependentWork::prepare);
         if let Err(error) = batch.start_after(cpu, &mut jobs, &[ready]) {

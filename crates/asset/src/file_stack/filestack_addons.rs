@@ -95,14 +95,41 @@ impl AssetStore {
     ///
     /// Returns an asset error for invalid namespace, unreadable loose content,
     /// archive failure, or absence from both permitted sources.
-    pub fn read_addon_file(&mut self, path: &AssetPath) -> Result<Vec<u8>, AssetError> {
+    pub fn read_addon_file(&mut self, path: &AssetPath) -> Result<crate::AssetBytes, AssetError> {
         let relative = addon_relative_path(path)?;
         let install_root = install_root(&self.data_root)?;
         if let Some(loose_path) = find_relative_path(install_root, &relative)? {
-            return fs::read(&loose_path).map_err(|source| AssetError::AddonRead {
+            let charge = self
+                .read_budget
+                .as_ref()
+                .map(|budget| {
+                    let size = fs::metadata(&loose_path)
+                        .map_err(|source| AssetError::AddonRead {
+                            path: loose_path.clone(),
+                            message: source.to_string(),
+                        })?
+                        .len();
+                    budget
+                        .reserve(size)
+                        .map_err(|source| AssetError::ReadAdmission {
+                            asset: path.clone(),
+                            source,
+                        })
+                })
+                .transpose()?;
+            let bytes = fs::read(&loose_path).map_err(|source| AssetError::AddonRead {
                 path: loose_path,
                 message: source.to_string(),
-            });
+            })?;
+            return match charge {
+                Some(charge) => crate::AssetBytes::admitted(bytes, charge).map_err(|source| {
+                    AssetError::ReadAdmission {
+                        asset: path.clone(),
+                        source,
+                    }
+                }),
+                None => Ok(crate::AssetBytes::unmetered(bytes)),
+            };
         }
         self.read(path)
             .map(crate::file_stack::AssetRead::into_bytes)

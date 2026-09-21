@@ -16,6 +16,7 @@ impl SoundReadAssets {
     pub(super) fn read(
         &mut self,
         request: &SoundLoadRequest,
+        budget: &solarity_asset::AssetReadBudget,
     ) -> Result<Arc<EncodedSound>, RuntimeSoundError> {
         let store = self.store.get_or_insert_with(|| {
             AssetStore::mount(self.catalog.clone()).map_err(|error| error.to_string())
@@ -25,8 +26,10 @@ impl SoundReadAssets {
             .map_err(|message| RuntimeSoundError::LoaderUnavailable {
                 message: message.clone(),
             })?;
-        SoundCache::new()
-            .load(store, request.path())
+        store
+            .with_read_budget(budget, |store| {
+                SoundCache::new().load(store, request.path())
+            })
             .map_err(|error| RuntimeSoundError::Engine(error.into()))
     }
 }

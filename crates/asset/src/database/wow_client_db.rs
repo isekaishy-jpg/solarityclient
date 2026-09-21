@@ -47,7 +47,7 @@ pub struct WdbcTable {
     path: AssetPath,
     source: ArchiveDescriptor,
     header: WdbcHeader,
-    bytes: Vec<u8>,
+    bytes: crate::AssetBytes,
     record_data_offset: usize,
     string_block_offset: usize,
 }

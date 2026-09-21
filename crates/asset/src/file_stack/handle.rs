@@ -36,6 +36,25 @@ impl AssetStoreHandle {
         self.store.borrow_mut()
     }
 
+    /// Applies source admission while a consumer uses cloned handles for its reads.
+    /// The policy guard holds no reader borrow across the operation. Nested calls
+    /// restore the previous policy on completion or unwind; returned bytes retain
+    /// their own reservations independently of this handle.
+    /// # Panics
+    /// Panics if a store borrow is held at entry or escapes the operation's scope.
+    pub fn with_read_budget<T>(
+        &self,
+        budget: &crate::AssetReadBudget,
+        operation: impl FnOnce() -> T,
+    ) -> T {
+        let previous = self.store.borrow_mut().read_budget.replace(budget.clone());
+        let _scope = ReadScope {
+            handle: self,
+            previous,
+        };
+        operation()
+    }
+
     /// Recovers the mounted store when this is its sole remaining handle.
     ///
     /// The original handle is returned unchanged when another main-thread
@@ -44,5 +63,16 @@ impl AssetStoreHandle {
         Rc::try_unwrap(self.store)
             .map(RefCell::into_inner)
             .map_err(|store| Self { store })
+    }
+}
+
+/// Restores policy after every operation-local RefCell borrow has unwound.
+struct ReadScope<'a> {
+    handle: &'a AssetStoreHandle,
+    previous: Option<crate::AssetReadBudget>,
+}
+impl Drop for ReadScope<'_> {
+    fn drop(&mut self) {
+        self.handle.store.borrow_mut().read_budget = self.previous.take();
     }
 }

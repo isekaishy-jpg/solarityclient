@@ -12,7 +12,9 @@ mod filestack_streaming;
 mod filestack_win32;
 mod handle;
 mod namespace;
+mod payload;
 pub use namespace::{AssetNamespaceId, AssetResourceKey};
+pub use payload::{AssetBytes, AssetReadBudget, AssetText};
 
 pub use filestack_localized_document::LocalizedDocument;
 pub use filestack_streaming::{AssetMount, AssetRead, AssetStore};

@@ -135,7 +135,7 @@ pub(super) fn decode_track<T>(
     field: &str,
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
     value_size: usize,
     decode_value: fn(&AssetPath, &[u8], usize, &str) -> Result<T, AssetError>,
 ) -> Result<M2Track<T>, AssetError> {

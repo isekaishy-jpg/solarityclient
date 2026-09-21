@@ -19,6 +19,24 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+Encoded source admission now follows archive-returned byte ownership through
+model decoders, retained database tables, sound buffers, FreeType faces and UTF-8
+Lua source. Connected worker readers reserve declared input storage before reads
+and reconcile returned capacity before publication. Terrain, appearance,
+GameObject M2, sound, world UI, sky, unit-effect and speculative Glue source paths
+use the CPU budget. Shared WMO retirement retains its budget and live service
+priority. Five real archive admission/ownership tests pass; formatting and full
+workspace Clippy pass. The full workspace suite passes 1,692 tests with 33
+existing ignored tests and no failures or compiler/linker warnings. This does not account
+for all decoded caches, codec scratch or main-owned startup reads, and establishes
+no live FPS gain. See [source ownership and limits](asset-read-admission.md).
+
+Combined validation exposed a startup stack overflow despite successful
+compilation and Clippy. The process service owner now returns and remains boxed,
+removing large by-value transfers through outer startup/caller frames. The exact
+previously failing startup/shutdown test passes without increasing the stack
+limit. See [startup ownership evidence](cpu-startup-stack.md).
+
 The root pose batch now also admits mount clocks already selected by ordered
 callbacks and named-bone requests from offscreen units. Attachment, event and
 light consumers receive typed `M2BoneSamples` from workers; visible and shadow
@@ -945,7 +963,8 @@ an operation has a context parameter. The requirements below remain in scope.
   result-page accounting now exist; model output, override buffers and retained
   geometry job records, final frame streams and owned full skeletal palettes now
   adopt it. Dispatched live effect simulation and named CPU bone samples now carry
-  reservations as well. Other resident effect owners, ordinary asset buffers
+  reservations as well. Encoded buffers now carry admission in connected worker
+  readers. Other resident effect owners, remaining source readers, decoded buffers
   and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, remaining GPU upload waits
@@ -972,7 +991,8 @@ an operation has a context parameter. The requirements below remain in scope.
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
-  Request metadata and encoded payload budgets still need admission/accounting.
+  Request metadata and remaining encoded source paths still need admission/accounting;
+  connected worker source buffers now retain reservations through ownership transfer.
   Stock-evidenced animation demand and
   retention, derived cache invalidation, byte-budgeted residency and GPU retirement
   from the resource design.
