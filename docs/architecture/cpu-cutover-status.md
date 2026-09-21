@@ -19,6 +19,11 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+[Testing Build 175](testing-build175-consolidation.md) is installed from the
+validated consolidated source `f14d27ab`. Its identity, installed artifact hash
+and Testing shortcut are verified. The full cutover requirements below remain
+open; this package has no new live frame-time measurement.
+
 The cutover histories and paused effect-loader edits are consolidated on
 `perf/critical-frame-work`. This preserves encoded read admission, retained M2
 payload accounting, scoped service demand, late bone continuations and effect
