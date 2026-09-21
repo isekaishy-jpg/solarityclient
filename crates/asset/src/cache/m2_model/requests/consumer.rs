@@ -31,6 +31,17 @@ impl M2LoadRequest {
             .lock()
             .unwrap_or_else(|_| unreachable!("model result metadata cannot panic"))
             .clone()
+            .map(|outcome| self.admit_result(outcome))
+    }
+
+    pub(super) fn admit_result(&self, outcome: Outcome) -> Outcome {
+        let model = outcome?;
+        if self.interest.service() != CpuService::Speculative {
+            model
+                .require_storage()
+                .map_err(|error| super::M2LoadError::Asset(Arc::new(error)))?;
+        }
+        Ok(model)
     }
 
     /// Waits at an explicit coordinator/tooling boundary; CPU workers may consume only ready results.
@@ -53,9 +64,11 @@ impl M2LoadRequest {
                 .wait(result)
                 .unwrap_or_else(|_| unreachable!("model result metadata cannot panic"));
         }
-        result
+        let outcome = result
             .as_ref()
             .unwrap_or_else(|| unreachable!("observed result remains published"))
-            .clone()
+            .clone();
+        drop(result);
+        self.admit_result(outcome)
     }
 }

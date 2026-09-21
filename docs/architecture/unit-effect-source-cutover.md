@@ -34,6 +34,7 @@ remain under the runtime tests tree.
 
 Formatting and full workspace Clippy with warnings denied pass. The full workspace
 test suite passes 1,694 tests, with zero failures and 33 existing ignored tests;
-doc tests pass as well. Evidence is in ignored
-`target/effects-{clippy,test}.{stdout,stderr}.log`. This source has no measured FPS
-gain or numbered Testing package yet.
+doc tests pass as well. Test evidence is in ignored
+`target/effects-test.{stdout,stderr}.log`. Subsequent combined-source linting also
+passes, recorded in `target/source-integration-clippy.{stdout,stderr}.log`.
+This source has no measured FPS gain or numbered Testing package yet.

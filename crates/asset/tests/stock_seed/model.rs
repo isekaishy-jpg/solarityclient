@@ -2702,3 +2702,6 @@ pub(crate) fn skin_bytes(
     bytes[submesh_offset + 18..submesh_offset + 20].copy_from_slice(&5_u16.to_le_bytes());
     Ok(bytes)
 }
+
+#[path = "model_storage.rs"]
+mod storage;

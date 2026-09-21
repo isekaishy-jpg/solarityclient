@@ -269,6 +269,11 @@ pub struct ArchiveDescriptor {
 }
 
 impl ArchiveDescriptor {
+    /// Owned path buffer capacities, separate from the descriptor's inline fields.
+    pub(crate) fn owned_storage_bytes(&self) -> usize {
+        self.path.capacity() + self.relative_path.capacity()
+    }
+
     /// Creates metadata after stock discovery has selected a concrete file.
     #[must_use]
     pub(crate) fn new(

@@ -207,3 +207,17 @@ fn decode_event_track(
         channels,
     })
 }
+
+impl M2Event {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        vector_bytes(&self.timeline.channels)
+            + self
+                .timeline
+                .channels
+                .iter()
+                .map(vector_bytes)
+                .sum::<usize>()
+    }
+}

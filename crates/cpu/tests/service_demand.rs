@@ -203,3 +203,19 @@ fn scoped_demand_admits_metadata_before_publication_and_releases_last_control()
     cpu.shutdown()?;
     Ok(())
 }
+
+#[test]
+fn resource_admission_observes_current_consumer_demand() {
+    let demand = CpuServiceDemand::default();
+    assert_eq!(demand.strongest(), None);
+    let prewarm = demand.subscribe(CpuService::Speculative);
+    let selected = demand.subscribe(CpuService::Required);
+    assert_eq!(demand.strongest(), Some(CpuService::Required));
+    assert_eq!(selected.service(), CpuService::Required);
+    let clone = selected.clone();
+    selected.set_service(CpuService::Speculative);
+    assert_eq!(clone.service(), CpuService::Speculative);
+    assert_eq!(demand.strongest(), Some(CpuService::Speculative));
+    drop((selected, clone, prewarm));
+    assert_eq!(demand.strongest(), None);
+}

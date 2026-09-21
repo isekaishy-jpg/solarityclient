@@ -351,3 +351,6 @@ fn model_dependency_registration_races_abandonment_without_lost_readiness()
     }
     Ok(())
 }
+
+#[path = "model_storage_requests.rs"]
+mod storage;

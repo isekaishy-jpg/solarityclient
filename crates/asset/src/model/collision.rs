@@ -196,3 +196,13 @@ fn read_bytes<const N: usize>(
         .and_then(|value| value.try_into().ok())
         .ok_or_else(|| model_decode(path, format!("{field} is truncated")))
 }
+
+impl M2CollisionMesh {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        vector_bytes(&self.vertices)
+            + vector_bytes(&self.indices)
+            + vector_bytes(&self.face_normals)
+    }
+}

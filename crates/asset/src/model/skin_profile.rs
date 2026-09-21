@@ -448,3 +448,16 @@ fn read_bytes<const N: usize>(
         .and_then(|value| value.try_into().ok())
         .ok_or_else(|| model_decode(path, format!("{field} is truncated")))
 }
+
+impl M2SkinProfile {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        self.source.owned_storage_bytes()
+            + vector_bytes(&self.vertex_lookup)
+            + vector_bytes(&self.triangle_lookup)
+            + vector_bytes(&self.bone_indices)
+            + vector_bytes(&self.submeshes)
+            + vector_bytes(&self.batches)
+    }
+}

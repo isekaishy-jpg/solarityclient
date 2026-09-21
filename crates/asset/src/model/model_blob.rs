@@ -660,3 +660,25 @@ fn read_bytes<const N: usize>(
         .and_then(|value| value.try_into().ok())
         .ok_or_else(|| model_decode(path, format!("{field} is truncated")))
 }
+
+impl ModelBlob {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::model::storage::vector_bytes;
+        self.name.as_ref().map_or(0, String::capacity)
+            + self
+                .collision
+                .as_ref()
+                .map_or(0, |value| value.heap_bytes())
+            + vector_bytes(&self.vertices)
+            + vector_bytes(&self.textures)
+            + vector_bytes(&self.materials)
+            + vector_bytes(&self.replaceable_texture_lookup)
+            + vector_bytes(&self.bone_lookup)
+            + vector_bytes(&self.texture_lookup)
+            + vector_bytes(&self.texture_coordinate_lookup)
+            + vector_bytes(&self.transparency_lookup)
+            + vector_bytes(&self.texture_animation_lookup)
+            + vector_bytes(&self.texture_combiner_combos)
+    }
+}

@@ -40,19 +40,29 @@ impl M2Frame {
             let Some(source) = &self.sources[placement.source_index] else {
                 continue;
             };
-            // Attached transforms remain with ordered traversal. Independent roots
-            // supply render palettes or only the bones their CPU consumers request.
-            if !placement.placement_valid
-                || self.placement_visibility.light_parent(index).is_some()
-                || self.vehicle_passengers.hidden(index)
-            {
+            // Unit callbacks resolve mounted riders and vehicle ancestry before
+            // this batch. Exact-input publication still rejects a later change.
+            if !placement.placement_valid || self.vehicle_passengers.hidden(index) {
                 continue;
             }
+            let root = self.placement_visibility.light_root(index).unwrap_or(index);
+            let root_placement = &self.placements[root];
+            let shadow_root = self.sources[root_placement.source_index]
+                .as_ref()
+                .filter(|_| {
+                    root_placement.placement_valid
+                        && !self.vehicle_passengers.hidden(root)
+                        && !root_placement
+                            .entity_opacity
+                            .as_ref()
+                            .is_some_and(|owner| owner.hidden())
+                })
+                .map(|source| (source, root_placement));
             let palette = !placement
                 .entity_opacity
                 .as_ref()
                 .is_some_and(|owner| owner.hidden())
-                && admission.allows(source, placement)?;
+                && admission.allows(source, placement, shadow_root)?;
             let Some(playback) = &placement.playback else {
                 continue;
             };

@@ -120,3 +120,10 @@ fn decode_attachment_lookup(
     }
     Ok(lookup)
 }
+
+impl M2Attachment {
+    /// Owned backing capacity; shared canonical path strings are separate metadata.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.enabled.heap_bytes()
+    }
+}

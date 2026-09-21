@@ -11,6 +11,7 @@ mod m2_model;
 mod m2_shared;
 mod model_blob;
 mod skin_profile;
+mod storage;
 
 pub use animation::{
     M2AnimationSet, M2Attachment, M2Bone, M2Camera, M2ColorAnimation, M2Event, M2EventTrack,

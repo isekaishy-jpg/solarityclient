@@ -16,6 +16,7 @@ pub(super) struct Registry {
     owners: Mutex<Vec<Arc<ModelCacheCore>>>,
     changed: Arc<AtomicBool>,
     pub(super) requests: Mutex<super::requests::RequestIndex>,
+    storage: std::sync::OnceLock<solarity_cpu::CpuStorageBudget>,
 }
 
 /// Shared by catalog clones; no worker, timer or thread is created by this service.
@@ -29,6 +30,37 @@ impl fmt::Debug for M2CacheService {
 }
 
 impl M2CacheService {
+    /// Binds retained decoded generations to the application's required-result budget.
+    /// Configure before the first cache load; offline tools may leave it unconfigured.
+    /// # Errors
+    /// Rejects repeated configuration or an already active source cache.
+    pub fn configure_storage(
+        &self,
+        budget: solarity_cpu::CpuStorageBudget,
+    ) -> Result<(), crate::AssetError> {
+        let _requests = self
+            .0
+            .requests
+            .lock()
+            .unwrap_or_else(|_| unreachable!("request metadata cannot panic"));
+        let owners = self
+            .0
+            .owners
+            .lock()
+            .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"));
+        if !owners.is_empty() {
+            return Err(crate::AssetError::SourceStorageConfigured);
+        }
+        self.0
+            .storage
+            .set(budget)
+            .map_err(|_| crate::AssetError::SourceStorageConfigured)
+    }
+
+    pub(crate) fn storage(&self) -> Option<&solarity_cpu::CpuStorageBudget> {
+        self.0.storage.get()
+    }
+
     /// First namespace use registers the cache and its durable release-change signal.
     pub(super) fn register(&self, core: &Arc<ModelCacheCore>) {
         core.lock().subscribe(&self.0.changed);

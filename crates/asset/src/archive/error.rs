@@ -37,6 +37,13 @@ pub enum AssetError {
         /// The original pipeline admission failure.
         source: solarity_cpu::CpuError,
     },
+    /// Decoded source retention exceeded the configured application storage allowance.
+    #[error(transparent)]
+    SourceStorage(#[from] solarity_cpu::CpuError),
+    /// Source accounting must be configured once before cache admission.
+    #[error("model source storage is already configured or in use")]
+    SourceStorageConfigured,
+
     /// The process cannot issue another distinct immutable asset owner.
     #[error("asset identity space is exhausted")]
     IdentityExhausted,

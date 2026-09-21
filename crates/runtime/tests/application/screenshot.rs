@@ -10,6 +10,7 @@ use solarity_cpu::CpuPoolConfig;
 use solarity_rendering::VulkanBootstrap;
 
 use super::*;
+use crate::application::frame_pipeline::FrameWait;
 use crate::test_support::{ClientFixture, SDL_TEST_LOCK};
 
 #[test]
@@ -78,8 +79,16 @@ fn screenshot_saves_the_completed_gpu_frame_and_reports_io_failure() -> Result<(
         let request = ScreenshotRequest::new(true, format, "3");
         screenshots.request(request);
         screenshots.request(request); // native pre-present requests coalesce
-        assert!(screenshots.poll(&mut renderer, &cpu).is_none());
-        assert!(screenshots.poll(&mut renderer, &cpu).is_none()); // not presented yet
+        assert!(
+            screenshots
+                .poll(&mut renderer, &cpu, &mut FrameWait::Offline)
+                .is_none()
+        );
+        assert!(
+            screenshots
+                .poll(&mut renderer, &cpu, &mut FrameWait::Offline)
+                .is_none()
+        ); // not presented yet
         renderer.present_rgba8(extent, &pixels)?;
         renderer.present_clear([extent.0 as f32, extent.1 as f32])?;
         let completion = wait_for_save(&mut screenshots, &mut renderer, &cpu)?;
@@ -109,7 +118,11 @@ fn screenshot_saves_the_completed_gpu_frame_and_reports_io_failure() -> Result<(
                 }
             }
         }
-        assert!(screenshots.poll(&mut renderer, &cpu).is_none());
+        assert!(
+            screenshots
+                .poll(&mut renderer, &cpu, &mut FrameWait::Offline)
+                .is_none()
+        );
         assert!(screenshots.pending.is_none() && screenshots.capturing.is_none());
     }
     assert_eq!(
@@ -123,10 +136,18 @@ fn screenshot_saves_the_completed_gpu_frame_and_reports_io_failure() -> Result<(
     let (release, blocked_worker) = std::sync::mpsc::sync_channel::<()>(1);
     let busy = cpu.try_submit(move || blocked_worker.recv())?;
     screenshots.request(ScreenshotRequest::new(true, "tga", "10"));
-    assert!(screenshots.poll(&mut renderer, &cpu).is_none());
+    assert!(
+        screenshots
+            .poll(&mut renderer, &cpu, &mut FrameWait::Offline)
+            .is_none()
+    );
     renderer.present_rgba8(extent, &pixels)?;
     for _ in 0..3 {
-        assert!(screenshots.poll(&mut renderer, &cpu).is_none());
+        assert!(
+            screenshots
+                .poll(&mut renderer, &cpu, &mut FrameWait::Offline)
+                .is_none()
+        );
         assert!(screenshots.capturing.is_some());
         assert!(screenshots.writing.is_none());
         renderer.present_clear([extent.0 as f32, extent.1 as f32])?;
@@ -166,7 +187,11 @@ fn screenshot_saves_the_completed_gpu_frame_and_reports_io_failure() -> Result<(
     fs::write(&blocked, b"existing user file")?;
     screenshots.directory = blocked.clone();
     screenshots.request(request);
-    assert!(screenshots.poll(&mut renderer, &cpu).is_none());
+    assert!(
+        screenshots
+            .poll(&mut renderer, &cpu, &mut FrameWait::Offline)
+            .is_none()
+    );
     renderer.present_rgba8(extent, &pixels)?;
     let completion = wait_for_save(&mut screenshots, &mut renderer, &cpu)?;
     assert!(!completion.world);
@@ -183,7 +208,7 @@ fn wait_for_save(
 ) -> Result<ScreenshotCompletion, Box<dyn Error>> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(completion) = screenshots.poll(renderer, cpu) {
+        if let Some(completion) = screenshots.poll(renderer, cpu, &mut FrameWait::Offline) {
             return Ok(completion);
         }
         if Instant::now() >= deadline {

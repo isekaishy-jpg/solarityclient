@@ -17,7 +17,62 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 [composition design](cpu-crate-composition-design.md), and
 [cache/residency design](resource-cache-residency-design.md).
 
-## Connected source changes
+## Connected cutover changes
+
+The composition branch now combines resumable unit effects and encoded read
+ownership with the committed mounted-rider, native screenshot-wait and retained
+M2 payload changes through `8f14b60b`. Startup keeps the service owner's existing
+box throughout construction and return. An integration fixture checks independent
+encoded/decoded charges and required promotion of the same published generation.
+Combined formatting and workspace Clippy pass. The full combined suite passes
+1,701 tests, with zero failures and 33 existing ignored tests, including doc tests.
+Logs are in ignored `target/source-integration-{clippy,test}.{stdout,stderr}.log`.
+
+Retained M2 generations now charge the existing CPU Result allowances once for
+their decoded geometry, primary SKIN, collision/hierarchy buffers and nested
+animation, material, light, ribbon and particle tracks. Runtime binds the shared
+source authority to its executor budget before model loading. Speculative
+sources use their separate allowance; required consumers atomically transfer
+the charge before consumption. Refusal preserves the original speculative
+generation and allows retry. Cache-only retention keeps its charge until the
+qualified release deadline, with no change to that policy.
+
+The accounting measures owned capacities, including unused Vec slots. Shared
+canonical path strings, cache/request metadata, allocator overhead and temporary
+encoded/decode scratch remain outside this generation charge. Other source
+domains and complete working-set admission remain open.
+
+Validation exposed a startup stack overflow on the default test thread. The
+process's large service owner is now boxed instead of being copied inline
+through application startup results; the unchanged startup/shutdown test passes
+without increasing the stack limit. Formatting, workspace Clippy with warnings
+denied, all 1,686 workspace unit/integration tests (33 existing ignores) and six
+doc tests pass. Logs are ignored `target/model-storage-final2.log` and the
+preceding failure/reproduction logs. Build 174 remains installed; this source
+has no measured FPS result yet.
+
+The unit pose batch now includes mounted riders and vehicle descendants whose
+transforms have already been resolved by ordered callbacks. Camera demand uses
+the model's bounds; shadow demand uses its attachment root. Exact generation,
+clock, transform and override checks still guard ordered result publication.
+This extends the existing batch without another scheduler or an extra animation
+tick. A moving-camera jump/landing test confirms worker-result consumption for
+local-player, remote-player and creature mounts and bodies with unchanged RNG.
+Offscreen inherited-shadow coverage verifies worker consumption during the
+entry fade and shadow packets after the native opacity cutoff. Formatting,
+runtime Clippy with warnings denied, and all 470 runtime tests pass (27 existing
+ignored). Validation is in ignored `target/rider-pose-final2.log`; this source
+has no measured FPS result yet.
+
+Screenshot readback now retires through the configured GPU completion service,
+allowing native input servicing while the existing device-idle barrier completes.
+The renderer retains exclusive capture/submission ownership through that wait;
+CPU encoder admission still precedes readback and saturated queues preserve the
+original captured frame. Absent, unpresented and collected captures add no wait.
+Offline rendering retains synchronous readback. Formatting and rendering/runtime
+Clippy with warnings denied pass, as do the real GPU capture/resize test and both
+runtime screenshot tests (quality, pixels, saturation and save failures). The log
+is ignored `target/capture-wait-check.log`. This has no measured FPS result.
 
 Encoded source admission now follows archive-returned byte ownership through
 model decoders, retained database tables, sound buffers, FreeType faces and UTF-8
@@ -45,7 +100,8 @@ carry frame reservations. Publication checks the source generation, clock, view,
 overrides and exact named demand before swapping the result into the ordered
 owner. Sampling an event window leaves its consumption cursor untouched. The
 offscreen equipped-NPC and moving-camera serial comparisons exercise this path;
-attached-parent dependencies and callback-time sampling remain to be connected.
+attachment inputs discovered later in traversal and callback-time sampling
+remain to be connected.
 Formatting, runtime Clippy with warnings denied, and all 468 runtime tests pass
 (27 existing ignored). The three offscreen mount populations consume worker
 samples while retaining callback/RNG behavior. Validation is recorded in ignored
@@ -971,7 +1027,8 @@ an operation has a context parameter. The requirements below remain in scope.
   and further useful main-ready continuations. World preparation,
   presentation-slot waits and required shadow-recording joins are connected;
   world/Glue, UI/loading and cinematic acquisition, world resource/quality
-  retirement and native swapchain recreation now use the completion service.
+  retirement, screenshot readback and native swapchain recreation now use the
+  completion service.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
 - Extend cross-domain overlap beyond the connected ground-detail/WMO and

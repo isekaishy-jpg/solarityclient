@@ -88,6 +88,9 @@ impl M2CacheService {
             .lock()
             .get(&key)?
         {
+            if service != solarity_cpu::CpuService::Speculative {
+                model.require_storage()?;
+            }
             return Ok(M2Load::Ready(model));
         }
         if let Some(slot) = index.pending.get(&key) {
@@ -103,6 +106,7 @@ impl M2CacheService {
             key,
             slot,
             finished: false,
+            requested_service: service,
         }))
     }
 }

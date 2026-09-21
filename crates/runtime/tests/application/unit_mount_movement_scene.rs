@@ -5,6 +5,20 @@ use solarity_ecs::{WorldMovementSpeeds, WorldMovementState};
 
 #[test]
 fn mount_jump_and_landing_callbacks_reach_all_offscreen_unit_paths() -> Result<(), Box<dyn Error>> {
+    mount_jump_and_landing_scene(false, false)
+}
+
+#[test]
+fn mounted_rider_worker_poses_preserve_camera_and_callback_order() -> Result<(), Box<dyn Error>> {
+    mount_jump_and_landing_scene(true, false)
+}
+
+#[test]
+fn offscreen_mounted_riders_keep_inherited_worker_shadow_palettes() -> Result<(), Box<dyn Error>> {
+    mount_jump_and_landing_scene(false, true)
+}
+
+fn mount_jump_and_landing_scene(visible: bool, shadows: bool) -> Result<(), Box<dyn Error>> {
     use crate::application::unit_animation::{
         UnitMovementAnimationEvent, UnitMovementAnimationEventKind,
     };
@@ -66,6 +80,29 @@ fn mount_jump_and_landing_callbacks_reach_all_offscreen_unit_paths() -> Result<(
             .into_iter()
             .enumerate()
     {
+        let camera = if visible {
+            WorldCamera::stock(
+                Vec3::new(12. + step as f32, -12., 8.),
+                Vec3::ZERO,
+                Vec3::Z,
+                100.,
+            )
+            .frame(1.)?
+        } else if shadows {
+            WorldCamera::stock(Vec3::X * 8., Vec3::X * 9., Vec3::Z, 100.).frame(1.)?
+        } else {
+            camera
+        };
+        let shadow = shadows
+            .then(|| {
+                solarity_rendering::WorldShadowProjection::primary(
+                    solarity_rendering::WorldShadowQuality::UnitsHigh,
+                    Vec3::ZERO,
+                    camera.camera().position(),
+                    -Vec3::Z,
+                )
+            })
+            .transpose()?;
         let before = random;
         if matches!(step, 0 | 3) {
             let movement = WorldMovementState::new(
@@ -109,7 +146,7 @@ fn mount_jump_and_landing_callbacks_reach_all_offscreen_unit_paths() -> Result<(
             now,
             &mut random,
         )?;
-        let draws = frame.prepare_visible_draws(
+        let draws = frame.prepare_visible_draws_with_unit_effects(
             &renderer,
             &crate::frame_cpu_support::executor()?,
             &mut crate::application::frame_pipeline::FrameWait::Offline,
@@ -121,16 +158,41 @@ fn mount_jump_and_landing_callbacks_reach_all_offscreen_unit_paths() -> Result<(
             M2CameraEffectScale::EXTERNAL_CAMERA,
             &mut random,
             None,
+            None,
+            None,
+            None,
+            shadow,
+            None,
         )?;
-        assert!(
-            draws.draws.is_empty(),
-            "callbacks must execute before culling"
-        );
         assert_eq!(
-            frame.pose_batch.named_consumption(),
-            (3, 3),
-            "all three offscreen mount roots publish rider samples from workers"
+            draws.draws.is_empty(),
+            !visible,
+            "camera culling at step {step}"
         );
+        if shadows {
+            assert_eq!(
+                draws.shadow_draws.len(),
+                if now < 1000. { 0 } else { 6 },
+                "entry opacity keeps its native shadow cutoff at step {step}"
+            );
+        }
+        if visible || shadows {
+            assert_eq!(
+                frame.pose_batch.consumption(),
+                (6, 6),
+                "all three mounts and their attached bodies consume worker poses at step {step}"
+            );
+        } else {
+            assert!(
+                draws.draws.is_empty(),
+                "callbacks must execute before culling"
+            );
+            assert_eq!(
+                frame.pose_batch.named_consumption(),
+                (3, 3),
+                "all three offscreen mount roots publish rider samples from workers"
+            );
+        }
         for (mount, body) in [
             (
                 M2GpuPlacementOwner::PlayerMount { guid: 7 },

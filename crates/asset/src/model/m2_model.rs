@@ -17,9 +17,19 @@ pub struct DecodedM2Model {
     blob: ModelBlob,
     animations: M2AnimationSet,
     skins: Vec<M2SkinProfile>,
+    resident_bytes: usize,
+    _storage: Option<super::storage::ModelStorage>,
 }
 
 impl DecodedM2Model {
+    /// Retained decoded value and backing capacities, including all nested tracks and SKINs.
+    /// Shared canonical path strings, cache/request metadata, allocator overhead and
+    /// temporary encoded/decode buffers are separate from this generation's charge.
+    #[must_use]
+    pub const fn resident_storage_bytes(&self) -> usize {
+        self.resident_bytes
+    }
+
     /// Resolves the model and each `ModelNN.skin` companion independently.
     ///
     /// This is deliberately path-based: an HD patch supplies larger replacement
@@ -32,7 +42,9 @@ impl DecodedM2Model {
     /// is missing or malformed, or cross-file geometry references are invalid.
     pub fn load(store: &mut AssetStore, path: &AssetPath) -> Result<Self, AssetError> {
         let _profile_scope = solarity_profiling::profile!("asset.model.m2_model.load");
-        Self::load_profiles(store, path, SkinProfileLoad::All)
+        Self::load_profiles(store, path, SkinProfileLoad::All, || {
+            solarity_cpu::CpuStorageClass::Required
+        })
     }
 
     /// Resolves only build 12340's highest-capability `00.skin` companion.
@@ -52,7 +64,24 @@ impl DecodedM2Model {
     ) -> Result<Self, AssetError> {
         let _profile_scope =
             solarity_profiling::profile!("asset.model.m2_model.load_primary_profile");
-        Self::load_profiles(store, path, SkinProfileLoad::Primary)
+        Self::load_primary_profile_with_class(store, path, || {
+            solarity_cpu::CpuStorageClass::Required
+        })
+    }
+
+    pub(crate) fn load_primary_profile_with_class(
+        store: &mut AssetStore,
+        path: &AssetPath,
+        class: impl FnOnce() -> solarity_cpu::CpuStorageClass,
+    ) -> Result<Self, AssetError> {
+        Self::load_profiles(store, path, SkinProfileLoad::Primary, class)
+    }
+
+    pub(crate) fn require_storage(&self) -> Result<(), AssetError> {
+        if let Some(storage) = &self._storage {
+            storage.require()?;
+        }
+        Ok(())
     }
 
     /// Shares body/animation decoding while varying only external view demand.
@@ -60,6 +89,7 @@ impl DecodedM2Model {
         store: &mut AssetStore,
         path: &AssetPath,
         profile_load: SkinProfileLoad,
+        class: impl FnOnce() -> solarity_cpu::CpuStorageClass,
     ) -> Result<Self, AssetError> {
         let path = canonical_model_path(path)?;
         let read = store.read(&path)?;
@@ -103,13 +133,33 @@ impl DecodedM2Model {
         }
         validate_material_animation_references(&path, &blob, &animations, &skins)?;
 
-        Ok(Self {
+        let mut model = Self {
             path,
             source,
             blob,
             animations,
             skins,
-        })
+            resident_bytes: 0,
+            _storage: None,
+        };
+        model.resident_bytes = size_of::<Self>()
+            + model.source.owned_storage_bytes()
+            + model.blob.heap_bytes()
+            + model.animations.heap_bytes()
+            + super::storage::vector_bytes(&model.skins)
+            + model
+                .skins
+                .iter()
+                .map(M2SkinProfile::heap_bytes)
+                .sum::<usize>();
+        if let Some(budget) = store.model_cache_service().storage() {
+            model._storage = Some(super::storage::ModelStorage::new(
+                budget,
+                class(),
+                model.resident_bytes,
+            )?);
+        }
+        Ok(model)
     }
 
     /// Returns the exact normalized M2 archive path.

@@ -78,6 +78,7 @@ impl RuntimeScreenshots {
         &mut self,
         renderer: &mut VulkanRenderer,
         cpu: &CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
     ) -> Option<ScreenshotCompletion> {
         if self
             .writing
@@ -105,7 +106,15 @@ impl RuntimeScreenshots {
                     });
                 }
             };
-            let result = match renderer.take_captured_frame() {
+            let capture = wait
+                .before_capture(renderer)
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    renderer
+                        .take_captured_frame()
+                        .map_err(|error| error.to_string())
+                });
+            let result = match capture {
                 Ok(None) => return None,
                 Ok(Some(frame)) => {
                     let directory = self.directory.clone();
@@ -114,7 +123,7 @@ impl RuntimeScreenshots {
                         write_screenshot(&directory, &frame, request)
                     }))
                 }
-                Err(error) => Err(error.to_string()),
+                Err(error) => Err(error),
             };
             self.capturing = None;
             match result {

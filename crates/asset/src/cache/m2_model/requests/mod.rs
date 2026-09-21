@@ -71,4 +71,5 @@ pub struct M2LoadProducer {
     key: AssetResourceKey,
     slot: Arc<Slot>,
     finished: bool,
+    requested_service: solarity_cpu::CpuService,
 }

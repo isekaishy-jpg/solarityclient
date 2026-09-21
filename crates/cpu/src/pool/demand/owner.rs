@@ -5,6 +5,23 @@ use super::{CpuServiceDemand, CpuServiceInterest, Interest};
 use std::sync::{Arc, atomic::AtomicU8};
 
 impl CpuServiceDemand {
+    /// Strongest currently registered consumer; an empty owner has no resource demand.
+    #[must_use]
+    pub fn strongest(&self) -> Option<CpuService> {
+        let values = self
+            .0
+            .values
+            .lock()
+            .unwrap_or_else(|_| unreachable!("demand metadata cannot panic"));
+        [
+            CpuService::Required,
+            CpuService::Retirement,
+            CpuService::Speculative,
+        ]
+        .into_iter()
+        .find(|service| values.counts[*service as usize] != 0)
+    }
+
     /// Registers a logical consumer; cloning its returned handle shares that registration.
     #[must_use]
     pub fn subscribe(&self, service: CpuService) -> CpuServiceInterest {
