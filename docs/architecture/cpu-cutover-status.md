@@ -19,6 +19,19 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+The unit pose batch now includes mounted riders and vehicle descendants whose
+transforms have already been resolved by ordered callbacks. Camera demand uses
+the model's bounds; shadow demand uses its attachment root. Exact generation,
+clock, transform and override checks still guard ordered result publication.
+This extends the existing batch without another scheduler or an extra animation
+tick. A moving-camera jump/landing test confirms worker-result consumption for
+local-player, remote-player and creature mounts and bodies with unchanged RNG.
+Offscreen inherited-shadow coverage verifies worker consumption during the
+entry fade and shadow packets after the native opacity cutoff. Formatting,
+runtime Clippy with warnings denied, and all 470 runtime tests pass (27 existing
+ignored). Validation is in ignored `target/rider-pose-final2.log`; this source
+has no measured FPS result yet.
+
 Screenshot readback now retires through the configured GPU completion service,
 allowing native input servicing while the existing device-idle barrier completes.
 The renderer retains exclusive capture/submission ownership through that wait;
@@ -37,7 +50,8 @@ carry frame reservations. Publication checks the source generation, clock, view,
 overrides and exact named demand before swapping the result into the ordered
 owner. Sampling an event window leaves its consumption cursor untouched. The
 offscreen equipped-NPC and moving-camera serial comparisons exercise this path;
-attached-parent dependencies and callback-time sampling remain to be connected.
+attachment inputs discovered later in traversal and callback-time sampling
+remain to be connected.
 Formatting, runtime Clippy with warnings denied, and all 468 runtime tests pass
 (27 existing ignored). The three offscreen mount populations consume worker
 samples while retaining callback/RNG behavior. Validation is recorded in ignored
