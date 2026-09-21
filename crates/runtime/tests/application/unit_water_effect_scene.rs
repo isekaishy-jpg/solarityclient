@@ -18,7 +18,9 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
             catalog,
             Arc::new(solarity_asset::EnvironmentalDamageCatalog::default()),
         )?);
-    while !warmup.service_one(&mut renderer)? {}
+    while !warmup.service_one(&mut crate::frame_cpu_support::gpu_preparation(
+        &mut renderer,
+    ))? {}
     let mut presentation = unit_presentation(&fixture)?;
     let mut world = ActiveWorld::enter(WorldBootstrap::new(
         WorldMapId::new(0),
@@ -33,7 +35,7 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -41,7 +43,7 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
     )?;
     frame.set_unit_effect_sources(Arc::new(warmup.into_sources()));
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -72,7 +74,7 @@ fn authored_effect_construction_precedes_the_next_unit_scene_callback() -> Resul
             }
             presentation.synchronize_creatures(Some(&world), |_| None)?;
             frame.replace_creatures(
-                &mut renderer,
+                &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
                 &presentation.resident_creature_frame_inputs(),
                 &mut random,
             )?;
@@ -311,7 +313,9 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
         )?;
         assert_eq!(effects.len(), 5);
         let mut warmup = M2UnitEffectWarmup::new(effects);
-        while !warmup.service_one(&mut renderer)? {}
+        while !warmup.service_one(&mut crate::frame_cpu_support::gpu_preparation(
+            &mut renderer,
+        ))? {}
         let bank = Arc::new(warmup.into_sources());
         let mut presentation = unit_presentation(&fixture)?;
         let mut world = ActiveWorld::enter(WorldBootstrap::new(
@@ -327,7 +331,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
         let lifetime = Rc::new(());
         let mut random = CrtRand::new();
         let mut frame = M2Frame::prepare(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &ResidentM2Scene::default(),
             fixture_animations(&fixture)?,
             &mut random,
@@ -335,7 +339,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
         )?;
         frame.set_unit_effect_sources(Arc::clone(&bank));
         frame.replace_creatures(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &presentation.resident_creature_frame_inputs(),
             &mut random,
         )?;
@@ -485,7 +489,7 @@ fn unit_water_effect_scene_publishes_attaches_replaces_and_drains() -> Result<()
         // creation clock, skips destroyed owners, and starts the primary in
         // the before-scene phase established by the native load fixtures.
         let mut delayed = M2Frame::prepare(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &ResidentM2Scene::default(),
             fixture_animations(&fixture)?,
             &mut random,

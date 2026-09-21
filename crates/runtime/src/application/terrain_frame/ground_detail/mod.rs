@@ -6,8 +6,8 @@ use std::sync::Arc;
 use glam::Vec3;
 use solarity_rendering::{
     BlpColorSpace, BlpTextureUploadRequest, GroundDetailDensity, GroundDetailDraw,
-    GroundDetailFrame, TerrainTileMeshPlan, VulkanRenderer, WorldCameraFrame, WorldFrustum,
-    WorldModelBaseMip, WorldModelTextureFiltering,
+    GroundDetailFrame, TerrainTileMeshPlan, WorldCameraFrame, WorldFrustum, WorldModelBaseMip,
+    WorldModelTextureFiltering,
 };
 
 mod preparation;
@@ -85,7 +85,7 @@ impl GroundDetailWorld {
     /// chunks retain the same authored placement and density selection.
     pub(super) fn prepare<'a>(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         residents: impl Iterator<Item = &'a ResidentTerrainTile> + Clone,
         camera: WorldCameraFrame,
         frustum: Option<WorldFrustum>,
@@ -196,7 +196,7 @@ impl GroundDetailWorld {
     /// Admits one completed immutable chunk, rejecting retired terrain/density tokens.
     fn publish_prepared(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         if !self
             .pending

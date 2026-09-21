@@ -270,7 +270,10 @@ impl TerrainFrame {
                 match step {
                     super::MainPreparationStep::GroundDetail => {
                         if let Err(error) = self.ground_detail.prepare(
-                            renderer,
+                            &mut solarity_rendering::GpuPreparation::new(
+                                renderer,
+                                &mut wait.recording(cpu),
+                            ),
                             terrain.resident_tiles(),
                             camera,
                             *exterior_frustum,

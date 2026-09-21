@@ -231,7 +231,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         Arc::clone(&animations),
         &mut random,
@@ -239,7 +239,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
     )?;
     for model in [&receiver, &light] {
         frame.sources.push(Some(prepare_gpu_source(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             model,
             &[M2ResolvedTexture::StockWhite],
             None,

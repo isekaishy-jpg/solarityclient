@@ -5,7 +5,6 @@ use std::{ops::ControlFlow, task::Poll, time::Duration};
 use solarity_asset::{ArchiveCatalog, AssetStoreHandle, BlpTextureCache, SpellNameCatalog};
 use solarity_ecs::ActiveWorld;
 use solarity_network::{WORLD_ACTION_BUTTON_COUNT, WorldActionButtons};
-use solarity_rendering::VulkanRenderer;
 use solarity_ui::{
     AddonCatalog, FrameManager, FramePublication, FrameStartup, GlueError, UiActionBarState,
     UiEventPayload, UiScriptEnvironment, UiSpellBookTab, UiWorldState, UiZoneState,
@@ -195,7 +194,7 @@ impl WorldUiConstruction {
     /// The caller must not consume intervening session notifications before this.
     pub(in crate::application) fn finish(
         self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         window_id: crate::WindowId,
         manager: FrameManager,
         startup_errors: Vec<ApplicationError>,
@@ -251,7 +250,7 @@ impl RuntimeWorldUi {
     /// Completes the same construction path synchronously for offline diagnostics.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         window_id: crate::WindowId,
         assets: AssetStoreHandle,
         archive_catalog: solarity_asset::ArchiveCatalog,

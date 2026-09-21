@@ -4,7 +4,7 @@ use super::{M2Frame, M2GluePipelineWarmup, M2GpuSource, RuntimeTerrainFrameError
 use crate::application::terrain_coordinator::m2_residency::ResidentM2Source;
 use solarity_asset::DecodedM2Model;
 use solarity_asset::ResourceLease;
-use solarity_rendering::{M2ModelOrientation, VulkanRenderer};
+use solarity_rendering::M2ModelOrientation;
 
 /// Retains uploaded resources until the exact tile generation commits membership.
 pub(super) struct PreparedStaticM2 {
@@ -35,7 +35,7 @@ impl M2Frame {
     /// Advances one cold source while leaving random consumption and visible owners untouched.
     pub(in crate::application::terrain_frame) fn prepare_static_source(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         source: &ResidentM2Source,
         admission: &mut Option<M2SourceAdmission>,
     ) -> Result<bool, RuntimeTerrainFrameError> {

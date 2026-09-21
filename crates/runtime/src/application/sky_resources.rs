@@ -197,7 +197,10 @@ impl RuntimeSkyResources {
                     stars.advance(time_ms, &self.animations, random)?;
                 }
                 stars.seed(
-                    renderer,
+                    &mut solarity_rendering::GpuPreparation::new(
+                        renderer,
+                        &mut wait.recording(cpu),
+                    ),
                     camera,
                     star_opacity,
                     &mut self.preparation.jobs[0],
@@ -233,7 +236,10 @@ impl RuntimeSkyResources {
                     && let Some(model) = &mut self.skyboxes[index].model
                 {
                     model.seed(
-                        renderer,
+                        &mut solarity_rendering::GpuPreparation::new(
+                            renderer,
+                            &mut wait.recording(cpu),
+                        ),
                         camera,
                         slot.weight,
                         &mut self.preparation.jobs[slot_index + 1],

@@ -22,7 +22,7 @@ fn creature_body_scale_updates_reach_gpu_placement() -> Result<(), Box<dyn Error
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -53,7 +53,11 @@ fn creature_body_scale_updates_reach_gpu_placement() -> Result<(), Box<dyn Error
                 .scale(),
             object_scale
         );
-        frame.replace_creatures(&mut renderer, &inputs, &mut random)?;
+        frame.replace_creatures(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            &inputs,
+            &mut random,
+        )?;
         let placement = frame
             .placements
             .iter()

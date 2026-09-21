@@ -30,7 +30,7 @@ fn offscreen_equipment_consumes_worker_named_bones() -> Result<(), Box<dyn Error
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -143,7 +143,7 @@ fn npc_virtual_items_update_models_effects_and_native_hand_placement() -> Result
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -315,7 +315,7 @@ fn npc_virtual_items_update_models_effects_and_native_hand_placement() -> Result
     fields(&mut world, 30, &[(122, 0)])?;
     presentation.synchronize_creatures(Some(&world), |_| Some((0, 0x1000_0000)))?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -359,7 +359,7 @@ fn publish_npcs(
 ) -> Result<(), Box<dyn Error>> {
     presentation.synchronize_creatures(Some(world), |_| None)?;
     frame.replace_creatures(
-        renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(renderer),
         &presentation.resident_creature_frame_inputs(),
         random,
     )?;
@@ -394,7 +394,7 @@ fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -409,7 +409,7 @@ fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result
     )?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -472,7 +472,7 @@ fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result
     fields(&mut world, 30, &[(4, 1.5_f32.to_bits())])?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -481,7 +481,7 @@ fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result
     fields(&mut world, 30, &[(67, 103)])?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -502,7 +502,7 @@ fn npc_armor_follows_body_bones_and_survives_other_unit_replacements() -> Result
     fields(&mut world, 40, &[(67, 102)])?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -538,7 +538,7 @@ fn camera_opacity_reaches_player_equipment_without_fading_other_units() -> Resul
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -724,7 +724,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -896,7 +896,7 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     fields(&mut world, 20, &[(315, 3000)])?;
     presentation.synchronize_remote_players(Some(&world))?;
     let failure = frame.replace_remote_players(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_remote_player_frame_inputs(),
         &mut random,
     );
@@ -1144,9 +1144,13 @@ fn publish(
 ) -> Result<(), Box<dyn Error>> {
     presentation.synchronize(Some(world))?;
     presentation.synchronize_remote_players(Some(world))?;
-    frame.replace_player(renderer, presentation.resident_frame_input(), random)?;
+    frame.replace_player(
+        &mut crate::frame_cpu_support::gpu_preparation(renderer),
+        presentation.resident_frame_input(),
+        random,
+    )?;
     frame.replace_remote_players(
-        renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(renderer),
         &presentation.resident_remote_player_frame_inputs(),
         random,
     )?;

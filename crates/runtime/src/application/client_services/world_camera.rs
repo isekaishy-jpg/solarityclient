@@ -190,11 +190,29 @@ impl ClientServices {
                 };
                 if loading {
                     frame
-                        .admit_loading_tile(&mut self.renderer, tile)
+                        .admit_loading_tile(
+                            &mut solarity_rendering::GpuPreparation::new(
+                                &mut self.renderer,
+                                &mut crate::application::frame_pipeline::FrameWait::Native(
+                                    &mut self.platform,
+                                )
+                                .recording(&self.cpu),
+                            ),
+                            tile,
+                        )
                         .map_err(RuntimeTerrainError::from)
                 } else {
                     frame
-                        .admit_tile(&mut self.renderer, tile)
+                        .admit_tile(
+                            &mut solarity_rendering::GpuPreparation::new(
+                                &mut self.renderer,
+                                &mut crate::application::frame_pipeline::FrameWait::Native(
+                                    &mut self.platform,
+                                )
+                                .recording(&self.cpu),
+                            ),
+                            tile,
+                        )
                         .map_err(RuntimeTerrainError::from)
                 }
             },
@@ -206,7 +224,11 @@ impl ClientServices {
             && let Some(primary) = self.terrain.resident_tile().map(|tile| tile.index())
         {
             frame.synchronize_tiles(
-                &mut self.renderer,
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut self.renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .recording(&self.cpu),
+                ),
                 primary,
                 self.terrain.resident_tiles(),
                 &mut self.crt_rand,
@@ -236,7 +258,15 @@ impl ClientServices {
             return Ok(false);
         };
         frame.set_ground_detail(settings[0], settings[1])?;
-        frame.prepare_ground_detail(&mut self.renderer, self.terrain.resident_tiles(), camera)?;
+        frame.prepare_ground_detail(
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
+            self.terrain.resident_tiles(),
+            camera,
+        )?;
         frame.service_cpu_retirements(&self.cpu)?;
         Ok(frame.ground_detail_ready())
     }

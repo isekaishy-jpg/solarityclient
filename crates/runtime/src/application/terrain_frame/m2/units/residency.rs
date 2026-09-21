@@ -16,14 +16,14 @@ use crate::application::player_coordinator::{
     ResidentCreatureFrameInput, ResidentCreatureTexture, ResidentPlayerFrameInput,
 };
 use crate::random::CrtRand;
-use solarity_rendering::{M2LocalLightCount, M2ModelOrientation, VulkanRenderer};
+use solarity_rendering::{M2LocalLightCount, M2ModelOrientation};
 use std::rc::Rc;
 
 impl M2Frame {
     /// Replaces the one player-owned source and placement transactionally.
     pub(in super::super::super) fn replace_player(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         input: Option<ResidentPlayerFrameInput<'_>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -56,7 +56,7 @@ impl M2Frame {
     /// Replaces all visible creature sources and placements transactionally.
     pub(in super::super::super) fn replace_creatures(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         inputs: &[ResidentCreatureFrameInput<'_>],
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -202,7 +202,7 @@ impl M2Frame {
     /// Replaces every visible remote character and equipped child placement.
     pub(in super::super::super) fn replace_remote_players(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         inputs: &[ResidentPlayerFrameInput<'_>],
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {

@@ -9,7 +9,7 @@ use solarity_asset::{
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, UnderwaterParticleFog, UnderwaterParticleFrame,
-    UnderwaterParticleVertex, VulkanRenderer, WorldCameraFrame,
+    UnderwaterParticleVertex, WorldCameraFrame,
 };
 use solarity_systems::UnderwaterParticles;
 use thiserror::Error;
@@ -127,7 +127,7 @@ impl RuntimeUnderwaterParticles {
     /// then prepares only the admitted billboard bank for this frame.
     pub(super) fn prepare_frame(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         camera: WorldCameraFrame,
         liquid: Option<&LiquidTypeDefinition>,
         liquids: &LiquidTypeCatalog,

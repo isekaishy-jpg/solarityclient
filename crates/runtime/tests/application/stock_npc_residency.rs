@@ -110,7 +110,7 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         animations,
         &mut random,
@@ -168,7 +168,7 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
         }
         frame
             .replace_creatures(
-                &mut renderer,
+                &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
                 &presentation.resident_creature_frame_inputs(),
                 &mut random,
             )
@@ -220,7 +220,7 @@ fn stock_npc_displays_prepare_visible_gpu_draws() -> Result<(), Box<dyn Error>> 
                     )?;
                     presentation.synchronize_creatures(Some(&world), |_| None)?;
                     frame.replace_creatures(
-                        &mut renderer,
+                        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
                         &presentation.resident_creature_frame_inputs(),
                         &mut random,
                     )?;

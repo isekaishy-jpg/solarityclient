@@ -6,8 +6,8 @@ use std::sync::Arc;
 use solarity_asset::{AssetError, AssetPath, AssetStore, BlpTextureSource, LiquidTypeCatalog};
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_rendering::{
-    BlpColorSpace, BlpTextureHandle, VulkanRenderer, WaterRippleFrame, WaterRipplePass,
-    WaterRippleRenderVertex, WorldCameraFrame, water_ripple_surface_transform,
+    BlpColorSpace, BlpTextureHandle, WaterRippleFrame, WaterRipplePass, WaterRippleRenderVertex,
+    WorldCameraFrame, water_ripple_surface_transform,
 };
 use solarity_systems::{
     MovementCollisionBounds, MovementCollisionTriangle, WaterRipple, WaterRippleClock,
@@ -237,7 +237,7 @@ impl RuntimeWaterRipples {
     /// Advances once for a scene frame and reuses both CPU vertex banks.
     pub(super) fn prepare_frame(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         elapsed: f32,
         scene_time: f32,
     ) -> Result<(), RuntimeWaterRippleError> {

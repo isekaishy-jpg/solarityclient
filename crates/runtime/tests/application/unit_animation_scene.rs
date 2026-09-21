@@ -88,13 +88,17 @@ fn hairless_npc_can_join_and_leave_an_existing_unit_scene() -> Result<(), Box<dy
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
-    frame.replace_creatures(&mut renderer, &inputs, &mut random)?;
+    frame.replace_creatures(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &inputs,
+        &mut random,
+    )?;
     let camera = WorldCamera::orthographic(
         Vec3::new(8., 0., 0.),
         Vec3::ZERO,
@@ -169,19 +173,19 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
     frame.replace_remote_players(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_remote_player_frame_inputs(),
         &mut random,
     )?;
@@ -230,12 +234,12 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         creature_generation.matches(presentation.resident_creature_frame_inputs()[0].generation())
     );
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
     frame.replace_remote_players(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_remote_player_frame_inputs(),
         &mut random,
     )?;
@@ -264,7 +268,11 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         &remote,
         rebuilt[0].unit_animation().ok_or("retained remote owner")?
     ));
-    frame.replace_remote_players(&mut renderer, &rebuilt, &mut random)?;
+    frame.replace_remote_players(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &rebuilt,
+        &mut random,
+    )?;
     assert_eq!(
         random, expected,
         "material replacement borrows the old timer"
@@ -312,7 +320,11 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
         &remote,
         replaced[0].unit_animation().ok_or("replacement owner")?
     ));
-    frame.replace_remote_players(&mut renderer, &replaced, &mut random)?;
+    frame.replace_remote_players(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &replaced,
+        &mut random,
+    )?;
     assert_eq!(
         replaced[0]
             .unit_animation()
@@ -325,7 +337,7 @@ fn replicated_units_retain_cpu_and_gpu_generations_when_neighbors_change()
     world.remove_object(30)?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -371,7 +383,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -383,14 +395,18 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
          presentation: &crate::application::player_coordinator::RuntimePlayerPresentation,
          random: &mut CrtRand|
          -> Result<(), Box<dyn Error>> {
-            frame.replace_player(renderer, presentation.resident_frame_input(), random)?;
+            frame.replace_player(
+                &mut crate::frame_cpu_support::gpu_preparation(renderer),
+                presentation.resident_frame_input(),
+                random,
+            )?;
             frame.replace_creatures(
-                renderer,
+                &mut crate::frame_cpu_support::gpu_preparation(renderer),
                 &presentation.resident_creature_frame_inputs(),
                 random,
             )?;
             frame.replace_remote_players(
-                renderer,
+                &mut crate::frame_cpu_support::gpu_preparation(renderer),
                 &presentation.resident_remote_player_frame_inputs(),
                 random,
             )?;
@@ -515,7 +531,7 @@ fn unit_material_replacement_retains_live_effects_but_new_lifetimes_start_empty(
     add_unit(&mut world, 7, ObjectKind::Player, 0)?;
     presentation.synchronize(Some(&world))?;
     frame.replace_player(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         presentation.resident_frame_input(),
         &mut random,
     )?;
@@ -712,7 +728,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -720,7 +736,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
     )?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;

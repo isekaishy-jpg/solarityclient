@@ -6,7 +6,6 @@ use std::rc::Rc;
 
 use crate::application::game_object_coordinator::{GameObjectFrameInput, GameObjectResource};
 use crate::random::CrtRand;
-use solarity_rendering::VulkanRenderer;
 
 use super::{
     M2Frame, M2GpuPlacementOwner, M2Playback, M2PlaybackStorage, RuntimeTerrainFrameError,
@@ -16,7 +15,7 @@ use super::{
 impl M2Frame {
     pub(in crate::application::terrain_frame) fn synchronize_game_objects(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         game_objects: GameObjectFrameInput<'_>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {

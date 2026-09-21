@@ -15,7 +15,7 @@ impl TerrainFrame {
     /// the world. Gameplay publication applies the current exterior clip.
     pub(in crate::application) fn prepare_ground_detail<'a>(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         tiles: impl Iterator<Item = &'a ResidentTerrainTile> + Clone,
         camera: solarity_rendering::WorldCameraFrame,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -67,7 +67,7 @@ impl TerrainFrame {
     /// Publishes added tiles and retires departed owners without resetting live M2s.
     pub(in crate::application) fn synchronize_tiles<'a>(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         primary: TerrainTileIndex,
         tiles: impl Iterator<Item = &'a ResidentTerrainTile> + Clone,
         random: &mut CrtRand,

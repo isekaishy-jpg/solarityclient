@@ -33,24 +33,28 @@ main admits the Vulkan transfer. Renderer deduplication precedes CPU submission;
 resident duplicates add no work. A conservative three-times-packed-byte reservation
 covers staging/decoded payload overlap and remains owned through staging retirement.
 It does not account for encoded cache residence or third-party codec internals.
-Minimap, celestial and portrait-mask uploads use this path with native servicing.
-M2, WMO, ADT, Glue and other texture callers still require connection. The upload
-API still waits for its worker result; full loading/publication continuations and
-main-side Vulkan staging copies remain open.
+All runtime authored texture callers now use this path: M2 bodies, equipment,
+effects and sky models; WMO and ADT admission/streaming; ground detail and liquids;
+Glue, FrameXML and loading cards; ripples and underwater particles; and the
+previously connected minimap, celestial and portrait-mask uploads. GPU admission
+helpers require an explicit borrowed `GpuPreparation` context. Composition passes
+the existing application executor and native wait owner; offline fixtures supply
+an existing executor. Other Vulkan operations retain their original main owner.
+The serial renderer API remains available outside these runtime admission paths.
+The upload API still waits for its worker result; full loading/publication
+continuations and main-side Vulkan staging copies remain open.
 
-Formatting and Clippy with warnings denied pass for CPU, asset, rendering and
-runtime. The broad run passed 604 tests before a new texture lifetime assertion
-checked release at GPU idle instead of renderer destruction. Only that test was
-corrected; its focused rerun passes, including upload formats, duplicate reuse,
-wait failure, admission pressure and reservation release. All 476 runtime library
-and 68 runtime integration tests also pass: 1,149 distinct passing tests across
-these runs, with 29 existing ignores in their completed suites. Runtime reused the
-binaries built by the broad run after verifying unchanged source dependencies;
-no production source changed afterward. Evidence is ignored
-`target/texture-portrait-final.log`, `target/texture-portrait-recheck2.log`,
-`target/texture-portrait-runtime.log` and
-`target/texture-portrait-runtime-artifacts.json`. Build 175 remains installed; no
-new package or live performance result is claimed.
+The complete texture-caller connection batch passes formatting and Clippy for
+runtime/rendering, all targets and features, with warnings denied. Its single
+combined test run passes 833 tests with zero failures and 28 existing ignores;
+both crate doc-test suites also complete. Existing scene fixtures now supply the
+CPU admission context, and the texture fixture covers native-wait failure,
+admission pressure, duplicate reuse, BC/RGBA upload, offline single-source upload,
+color-space identity and reservation release. A source audit confirms all 11
+previously serial runtime authored-upload sites require the worker context.
+Evidence is ignored `target/texture-callers-final.log` and
+`target/texture-callers-audit.json`. Build 175 remains installed; no new package
+or live performance result is claimed.
 
 Sky numeric preparation now uses the shared frame executor. Gradient colors,
 celestial meshes and the retained procedural-cloud simulation dispatch at the

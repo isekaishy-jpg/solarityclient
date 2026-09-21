@@ -150,9 +150,15 @@ impl ClientServices {
             return Ok(());
         }
         let namespace = self.assets.borrow().namespace();
-        let uploaded =
-            self.ui_texture_residency
-                .prewarm(&mut self.renderer, &self.ui_textures, namespace)?;
+        let uploaded = self.ui_texture_residency.prewarm(
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
+            &self.ui_textures,
+            namespace,
+        )?;
         self.glue_gpu_texture_prewarm_pending = false;
         tracing::info!(
             uploaded_texture_count = uploaded,

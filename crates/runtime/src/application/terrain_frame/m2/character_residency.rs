@@ -208,7 +208,7 @@ pub(super) struct UnitMountGpuInput<'a> {
 /// 717910 preserves its instance while the same unit and mount model remain.
 pub(super) fn prepare_mount_gpu(
     frame: &M2Frame,
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     prepared: &mut M2PreparedCharacter,
     input: UnitMountGpuInput<'_>,
     scene_time_ms: f32,
@@ -318,7 +318,7 @@ pub(super) fn prepare_mount_gpu(
 /// Prepares one complete player character, including equipment and visuals.
 pub(super) fn prepare_character_gpu(
     frame: &M2Frame,
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     input: &ResidentPlayerFrameInput<'_>,
     body_owner: M2GpuPlacementOwner,
     scene_time_ms: f32,
@@ -441,7 +441,7 @@ pub(super) struct UnitEquipmentGpuInput<'a> {
 /// players and NPCs. Display-only NPC armor has no public item entry identity.
 pub(super) fn prepare_unit_equipment_gpu(
     frame: &M2Frame,
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     prepared: &mut M2PreparedCharacter,
     input: UnitEquipmentGpuInput<'_>,
     item_identity: impl Fn(PlayerEquipmentSlot) -> Option<M2UnitItemIdentity>,

@@ -44,14 +44,14 @@ fn offscreen_units_keep_shadow_bones_without_advancing_visible_effects()
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         Arc::clone(&animations),
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.sources.push(Some(prepare_gpu_source(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &model,
         &[M2ResolvedTexture::StockWhite],
         None,
@@ -278,7 +278,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         Arc::clone(&animations),
         &mut random,
@@ -287,7 +287,7 @@ fn environment_shadows_keep_offscreen_scenery_and_share_visible_bones() -> Resul
     let center = Vec3::X * 1000.;
     for (source_index, model) in models.iter().enumerate() {
         frame.sources.push(Some(prepare_gpu_source(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             model,
             &[M2ResolvedTexture::StockWhite],
             None,

@@ -8,7 +8,6 @@ use crate::application::terrain_frame::m2::unit_effects::{
 use crate::application::{ApplicationError, RuntimeTerrainError};
 use solarity_asset::{ArchiveCatalog, EnvironmentalDamageCatalog};
 use solarity_cpu::{CpuExecutor, CpuTask, CpuTaskStep, JobContext};
-use solarity_rendering::VulkanRenderer;
 use std::{ops::ControlFlow, sync::Arc};
 
 /// Partial readers and models belong to the running task until complete publication.
@@ -24,7 +23,7 @@ impl RuntimeUnitEffects {
     pub(in crate::application) fn service_sources(
         &mut self,
         cpu: &CpuExecutor,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
     ) -> Result<(), ApplicationError> {
         self.sources =
             Some(

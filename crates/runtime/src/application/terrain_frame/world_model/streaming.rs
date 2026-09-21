@@ -17,7 +17,7 @@ impl WorldModelFrame {
     /// Reuses shared root/group resources and keeps one transform per MODF ID.
     pub(in crate::application::terrain_frame) fn synchronize_static_scenes<'a>(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         scenes: impl Iterator<Item = &'a ResidentWorldModelScene> + Clone,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let requested = scenes

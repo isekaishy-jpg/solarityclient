@@ -118,7 +118,7 @@ impl SkyM2Model {
     /// Captures only immutable numerical inputs after ordered scene advancement.
     pub(in crate::application) fn seed(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         camera: WorldCameraFrame,
         opacity: f32,
         job: &mut SkyJob,
@@ -149,7 +149,7 @@ impl SkyM2Model {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         camera: WorldCameraFrame,
         time_ms: u32,
         opacity: f32,

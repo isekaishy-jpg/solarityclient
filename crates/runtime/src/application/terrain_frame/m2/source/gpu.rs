@@ -6,20 +6,20 @@ use super::super::{
     M2MeshPlan, M2ModelOrientation, M2ParticleEmitter, M2ParticlePipelineHandle, M2ResolvedTexture,
     M2SampledTexture, M2ShaderPermutation, M2ShaderPlan, M2ShadowFiltering, M2ShadowPermutation,
     M2SpirvKey, M2TextureImageHandle, M2TextureSet, ResidentM2Source, ResidentM2Texture,
-    RuntimeTerrainFrameError, VulkanRenderer, prepare_m2_cpu_source,
+    RuntimeTerrainFrameError, prepare_m2_cpu_source,
 };
 use solarity_asset::ResourceLease;
 
 /// Publishes a source only when every selected draw has concrete BLP stages.
 pub(in super::super) fn prepare_source(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     source: &ResidentM2Source,
 ) -> Result<Option<M2GpuSource>, RuntimeTerrainFrameError> {
     prepare_source_with_lights(renderer, source, M2LocalLightCount::Four)
 }
 
 pub(in super::super) fn prepare_source_with_lights(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     source: &ResidentM2Source,
     local_light_count: M2LocalLightCount,
 ) -> Result<Option<M2GpuSource>, RuntimeTerrainFrameError> {
@@ -109,7 +109,7 @@ pub(in super::super) fn prepare_source_with_lights(
 
 /// Publishes immutable model resources using one owner's resolved texture table.
 pub(in super::super) fn prepare_gpu_source(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
@@ -131,7 +131,7 @@ pub(in super::super) fn prepare_gpu_source(
 /// Publishes a Glue source from worker-prepared mesh and shader state.
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn prepare_gpu_source_from_cpu(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,
@@ -154,7 +154,7 @@ pub(in super::super) fn prepare_gpu_source_from_cpu(
 /// Joins one CPU plan to texture uploads and render-owner Vulkan resources.
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn prepare_gpu_source_with_plan(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,

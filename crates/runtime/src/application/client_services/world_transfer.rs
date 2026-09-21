@@ -169,7 +169,13 @@ impl ClientServices {
                 .map_or_else(
                     || {
                         RuntimeLoadingScreen::prepare(
-                            &mut self.renderer,
+                            &mut solarity_rendering::GpuPreparation::new(
+                                &mut self.renderer,
+                                &mut crate::application::frame_pipeline::FrameWait::Native(
+                                    &mut self.platform,
+                                )
+                                .recording(&self.cpu),
+                            ),
                             &self.assets,
                             &mut self.ui_textures,
                             &self.loading_directory,

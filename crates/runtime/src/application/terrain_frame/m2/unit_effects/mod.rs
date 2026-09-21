@@ -21,7 +21,7 @@ use std::sync::Arc;
 use super::{
     M2GluePipelineWarmup, M2GpuPlacement, M2GpuPlacementOwner, M2GpuSource, M2Playback,
     M2PlaybackAdvance, M2PlaybackStorage, ResidentM2Source, RuntimeTerrainFrameError,
-    VulkanRenderer, m2_gpu_placement, prepare_source,
+    m2_gpu_placement, prepare_source,
 };
 use crate::random::CrtRand;
 
@@ -508,7 +508,7 @@ impl M2UnitEffectWarmup {
     /// final pipeline so an authored callback never compiles a shader.
     pub(in crate::application) fn service_one(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
     ) -> Result<bool, RuntimeTerrainFrameError> {
         let Some(slot) = self.pending.get(self.next) else {
             return Ok(true);

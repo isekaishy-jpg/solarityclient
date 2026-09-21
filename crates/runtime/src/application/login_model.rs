@@ -583,7 +583,7 @@ impl RuntimeGlueModelScene {
     /// AccountLogin_OnShow starts playback when login actually becomes visible.
     pub(crate) fn finish_prewarm(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         presentation: &UiModelPresentation,
     ) -> Result<(), RuntimeGlueModelError> {
         let key = GlueModelKey::from_presentation(presentation);
@@ -678,7 +678,7 @@ impl RuntimeGlueModelScene {
     /// a cache lookup.
     pub(crate) fn service_backdrop_prewarms(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         cpu: &CpuExecutor,
     ) -> Result<bool, RuntimeGlueModelError> {
         self.service_backdrop_reads(cpu)?;
@@ -753,7 +753,7 @@ impl RuntimeGlueModelScene {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn synchronize(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         glue: &GlueManager,
         cpu: &CpuExecutor,
         random: &mut CrtRand,
@@ -1128,7 +1128,7 @@ impl RuntimeGlueModelScene {
     /// Publishes one finished worker generation into renderer-owned residency.
     fn complete_pending(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         pending_index: usize,
         message: &'static str,
     ) -> Result<(), RuntimeGlueModelError> {
@@ -1170,7 +1170,7 @@ impl RuntimeGlueModelScene {
     #[allow(clippy::too_many_arguments)]
     fn activate_prepared(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         generation: GlueModelGenerationKey,
         key: GlueModelKey,
         environment: GlueModelEnvironment,

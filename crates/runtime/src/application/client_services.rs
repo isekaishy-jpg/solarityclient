@@ -453,11 +453,22 @@ impl ClientServices {
             glue_model.synchronize_script_models(&glue, &cpu, &mut crt_rand)?;
             // OnLoad assigns the source while hidden. OnShow starts sequence
             // zero when login appears, after the movie has finished.
-            glue_model.finish_prewarm(&mut renderer, login_model)?;
+            glue_model.finish_prewarm(
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut platform)
+                        .recording(&cpu),
+                ),
+                login_model,
+            )?;
         }
         if initial_screen != GlueInitialScreen::Movie {
             let _initial_model_poll = glue_model.synchronize(
-                &mut renderer,
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut platform)
+                        .recording(&cpu),
+                ),
                 &glue,
                 &cpu,
                 &mut crt_rand,
@@ -512,7 +523,10 @@ impl ClientServices {
             None
         } else {
             let frame = RuntimeUiFrame::prepare_glue(
-                &mut renderer,
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut renderer,
+                    &mut super::frame_pipeline::FrameWait::Native(&mut platform).recording(&cpu),
+                ),
                 &glue,
                 &mut ui_textures,
                 &mut ui_texture_residency,
@@ -1260,7 +1274,13 @@ impl ClientServices {
                 && let Some(frame) = self.login_ui.as_mut()
             {
                 frame.refresh_glue(
-                    &mut self.renderer,
+                    &mut solarity_rendering::GpuPreparation::new(
+                        &mut self.renderer,
+                        &mut crate::application::frame_pipeline::FrameWait::Native(
+                            &mut self.platform,
+                        )
+                        .recording(&self.cpu),
+                    ),
                     &self.glue,
                     &mut self.ui_textures,
                     &mut self.ui_texture_residency,
@@ -1342,7 +1362,11 @@ impl ClientServices {
                         &player,
                     )?;
                 }
-                world_ui.refresh(&mut self.renderer)?;
+                world_ui.refresh(&mut solarity_rendering::GpuPreparation::new(
+                    &mut self.renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .recording(&self.cpu),
+                ))?;
                 world_ui.synchronize_minimap(
                     &mut self.renderer,
                     &self.cpu,
@@ -1394,7 +1418,11 @@ impl ClientServices {
             .resolve_liquid(environment, underwater, &self.liquids)?
             .with_world_model_fog(indoor_fog);
         self.underwater_particles.prepare_frame(
-            &mut self.renderer,
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
             camera,
             underwater.and_then(|liquid| self.liquids.entry(liquid.liquid_type)),
             &self.liquids,
@@ -1459,7 +1487,11 @@ impl ClientServices {
             )
             .ok_or(super::RuntimeWaterRippleError::DepthBiasCvar)?;
         self.water_ripples.prepare_frame(
-            &mut self.renderer,
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
             developer_elapsed,
             global_animation_time_ms * 0.001,
         )?;
@@ -1628,7 +1660,13 @@ impl ClientServices {
             if let Some((candidate_screen, frame)) = self.pending_login_ui.as_mut() {
                 if !candidate_screen.eq_ignore_ascii_case(&current_screen) || self.glue_ui_dirty {
                     frame.refresh_glue(
-                        &mut self.renderer,
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
                         &self.glue,
                         &mut self.ui_textures,
                         &mut self.ui_texture_residency,
@@ -1638,7 +1676,13 @@ impl ClientServices {
                 }
             } else {
                 let frame = RuntimeUiFrame::prepare_glue(
-                    &mut self.renderer,
+                    &mut solarity_rendering::GpuPreparation::new(
+                        &mut self.renderer,
+                        &mut crate::application::frame_pipeline::FrameWait::Native(
+                            &mut self.platform,
+                        )
+                        .recording(&self.cpu),
+                    ),
                     &self.glue,
                     &mut self.ui_textures,
                     &mut self.ui_texture_residency,
@@ -1649,7 +1693,11 @@ impl ClientServices {
         }
         if self.login_ui.is_none() && !screen_transition {
             self.login_ui = Some(RuntimeUiFrame::prepare_glue(
-                &mut self.renderer,
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut self.renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .recording(&self.cpu),
+                ),
                 &self.glue,
                 &mut self.ui_textures,
                 &mut self.ui_texture_residency,
@@ -1695,7 +1743,11 @@ impl ClientServices {
         let glue_character = self.player.glue_character_frame_input();
         profile.mark("character synchronization");
         let model_poll = self.glue_model.synchronize(
-            &mut self.renderer,
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
             &self.glue,
             &self.cpu,
             &mut self.crt_rand,
@@ -1783,8 +1835,14 @@ impl ClientServices {
         if self.world_ui_construction.is_some() {
             return self.advance_world_ui_construction();
         }
-        self.unit_effects
-            .service_sources(&self.cpu, &mut self.renderer)?;
+        self.unit_effects.service_sources(
+            &self.cpu,
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
+        )?;
         self.sky_resources.service_textures(&self.cpu)?;
         self.sky_resources.service_models(&self.cpu)?;
         let Some(network) = self.network.as_ref() else {
@@ -2063,7 +2121,13 @@ impl ClientServices {
                         .map_or_else(
                             || {
                                 RuntimeLoadingScreen::prepare(
-                                    &mut self.renderer,
+                                    &mut solarity_rendering::GpuPreparation::new(
+                                        &mut self.renderer,
+                                        &mut crate::application::frame_pipeline::FrameWait::Native(
+                                            &mut self.platform,
+                                        )
+                                        .recording(&self.cpu),
+                                    ),
                                     &self.assets,
                                     &mut self.ui_textures,
                                     &self.loading_directory,
@@ -2090,8 +2154,14 @@ impl ClientServices {
         let backdrop_prewarm_window_active =
             self.authentication_prewarm_active || self.glue.media_intent().movie().is_some();
         let backdrop_prewarms_complete = if backdrop_prewarm_window_active {
-            self.glue_model
-                .service_backdrop_prewarms(&mut self.renderer, &self.cpu)?
+            self.glue_model.service_backdrop_prewarms(
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut self.renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .recording(&self.cpu),
+                ),
+                &self.cpu,
+            )?
         } else {
             false
         };
@@ -2401,7 +2471,13 @@ impl ClientServices {
                     .filter(|frame| frame.belongs_to_map(map_id))
                 {
                     frame.synchronize_tiles(
-                        &mut self.renderer,
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
                         tile,
                         self.terrain.resident_tiles(),
                         &mut self.crt_rand,
@@ -2436,7 +2512,13 @@ impl ClientServices {
                     )?;
                     let (texture_filtering, base_mip) = self.renderer.file_texture_sampling();
                     let frame = TerrainFrame::prepare(
-                        &mut self.renderer,
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
                         map_id,
                         plan,
                         sources,
@@ -2480,7 +2562,13 @@ impl ClientServices {
                     .ok_or(RuntimeTerrainFrameError::SceneKindMismatch)?;
                 let (texture_filtering, base_mip) = self.renderer.file_texture_sampling();
                 let frame = TerrainFrame::prepare_global_world_model(
-                    &mut self.renderer,
+                    &mut solarity_rendering::GpuPreparation::new(
+                        &mut self.renderer,
+                        &mut crate::application::frame_pipeline::FrameWait::Native(
+                            &mut self.platform,
+                        )
+                        .recording(&self.cpu),
+                    ),
                     m2_scene,
                     world_models,
                     texture_filtering,
@@ -2790,7 +2878,13 @@ impl ClientServices {
                 }
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     frame.replace_player(
-                        &mut self.renderer,
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
                         self.player.resident_frame_input(),
                         &mut self.crt_rand,
                     )?;
@@ -2798,7 +2892,17 @@ impl ClientServices {
             }
             RuntimePlayerPoll::Idle | RuntimePlayerPoll::Pending => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_player(&mut self.renderer, None, &mut self.crt_rand)?;
+                    frame.replace_player(
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
+                        None,
+                        &mut self.crt_rand,
+                    )?;
                 }
             }
             RuntimePlayerPoll::Current => {}
@@ -2817,12 +2921,32 @@ impl ClientServices {
             RuntimeCreaturePoll::ModelsChanged => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     let creatures = self.player.resident_creature_frame_inputs();
-                    frame.replace_creatures(&mut self.renderer, &creatures, &mut self.crt_rand)?;
+                    frame.replace_creatures(
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
+                        &creatures,
+                        &mut self.crt_rand,
+                    )?;
                 }
             }
             RuntimeCreaturePoll::Idle => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_creatures(&mut self.renderer, &[], &mut self.crt_rand)?;
+                    frame.replace_creatures(
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
+                        &[],
+                        &mut self.crt_rand,
+                    )?;
                 }
             }
             RuntimeCreaturePoll::Current => {}
@@ -2836,7 +2960,13 @@ impl ClientServices {
                 if let Some(frame) = self.terrain_frame.as_mut() {
                     let players = self.player.resident_remote_player_frame_inputs();
                     frame.replace_remote_players(
-                        &mut self.renderer,
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
                         &players,
                         &mut self.crt_rand,
                     )?;
@@ -2844,7 +2974,17 @@ impl ClientServices {
             }
             RuntimeRemotePlayerPoll::Idle => {
                 if let Some(frame) = self.terrain_frame.as_mut() {
-                    frame.replace_remote_players(&mut self.renderer, &[], &mut self.crt_rand)?;
+                    frame.replace_remote_players(
+                        &mut solarity_rendering::GpuPreparation::new(
+                            &mut self.renderer,
+                            &mut crate::application::frame_pipeline::FrameWait::Native(
+                                &mut self.platform,
+                            )
+                            .recording(&self.cpu),
+                        ),
+                        &[],
+                        &mut self.crt_rand,
+                    )?;
                 }
             }
             RuntimeRemotePlayerPoll::Current => {}
@@ -2889,7 +3029,11 @@ impl ClientServices {
             && let Some(frame) = self.terrain_frame.as_mut()
         {
             frame.synchronize_game_objects(
-                &mut self.renderer,
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut self.renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .recording(&self.cpu),
+                ),
                 self.game_objects.frame_input(self.gameplay.world()),
                 &mut self.crt_rand,
             )?;
@@ -2941,7 +3085,11 @@ impl ClientServices {
                 terrain,
                 &player,
             )?;
-            ui.refresh(&mut self.renderer)?;
+            ui.refresh(&mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ))?;
             ui.synchronize_minimap(
                 &mut self.renderer,
                 &self.cpu,
@@ -3082,9 +3230,14 @@ impl ClientServices {
                 }
                 std::task::Poll::Ready(result) => result?,
             };
+        let window_id = self.platform.window_id();
         let (world_ui, startup_errors) = construction.finish(
-            &mut self.renderer,
-            self.platform.window_id(),
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
+            window_id,
             manager,
             startup_errors,
         )?;
@@ -3307,7 +3460,11 @@ impl ClientServices {
                 continue;
             }
             let loading = RuntimeLoadingScreen::prepare(
-                &mut self.renderer,
+                &mut solarity_rendering::GpuPreparation::new(
+                    &mut self.renderer,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                        .recording(&self.cpu),
+                ),
                 &self.assets,
                 &mut self.ui_textures,
                 &self.loading_directory,

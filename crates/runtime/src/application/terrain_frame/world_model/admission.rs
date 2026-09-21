@@ -26,7 +26,7 @@ impl WorldModelFrame {
     /// Prepares one source without creating any MODF placement or collision owner.
     pub(in crate::application::terrain_frame) fn prepare_static_source(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         source: &ResidentWorldModelSource,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.prepared_static.push(prepare_gpu_source(

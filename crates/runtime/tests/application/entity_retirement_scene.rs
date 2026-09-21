@@ -24,14 +24,14 @@ fn removed_mount_keeps_rider_attachment_and_retires_an_unready_hierarchy()
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -57,7 +57,7 @@ fn removed_mount_keeps_rider_attachment_and_retires_an_unready_hierarchy()
     world.remove_object(30)?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -86,14 +86,14 @@ fn removed_mount_keeps_rider_attachment_and_retires_an_unready_hierarchy()
     presentation.set_animation_scene_time(1800);
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
     world.remove_object(30)?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -152,7 +152,7 @@ fn retired_game_object_follows_transport_then_freezes_when_parent_leaves()
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         animations,
         &mut random,
@@ -160,7 +160,7 @@ fn retired_game_object_follows_transport_then_freezes_when_parent_leaves()
     )?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -200,7 +200,7 @@ fn retired_game_object_follows_transport_then_freezes_when_parent_leaves()
     world.remove_object(30)?;
     objects.synchronize(Some(&world))?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -230,7 +230,7 @@ fn retired_game_object_follows_transport_then_freezes_when_parent_leaves()
     world.remove_object(99)?;
     objects.synchronize(Some(&world))?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -241,7 +241,7 @@ fn retired_game_object_follows_transport_then_freezes_when_parent_leaves()
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -279,7 +279,7 @@ fn removed_equipment_hierarchy_fades_without_rebinding_to_a_reused_guid()
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -297,7 +297,7 @@ fn removed_equipment_hierarchy_fades_without_rebinding_to_a_reused_guid()
     .frame(1.)?;
     presentation.synchronize_remote_players(Some(&world))?;
     frame.replace_remote_players(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_remote_player_frame_inputs(),
         &mut random,
     )?;
@@ -342,7 +342,7 @@ fn removed_equipment_hierarchy_fades_without_rebinding_to_a_reused_guid()
     world.update_transform(20, WorldTransform::new(Vec3::new(0., 50., 0.), 1.))?;
     presentation.synchronize_remote_players(Some(&world))?;
     frame.replace_remote_players(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_remote_player_frame_inputs(),
         &mut random,
     )?;

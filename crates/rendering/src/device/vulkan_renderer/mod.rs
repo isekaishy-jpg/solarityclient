@@ -4,7 +4,9 @@
 
 mod cinematic;
 mod frame_wait;
+mod preparation;
 mod presentation;
+pub use preparation::GpuPreparation;
 mod ui;
 pub use frame_wait::GpuFrameKind;
 mod effect_draws;
@@ -1112,7 +1114,7 @@ impl VulkanRenderer {
     /// Returns CPU admission, decoding, native servicing or Vulkan upload errors.
     pub fn upload_blp_textures_with_execution(
         &mut self,
-        execution: &mut impl crate::WorldFrameExecution,
+        execution: &mut dyn crate::WorldFrameExecution,
         requests: &[BlpTextureUploadRequest<'_>],
     ) -> Result<Vec<BlpTextureHandle>, BlpTextureUploadError> {
         if requests.is_empty() {
@@ -1140,7 +1142,7 @@ impl VulkanRenderer {
     /// Returns the same errors as the ordered batch upload.
     pub fn upload_blp_texture_with_execution(
         &mut self,
-        execution: &mut impl crate::WorldFrameExecution,
+        execution: &mut dyn crate::WorldFrameExecution,
         source: &BlpTextureSource,
         color_space: BlpColorSpace,
     ) -> Result<BlpTextureHandle, BlpTextureUploadError> {

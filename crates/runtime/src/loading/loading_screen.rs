@@ -73,7 +73,7 @@ struct ResolvedLoadingBackground {
 impl RuntimeLoadingScreen {
     /// Resolves stock loading art and prepares each finite progress generation.
     pub(crate) fn prepare(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         assets: &AssetStoreHandle,
         textures: &mut BlpTextureCache,
         directory: &LoadingScreenDirectory,
@@ -220,7 +220,7 @@ fn resolve_background(
 }
 
 fn upload_textures(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     assets: &AssetStoreHandle,
     cache: &mut BlpTextureCache,
     paths: &[AssetPath],

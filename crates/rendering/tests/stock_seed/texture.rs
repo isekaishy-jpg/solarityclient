@@ -89,8 +89,8 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
         waits: 0,
     };
     assert!(
-        renderer
-            .upload_blp_textures_with_execution(&mut execution, &requests)
+        solarity_rendering::GpuPreparation::new(&mut renderer, &mut execution)
+            .upload_blp_textures(&requests)
             .is_err()
     );
     assert_eq!(execution.waits, 1);
@@ -111,15 +111,16 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
             - snapshot.used(solarity_cpu::CpuStorageClass::Required),
     )?;
     assert!(
-        renderer
-            .upload_blp_textures_with_execution(&mut execution, &requests)
+        solarity_rendering::GpuPreparation::new(&mut renderer, &mut execution)
+            .upload_blp_textures(&requests)
             .is_err()
     );
     assert_eq!(renderer.blp_texture_upload_submission_count(), 0);
     drop(pressure);
     let waits = execution.waits;
 
-    let handles = renderer.upload_blp_textures_with_execution(&mut execution, &requests)?;
+    let handles = solarity_rendering::GpuPreparation::new(&mut renderer, &mut execution)
+        .upload_blp_textures(&requests)?;
     assert_eq!(execution.waits, waits + 1);
     assert!(
         cpu.storage().snapshot().bytes(
@@ -128,7 +129,8 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
         ) > 0
     );
     assert_eq!(
-        renderer.upload_blp_textures_with_execution(&mut execution, &requests)?,
+        solarity_rendering::GpuPreparation::new(&mut renderer, &mut execution)
+            .upload_blp_textures(&requests)?,
         handles
     );
     assert_eq!(
@@ -139,6 +141,11 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
     assert_eq!(renderer.blp_texture_upload_submission_count(), 1);
     assert_eq!(handles[0], handles[2]);
     assert_eq!(renderer.upload_blp_textures(&requests)?, handles);
+    assert_eq!(
+        solarity_rendering::GpuPreparation::offline(&mut renderer, &cpu)
+            .upload_blp_texture(&sources[0], BlpColorSpace::Srgb)?,
+        handles[0]
+    );
     assert_eq!(renderer.blp_texture_upload_submission_count(), 1);
 
     for (source, handle, storage, byte_count) in [
@@ -165,6 +172,11 @@ fn authored_dxt_upload_retains_bc_storage() -> Result<(), Box<dyn Error>> {
         assert_eq!(info.mip_count(), 1);
         assert_eq!(info.upload_byte_count(), byte_count);
     }
+    let offline = solarity_rendering::GpuPreparation::offline(&mut renderer, &cpu)
+        .upload_blp_texture(&sources[3], BlpColorSpace::Srgb)?;
+    assert_ne!(offline, handles[4], "color-space identity remains distinct");
+    assert_eq!(renderer.blp_texture_upload_submission_count(), 2);
+    assert_eq!(execution.waits, waits + 1);
     renderer.shutdown()?;
     drop(renderer);
     assert_eq!(

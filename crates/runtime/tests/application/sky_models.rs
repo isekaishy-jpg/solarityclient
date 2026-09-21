@@ -65,7 +65,7 @@ fn installed_stars_follow_opacity_without_camera_translation()
             _ => 1.,
         };
         stars.prepare(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             camera,
             time,
             opacity,
@@ -164,7 +164,7 @@ fn installed_stars_follow_opacity_without_camera_translation()
     assert!(fade_changes == 4, "missing star opacity samples");
     let camera = WorldCamera::stock(Vec3::ZERO, Vec3::X, Vec3::Z, 1000.).frame(1.)?;
     stars.prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         camera,
         120000,
         0.,

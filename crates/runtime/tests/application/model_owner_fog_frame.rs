@@ -96,14 +96,14 @@ fn verify(moving: bool) -> Result<(), Box<dyn Error>> {
         terrain.resident_m2_scene().map_or(&empty, Arc::as_ref)
     };
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         resident,
         Arc::clone(&animations),
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;

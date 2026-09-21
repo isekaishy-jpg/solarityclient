@@ -100,12 +100,15 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
     // SAFETY: Sole surface ownership transfers; the window outlives the renderer.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
     let mut frame = WorldModelFrame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentWorldModelScene::default(),
         WorldModelTextureFiltering::Bilinear,
         WorldModelBaseMip::Zero,
     )?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(Some(&world)))?;
+    frame.synchronize_game_objects(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        objects.frame_input(Some(&world)),
+    )?;
     assert_eq!(frame.sources.len(), 1);
     assert_eq!(frame.placements.len(), 2);
     let local_camera = WorldSceneCameraFrame::perspective(

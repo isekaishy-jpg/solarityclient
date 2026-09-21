@@ -52,7 +52,10 @@ fn liquid_resident_terrain_reaches_the_world_frame() -> Result<(), Box<dyn Error
     // SAFETY: Sole surface ownership transfers and the window outlives the renderer.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (32, 32), 0) }?;
     let mut materials = super::LiquidGpuMaterialCache::default();
-    let prepared = materials.prepare_terrain(&mut renderer, &batches)?;
+    let prepared = materials.prepare_terrain(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &batches,
+    )?;
     let center = batches[0].origin + Vec3::new(-2.0, -2.0, 10.0);
     let camera = WorldCamera::orthographic(
         center + Vec3::Z * 50.0,

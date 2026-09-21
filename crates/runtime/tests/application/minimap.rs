@@ -101,8 +101,12 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     let mut renderer = renderer(&platform)?;
     let mut cache = solarity_asset::BlpTextureCache::new();
     let mut residency = RuntimeUiResidency::new();
-    let mut ui =
-        RuntimeUiFrame::prepare_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
+    let mut ui = RuntimeUiFrame::prepare_frame(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &manager,
+        &mut cache,
+        &mut residency,
+    )?;
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         {
             let total: std::num::NonZeroUsize = NonZeroUsize::MIN;
@@ -272,7 +276,12 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         .mesh();
 
     manager.invoke_binding("ROTATE", true)?;
-    ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
+    ui.refresh_frame(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &manager,
+        &mut cache,
+        &mut residency,
+    )?;
     let moved = Some(WorldTransform::new(
         Vec3::new(40.0, 35.0, 0.0),
         std::f32::consts::FRAC_PI_2,
@@ -297,7 +306,12 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     );
     assert_eq!(scene.textures.len(), 8);
     manager.invoke_binding("HIDE", true)?;
-    ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
+    ui.refresh_frame(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &manager,
+        &mut cache,
+        &mut residency,
+    )?;
     scene.synchronize(
         &mut renderer,
         &cpu,
@@ -310,7 +324,12 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     )?;
     assert_eq!(scene.draws(&ui).len(), 1);
     manager.invoke_binding("SHOW", true)?;
-    ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
+    ui.refresh_frame(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &manager,
+        &mut cache,
+        &mut residency,
+    )?;
     scene.synchronize(
         &mut renderer,
         &cpu,
@@ -348,7 +367,12 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         "a new location must not display stale tiles"
     );
     manager.invoke_binding("MISSING", true)?;
-    ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
+    ui.refresh_frame(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &manager,
+        &mut cache,
+        &mut residency,
+    )?;
     wait_ready(
         &mut scene,
         &mut renderer,

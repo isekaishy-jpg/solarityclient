@@ -94,12 +94,15 @@ fn replicated_water(interior: bool) -> Result<(), Box<dyn Error>> {
     // SAFETY: Sole surface ownership transfers; the window outlives the renderer.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (32, 32), 0) }?;
     let mut frame = WorldModelFrame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentWorldModelScene::default(),
         WorldModelTextureFiltering::Bilinear,
         WorldModelBaseMip::Zero,
     )?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(Some(&world)))?;
+    frame.synchronize_game_objects(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        objects.frame_input(Some(&world)),
+    )?;
     assert_eq!(
         frame.sources.len(),
         1,
@@ -208,7 +211,10 @@ fn replicated_water(interior: bool) -> Result<(), Box<dyn Error>> {
         WorldTransform::new(Vec3::X * 15., std::f32::consts::FRAC_PI_2),
     )?;
     objects.synchronize(Some(&world))?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(Some(&world)))?;
+    frame.synchronize_game_objects(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        objects.frame_input(Some(&world)),
+    )?;
     frame.update_game_object_states(objects.frame_input(Some(&world)))?;
     let moved = frame.placements.iter().find(|placement| matches!(placement.owner, super::WorldModelGpuPlacementOwner::GameObject {identity, ..} if identity.guid()==90)).ok_or("moved placement")?;
     let center = moved
@@ -230,7 +236,10 @@ fn replicated_water(interior: bool) -> Result<(), Box<dyn Error>> {
     );
     world.remove_object(90)?;
     objects.synchronize(Some(&world))?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(Some(&world)))?;
+    frame.synchronize_game_objects(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        objects.frame_input(Some(&world)),
+    )?;
     assert_eq!(
         frame.sources.len(),
         1,
@@ -242,7 +251,10 @@ fn replicated_water(interior: bool) -> Result<(), Box<dyn Error>> {
     );
     world.remove_object(91)?;
     objects.synchronize(Some(&world))?;
-    frame.synchronize_game_objects(&mut renderer, objects.frame_input(Some(&world)))?;
+    frame.synchronize_game_objects(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        objects.frame_input(Some(&world)),
+    )?;
     assert!(frame.sources.is_empty());
     assert!(prepare_draws(&frame, &renderer, camera, &groups, fog(), Vec3::ZERO)?.is_empty());
     let surface = renderer.upload_stock_m2_failure()?;

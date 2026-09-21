@@ -635,7 +635,7 @@ impl TerrainFrame {
     /// Uploads and validates every resource referenced by one admitted ADT.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         map_id: u32,
         plan: &Arc<TerrainTileMeshPlan>,
         sources: &[Arc<BlpTextureSource>],
@@ -698,7 +698,7 @@ impl TerrainFrame {
     /// Uploads one global-WMO scene without fabricating an ADT generation.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare_global_world_model(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         m2_scene: &ResidentM2Scene,
         world_models: &ResidentWorldModelScene,
         world_model_filtering: WorldModelTextureFiltering,
@@ -814,7 +814,7 @@ impl TerrainFrame {
     /// Rebuilds only the player-owned source after appearance customization.
     pub(super) fn replace_player(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         player: Option<ResidentPlayerFrameInput<'_>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -824,7 +824,7 @@ impl TerrainFrame {
     /// Rebuilds only visible creature sources after range/appearance changes.
     pub(super) fn replace_creatures(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         creatures: &[ResidentCreatureFrameInput<'_>],
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -834,7 +834,7 @@ impl TerrainFrame {
     /// Rebuilds visible remote characters after range or appearance changes.
     pub(super) fn replace_remote_players(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         players: &[ResidentPlayerFrameInput<'_>],
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -844,7 +844,7 @@ impl TerrainFrame {
     /// Reconciles shared GameObject resources and independent object lifetimes.
     pub(super) fn synchronize_game_objects(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         game_objects: GameObjectFrameInput<'_>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
@@ -903,7 +903,7 @@ impl TerrainFrame {
 /// Prepares scene-wide M2 and WMO state shared by tiled and global maps.
 #[allow(clippy::too_many_arguments)]
 fn prepare_scene_models(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     m2_scene: &ResidentM2Scene,
     world_models: &ResidentWorldModelScene,
     world_model_filtering: WorldModelTextureFiltering,
@@ -961,7 +961,7 @@ fn validate_texture_table(
 
 /// Uploads one admitted ADT without replacing any world placement state.
 fn prepare_tile_draws(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     plan: &TerrainTileMeshPlan,
     sources: &[Arc<BlpTextureSource>],
 ) -> Result<Vec<TerrainPreparedDraw>, RuntimeTerrainFrameError> {

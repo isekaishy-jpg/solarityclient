@@ -399,7 +399,7 @@ impl RuntimeWorldUi {
     /// Rebuilds renderer resources after an event or update mutated live UI.
     pub(super) fn refresh(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
     ) -> Result<(), ApplicationError> {
         let _profile_scope = solarity_profiling::profile!("runtime.application.world_ui.refresh");
         if self.dirty {

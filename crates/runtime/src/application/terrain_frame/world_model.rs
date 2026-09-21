@@ -208,7 +208,7 @@ impl WorldModelFrame {
 
     /// Uploads shared generations once and prepares each exact material pass.
     pub(super) fn prepare(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         scene: &ResidentWorldModelScene,
         filtering: WorldModelTextureFiltering,
         base_mip: WorldModelBaseMip,
@@ -287,7 +287,7 @@ impl WorldModelFrame {
     /// Reconciles object lifetimes while reusing shared WMO GPU generations.
     pub(super) fn synchronize_game_objects(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         game_objects: GameObjectFrameInput<'_>,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let sources = &self.sources;
@@ -503,7 +503,7 @@ impl WorldModelFrame {
 
 /// Uploads one retained root/group generation and its exact material stages.
 fn prepare_gpu_source(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     source: &ResidentWorldModelSource,
     filtering: WorldModelTextureFiltering,
     base_mip: WorldModelBaseMip,
@@ -605,7 +605,7 @@ fn prepare_gpu_source(
 }
 
 fn prepare_draw_resources(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     plan: &WorldModelMeshPlan,
     texture_sets: &[WorldModelTextureSetHandle],
 ) -> Result<Vec<LogicalDrawResource>, RuntimeTerrainFrameError> {

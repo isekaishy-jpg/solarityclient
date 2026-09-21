@@ -176,7 +176,11 @@ impl ClientServices {
             .ok_or(WorldBenchmarkError::State("requires an ADT map"))?;
         let (texture_filtering, base_mip) = self.renderer.file_texture_sampling();
         let frame = TerrainFrame::prepare(
-            &mut self.renderer,
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
             world.map_id().value(),
             resident.mesh(),
             resident.textures(),
@@ -210,12 +214,18 @@ impl ClientServices {
         let sources =
             super::super::world_ui::WorldUiSourceImage::load(&mut self.assets.borrow_mut())
                 .map_err(ApplicationError::from)?;
+        let window_id = self.platform.window_id();
+        let logical_extent = self.platform.logical_extent();
         let (ui, errors) = RuntimeWorldUi::prepare(
-            &mut self.renderer,
-            self.platform.window_id(),
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
+            window_id,
             self.assets.clone(),
             self.world_ui_catalog.clone(),
-            self.platform.logical_extent(),
+            logical_extent,
             self.startup_profile.cvar_values(),
             &self.addon_catalog,
             &self.character_metadata,
@@ -360,13 +370,18 @@ impl ClientServices {
 
     /// Makes an explicitly requested capture wait for current terrain/detail demand.
     fn preload_world_capture(&mut self, map: u32) -> Result<(), WorldBenchmarkError> {
+        let logical_extent = self.platform.logical_extent();
         self.loading_screen = Some(RuntimeLoadingScreen::prepare(
-            &mut self.renderer,
+            &mut solarity_rendering::GpuPreparation::new(
+                &mut self.renderer,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                    .recording(&self.cpu),
+            ),
             &self.assets,
             &mut self.ui_textures,
             &self.loading_directory,
             Some(map),
-            self.platform.logical_extent(),
+            logical_extent,
         )?);
         let deadline = Instant::now() + Duration::from_secs(180);
         loop {
@@ -455,7 +470,13 @@ impl ClientServices {
         {
             frame
                 .replace_creatures(
-                    &mut self.renderer,
+                    &mut solarity_rendering::GpuPreparation::new(
+                        &mut self.renderer,
+                        &mut crate::application::frame_pipeline::FrameWait::Native(
+                            &mut self.platform,
+                        )
+                        .recording(&self.cpu),
+                    ),
                     &self.player.resident_creature_frame_inputs(),
                     &mut self.crt_rand,
                 )
@@ -524,7 +545,11 @@ impl ClientServices {
             )?;
         }
         ui_profile.mark("portrait");
-        ui.refresh(&mut self.renderer)?;
+        ui.refresh(&mut solarity_rendering::GpuPreparation::new(
+            &mut self.renderer,
+            &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform)
+                .recording(&self.cpu),
+        ))?;
         ui_profile.mark("render resources");
         ui.synchronize_minimap(
             &mut self.renderer,

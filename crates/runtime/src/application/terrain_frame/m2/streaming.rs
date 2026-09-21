@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use solarity_asset::AnimationDataCatalog;
-use solarity_rendering::{M2ModelOrientation, M2RibbonTrail, VulkanRenderer};
+use solarity_rendering::{M2ModelOrientation, M2RibbonTrail};
 
 use crate::application::terrain_coordinator::m2_residency::{
     ResidentM2Owner, ResidentM2Placement, ResidentM2Scene,
@@ -166,7 +166,7 @@ impl M2Frame {
     /// New tile references must not create a second playback or emitter owner.
     pub(in crate::application::terrain_frame) fn synchronize_static_scenes<'a>(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         scenes: impl Iterator<Item = &'a Arc<ResidentM2Scene>>,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {

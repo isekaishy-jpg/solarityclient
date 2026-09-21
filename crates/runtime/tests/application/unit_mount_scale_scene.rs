@@ -22,14 +22,14 @@ fn mounted_creatures_publish_a_mount_and_attached_rider() -> Result<(), Box<dyn 
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -76,7 +76,7 @@ fn mounted_creatures_publish_a_mount_and_attached_rider() -> Result<(), Box<dyn 
          -> Result<(), Box<dyn Error>> {
             presentation.synchronize_creatures(Some(world), |_| None)?;
             frame.replace_creatures(
-                renderer,
+                &mut crate::frame_cpu_support::gpu_preparation(renderer),
                 &presentation.resident_creature_frame_inputs(),
                 random,
             )?;
@@ -253,7 +253,7 @@ fn unchanged_mounts_retain_animation_and_effects_across_rider_rebuilds()
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -278,9 +278,13 @@ fn unchanged_mounts_retain_animation_and_effects_across_rider_rebuilds()
          -> Result<(), Box<dyn Error>> {
             presentation.synchronize(Some(world))?;
             presentation.synchronize_remote_players(Some(world))?;
-            frame.replace_player(renderer, presentation.resident_frame_input(), random)?;
+            frame.replace_player(
+                &mut crate::frame_cpu_support::gpu_preparation(renderer),
+                presentation.resident_frame_input(),
+                random,
+            )?;
             frame.replace_remote_players(
-                renderer,
+                &mut crate::frame_cpu_support::gpu_preparation(renderer),
                 &presentation.resident_remote_player_frame_inputs(),
                 random,
             )?;
@@ -556,7 +560,7 @@ fn mounted_ground_pose_reaches_local_and_remote_rider_attachments() -> Result<()
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -595,8 +599,16 @@ fn mounted_ground_pose_reaches_local_and_remote_rider_attachments() -> Result<()
         presentation.synchronize_remote_players(Some(&world))?;
         let local = presentation.resident_frame_input().ok_or("local")?;
         let remote = presentation.resident_remote_player_frame_inputs();
-        frame.replace_player(&mut renderer, Some(local), &mut random)?;
-        frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
+        frame.replace_player(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            Some(local),
+            &mut random,
+        )?;
+        frame.replace_remote_players(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            &remote,
+            &mut random,
+        )?;
         if index != 0 {
             frame.update_player_state(
                 presentation.resident_frame_input().ok_or("local")?,
@@ -692,7 +704,7 @@ fn native_mount_scales_reach_local_and_remote_rider_matrices() -> Result<(), Box
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -747,8 +759,16 @@ fn native_mount_scales_reach_local_and_remote_rider_matrices() -> Result<(), Box
                 assert_eq!(mount_id, 0);
             }
         }
-        frame.replace_player(&mut renderer, Some(local), &mut random)?;
-        frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
+        frame.replace_player(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            Some(local),
+            &mut random,
+        )?;
+        frame.replace_remote_players(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            &remote,
+            &mut random,
+        )?;
         frame.prepare_visible_draws(
             &renderer,
             &crate::frame_cpu_support::executor()?,
@@ -849,7 +869,7 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -888,9 +908,21 @@ fn mounted_scene_callbacks_use_mount_bounds_and_follow_movement() -> Result<(), 
         let local = presentation.resident_frame_input().ok_or("local")?;
         let remote = presentation.resident_remote_player_frame_inputs();
         let creatures = presentation.resident_creature_frame_inputs();
-        frame.replace_player(&mut renderer, Some(local), &mut random)?;
-        frame.replace_remote_players(&mut renderer, &remote, &mut random)?;
-        frame.replace_creatures(&mut renderer, &creatures, &mut random)?;
+        frame.replace_player(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            Some(local),
+            &mut random,
+        )?;
+        frame.replace_remote_players(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            &remote,
+            &mut random,
+        )?;
+        frame.replace_creatures(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            &creatures,
+            &mut random,
+        )?;
         let time = index as f32 * 100.;
         // Exercise all six unit owner lookups with both current metadata and
         // publication-dirtied indices through mount removal and re-admission.

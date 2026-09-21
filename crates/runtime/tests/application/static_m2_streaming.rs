@@ -52,7 +52,7 @@ fn exercise_dynamic_publications(measure: bool) -> Result<(), Box<dyn Error>> {
     let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         terrain.resident_m2_scene().ok_or("initial scene")?,
         animations,
         &mut random,
@@ -211,7 +211,7 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         terrain.resident_m2_scene().ok_or("initial scene")?,
         animations,
         &mut random,
@@ -235,7 +235,11 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     let scene = terrain.resident_m2_scene().ok_or("second scene")?;
     let mut expected = random;
     roll_owners(&mut expected, 1);
-    frame.synchronize_static_scenes(&mut renderer, [scene, scene].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [scene, scene].into_iter(),
+        &mut random,
+    )?;
     assert_eq!(
         random, expected,
         "duplicate ADT references start only one new owner"
@@ -262,7 +266,11 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     terrain.synchronize(Some(&world(-10.)))?;
     let scene = terrain.resident_m2_scene().ok_or("third scene")?;
     roll_owners(&mut expected, 2);
-    frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [scene].into_iter(),
+        &mut random,
+    )?;
     assert_eq!(random, expected);
     assert_eq!(owners(&frame), [20, 40, 50]);
     assert_worker_spatial(&frame)?;
@@ -280,7 +288,11 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         .placement_visibility
         .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
-    frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [scene].into_iter(),
+        &mut random,
+    )?;
     assert!(
         !frame.placement_topology_dirty,
         "unchanged publication keeps valid placement metadata"
@@ -290,7 +302,11 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         "retained publication consumes no randomness"
     );
     frame.placement_topology_dirty = true;
-    frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [scene].into_iter(),
+        &mut random,
+    )?;
     assert!(
         frame.placement_topology_dirty,
         "publication must preserve pending invalidation from another owner"
@@ -310,14 +326,22 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     )?;
     dynamic.owner = M2GpuPlacementOwner::GluePet;
     frame.placements.push(dynamic);
-    frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        std::iter::empty(),
+        &mut random,
+    )?;
     assert_eq!(frame.placements.len(), 1);
     assert_eq!(frame.sources.len(), 1);
     assert_eq!(frame.placements[0].owner, M2GpuPlacementOwner::GluePet);
     assert_eq!(frame.placements[0].source_index, 0);
     expected = random;
     roll_owners(&mut expected, 3);
-    frame.synchronize_static_scenes(&mut renderer, [scene].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [scene].into_iter(),
+        &mut random,
+    )?;
     assert_eq!(
         random, expected,
         "last-reference removal permits fresh playback on return"
@@ -352,7 +376,11 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
     )?;
     empty.owner = M2GpuPlacementOwner::GluePet;
     frame.placements.push(empty);
-    frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        std::iter::empty(),
+        &mut random,
+    )?;
     assert_eq!(frame.placements.len(), 2);
     assert_eq!(frame.sources.len(), 2);
     assert_eq!(frame.placements[1].source_index, 1);
@@ -364,7 +392,11 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     frame.sources.push(None);
-    frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        std::iter::empty(),
+        &mut random,
+    )?;
     assert_eq!(frame.placements.len(), 2);
     assert_eq!(frame.sources.len(), 2);
     assert_eq!(frame.placements[1].source_index, 1);
@@ -392,7 +424,11 @@ fn static_owners_survive_overlap_and_remapped_sources_exclude_dynamic_materials(
         [0, 0],
         "visibility references use the compact source indices"
     );
-    frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        std::iter::empty(),
+        &mut random,
+    )?;
     assert_eq!(frame.placements.len(), 2);
     assert_eq!(frame.sources.len(), 2);
     assert_eq!(frame.placements[1].source_index, 1);
@@ -423,7 +459,7 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &first,
         animations,
         &mut random,
@@ -431,7 +467,11 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     )?;
     frame.placements[1].last_effect_time_ms = 777;
     let mut expected = random;
-    frame.synchronize_static_scenes(&mut renderer, [&first, &first].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [&first, &first].into_iter(),
+        &mut random,
+    )?;
     assert_eq!(random, expected, "initial publication adds no extra owner");
     assert!(
         frame.placement_topology_dirty,
@@ -442,14 +482,18 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     let second = Arc::clone(terrain.resident_m2_scene().ok_or("second scene")?);
     roll_owners(&mut expected, 1);
     frame.synchronize_static_scenes(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         [&second, &first, &second].into_iter(),
         &mut random,
     )?;
     assert_eq!(owners(&frame), [10, 20, 30]);
     assert_worker_spatial(&frame)?;
     assert_eq!(random, expected, "two scene references share owner 20");
-    frame.synchronize_static_scenes(&mut renderer, [&second].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [&second].into_iter(),
+        &mut random,
+    )?;
     assert_eq!(owners(&frame), [20, 30]);
     assert_worker_spatial(&frame)?;
     assert_eq!(frame.placements[0].last_effect_time_ms, 777);
@@ -470,7 +514,11 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
         .rebuild(&mut frame.placements, &frame.sources);
     frame.placement_topology_dirty = false;
     let previous_bounds = frame.placement_visibility.bounds().to_vec();
-    frame.synchronize_static_scenes(&mut renderer, [&reloaded].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [&reloaded].into_iter(),
+        &mut random,
+    )?;
     assert!(
         !frame.placement_topology_dirty,
         "a scene generation exchange retains unchanged owner topology"
@@ -495,7 +543,11 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
     );
 
     // Retaining CPU generation handles alone must not keep any GPU owner alive.
-    frame.synchronize_static_scenes(&mut renderer, std::iter::empty(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        std::iter::empty(),
+        &mut random,
+    )?;
     assert!(frame.placements.is_empty());
     assert!(frame.sources.is_empty());
     assert!(
@@ -503,7 +555,11 @@ fn scene_generation_changes_preserve_shared_owner_clocks_and_publication_order()
         "last-reference retirement invalidates topology"
     );
     roll_owners(&mut expected, 3);
-    frame.synchronize_static_scenes(&mut renderer, [&second, &first].into_iter(), &mut random)?;
+    frame.synchronize_static_scenes(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        [&second, &first].into_iter(),
+        &mut random,
+    )?;
     assert_eq!(
         owners(&frame),
         [20, 30, 10],

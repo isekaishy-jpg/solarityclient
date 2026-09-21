@@ -622,7 +622,7 @@ impl M2Frame {
 
     /// Publishes profile zero and its fully resolved static material resources.
     pub(super) fn prepare(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         scene: &ResidentM2Scene,
         animations: Arc<AnimationDataCatalog>,
         random: &mut CrtRand,
@@ -715,7 +715,7 @@ impl M2Frame {
     /// Uploads one immutable Glue model generation without starting playback.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::application) fn prepare_glue_gpu_source(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         model: ResourceLease<DecodedM2Model>,
         textures: &[GlueM2Texture],
         cpu_source: &M2CpuSource,
@@ -875,7 +875,7 @@ impl M2Frame {
     /// Replaces the character body and optional pet beneath the retained Glue environment.
     pub(in crate::application) fn replace_glue_character(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         input: Option<ResidentGlueCharacterFrameInput<'_>>,
         character_light_count: M2LocalLightCount,
         pet_light_count: M2LocalLightCount,
@@ -1476,7 +1476,7 @@ fn stock_glue_character_local_transform(facing_radians: f32) -> Mat4 {
 /// Publishes one Glue character source from an already completed worker generation.
 #[allow(clippy::too_many_arguments)]
 fn prepare_glue_character_gpu_source(
-    renderer: &mut VulkanRenderer,
+    renderer: &mut solarity_rendering::GpuPreparation<'_>,
     model: &ResourceLease<DecodedM2Model>,
     textures: &[M2ResolvedTexture<'_>],
     geosets: Option<M2GeosetSelection<'_>>,

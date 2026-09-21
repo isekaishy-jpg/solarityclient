@@ -84,7 +84,7 @@ impl RuntimeUiResidency {
     /// Uploads decoded UI sources that are not already renderer-resident.
     pub(super) fn prewarm(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         cache: &BlpTextureCache,
         namespace: solarity_asset::AssetNamespaceId,
     ) -> Result<usize, ApplicationError> {
@@ -114,7 +114,7 @@ impl RuntimeUiResidency {
 impl RuntimeUiFrame {
     /// Uploads the current Glue generation into renderer-owned resources.
     pub(super) fn prepare_glue(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         glue: &GlueManager,
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
@@ -127,7 +127,7 @@ impl RuntimeUiFrame {
     /// the compatible replacement or complete preparation paths.
     pub(super) fn refresh_glue(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         glue: &GlueManager,
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
@@ -139,7 +139,7 @@ impl RuntimeUiFrame {
     /// and material path as GlueXML.
     pub(super) fn refresh_frame(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         frame: &FrameManager,
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
@@ -149,7 +149,7 @@ impl RuntimeUiFrame {
 
     fn refresh_source(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
@@ -182,7 +182,7 @@ impl RuntimeUiFrame {
 
     /// Uploads the current FrameXML generation into renderer-owned resources.
     pub(super) fn prepare_frame(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         frame: &FrameManager,
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
@@ -192,7 +192,7 @@ impl RuntimeUiFrame {
 
     /// Joins one built-in UI owner to renderer-resident mesh and textures.
     fn prepare_source(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
         residency: &mut RuntimeUiResidency,
@@ -217,7 +217,7 @@ impl RuntimeUiFrame {
 
     /// Prepares material resources while retaining process-long sampled images.
     fn prepare_source_with_resources(
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         source: &impl RuntimeUiSource,
         cache: &mut BlpTextureCache,
         retained_mesh: Option<solarity_rendering::UiMeshHandle>,

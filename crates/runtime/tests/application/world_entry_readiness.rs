@@ -102,7 +102,7 @@ fn installed_world_entry_waits_for_camera_terrain_and_detail() -> Result<(), Box
         .ok_or("primary tile")?;
     let (filtering, mip) = services.renderer.file_texture_sampling();
     services.terrain_frame = Some(TerrainFrame::prepare(
-        &mut services.renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut services.renderer),
         1,
         resident.mesh(),
         resident.textures(),
@@ -119,7 +119,7 @@ fn installed_world_entry_waits_for_camera_terrain_and_detail() -> Result<(), Box
         services.game_objects.frame_input(Some(&world)),
     )?);
     services.loading_screen = Some(RuntimeLoadingScreen::prepare(
-        &mut services.renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut services.renderer),
         &services.assets,
         &mut services.ui_textures,
         &services.loading_directory,

@@ -89,8 +89,8 @@ pub use vulkan_m2_texture_set::{
 };
 pub use vulkan_mesh::{M2MeshHandle, M2MeshResourceInfo};
 pub use vulkan_renderer::{
-    GpuFrameKind, GpuResourceLease, GpuResourceUsage, M2EffectDrawCatalog, VulkanPresentMode,
-    VulkanRenderer, VulkanReport,
+    GpuFrameKind, GpuPreparation, GpuResourceLease, GpuResourceUsage, M2EffectDrawCatalog,
+    VulkanPresentMode, VulkanRenderer, VulkanReport,
 };
 pub use vulkan_ripple::{WaterRippleFrame, WaterRippleFrameError, WaterRipplePass};
 pub use vulkan_sampler::{M2SamplerHandle, M2SamplerInfo, M2TextureAddressMode};

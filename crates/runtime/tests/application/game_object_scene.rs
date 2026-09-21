@@ -153,7 +153,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         Arc::clone(objects.frame_input(Some(&world)).animations()),
         &mut random,
@@ -161,7 +161,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     )?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -188,7 +188,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -228,7 +228,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -251,7 +251,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -284,7 +284,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -321,7 +321,7 @@ fn verify_independent_lifetimes(model: Vec<u8>) -> Result<(), Box<dyn Error>> {
     assert_eq!(random, before_disconnect);
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -399,7 +399,7 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         Arc::clone(objects.frame_input(Some(&world)).animations()),
         &mut random,
@@ -407,7 +407,7 @@ fn static_visibility_tracks_camera_and_replaced_placement_order() -> Result<(), 
     )?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;

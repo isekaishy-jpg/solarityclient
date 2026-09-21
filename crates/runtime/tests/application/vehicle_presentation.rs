@@ -80,7 +80,7 @@ fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_
         let parent = world.object_identity(30).ok_or("parent")?;
         let mut random = CrtRand::new();
         let mut frame = M2Frame::prepare(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &ResidentM2Scene::default(),
             fixture_animations(&fixture)?,
             &mut random,
@@ -123,7 +123,7 @@ fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_
             presentation.synchronize(Some(&world))?;
             presentation.synchronize_creatures(Some(&world), |_| None)?;
             frame.replace_creatures(
-                &mut renderer,
+                &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
                 &presentation.resident_creature_frame_inputs(),
                 &mut random,
             )?;
@@ -243,7 +243,7 @@ fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_
         presentation.synchronize(Some(&world))?;
         presentation.synchronize_creatures(Some(&world), |_| None)?;
         frame.replace_creatures(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &presentation.resident_creature_frame_inputs(),
             &mut random,
         )?;
@@ -334,7 +334,7 @@ fn vehicle_passenger_transition_changes_render_parent_only_when_the_model_attach
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -407,7 +407,7 @@ fn vehicle_passenger_transition_changes_render_parent_only_when_the_model_attach
         }
         presentation.synchronize_creatures(Some(&world), |_| None)?;
         frame.replace_creatures(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &presentation.resident_creature_frame_inputs(),
             &mut random,
         )?;
@@ -541,7 +541,7 @@ fn nested_vehicle_scene(mounted: bool) -> Result<(), Box<dyn Error>> {
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -574,7 +574,7 @@ fn nested_vehicle_scene(mounted: bool) -> Result<(), Box<dyn Error>> {
         presentation.set_animation_scene_time(now);
         presentation.synchronize_creatures(Some(&world), |_| None)?;
         frame.replace_creatures(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &presentation.resident_creature_frame_inputs(),
             &mut random,
         )?;
@@ -768,7 +768,7 @@ fn nested_vehicle_scene(mounted: bool) -> Result<(), Box<dyn Error>> {
     world.update_transform(20, WorldTransform::new(Vec3::new(100., 0., 0.), 0.))?;
     presentation.synchronize_creatures(Some(&world), |_| None)?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;

@@ -49,7 +49,7 @@ fn vehicle_ride_owner_survives_passenger_model_arrival_and_shared_seat_departure
         let parent = world.object_identity(30).ok_or("parent")?;
         let mut random = CrtRand::new();
         let mut frame = M2Frame::prepare(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &ResidentM2Scene::default(),
             fixture_animations(&fixture)?,
             &mut random,
@@ -110,7 +110,7 @@ fn vehicle_ride_owner_survives_passenger_model_arrival_and_shared_seat_departure
             presentation.synchronize_creatures(Some(&world), |_| None)?;
             frame
                 .replace_creatures(
-                    &mut renderer,
+                    &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
                     &presentation.resident_creature_frame_inputs(),
                     &mut random,
                 )

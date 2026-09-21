@@ -90,14 +90,14 @@ fn registered_model_liquid_splits_translucent_meshes_without_double_blending()
     );
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         Arc::clone(&animations),
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.sources.push(Some(prepare_gpu_source(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &model,
         &[M2ResolvedTexture::StockWhite],
         None,

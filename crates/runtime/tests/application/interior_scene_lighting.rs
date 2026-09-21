@@ -213,7 +213,7 @@ fn interior_floor_and_doodad_lights_reach_model_uniforms() -> Result<(), Box<dyn
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         terrain.resident_m2_scene().ok_or("M2 scene")?,
         Arc::clone(&animations),
         &mut random,

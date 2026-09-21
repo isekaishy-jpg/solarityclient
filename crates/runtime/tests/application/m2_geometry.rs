@@ -82,7 +82,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     let surface = unsafe { platform.create_vulkan_surface(bootstrap.instance_handle()) }?;
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (64, 64), 0) }?;
     let source = prepare_gpu_source(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &model,
         &[M2ResolvedTexture::StockWhite],
         None,
@@ -94,7 +94,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
     for _ in 0..2 {
         let mut random = CrtRand::new();
         let mut frame = M2Frame::prepare(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &ResidentM2Scene::default(),
             Arc::clone(&animations),
             &mut random,

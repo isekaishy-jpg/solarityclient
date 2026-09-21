@@ -79,14 +79,14 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         Arc::clone(objects.frame_input(Some(&world)).animations()),
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -106,7 +106,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -169,7 +169,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -201,7 +201,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -245,7 +245,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -295,7 +295,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     }
     assert_eq!(random, expected_neighbor_random);
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -309,7 +309,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     objects.synchronize(Some(&world))?;
     objects.synchronize_animations(Some(&world), &mut random)?;
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;
@@ -324,7 +324,7 @@ fn replicated_wmo_doodads_share_gpu_sources_and_keep_cpu_timers_through_parent_c
     assert_ne!(world.object_identity(90), Some(identity));
     objects.disconnect();
     frame.synchronize_game_objects(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         objects.frame_input(Some(&world)),
         &mut random,
     )?;

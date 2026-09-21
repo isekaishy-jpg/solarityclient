@@ -206,10 +206,12 @@ fn unit_effect_stock_models_enter_gpu_scene_and_drain() -> Result<(), Box<dyn Er
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = super::game_object_scene_tests::renderer(&platform)?;
     let mut warmup = M2UnitEffectWarmup::new(sources);
-    while !warmup.service_one(&mut renderer)? {}
+    while !warmup.service_one(&mut crate::frame_cpu_support::gpu_preparation(
+        &mut renderer,
+    ))? {}
     let mut random = CrtRand::new();
     let mut frame = super::M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &super::ResidentM2Scene::default(),
         animations,
         &mut random,

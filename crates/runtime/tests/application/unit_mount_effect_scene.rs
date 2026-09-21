@@ -20,7 +20,9 @@ fn mount_authored_effects_run_before_rider_callbacks_and_bind_body_attachments()
                 catalog,
                 Arc::new(solarity_asset::EnvironmentalDamageCatalog::default()),
             )?);
-        while !warmup.service_one(&mut renderer)? {}
+        while !warmup.service_one(&mut crate::frame_cpu_support::gpu_preparation(
+            &mut renderer,
+        ))? {}
         let mut presentation = unit_presentation(&fixture)?;
         let mut world = ActiveWorld::enter(WorldBootstrap::new(
             WorldMapId::new(0),
@@ -35,7 +37,7 @@ fn mount_authored_effects_run_before_rider_callbacks_and_bind_body_attachments()
         presentation.synchronize_creatures(Some(&world), |_| None)?;
         let mut random = CrtRand::new();
         let mut frame = M2Frame::prepare(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &ResidentM2Scene::default(),
             fixture_animations(&fixture)?,
             &mut random,
@@ -43,7 +45,7 @@ fn mount_authored_effects_run_before_rider_callbacks_and_bind_body_attachments()
         )?;
         frame.set_unit_effect_sources(Arc::new(warmup.into_sources()));
         frame.replace_creatures(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &presentation.resident_creature_frame_inputs(),
             &mut random,
         )?;

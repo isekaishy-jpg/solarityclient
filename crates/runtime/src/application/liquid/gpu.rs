@@ -43,7 +43,7 @@ impl LiquidGpuMaterialCache {
     /// Shares the renderer images for a CPU material's exact selected BLP sources.
     fn prepare(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         source: &Arc<ResidentLiquidMaterial>,
     ) -> Result<Arc<LiquidGpuMaterial>, RuntimeTerrainFrameError> {
         let key = Arc::as_ptr(source) as usize;
@@ -85,7 +85,7 @@ impl LiquidGpuMaterialCache {
     /// Prepares materials before atomically admitting the tile's independent strips.
     pub(in crate::application) fn prepare_terrain(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         batches: &[ResidentTerrainLiquidBatch],
     ) -> Result<Vec<LiquidGpuBatch>, RuntimeTerrainFrameError> {
         let mut profile = solarity_profiling::profile!("Terrain liquid admission");
@@ -120,7 +120,7 @@ impl LiquidGpuMaterialCache {
     /// Uploads immutable group-local WMO strips and retains their lighting mode.
     pub(in crate::application) fn prepare_world_model(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         batches: &[ResidentWorldModelLiquidBatch],
     ) -> Result<Vec<LiquidGpuBatch>, RuntimeTerrainFrameError> {
         let materials = batches

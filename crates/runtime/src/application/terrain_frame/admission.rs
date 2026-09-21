@@ -37,7 +37,7 @@ impl TerrainFrame {
     /// caller returns to the event pump between complete tile publications.
     pub(in crate::application) fn admit_loading_tile(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         resident: &ResidentTerrainTile,
     ) -> Result<bool, RuntimeTerrainFrameError> {
         while !self.admit_tile(renderer, resident)? {}
@@ -69,7 +69,7 @@ impl TerrainFrame {
     /// commits CPU collision and GPU membership in the same service transaction.
     pub(in crate::application) fn admit_tile(
         &mut self,
-        renderer: &mut VulkanRenderer,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
         resident: &ResidentTerrainTile,
     ) -> Result<bool, RuntimeTerrainFrameError> {
         if self

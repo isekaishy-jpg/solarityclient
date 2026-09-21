@@ -47,24 +47,24 @@ fn mount_jump_and_landing_scene(visible: bool, shadows: bool) -> Result<(), Box<
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
         Arc::new(M2ParticleTwinkleTable::new(1)),
     )?;
     frame.replace_player(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         presentation.resident_frame_input(),
         &mut random,
     )?;
     frame.replace_remote_players(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_remote_player_frame_inputs(),
         &mut random,
     )?;
     frame.replace_creatures(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &presentation.resident_creature_frame_inputs(),
         &mut random,
     )?;
@@ -263,7 +263,7 @@ fn mount_stride_rates_reach_local_remote_and_creature_scene_timers() -> Result<(
     let mut renderer = renderer(&platform)?;
     let mut random = CrtRand::new();
     let mut frame = M2Frame::prepare(
-        &mut renderer,
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
         &ResidentM2Scene::default(),
         fixture_animations(&fixture)?,
         &mut random,
@@ -290,17 +290,17 @@ fn mount_stride_rates_reach_local_remote_and_creature_scene_timers() -> Result<(
         // retained mount. Count the whole replacement/update transaction.
         let before_replace = random;
         frame.replace_player(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             presentation.resident_frame_input(),
             &mut random,
         )?;
         frame.replace_remote_players(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &presentation.resident_remote_player_frame_inputs(),
             &mut random,
         )?;
         frame.replace_creatures(
-            &mut renderer,
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
             &presentation.resident_creature_frame_inputs(),
             &mut random,
         )?;
