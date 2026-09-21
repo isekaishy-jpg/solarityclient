@@ -44,11 +44,38 @@ minimap fixture now supplies its immutable catalog to the UI reader owner.
 Evidence is `target/ui-sources-clippy-final.log` and `target/ui-sources-tests.log`.
 Build 176 remains installed; this UI batch is source-only.
 
-The next confirmed direct BLP source sites are the portrait alpha mask in
-`world_ui.rs`, the startup splash/wake textures in `water_ripples.rs`, and the
-startup underwater atlas in `underwater_particles.rs`. They still use the
-uncached synchronous API. These concrete consumers remain work, in addition to
-the complete cutover requirements below.
+The subsequent startup/portrait batch removes the remaining direct BLP reads
+from production runtime sources. Portrait masks reuse the retained UI worker
+reader/cache and GPU residency. Splash, wake and underwater textures prepare on
+one required startup task while main initializes Vulkan. Authored missing/invalid
+textures retain their exact stock failure-image slots; admission, cancellation
+and shared-producer failures propagate. Native servicing consumes the completed
+sources before the original main-thread RNG initialization order.
+
+That same admitted startup owner reads the FPS font, rasterizes its fixed
+repertoire and prepares its initial mesh. `UiNativeTextAtlas` contains immutable
+coverage and metrics; FreeType library/faces are created and released entirely
+on the worker. Main publishes renderer resources and retains the original text
+update behavior. This replaces the native atlas's previous UI-thread font-system
+ownership without sharing a FreeType object across threads. Per-glyph rasterization
+and atlas packing remain indivisible within that startup turn. Dynamic Glue/FrameXML
+font/layout work, initial metadata catalogs and complete nested allocation accounting
+remain outside this batch and within the full cutover requirements below.
+
+Startup/portrait validation passes formatting and all-target/all-feature UI/runtime
+Clippy with warnings denied. The full UI/runtime test command passes 783 tests
+with 30 ignores; the newly added stock-font test was then explicitly run from
+that fresh runtime executable and passed against the local build-12340 archive
+(784 distinct passes, 29 remaining ignores). Atlas pixels, initial mesh and later
+FPS/recording-status text geometry match serial preparation after the worker and
+its font library retire. Fixed-slot fallback, shared publication/abandonment,
+cancellation, admission failure and invalid-font cases pass; the existing native
+minimap fixture also verifies the new image helper retains source/GPU residency.
+Evidence is `target/startup-cutover-clippy-clean.log`,
+`target/startup-cutover-tests.log` and `target/startup-native-font.log`.
+Build 176 remains installed. No additional client package or FPS comparison was
+performed. The next large confirmed source block is the metadata catalog loading
+in `ClientServices::start`, still before executor creation.
 
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared

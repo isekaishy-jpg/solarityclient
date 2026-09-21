@@ -8,6 +8,7 @@ mod glue_texture_prewarm;
 mod instrumentation;
 mod model_cache_maintenance;
 mod session_lifecycle;
+mod startup_presentation;
 pub(super) mod world_benchmark;
 mod world_camera;
 mod world_transfer;
@@ -236,6 +237,7 @@ impl ClientServices {
         let sound_catalog = catalog.clone();
         let backdrop_catalog = catalog.clone();
         let ui_texture_catalog = catalog.clone();
+        let presentation_catalog = catalog.clone();
         let player_catalog = catalog.clone();
         let transport_catalog = catalog.clone();
         let terrain_catalog = catalog.clone();
@@ -277,9 +279,6 @@ impl ClientServices {
         let weather = solarity_asset::WeatherCatalog::load(&mut assets)?;
         let screen_effects = solarity_asset::ScreenEffectCatalog::load(&mut assets)?;
         let liquids = solarity_asset::LiquidTypeCatalog::load(&mut assets)?;
-        let water_ripples = super::water_ripples::RuntimeWaterRipples::load(&mut assets)?;
-        let underwater_particles =
-            super::underwater_particles::RuntimeUnderwaterParticles::load(&mut assets)?;
         let addon_manifest = WorldAddonManifest::new(
             addon_catalog
                 .addons()
@@ -302,6 +301,17 @@ impl ClientServices {
         // SDL must be initialized by the process main thread before worker
         // construction can make lifecycle mistakes harder to diagnose.
         let mut platform = SdlPlatform::start(configuration.window())?;
+        let cpu =
+            CpuExecutor::with_notifier(configuration.cpu_pool(), platform.coordinator_notifier())?;
+        model_sources.configure_storage(cpu.storage().clone())?;
+        let permit = cpu.try_reserve_for(solarity_cpu::CpuService::Required)?;
+        let shared = super::texture_source_job::SharedTextureSources {
+            budget: cpu.storage().clone(),
+            service: permit.service_control(),
+        };
+        let presentation_sources = permit.submit_resumable_with_context(
+            startup_presentation::prepare(presentation_catalog, shared, platform.pixel_extent()),
+        );
         let total_physical_memory_bytes = platform.total_physical_memory_bytes();
         let input = InputControl::new(platform.window_id());
         let instance_extensions = platform.vulkan_instance_extensions()?;
@@ -343,9 +353,18 @@ impl ClientServices {
             &lights,
             Arc::clone(&animations),
         )?;
-        let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, &assets, platform.pixel_extent())?;
         let developer_console =
             RuntimeDeveloperConsole::new(overlay_extent(platform.pixel_extent()));
+        let prepared = solarity_rendering::GpuPreparation::new(
+            &mut renderer,
+            &mut super::frame_pipeline::FrameWait::Native(&mut platform).recording(&cpu),
+        )
+        .join_source(presentation_sources)??;
+        let mut fps = RuntimeFpsOverlay::prepare(&mut renderer, prepared.fps)?;
+        let [splash, wake, underwater] = prepared.effects;
+        let water_ripples = super::water_ripples::RuntimeWaterRipples::new([splash, wake]);
+        let underwater_particles =
+            super::underwater_particles::RuntimeUnderwaterParticles::new(underwater);
         // The stock process owns one Blizzard RNG stream. Character creation
         // and sound variation consume it in actual main-thread call order.
         let blizzard_rand = Rc::new(RefCell::new(BlizzardRand::new(sdl3::timer::ticks() as u32)));
@@ -404,9 +423,6 @@ impl ClientServices {
         let first = u32::from(crt_rand.next_u15());
         let second = u32::from(crt_rand.next_u15());
         let particle_twinkle = Arc::new(M2ParticleTwinkleTable::new(first << 16 | second));
-        let cpu =
-            CpuExecutor::with_notifier(configuration.cpu_pool(), platform.coordinator_notifier())?;
-        model_sources.configure_storage(cpu.storage().clone())?;
         let capabilities = solarity_cpu::CpuCapabilities::discover();
         tracing::info!(
             protected_workers = cpu.frame_worker_count(),

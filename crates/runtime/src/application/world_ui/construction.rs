@@ -229,7 +229,6 @@ impl WorldUiConstruction {
                 presentation_revision: 0,
                 texture_cache,
                 texture_residency,
-                assets,
                 portrait_mask: None,
                 portrait_generation: None,
                 player_portrait_requested,

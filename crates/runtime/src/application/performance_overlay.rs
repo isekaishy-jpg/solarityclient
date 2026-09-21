@@ -5,9 +5,9 @@ mod layout;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use solarity_asset::{AssetPath, AssetStoreHandle};
+use solarity_asset::{AssetPath, AssetStore};
 use solarity_rendering::{UiPreparedDraw, VulkanRenderer};
-use solarity_ui::{FontRasterization, UiGlyphAtlasPlan, UiNativeTextStyle};
+use solarity_ui::{FontError, FontRasterization, UiNativeTextAtlas, UiNativeTextStyle};
 
 use crate::FrameRateCounter;
 use crate::application::ApplicationError;
@@ -16,12 +16,16 @@ use crate::application::ui_frame::PreparedUiFrame;
 pub(super) use layout::overlay_extent;
 use layout::{FPS_TEXT_REGION_HEIGHT, FPS_TEXT_TOP_LEFT};
 
+#[cfg(test)]
+#[path = "../../tests/application/native_overlay.rs"]
+mod tests;
+
 const FONT_PATH: &str = "Fonts\\FRIZQT__.TTF";
 const GLYPH_REPERTOIRE: &str = "-0123456789. ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /// Renderer-resident developer FPS overlay matching SolCL's default style.
 pub(super) struct RuntimeFpsOverlay {
-    atlas: UiGlyphAtlasPlan,
+    atlas: UiNativeTextAtlas,
     style: UiNativeTextStyle,
     frame: PreparedUiFrame,
     counter: FrameRateCounter,
@@ -33,15 +37,24 @@ pub(super) struct RuntimeFpsOverlay {
     status_dirty: bool,
 }
 
-impl RuntimeFpsOverlay {
-    pub(super) fn prepare(
-        renderer: &mut VulkanRenderer,
-        assets: &AssetStoreHandle,
+/// Worker-owned immutable coverage and initial geometry, with no font handles.
+pub(super) struct PreparedFpsOverlay {
+    atlas: UiNativeTextAtlas,
+    style: UiNativeTextStyle,
+    plan: solarity_rendering::UiMeshPlan,
+    logical_extent: [f32; 2],
+    display_height: u32,
+    text: String,
+}
+
+impl PreparedFpsOverlay {
+    pub(in crate::application) fn load(
+        store: &mut AssetStore,
         pixel_extent: (u32, u32),
-    ) -> Result<Option<Self>, ApplicationError> {
+    ) -> Result<Option<Self>, FontError> {
         let logical_extent = overlay_extent(pixel_extent);
         let face = AssetPath::new(FONT_PATH)?;
-        if !assets.borrow().contains(&face)? {
+        if !store.contains(&face)? {
             tracing::warn!(font = %face, "FPS overlay font is absent from the mounted client data");
             return Ok(None);
         }
@@ -49,16 +62,7 @@ impl RuntimeFpsOverlay {
             .with_color([0.35, 1.0, 0.35, 1.0])
             .with_shadow([0.0, 0.0, 0.0, 1.0], [1.0, 1.0])
             .with_outline([0.0, 0.0, 0.0, 1.0], 1.0);
-        let mut store = assets.borrow_mut();
-        let atlas = UiGlyphAtlasPlan::from_native_text(
-            &style,
-            GLYPH_REPERTOIRE,
-            &mut store,
-            pixel_extent.1,
-        )?;
-        drop(store);
-        let glyph_texture =
-            renderer.upload_ui_glyph_texture(atlas.identity(), atlas.extent(), atlas.rgba8())?;
+        let atlas = UiNativeTextAtlas::prepare(&style, GLYPH_REPERTOIRE, store, pixel_extent.1)?;
         let text = "-- FPS".to_owned();
         let plan = atlas.native_text_mesh(
             &text,
@@ -68,6 +72,35 @@ impl RuntimeFpsOverlay {
             FPS_TEXT_REGION_HEIGHT,
             pixel_extent.1,
         )?;
+        Ok(Some(Self {
+            atlas,
+            style,
+            plan,
+            logical_extent,
+            display_height: pixel_extent.1,
+            text,
+        }))
+    }
+}
+
+impl RuntimeFpsOverlay {
+    pub(super) fn prepare(
+        renderer: &mut VulkanRenderer,
+        prepared: Option<PreparedFpsOverlay>,
+    ) -> Result<Option<Self>, ApplicationError> {
+        let Some(PreparedFpsOverlay {
+            atlas,
+            style,
+            plan,
+            logical_extent,
+            display_height,
+            text,
+        }) = prepared
+        else {
+            return Ok(None);
+        };
+        let glyph_texture =
+            renderer.upload_ui_glyph_texture(atlas.identity(), atlas.extent(), atlas.rgba8())?;
         let frame = PreparedUiFrame::prepare(
             renderer,
             &plan,
@@ -80,7 +113,7 @@ impl RuntimeFpsOverlay {
             frame,
             counter: FrameRateCounter::new(),
             logical_extent,
-            display_height: pixel_extent.1,
+            display_height,
             text,
             recording_status: None,
             last_fps: None,

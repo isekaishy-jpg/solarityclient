@@ -107,6 +107,24 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         &mut cache,
         &mut residency,
     )?;
+    let mask_path = solarity_asset::AssetPath::new("Textures/MinimapMask.blp")?;
+    let prepared_mask = residency.require_texture(
+        &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+        &mut cache,
+        mask_path.clone(),
+    )?;
+    let retained_sources = cache.len();
+    assert_eq!(
+        residency.require_texture(
+            &mut crate::frame_cpu_support::gpu_preparation(&mut renderer),
+            &mut cache,
+            mask_path,
+        )?,
+        prepared_mask,
+        "native UI images reuse source and GPU residency"
+    );
+    assert_eq!(cache.len(), retained_sources);
+    assert!(renderer.blp_texture_info(prepared_mask).is_some());
     let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
         {
             let total: std::num::NonZeroUsize = NonZeroUsize::MIN;

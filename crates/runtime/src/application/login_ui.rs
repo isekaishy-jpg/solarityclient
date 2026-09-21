@@ -30,6 +30,25 @@ pub(super) struct RuntimeUiResidency {
 }
 
 impl RuntimeUiResidency {
+    /// Uses the same required source owner for a native UI image outside the mesh plan.
+    pub(super) fn require_texture(
+        &mut self,
+        renderer: &mut solarity_rendering::GpuPreparation<'_>,
+        cache: &mut BlpTextureCache,
+        path: AssetPath,
+    ) -> Result<BlpTextureHandle, ApplicationError> {
+        if let Some(handle) = self.textures.get(&path) {
+            return Ok(*handle);
+        }
+        let sources = self.sources.load(renderer, cache, vec![path.clone()])?;
+        let source = sources
+            .first()
+            .unwrap_or_else(|| unreachable!("one required UI source"));
+        let handle = renderer.upload_blp_texture(source, BlpColorSpace::Linear)?;
+        self.textures.insert(path, handle);
+        Ok(handle)
+    }
+
     pub(super) fn new(catalog: solarity_asset::ArchiveCatalog) -> Self {
         Self {
             sources: sources::UiTextureLoader::new(catalog),

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use solarity_asset::{AssetError, AssetPath, AssetStore, BlpTextureSource, LiquidTypeCatalog};
+use solarity_asset::{AssetError, BlpTextureSource, LiquidTypeCatalog};
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, WaterRippleFrame, WaterRipplePass, WaterRippleRenderVertex,
@@ -77,24 +77,10 @@ pub(super) struct RuntimeWaterRipples {
 }
 
 impl RuntimeWaterRipples {
-    /// Preloads the two fixed native requests before interactive world rendering.
-    /// Texture.cpp's failure image occupies a failed request's original slot.
-    pub(super) fn load(store: &mut AssetStore) -> Result<Self, RuntimeWaterRippleError> {
-        let mut sources = [None, None];
-        for (index, path) in ["XTextures/splash/splash.blp", "XTextures/splash/wake.blp"]
-            .into_iter()
-            .enumerate()
-        {
-            let path = AssetPath::new(path)?;
-            sources[index] = match BlpTextureSource::load(store, &path) {
-                Ok(source) => Some(Arc::new(source)),
-                Err(error) => {
-                    tracing::warn!(texture = %path, %error, "ripple texture request failed; using stock green texture");
-                    None
-                }
-            };
-        }
-        Ok(Self {
+    /// Adopts startup worker results in the fixed splash/wake slot order.
+    /// Texture.cpp's failure image occupies an authored failed request's slot.
+    pub(super) fn new(sources: [Option<Arc<BlpTextureSource>>; 2]) -> Self {
+        Self {
             world: None,
             clocks: HashMap::new(),
             pool: WaterRipplePool::default(),
@@ -102,7 +88,7 @@ impl RuntimeWaterRipples {
             vertices: [Vec::new(), Vec::new()],
             sources,
             textures: [None; 2],
-        })
+        }
     }
 
     /// A world replacement clears effects; departures retire only unit clocks.

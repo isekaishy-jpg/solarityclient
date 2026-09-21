@@ -10,7 +10,7 @@ pub(super) use construction::{WORLD_UI_CONSTRUCTION_BUDGET, WorldUiConstruction}
 use minimap::RuntimeMinimapScene;
 pub(super) use startup::{WorldUiSourceImage, WorldUiSourcePreparation};
 
-use solarity_asset::{AssetStoreHandle, BlpTextureCache};
+use solarity_asset::BlpTextureCache;
 use solarity_ecs::ActiveWorld;
 use solarity_network::WorldActionButtons;
 use solarity_rendering::{UiPreparedDraw, VulkanRenderer};
@@ -57,7 +57,6 @@ pub(super) struct RuntimeWorldUi {
     presentation_revision: u64,
     texture_cache: BlpTextureCache,
     texture_residency: RuntimeUiResidency,
-    assets: AssetStoreHandle,
     portrait_mask: Option<solarity_rendering::BlpTextureHandle>,
     portrait_generation: Option<UnitPresentationGeneration>,
     player_portrait_requested: bool,
@@ -379,12 +378,10 @@ impl RuntimeWorldUi {
             let path = solarity_asset::AssetPath::new(
                 "Interface\\CharacterFrame\\TempPortraitAlphaMask.blp",
             )?;
-            let source =
-                solarity_asset::BlpTextureSource::load(&mut self.assets.borrow_mut(), &path)?;
-            let mask = renderer.upload_blp_texture_with_execution(
-                &mut wait.recording(cpu),
-                &source,
-                solarity_rendering::BlpColorSpace::Linear,
+            let mask = self.texture_residency.require_texture(
+                &mut solarity_rendering::GpuPreparation::new(renderer, &mut wait.recording(cpu)),
+                &mut self.texture_cache,
+                path,
             )?;
             self.portrait_mask = Some(mask);
             mask

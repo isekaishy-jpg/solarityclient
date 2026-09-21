@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
-use solarity_asset::{
-    AssetError, AssetPath, AssetStore, BlpTextureSource, LiquidTypeCatalog, LiquidTypeDefinition,
-};
+use solarity_asset::{AssetError, BlpTextureSource, LiquidTypeCatalog, LiquidTypeDefinition};
 use solarity_ecs::{ActiveWorld, WorldObjectIdentity};
 use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, UnderwaterParticleFog, UnderwaterParticleFrame,
@@ -53,17 +51,9 @@ pub(super) struct RuntimeUnderwaterParticles {
 }
 
 impl RuntimeUnderwaterParticles {
-    /// Preloads 79E100's single fixed atlas before interactive world rendering.
-    pub(super) fn load(store: &mut AssetStore) -> Result<Self, RuntimeUnderwaterParticleError> {
-        let path = AssetPath::new("Textures/WaterPoop02.blp")?;
-        let source = match BlpTextureSource::load(store, &path) {
-            Ok(source) => Some(Arc::new(source)),
-            Err(error) => {
-                tracing::warn!(texture = %path, %error, "underwater atlas request failed; using stock green texture");
-                None
-            }
-        };
-        Ok(Self {
+    /// Adopts 79E100's fixed atlas after startup worker preparation.
+    pub(super) fn new(source: Option<Arc<BlpTextureSource>>) -> Self {
+        Self {
             enabled: true,
             world: None,
             pool: None,
@@ -71,7 +61,7 @@ impl RuntimeUnderwaterParticles {
             texture: None,
             vertices: Vec::new(),
             indices: Vec::new(),
-        })
+        }
     }
 
     /// Native `waterParticulates` toggles render bit 0x02000000; it is not a CVar.
