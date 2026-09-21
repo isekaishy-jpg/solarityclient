@@ -232,7 +232,9 @@ impl StartupReport {
 
 /// The sole owner of cross-crate concrete service wiring.
 pub struct ClientApplication {
-    services: ClientServices,
+    // The process owner stays at one address rather than travelling through
+    // nested startup results and caller stack frames by value.
+    services: Box<ClientServices>,
     report: StartupReport,
 }
 
