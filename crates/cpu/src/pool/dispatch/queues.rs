@@ -39,7 +39,7 @@ impl Dispatch {
     pub(crate) fn push_runners(
         &self,
         owner: Arc<dyn ReadyWork>,
-        service: Option<Arc<std::sync::atomic::AtomicU8>>,
+        service: Option<Arc<crate::pool::task::ServiceIdentity>>,
         count: usize,
     ) {
         if count == 0 {
@@ -171,14 +171,14 @@ impl Dispatch {
     /// is indivisible; only a still-queued operation moves between FIFOs.
     pub(crate) fn reclassify(
         &self,
-        identity: &Arc<std::sync::atomic::AtomicU8>,
+        identity: &Arc<crate::pool::task::ServiceIdentity>,
         service: CpuService,
     ) {
-        if identity.load(Ordering::Acquire) == service as u8 {
+        if identity.effective.load(Ordering::Acquire) == service as u8 {
             return;
         }
         let mut queues = self.lock();
-        let previous = identity.swap(service as u8, Ordering::AcqRel);
+        let previous = identity.effective.swap(service as u8, Ordering::AcqRel);
         if previous == service as u8 {
             return;
         }

@@ -43,6 +43,12 @@ impl<T: Send + 'static> FrameBatch<T> {
                 (lease, class, &cpu.load_epochs)
             }
         };
+        let service_identity = self
+            .service
+            .map(|service| {
+                crate::pool::task::ServiceIdentity::reserve(&cpu.dispatch, service, cpu.storage())
+            })
+            .transpose()?;
         let mut state = self.core.lock();
         let generation = state
             .generation
@@ -98,9 +104,7 @@ impl<T: Send + 'static> FrameBatch<T> {
         } else {
             cpu.worker_count()
         };
-        state.service = self
-            .service
-            .map(|service| Arc::new(std::sync::atomic::AtomicU8::new(service as u8)));
+        state.service = service_identity;
         state.dispatch = Some(Arc::clone(&cpu.dispatch));
         state.notifier = cpu.notifier.clone();
         state.trace = solarity_profiling::TraceContext::capture().fork(if self.service.is_some() {

@@ -2,7 +2,8 @@
 
 use super::{CpuServiceControl, TaskControl, TaskInterest};
 use crate::pool::{CpuService, dispatch::Dispatch};
-use std::sync::atomic::{AtomicU8, Ordering};
+
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Weak};
 
@@ -29,7 +30,7 @@ pub struct CpuTask<T> {
     control: TaskInterest,
     trace: solarity_profiling::TraceContext,
     dispatch: Weak<Dispatch>,
-    service: Arc<AtomicU8>,
+    service: Arc<crate::pool::task::ServiceIdentity>,
 }
 
 impl<T> CpuTask<T> {
@@ -39,7 +40,7 @@ impl<T> CpuTask<T> {
         control: Arc<TaskControl>,
         trace: solarity_profiling::TraceContext,
         dispatch: Weak<Dispatch>,
-        service: Arc<AtomicU8>,
+        service: Arc<crate::pool::task::ServiceIdentity>,
     ) -> Self {
         Self {
             receiver,
@@ -64,20 +65,13 @@ impl<T> CpuTask<T> {
     /// De-escalation is explicit when a selected consumer no longer needs a
     /// prewarm. A running operation remains indivisible and retains ownership.
     pub fn set_service(&self, service: CpuService) {
-        if self.service.load(Ordering::Acquire) != service as u8
-            && let Some(dispatch) = self.dispatch.upgrade()
-        {
-            dispatch.reclassify(&self.service, service);
-        }
+        self.service_control().set_service(service);
     }
 
     /// Exposes scheduling metadata without transferring or cloning result ownership.
     #[must_use]
     pub fn service_control(&self) -> CpuServiceControl {
-        CpuServiceControl {
-            dispatch: self.dispatch.clone(),
-            service: Arc::clone(&self.service),
-        }
+        CpuServiceControl::new(Arc::clone(&self.service))
     }
 
     /// Waits for the task and transfers ownership of its result.

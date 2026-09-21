@@ -3,10 +3,7 @@
 use super::{Dispatch, QueuedWork, Queues, Work};
 use crate::completion::{Binding, ReadySink};
 use crate::{CpuTaskDependency, JobOutcome};
-use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
-};
+use std::sync::{Arc, atomic::Ordering};
 
 /// Slot serials reject a delayed delivery after cancellation and subsequent reuse.
 #[derive(Default)]
@@ -17,7 +14,12 @@ pub(super) struct ParkedService {
 
 impl ParkedService {
     /// Only shared scheduling metadata escapes the dispatch lock.
-    pub(super) fn demand(&self) -> Option<(Arc<AtomicU8>, crate::CpuServiceInterest)> {
+    pub(super) fn demand(
+        &self,
+    ) -> Option<(
+        Arc<crate::pool::task::ServiceIdentity>,
+        crate::CpuServiceInterest,
+    )> {
         match &self.work {
             Some(Work::Sliced(identity, _, operation)) => operation
                 .dependency_demand()
@@ -29,11 +31,14 @@ impl ParkedService {
 
 /// Refresh outside every queue lock. Recheck after delivery so a concurrent
 /// demotion/promotion cannot leave the dependency at an older scheduling class.
-pub(super) fn follow_demand(identity: &Arc<AtomicU8>, interest: &crate::CpuServiceInterest) {
+pub(super) fn follow_demand(
+    identity: &Arc<crate::pool::task::ServiceIdentity>,
+    interest: &crate::CpuServiceInterest,
+) {
     loop {
-        let current = identity.load(Ordering::Acquire);
+        let current = identity.effective.load(Ordering::Acquire);
         interest.set_service(crate::CpuService::from_raw(current));
-        if identity.load(Ordering::Acquire) == current {
+        if identity.effective.load(Ordering::Acquire) == current {
             return;
         }
     }
@@ -126,7 +131,7 @@ impl Dispatch {
 
     /// Consumer cancellation and destruction wake only that service's gate.
     /// The flag is set before this lock; park checks it under this same lock.
-    pub(crate) fn resume_cancelled(&self, identity: &Arc<AtomicU8>) {
+    pub(crate) fn resume_cancelled(&self, identity: &Arc<crate::pool::task::ServiceIdentity>) {
         let mut queues = self.lock();
         let index = queues.parked.iter().position(|slot| {
             slot.work

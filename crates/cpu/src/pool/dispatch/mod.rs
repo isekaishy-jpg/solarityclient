@@ -79,17 +79,17 @@ pub(crate) struct WorkerLane {
 /// Cold background closures and retained frame operations share thread ownership.
 pub(crate) enum Work {
     Once(
-        Arc<AtomicU8>,
+        Arc<crate::pool::task::ServiceIdentity>,
         crate::CpuServiceExecution,
         Box<dyn FnOnce(WorkerLane) + Send>,
     ),
     Sliced(
-        Arc<AtomicU8>,
+        Arc<crate::pool::task::ServiceIdentity>,
         crate::CpuServiceExecution,
         Box<dyn ServiceStep>,
     ),
     Retained(Arc<dyn ReadyWork>),
-    Loading(Arc<AtomicU8>, Arc<dyn ReadyWork>),
+    Loading(Arc<crate::pool::task::ServiceIdentity>, Arc<dyn ReadyWork>),
     Priority(Arc<dyn ReadyWork>, u64),
 }
 
@@ -121,7 +121,7 @@ impl Work {
     }
 
     /// Reads the private service identity without invoking a kernel or trait method.
-    fn service_identity(&self) -> Option<&Arc<AtomicU8>> {
+    fn service_identity(&self) -> Option<&Arc<crate::pool::task::ServiceIdentity>> {
         match self {
             Self::Once(identity, ..) | Self::Sliced(identity, ..) | Self::Loading(identity, _) => {
                 Some(identity)
@@ -149,7 +149,7 @@ impl Work {
         let identity = self
             .service_identity()
             .unwrap_or_else(|| unreachable!("background dispatch owns a service identity"));
-        CpuService::from_raw(identity.load(Ordering::Acquire))
+        CpuService::from_raw(identity.effective.load(Ordering::Acquire))
     }
     /// Queue classification may read only atomic urgency, never an epoch lock.
     fn urgent(&self) -> bool {
