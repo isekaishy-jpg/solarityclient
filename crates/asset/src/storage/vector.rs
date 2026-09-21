@@ -118,6 +118,11 @@ impl<T> AssetStorageVec<T> {
         }
         Ok(())
     }
+    /// Publishes into capacity admitted before a multi-container metadata transition.
+    pub(crate) fn push_reserved(&mut self, value: T) {
+        assert!(self.values.len() < self.values.capacity());
+        self.values.push(value);
+    }
     /// Appends after admitting any necessary backing storage.
     /// # Errors
     /// Returns byte pressure, size overflow or allocation failure.

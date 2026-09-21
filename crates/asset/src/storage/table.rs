@@ -37,6 +37,15 @@ impl<K: Eq + Hash, V> AssetStorageMap<K, V> {
             ..Self::default()
         }
     }
+    /// Removes a key and value without reallocating the retained table.
+    pub fn remove_entry(&mut self, key: &K) -> Option<(K, V)> {
+        self.values.remove_entry(key)
+    }
+    /// Publishes into capacity admitted before a multi-container metadata transition.
+    pub(crate) fn insert_reserved(&mut self, key: K, value: V) {
+        assert!(self.values.contains_key(&key) || self.values.len() < self.values.capacity());
+        self.values.insert(key, value);
+    }
     /// Removes an entry while retaining admitted table capacity for reuse.
     pub fn remove(&mut self, key: &K) -> Option<V> {
         self.values.remove(key)

@@ -61,7 +61,6 @@ impl WmoCacheService {
     pub(crate) fn with_storage(storage: Arc<std::sync::OnceLock<CpuStorageBudget>>) -> Self {
         let changed = Arc::new(AtomicBool::new(false));
         let models = ResourceCache::default();
-        models.subscribe(&changed);
         Self(Arc::new(State {
             models: Mutex::new(models),
             pending: Mutex::new(crate::AssetStorageMap::metadata()),
@@ -116,13 +115,17 @@ impl WmoCacheService {
             .pending
             .lock()
             .unwrap_or_else(|_| unreachable!("WMO request metadata cannot panic"));
-        if let Some(model) = self
-            .0
-            .models
-            .lock()
-            .unwrap_or_else(|_| unreachable!("WMO cache metadata cannot panic"))
-            .get(key)?
-        {
+        let ready = {
+            let mut models = self
+                .0
+                .models
+                .lock()
+                .unwrap_or_else(|_| unreachable!("WMO cache metadata cannot panic"));
+            models.admit(self.0.storage.get())?;
+            models.subscribe(&self.0.changed)?;
+            models.get(key)?
+        };
+        if let Some(model) = ready {
             return Ok(WmoLoad::Ready(model));
         }
         if let Some(slot) = pending.get(key) {

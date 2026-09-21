@@ -79,7 +79,7 @@ impl M2CacheService {
                 )),
                 owned: AtomicBool::new(true),
             });
-            self.register(&core);
+            self.register(&core)?;
             index.core = Some(core);
         }
         if let Some(model) = index

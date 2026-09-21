@@ -7,11 +7,34 @@ use std::{
 };
 
 use super::releases::{Releases, Ticket};
+use crate::{AssetError, AssetReadBudget};
+use solarity_cpu::{ByteReservation, CpuStorageKind};
+
+/// The allocation charge follows both strong and weak observers, including its own Arc.
+pub(super) fn shared_metadata<T>(
+    budget: Option<&AssetReadBudget>,
+) -> Result<Option<Arc<ByteReservation>>, AssetError> {
+    budget
+        .map(|budget| {
+            budget
+                .storage()
+                .reserve(
+                    budget.class(),
+                    CpuStorageKind::Metadata,
+                    size_of::<T>() + size_of::<ByteReservation>() + 4 * size_of::<usize>(),
+                )
+                .map(Arc::new)
+                .map_err(Into::into)
+        })
+        .transpose()
+}
 
 /// One shared pin covers all clones of a live consumer generation.
 pub(super) struct Pin<T> {
     pub(super) value: Arc<T>,
     release: Option<(Weak<Releases>, Ticket)>,
+    // The release owner allocation survives cache teardown until this weak link drops.
+    _release_memory: Option<Arc<ByteReservation>>,
 }
 
 impl<T> Drop for Pin<T> {
@@ -28,6 +51,7 @@ impl<T> Drop for Pin<T> {
 /// Cloning a live lease shares its pin; the final clone notifies its cache once.
 pub struct ResourceLease<T> {
     pub(super) pin: Arc<Pin<T>>,
+    memory: Option<Arc<ByteReservation>>,
 }
 
 impl<T> ResourceLease<T> {
@@ -38,17 +62,27 @@ impl<T> ResourceLease<T> {
             pin: Arc::new(Pin {
                 value: Arc::new(value),
                 release: None,
+                _release_memory: None,
             }),
+            memory: None,
         }
     }
 
     /// The cache retains its distinct payload owner while consumers share one pin.
-    pub(super) fn cached(value: Arc<T>, releases: &Arc<Releases>, ticket: Ticket) -> Self {
+    pub(super) fn cached(
+        value: Arc<T>,
+        releases: &Arc<Releases>,
+        ticket: Ticket,
+        memory: Option<Arc<ByteReservation>>,
+        release_memory: Option<Arc<ByteReservation>>,
+    ) -> Self {
         Self {
             pin: Arc::new(Pin {
                 value,
                 release: Some((Arc::downgrade(releases), ticket)),
+                _release_memory: release_memory,
             }),
+            memory,
         }
     }
 
@@ -70,6 +104,7 @@ impl<T> ResourceLease<T> {
         ResourceWeak {
             value: Arc::downgrade(&this.pin.value),
             pin: Arc::downgrade(&this.pin),
+            memory: this.memory.clone(),
         }
     }
 }
@@ -78,6 +113,7 @@ impl<T> Clone for ResourceLease<T> {
     fn clone(&self) -> Self {
         Self {
             pin: Arc::clone(&self.pin),
+            memory: self.memory.clone(),
         }
     }
 }
@@ -103,6 +139,7 @@ impl<T: fmt::Debug> fmt::Debug for ResourceLease<T> {
 pub struct ResourceWeak<T> {
     value: Weak<T>,
     pin: Weak<Pin<T>>,
+    memory: Option<Arc<ByteReservation>>,
 }
 impl<T> ResourceWeak<T> {
     /// Reports whether the immutable generation still has a cache or consumer owner.
@@ -115,7 +152,14 @@ impl<T> ResourceWeak<T> {
     /// Upgrades only while a consumer of this pin generation remains live.
     #[must_use]
     pub fn upgrade(&self) -> Option<ResourceLease<T>> {
-        self.pin.upgrade().map(|pin| ResourceLease { pin })
+        self.pin.upgrade().map(|pin| ResourceLease {
+            pin,
+            memory: self.memory.clone(),
+        })
+    }
+    /// Cache retirement examines demand without transiently reviving the consumer.
+    pub(super) fn has_consumers(&self) -> bool {
+        self.pin.strong_count() != 0
     }
     /// Identity remains comparable while this weak observer exists.
     #[must_use]
@@ -133,6 +177,7 @@ impl<T> Default for ResourceWeak<T> {
         Self {
             value: Weak::new(),
             pin: Weak::new(),
+            memory: None,
         }
     }
 }
@@ -141,6 +186,7 @@ impl<T> Clone for ResourceWeak<T> {
         Self {
             value: self.value.clone(),
             pin: self.pin.clone(),
+            memory: self.memory.clone(),
         }
     }
 }

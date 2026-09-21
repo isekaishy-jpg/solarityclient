@@ -79,8 +79,9 @@ impl M2ModelCache {
         if let Some(model) = store.model_cache_service().ready(&key)? {
             return Ok(model);
         }
-        if self.namespaces.insert(store.namespace()) {
-            store.model_cache_service().register(&self.core);
+        if !self.namespaces.contains(&store.namespace()) {
+            store.model_cache_service().register(&self.core)?;
+            self.namespaces.insert(store.namespace());
         }
         if let Some(model) = self.core.lock().get(&key)? {
             return Ok(model);

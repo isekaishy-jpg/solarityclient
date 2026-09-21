@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use super::ResourceCacheClock;
-use crate::AssetError;
+use crate::{AssetError, AssetReadBudget, AssetStorageVec};
 
 /// Reuse cannot turn a late final release into another resource's notification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,13 +26,23 @@ struct Slot {
 }
 
 /// One pending record per registered resource, regardless of release/reacquire churn.
-#[derive(Default)]
 struct State {
-    slots: Vec<Slot>,
+    slots: AssetStorageVec<Slot>,
     free: Option<usize>,
     head: Option<usize>,
     tail: Option<usize>,
-    watchers: Vec<Weak<AtomicBool>>,
+    watchers: AssetStorageVec<Weak<AtomicBool>>,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            slots: AssetStorageVec::metadata(),
+            free: None,
+            head: None,
+            tail: None,
+            watchers: AssetStorageVec::metadata(),
+        }
+    }
 }
 
 /// Contains only indices and generations; no payload destructor runs under its lock.
@@ -58,10 +68,30 @@ impl Releases {
         }
     }
 
+    /// Adopts retained buffers and remembers admission for future registration growth.
+    pub(super) fn admit(&self, budget: &AssetReadBudget) -> Result<(), AssetError> {
+        let mut state = self.lock();
+        let slots = state.slots.len();
+        let watchers = state.watchers.len();
+        state.slots.reserve(Some(budget), slots)?;
+        state.watchers.reserve(Some(budget), watchers)?;
+        Ok(())
+    }
+
     /// Registry notification is an atomic state change, never a domain callback.
-    pub(super) fn subscribe(&self, watcher: &Arc<AtomicBool>) {
-        self.lock().watchers.push(Arc::downgrade(watcher));
+    pub(super) fn subscribe(&self, watcher: &Arc<AtomicBool>) -> Result<(), AssetError> {
+        let mut state = self.lock();
+        if state
+            .watchers
+            .iter()
+            .any(|old| old.as_ptr() == Arc::as_ptr(watcher))
+        {
+            return Ok(());
+        }
+        state.watchers.retain(|old| old.strong_count() != 0);
+        state.watchers.push(None, Arc::downgrade(watcher))?;
         watcher.store(true, Ordering::Release);
+        Ok(())
     }
 
     /// Signals owner closure without manufacturing a resource release.
@@ -136,14 +166,17 @@ impl Releases {
             index
         } else {
             let index = state.slots.len();
-            state.slots.push(Slot {
-                generation: 1,
-                active: true,
-                queued: false,
-                released_at_ms: 0,
-                previous: None,
-                next: None,
-            });
+            state.slots.push(
+                None,
+                Slot {
+                    generation: 1,
+                    active: true,
+                    queued: false,
+                    released_at_ms: 0,
+                    previous: None,
+                    next: None,
+                },
+            )?;
             index
         };
         Ok(Ticket {

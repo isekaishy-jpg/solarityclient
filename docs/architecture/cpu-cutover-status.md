@@ -341,6 +341,33 @@ denied. Logs are `target/source-metadata-tests.log`,
 and `target/source-metadata-clippy-final.log`. No client package or FPS comparison
 was produced; Build 176 remains installed.
 
+The following resource-control batch connects M2/WMO cache lookup tables, entry
+arrays, intrusive release slots and maintenance watchers to required metadata
+admission. Both namespace producers and direct cache owners bind that policy
+before publication. New consumers reserve their control allocation before renewing
+a release ticket; refusal leaves the original source and stock grace period intact.
+Cache insertion admits all growing containers before registering a ticket. Warm
+hits/clones, slot reuse, final consumer release and retirement do not allocate.
+
+Consumer controls retain their charges through strong and weak observers. A live
+pin also retains the release-owner allocation charge if its cache is destroyed
+first. Payload graph/outer-Arc accounting, owner registries and maintenance snapshot
+buffers remain separate outstanding work. Offline callers may still run without
+a configured budget; adopting existing containers does not retroactively charge
+all earlier offline consumer controls. Runtime configures storage before use.
+Build 176 remains the only authorized client package; no additional package or
+performance run accompanies this source batch.
+
+Resource-control validation covers 228 distinct asset tests with one existing
+ignore. The grouped run passed 227; its remaining legacy M2 assertion counted
+metadata as payload. The updated focused test passes and now checks separate
+payload/control retirement through the final weak observer. Three new pressure
+and lifetime regressions pass; existing warmed cache-hit and worker-release
+fixtures still record zero allocations with admission enabled. All-target,
+all-feature CPU/asset/UI/runtime Clippy passes with warnings denied, alongside
+formatting and diff checks. Evidence is `target/resource-control-tests.log`,
+`target/resource-control-cache-final.log` and `target/resource-control-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
@@ -1644,8 +1671,10 @@ an operation has a context parameter. The requirements below remain in scope.
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
-  Remaining release/lease indices, canonical key and error allocations, and encoded
-  source paths still need admission/accounting; namespace pending slots/tables,
+  Remaining owner-registry/maintenance snapshots, canonical key and error allocations,
+  payload Arc allocations retained by weak observers, and encoded source paths still need
+  admission/accounting. M2/WMO cache tables, entry arrays, release slots/watchers and
+  cached consumer controls now retain metadata admission; namespace pending slots/tables,
   demand consumers and typed source listeners now retain metadata charges;
   connected worker source buffers now retain reservations through ownership transfer.
   Stock-evidenced animation demand and

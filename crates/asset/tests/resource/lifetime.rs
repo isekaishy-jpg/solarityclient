@@ -13,6 +13,9 @@ use std::{
 
 use super::super::{ResourceCacheClock, ResourceLease, releases::Releases};
 use super::ResourceCache;
+use solarity_cpu::{
+    CpuStorageBudget, CpuStorageClass as Class, CpuStorageKind as Kind, CpuStoragePlan,
+};
 
 /// Cache ownership survives zero consumers; reacquisition preserves exact payload identity.
 #[test]
@@ -113,6 +116,8 @@ fn collection_drops_sources_without_holding_the_release_queue() -> Result<(), Bo
 #[test]
 fn warm_consumers_and_final_release_allocate_nothing() -> Result<(), Box<dyn Error>> {
     let mut cache = ResourceCache::default();
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 65536, 0));
+    cache.admit(Some(&budget))?;
     let first = cache.insert(7u32, 42u64)?;
     let (result, calls) = allocations::count(|| -> Result<usize, &'static str> {
         for _ in 0..1000 {
@@ -136,6 +141,8 @@ fn warm_consumers_and_final_release_allocate_nothing() -> Result<(), Box<dyn Err
 #[test]
 fn final_worker_release_is_delivered_without_allocating() -> Result<(), Box<dyn Error>> {
     let mut cache = ResourceCache::default();
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 65536, 0));
+    cache.admit(Some(&budget))?;
     let resource = cache.insert(7u32, 42u64)?;
     let calls = std::thread::spawn(move || allocations::count(|| drop(resource)).1)
         .join()
@@ -247,7 +254,7 @@ fn qualified_release_notifies_idle_maintenance_without_allocation() -> Result<()
     let mut cache =
         ResourceCache::with_retention(ResourceCacheClock::from_milliseconds(Arc::clone(&clock)));
     let changed = Arc::new(AtomicBool::new(false));
-    cache.subscribe(&changed);
+    cache.subscribe(&changed)?;
     let value = cache.insert(1u32, 42u32)?;
     changed.store(false, Ordering::Release);
     let (_, calls) = allocations::count(|| drop(value));
@@ -255,5 +262,111 @@ fn qualified_release_notifies_idle_maintenance_without_allocation() -> Result<()
     assert!(changed.load(Ordering::Acquire));
     clock.store(10_000, Ordering::Release);
     assert_eq!(cache.collect_unused(), 1);
+    Ok(())
+}
+
+/// Refused reacquisition must not withdraw the old deadline or change source identity.
+#[test]
+fn admitted_cache_pressure_preserves_live_hits_and_expired_release() -> Result<(), Box<dyn Error>> {
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 65536, 0));
+    let clock = Arc::new(AtomicU32::new(0));
+    let mut cache =
+        ResourceCache::with_retention(ResourceCacheClock::from_milliseconds(Arc::clone(&clock)));
+    cache.admit(Some(&budget))?;
+    let lease = cache.insert(1u32, 73u32)?;
+    let weak = ResourceLease::downgrade(&lease);
+    let held = budget.reserve(
+        Class::Required,
+        Kind::Scratch,
+        65536 - budget.snapshot().used(Class::Required),
+    )?;
+    let hit = cache.get(&1)?.ok_or("live source missing")?;
+    assert!(ResourceLease::ptr_eq(&lease, &hit));
+    assert!(cache.insert(2, 91).is_err());
+    assert_eq!(cache.len(), 1);
+    drop((lease, hit));
+    clock.store(5000, Ordering::Release);
+    assert!(cache.get(&1).is_err());
+    assert_eq!(cache.next_delay_ms(), Some(5000));
+    assert!(weak.upgrade().is_none());
+    clock.store(10000, Ordering::Release);
+    let (count, calls) = allocations::count(|| cache.collect_unused());
+    assert_eq!(count, 1);
+    assert_eq!(calls, 0);
+    assert!(!weak.is_alive());
+    drop(held);
+    let replacement = cache.insert(2, 91)?;
+    assert_eq!(*replacement, 91);
+    drop((cache, replacement, weak));
+    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    Ok(())
+}
+
+/// Weak observers charge the pin allocation after the consumer and cache have retired.
+#[test]
+fn cached_pin_metadata_survives_cache_then_strong_then_weak_retirement()
+-> Result<(), Box<dyn Error>> {
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 65536, 0));
+    let mut cache = ResourceCache::default();
+    cache.admit(Some(&budget))?;
+    let lease = cache.insert(1u32, 73u32)?;
+    let weak = ResourceLease::downgrade(&lease);
+    drop(cache);
+    let live_bytes = budget.snapshot().used(Class::Required);
+    assert!(live_bytes > 0);
+    assert_eq!(*weak.upgrade().ok_or("lost consumer")?, 73);
+    drop(lease);
+    let weak_bytes = budget.snapshot().used(Class::Required);
+    assert!(weak_bytes > 0 && weak_bytes < live_bytes);
+    assert!(weak.upgrade().is_none());
+    assert!(!weak.is_alive());
+    let clone = weak.clone();
+    drop(weak);
+    assert_eq!(budget.snapshot().used(Class::Required), weak_bytes);
+    drop(clone);
+    assert_eq!(budget.snapshot().used(Class::Required), 0);
+    Ok(())
+}
+
+/// Failed cache admission creates no lease, and failed slot growth leaves reusable tickets intact.
+#[test]
+fn cache_and_release_registration_refusal_are_retryable() -> Result<(), Box<dyn Error>> {
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(0, 65536, 0));
+    let mut cache = ResourceCache::<u32, u32>::default();
+    let hold = budget.reserve(Class::Required, Kind::Scratch, 65536)?;
+    assert!(cache.admit(Some(&budget)).is_err());
+    assert!(cache.is_empty());
+    drop(hold);
+    cache.admit(Some(&budget))?;
+    let releases = Releases::default();
+    releases.admit(&crate::AssetReadBudget::for_service(
+        budget.clone(),
+        solarity_cpu::CpuService::Required,
+    ))?;
+    let first = releases.register()?;
+    let hold = budget.reserve(
+        Class::Required,
+        Kind::Scratch,
+        65536 - budget.snapshot().used(Class::Required),
+    )?;
+    assert!(releases.register().is_err());
+    let watcher = Arc::new(AtomicBool::new(false));
+    assert!(releases.subscribe(&watcher).is_err());
+    assert!(!watcher.load(Ordering::Acquire));
+    releases.notify(first);
+    assert_eq!(releases.pop(0), Some(first));
+    releases.unregister(first);
+    let (replacement, calls) = allocations::count(|| releases.register());
+    let replacement = replacement?;
+    assert_eq!(calls, 0);
+    assert_eq!(replacement.index, first.index);
+    assert_ne!(replacement, first);
+    releases.notify(first);
+    assert_eq!(releases.pop(0), None);
+    drop(hold);
+    releases.subscribe(&watcher)?;
+    assert!(watcher.load(Ordering::Acquire));
+    drop((releases, cache));
+    assert_eq!(budget.snapshot().used(Class::Required), 0);
     Ok(())
 }

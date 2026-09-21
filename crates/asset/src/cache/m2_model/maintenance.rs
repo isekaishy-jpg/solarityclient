@@ -72,14 +72,19 @@ impl M2CacheService {
     }
 
     /// First namespace use registers the cache and its durable release-change signal.
-    pub(super) fn register(&self, core: &Arc<ModelCacheCore>) {
-        core.lock().subscribe(&self.0.changed);
+    pub(super) fn register(&self, core: &Arc<ModelCacheCore>) -> Result<(), crate::AssetError> {
+        {
+            let mut cache = core.lock();
+            cache.admit(self.storage())?;
+            cache.subscribe(&self.0.changed)?;
+        }
         self.0
             .owners
             .lock()
             .unwrap_or_else(|_| unreachable!("cache registry metadata cannot panic"))
             .push(Arc::clone(core));
         self.0.changed.store(true, Ordering::Release);
+        Ok(())
     }
 
     /// The single runtime coordinator acknowledges changes before observing deadlines.

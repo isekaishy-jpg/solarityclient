@@ -1,23 +1,20 @@
 //! Single-owner resource index visits release notifications instead of all sources.
 
-use std::{
-    collections::HashMap,
-    hash::Hash,
-    sync::{Arc, Weak},
-};
+use std::{hash::Hash, sync::Arc};
 
 use super::{
-    ResourceCacheClock, ResourceLease,
-    lease::Pin,
+    ResourceCacheClock, ResourceLease, ResourceWeak,
+    lease::{Pin, shared_metadata},
     releases::{Releases, Ticket},
 };
-use crate::AssetError;
+use crate::{AssetError, AssetReadBudget, AssetStorageMap, AssetStorageVec};
+use solarity_cpu::{ByteReservation, CpuService, CpuStorageBudget};
 
 /// Cache ownership is distinct from the current external consumer pin generation.
 struct Entry<K, T> {
     key: K,
     value: Arc<T>,
-    pin: Weak<Pin<T>>,
+    pin: ResourceWeak<T>,
     ticket: Ticket,
 }
 
@@ -29,17 +26,21 @@ pub(crate) struct RetiredResource<K, T> {
 
 /// Keys remain domain-defined; this index supplies no guessed age/eviction policy.
 pub(crate) struct ResourceCache<K, T> {
-    indices: HashMap<K, usize>,
-    entries: Vec<Option<Entry<K, T>>>,
+    indices: AssetStorageMap<K, usize>,
+    entries: AssetStorageVec<Option<Entry<K, T>>>,
     releases: Arc<Releases>,
+    release_memory: Option<Arc<ByteReservation>>,
+    budget: Option<AssetReadBudget>,
 }
 
-impl<K, T> Default for ResourceCache<K, T> {
+impl<K: Eq + Hash, T> Default for ResourceCache<K, T> {
     fn default() -> Self {
         Self {
-            indices: HashMap::new(),
-            entries: Vec::new(),
+            indices: AssetStorageMap::metadata(),
+            entries: AssetStorageVec::metadata(),
             releases: Arc::default(),
+            release_memory: None,
+            budget: None,
         }
     }
 }
@@ -53,9 +54,31 @@ impl<K: Eq + Hash + Clone, T> ResourceCache<K, T> {
         }
     }
 
+    /// Binds cache control storage at first configured namespace use.
+    /// Existing offline buffers are adopted before this owner may serve new demand.
+    pub(crate) fn admit(&mut self, storage: Option<&CpuStorageBudget>) -> Result<(), AssetError> {
+        if self.budget.is_some() {
+            return Ok(());
+        }
+        let Some(storage) = storage else {
+            return Ok(());
+        };
+        let budget = AssetReadBudget::for_service(storage.clone(), CpuService::Required);
+        let memory = shared_metadata::<Releases>(Some(&budget))?;
+        self.indices.reserve(Some(&budget), self.indices.len())?;
+        self.entries.reserve(Some(&budget), self.entries.len())?;
+        self.releases.admit(&budget)?;
+        self.release_memory = memory;
+        self.budget = Some(budget);
+        Ok(())
+    }
+
     /// Registers a namespace maintenance observer at the first load boundary.
-    pub(crate) fn subscribe(&self, watcher: &Arc<std::sync::atomic::AtomicBool>) {
-        self.releases.subscribe(watcher);
+    pub(crate) fn subscribe(
+        &self,
+        watcher: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<(), AssetError> {
+        self.releases.subscribe(watcher)
     }
 
     /// Reports a deadline without examining any retained source data.
@@ -88,12 +111,20 @@ impl<K: Eq + Hash + Clone, T> ResourceCache<K, T> {
         let entry = self.entries[index]
             .as_mut()
             .unwrap_or_else(|| unreachable!("registered keys own their entry"));
-        if let Some(pin) = entry.pin.upgrade() {
-            return Ok(Some(ResourceLease { pin }));
+        if let Some(lease) = entry.pin.upgrade() {
+            return Ok(Some(lease));
         }
+        // Pressure must leave the old ticket and grace-period notification intact.
+        let memory = shared_metadata::<Pin<T>>(self.budget.as_ref())?;
         entry.ticket = self.releases.renew(entry.ticket)?;
-        let lease = ResourceLease::cached(Arc::clone(&entry.value), &self.releases, entry.ticket);
-        entry.pin = Arc::downgrade(&lease.pin);
+        let lease = ResourceLease::cached(
+            Arc::clone(&entry.value),
+            &self.releases,
+            entry.ticket,
+            memory,
+            self.release_memory.clone(),
+        );
+        entry.pin = ResourceLease::downgrade(&lease);
         Ok(Some(lease))
     }
 
@@ -111,15 +142,31 @@ impl<K: Eq + Hash + Clone, T> ResourceCache<K, T> {
         if let Some(existing) = self.get(&key)? {
             return Ok(existing);
         }
+        // Every fallible admission precedes ticket publication; after registration,
+        // all index writes use capacity already owned by this cache.
+        let memory = shared_metadata::<Pin<T>>(self.budget.as_ref())?;
+        self.indices
+            .reserve(self.budget.as_ref(), self.indices.len() + 1)?;
+        if self.indices.len() == self.entries.len() {
+            self.entries.reserve_one(self.budget.as_ref())?;
+        }
+        let index_key = key.clone();
         let ticket = self.releases.register()?;
-        let lease = ResourceLease::cached(Arc::clone(&value), &self.releases, ticket);
-        self.indices.insert(key.clone(), ticket.index);
-        self.entries
-            .resize_with(self.entries.len().max(ticket.index + 1), || None);
+        let lease = ResourceLease::cached(
+            Arc::clone(&value),
+            &self.releases,
+            ticket,
+            memory,
+            self.release_memory.clone(),
+        );
+        self.indices.insert_reserved(index_key, ticket.index);
+        while self.entries.len() <= ticket.index {
+            self.entries.push_reserved(None);
+        }
         self.entries[ticket.index] = Some(Entry {
             key,
             value,
-            pin: Arc::downgrade(&lease.pin),
+            pin: ResourceLease::downgrade(&lease),
             ticket,
         });
         Ok(lease)
@@ -143,7 +190,7 @@ impl<K: Eq + Hash + Clone, T> ResourceCache<K, T> {
             let Some(entry) = self.entries.get(ticket.index).and_then(Option::as_ref) else {
                 continue;
             };
-            if entry.ticket != ticket || entry.pin.strong_count() != 0 {
+            if entry.ticket != ticket || entry.pin.has_consumers() {
                 continue;
             }
             let entry = self.entries[ticket.index]

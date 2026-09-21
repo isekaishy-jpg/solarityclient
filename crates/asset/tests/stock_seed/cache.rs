@@ -63,9 +63,10 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
 
     let charged = first.resident_storage_bytes();
     assert_eq!(
-        budget
-            .snapshot()
-            .used(solarity_cpu::CpuStorageClass::Required),
+        budget.snapshot().bytes(
+            solarity_cpu::CpuStorageClass::Required,
+            solarity_cpu::CpuStorageKind::Result
+        ),
         charged
     );
     assert!(ResourceLease::ptr_eq(&first, &second));
@@ -81,15 +82,38 @@ fn m2_cache_shares_path_decode_and_collects_unreferenced_models() -> Result<(), 
     assert_eq!(cache.collect_unused(), 0);
     assert!(weak.is_alive());
     assert_eq!(
-        budget
-            .snapshot()
-            .used(solarity_cpu::CpuStorageClass::Required),
+        budget.snapshot().bytes(
+            solarity_cpu::CpuStorageClass::Required,
+            solarity_cpu::CpuStorageKind::Result
+        ),
         charged
     );
     clock.store(10_000, Ordering::Release);
     assert_eq!(cache.collect_unused(), 1);
     assert!(cache.is_empty());
     assert!(weak.upgrade().is_none());
+    assert_eq!(
+        budget.snapshot().bytes(
+            solarity_cpu::CpuStorageClass::Required,
+            solarity_cpu::CpuStorageKind::Result
+        ),
+        0
+    );
+    // Warm control storage survives payload collection; weak pin storage outlives the cache.
+    assert!(
+        budget.snapshot().bytes(
+            solarity_cpu::CpuStorageClass::Required,
+            solarity_cpu::CpuStorageKind::Metadata
+        ) > 0
+    );
+    drop((cache, store));
+    assert!(
+        budget
+            .snapshot()
+            .used(solarity_cpu::CpuStorageClass::Required)
+            > 0
+    );
+    drop(weak);
     assert_eq!(
         budget
             .snapshot()

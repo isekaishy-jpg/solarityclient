@@ -48,6 +48,7 @@ impl WmoModelCache {
         store: &mut AssetStore,
         path: &AssetPath,
     ) -> Result<ResourceLease<DecodedWorldModel>, AssetError> {
+        self.models.admit(store.model_cache_service().storage())?;
         let key = AssetResourceKey::new(store.namespace(), path.clone());
         if let Some(model) = self.models.get(&key)? {
             return Ok(model);
