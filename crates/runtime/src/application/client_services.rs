@@ -1103,7 +1103,11 @@ impl ClientServices {
     }
 
     fn service_screenshots(&mut self) -> Result<(), ApplicationError> {
-        let Some(completion) = self.screenshots.poll(&mut self.renderer, &self.cpu) else {
+        let Some(completion) = self.screenshots.poll(
+            &mut self.renderer,
+            &self.cpu,
+            &mut super::frame_pipeline::FrameWait::Native(&mut self.platform),
+        ) else {
             return Ok(());
         };
         let event = match completion.result {

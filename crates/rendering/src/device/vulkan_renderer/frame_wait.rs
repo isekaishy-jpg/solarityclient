@@ -24,6 +24,36 @@ pub enum GpuFrameKind {
 }
 
 impl VulkanRenderer {
+    /// Services native input while a presented screenshot's readback retires.
+    /// The same exclusive renderer scope pins the capture and submissions until
+    /// the host observer returns. An absent or unpresented capture needs no wait.
+    ///
+    /// # Errors
+    /// Returns completion-service, driver, or native servicing failures.
+    pub fn wait_for_capture<E: From<VulkanError>>(
+        &mut self,
+        service_native: impl FnOnce(&GpuCompletion<'_>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        if self.is_idle
+            || !self
+                .capture
+                .as_ref()
+                .is_some_and(|capture| capture.captured)
+        {
+            return Ok(());
+        }
+        let completion = self.gpu_completion.as_mut().ok_or_else(|| {
+            VulkanError::operation(
+                "wait for screenshot readback",
+                "native waits are not configured",
+            )
+        })?;
+        let _profile = solarity_profiling::profile!("rendering.capture.pending");
+        completion.idle(service_native)?;
+        self.is_idle = true;
+        Ok(())
+    }
+
     /// Services native input while readers of a changing movie source finish.
     /// The exclusive renderer borrow pins all fences and the shared image until
     /// host observation ends, including callback failure or unwind. Repeating an

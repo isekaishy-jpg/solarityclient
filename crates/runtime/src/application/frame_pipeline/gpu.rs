@@ -14,6 +14,18 @@ pub(in crate::application) enum GpuFrameWaitError {
 }
 
 impl FrameWait<'_> {
+    /// Screenshot encoding admission precedes this existing readback barrier.
+    pub(in crate::application) fn before_capture(
+        &mut self,
+        renderer: &mut VulkanRenderer,
+    ) -> Result<(), GpuFrameWaitError> {
+        let Self::Native(platform) = self else {
+            return Ok(());
+        };
+        renderer
+            .wait_for_capture(|completion| platform.wait_until_ready(|| Ok(completion.is_ready())))
+    }
+
     /// Services a renderer-owned host operation without dispatching gameplay events.
     pub(in crate::application) fn service_gpu(
         &mut self,

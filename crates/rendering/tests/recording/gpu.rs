@@ -36,6 +36,14 @@ fn video_capture_reuses_scaled_storage_and_survives_screenshots_and_resize()
     let surface = unsafe { window.vulkan_create_surface(bootstrap.instance_handle()) }?;
     // SAFETY: The renderer receives sole surface ownership and is dropped before the window.
     let mut renderer = unsafe { bootstrap.attach_surface(surface, (1600, 900), 0) }?;
+    struct CaptureWake;
+    impl solarity_cpu::CoordinatorNotifier for CaptureWake {
+        fn notify(&self) {}
+    }
+    renderer.configure_frame_waits(std::sync::Arc::new(CaptureWake))?;
+    renderer.wait_for_capture::<solarity_rendering::VulkanError>(|_| {
+        panic!("no capture needs no host wait")
+    })?;
     assert_eq!(renderer.begin_video_capture()?, (1280, 720));
     let mut pixels = vec![0; 1280 * 720 * 4];
     for index in 0..3 {
@@ -56,9 +64,24 @@ fn video_capture_reuses_scaled_storage_and_survives_screenshots_and_resize()
         assert!(renderer.poll_video_frame(&mut pixels)?.is_none());
     }
     renderer.request_frame_capture()?;
+    renderer.wait_for_capture::<solarity_rendering::VulkanError>(|_| {
+        panic!("unpresented capture needs no host wait")
+    })?;
     assert!(!renderer.request_video_frame(Duration::from_millis(200))?);
     renderer.present_clear([1600.0, 900.0])?;
+    let mut serviced = false;
+    renderer.wait_for_capture(|completion| {
+        serviced = true;
+        completion.wait()
+    })?;
+    assert!(
+        serviced,
+        "presented screenshot retirement uses the configured completion service"
+    );
     assert!(renderer.take_captured_frame()?.is_some());
+    renderer.wait_for_capture::<solarity_rendering::VulkanError>(|_| {
+        panic!("collected capture needs no host wait")
+    })?;
     window.set_size(800, 800)?;
     // SDL updates the native surface before presentation performs its normal retry.
     let mut events = sdl.event_pump()?;

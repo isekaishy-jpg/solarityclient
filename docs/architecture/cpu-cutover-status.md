@@ -17,7 +17,17 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 [composition design](cpu-crate-composition-design.md), and
 [cache/residency design](resource-cache-residency-design.md).
 
-## Connected source changes
+## Connected cutover changes
+
+Screenshot readback now retires through the configured GPU completion service,
+allowing native input servicing while the existing device-idle barrier completes.
+The renderer retains exclusive capture/submission ownership through that wait;
+CPU encoder admission still precedes readback and saturated queues preserve the
+original captured frame. Absent, unpresented and collected captures add no wait.
+Offline rendering retains synchronous readback. Formatting and rendering/runtime
+Clippy with warnings denied pass, as do the real GPU capture/resize test and both
+runtime screenshot tests (quality, pixels, saturation and save failures). The log
+is ignored `target/capture-wait-check.log`. This has no measured FPS result.
 
 The root pose batch now also admits mount clocks already selected by ordered
 callbacks and named-bone requests from offscreen units. Attachment, event and
@@ -952,7 +962,8 @@ an operation has a context parameter. The requirements below remain in scope.
   and further useful main-ready continuations. World preparation,
   presentation-slot waits and required shadow-recording joins are connected;
   world/Glue, UI/loading and cinematic acquisition, world resource/quality
-  retirement and native swapchain recreation now use the completion service.
+  retirement, screenshot readback and native swapchain recreation now use the
+  completion service.
   M2 normal consumption now services native input at its necessary waits;
   exceptional abandonment retains unconditional CPU state reclamation.
 - Extend cross-domain overlap beyond the connected ground-detail/WMO and
