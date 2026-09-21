@@ -621,12 +621,15 @@ impl TerrainFrame {
     }
     /// Captures the published player appearance without changing its live pose.
     pub(super) fn render_player_portrait(
-        &self,
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         renderer: &mut VulkanRenderer,
         player: &ResidentPlayerFrameInput<'_>,
         mask: solarity_rendering::BlpTextureHandle,
     ) -> Result<bool, RuntimeTerrainFrameError> {
-        self.m2.render_player_portrait(renderer, player, mask)
+        self.m2
+            .render_player_portrait(cpu, wait, renderer, player, mask)
     }
 
     /// Uploads and validates every resource referenced by one admitted ADT.

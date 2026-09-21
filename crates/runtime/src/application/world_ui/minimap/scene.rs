@@ -124,13 +124,14 @@ impl RuntimeMinimapScene {
         &mut self,
         renderer: &mut VulkanRenderer,
         cpu: &CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         manager: &FrameManager,
         ui: &RuntimeUiFrame,
         ui_revision: u64,
         map: Option<&TerrainMap>,
         world: Option<WorldTransform>,
     ) -> Result<(), ApplicationError> {
-        let uploaded = self.poll_textures(renderer)?;
+        let uploaded = self.poll_textures(cpu, wait, renderer)?;
         let ui_changed = self.ui_revision != Some(ui_revision);
         if ui_changed {
             let mut previous = std::mem::take(&mut self.slots);
@@ -383,7 +384,12 @@ impl RuntimeMinimapScene {
         Ok(())
     }
 
-    fn poll_textures(&mut self, renderer: &mut VulkanRenderer) -> Result<bool, ApplicationError> {
+    fn poll_textures(
+        &mut self,
+        cpu: &CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
+        renderer: &mut VulkanRenderer,
+    ) -> Result<bool, ApplicationError> {
         if self.pending.as_ref().is_none_or(|task| !task.is_finished()) {
             return Ok(false);
         }
@@ -412,7 +418,8 @@ impl RuntimeMinimapScene {
             .iter()
             .map(|(_, source)| BlpTextureUploadRequest::new(source, BlpColorSpace::Linear))
             .collect::<Vec<_>>();
-        let handles = renderer.upload_blp_textures(&uploads)?;
+        let handles =
+            renderer.upload_blp_textures_with_execution(&mut wait.recording(cpu), &uploads)?;
         for ((path, _), handle) in sources.into_iter().zip(handles) {
             self.textures.insert(path, handle);
         }

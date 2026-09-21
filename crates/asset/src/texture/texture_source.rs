@@ -12,11 +12,11 @@ use super::{
 /// Parsing once retains substantially less memory than eagerly expanding every
 /// mip of an HD replacement to RGBA8. Consumers decode only the mip required by
 /// character composition or GPU upload.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BlpTextureSource {
     path: AssetPath,
     archive: ArchiveDescriptor,
-    image: wow_blp::BlpImage,
+    image: std::sync::Arc<wow_blp::BlpImage>,
 }
 
 impl BlpTextureSource {
@@ -54,19 +54,19 @@ impl BlpTextureSource {
         Ok(Self {
             path: path.clone(),
             archive,
-            image,
+            image: std::sync::Arc::new(image),
         })
     }
 
     /// Returns the resource-declared top-mip width.
     #[must_use]
-    pub const fn width(&self) -> u32 {
+    pub fn width(&self) -> u32 {
         self.image.header.width
     }
 
     /// Returns the resource-declared top-mip height.
     #[must_use]
-    pub const fn height(&self) -> u32 {
+    pub fn height(&self) -> u32 {
         self.image.header.height
     }
 

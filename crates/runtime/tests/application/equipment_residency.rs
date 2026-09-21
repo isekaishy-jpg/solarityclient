@@ -833,7 +833,13 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     let player = presentation
         .resident_frame_input()
         .ok_or("portrait player")?;
-    assert!(frame.render_player_portrait(&mut renderer, &player, mask)?);
+    assert!(frame.render_player_portrait(
+        &crate::frame_cpu_support::executor()?,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &mut renderer,
+        &player,
+        mask
+    )?);
     let portrait = renderer
         .unit_portrait_texture("player")
         .ok_or("portrait image")?;
@@ -868,7 +874,13 @@ fn equipped_instances_survive_material_updates_and_follow_component_replacement(
     let player = presentation
         .resident_frame_input()
         .ok_or("updated portrait player")?;
-    assert!(frame.render_player_portrait(&mut renderer, &player, mask)?);
+    assert!(frame.render_player_portrait(
+        &crate::frame_cpu_support::executor()?,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &mut renderer,
+        &player,
+        mask
+    )?);
     assert_eq!(renderer.unit_portrait_texture("player"), Some(portrait));
     assert_visible_portrait(&mut renderer, portrait)?;
     assert_eq!(

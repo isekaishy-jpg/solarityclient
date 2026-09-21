@@ -354,8 +354,10 @@ impl RuntimeWorldUi {
     /// Updates a requested portrait only when the resident appearance changes.
     pub(super) fn synchronize_portrait(
         &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         renderer: &mut VulkanRenderer,
-        terrain: &TerrainFrame,
+        terrain: &mut TerrainFrame,
         player: &ResidentPlayerFrameInput<'_>,
     ) -> Result<(), ApplicationError> {
         let _profile_scope =
@@ -379,12 +381,15 @@ impl RuntimeWorldUi {
             )?;
             let source =
                 solarity_asset::BlpTextureSource::load(&mut self.assets.borrow_mut(), &path)?;
-            let mask =
-                renderer.upload_blp_texture(&source, solarity_rendering::BlpColorSpace::Linear)?;
+            let mask = renderer.upload_blp_texture_with_execution(
+                &mut wait.recording(cpu),
+                &source,
+                solarity_rendering::BlpColorSpace::Linear,
+            )?;
             self.portrait_mask = Some(mask);
             mask
         };
-        if terrain.render_player_portrait(renderer, player, mask)? {
+        if terrain.render_player_portrait(cpu, wait, renderer, player, mask)? {
             self.portrait_generation = Some(player.generation().clone());
             self.dirty = true;
         }
@@ -414,6 +419,7 @@ impl RuntimeWorldUi {
         &mut self,
         renderer: &mut VulkanRenderer,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         map: Option<&solarity_asset::TerrainMap>,
         player: Option<solarity_ecs::WorldTransform>,
     ) -> Result<(), ApplicationError> {
@@ -422,6 +428,7 @@ impl RuntimeWorldUi {
         self.minimap.synchronize(
             renderer,
             cpu,
+            wait,
             &self.manager,
             &self.frame,
             self.presentation_revision,

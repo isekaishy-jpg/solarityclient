@@ -8,7 +8,9 @@ impl M2Frame {
     /// Reads the complete published appearance only after its generation matches.
     /// The local palettes and draw list leave live animation, effects, and RNG untouched.
     pub(in crate::application) fn render_player_portrait(
-        &self,
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         renderer: &mut VulkanRenderer,
         player: &ResidentPlayerFrameInput<'_>,
         mask: BlpTextureHandle,
@@ -26,14 +28,111 @@ impl M2Frame {
         let Some(body_source) = self.sources[body.source_index].as_ref() else {
             return Ok(false);
         };
-        let clock = portrait_clock(&body_source.model, &self.animations);
-        let camera = portrait_camera(&body_source.model, clock)?;
-        let mut bones = Vec::new();
-        let mut draws = Vec::new();
+        let input = PortraitInput {
+            guid,
+            body: Arc::clone(body_source),
+            animations: Arc::clone(&self.animations),
+            placements: self
+                .placements
+                .iter()
+                .enumerate()
+                .filter_map(|(index, placement)| {
+                    let selected = match placement.owner {
+                        M2GpuPlacementOwner::PlayerBody { guid: owner }
+                        | M2GpuPlacementOwner::UnitItem { guid: owner, .. }
+                        | M2GpuPlacementOwner::UnitItemVisual { guid: owner, .. } => owner == guid,
+                        _ => false,
+                    };
+                    selected.then(|| PortraitPlacement {
+                        index,
+                        owner: placement.owner,
+                        source: self.sources[placement.source_index].clone(),
+                        local_transform: placement.orientation.local_transform(),
+                    })
+                })
+                .collect(),
+        };
+        let prepared = &mut self.portrait;
+        prepared.jobs[0].input = Some(input);
+        prepared.jobs[0].result = None;
+        if let Err(error) = prepared.batch.start(cpu, &mut prepared.jobs) {
+            prepared.jobs[0].input = None;
+            return Err(error.into());
+        }
+        let ready = wait.before_reclaim(&prepared.batch);
+        let reclaimed = prepared.batch.reclaim(&mut prepared.jobs);
+        for job in &mut prepared.jobs {
+            job.input = None;
+        }
+        ready?;
+        reclaimed?;
+        let job = &mut prepared.jobs[0];
+        job.result
+            .take()
+            .ok_or(solarity_rendering::VulkanError::WorldFrameCapacity)??;
+        if job.draws.is_empty() {
+            return Ok(false);
+        }
+        let scene = job
+            .scene
+            .ok_or(solarity_rendering::VulkanError::WorldFrameCapacity)?;
+        renderer.render_unit_portrait("player", scene, &job.bones, &job.draws, mask)?;
+        Ok(true)
+    }
+}
+
+struct PortraitPlacement {
+    index: usize,
+    owner: M2GpuPlacementOwner,
+    source: Option<M2GpuSource>,
+    local_transform: Mat4,
+}
+struct PortraitInput {
+    guid: u64,
+    body: M2GpuSource,
+    animations: Arc<AnimationDataCatalog>,
+    placements: Vec<PortraitPlacement>,
+}
+#[derive(Default)]
+struct PortraitJob {
+    input: Option<PortraitInput>,
+    bones: Vec<Mat4>,
+    draws: Vec<M2PreparedDraw>,
+    scene: Option<M2SceneUniform>,
+    result: Option<Result<(), RuntimeTerrainFrameError>>,
+}
+pub(super) struct PortraitPreparation {
+    jobs: Vec<PortraitJob>,
+    batch: solarity_cpu::FrameBatch<PortraitJob>,
+}
+impl Default for PortraitPreparation {
+    fn default() -> Self {
+        Self {
+            jobs: vec![PortraitJob::default()],
+            batch: solarity_cpu::FrameBatch::new(|job| {
+                job.bones.clear();
+                job.draws.clear();
+                job.scene = None;
+                job.result = Some(match job.input.take() {
+                    Some(input) => job.prepare(&input),
+                    None => Err(solarity_rendering::VulkanError::WorldFrameCapacity.into()),
+                });
+            }),
+        }
+    }
+}
+impl PortraitJob {
+    fn prepare(&mut self, input: &PortraitInput) -> Result<(), RuntimeTerrainFrameError> {
+        let guid = input.guid;
+        let clock = portrait_clock(&input.body.model, &input.animations);
+        let camera = portrait_camera(&input.body.model, clock)?;
+        let bones = &mut self.bones;
+        let draws = &mut self.draws;
         let mut transparent = Vec::new();
         let mut poses = Vec::new();
         let mut pose_scratch = M2BonePose::default();
-        for (index, placement) in self.placements.iter().enumerate() {
+        for placement in &input.placements {
+            let index = placement.index;
             let (transform, parent_distance_sort) = match placement.owner {
                 M2GpuPlacementOwner::PlayerBody { guid: owner } if owner == guid => {
                     (Mat4::IDENTITY, true)
@@ -49,10 +148,7 @@ impl M2Frame {
                     else {
                         continue;
                     };
-                    (
-                        transform * placement.orientation.local_transform(),
-                        distance_sort,
-                    )
+                    (transform * placement.local_transform, distance_sort)
                 }
                 M2GpuPlacementOwner::UnitItemVisual {
                     guid: owner,
@@ -74,10 +170,10 @@ impl M2Frame {
                 }
                 _ => continue,
             };
-            let Some(source) = self.sources[placement.source_index].as_ref() else {
+            let Some(source) = placement.source.as_ref() else {
                 continue;
             };
-            let clock = portrait_clock(&source.model, &self.animations);
+            let clock = portrait_clock(&source.model, &input.animations);
             let model_distance_sort =
                 source.model.skin_profile_count() >= 2 && parent_distance_sort;
             let model_view = camera.view() * transform;
@@ -159,7 +255,7 @@ impl M2Frame {
         transparent.sort_by(|left, right| compare_m2_transparent(&left.0, &right.0));
         draws.extend(transparent.into_iter().map(|(_, draw)| draw));
         if draws.is_empty() {
-            return Ok(false);
+            return Ok(());
         }
         // 0x00616BC0 supplies ambient .45 and one white (-1, 0, -1) D3D ray.
         let scene = M2SceneUniform::new(
@@ -173,8 +269,8 @@ impl M2Frame {
             Vec3::ZERO,
             [solarity_rendering::M2LocalLightState::disabled(); 4],
         );
-        renderer.render_unit_portrait("player", scene, &bones, &draws, mask)?;
-        Ok(true)
+        self.scene = Some(scene);
+        Ok(())
     }
 }
 

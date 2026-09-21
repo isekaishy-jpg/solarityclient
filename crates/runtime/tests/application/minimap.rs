@@ -115,7 +115,16 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     let (release, wait) = std::sync::mpsc::channel();
     let blocker = cpu.try_submit(move || wait.recv())?;
     let world = Some(WorldTransform::new(Vec3::ZERO, 0.0));
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 0, Some(&map), world)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        0,
+        Some(&map),
+        world,
+    )?;
     assert!(!scene.ready());
     assert!(scene.request_deferred);
     assert!(
@@ -147,7 +156,16 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         .ui_mesh_info(retained_mesh)
         .ok_or("missing mesh info")?;
     // A surrounding UI refresh must not touch unchanged minimap vertices.
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 1, Some(&map), world)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        1,
+        Some(&map),
+        world,
+    )?;
     assert_eq!(
         renderer
             .ui_mesh_info(retained_mesh)
@@ -192,7 +210,16 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     minimap_state.set_corpse([40.0, 0.0]);
     assert_eq!(minimap_state.revision(), revision);
     minimap_state.set_corpse([35.0, 0.0]);
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 1, Some(&map), world)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        1,
+        Some(&map),
+        world,
+    )?;
     assert_eq!(
         scene.slots[0]
             .frame
@@ -221,7 +248,16 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         "fixed-offset corpse edge arrow"
     );
     minimap_state.set_corpse([0.0; 2]);
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 1, Some(&map), world)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        1,
+        Some(&map),
+        world,
+    )?;
     assert_eq!(scene.draws(&ui).len(), 7);
     let pixels = capture(&mut renderer, scene.draws(&ui))?;
     assert_eq!(
@@ -241,7 +277,16 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
         Vec3::new(40.0, 35.0, 0.0),
         std::f32::consts::FRAC_PI_2,
     ));
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 1, Some(&map), moved)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        1,
+        Some(&map),
+        moved,
+    )?;
     assert_eq!(
         scene.slots[0]
             .frame
@@ -253,11 +298,29 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     assert_eq!(scene.textures.len(), 8);
     manager.invoke_binding("HIDE", true)?;
     ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 2, Some(&map), moved)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        2,
+        Some(&map),
+        moved,
+    )?;
     assert_eq!(scene.draws(&ui).len(), 1);
     manager.invoke_binding("SHOW", true)?;
     ui.refresh_frame(&mut renderer, &manager, &mut cache, &mut residency)?;
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 3, Some(&map), moved)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        3,
+        Some(&map),
+        moved,
+    )?;
     assert_eq!(scene.draws(&ui).len(), 7);
     assert_eq!(
         scene.slots[0]
@@ -269,7 +332,16 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
     );
 
     let unmapped = Some(WorldTransform::new(Vec3::new(5000.0, 5000.0, 0.0), 0.0));
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 3, Some(&map), unmapped)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        3,
+        Some(&map),
+        unmapped,
+    )?;
     assert_eq!(
         scene.draws(&ui).len(),
         3,
@@ -293,7 +365,16 @@ fn minimap_streams_into_native_order_and_reuses_gpu_storage() -> Result<(), Box<
             .failed
             .contains(&AssetPath::new("Interface/Minimap/Missing.blp")?)
     );
-    scene.synchronize(&mut renderer, &cpu, &manager, &ui, 4, Some(&map), unmapped)?;
+    scene.synchronize(
+        &mut renderer,
+        &cpu,
+        &mut crate::application::frame_pipeline::FrameWait::Offline,
+        &manager,
+        &ui,
+        4,
+        Some(&map),
+        unmapped,
+    )?;
     assert!(
         scene.pending.is_none(),
         "missing textures must not retry every frame"
@@ -316,7 +397,16 @@ fn wait_ready(
 ) -> Result<(), Box<dyn Error>> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        scene.synchronize(renderer, cpu, manager, ui, revision, Some(map), world)?;
+        scene.synchronize(
+            renderer,
+            cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
+            manager,
+            ui,
+            revision,
+            Some(map),
+            world,
+        )?;
         if scene.ready() {
             return Ok(());
         }

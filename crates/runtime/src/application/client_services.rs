@@ -1329,15 +1329,24 @@ impl ClientServices {
                     self.developer_console.record_error(&message);
                 }
                 if let (Some(terrain), Some(player)) = (
-                    self.terrain_frame.as_ref(),
+                    self.terrain_frame.as_mut(),
                     self.player.resident_frame_input(),
                 ) {
-                    world_ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
+                    world_ui.synchronize_portrait(
+                        &self.cpu,
+                        &mut crate::application::frame_pipeline::FrameWait::Native(
+                            &mut self.platform,
+                        ),
+                        &mut self.renderer,
+                        terrain,
+                        &player,
+                    )?;
                 }
                 world_ui.refresh(&mut self.renderer)?;
                 world_ui.synchronize_minimap(
                     &mut self.renderer,
                     &self.cpu,
+                    &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
                     self.terrain.active_map(),
                     self.player
                         .resident_frame_input()
@@ -1455,9 +1464,12 @@ impl ClientServices {
             global_animation_time_ms * 0.001,
         )?;
         let ripples = self.water_ripples.frame(camera, footstep_bias)?;
-        let celestial_resources =
-            self.sky_resources
-                .prepare(&self.cpu, &mut self.renderer, environment)?;
+        let celestial_resources = self.sky_resources.prepare(
+            &self.cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
+            &mut self.renderer,
+            environment,
+        )?;
         let underwater_particles =
             self.underwater_particles
                 .frame(camera, &self.liquids, environment.fog())?;
@@ -2918,15 +2930,22 @@ impl ClientServices {
         if self.loading_screen.is_some()
             && let (Some(ui), Some(terrain), Some(player)) = (
                 self.world_ui.as_mut(),
-                self.terrain_frame.as_ref(),
+                self.terrain_frame.as_mut(),
                 self.player.resident_frame_input(),
             )
         {
-            ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
+            ui.synchronize_portrait(
+                &self.cpu,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
+                &mut self.renderer,
+                terrain,
+                &player,
+            )?;
             ui.refresh(&mut self.renderer)?;
             ui.synchronize_minimap(
                 &mut self.renderer,
                 &self.cpu,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
                 self.terrain.active_map(),
                 Some(player.world_transform()),
             )?;

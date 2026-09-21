@@ -8,6 +8,9 @@ use crate::device::VulkanError;
 /// Failure to decode or upload one selected BLP source.
 #[derive(Debug, Error)]
 pub enum BlpTextureUploadError {
+    /// Required CPU preparation or its byte admission failed.
+    #[error(transparent)]
+    Cpu(#[from] solarity_cpu::CpuError),
     /// One authored mip could not be decoded from the selected archive bytes.
     #[error(transparent)]
     Asset(#[from] AssetError),

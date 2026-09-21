@@ -512,10 +512,16 @@ impl ClientServices {
             return Err(WorldBenchmarkError::Ui(error));
         }
         if let (Some(terrain), Some(player)) = (
-            self.terrain_frame.as_ref(),
+            self.terrain_frame.as_mut(),
             self.player.resident_frame_input(),
         ) {
-            ui.synchronize_portrait(&mut self.renderer, terrain, &player)?;
+            ui.synchronize_portrait(
+                &self.cpu,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
+                &mut self.renderer,
+                terrain,
+                &player,
+            )?;
         }
         ui_profile.mark("portrait");
         ui.refresh(&mut self.renderer)?;
@@ -523,6 +529,7 @@ impl ClientServices {
         ui.synchronize_minimap(
             &mut self.renderer,
             &self.cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
             self.terrain.active_map(),
             self.player
                 .resident_frame_input()
@@ -566,7 +573,12 @@ impl ClientServices {
             .ok_or(WorldBenchmarkError::State("missing FrameXML"))?;
         let celestial_resources = self
             .sky_resources
-            .prepare(&self.cpu, &mut self.renderer, environment)
+            .prepare(
+                &self.cpu,
+                &mut crate::application::frame_pipeline::FrameWait::Native(&mut self.platform),
+                &mut self.renderer,
+                environment,
+            )
             .map_err(ApplicationError::from)?;
         frame
             .set_environment_detail(ui.cvar_number("environmentDetail"))

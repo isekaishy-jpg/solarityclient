@@ -1105,6 +1105,55 @@ impl VulkanRenderer {
         Ok(handles)
     }
 
+    /// Prepares new authored mip chains on the supplied shared CPU service workers.
+    /// Existing identities and duplicate order follow the same registry transaction.
+    /// Native callers service readiness through their existing execution adapter.
+    /// # Errors
+    /// Returns CPU admission, decoding, native servicing or Vulkan upload errors.
+    pub fn upload_blp_textures_with_execution(
+        &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
+        requests: &[BlpTextureUploadRequest<'_>],
+    ) -> Result<Vec<BlpTextureHandle>, BlpTextureUploadError> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let allocator = self.allocator.as_ref().ok_or_else(|| {
+            VulkanError::operation("access Vulkan allocator", "allocator is unavailable")
+        })?;
+        let handles = self.blp_textures.upload_batch_with_execution(
+            TextureUploadContext {
+                device: &self.device,
+                allocator,
+                graphics_queue: self.graphics_queue,
+                graphics_queue_family: self.report.graphics_queue_family,
+            },
+            requests,
+            Some(execution),
+        )?;
+        self.is_idle = false;
+        Ok(handles)
+    }
+
+    /// Prepares and uploads one authored texture through shared CPU execution.
+    /// # Errors
+    /// Returns the same errors as the ordered batch upload.
+    pub fn upload_blp_texture_with_execution(
+        &mut self,
+        execution: &mut impl crate::WorldFrameExecution,
+        source: &BlpTextureSource,
+        color_space: BlpColorSpace,
+    ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
+        self.upload_blp_textures_with_execution(
+            execution,
+            &[BlpTextureUploadRequest::new(source, color_space)],
+        )?
+        .pop()
+        .ok_or_else(|| {
+            VulkanError::operation("finish BLP registry upload", "handle is unavailable").into()
+        })
+    }
+
     /// Creates or retrieves stock's opaque 8x8 green WMO placeholder.
     ///
     /// This is the recovered MapObj image for a valid empty material stage,

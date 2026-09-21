@@ -129,6 +129,13 @@ impl<T: Send + 'static> LoadBatch<T> {
         self.batch.core.ready.notify_all();
     }
 
+    /// Waits for terminal publication and release without consuming owned inputs.
+    /// # Errors
+    /// Rejects inactive phases or a blocking wait attempted from a CPU worker.
+    pub fn wait_until_finished(&self) -> Result<(), CpuError> {
+        self.batch.wait_until_finished()
+    }
+
     /// Returns all inputs in admission order, even on failed dependencies or shutdown.
     /// # Errors
     /// Reports terminal failure after returning inputs, or rejects an unfinished worker wait.

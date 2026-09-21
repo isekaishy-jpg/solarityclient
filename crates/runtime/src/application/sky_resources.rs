@@ -378,16 +378,32 @@ impl RuntimeSkyResources {
     pub(super) fn prepare(
         &mut self,
         cpu: &CpuExecutor,
+        wait: &mut super::frame_pipeline::FrameWait<'_>,
         renderer: &mut VulkanRenderer,
         environment: super::environment_coordinator::RuntimeWorldEnvironmentFrame,
     ) -> Result<RuntimeCelestialResources, RuntimeTerrainFrameError> {
         self.service_textures(cpu)?;
-        for (slot, source) in self.textures.iter_mut().zip(&self.sources) {
+        let mut indices = Vec::new();
+        let mut requests = Vec::new();
+        for (index, (slot, source)) in self.textures.iter().zip(&self.sources).enumerate() {
+            if slot.is_none()
+                && let Some(source) = source
+            {
+                indices.push(index);
+                requests.push(solarity_rendering::BlpTextureUploadRequest::new(
+                    source,
+                    BlpColorSpace::Linear,
+                ));
+            }
+        }
+        let handles =
+            renderer.upload_blp_textures_with_execution(&mut wait.recording(cpu), &requests)?;
+        for (index, handle) in indices.into_iter().zip(handles) {
+            self.textures[index] = Some(handle);
+        }
+        for slot in &mut self.textures {
             if slot.is_none() {
-                *slot = Some(match source {
-                    Some(source) => renderer.upload_blp_texture(source, BlpColorSpace::Linear)?,
-                    None => renderer.upload_stock_m2_failure()?,
-                });
+                *slot = Some(renderer.upload_stock_m2_failure()?);
             }
         }
         let [

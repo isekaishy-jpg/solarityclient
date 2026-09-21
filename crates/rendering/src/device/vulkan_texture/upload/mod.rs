@@ -2,7 +2,10 @@
 
 #![allow(unsafe_code)]
 
+mod preparation;
 mod regions;
+use preparation::PreparedTextureBatch;
+pub(in crate::device::vulkan_texture) use preparation::TexturePreparation;
 
 pub(in crate::device) use regions::update_rgba8_regions;
 
@@ -213,6 +216,7 @@ struct TextureTransfer<'a> {
 /// without a host wait: queue order plus the recorded image barriers establish
 /// the dependency. Only staging destruction must be deferred.
 pub(in crate::device) struct DeferredTextureTransfer {
+    cpu_storage: Option<solarity_cpu::ByteReservation>,
     staging_buffer: vk::Buffer,
     staging_allocation: Option<vk_mem::Allocation>,
     command_pool: vk::CommandPool,
@@ -328,6 +332,7 @@ impl<'a> TextureTransfer<'a> {
     /// Transfers staging lifetime to a renderer registry after submission.
     fn defer(mut self) -> DeferredTextureTransfer {
         DeferredTextureTransfer {
+            cpu_storage: None,
             staging_buffer: std::mem::replace(&mut self.staging_buffer, vk::Buffer::null()),
             staging_allocation: self.staging_allocation.take(),
             command_pool: std::mem::replace(&mut self.command_pool, vk::CommandPool::null()),
@@ -362,6 +367,7 @@ impl DeferredTextureTransfer {
                 self.staging_buffer = vk::Buffer::null();
             }
         }
+        self.cpu_storage = None;
     }
 }
 
@@ -396,88 +402,18 @@ impl Drop for TextureTransfer<'_> {
 pub(super) fn upload_textures_deferred(
     context: TextureUploadContext<'_>,
     requests: &[(&BlpTextureSource, BlpColorSpace)],
+    preparation: &mut TexturePreparation,
+    execution: Option<&mut dyn crate::WorldFrameExecution>,
 ) -> Result<(Vec<GpuBlpTexture>, Option<DeferredTextureTransfer>), BlpTextureUploadError> {
     if requests.is_empty() {
         return Ok((Vec::new(), None));
     }
 
-    let mut staging_byte_count = 0_usize;
-    for (source, _color_space) in requests {
-        staging_byte_count = align_up(
-            staging_byte_count,
-            texel_block_byte_count(source_storage(source)),
-        )
-        .ok_or_else(|| AssetError::TextureDecode {
-            path: source.path().clone(),
-            message: "BLP batch staging alignment overflows".to_owned(),
-        })?;
-        staging_byte_count = staging_byte_count
-            .checked_add(prepared_byte_count(source)?)
-            .ok_or_else(|| AssetError::TextureDecode {
-                path: source.path().clone(),
-                message: "BLP batch staging byte count overflows".to_owned(),
-            })?;
-    }
-
-    let mut staging_bytes = Vec::with_capacity(staging_byte_count);
-    let mut prepared_textures = Vec::with_capacity(requests.len());
-    for (source, color_space) in requests {
-        let mut prepared = prepare_mips(source)?;
-        let aligned_offset = align_up(
-            staging_bytes.len(),
-            texel_block_byte_count(prepared.storage),
-        )
-        .ok_or_else(|| AssetError::TextureDecode {
-            path: source.path().clone(),
-            message: "BLP batch staging alignment overflows".to_owned(),
-        })?;
-        staging_bytes.resize(aligned_offset, 0);
-        let base_offset =
-            u64::try_from(staging_bytes.len()).map_err(|error| AssetError::TextureDecode {
-                path: source.path().clone(),
-                message: format!("BLP batch staging offset is not addressable: {error}"),
-            })?;
-        for mip in &mut prepared.mips {
-            mip.offset =
-                mip.offset
-                    .checked_add(base_offset)
-                    .ok_or_else(|| AssetError::TextureDecode {
-                        path: source.path().clone(),
-                        message: "BLP batch mip offset overflows".to_owned(),
-                    })?;
-        }
-        staging_bytes.extend_from_slice(&prepared.bytes);
-        let format = texture_format(prepared.storage, *color_space);
-        let mip_levels = u32::try_from(prepared.mips.len())
-            .map_err(|error| VulkanError::operation("convert sampled image mip count", error))?;
-        let info = BlpTextureResourceInfo::new(
-            source.path().clone(),
-            BlpTextureSourceKind::Authored,
-            *color_space,
-            prepared.storage,
-            (source.width(), source.height()),
-            prepared.mips.len(),
-            prepared.bytes.len(),
-        );
-        prepared_textures.push((
-            format,
-            mip_levels,
-            (source.width(), source.height()),
-            prepared.mips,
-            info,
-        ));
-    }
-    if staging_bytes.len() != staging_byte_count {
-        let source = requests[0].0;
-        return Err(AssetError::TextureDecode {
-            path: source.path().clone(),
-            message: format!(
-                "BLP batch contains {} upload bytes; expected {staging_byte_count}",
-                staging_bytes.len()
-            ),
-        }
-        .into());
-    }
+    let PreparedTextureBatch {
+        bytes: staging_bytes,
+        textures: prepared_textures,
+        storage,
+    } = preparation.prepare(execution, requests)?;
 
     let mut guard = TextureBatchGuard {
         device: context.device,
@@ -523,7 +459,9 @@ pub(super) fn upload_textures_deferred(
         )?;
     }
     transfer.submit(command_buffer)?;
-    Ok((guard.finish(), Some(transfer.defer())))
+    let mut deferred = transfer.defer();
+    deferred.cpu_storage = storage;
+    Ok((guard.finish(), Some(deferred)))
 }
 
 /// Uploads stock's opaque 8x8 green WMO placeholder without transfer conversion.

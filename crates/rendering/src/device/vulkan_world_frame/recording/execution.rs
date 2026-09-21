@@ -73,3 +73,20 @@ impl<T: Send + 'static> RecordingReadiness for FrameBatch<T> {
         Ok(self.wait_until_finished()?)
     }
 }
+
+impl<'a> WorldRecordingCompletion<'a> {
+    /// Loading uses the same readiness-only native servicing contract as recording.
+    pub(in crate::device) fn loading<T: Send + 'static>(
+        batch: &'a solarity_cpu::LoadBatch<T>,
+    ) -> Self {
+        Self { batch }
+    }
+}
+impl<T: Send + 'static> RecordingReadiness for solarity_cpu::LoadBatch<T> {
+    fn is_ready(&self) -> bool {
+        self.is_finished()
+    }
+    fn wait(&self) -> Result<(), VulkanError> {
+        Ok(self.wait_until_finished()?)
+    }
+}

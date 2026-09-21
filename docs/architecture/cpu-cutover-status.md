@@ -19,6 +19,39 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Portrait requests now capture the exact published player appearance and pin its
+immutable source generations. One shared frame job computes the portrait camera,
+attachment chain, bone palettes, materials and transparent ordering. Main retains
+GPU submission and UI generation publication; live playback, particles and RNG
+remain untouched. The owner reuses palette/draw buffers and reclaims inputs before
+returning an execution or native-wait failure.
+
+Authored BLP uploads now offer explicit shared-CPU execution. Compressed source
+clones share their immutable image payload. Required service workers perform the
+original mip decoding, BC preservation/padding, alignment and batch packing before
+main admits the Vulkan transfer. Renderer deduplication precedes CPU submission;
+resident duplicates add no work. A conservative three-times-packed-byte reservation
+covers staging/decoded payload overlap and remains owned through staging retirement.
+It does not account for encoded cache residence or third-party codec internals.
+Minimap, celestial and portrait-mask uploads use this path with native servicing.
+M2, WMO, ADT, Glue and other texture callers still require connection. The upload
+API still waits for its worker result; full loading/publication continuations and
+main-side Vulkan staging copies remain open.
+
+Formatting and Clippy with warnings denied pass for CPU, asset, rendering and
+runtime. The broad run passed 604 tests before a new texture lifetime assertion
+checked release at GPU idle instead of renderer destruction. Only that test was
+corrected; its focused rerun passes, including upload formats, duplicate reuse,
+wait failure, admission pressure and reservation release. All 476 runtime library
+and 68 runtime integration tests also pass: 1,149 distinct passing tests across
+these runs, with 29 existing ignores in their completed suites. Runtime reused the
+binaries built by the broad run after verifying unchanged source dependencies;
+no production source changed afterward. Evidence is ignored
+`target/texture-portrait-final.log`, `target/texture-portrait-recheck2.log`,
+`target/texture-portrait-runtime.log` and
+`target/texture-portrait-runtime-artifacts.json`. Build 175 remains installed; no
+new package or live performance result is claimed.
+
 Sky numeric preparation now uses the shared frame executor. Gradient colors,
 celestial meshes and the retained procedural-cloud simulation dispatch at the
 original sky-update point, ahead of world admission. The consumer services native
@@ -76,8 +109,8 @@ failure; production loading behavior is unchanged. Final evidence is ignored
 `target/scene-cutover-final3.log`. Build 175 remains installed; no new package or
 live performance result is claimed.
 
-Still open in the frame path: portrait numeric preparation, renderer-side mip
-preparation/staging, the single current-placement late-pose dependency, receiver
+Still open in the frame path: remaining renderer-side mip preparation/staging
+callers, the single current-placement late-pose dependency, receiver
 and final-publication barriers, and complete connected working-set admission.
 Requested animation loading, shared texture requests and the remaining resource
 budgets/lifecycles below also remain required.

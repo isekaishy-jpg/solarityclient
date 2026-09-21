@@ -33,6 +33,7 @@ pub(in crate::device) struct BlpTextureRegistry {
     resources: Vec<GpuBlpTexture>,
     pending_transfers: Vec<DeferredTextureTransfer>,
     upload_submission_count: u64,
+    preparation: super::upload::TexturePreparation,
 }
 
 impl Default for BlpTextureRegistry {
@@ -46,6 +47,7 @@ impl Default for BlpTextureRegistry {
             resources: Vec::new(),
             pending_transfers: Vec::new(),
             upload_submission_count: 0,
+            preparation: Default::default(),
         }
     }
 }
@@ -89,6 +91,15 @@ impl BlpTextureRegistry {
         context: TextureUploadContext<'_>,
         requests: &[BlpTextureUploadRequest<'_>],
     ) -> Result<Vec<BlpTextureHandle>, BlpTextureUploadError> {
+        self.upload_batch_with_execution(context, requests, None)
+    }
+
+    pub(in crate::device) fn upload_batch_with_execution(
+        &mut self,
+        context: TextureUploadContext<'_>,
+        requests: &[BlpTextureUploadRequest<'_>],
+        execution: Option<&mut dyn crate::WorldFrameExecution>,
+    ) -> Result<Vec<BlpTextureHandle>, BlpTextureUploadError> {
         self.retire_completed_transfers(context)?;
         let mut pending_by_key = HashMap::<BlpTextureKey, usize>::new();
         let mut pending_keys = Vec::new();
@@ -116,7 +127,12 @@ impl BlpTextureRegistry {
                 .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
             // The private batch uploader constructs exactly one destination
             // for each request before its sole submission.
-            let (resources, transfer) = upload_textures_deferred(context, &pending_requests)?;
+            let (resources, transfer) = upload_textures_deferred(
+                context,
+                &pending_requests,
+                &mut self.preparation,
+                execution,
+            )?;
             for (key, resource) in pending_keys.into_iter().zip(resources) {
                 let slot = u32::try_from(self.resources.len())
                     .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
