@@ -37,6 +37,29 @@ impl Default for PoseBatch {
 }
 
 impl PoseBatch {
+    /// Publishes only an exact current-frame named-bone result, once and in owner order.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::application::terrain_frame::m2) fn take_samples(
+        &mut self,
+        index: usize,
+        model: &ResourceLease<solarity_asset::DecodedM2Model>,
+        clock: solarity_rendering::M2AnimationClock,
+        view: glam::Mat4,
+        overrides: solarity_rendering::M2BonePoseOverrides<'_>,
+        bones: &[usize],
+        output: &mut solarity_rendering::M2BoneSamples,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
+        let Some(job) = self.indices.get(index).copied().flatten() else {
+            return Ok(false);
+        };
+        if self.submitted {
+            return self.pending.with_result(&self.handles[job], |job| {
+                job.take_samples(model, clock, view, overrides, bones, output)
+            })?;
+        }
+        self.jobs[job].take_samples(model, clock, view, overrides, bones, output)
+    }
+
     pub(in crate::application::terrain_frame::m2) fn is_finished(&self) -> bool {
         self.pending.is_finished()
     }

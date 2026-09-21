@@ -169,6 +169,7 @@ impl M2Frame {
                 random,
                 game_objects,
                 unit_effect_callback,
+                world_lighting.is_some(),
                 spatial_lighting
                     .as_mut()
                     .map(|(terrain, ..)| &mut **terrain),

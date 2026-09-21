@@ -531,6 +531,14 @@ impl UnitAnimationBehavior {
         self.scene_sample.borrow_mut().take()
     }
 
+    /// Immutable event demand for worker sampling; ordered traversal still owns consumption.
+    pub(in crate::application) fn prepared_scene_event_window(&self) -> Option<M2EventTimeWindow> {
+        self.scene_sample
+            .borrow()
+            .as_ref()
+            .map(|sample| sample.event_window)
+    }
+
     pub fn body_pose(&self) -> UnitBodyPoseSample {
         self.body.borrow().sample
     }

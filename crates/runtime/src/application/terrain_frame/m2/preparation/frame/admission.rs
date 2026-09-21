@@ -569,7 +569,6 @@ impl M2Frame {
                         overrides,
                         &mut self.bone_pose_scratch,
                     )?;
-                observed.batch_hit = batch_hit;
                 if !batch_hit {
                     self.bone_demand
                         .model(super::super::demand::CpuModelInputs {
@@ -583,6 +582,17 @@ impl M2Frame {
                             publishes_lights,
                         });
                 }
+                let samples_hit = !batch_hit
+                    && self.pose_batch.take_samples(
+                        placement_index,
+                        &source.model,
+                        clock,
+                        model_view,
+                        overrides,
+                        self.bone_demand.bones(),
+                        &mut self.bone_samples_scratch,
+                    )?;
+                observed.batch_hit = batch_hit || samples_hit;
                 let deferred_palette = needs_palette && !batch_hit;
                 let unrequested =
                     super::super::demand::UnrequestedBones(source.model.animations().bones().len());
@@ -596,6 +606,8 @@ impl M2Frame {
                 }
                 let bone_pose: &dyn solarity_rendering::M2BoneTransforms = if batch_hit {
                     &self.bone_pose_scratch
+                } else if samples_hit {
+                    &self.bone_samples_scratch
                 } else if deferred_palette && self.bone_demand.bones().is_empty() {
                     &unrequested
                 } else {

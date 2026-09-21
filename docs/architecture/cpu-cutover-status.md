@@ -19,6 +19,20 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+The root pose batch now also admits mount clocks already selected by ordered
+callbacks and named-bone requests from offscreen units. Attachment, event and
+light consumers receive typed `M2BoneSamples` from workers; visible and shadow
+consumers retain full palettes. Request records and sparse output working storage
+carry frame reservations. Publication checks the source generation, clock, view,
+overrides and exact named demand before swapping the result into the ordered
+owner. Sampling an event window leaves its consumption cursor untouched. The
+offscreen equipped-NPC and moving-camera serial comparisons exercise this path;
+attached-parent dependencies and callback-time sampling remain to be connected.
+Formatting, runtime Clippy with warnings denied, and all 468 runtime tests pass
+(27 existing ignored). The three offscreen mount populations consume worker
+samples while retaining callback/RNG behavior. Validation is recorded in ignored
+`target/named-pose-final.log`; this source has no measured FPS result yet.
+
 Sky models now join the namespace M2 authority in resumable worker tasks, including
 stars and WMO-selected skies. The ordered main owner resolves aliases, first phase
 flags and request timestamps without archive access; queue saturation retains the

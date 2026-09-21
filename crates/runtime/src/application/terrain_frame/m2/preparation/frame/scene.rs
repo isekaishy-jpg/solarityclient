@@ -18,6 +18,7 @@ impl M2Frame {
         random: &mut CrtRand,
         game_objects: Option<GameObjectFrameInput<'_>>,
         unit_effect_callback: Option<&mut unit_effects::UnitEffectEventCallback<'_>>,
+        world_lighting: bool,
         mut terrain: Option<&mut RuntimeTerrainCoordinator>,
         shadow_projection: Option<solarity_rendering::WorldShadowProjection>,
         scenery_shadows: Option<
@@ -178,6 +179,7 @@ impl M2Frame {
                 scenery_shadows,
                 self.environment_detail,
             ),
+            world_lighting,
             animation_time_ms as u32,
         )?;
         frame_profile.mark("unit pose batch");

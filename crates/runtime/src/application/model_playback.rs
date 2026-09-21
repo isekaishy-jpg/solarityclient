@@ -787,40 +787,48 @@ impl M2Playback {
         &mut self,
         animation_time_ms: f32,
     ) -> M2EventTimeWindow {
+        let window = self.sample_event_window(animation_time_ms);
+        self.previous_event_scene_time_ms = animation_time_ms as u32;
+        if self.script_timer.is_none() && self.sequence_duration_ms != 0.0 {
+            self.previous_event_elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
+            self.previous_global_event_elapsed_ms =
+                self.global_tick(animation_time_ms as u32) as f32;
+            self.event_timeline_started = true;
+        }
+        window
+    }
+
+    /// Captures bone demand without advancing the ordered event-consumption cursor.
+    pub(in crate::application) fn sample_event_window(
+        &self,
+        animation_time_ms: f32,
+    ) -> M2EventTimeWindow {
         let global_time_ms = self.global_tick(animation_time_ms as u32) as f32;
         if let Some(timer) = self.script_timer {
-            let window = M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false)
-                .with_scene_timer(
-                    timer,
-                    if self.paused_scene_time_ms != 0 {
-                        animation_time_ms as u32
-                    } else {
-                        self.previous_event_scene_time_ms
-                    },
-                    animation_time_ms as u32,
-                );
-            self.previous_event_scene_time_ms = animation_time_ms as u32;
-            return window;
+            return M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false).with_scene_timer(
+                timer,
+                if self.paused_scene_time_ms != 0 {
+                    animation_time_ms as u32
+                } else {
+                    self.previous_event_scene_time_ms
+                },
+                animation_time_ms as u32,
+            );
         }
-        self.previous_event_scene_time_ms = animation_time_ms as u32;
         if self.sequence_duration_ms == 0.0 {
             // No primary timer exists for a bone-less model or a pending
             // sequence. Static geometry must not replay sequence-zero events.
             return M2EventTimeWindow::new(self.sequence, 0.0, 0.0, false, false);
         }
         let current_event_elapsed_ms = (animation_time_ms - self.cycle_started_ms).max(0.0);
-        let window = M2EventTimeWindow::new(
+        M2EventTimeWindow::new(
             self.sequence,
             self.previous_event_elapsed_ms,
             current_event_elapsed_ms,
             !self.event_timeline_started,
             true,
         )
-        .with_global_time(self.previous_global_event_elapsed_ms, global_time_ms);
-        self.previous_event_elapsed_ms = current_event_elapsed_ms;
-        self.previous_global_event_elapsed_ms = global_time_ms;
-        self.event_timeline_started = true;
-        window
+        .with_global_time(self.previous_global_event_elapsed_ms, global_time_ms)
     }
 
     /// Native global tracks keep advancing through primary pauses and seeks.

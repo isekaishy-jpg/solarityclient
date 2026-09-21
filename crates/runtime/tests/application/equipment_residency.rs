@@ -7,6 +7,65 @@ use solarity_rendering::{
     CharacterAttachmentPoint, CharacterComponentTextureLevel, WorldCameraFrame,
 };
 
+#[test]
+fn offscreen_equipment_consumes_worker_named_bones() -> Result<(), Box<dyn Error>> {
+    let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let fixture = crate::test_support::unit_models::fixture_with_equipped_npc()?;
+    let mut presentation = unit_presentation(&fixture)?;
+    let mut world = ActiveWorld::enter(WorldBootstrap::new(
+        WorldMapId::new(0),
+        7,
+        "Local",
+        Vec3::ZERO,
+        0.,
+    ));
+    add_unit(&mut world, 7, ObjectKind::Player, 0)?;
+    add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
+    fields(
+        &mut world,
+        30,
+        &[(67, 102), (56, 3100), (57, 3101), (122, 1)],
+    )?;
+    let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
+    let mut renderer = renderer(&platform)?;
+    let mut random = CrtRand::new();
+    let mut frame = M2Frame::prepare(
+        &mut renderer,
+        &ResidentM2Scene::default(),
+        fixture_animations(&fixture)?,
+        &mut random,
+        Arc::new(M2ParticleTwinkleTable::new(1)),
+    )?;
+    publish_npcs(
+        &mut presentation,
+        &world,
+        &mut frame,
+        &mut renderer,
+        &mut random,
+    )?;
+    let camera = WorldCamera::stock(
+        Vec3::new(100., 0., 0.),
+        Vec3::new(200., 0., 0.),
+        Vec3::Z,
+        100.,
+    )
+    .frame(1.)?;
+    advance(&mut frame, &renderer, camera, 1200., &mut random)?;
+    assert!(frame.visible_draws.is_empty());
+    assert_eq!(
+        frame.pose_batch.named_consumption(),
+        (1, 1),
+        "the offscreen NPC's weapon anchors consume a worker result"
+    );
+    for point in [
+        CharacterAttachmentPoint::HandRight,
+        CharacterAttachmentPoint::Shield,
+    ] {
+        assert!(frame.item_transforms.first((30, point)).flatten().is_some());
+    }
+    Ok(())
+}
+
 /// Appearance reuse must leave authoritative movement live and invalidate on
 /// visible equipment changes, even when the canonical body model is unchanged.
 #[test]

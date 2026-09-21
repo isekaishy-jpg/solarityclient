@@ -20,6 +20,41 @@ use crate::random::CrtRand;
 use crate::test_support::ClientFixture;
 
 #[test]
+fn event_window_sampling_preserves_the_ordered_cursor() -> Result<(), Box<dyn Error>> {
+    let (model, catalog) = playback_model()?;
+    let mut random = CrtRand::new();
+    let mut playback = M2Playback::default_sequence(&model, &catalog, 0, &mut random)?;
+    for timer in [true, false] {
+        if !timer {
+            playback.script_timer = None;
+        }
+        for now in [0., 100., 1200., 1200., 3500.] {
+            let before = playback.clone();
+            let expected = before.clone().event_window(now);
+            assert_eq!(playback.sample_event_window(now), expected);
+            assert_eq!(
+                playback.previous_event_scene_time_ms,
+                before.previous_event_scene_time_ms
+            );
+            assert_eq!(
+                playback.previous_event_elapsed_ms,
+                before.previous_event_elapsed_ms
+            );
+            assert_eq!(
+                playback.previous_global_event_elapsed_ms,
+                before.previous_global_event_elapsed_ms
+            );
+            assert_eq!(
+                playback.event_timeline_started,
+                before.event_timeline_started
+            );
+            assert_eq!(playback.event_window(now), expected);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn attachment_clock_queries_preserve_overdue_callbacks_events_and_variation_randomness()
 -> Result<(), Box<dyn Error>> {
     let (model, catalog) = playback_model()?;
