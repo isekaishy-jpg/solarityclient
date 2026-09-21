@@ -4,10 +4,11 @@ mod glue;
 mod model_request;
 mod owner;
 mod player;
+mod source_plans;
 
 use super::RuntimePlayerError;
 pub(super) use glue::prepare_glue_character;
-pub(super) use model_request::{AppearanceRequest, AppearanceTask};
+pub(super) use model_request::{AppearanceRequest, AppearanceSources, AppearanceTask};
 pub(super) use owner::with_worker_presentation;
 use solarity_asset::{AssetStore, BlpTextureCache, M2ModelCache};
 

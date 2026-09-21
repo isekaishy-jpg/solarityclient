@@ -3,14 +3,13 @@
 use super::population_worker::{PopulationLoading, PopulationRequest};
 
 use super::{
-    ActiveWorld, AnimationDataCatalog, CharacterAttachmentPlan, CharacterCustomization,
-    CharacterEquipmentItem, CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode,
-    CharacterTexturePlan, CreatureAppearanceInputs, CreatureModelKey, DesiredCreatureModel,
-    M2ParticleColorReplacement, PlayerEquipmentSlot, ResidentCreatureGeosets,
+    ActiveWorld, AnimationDataCatalog, CharacterCustomization, CharacterGeosetContext,
+    CharacterGeosetPlan, CharacterTabardMode, CharacterTexturePlan, CreatureAppearanceInputs,
+    CreatureModelKey, DesiredCreatureModel, M2ParticleColorReplacement, ResidentCreatureGeosets,
     ResidentCreatureModel, RuntimeCreaturePoll, RuntimePlayerError, RuntimePlayerPresentation,
     UnitAnimationTier, UnitLocomotionAnimation, UnitModelAppearanceError,
-    UnitPresentationGeneration, VisibleEquipmentItem, WorldObjectIdentity, WorldTransform,
-    load_mount_model, load_player_attachments, mount_model_key, prepare_creature_textures,
+    UnitPresentationGeneration, WorldObjectIdentity, WorldTransform, load_mount_model,
+    load_player_attachments, mount_model_key, prepare_creature_textures,
     prepare_npc_character_textures, resolve_npc_equipment, resolve_resident_animation,
     resolve_unit_locomotion_animation, resolve_unit_model,
 };
@@ -304,6 +303,10 @@ impl RuntimePlayerPresentation {
                             key: desired.key.clone(),
                             level: self.component_texture_level,
                             model_path: desired.key.path.clone(),
+                            sources: super::worker_presentation::AppearanceSources::Creature {
+                                key: desired.key.clone(),
+                                definitions: desired.virtual_definitions,
+                            },
                         },
                         catalog,
                         catalogs,
@@ -364,7 +367,7 @@ impl RuntimePlayerPresentation {
             .creatures
             .resolve_model(desired.key.display_id)
             .map_err(UnitModelAppearanceError::from)?;
-        let (textures, geosets, mut attachment_plan) = if let Some(extra) = appearance.extra() {
+        let (textures, geosets) = if let Some(extra) = appearance.extra() {
             let character = self.characters.resolve_player(
                 extra.race_id(),
                 extra.gender_id(),
@@ -396,64 +399,18 @@ impl RuntimePlayerPresentation {
                 &self.helmet_visibility,
                 equipment.iter().copied(),
             )?;
-            // 730100 walks all eleven CreatureDisplayInfoExtra components
-            // through 4F2830/4F2640, including separate head/shoulder M2s.
-            let attachment_plan = CharacterAttachmentPlan::npc_armor(
-                equipment.iter().copied(),
-                &self.races,
-                character.race_id(),
-                character.gender_id(),
-            )?;
-            (
-                textures,
-                Some(ResidentCreatureGeosets::Character(geosets)),
-                attachment_plan,
-            )
+            (textures, Some(ResidentCreatureGeosets::Character(geosets)))
         } else {
             (
                 prepare_creature_textures(&model, &appearance, &mut assets, &mut self.textures)?,
                 ResidentCreatureGeosets::from_packed_selector(appearance.display().geoset_data()),
-                CharacterAttachmentPlan::default(),
             )
         };
-        if let Some(state) = desired.key.weapon_state {
-            let entries = desired.key.virtual_entries;
-            let equipment = std::array::from_fn(|index| {
-                if entries[index] == 0 {
-                    return None;
-                }
-                let definition = desired.virtual_definitions[index].as_ref()?;
-                let display = self.item_displays.display(definition.display_info_id())?;
-                Some(CharacterEquipmentItem::new_visible(
-                    [
-                        PlayerEquipmentSlot::MainHand,
-                        PlayerEquipmentSlot::OffHand,
-                        PlayerEquipmentSlot::Ranged,
-                    ][index],
-                    VisibleEquipmentItem::new(entries[index], 0),
-                    definition,
-                    display,
-                ))
-            });
-            attachment_plan.add_npc_held_items(
-                equipment,
-                state,
-                [
-                    desired.virtual_definitions[0].as_ref(),
-                    desired.virtual_definitions[1].as_ref(),
-                ],
-            )?;
-        }
-        attachment_plan.retain_attachments(|attachment| {
-            !matches!(
-                attachment.slot(),
-                Some(
-                    PlayerEquipmentSlot::MainHand
-                        | PlayerEquipmentSlot::OffHand
-                        | PlayerEquipmentSlot::Ranged
-                )
-            ) || model.attachment(attachment.point().id()).is_some()
-        });
+        let attachment_plan = self.shared_catalogs().creature_attachment_plan(
+            &desired.key,
+            &desired.virtual_definitions,
+            &model,
+        )?;
         let attachments = load_player_attachments(
             &attachment_plan,
             &self.item_visuals,

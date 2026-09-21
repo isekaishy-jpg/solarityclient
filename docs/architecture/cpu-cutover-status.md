@@ -19,6 +19,26 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+Appearance loading now carries player/NPC attachments, item visual children,
+mounts and Glue pets through the namespace-wide shared M2 authority. One admitted
+resumable task retains the archive bank and source leases across discovered
+pending dependencies; a waiting consumer releases its worker and withdrawal
+returns its bank without cancelling other source consumers. An already claimed
+primary producer completes before cancellation is returned. Nested source records
+and result pins use the Required storage budget. Derived construction runs once
+after source readiness and consumes those shared generations without inserting
+a second local retained copy. Missing authored attachment links still omit their
+visual source. This replaces the separate primary-only loading-batch adapter;
+whole-payload accounting, requested animation loading, and the remaining frame
+cutover requirements below remain open.
+
+Appearance validation passes formatting, workspace Clippy with warnings denied,
+and 1,682 workspace unit/integration tests (33 ignored). The final priority
+regression passes the 464-test runtime rerun, and workspace doc tests pass after
+rebuilding missing shared-target artifacts. Logs are in ignored
+`target/appearance-cutover-{final,priority-final}.log`. This source is not yet
+installed and has no measured FPS result.
+
 After Build 174, geometry working-set preparation moves from ordered M2 traversal
 into the owned worker turn. Main still admits the request records, copied pose
 inputs and shared sorting lanes. The worker then admits its palette, packet and
@@ -913,8 +933,9 @@ an operation has a context parameter. The requirements below remain in scope.
 - Extend pending-request authority beyond runtime audio, Glue backdrops and
   creation/selection primary M2s, asynchronous top-level GameObject M2s and
   local/NPC/remote-player primary M2s. Terrain MDDF/MODD/ground detail and GameObject WMO sources are now connected.
-  Glue attachments and pets, population attachments/mounts, effects
-  and sky sources still use their existing local decode caches.
+  Glue attachments/pets and population attachments/mounts/item visuals now join
+  the same namespace source authority through resumable appearance tasks.
+  Effects and sky sources still require the remaining shared-source connection.
   Other source domains still need shared pending authority, cross-resource I/O
   dependencies and the remaining domain-wide shared result leases. WMO requests
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources

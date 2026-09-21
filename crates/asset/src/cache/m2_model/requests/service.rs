@@ -7,6 +7,26 @@ use crate::{AssetError, AssetResourceKey};
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 impl M2CacheService {
+    /// Acquires an already published namespace source without creating a producer.
+    /// Legacy derived consumers can use a generation pinned by their loading phase.
+    /// # Errors
+    /// Rejects unsupported paths or exhausted release identity.
+    pub fn ready(
+        &self,
+        key: &AssetResourceKey,
+    ) -> Result<Option<crate::ResourceLease<crate::DecodedM2Model>>, AssetError> {
+        let key = AssetResourceKey::new(key.namespace(), M2ModelCache::canonical_path(key.path())?);
+        let index = self
+            .0
+            .requests
+            .lock()
+            .unwrap_or_else(|_| unreachable!("model request metadata cannot panic"));
+        match &index.core {
+            Some(core) => core.lock().get(&key),
+            None => Ok(None),
+        }
+    }
+
     /// Joins and promotes an existing producer without requiring another CPU admission slot.
     /// No producer or source cache is created when the key has no pending work.
     /// # Errors

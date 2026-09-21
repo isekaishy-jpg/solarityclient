@@ -40,6 +40,7 @@ impl<K: PartialEq, T: PreparedPopulation> PopulationWorker<K, T> {
                 catalogs,
                 level: request.level,
                 model_path: request.model_path,
+                sources: request.sources,
             },
             &mut self.cache,
             prepare,

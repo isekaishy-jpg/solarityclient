@@ -4,14 +4,14 @@ use super::super::{
     OptionalTextureBinding, ResidentGlueCharacterKey, ResidentGlueCharacterModel,
     RuntimePlayerError, RuntimePlayerPresentation, load_optional_texture, load_player_attachments,
     prepare_model_textures, resolve_creation_equipment, resolve_resident_animation,
-    resolve_selection_equipment, resolve_selection_quiver,
+    resolve_selection_equipment,
 };
 use super::source::GlueModelSource;
 use solarity_asset::{CharacterCustomization, InventoryType};
-use solarity_ecs::{PlayerEquipmentSlot, UnitAnimationTier, UnitSheathState};
+use solarity_ecs::{PlayerEquipmentSlot, UnitAnimationTier};
 use solarity_rendering::{
-    CharacterAttachmentPlan, CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode,
-    CharacterTexturePlan, CharacterWeaponState, M2ParticleColorReplacement,
+    CharacterGeosetContext, CharacterGeosetPlan, CharacterTabardMode, CharacterTexturePlan,
+    M2ParticleColorReplacement,
 };
 use solarity_systems::UnitLocomotionAnimation;
 use solarity_ui::{UiCharacterCreationPreview, UiCharacterSelectionPreview};
@@ -101,12 +101,9 @@ impl RuntimePlayerPresentation {
             &self.helmet_visibility,
             equipment_items.iter().copied(),
         )?;
-        let attachment_plan = CharacterAttachmentPlan::equipped_items(
-            equipment_items.iter().copied(),
-            race,
-            u32::from(preview.gender_id()),
-            CharacterWeaponState::new(UnitSheathState::Unarmed),
-        )?;
+        let attachment_plan = self
+            .shared_catalogs()
+            .glue_attachment_plan(&ResidentGlueCharacterKey::Creation(preview.clone()))?;
         let mut assets = self.assets.borrow_mut();
         let model = source.load(&mut self.models, &mut assets, body.model_path())?;
         let atlas = texture_plan.compose_at_level(
@@ -237,13 +234,11 @@ impl RuntimePlayerPresentation {
             &self.helmet_visibility,
             equipment_items.iter().copied(),
         )?;
-        let attachment_plan = CharacterAttachmentPlan::character_selection(
-            equipment_items.iter().copied(),
-            resolve_selection_quiver(preview, &self.item_displays)?,
-            race,
-            u32::from(preview.gender_id()),
-            preview.class_id(),
-        )?;
+        let attachment_plan =
+            self.shared_catalogs()
+                .glue_attachment_plan(&ResidentGlueCharacterKey::Selection(Box::new(
+                    preview.clone(),
+                )))?;
         let mut assets = self.assets.borrow_mut();
         let model = source.load(&mut self.models, &mut assets, body.model_path())?;
         let atlas = texture_plan.compose_at_level(
