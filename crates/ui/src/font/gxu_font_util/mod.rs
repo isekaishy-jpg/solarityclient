@@ -34,6 +34,7 @@ enum Owner {
 struct WorkerFontSystem {
     cache: Arc<Mutex<FontCache>>,
     executor: Rc<dyn FontWorkExecutor>,
+    preparations: RefCell<preparation::PreparationPool>,
 }
 
 impl WorkerFontSystem {
@@ -54,6 +55,22 @@ impl WorkerFontSystem {
                 cache: Arc::clone(&self.cache),
                 namespace,
                 request,
+            })
+            .map(|result| result.0)
+    }
+
+    fn execute_prepared(
+        &self,
+        namespace: AssetNamespaceId,
+        prepare: &mut dyn FnMut() -> Result<Request, FontError>,
+    ) -> Result<Reply, FontError> {
+        self.executor
+            .execute_prepared(&mut || {
+                Ok(FontWork {
+                    cache: Arc::clone(&self.cache),
+                    namespace,
+                    request: prepare()?,
+                })
             })
             .map(|result| result.0)
     }
@@ -109,6 +126,7 @@ impl FontSystem {
             owner: Owner::Worker(Rc::new(WorkerFontSystem {
                 cache: Arc::new(Mutex::new(FontCache::default())),
                 executor,
+                preparations: RefCell::default(),
             })),
         }
     }
@@ -338,10 +356,16 @@ impl FontSystem {
     pub fn trim_unused(&self, assets: &mut AssetStore) -> Result<(), FontError> {
         match &self.owner {
             Owner::Local(state) => state.borrow_mut().trim_unused(),
-            Owner::Worker(worker) => match worker.execute(assets.namespace(), Request::Trim)? {
-                Reply::Prepared => (),
-                _ => unreachable!("typed font trim reply"),
-            },
+            Owner::Worker(worker) => {
+                match worker.execute_prepared(assets.namespace(), &mut || {
+                    Ok(Request::Trim(std::mem::take(
+                        &mut *worker.preparations.borrow_mut(),
+                    )))
+                })? {
+                    Reply::Prepared => (),
+                    _ => unreachable!("typed font trim reply"),
+                }
+            }
         }
         Ok(())
     }

@@ -234,3 +234,39 @@ fn stock_worker_fonts_match_serial_and_reuse_cache_under_saturation() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn font_host_admits_before_constructing_prepared_inputs() -> Result<(), Box<dyn Error>> {
+    let fixture = ClientFixture::with_common_files(&[])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let cpu = CpuExecutor::new(config()?)?;
+    let host = RuntimeFontPreparation {
+        cpu: cpu.service_handle(),
+        input: None,
+        catalog,
+        reader: Arc::new(Mutex::new(None)),
+    };
+    let calls = std::cell::Cell::new(0usize);
+    let mut prepare = || {
+        calls.set(calls.get() + 1);
+        Err(FontError::Execution {
+            message: "prepared input refusal".into(),
+        })
+    };
+    let occupied = cpu.try_reserve()?;
+    assert!(matches!(
+        host.execute_prepared(&mut prepare),
+        Err(FontError::Asset(AssetError::SourceStorage(
+            CpuError::AtCapacity { .. }
+        )))
+    ));
+    assert_eq!(calls.get(), 0);
+    drop(occupied);
+    assert!(matches!(host.execute_prepared(&mut prepare),
+        Err(FontError::Execution { message }) if message == "prepared input refusal"));
+    assert_eq!(calls.get(), 1);
+    assert_eq!(cpu.snapshot()?.in_flight(), 0);
+    assert!(host.reader.lock().map_err(|_| "font reader")?.is_none());
+    Ok(())
+}

@@ -24,7 +24,23 @@ struct Host {
 }
 
 impl FontWorkExecutor for Host {
+    fn storage(&self) -> Option<&solarity_cpu::CpuStorageBudget> {
+        Some(self.cpu.storage())
+    }
+
     fn execute(&self, work: FontWork) -> Result<FontWorkOutput, FontError> {
+        let mut work = Some(work);
+        self.execute_prepared(&mut || {
+            Ok(work
+                .take()
+                .unwrap_or_else(|| unreachable!("one font request")))
+        })
+    }
+
+    fn execute_prepared(
+        &self,
+        prepare: &mut dyn FnMut() -> Result<FontWork, FontError>,
+    ) -> Result<FontWorkOutput, FontError> {
         assert!(!solarity_cpu::is_worker_thread());
         let reader = self.reader.clone();
         let budget = solarity_asset::AssetReadBudget::for_service(
@@ -34,7 +50,9 @@ impl FontWorkExecutor for Host {
         let task = self
             .cpu
             .try_submit_prepared(move || {
+                let work = prepare();
                 move |_: &solarity_cpu::JobContext<'_>| {
+                    let work = work?;
                     assert!(solarity_cpu::is_worker_thread());
                     reader
                         .lock()
@@ -333,5 +351,92 @@ fn worker_cache_trim_preserves_pinned_identity_and_charges_until_final_release()
             .bytes(CpuStorageClass::Required, CpuStorageKind::Result),
         baseline
     );
+    Ok(())
+}
+
+/// A retained placeholder is constructed once per shape, and only after task admission.
+#[test]
+fn prepared_ui_admission_precedes_loan_checkout_and_trim_releases_warm_slots()
+-> Result<(), Box<dyn Error>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static DEFAULTS: AtomicUsize = AtomicUsize::new(0);
+    struct Counted(Vec<u32>);
+    impl Default for Counted {
+        fn default() -> Self {
+            DEFAULTS.fetch_add(1, Ordering::Relaxed);
+            Self(Vec::with_capacity(8))
+        }
+    }
+    let fixture = Fixture::new(&[])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let cpu = pool()?;
+    let host = host(&cpu, catalog.clone())?;
+    let fonts = FontSystem::with_executor(host.clone());
+    let mut assets = AssetStore::mount(catalog)?;
+    let mut state = Counted(vec![3]);
+    let original = state.0.as_ptr();
+    let occupied = cpu.try_reserve()?;
+    assert!(
+        fonts
+            .prepare(&mut assets, &mut state, |state, _, _| state.0[0] += 1)
+            .is_err()
+    );
+    assert_eq!(DEFAULTS.load(Ordering::Relaxed), 0);
+    assert_eq!(state.0, [3]);
+    drop(occupied);
+    let hold = cpu.storage().reserve(
+        solarity_cpu::CpuStorageClass::Required,
+        solarity_cpu::CpuStorageKind::Scratch,
+        (64 << 20)
+            - cpu
+                .storage()
+                .snapshot()
+                .used(solarity_cpu::CpuStorageClass::Required)
+            - 4096,
+    )?;
+    let capture = [0u8; 8192];
+    assert!(matches!(
+        fonts.prepare(&mut assets, &mut state, move |state, _, _| {
+            std::hint::black_box(capture);
+            state.0[0] += 99;
+        }),
+        Err(FontError::Asset(AssetError::SourceStorage(
+            solarity_cpu::CpuError::StorageAtCapacity { .. }
+        )))
+    ));
+    assert_eq!(DEFAULTS.load(Ordering::Relaxed), 0);
+    assert_eq!(state.0, [3]);
+    drop(hold);
+    for _ in 0..10 {
+        fonts.prepare(&mut assets, &mut state, |state, _, _| state.0[0] += 1)?;
+    }
+    assert_eq!(DEFAULTS.load(Ordering::Relaxed), 1);
+    assert_eq!(state.0, [13]);
+    assert_eq!(state.0.as_ptr(), original);
+    let warmed = cpu
+        .storage()
+        .snapshot()
+        .used(solarity_cpu::CpuStorageClass::Required);
+    let occupied = cpu.try_reserve()?;
+    assert!(fonts.trim_unused(&mut assets).is_err());
+    drop(occupied);
+    assert_eq!(
+        cpu.storage()
+            .snapshot()
+            .used(solarity_cpu::CpuStorageClass::Required),
+        warmed
+    );
+    fonts.trim_unused(&mut assets)?;
+    assert!(
+        cpu.storage()
+            .snapshot()
+            .used(solarity_cpu::CpuStorageClass::Required)
+            < warmed
+    );
+    fonts.prepare(&mut assets, &mut state, |state, _, _| state.0[0] += 1)?;
+    assert_eq!(DEFAULTS.load(Ordering::Relaxed), 2);
+    assert_eq!(state.0, [14]);
+    assert_eq!(state.0.as_ptr(), original);
     Ok(())
 }

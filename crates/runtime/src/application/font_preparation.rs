@@ -30,15 +30,33 @@ pub(super) fn font_system(
 }
 
 impl FontWorkExecutor for RuntimeFontPreparation {
+    fn storage(&self) -> Option<&solarity_cpu::CpuStorageBudget> {
+        Some(self.cpu.storage())
+    }
+
     fn execute(&self, work: FontWork) -> Result<FontWorkOutput, FontError> {
+        let mut work = Some(work);
+        self.execute_prepared(&mut || {
+            Ok(work
+                .take()
+                .unwrap_or_else(|| unreachable!("one font request")))
+        })
+    }
+
+    fn execute_prepared(
+        &self,
+        prepare: &mut dyn FnMut() -> Result<FontWork, FontError>,
+    ) -> Result<FontWorkOutput, FontError> {
         let task = self
             .cpu
             .try_submit_prepared(|| {
+                let work = prepare();
                 let catalog = self.catalog.clone();
                 let reader = Arc::clone(&self.reader);
                 let budget =
                     AssetReadBudget::for_service(self.cpu.storage().clone(), CpuService::Required);
                 move |context: &solarity_cpu::JobContext<'_>| {
+                    let work = work?;
                     context.diagnostic_value("ui.preparation.required_request", 1);
                     if context.is_cancelled() {
                         return Err(AssetError::from(CpuError::JobCancelled).into());

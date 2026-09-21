@@ -395,6 +395,37 @@ complete connected-phase headroom. All-target/all-feature asset/UI/runtime Clipp
 formatting and diff checks pass. Logs: `target/owner-retirement-asset-tests.log`,
 `target/owner-retirement-runtime-tests.log`, `target/owner-retirement-clippy.log`.
 
+The subsequent UI handoff batch moves preparation factories behind CPU task
+admission. Refused task admission neither checks out live UI state nor constructs
+its empty placeholder. A per-font-owner typed pool retains one transfer slot and
+placeholder per state/output shape; warm checkouts swap existing owners without
+allocating another loan Arc or rebuilding an empty native UI plan. Slot/table
+capacity and boxed operation captures carry required metadata admission. The
+capture layout is concrete so its actual allocation size is reserved before boxing.
+
+Loans restore the original buffers after domain/native failures, cancellation or
+panic, and discard unconsumed output outside the slot lock before reuse. A busy
+slot refuses reentrant checkout. Font maintenance transfers idle loan storage to
+the admitted worker for disposal alongside cache trimming; task refusal leaves
+the pool intact. Request-box/task-control reuse, native font setup and nested UI graph
+allocations are still separate remaining work; this is not an
+allocation-free whole UI update or a claim of complete phase admission. Build 176
+remains installed and no additional client package is authorized.
+
+UI handoff validation covers 214 distinct passing tests and two existing ignores:
+210 in the full UI run, one additional cleanup regression in the final eight-test
+preparation run, and three runtime font-host tests. The final focused run follows
+the correction that unlocks font metadata before placeholder disposal. Coverage
+includes 1,000 warm slot checkouts with zero allocator calls at full byte pressure,
+unchanged buffer addresses, task/capture refusal before checkout, placeholder
+reuse/trim, result disposal outside locks, panic recovery and existing Lua/geometry/
+mesh parity. Runtime coverage checks factory admission before input construction,
+unchanged source failures, and native-input/shutdown reclamation. All-target,
+all-feature UI/runtime Clippy, formatting and diff checks pass. Logs:
+`target/ui-handoff-tests.log`, `target/ui-handoff-preparation-final.log`,
+`target/ui-handoff-runtime-tests.log`, `target/ui-handoff-clippy.log`.
+No client package, live FPS test or stock-data run was added.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

@@ -29,11 +29,13 @@ impl FontGlyphRequest {
     }
 }
 
-type Preparation = Box<dyn FnOnce(&mut super::FontSystem, &mut AssetStore) + Send>;
+pub(super) trait Preparation: Send {
+    fn run(self: Box<Self>, fonts: &mut super::FontSystem, assets: &mut AssetStore);
+}
 
 pub(super) enum Request {
-    Trim,
-    Preparation(Preparation),
+    Trim(super::preparation::PreparationPool),
+    Preparation(Box<dyn Preparation>),
     Glyph(FontGlyphRequest),
     Glyphs(Vec<FontGlyphRequest>),
     Advances {
@@ -69,7 +71,7 @@ impl Request {
         store: &mut AssetStore,
     ) -> Result<Reply, FontError> {
         match self {
-            Self::Preparation(_) | Self::Trim => {
+            Self::Preparation(_) | Self::Trim(_) => {
                 unreachable!("preparation and trim have dedicated owners")
             }
             Self::Glyph(key) => state
@@ -112,6 +114,24 @@ pub trait FontWorkExecutor {
     /// # Errors
     /// Returns admission, completion, native servicing or exact font failures.
     fn execute(&self, work: FontWork) -> Result<FontWorkOutput, FontError>;
+
+    /// Builds owned inputs only after task admission. Scheduled hosts override this
+    /// boundary; synchronous/offline hosts can execute the factory directly.
+    /// The factory is called at most once and all submitted work is reclaimed before return.
+    /// # Errors
+    /// Returns admission, preparation or execution failure without losing borrowed state.
+    fn execute_prepared(
+        &self,
+        prepare: &mut dyn FnMut() -> Result<FontWork, FontError>,
+    ) -> Result<FontWorkOutput, FontError> {
+        self.execute(prepare()?)
+    }
+
+    /// The stable application budget for retained handoff storage and owned captures.
+    /// Offline hosts may omit accounting along with executor ownership.
+    fn storage(&self) -> Option<&solarity_cpu::CpuStorageBudget> {
+        None
+    }
 }
 
 /// Sendable request and a pin on its sole common coverage/metric authority.
@@ -136,8 +156,11 @@ impl FontWork {
             });
         }
         let mut cache = self.cache.lock().map_err(|_| unavailable())?;
-        if matches!(self.request, Request::Trim) {
+        if let Request::Trim(loans) = self.request {
             cache.trim_unused();
+            drop(cache);
+            // Typed placeholder destructors execute after font metadata is unlocked.
+            drop(loans);
             return Ok(FontWorkOutput(Reply::Prepared));
         }
         let mut state = FontSystemState::new()?;
@@ -147,7 +170,7 @@ impl FontWork {
             let mut fonts = super::FontSystem {
                 owner: super::Owner::Local(local.clone()),
             };
-            operation(&mut fonts, store);
+            operation.run(&mut fonts, store);
             *cache = std::mem::take(&mut local.borrow_mut().cache);
             return Ok(FontWorkOutput(Reply::Prepared));
         }
