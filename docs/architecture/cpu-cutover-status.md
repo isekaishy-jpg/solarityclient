@@ -26,6 +26,7 @@ completion thread, with native servicing at world resource/quality barriers and
 swapchain retirement. The current source retains stock simulation and camera order;
 formatting, workspace Clippy and all 1,659 tests pass (zero failures, 33 existing
 ignored). This does not complete the remaining architecture listed below.
+[Testing Build 173](testing-build173-storage-waits.md) packages this source.
 
 [Service execution and skeletal ownership](cpu-service-execution-cutover.md) now
 separate finite/bulk eligibility from request urgency, remove the one-runner loading
