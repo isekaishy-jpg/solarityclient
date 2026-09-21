@@ -126,7 +126,9 @@ pub use vulkan_world_frame::{
     WorldFrameExecution, WorldFrameReport, WorldFrameScene, WorldRecordingCompletion,
     WorldSkyModelBatch, WorldSkyModelFrame,
 };
-pub use vulkan_world_model_draw::{WorldModelPreparedDraw, WorldModelShadowDraw};
+pub use vulkan_world_model_draw::{
+    WorldModelDrawTemplate, WorldModelPreparedDraw, WorldModelShadowDraw,
+};
 pub use vulkan_world_model_mesh::{WorldModelMeshHandle, WorldModelMeshResourceInfo};
 pub use vulkan_world_model_pipeline::{WorldModelPipelineHandle, WorldModelPipelineInfo};
 pub use vulkan_world_model_sampler::{

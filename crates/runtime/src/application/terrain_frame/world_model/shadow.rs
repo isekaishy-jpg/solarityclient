@@ -1,46 +1,29 @@
 //! WMO shadow groups and MODR membership independent of portal visibility.
 
 use glam::{Mat4, Vec3};
-use solarity_rendering::{VulkanError, VulkanRenderer, WorldEnvironmentWmoCaster};
+use solarity_rendering::{VulkanError, WorldEnvironmentWmoCaster};
 use solarity_systems::{MovementCollisionBounds, WorldModelVisibilityError};
 
-use super::super::{
-    RuntimeTerrainFrameError,
-    shadow::{WorldModelShadowDoodads, WorldShadowAdmission},
-};
+use super::super::{RuntimeTerrainFrameError, shadow::WorldModelShadowDoodads};
 use super::{WorldModelFrame, WorldModelGpuPlacementOwner};
 
-impl WorldModelFrame {
-    /// Collects every resident exterior group once per admitted shadow map.
-    /// Moving roots use 7B64F0's animated bank; their doodads inherit that bank.
-    pub(in crate::application::terrain_frame) fn prepare_shadow_draws(
-        &mut self,
-        renderer: &VulkanRenderer,
-        admission: Option<&WorldShadowAdmission>,
-    ) -> Result<(), RuntimeTerrainFrameError> {
-        self.shadow_draws.clear();
-        self.shadow_doodads.clear();
-        let Some(admission) = admission else {
+impl super::preparation::ShadowJob {
+    pub(super) fn run(&mut self) -> Result<(), RuntimeTerrainFrameError> {
+        self.draws.clear();
+        self.doodads.clear();
+        let Some(admission) = self.admission.as_ref() else {
             return Ok(());
         };
         let mut group_counts = [0; 4];
-        for placement in &self.placements {
-            if !placement.placement_valid {
-                continue;
-            }
+        for placement in self.inputs.iter() {
             let moving = matches!(
                 placement.owner,
                 WorldModelGpuPlacementOwner::GameObject { .. }
             );
             // Static geometry can be idle while its animated MODR doodads
             // still need primary membership, so retain that group traversal.
-            let source = self.sources[placement.source_index].as_ref().ok_or(
-                RuntimeTerrainFrameError::WorldModelSourceIndex {
-                    source_index: placement.source_index,
-                    source_count: self.sources.len(),
-                },
-            )?;
-            let transform = placement.plan.transform();
+            let source = &placement.source;
+            let transform = placement.transform;
             let root_maps = admission.admitted_maps(bounds(source.model.bounds(), transform)?);
             if root_maps == 0 {
                 continue;
@@ -76,10 +59,10 @@ impl WorldModelFrame {
                 }
                 if doodad_maps != 0 {
                     for &doodad in group.doodad_references() {
-                        *self
-                            .shadow_doodads
-                            .entry((placement.owner.scene_owner(), usize::from(doodad)))
-                            .or_default() |= doodad_maps;
+                        self.doodads.push((
+                            (placement.owner.scene_owner(), usize::from(doodad)),
+                            doodad_maps,
+                        ))?;
                     }
                 }
                 if geometry_maps == 0 {
@@ -97,31 +80,39 @@ impl WorldModelFrame {
                 for draw_index in range {
                     let material =
                         usize::from(source.plan.shadow_draws()[draw_index].material_id());
-                    let texture = source
-                        .shadow_textures
-                        .get(material)
+                    let draw = source
+                        .shadow_templates
+                        .get(draw_index)
                         .copied()
-                        .ok_or(VulkanError::WorldModelDrawMaterial)?;
-                    let draw = renderer.prepare_world_model_shadow_draw(
-                        source.mesh,
-                        texture,
-                        &source.plan,
-                        draw_index,
-                        transform,
-                    )?;
-                    self.shadow_draws.push(WorldEnvironmentWmoCaster {
+                        .ok_or(VulkanError::WorldModelDrawIndex {
+                            requested: draw_index,
+                            available: source.shadow_templates.len(),
+                        })?
+                        .with_model(transform);
+                    self.draws.push(WorldEnvironmentWmoCaster {
                         draw,
                         maps: geometry_maps,
                         blend_mode: source.plan.materials()[material].blend_mode(),
-                    });
+                    })?;
                 }
             }
         }
         Ok(())
     }
-
+}
+impl WorldModelFrame {
     pub(in crate::application::terrain_frame) fn shadow_doodads(&self) -> &WorldModelShadowDoodads {
         &self.shadow_doodads
+    }
+    #[cfg(test)]
+    pub(in crate::application::terrain_frame) fn prepare_shadow_draws(
+        &mut self,
+        _renderer: &solarity_rendering::VulkanRenderer,
+        admission: Option<&super::super::shadow::WorldShadowAdmission>,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let cpu = crate::frame_cpu_support::executor()?;
+        self.begin_preparation(&cpu, &[], admission, 0., Vec3::ZERO, Vec3::ZERO)?
+            .finish_shadow(&mut crate::application::frame_pipeline::FrameWait::Offline)
     }
 }
 

@@ -40,6 +40,13 @@ pub struct WorldModelShadowDraw {
 }
 
 impl WorldModelShadowDraw {
+    /// Reuses validated geometry/texture identity with a new owner transform.
+    #[must_use]
+    pub fn with_model(mut self, model: Mat4) -> Self {
+        self.material = WorldModelMaterialUniform::shadow(model);
+        self
+    }
+
     /// Returns the shared geometry identity.
     pub const fn mesh(self) -> WorldModelMeshHandle {
         self.mesh
@@ -186,7 +193,7 @@ impl WorldModelPreparedDraw {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::device) fn prepare_draw(
+pub(in crate::device) fn prepare_template(
     meshes: &WorldModelMeshRegistry,
     pipelines: &WorldModelPipelineRegistry,
     texture_sets: &WorldModelTextureSetRegistry,
@@ -197,10 +204,7 @@ pub(in crate::device) fn prepare_draw(
     plan: &WorldModelMeshPlan,
     draw_index: usize,
     pass_index: usize,
-    model: Mat4,
-    environment_emissive: f32,
-    fog_color: Vec3,
-) -> Result<WorldModelPreparedDraw, VulkanError> {
+) -> Result<WorldModelDrawTemplate, VulkanError> {
     let mesh_info = meshes
         .info(mesh)
         .ok_or(VulkanError::UnknownWorldModelMeshHandle)?;
@@ -278,29 +282,61 @@ pub(in crate::device) fn prepare_draw(
             return Err(VulkanError::WorldModelDrawTextureSetMismatch);
         }
     }
-    // 7AC6A0 uses the ordinary bank. 7AC9F0's final pass uses the selected
-    // group bank. 7A9380 also forces fog for nontransition batches, selecting
-    // the ordinary bank for exterior-lit groups regardless of MOMT unfogged.
-    let submission_fog_color = (pass_index + 1 == passes.passes().len()
-        && pass.fog_mode() != crate::WorldModelFogMode::Disabled)
-        .then_some(fog_color);
-    let submission_fog_outdoor = pass.fog_mode() == crate::WorldModelFogMode::OutdoorColor;
-    let material = WorldModelMaterialUniform::new(
-        model,
-        plan.ambient_color(),
-        material,
-        pass,
-        environment_emissive,
-        fog_color,
-    );
-    Ok(WorldModelPreparedDraw {
-        submission_fog_color,
-        submission_fog_outdoor,
+    Ok(WorldModelDrawTemplate {
         mesh,
         pipeline,
         texture_set,
         first_index: draw.first_index(),
         index_count: draw.index_count(),
-        material,
+        root_ambient: plan.ambient_color(),
+        material: material.clone(),
+        pass,
+        final_pass: pass_index + 1 == passes.passes().len(),
     })
+}
+
+/// Immutable renderer-validated WMO resources and authored material inputs.
+/// Instantiation needs no renderer access and may run on CPU workers while the
+/// owner retains the source generation and its GPU resources.
+#[derive(Clone, Debug)]
+pub struct WorldModelDrawTemplate {
+    mesh: WorldModelMeshHandle,
+    pipeline: WorldModelPipelineHandle,
+    texture_set: WorldModelTextureSetHandle,
+    first_index: u32,
+    index_count: u32,
+    root_ambient: [u8; 4],
+    material: solarity_asset::WorldModelMaterial,
+    pass: crate::WorldModelSurfacePass,
+    final_pass: bool,
+}
+impl WorldModelDrawTemplate {
+    /// Replays the original material arithmetic using this frame's placement and fog.
+    #[must_use]
+    pub fn instantiate(
+        &self,
+        model: Mat4,
+        environment_emissive: f32,
+        fog_color: Vec3,
+    ) -> WorldModelPreparedDraw {
+        WorldModelPreparedDraw {
+            submission_fog_color: (self.final_pass
+                && self.pass.fog_mode() != crate::WorldModelFogMode::Disabled)
+                .then_some(fog_color),
+            submission_fog_outdoor: self.pass.fog_mode() == crate::WorldModelFogMode::OutdoorColor,
+            mesh: self.mesh,
+            pipeline: self.pipeline,
+            texture_set: self.texture_set,
+            first_index: self.first_index,
+            index_count: self.index_count,
+            material: WorldModelMaterialUniform::new(
+                model,
+                self.root_ambient,
+                &self.material,
+                self.pass,
+                environment_emissive,
+                fog_color,
+            ),
+        }
+    }
 }

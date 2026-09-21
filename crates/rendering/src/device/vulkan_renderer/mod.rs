@@ -93,8 +93,9 @@ use crate::device::vulkan_world_frame::{
     WorldUiOverlay,
 };
 use crate::device::vulkan_world_model_draw::{
-    WorldModelPreparedDraw, WorldModelShadowDraw, prepare_draw as prepare_world_model_draw,
+    WorldModelPreparedDraw, WorldModelShadowDraw,
     prepare_shadow_draw as prepare_world_model_shadow_draw,
+    prepare_template as prepare_world_model_template,
 };
 use crate::device::vulkan_world_model_mesh::{
     WorldModelMeshHandle, WorldModelMeshRegistry, WorldModelMeshResourceInfo,
@@ -1979,7 +1980,32 @@ impl VulkanRenderer {
         environment_emissive: f32,
         fog_color: Vec3,
     ) -> Result<WorldModelPreparedDraw, VulkanError> {
-        prepare_world_model_draw(
+        Ok(self
+            .prepare_world_model_draw_template(
+                mesh,
+                pipeline,
+                texture_set,
+                plan,
+                draw_index,
+                pass_index,
+            )?
+            .instantiate(model, environment_emissive, fog_color))
+    }
+
+    /// Validates immutable WMO resources once before worker packet construction.
+    /// # Errors
+    /// Rejects foreign handles and mismatched geometry, material, pipeline or textures.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_world_model_draw_template(
+        &self,
+        mesh: WorldModelMeshHandle,
+        pipeline: WorldModelPipelineHandle,
+        texture_set: WorldModelTextureSetHandle,
+        plan: &WorldModelMeshPlan,
+        draw_index: usize,
+        pass_index: usize,
+    ) -> Result<crate::WorldModelDrawTemplate, VulkanError> {
+        prepare_world_model_template(
             &self.world_model_meshes,
             &self.world_model_pipelines,
             &self.world_model_texture_sets,
@@ -1990,9 +2016,6 @@ impl VulkanRenderer {
             plan,
             draw_index,
             pass_index,
-            model,
-            environment_emissive,
-            fog_color,
         )
     }
 

@@ -19,6 +19,35 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+WMO ordinary and shadow packet preparation now use shared frame workers. GPU
+admission validates immutable surface templates and complete shadow ranges once.
+Frame snapshots pin the exact source generation, transforms, ordered portal
+regions and fog inputs; bounded visible-group jobs replay native first-accepted
+batch order and material arithmetic. Their packet output overlaps unit admission,
+M2 preparation and ground/surface work. Ordered publication retains the previous
+M2/surface/WMO failure sequence and final fog-bank owner.
+
+One ordered shadow job performs root/group bounds, map membership, native 2048
+caps and range instantiation. Unit state updates overlap that job; M2 consumes its
+exact doodad membership at the original dependency. Main retains final dictionary
+publication and Vulkan ownership. Snapshot inputs, portal regions, selection
+scratch and draw outputs use preadmitted reusable CPU buffers. Guard cleanup joins
+both phases and releases source pins after errors or abandoned frames. Immutable
+source/cache residency and the final shadow-doodad dictionary are not newly byte
+accounted by this change. Large individual group/shadow kernels still need the
+broader step-cost policy; this is not completion of every remaining requirement.
+
+
+This batch passes formatting and runtime/rendering/systems Clippy with warnings
+denied, all targets and features. The combined run passes 1,019 tests with
+zero failures and 28 existing ignores; all three doc-test suites complete.
+The real WMO packet/pixel fixture also checks blocked-worker admission, 129-group
+ordered publication, source-pin release after abandonment, and reuse after a
+worker group error. Review caught and corrected portal snapshot timing: capture
+follows M2 entry's current-camera scene rebuild. Evidence is ignored
+`target/wmo-cutover-final2.log`. Build 175 remains installed; no package or live
+performance result is claimed.
+
 Portrait requests now capture the exact published player appearance and pin its
 immutable source generations. One shared frame job computes the portrait camera,
 attachment chain, bone palettes, materials and transparent ordering. Main retains

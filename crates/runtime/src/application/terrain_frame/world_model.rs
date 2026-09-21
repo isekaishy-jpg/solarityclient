@@ -1,6 +1,7 @@
 //! Renderer-local WMO resources and allocation-reusing MODF visibility.
 
 mod admission;
+mod preparation;
 mod shadow;
 mod streaming;
 
@@ -22,9 +23,8 @@ use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, BlpTextureUploadRequest, LiquidFog, LiquidLighting,
     LiquidPreparedDraw, PlacedWorldModelDrawPlan, VulkanError, VulkanRenderer, WorldCameraFrame,
     WorldModelBaseMip, WorldModelMaterialState, WorldModelMeshHandle, WorldModelMeshPlan,
-    WorldModelPipelineHandle, WorldModelPreparedDraw, WorldModelSampledTexture,
-    WorldModelSurfacePassPlan, WorldModelTextureFiltering, WorldModelTextureSet,
-    WorldModelTextureSetHandle,
+    WorldModelPreparedDraw, WorldModelSampledTexture, WorldModelSurfacePassPlan,
+    WorldModelTextureFiltering, WorldModelTextureSet, WorldModelTextureSetHandle,
 };
 use solarity_systems::{MovementCollisionBounds, WorldModelBatchVisibilityQuery};
 
@@ -40,16 +40,9 @@ use crate::application::terrain_coordinator::{
 
 use super::RuntimeTerrainFrameError;
 
-/// One physical pipeline and descriptor pair for a logical MOBA pass.
-#[derive(Clone, Copy)]
-struct PhysicalDrawResource {
-    pipeline: WorldModelPipelineHandle,
-    texture_set: WorldModelTextureSetHandle,
-}
-
-/// One logical MOBA draw expanded to stock's one or two physical passes.
+/// Renderer-validated physical passes, retained for all placements of this source.
 struct LogicalDrawResource {
-    passes: [Option<PhysicalDrawResource>; 2],
+    passes: [Option<solarity_rendering::WorldModelDrawTemplate>; 2],
     pass_count: usize,
 }
 
@@ -57,10 +50,9 @@ struct LogicalDrawResource {
 struct WorldModelGpuSource {
     model: ResourceLease<solarity_asset::DecodedWorldModel>,
     plan: Arc<WorldModelMeshPlan>,
-    mesh: WorldModelMeshHandle,
     draws: Vec<LogicalDrawResource>,
     /// Complete MOMT table, including batches omitted by visible callbacks.
-    shadow_textures: Vec<WorldModelTextureSetHandle>,
+    shadow_templates: Vec<solarity_rendering::WorldModelShadowDraw>,
     draw_bounds: Vec<MovementCollisionBounds>,
     liquids: Vec<LiquidGpuBatch>,
     liquid_indices: Vec<Option<usize>>,
@@ -100,16 +92,16 @@ impl WorldModelGpuPlacementOwner {
 
 /// Complete resident WMO generation for one terrain tile.
 pub(super) struct WorldModelFrame {
-    sources: Vec<Option<WorldModelGpuSource>>,
-    prepared_static: Vec<WorldModelGpuSource>,
+    sources: Vec<Option<Arc<WorldModelGpuSource>>>,
+    prepared_static: Vec<Arc<WorldModelGpuSource>>,
     liquid_materials: LiquidGpuMaterialCache,
     placements: Vec<WorldModelGpuPlacement>,
     placement_indices: HashMap<RuntimeWorldModelMovementOwner, usize>,
-    batch_visibility: WorldModelBatchVisibilityQuery,
-    prepared_draws: Vec<WorldModelPreparedDraw>,
+    preparation: preparation::WorldModelPreparation,
+    prepared_draws: solarity_cpu::CpuBuffer<WorldModelPreparedDraw>,
     /// Final visited group associated with the current prepared packet list.
     prepared_last_group: Option<usize>,
-    shadow_draws: Vec<solarity_rendering::WorldEnvironmentWmoCaster>,
+    shadow_draws: solarity_cpu::CpuBuffer<solarity_rendering::WorldEnvironmentWmoCaster>,
     shadow_doodads: super::shadow::WorldModelShadowDoodads,
     filtering: WorldModelTextureFiltering,
     base_mip: WorldModelBaseMip,
@@ -249,20 +241,6 @@ impl WorldModelFrame {
                 plan,
             });
         }
-        let mut prepared_capacity = 0;
-        for placement in &placements {
-            let source = sources[placement.source_index].as_ref().ok_or(
-                RuntimeTerrainFrameError::WorldModelSourceIndex {
-                    source_index: placement.source_index,
-                    source_count: sources.len(),
-                },
-            )?;
-            prepared_capacity += source
-                .draws
-                .iter()
-                .map(|draw| draw.pass_count)
-                .sum::<usize>();
-        }
         let placement_indices = placements
             .iter()
             .enumerate()
@@ -274,10 +252,10 @@ impl WorldModelFrame {
             liquid_materials,
             placements,
             placement_indices,
-            batch_visibility: WorldModelBatchVisibilityQuery::default(),
-            prepared_draws: Vec::with_capacity(prepared_capacity),
+            preparation: preparation::WorldModelPreparation::default(),
+            prepared_draws: solarity_cpu::CpuBuffer::default(),
             prepared_last_group: None,
-            shadow_draws: Vec::new(),
+            shadow_draws: solarity_cpu::CpuBuffer::default(),
             shadow_doodads: HashMap::new(),
             filtering,
             base_mip,
@@ -401,90 +379,6 @@ impl WorldModelFrame {
         Ok(())
     }
 
-    /// Replays first-visited groups and their ordered root-local portal clips.
-    /// Returns the final submitted scene group for the native fog-bank carry.
-    pub(super) fn prepare_visible_draws(
-        &mut self,
-        renderer: &mut VulkanRenderer,
-        scene_groups: &[WorldModelSceneGroup],
-        environment_emissive: f32,
-        ordinary_fog_color: Vec3,
-        indoor_fog_color: Vec3,
-    ) -> Result<WorldModelVisibleFrame<'_>, RuntimeTerrainFrameError> {
-        self.prepared_draws.clear();
-        let mut last_group = None;
-        for (scene_index, scene) in scene_groups.iter().enumerate() {
-            let Some(&placement_index) = self.placement_indices.get(&scene.owner) else {
-                continue;
-            };
-            let placement = &self.placements[placement_index];
-            if !placement.placement_valid {
-                continue;
-            }
-            let source = self.sources[placement.source_index].as_ref().ok_or(
-                RuntimeTerrainFrameError::WorldModelSourceIndex {
-                    source_index: placement.source_index,
-                    source_count: self.sources.len(),
-                },
-            )?;
-            let group = source.plan.groups().get(scene.group).ok_or(
-                RuntimeTerrainFrameError::WorldModelGroupIndex {
-                    group_index: scene.group,
-                    group_count: source.plan.groups().len(),
-                },
-            )?;
-            let range = group.draw_range();
-            last_group = Some(scene_index);
-            // 799310 accumulates the group's 0x8000 bit across portal visits;
-            // 7964A0 invokes 7B3F30 to select its ordinary or indoor fog bank.
-            // 7F16F0 gives both banks the same range and exponent, so only the
-            // material color varies while the scene fog parameters stay shared.
-            let fog_color = if scene.indoor_fog {
-                indoor_fog_color
-            } else {
-                ordinary_fog_color
-            };
-            for &batch in self
-                .batch_visibility
-                .query(&source.draw_bounds[range.clone()], &scene.frusta)
-            {
-                let draw_index = range.start + batch;
-                let resources =
-                    source
-                        .draws
-                        .get(draw_index)
-                        .ok_or(VulkanError::WorldModelDrawIndex {
-                            requested: draw_index,
-                            available: source.draws.len(),
-                        })?;
-                for pass_index in 0..resources.pass_count {
-                    let resource =
-                        resources.passes[pass_index].ok_or(VulkanError::WorldModelDrawPass {
-                            requested: pass_index,
-                            available: resources.pass_count,
-                        })?;
-                    self.prepared_draws.push(
-                        renderer
-                            .prepare_world_model_draw(
-                                source.mesh,
-                                resource.pipeline,
-                                resource.texture_set,
-                                &source.plan,
-                                draw_index,
-                                pass_index,
-                                placement.plan.transform(),
-                                environment_emissive,
-                                fog_color,
-                            )?
-                            .with_outdoor_fog_color(ordinary_fog_color),
-                    );
-                }
-            }
-        }
-        self.prepared_last_group = last_group;
-        Ok(self.visible_frame())
-    }
-
     /// Borrows the last successful packet preparation without repeating culling
     /// or material validation. Main publishes the fog bank at its ordered boundary.
     pub(super) fn visible_frame(&self) -> WorldModelVisibleFrame<'_> {
@@ -508,7 +402,7 @@ fn prepare_gpu_source(
     filtering: WorldModelTextureFiltering,
     base_mip: WorldModelBaseMip,
     liquid_materials: &mut LiquidGpuMaterialCache,
-) -> Result<WorldModelGpuSource, RuntimeTerrainFrameError> {
+) -> Result<Arc<WorldModelGpuSource>, RuntimeTerrainFrameError> {
     let mut profile = solarity_profiling::profile!("WMO source publication");
     let plan = Arc::clone(source.plan());
     profile.mark("mesh plan");
@@ -570,7 +464,7 @@ fn prepare_gpu_source(
     } else {
         renderer.prepare_world_model_texture_sets(&texture_requests)?
     };
-    let draws = prepare_draw_resources(renderer, &plan, &texture_sets)?;
+    let draws = prepare_draw_resources(renderer, mesh, &plan, &texture_sets)?;
     profile.mark("descriptors and pipelines");
     let draw_bounds = plan
         .draws()
@@ -592,25 +486,43 @@ fn prepare_gpu_source(
         }
     }
     profile.mark("liquids");
-    Ok(WorldModelGpuSource {
+    let shadow_templates = plan
+        .shadow_draws()
+        .iter()
+        .enumerate()
+        .map(|(index, draw)| {
+            let texture = texture_sets
+                .get(usize::from(draw.material_id()))
+                .copied()
+                .ok_or(VulkanError::WorldModelDrawMaterial)?;
+            renderer.prepare_world_model_shadow_draw(
+                mesh,
+                texture,
+                &plan,
+                index,
+                glam::Mat4::IDENTITY,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Arc::new(WorldModelGpuSource {
         model: ResourceLease::clone(source.model()),
         plan,
-        mesh,
         draws,
-        shadow_textures: texture_sets,
+        shadow_templates,
         draw_bounds,
         liquids,
         liquid_indices,
-    })
+    }))
 }
 
 fn prepare_draw_resources(
     renderer: &mut solarity_rendering::GpuPreparation<'_>,
+    mesh: WorldModelMeshHandle,
     plan: &WorldModelMeshPlan,
     texture_sets: &[WorldModelTextureSetHandle],
 ) -> Result<Vec<LogicalDrawResource>, RuntimeTerrainFrameError> {
     let mut resources = Vec::with_capacity(plan.draws().len());
-    for draw in plan.draws() {
+    for (draw_index, draw) in plan.draws().iter().enumerate() {
         let material = plan
             .materials()
             .get(usize::from(draw.material_id()))
@@ -631,12 +543,17 @@ fn prepare_draw_resources(
             draw.class(),
             material,
         );
-        let mut passes = [None; 2];
+        let mut passes = std::array::from_fn(|_| None);
         for (pass_index, pass) in pass_plan.passes().iter().copied().enumerate() {
-            passes[pass_index] = Some(PhysicalDrawResource {
-                pipeline: renderer.prepare_world_model_pipeline(pass_plan.is_unified(), pass)?,
+            let pipeline = renderer.prepare_world_model_pipeline(pass_plan.is_unified(), pass)?;
+            passes[pass_index] = Some(renderer.prepare_world_model_draw_template(
+                mesh,
+                pipeline,
                 texture_set,
-            });
+                plan,
+                draw_index,
+                pass_index,
+            )?);
         }
         resources.push(LogicalDrawResource {
             passes,

@@ -124,16 +124,6 @@ impl TerrainFrame {
         )
         .with_specular_enabled(specular_enabled);
         profile.mark("scene uniforms");
-        self.m2
-            .update_player_state(player, local_animation_time_ms, random)?;
-        self.m2
-            .update_creature_states(creatures, local_animation_time_ms, random)?;
-        self.m2
-            .update_remote_player_states(remote_players, local_animation_time_ms, random)?;
-        profile.mark("unit states");
-        if let Some(sources) = unit_effect_sources {
-            self.m2.set_unit_effect_sources(sources);
-        }
         // 874210 registers extShadowQuality=2. 7BB3E0 centers its primary map
         // on the controlled unit; 7BB570 consumes the raw day/night ray.
         let shadow_projection = self
@@ -174,8 +164,20 @@ impl TerrainFrame {
             .zip(environment_frame)
             .map(|(primary, frame)| shadow::WorldShadowAdmission::new(primary, frame, camera, ray))
             .transpose()?;
-        self.world_models
-            .prepare_shadow_draws(renderer, shadow_admission.as_ref())?;
+        let mut pending_wmo = self
+            .world_models
+            .begin_shadow_preparation(cpu, shadow_admission.as_ref())?;
+        self.m2
+            .update_player_state(player, local_animation_time_ms, random)?;
+        self.m2
+            .update_creature_states(creatures, local_animation_time_ms, random)?;
+        self.m2
+            .update_remote_player_states(remote_players, local_animation_time_ms, random)?;
+        profile.mark("unit states");
+        if let Some(sources) = unit_effect_sources {
+            self.m2.set_unit_effect_sources(sources);
+        }
+        pending_wmo.finish_shadow(wait)?;
         let entity_light_environment = solarity_systems::WorldEntityLightEnvironment::new(
             ambient,
             diffuse,
@@ -226,8 +228,17 @@ impl TerrainFrame {
                 .as_ref()
                 .map(|admission| shadow::SceneryShadowQueries {
                     admission,
-                    doodads: self.world_models.shadow_doodads(),
+                    doodads: pending_wmo.frame().shadow_doodads(),
                 }),
+        )?;
+        // M2 entry rebuilds the current camera's portal scene before it returns.
+        // Freeze that generation now; receiver callbacks cannot mutate these clips.
+        pending_wmo.start_visible(
+            cpu,
+            terrain.world_model_scene_groups(),
+            environment.world_model_emissive(),
+            environment.ordinary_model_fog().color(),
+            fog.color(),
         )?;
         profile.mark("M2 admission");
         // Scene visibility and model clocks are fixed. Ordered M2 traversal may
@@ -238,7 +249,7 @@ impl TerrainFrame {
         let mut independent = terrain
             .world_terrain_frustum(camera)
             .map_err(RuntimeTerrainFrameError::from)
-            .map(|frustum| (frustum, Ok(())));
+            .map(|frustum| (frustum, Ok::<(), RuntimeTerrainFrameError>(())));
         while !main.initial_done() {
             let (step, outcome) = main
                 .take_ready()
@@ -259,7 +270,7 @@ impl TerrainFrame {
                     .as_ref()
                     .map(|admission| shadow::SceneryShadowQueries {
                         admission,
-                        doodads: self.world_models.shadow_doodads(),
+                        doodads: pending_wmo.frame().shadow_doodads(),
                     }),
             )?;
             let _profile = solarity_profiling::profile!("world.independent_preparation");
@@ -282,16 +293,9 @@ impl TerrainFrame {
                         }
                     }
                     super::MainPreparationStep::WorldModels => {
-                        *wmo = self
-                            .world_models
-                            .prepare_visible_draws(
-                                renderer,
-                                terrain.world_model_scene_groups(),
-                                environment.world_model_emissive(),
-                                environment.ordinary_model_fog().color(),
-                                fog.color(),
-                            )
-                            .map(|_| ());
+                        // Frozen WMO packets are already running. Their consumer remains
+                        // after M2/surface error publication, so do not join here.
+                        *wmo = Ok(());
                     }
                     super::MainPreparationStep::Surfaces | super::MainPreparationStep::Uniforms => {
                         unreachable!("light continuations follow initial world preparation")
@@ -322,7 +326,7 @@ impl TerrainFrame {
                     .as_ref()
                     .map(|admission| shadow::SceneryShadowQueries {
                         admission,
-                        doodads: self.world_models.shadow_doodads(),
+                        doodads: pending_wmo.frame().shadow_doodads(),
                     }),
             )?;
             if !main.sources_published() && pending_m2.scene_lights().is_some() {
@@ -349,7 +353,7 @@ impl TerrainFrame {
                                 tiles: &self.tiles,
                                 terrain_draws: &mut self.visible_draws,
                                 liquid_draws: &mut self.liquid_draws,
-                                world_models: &self.world_models,
+                                world_models: pending_wmo.frame(),
                             }
                             .prepare(
                                 renderer,
@@ -390,11 +394,12 @@ impl TerrainFrame {
         profile.mark("M2 and lit surface publication");
         // Preserve the original failure order even though WMO work executed earlier.
         wmo_result?;
+        pending_wmo.finish_visible(wait)?;
         let world_model::WorldModelVisibleFrame {
             draws: world_model_draws,
             last_group: last_world_model_group,
             shadow_draws: world_model_shadow_draws,
-        } = self.world_models.visible_frame();
+        } = pending_wmo.frame().visible_frame();
         terrain.complete_world_model_scene(last_world_model_group);
         profile.mark("WMO publication");
 

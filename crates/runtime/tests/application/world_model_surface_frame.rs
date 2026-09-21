@@ -400,7 +400,78 @@ fn world_model_surface_packets_and_pixels_follow_owner_portal_regions() -> Resul
         frame.shadow_draws.is_empty(),
         "disabling clears prior shadow packets"
     );
+    verify_worker_publication(&mut frame, &mut renderer, &groups)?;
     renderer.shutdown()?;
+    Ok(())
+}
+
+/// Occupied workers must not stop admission; partitions retain exact packet order,
+/// abandoned inputs release their source pins, and a bad group cannot poison reuse.
+fn verify_worker_publication(
+    frame: &mut WorldModelFrame,
+    renderer: &mut solarity_rendering::VulkanRenderer,
+    groups: &[WorldModelSceneGroup],
+) -> Result<(), Box<dyn Error>> {
+    use crate::application::frame_pipeline::FrameWait;
+    use crate::frame_cpu_support::continuation_support::HeldFrameWorkers;
+    let cpu = solarity_cpu::CpuExecutor::new(solarity_cpu::CpuPoolConfig::new(
+        solarity_cpu::CpuExecutionPlan::new(2, 2, 1, 2)?,
+        std::num::NonZeroUsize::new(32).ok_or("capacity")?,
+        solarity_cpu::CpuStoragePlan::new(64 << 20, 64 << 20, 0),
+    ))?;
+    let expected = frame
+        .prepare_visible_draws(renderer, groups, 0.7, Vec3::X, Vec3::Y)?
+        .draws
+        .to_vec();
+    // 129 groups used to leave a trailing unseeded slot when rounding partitions.
+    let mut repeated = (0..129)
+        .map(|index| {
+            let source = &groups[index % 2];
+            WorldModelSceneGroup {
+                owner: source.owner,
+                group: source.group,
+                indoor_fog: source.indoor_fog,
+                frusta: source.frusta.clone(),
+                doodads: Default::default(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let source = Arc::clone(frame.sources[0].as_ref().ok_or("source")?);
+    let pins = Arc::strong_count(&source);
+    let held = HeldFrameWorkers::new(&cpu)?;
+    let mut pending = frame.begin_preparation(&cpu, &repeated, None, 0.7, Vec3::X, Vec3::Y)?;
+    assert!(Arc::strong_count(&source) > pins);
+    held.release()?;
+    pending.finish_visible(&mut FrameWait::Offline)?;
+    drop(pending);
+    assert_eq!(Arc::strong_count(&source), pins);
+    let prefix = &frame.visible_frame().draws[..expected.len() * 64];
+    assert_eq!(prefix, expected.repeat(64));
+    assert_eq!(frame.visible_frame().last_group, Some(128));
+    let admitted = cpu
+        .storage()
+        .snapshot()
+        .used(solarity_cpu::CpuStorageClass::Frame);
+    assert!(admitted > 0);
+    drop(frame.begin_preparation(&cpu, &repeated, None, 0.7, Vec3::X, Vec3::Y)?);
+    assert_eq!(
+        Arc::strong_count(&source),
+        pins,
+        "abandoned snapshots release their pins"
+    );
+    repeated[0].group = usize::MAX;
+    assert!(
+        frame
+            .begin_preparation(&cpu, &repeated, None, 0.7, Vec3::X, Vec3::Y)?
+            .finish_visible(&mut FrameWait::Offline)
+            .is_err()
+    );
+    assert_eq!(Arc::strong_count(&source), pins);
+    let mut pending = frame.begin_preparation(&cpu, groups, None, 0.7, Vec3::X, Vec3::Y)?;
+    pending.finish_visible(&mut FrameWait::Offline)?;
+    drop(pending);
+    assert_eq!(frame.visible_frame().draws, expected);
+    assert_eq!(Arc::strong_count(&source), pins);
     Ok(())
 }
 

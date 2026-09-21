@@ -28,14 +28,48 @@ impl WorldModelBatchVisibilityQuery {
         self.selected.clear();
         self.visible.resize(bounds.len(), false);
         self.visible.fill(false);
-        for frustum in frusta {
-            for (index, bounds) in bounds.iter().copied().enumerate() {
-                if !self.visible[index] && frustum.intersects_bounds(bounds) {
-                    self.visible[index] = true;
-                    self.selected.push(index);
-                }
-            }
-        }
+        select(bounds, frusta, &mut self.visible, |index| {
+            self.selected.push(index);
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .unwrap_or_else(|never| match never {});
         &self.selected
     }
+    /// Selects into preadmitted worker storage without allocating in the kernel.
+    /// # Errors
+    /// Rejects insufficient visibility or selected-index capacity.
+    pub fn query_admitted<'a>(
+        bounds: &[MovementCollisionBounds],
+        frusta: &[WorldSceneFrustum],
+        visible: &mut [bool],
+        selected: &'a mut solarity_cpu::CpuBuffer<usize>,
+    ) -> Result<&'a [usize], solarity_cpu::CpuError> {
+        if visible.len() < bounds.len() {
+            return Err(solarity_cpu::CpuError::OutputCapacity {
+                requested: bounds.len(),
+                available: visible.len(),
+            });
+        }
+        selected.clear();
+        visible.fill(false);
+        select(bounds, frusta, visible, |index| selected.push(index))?;
+        Ok(selected)
+    }
+}
+
+fn select<E>(
+    bounds: &[MovementCollisionBounds],
+    frusta: &[WorldSceneFrustum],
+    visible: &mut [bool],
+    mut append: impl FnMut(usize) -> Result<(), E>,
+) -> Result<(), E> {
+    for frustum in frusta {
+        for (index, bounds) in bounds.iter().copied().enumerate() {
+            if !visible[index] && frustum.intersects_bounds(bounds) {
+                visible[index] = true;
+                append(index)?;
+            }
+        }
+    }
+    Ok(())
 }
