@@ -24,7 +24,14 @@ fn configured_texture_steps_keep_alias_reuse_and_ordered_failures() -> Result<()
     .map(AssetPath::new)
     .into_iter()
     .collect::<Result<Vec<_>, _>>()?;
-    let mut operation = prepare_configured_glue_textures(catalog, paths);
+    let mut operation = prepare_configured_glue_textures(
+        catalog,
+        paths,
+        solarity_asset::AssetReadBudget::for_service(
+            solarity_cpu::CpuStorageBudget::new(solarity_cpu::CpuStoragePlan::new(0, 0, 1 << 20)),
+            solarity_cpu::CpuService::Speculative,
+        ),
+    );
     for _ in 0..(1 + mounts + 4) {
         assert!(matches!(operation(), ControlFlow::Continue(())));
     }

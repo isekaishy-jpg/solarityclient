@@ -44,6 +44,8 @@ mod loading_screen;
 mod model;
 #[path = "stock_seed/model_requests.rs"]
 mod model_requests;
+#[path = "stock_seed/read_admission.rs"]
+mod read_admission;
 #[path = "stock_seed/realm.rs"]
 mod realm;
 #[path = "stock_seed/shader.rs"]

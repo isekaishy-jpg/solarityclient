@@ -85,7 +85,7 @@ pub(super) fn decode_events(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
     bone_count: usize,
 ) -> Result<Vec<M2Event>, AssetError> {
     let array = array_ref(path, bytes, 0x100, "events")?;
@@ -133,7 +133,7 @@ fn decode_event_track(
     field: &str,
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
 ) -> Result<M2EventTrack, AssetError> {
     let interpolation =
         M2Interpolation::from_raw(path, read_u16(path, model_bytes, offset, field)?, field)?;

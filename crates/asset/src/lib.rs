@@ -60,8 +60,8 @@ pub use database::{
 pub use database::{VehicleCatalog, VehicleDefinition, VehicleSeatDefinition};
 pub use database::{WeatherCatalog, WeatherDefinition};
 pub use file_stack::{
-    ArchiveCatalog, AssetMount, AssetNamespaceId, AssetRead, AssetResourceKey, AssetStore,
-    AssetStoreHandle, LocalizedDocument,
+    ArchiveCatalog, AssetBytes, AssetMount, AssetNamespaceId, AssetRead, AssetReadBudget,
+    AssetResourceKey, AssetStore, AssetStoreHandle, AssetText, LocalizedDocument,
 };
 pub use model::{
     DecodedM2Model, M2AnimationSet, M2Attachment, M2Batch, M2BlendMode, M2Bone, M2Camera,

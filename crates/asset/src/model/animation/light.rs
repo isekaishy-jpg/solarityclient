@@ -116,7 +116,7 @@ pub(super) fn decode_lights(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
     bone_count: usize,
 ) -> Result<Vec<M2Light>, AssetError> {
     let array = array_ref(path, bytes, 0x108, "lights")?;
@@ -226,7 +226,7 @@ fn float_track(
     field: &str,
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
 ) -> Result<M2Track<f32>, AssetError> {
     decode_track(
         path, bytes, offset, field, globals, sequences, payloads, 4, read_f32,

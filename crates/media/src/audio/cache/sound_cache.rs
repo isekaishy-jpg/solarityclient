@@ -11,7 +11,7 @@ pub struct EncodedSound {
     path: AssetPath,
     namespace: solarity_asset::AssetNamespaceId,
     source: ArchiveDescriptor,
-    bytes: Vec<u8>,
+    bytes: solarity_asset::AssetBytes,
 }
 
 impl EncodedSound {

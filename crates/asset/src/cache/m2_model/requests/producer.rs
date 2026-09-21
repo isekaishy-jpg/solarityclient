@@ -17,6 +17,13 @@ impl M2LoadProducer {
         M2LoadRequest::new(Arc::clone(&self.slot), service)
     }
 
+    /// Admits encoded source inputs before decoding and publishes failures to all joiners.
+    /// # Errors
+    /// Returns source admission, archive, decode or namespace errors.
+    pub fn load_admitted(self, store: &mut AssetStore, budget: &crate::AssetReadBudget) -> Outcome {
+        store.with_read_budget(budget, |store| self.load(store))
+    }
+
     /// Decodes the existing primary-profile contract outside all request/cache locks.
     /// # Errors
     /// Returns the original archive/decode error or rejects a mismatched namespace.

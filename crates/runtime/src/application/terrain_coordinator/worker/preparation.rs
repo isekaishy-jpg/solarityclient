@@ -144,10 +144,13 @@ fn advance(
     let worker = worker.as_mut().unwrap_or_else(|| {
         unreachable!("terrain decoding follows successful archive-bank ownership")
     });
+    let budget = shared.read_budget();
     let next = match stage {
-        TerrainStage::Map => {
-            TerrainStage::LowDetail(TerrainMap::load(&mut worker.assets, definition)?)
-        }
+        TerrainStage::Map => TerrainStage::LowDetail(
+            worker
+                .assets
+                .with_read_budget(&budget, |store| TerrainMap::load(store, definition))?,
+        ),
         TerrainStage::LowDetail(terrain) => {
             if worker
                 .low_detail
@@ -156,7 +159,9 @@ fn advance(
             {
                 worker.low_detail = Some((
                     request.map_id,
-                    load_low_detail(&mut worker.assets, &terrain)?,
+                    worker
+                        .assets
+                        .with_read_budget(&budget, |store| load_low_detail(store, &terrain))?,
                 ));
             }
             TerrainStage::Content(terrain)
@@ -180,21 +185,25 @@ fn advance(
                     tile_y: request.tile.y(),
                 });
             }
-            let decoded = terrain.load_tile(&mut worker.assets, request.tile)?;
+            let decoded = worker
+                .assets
+                .with_read_budget(&budget, |store| terrain.load_tile(store, request.tile))?;
             TerrainStage::Tile(
                 terrain,
                 TilePreparation::with_shared_sources(decoded, specular_textures, shared.clone()),
             )
         }
         TerrainStage::Tile(terrain, pending) => {
-            match pending.advance(
-                &mut worker.ground_detail_assets,
-                &mut worker.liquid_assets,
-                &mut worker.textures,
-                &mut worker.models,
-                &mut worker.world_models,
-                &mut worker.assets,
-            )? {
+            match worker.assets.with_read_budget(&budget, |store| {
+                pending.advance(
+                    &mut worker.ground_detail_assets,
+                    &mut worker.liquid_assets,
+                    &mut worker.textures,
+                    &mut worker.models,
+                    &mut worker.world_models,
+                    store,
+                )
+            })? {
                 ControlFlow::Continue(next) => TerrainStage::Tile(terrain, next),
                 ControlFlow::Break(tile) => {
                     return Ok(ControlFlow::Break(resident(
@@ -207,16 +216,18 @@ fn advance(
             }
         }
         TerrainStage::Global(terrain, mut pending) => {
-            if pending.models.advance(
-                &mut worker.world_models,
-                &mut worker.models,
-                &mut worker.textures,
-                &mut pending.m2,
-                &mut worker.liquid_assets,
-                &mut worker.assets,
-                Some(shared),
-                &mut pending.dependency,
-            )? {
+            if worker.assets.with_read_budget(&budget, |store| {
+                pending.models.advance(
+                    &mut worker.world_models,
+                    &mut worker.models,
+                    &mut worker.textures,
+                    &mut pending.m2,
+                    &mut worker.liquid_assets,
+                    store,
+                    Some(shared),
+                    &mut pending.dependency,
+                )
+            })? {
                 let (models, collision, liquids) = pending.models.finish();
                 let global =
                     ResidentGlobalWorldModel::from_models(pending.m2, models, collision, liquids);

@@ -91,7 +91,7 @@ pub(super) struct State<T> {
     pub plan: FrameBatchPlan,
     pub runners: usize,
     pub workers: usize,
-    pub service: Option<Arc<std::sync::atomic::AtomicU8>>,
+    pub service: Option<Arc<crate::pool::task::ServiceIdentity>>,
     pub open: bool,
     pub gate: Gate,
     pub subscriptions: StorageVec<Option<Subscription>>,
@@ -290,6 +290,7 @@ impl<T> State<T> {
         self.edge_count = 0;
         self.ready.clear();
         self.dispatch = None;
+        self.service = None;
         self.subscriptions.clear();
         self.drain_tail = super::diagnostics::DrainTail::default();
     }

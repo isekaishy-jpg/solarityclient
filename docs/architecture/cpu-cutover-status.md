@@ -36,6 +36,15 @@ time; expired-variation event samples and callback-time sampling still run on
 the main owner. Broader graph, memory and source cutover work and performance
 qualification remain open. Build 174 remains installed; no FPS gain is claimed.
 
+The composition branch now combines resumable unit effects and encoded read
+ownership with the committed mounted-rider, native screenshot-wait and retained
+M2 payload changes through `8f14b60b`. Startup keeps the service owner's existing
+box throughout construction and return. An integration fixture checks independent
+encoded/decoded charges and required promotion of the same published generation.
+Combined formatting and workspace Clippy pass. The full combined suite passes
+1,701 tests, with zero failures and 33 existing ignored tests, including doc tests.
+Logs are in ignored `target/source-integration-{clippy,test}.{stdout,stderr}.log`.
+
 Retained M2 generations now charge the existing CPU Result allowances once for
 their decoded geometry, primary SKIN, collision/hierarchy buffers and nested
 animation, material, light, ribbon and particle tracks. Runtime binds the shared
@@ -81,6 +90,24 @@ Offline rendering retains synchronous readback. Formatting and rendering/runtime
 Clippy with warnings denied pass, as do the real GPU capture/resize test and both
 runtime screenshot tests (quality, pixels, saturation and save failures). The log
 is ignored `target/capture-wait-check.log`. This has no measured FPS result.
+
+Encoded source admission now follows archive-returned byte ownership through
+model decoders, retained database tables, sound buffers, FreeType faces and UTF-8
+Lua source. Connected worker readers reserve declared input storage before reads
+and reconcile returned capacity before publication. Terrain, appearance,
+GameObject M2, sound, world UI, sky, unit-effect and speculative Glue source paths
+use the CPU budget. Shared WMO retirement retains its budget and live service
+priority. Five real archive admission/ownership tests pass; formatting and full
+workspace Clippy pass. The full workspace suite passes 1,692 tests with 33
+existing ignored tests and no failures or compiler/linker warnings. This does not account
+for all decoded caches, codec scratch or main-owned startup reads, and establishes
+no live FPS gain. See [source ownership and limits](asset-read-admission.md).
+
+Combined validation exposed a startup stack overflow despite successful
+compilation and Clippy. The process service owner now returns and remains boxed,
+removing large by-value transfers through outer startup/caller frames. The exact
+previously failing startup/shutdown test passes without increasing the stack
+limit. See [startup ownership evidence](cpu-startup-stack.md).
 
 The root pose batch now also admits mount clocks already selected by ordered
 callbacks and named-bone requests from offscreen units. Attachment, event and
@@ -281,7 +308,7 @@ dependency. See [ownership, connected consumers and limits](cpu-shared-products.
 
 The [Build 163 live Brewfest capture](live-build163-brewfest.md) records 11.254 ms
 ordinary frames, including 5.432 ms across M2 admission/publication. Main consumes
-0.964 of a core while each CPU worker consumes 0.075–0.084 cores. Scene changes
+0.964 of a core while each CPU worker consumes 0.075â€“0.084 cores. Scene changes
 and incomplete background-activity isolation prevent a build-only regression
 claim; remaining main-thread model work is a concrete cutover target.
 
@@ -964,7 +991,7 @@ The complete requirements below remain in scope.
 The next priority is the remaining main-thread admission and renderer boundary.
 Complete M2 assembly/ordering now runs as an owned worker operation; its join and
 lighter-scene overhead still need improvement. The user expects work to
-be distributed across cores for ordinary mixed populations of 200–300 entities.
+be distributed across cores for ordinary mixed populations of 200â€“300 entities.
 M2 geometry already receives `JobContext`; completing every unrelated service
 adapter is not a prerequisite for that distribution work. Preserve stock
 ordering and compare main-thread time and worker utilization, not just whether
@@ -1009,7 +1036,8 @@ an operation has a context parameter. The requirements below remain in scope.
   result-page accounting now exist; model output, override buffers and retained
   geometry job records, final frame streams and owned full skeletal palettes now
   adopt it. Dispatched live effect simulation and named CPU bone samples now carry
-  reservations as well. Other resident effect owners, ordinary asset buffers
+  reservations as well. Encoded buffers now carry admission in connected worker
+  readers. Other resident effect owners, remaining source readers, decoded buffers
   and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, remaining GPU upload waits
@@ -1031,13 +1059,17 @@ an operation has a context parameter. The requirements below remain in scope.
   Glue attachments/pets and population attachments/mounts/item visuals now join
   the same namespace source authority through resumable appearance tasks.
   Sky models and stars now join the same authority through resumable source tasks.
-  Effects still require their remaining shared-source connection.
+  Unit effect sources now join the same authority through a resumable operation.
+  Formatting, workspace Clippy and all 1,694 workspace tests pass, with zero
+  failures and 33 existing ignored tests; see
+  [the effect source report](unit-effect-source-cutover.md).
   Other source domains still need shared pending authority, cross-resource I/O
   dependencies and the remaining domain-wide shared result leases. WMO requests
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
-  Request metadata and encoded payload budgets still need admission/accounting.
+  Request metadata and remaining encoded source paths still need admission/accounting;
+  connected worker source buffers now retain reservations through ownership transfer.
   Stock-evidenced animation demand and
   retention, derived cache invalidation, byte-budgeted residency and GPU retirement
   from the resource design.
@@ -1251,7 +1283,7 @@ The hidden populated-world replay passed 168 frames across streaming, stationary
 orbit, pointer, travel-out, travel-back and settled phases with Soap and 48 NPCs.
 Primary and all three environment shadow maps produced packets. Sampled trace
 records show static admission on the three protected workers, with observed group
-lengths of 6–64. The capture reported zero dropped samples/events/trace rows and
+lengths of 6â€“64. The capture reported zero dropped samples/events/trace rows and
 zero capacity overflows; stderr contained no warning/error. Artifacts are
 `target/m2-spatial-smoke*`, with capture `1789850594757-1` in its isolated profile.
 This was a debug functional replay with a 32 MiB stack, using installed terrain,

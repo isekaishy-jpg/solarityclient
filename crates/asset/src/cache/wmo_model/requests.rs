@@ -18,6 +18,9 @@ use thiserror::Error;
 /// Source failures remain separate from scheduler cancellation and producer abandonment.
 #[derive(Clone, Debug, Error)]
 pub enum WmoLoadError {
+    /// Producer admission failed before source work could proceed.
+    #[error(transparent)]
+    Cpu(Arc<CpuError>),
     /// Joined consumers retain the same original archive or decoder failure.
     #[error(transparent)]
     Asset(Arc<AssetError>),

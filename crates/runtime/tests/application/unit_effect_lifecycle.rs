@@ -3,7 +3,8 @@
 use super::*;
 use crate::test_support::{ClientFixture, game_object_models};
 use solarity_asset::{
-    AnimationDataCatalog, ArchiveCatalog, AssetPath, ClientDataRoot, DecodedM2Model, Locale,
+    AnimationDataCatalog, ArchiveCatalog, AssetPath, AssetStore, ClientDataRoot, DecodedM2Model,
+    Locale,
 };
 use std::error::Error;
 

@@ -215,7 +215,7 @@ impl ClientServices {
     pub(super) fn start(
         configuration: &RuntimeConfiguration,
         visibility: StartupVisibility,
-    ) -> Result<(Self, usize, usize), ApplicationError> {
+    ) -> Result<(Box<Self>, usize, usize), ApplicationError> {
         let instrumentation = super::frame_profile::RuntimeInstrumentation::new(configuration);
         let _profile = solarity_profiling::profile!("application.startup");
         let mut startup_profile = StartupProfile::load(configuration.profile_root())?;
@@ -486,6 +486,10 @@ impl ClientServices {
                         prepare_configured_glue_textures(
                             ui_texture_catalog,
                             configured_texture_paths,
+                            solarity_asset::AssetReadBudget::for_service(
+                                cpu.storage().clone(),
+                                solarity_cpu::CpuService::Speculative,
+                            ),
                         ),
                     )),
                 )),
@@ -561,7 +565,7 @@ impl ClientServices {
         let world = RuntimeWorldCoordinator::new();
         let terrain_specular = glue.cvar_boolean("specular");
         Ok((
-            Self {
+            Box::new(Self {
                 instrumentation,
                 renderer,
                 screenshots: super::screenshot::RuntimeScreenshots::new(
@@ -677,7 +681,7 @@ impl ClientServices {
                 login_failures: VecDeque::new(),
                 world_failures: VecDeque::new(),
                 network_shutdown_timeout: configuration.network_shutdown_timeout(),
-            },
+            }),
             archive_count,
             addon_count,
         ))

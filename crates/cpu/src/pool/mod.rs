@@ -29,5 +29,5 @@ pub use executor::CpuExecutor;
 pub use permit::CpuTaskPermit;
 pub use plan::CpuExecutionPlan;
 pub use service::CpuService;
-pub use task::{CpuServiceControl, CpuTask, CpuTaskDependency, CpuTaskStep};
+pub use task::{CpuServiceControl, CpuServiceScope, CpuTask, CpuTaskDependency, CpuTaskStep};
 pub use types::{CpuError, CpuPoolConfig, CpuPoolSnapshot};

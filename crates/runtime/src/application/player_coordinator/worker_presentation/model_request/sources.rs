@@ -149,7 +149,13 @@ impl SourceWork {
                 // This producer completes in the current indivisible bulk turn.
                 // Binding its short-lived demand to the whole appearance would
                 // demote the remaining work when this source's subscribers leave.
-                M2Load::Producer(producer) => producer.load(store)?,
+                M2Load::Producer(producer) => producer.load_admitted(
+                    store,
+                    &solarity_asset::AssetReadBudget::for_service(
+                        budget.clone(),
+                        service.service(),
+                    ),
+                )?,
                 M2Load::Pending(request) => {
                     let dependency = request.dependency(budget, CpuStorageClass::Required)?;
                     let edge = dependency.task_dependency()?;

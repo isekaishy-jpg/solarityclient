@@ -476,9 +476,16 @@ impl RuntimeGameObjectPresentation {
                     shared,
                 ))
             } else {
+                let budget = cpu.storage().clone();
+                let service = permit.service_control();
                 permit.submit_with_context(move |context| {
                     context.diagnostic_value("game_object.prepare.direct", 1);
-                    prepare_on_worker(source, &task_request, model)
+                    prepare_on_worker(
+                        source,
+                        &task_request,
+                        model,
+                        &solarity_asset::AssetReadBudget::for_service(budget, service.service()),
+                    )
                 })
             };
             if let Some(demand) = &model_demand {

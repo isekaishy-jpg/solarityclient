@@ -105,7 +105,15 @@ fn model_steps(
                     M2LocalLightCount::Zero
                 };
                 return CpuTaskStep::Complete(
-                    ResidentM2Source::from_model_with_lights(model, &mut textures, store, lights)
+                    store
+                        .with_read_budget(&shared.read_budget(), |store| {
+                            ResidentM2Source::from_model_with_lights(
+                                model,
+                                &mut textures,
+                                store,
+                                lights,
+                            )
+                        })
                         .map(|source| (source, lights)),
                 );
             }
@@ -164,6 +172,10 @@ impl RuntimeSkyResources {
                     Err(CpuError::AtCapacity { .. }) => return Ok(()),
                     Err(error) => return Err(error.into()),
                 };
+                let budget = solarity_asset::AssetReadBudget::for_service(
+                    cpu.storage().clone(),
+                    solarity_cpu::CpuService::Required,
+                );
                 let mut sources: CelestialSources = Default::default();
                 let mut next = 0;
                 let operation = crate::application::archive_job::prepare_archive(
@@ -184,7 +196,9 @@ impl RuntimeSkyResources {
                             Ok(path) => path,
                             Err(error) => return ControlFlow::Break(Err(error)),
                         };
-                        match BlpTextureSource::load(store, &path) {
+                        match store
+                            .with_read_budget(&budget, |store| BlpTextureSource::load(store, &path))
+                        {
                             Ok(source) => sources[next] = Some(source),
                             Err(error) => {
                                 tracing::warn!(texture = %path, %error, "celestial texture request failed; using stock green texture")

@@ -85,7 +85,7 @@ pub(super) fn decode_cameras(
     bytes: &[u8],
     globals: &[u32],
     sequences: &[M2Sequence],
-    payloads: &[Option<(AssetPath, Vec<u8>)>],
+    payloads: &[Option<(AssetPath, crate::AssetBytes)>],
 ) -> Result<(Vec<M2Camera>, Vec<Option<u16>>), AssetError> {
     let array = array_ref(path, bytes, 0x110, "cameras")?;
     validate_array(path, bytes, array, 100, "cameras")?;

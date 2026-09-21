@@ -87,6 +87,123 @@ fn demand_registered_before_binding_applies_only_current_consumers() -> Result<(
     Ok(())
 }
 
+/// Parent controls obtained before and after dispatch must see the same scoped demand.
+#[test]
+fn nested_source_cannot_demote_parent_and_expired_controls_cannot_promote_it()
+-> Result<(), Box<dyn Error>> {
+    let mut cpu = pool()?;
+    let (release, wait) = mpsc::channel();
+    let blocker = cpu.try_submit(move || wait.recv())?;
+    let permit = cpu.try_reserve()?;
+    let parent = permit.service_control();
+    let scope = parent.scoped_demand(CpuService::Speculative)?;
+    let source = CpuServiceDemand::default();
+    let interest = source.subscribe(CpuService::Speculative);
+    assert!(source.bind(scope.control()));
+    let task = permit.submit(|| 42);
+    let later = task.service_control();
+    let mut observed = vec![parent.service()];
+    task.set_service(CpuService::Speculative);
+    observed.push(parent.service());
+    interest.set_service(CpuService::Required);
+    observed.push(later.service());
+    later.set_service(CpuService::Retirement);
+    observed.push(parent.service());
+    drop(scope);
+    observed.push(later.service());
+    interest.set_service(CpuService::Speculative);
+    interest.set_service(CpuService::Required);
+    observed.push(parent.service());
+    release.send(())?;
+    blocker.join()??;
+    assert_eq!(task.join()?, 42);
+    assert_eq!(
+        observed,
+        [
+            CpuService::Required,
+            CpuService::Speculative,
+            CpuService::Required,
+            CpuService::Required,
+            CpuService::Retirement,
+            CpuService::Retirement,
+        ]
+    );
+    cpu.shutdown()?;
+    Ok(())
+}
+
+/// Completing one source must not clear another active source's promotion.
+#[test]
+fn sibling_producers_withdraw_independently_and_restore_current_owner_demand()
+-> Result<(), Box<dyn Error>> {
+    let mut cpu = pool()?;
+    let (release, wait) = mpsc::channel();
+    let blocker = cpu.try_submit(move || wait.recv())?;
+    let task = cpu.try_submit_for(CpuService::Speculative, || 42)?;
+    let owner = task.service_control();
+    let first = owner.scoped_demand(CpuService::Required)?;
+    let second = owner.scoped_demand(CpuService::Retirement)?;
+    let control = second.control();
+    let mut observed = vec![owner.service()];
+    drop(first);
+    observed.push(owner.service());
+    owner.set_service(CpuService::Required);
+    drop(second);
+    observed.push(owner.service());
+    owner.set_service(CpuService::Speculative);
+    control.set_service(CpuService::Required);
+    observed.push(owner.service());
+    release.send(())?;
+    blocker.join()??;
+    assert_eq!(task.join()?, 42);
+    assert_eq!(
+        observed,
+        [
+            CpuService::Required,
+            CpuService::Retirement,
+            CpuService::Required,
+            CpuService::Speculative
+        ]
+    );
+    cpu.shutdown()?;
+    Ok(())
+}
+
+/// Budget refusal is atomic and retained stale controls keep their metadata charged.
+#[test]
+fn scoped_demand_admits_metadata_before_publication_and_releases_last_control()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{CpuError, CpuStorageClass as Class, CpuStorageKind as Kind};
+    let mut cpu = pool()?;
+    let permit = cpu.try_reserve()?;
+    let owner = permit.service_control();
+    let baseline = cpu.storage().snapshot().used(Class::Required);
+    let snapshot = cpu.storage().snapshot();
+    let pressure = cpu.storage().reserve(
+        Class::Required,
+        Kind::Scratch,
+        snapshot.limit(Class::Required) - snapshot.used(Class::Required),
+    )?;
+    assert!(matches!(
+        owner.scoped_demand(CpuService::Speculative),
+        Err(CpuError::StorageAtCapacity { .. })
+    ));
+    assert_eq!(owner.service(), CpuService::Required);
+    drop(pressure);
+    assert_eq!(cpu.storage().snapshot().used(Class::Required), baseline);
+    let scope = owner.scoped_demand(CpuService::Required)?;
+    let control = scope.control();
+    let charged = cpu.storage().snapshot().used(Class::Required);
+    assert!(charged > baseline);
+    drop(scope);
+    assert_eq!(cpu.storage().snapshot().used(Class::Required), charged);
+    drop(control);
+    assert_eq!(cpu.storage().snapshot().used(Class::Required), baseline);
+    drop((permit, owner));
+    cpu.shutdown()?;
+    Ok(())
+}
+
 #[test]
 fn resource_admission_observes_current_consumer_demand() {
     let demand = CpuServiceDemand::default();

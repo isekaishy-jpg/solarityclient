@@ -92,11 +92,15 @@ impl AppearanceBank {
                 if let Some(model) = input.take() {
                     primary = Some(match model {
                         ModelInput::Ready(model) => model,
-                        ModelInput::Producer(producer) => {
-                            producer.load(current.cache.store.as_mut().unwrap_or_else(|| {
+                        ModelInput::Producer(producer) => producer.load_admitted(
+                            current.cache.store.as_mut().unwrap_or_else(|| {
                                 unreachable!("admitted appearance retains its phase inputs")
-                            }))?
-                        }
+                            }),
+                            &solarity_asset::AssetReadBudget::for_service(
+                                budget.clone(),
+                                service.service(),
+                            ),
+                        )?,
                         ModelInput::Pending(_) => {
                             unreachable!("pending primary was serviced before archive work")
                         }
@@ -140,6 +144,10 @@ impl AppearanceBank {
                             prepare.take().unwrap_or_else(|| {
                                 unreachable!("admitted appearance retains its phase inputs")
                             }),
+                            &solarity_asset::AssetReadBudget::for_service(
+                                budget.clone(),
+                                service.service(),
+                            ),
                         );
                     // The final consumer has acquired its own leases before these pins leave.
                     sources = None;
@@ -161,13 +169,17 @@ impl AppearanceBank {
         mut self,
         model: ResourceLease<DecodedM2Model>,
         prepare: Prepare<T>,
+        budget: &solarity_asset::AssetReadBudget,
     ) -> AppearanceCompletion<T> {
         let result = with_worker_presentation(
             self.catalog,
             self.catalogs,
             self.level,
             &mut self.cache,
-            |presentation| prepare(presentation, model),
+            |presentation| {
+                let assets = presentation.assets.clone();
+                assets.with_read_budget(budget, || prepare(presentation, model))
+            },
         );
         AppearanceCompletion {
             cache: self.cache,
