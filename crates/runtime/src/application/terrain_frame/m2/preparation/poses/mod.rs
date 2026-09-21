@@ -4,7 +4,9 @@ mod admission;
 mod frame;
 mod input;
 mod late;
+mod scene;
 pub(in crate::application::terrain_frame::m2) use late::LatePose;
+pub(in crate::application::terrain_frame::m2) use scene::{ScenePoseExecution, ScenePoses};
 
 pub(in crate::application::terrain_frame::m2) use admission::PoseAdmission;
 

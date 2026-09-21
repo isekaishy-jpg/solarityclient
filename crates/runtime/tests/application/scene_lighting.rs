@@ -294,6 +294,7 @@ fn offscreen_animated_sources_light_distinct_receivers_and_retire_when_hidden()
     let exterior = M2DirectionalLight::new(-Vec3::Z, Vec3::splat(0.1), Vec3::splat(0.2));
     let cpu = crate::frame_cpu_support::executor()?;
     verify_late_pose_dependency(&cpu, frame.sources[1].as_ref().ok_or("light source")?)?;
+    verify_scene_pose_batch(&cpu, frame.sources[1].as_ref().ok_or("light source")?)?;
     for now in [1., 251., 751.] {
         let consumed = frame.late_pose.consumed();
         let visible = frame.prepare_visible_draws_with_unit_effects(
@@ -406,6 +407,180 @@ impl scene_lighting::SceneLighting {
 }
 
 /// A discovered dependency returns main immediately even when every worker is occupied.
+fn verify_scene_pose_batch(
+    cpu: &solarity_cpu::CpuExecutor,
+    source: &M2GpuSource,
+) -> Result<(), Box<dyn Error>> {
+    use crate::application::frame_pipeline::FrameWait;
+    use solarity_rendering::M2BoneTransforms;
+    let mut poses = preparation::poses::ScenePoses::default();
+    let mut wait = FrameWait::Offline;
+    let view = Mat4::from_rotation_z(0.3);
+    let overrides = M2BonePoseOverrides {
+        model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+        ..Default::default()
+    };
+    let clock = |i: usize| M2AnimationClock::new(0, 31. * i as f32, 31. * i as f32);
+    let held = late_continuation_support::HeldFrameWorkers::new(cpu)?;
+    for index in 0..12 {
+        poses.seed(cpu, index, source, clock(index), view, overrides, &[0, 0])?;
+    }
+    poses.start(cpu)?;
+    let all_pending = (0..12)
+        .map(|index| poses.is_ready(index))
+        .collect::<Result<Vec<_>, _>>()?;
+    held.release()?;
+    assert!(
+        all_pending.into_iter().all(|ready| !ready),
+        "batch dispatch must return before occupied workers"
+    );
+    let mut serial = solarity_rendering::M2BoneSamples::default();
+    for index in (0..12).rev() {
+        serial.recompose(
+            source.model.animations(),
+            clock(index),
+            view,
+            overrides,
+            &[0],
+        )?;
+        let sampled = poses.sample(
+            Some(cpu),
+            &mut wait,
+            index,
+            source,
+            clock(index),
+            view,
+            overrides,
+            &[0],
+        )?;
+        assert_eq!(sampled.bone_transform(0), serial.bone_transform(0));
+    }
+    assert_eq!(
+        poses.hits, 12,
+        "every frozen event sample consumed its independent worker result"
+    );
+    assert_eq!(poses.misses, 0);
+    let unchanged = poses
+        .sample(
+            Some(cpu),
+            &mut wait,
+            0,
+            source,
+            clock(0),
+            view,
+            overrides,
+            &[0],
+        )?
+        .bone_transform(0);
+    assert_eq!(
+        poses.hits, 13,
+        "another callback reuses the same immutable result"
+    );
+    for (tick, changed_view) in [(251., view), (751., Mat4::from_rotation_y(0.6))] {
+        let changed = M2AnimationClock::new(0, tick, tick);
+        serial.recompose(
+            source.model.animations(),
+            changed,
+            changed_view,
+            overrides,
+            &[0],
+        )?;
+        let actual = poses
+            .sample(
+                Some(cpu),
+                &mut wait,
+                0,
+                source,
+                changed,
+                changed_view,
+                overrides,
+                &[0],
+            )?
+            .bone_transform(0);
+        assert_eq!(actual, serial.bone_transform(0));
+        assert_ne!(actual, unchanged);
+    }
+    assert_eq!(
+        poses.misses, 2,
+        "changed callback inputs cannot reuse a stale pose"
+    );
+    poses.finish(&mut wait)?;
+
+    let hits_before = poses.hits;
+    for index in 0..6 {
+        poses.seed_palette(cpu, index, source, clock(index), view, overrides)?;
+    }
+    poses.start(cpu)?;
+    let mut palette = M2BonePose::default();
+    for index in 0..6 {
+        serial.recompose(
+            source.model.animations(),
+            clock(index),
+            view,
+            overrides,
+            &[0],
+        )?;
+        poses.palette(
+            cpu,
+            &mut wait,
+            index,
+            source,
+            clock(index),
+            view,
+            overrides,
+            &mut palette,
+        )?;
+        assert_eq!(palette.bone_transform(0), serial.bone_transform(0));
+    }
+    assert_eq!(
+        poses.hits - hits_before,
+        6,
+        "independent parents consume batched full palettes"
+    );
+    poses.finish(&mut wait)?;
+
+    // Failed unused demand cannot poison a narrower callback.
+    poses.seed(cpu, 0, source, clock(0), view, overrides, &[0, usize::MAX])?;
+    poses.start(cpu)?;
+    let valid = poses.sample(
+        Some(cpu),
+        &mut wait,
+        0,
+        source,
+        clock(0),
+        view,
+        overrides,
+        &[0],
+    )?;
+    assert_eq!(valid.bone_transform(0), unchanged);
+    poses.finish(&mut wait)?;
+
+    // Abandonment must return worker-owned state before this owner is reused.
+    poses.seed(cpu, 3, source, clock(3), view, overrides, &[0])?;
+    poses.start(cpu)?;
+    poses.finish(&mut wait)?;
+    poses.seed(cpu, 3, source, clock(4), view, overrides, &[0])?;
+    poses.start(cpu)?;
+    serial.recompose(source.model.animations(), clock(4), view, overrides, &[0])?;
+    assert_eq!(
+        poses
+            .sample(
+                Some(cpu),
+                &mut wait,
+                3,
+                source,
+                clock(4),
+                view,
+                overrides,
+                &[0]
+            )?
+            .bone_transform(0),
+        serial.bone_transform(0)
+    );
+    poses.finish(&mut wait)?;
+    Ok(())
+}
+
 fn verify_late_pose_dependency(
     cpu: &solarity_cpu::CpuExecutor,
     source: &M2GpuSource,

@@ -2840,6 +2840,8 @@ impl ClientServices {
         profile.mark("creature and remote player residency");
         if let Some(frame) = self.terrain_frame.as_mut() {
             frame.advance_unbound_passengers(
+                &self.cpu,
+                &mut super::frame_pipeline::FrameWait::Native(&mut self.platform),
                 self.player.movement_animations(),
                 &mut self.crt_rand,
             )?;

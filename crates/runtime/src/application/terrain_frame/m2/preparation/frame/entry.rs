@@ -18,6 +18,8 @@ impl M2Frame {
             .map(|_| ());
         let geometry = self.finish_geometry(&mut FrameWait::Offline);
         self.restore_geometry_states();
+        let scene_poses = self.scene_poses.finish(&mut FrameWait::Offline);
+        let event_poses = self.event_poses.finish(&mut FrameWait::Offline);
         let poses = self.pose_batch.finish(&mut FrameWait::Offline);
         let late_poses = self.late_pose.finish(&mut FrameWait::Offline);
         self.late_pose.release_model();
@@ -27,9 +29,18 @@ impl M2Frame {
         } else {
             Ok(())
         };
-        for error in [finalization, geometry, poses, late_poses, spatial, lighting]
-            .into_iter()
-            .filter_map(Result::err)
+        for error in [
+            finalization,
+            geometry,
+            poses,
+            scene_poses,
+            event_poses,
+            late_poses,
+            spatial,
+            lighting,
+        ]
+        .into_iter()
+        .filter_map(Result::err)
         {
             tracing::warn!(error = %error, "M2 frame abandonment encountered an executor failure");
         }
@@ -69,6 +80,7 @@ impl M2Frame {
         let pending = self.begin_visible_draws_with_unit_effects(
             renderer,
             cpu,
+            wait,
             frustum,
             camera,
             first_transparent_pass,
@@ -106,6 +118,7 @@ impl M2Frame {
         &mut self,
         renderer: &VulkanRenderer,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut FrameWait<'_>,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         first_transparent_pass: M2TransparentPass,
@@ -165,6 +178,7 @@ impl M2Frame {
             let _cycles = solarity_profiling::profile_cycles!("m2.prepare_cpu");
             frame.prepare_frame_scene(
                 cpu,
+                wait,
                 frustum,
                 camera,
                 animation_time_ms,

@@ -19,6 +19,42 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected cutover changes
 
+Unit/mount event positions, rider callback transforms and attached-effect anchors
+now consume CPU worker bone samples. Independent callback inputs and independent
+vehicle parents dispatch as batches; initial seat targets, nested/changed parent
+queries and unloaded-passenger queries retain their ordered consumers. A changed
+clock, model generation, view or override requires its exact worker result.
+Native input servicing remains active at those required callback dependencies.
+The ordered callback/RNG owner is unchanged; this is not a general suspension of
+the callback stack or removal of every scene-admission barrier.
+
+Expired-variation event samples discovered during placement admission now dispatch
+as an independent batch, with saved placement state and ordered event publication.
+The consumer yields before an unfinished event sample and resumes without another
+clock advance. Successful sparse results can serve narrower callback demands;
+an error from unused broader demand cannot poison a valid narrower request.
+Vehicle consumers retain full-palette validation. Worker state returns on failure
+or abandonment, model leases release after consumption/cleanup, and retained
+callback buffers are pruned for removed placements and reset for changed source
+generations.
+
+Formatting, runtime Clippy with warnings denied, 475 runtime library tests and
+68 stock-seed integration tests pass (28 existing ignores). Controlled coverage
+checks occupied-worker batch submission, out-of-order result consumption,
+changed-input rejection, sparse/full parity, abandonment/reuse and worker-backed
+unloaded-passenger queries. Validation also exposed an existing population fixture
+race: it re-added an NPC before the cancelled task returned its exclusive bank.
+The fixture now waits for that cancellation before testing replacement-source
+failure; production loading behavior is unchanged. Final evidence is ignored
+`target/scene-cutover-final3.log`. Build 175 remains installed; no new package or
+live performance result is claimed.
+
+Still open in the frame path: sky/portrait numeric preparation, renderer-side mip
+preparation/staging, the single current-placement late-pose dependency, receiver
+and final-publication barriers, and complete connected working-set admission.
+Requested animation loading, shared texture requests and the remaining resource
+budgets/lifecycles below also remain required.
+
 [Testing Build 175](testing-build175-consolidation.md) is installed from the
 validated consolidated source `f14d27ab`. Its identity, installed artifact hash
 and Testing shortcut are verified. The full cutover requirements below remain
@@ -52,9 +88,9 @@ Formatting and runtime Clippy with warnings denied pass. Runtime validation
 passes 471 library tests and 68 stock-seed integration tests (28 existing ignores),
 including held-worker suspension, sparse/full pose parity, animated offscreen
 light result consumption and exactly-once placement accounting. Evidence is in
-ignored `target/late-pose-final2.log`. Late dependencies remain ordered one at a
-time; expired-variation event samples and callback-time sampling still run on
-the main owner. Broader graph, memory and source cutover work and performance
+ignored `target/late-pose-final2.log`. Current-placement late dependencies remain
+ordered one at a time; expired-variation and callback-time sampling are connected
+by the scene batches above. Broader graph, memory and source cutover work and performance
 qualification remain open. Build 174 remains installed; no FPS gain is claimed.
 
 The composition branch now combines resumable unit effects and encoded read
@@ -139,7 +175,7 @@ overrides and exact named demand before swapping the result into the ordered
 owner. Sampling an event window leaves its consumption cursor untouched. The
 offscreen equipped-NPC and moving-camera serial comparisons exercise this path;
 attachment inputs discovered later in traversal are connected by the placement
-continuation above; callback-time sampling remains to be connected.
+continuation above; callback-time sampling now uses the scene batches above.
 Formatting, runtime Clippy with warnings denied, and all 468 runtime tests pass
 (27 existing ignored). The three offscreen mount populations consume worker
 samples while retaining callback/RNG behavior. Validation is recorded in ignored

@@ -15,6 +15,7 @@ pub(super) struct PoseJob {
     placement: usize,
     trace: solarity_profiling::TraceContext,
     model: Option<ResourceLease<DecodedM2Model>>,
+    layout: solarity_asset::ResourceWeak<DecodedM2Model>,
     orientation: Vec<bool>,
     clock: M2AnimationClock,
     view: Mat4,
@@ -106,6 +107,7 @@ impl PoseJob {
             measurement: solarity_cpu::WorkMeasurement::default(),
             placement: 0,
             trace: solarity_profiling::TraceContext::default(),
+            layout: ResourceLease::downgrade(&model),
             model: Some(model),
             orientation: Vec::new(),
             clock: M2AnimationClock::new(0, 0., 0.),
@@ -130,6 +132,10 @@ impl PoseJob {
         self.placement
     }
 
+    pub(super) fn retains_layout(&self, source: &M2GpuSource) -> bool {
+        self.layout.as_ptr() == ResourceLease::as_ptr(&source.model)
+    }
+
     /// Replaces all frame inputs; no old sampling result survives preparation.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prepare(
@@ -144,6 +150,13 @@ impl PoseJob {
     ) {
         self.placement = placement;
         self.trace = solarity_profiling::TraceContext::capture().fork("m2.pose.request");
+        if !self.retains_layout(source) {
+            self.pose = M2BonePose::default();
+            self.samples = M2BoneSamples::default();
+            self.requested = solarity_cpu::CpuBuffer::default();
+            self.orientation = Vec::new();
+            self.layout = ResourceLease::downgrade(&source.model);
+        }
         if self
             .model
             .as_ref()
@@ -252,6 +265,55 @@ impl PoseJob {
         self.trace.link("m2.pose.consume_samples");
         std::mem::swap(&mut self.samples, output);
         Ok(true)
+    }
+
+    /// Successful supersets may serve another callback without recomputation. A failed
+    /// broad request cannot introduce an error for a narrower, otherwise valid consumer.
+    pub(super) fn matches_samples(
+        &self,
+        model: &ResourceLease<DecodedM2Model>,
+        clock: M2AnimationClock,
+        view: Mat4,
+        overrides: M2BonePoseOverrides<'_>,
+        bones: &[usize],
+    ) -> bool {
+        self.sparse
+            && self.matches(model, clock, view, overrides)
+            && self.result.is_some()
+            && (&*self.requested == bones
+                || (self.result.as_ref().is_some_and(Result::is_ok)
+                    && bones.iter().all(|bone| self.requested.contains(bone))))
+    }
+
+    pub(super) fn samples(&mut self) -> Result<&M2BoneSamples, RuntimeTerrainFrameError> {
+        if self.result.as_ref().is_some_and(Result::is_err) {
+            self.result
+                .take()
+                .unwrap_or_else(|| unreachable!("sample result exists"))?;
+        }
+        Ok(&self.samples)
+    }
+
+    /// The frozen serial reference uses exactly the same inputs without worker admission.
+    pub(super) fn sample_unadmitted(&mut self, bones: &[usize]) {
+        self.sparse = true;
+        self.result = Some(
+            self.samples.recompose(
+                self.model
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("sample owns its model"))
+                    .animations(),
+                self.clock,
+                self.view,
+                M2BonePoseOverrides {
+                    model_oriented_billboard_bones: &self.orientation,
+                    finger_pose: self.fingers,
+                    bone_transforms: &self.transforms,
+                    bone_sequences: &self.sequences,
+                },
+                bones,
+            ),
+        );
     }
 
     fn matches(

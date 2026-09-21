@@ -794,11 +794,18 @@ impl TerrainFrame {
 
     pub(super) fn advance_unbound_passengers(
         &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         scene: &crate::application::unit_animation::UnitAnimationScene,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.m2
-            .advance_unbound_passengers(scene, scene.scene_time_ms() as f32, random)
+        self.m2.advance_unbound_passengers(
+            Some(cpu),
+            wait,
+            scene,
+            scene.scene_time_ms() as f32,
+            random,
+        )
     }
 
     /// Rebuilds only the player-owned source after appearance customization.

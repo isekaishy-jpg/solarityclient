@@ -192,6 +192,7 @@ fn verify(moving: bool, publishes_light: bool) -> Result<(), Box<dyn Error>> {
         let pending = frame.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,

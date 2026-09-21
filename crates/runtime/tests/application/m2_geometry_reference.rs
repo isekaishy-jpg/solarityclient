@@ -100,6 +100,11 @@ impl M2Frame {
         self.publish_placement_topology();
         frame_profile.mark("residency and topology");
         self.vehicle_passengers.prepare_timing(
+            &mut super::super::preparation::poses::ScenePoseExecution {
+                cpu: None,
+                wait: &mut crate::application::frame_pipeline::FrameWait::Offline,
+                poses: &mut self.scene_poses,
+            },
             self.placements.as_mut_slice(),
             &self.sources,
             &self.placement_visibility,
@@ -159,6 +164,11 @@ impl M2Frame {
             }
         }
         self.vehicle_passengers.prepare(
+            &mut super::super::preparation::poses::ScenePoseExecution {
+                cpu: None,
+                wait: &mut crate::application::frame_pipeline::FrameWait::Offline,
+                poses: &mut self.scene_poses,
+            },
             self.placements.as_mut_slice(),
             &self.sources,
             &self.placement_visibility,
@@ -169,7 +179,14 @@ impl M2Frame {
         )?;
         self.placement_visibility
             .set_vehicle_parents(self.vehicle_passengers.parents());
-        self.advance_unit_callbacks(camera, animation_time_ms, random, unit_effect_callback)?;
+        self.advance_unit_callbacks(
+            None,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
+            camera,
+            animation_time_ms,
+            random,
+            unit_effect_callback,
+        )?;
         self.rider_transforms.clear();
         self.rider_transforms.reserve(self.mounted_guids.len());
         self.item_transforms.clear();

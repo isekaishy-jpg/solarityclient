@@ -192,6 +192,7 @@ impl TerrainFrame {
         let mut pending_m2 = self.m2.begin_visible_draws_with_unit_effects(
             renderer,
             cpu,
+            wait,
             frustum,
             camera,
             if camera_submerged {

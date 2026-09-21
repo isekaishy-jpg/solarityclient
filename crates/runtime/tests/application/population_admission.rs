@@ -113,6 +113,12 @@ fn exercise_shared_primary(lifecycle: SourceLifecycle) -> Result<(), Box<dyn Err
         observer.poll().is_none(),
         "one withdrawal cannot abandon the shared producer"
     );
+    // Cancellation is asynchronous. Return the withdrawn lifetime's exclusive bank
+    // before expecting the replacement to join the still-pending original source.
+    while presentation.creature_preparation_pending() {
+        ready.recv_timeout(Duration::from_secs(10))?;
+    }
+    presentation.synchronize_creatures_async(Some(&world), |_| None, &cpu, &mut renderer)?;
     add_unit(&mut world, 30, ObjectKind::Unit, 0)?;
     assert_ne!(world.object_identity(30), Some(original));
     presentation.synchronize_creatures_async(Some(&world), |_| None, &cpu, &mut renderer)?;

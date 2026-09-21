@@ -262,6 +262,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         let mut pending = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,
@@ -427,6 +428,7 @@ fn compare_geometry(count: u64, steps: u32, measure: bool) -> Result<(), Box<dyn
         let mut abandoned = candidate.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             M2TransparentPass::One,

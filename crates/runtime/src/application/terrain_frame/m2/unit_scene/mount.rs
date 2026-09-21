@@ -8,8 +8,11 @@ use crate::application::model_playback::M2ExpiredVariation;
 use glam::Vec3;
 
 impl M2Frame {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn advance_mount_callbacks(
         &mut self,
+        cpu: Option<&solarity_cpu::CpuExecutor>,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         index: usize,
         camera: WorldCameraFrame,
         now: f32,
@@ -54,8 +57,11 @@ impl M2Frame {
             self.bone_demand
                 .events(&source.model, placement.owner, event.event_window);
             self.bone_demand.attachment(&source.model, 0);
-            self.bone_samples_scratch.recompose(
-                source.model.animations(),
+            let samples = self.scene_poses.sample(
+                cpu,
+                wait,
+                index,
+                source,
                 event.clock,
                 camera.view() * transform,
                 M2BonePoseOverrides {
@@ -72,7 +78,7 @@ impl M2Frame {
                 placement.owner,
                 transform,
                 &placement.sound_lifetime,
-                &self.bone_samples_scratch,
+                samples,
                 event.event_window,
             )?;
             let Some((animation, body_source, rider_scale)) = &body else {
@@ -87,9 +93,12 @@ impl M2Frame {
             // this body query samples its current pose without another scan.
             let clock = playback.sample_clock(now as u32);
             let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
-            if clock != event.clock || sequences != event.bone_sequences {
-                self.bone_samples_scratch.recompose(
-                    source.model.animations(),
+            let samples = if clock != event.clock || sequences != event.bone_sequences {
+                self.scene_poses.sample(
+                    cpu,
+                    wait,
+                    index,
+                    source,
                     clock,
                     camera.view() * transform,
                     M2BonePoseOverrides {
@@ -98,20 +107,21 @@ impl M2Frame {
                         ..Default::default()
                     },
                     self.bone_demand.bones(),
-                )?;
-            }
+                )?
+            } else {
+                samples
+            };
             let attachment = source.model.attachment(0).ok_or_else(|| {
                 RuntimeTerrainFrameError::MissingMountM2Attachment {
                     model: source.model.path().clone(),
                     attachment_id: 0,
                 }
             })?;
-            let bone = self
-                .bone_samples_scratch
+            let bone = samples
                 .bone_transform(usize::from(attachment.bone_index()))
                 .ok_or(solarity_rendering::M2BonePoseError::AttachmentBoneIndex {
                     requested: attachment.bone_index(),
-                    available: self.bone_samples_scratch.bone_count(),
+                    available: samples.bone_count(),
                 })?;
             // Bone queries do not test an attachment's enable channel. That
             // channel governs the later rider callback traversal separately.

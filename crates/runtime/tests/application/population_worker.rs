@@ -16,6 +16,14 @@ use std::thread::{self, ThreadId};
 use std::time::Duration;
 
 impl super::super::RuntimePlayerPresentation {
+    /// A withdrawn NPC must return its bank before a replacement lifetime can join.
+    pub(in crate::application) fn creature_preparation_pending(&self) -> bool {
+        self.creature_worker
+            .pending
+            .as_ref()
+            .is_some_and(|pending| !pending.stage.is_finished())
+    }
+
     /// Local fixtures distinguish source/CPU readiness from main-only GPU warmup.
     pub(in crate::application) fn local_preparation_pending(&self) -> bool {
         self.local_worker

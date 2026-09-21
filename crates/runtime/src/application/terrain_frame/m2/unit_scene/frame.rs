@@ -7,8 +7,78 @@ use super::super::{
 use crate::application::model_playback::M2ExpiredVariation;
 
 impl M2Frame {
+    /// Freeze independent callback inputs after placement, without advancing any timer.
+    pub(in crate::application::terrain_frame::m2) fn seed_callback_poses(
+        &mut self,
+        cpu: &solarity_cpu::CpuExecutor,
+        camera: WorldCameraFrame,
+        now: f32,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        for &index in self.placement_visibility.dynamic_scene_indices() {
+            let placement = &self.placements[index];
+            let mount = matches!(
+                placement.owner,
+                M2GpuPlacementOwner::PlayerMount { .. }
+                    | M2GpuPlacementOwner::RemotePlayerMount { .. }
+                    | M2GpuPlacementOwner::CreatureMount { .. }
+            );
+            if placement.unit_animation.is_none() && !mount {
+                continue;
+            }
+            let Some(source) = &self.sources[placement.source_index] else {
+                continue;
+            };
+            let Some(playback) = &placement.playback else {
+                continue;
+            };
+            let playback = playback.borrow();
+            let clock = playback.sample_clock(now as u32);
+            self.bone_demand.clear();
+            self.bone_demand.events(
+                &source.model,
+                placement.owner,
+                playback.sample_event_window(now),
+            );
+            if mount {
+                self.bone_demand.attachment(&source.model, 0);
+            }
+            if let Some(animation) = &placement.unit_animation {
+                self.unit_effects.request_anchor_bones(
+                    animation,
+                    &source.model,
+                    &mut self.bone_demand,
+                );
+            }
+            if self.bone_demand.bones().is_empty() {
+                continue;
+            }
+            let body = placement
+                .unit_animation
+                .as_ref()
+                .map(|animation| animation.body_pose());
+            let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
+            self.scene_poses.seed(
+                cpu,
+                index,
+                source,
+                clock,
+                camera.view() * placement.transform,
+                M2BonePoseOverrides {
+                    model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+                    bone_transforms: body.as_ref().map_or(&[], |body| body.bone_transforms()),
+                    bone_sequences: &sequences,
+                    ..Default::default()
+                },
+                self.bone_demand.bones(),
+            )?;
+        }
+        self.scene_poses.start(cpu)
+    }
+
     pub(in crate::application::terrain_frame::m2) fn advance_unit_callbacks(
         &mut self,
+        cpu: Option<&solarity_cpu::CpuExecutor>,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         camera: WorldCameraFrame,
         now: f32,
         random: &mut CrtRand,
@@ -30,6 +100,11 @@ impl M2Frame {
                 continue;
             }
             self.vehicle_passengers.refresh_callback_pose(
+                &mut super::super::preparation::poses::ScenePoseExecution {
+                    cpu,
+                    wait,
+                    poses: &mut self.scene_poses,
+                },
                 index,
                 self.placements.as_mut_slice(),
                 &self.sources,
@@ -47,6 +122,8 @@ impl M2Frame {
             }
             if mount {
                 self.advance_mount_callbacks(
+                    cpu,
+                    wait,
                     index,
                     camera,
                     now,
@@ -55,7 +132,7 @@ impl M2Frame {
                 )?;
                 continue;
             }
-            if !self.prepare_rider_callback_transform(index, camera, now)? {
+            if !self.prepare_rider_callback_transform(cpu, wait, index, camera, now)? {
                 // 832450 skips disabled attachment children. Their timers still
                 // age; the next admitted scan sees only that scene's interval.
                 if let Some(playback) = &mut self.placements[index].playback {
@@ -80,8 +157,11 @@ impl M2Frame {
                 self.bone_demand.clear();
                 self.bone_demand
                     .events(&source.model, placement.owner, event.event_window);
-                self.bone_samples_scratch.recompose(
-                    source.model.animations(),
+                let samples = self.scene_poses.sample(
+                    cpu,
+                    wait,
+                    index,
+                    source,
                     event.clock,
                     camera.view() * transform,
                     M2BonePoseOverrides {
@@ -99,7 +179,7 @@ impl M2Frame {
                     placement.owner,
                     transform,
                     &placement.sound_lifetime,
-                    &self.bone_samples_scratch,
+                    samples,
                     event.event_window,
                 )?;
                 if let Some(callback) = effect_callback.as_mut() {
@@ -126,8 +206,11 @@ impl M2Frame {
                     &source.model,
                     &mut self.bone_demand,
                 );
-                self.bone_samples_scratch.recompose(
-                    source.model.animations(),
+                let samples = self.scene_poses.sample(
+                    cpu,
+                    wait,
+                    index,
+                    source,
                     clock,
                     camera.view() * transform,
                     M2BonePoseOverrides {
@@ -138,12 +221,8 @@ impl M2Frame {
                     },
                     self.bone_demand.bones(),
                 )?;
-                self.unit_effects.update_anchor(
-                    animation,
-                    &source.model,
-                    &self.bone_samples_scratch,
-                    transform,
-                )?;
+                self.unit_effects
+                    .update_anchor(animation, &source.model, samples, transform)?;
             }
         }
         Ok(())
@@ -151,6 +230,8 @@ impl M2Frame {
 
     fn prepare_rider_callback_transform(
         &mut self,
+        cpu: Option<&solarity_cpu::CpuExecutor>,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         index: usize,
         camera: WorldCameraFrame,
         now: f32,
@@ -191,8 +272,11 @@ impl M2Frame {
         let sequences = playback.bone_sequence_clocks(&source.model, clock, now as u32);
         self.bone_demand.clear();
         self.bone_demand.attachment(&source.model, 0);
-        self.bone_samples_scratch.recompose(
-            source.model.animations(),
+        let samples = self.scene_poses.sample(
+            cpu,
+            wait,
+            parent,
+            source,
             clock,
             camera.view() * placement.transform,
             M2BonePoseOverrides {
@@ -208,7 +292,7 @@ impl M2Frame {
                 attachment_id: 0,
             }
         })?;
-        let transform = self.bone_samples_scratch.attachment_transform(
+        let transform = samples.attachment_transform(
             source.model.animations(),
             attachment,
             clock,

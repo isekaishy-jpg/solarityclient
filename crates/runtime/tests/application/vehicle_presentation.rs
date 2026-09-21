@@ -23,6 +23,7 @@ fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_
     };
 
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let cpu = crate::frame_cpu_support::executor()?;
     let parameters = [0.25, 4., 20., 0., 10., 0., 20.];
     let fixture = crate::test_support::unit_models::fixture_with_vehicle_entry(parameters)?;
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
@@ -128,6 +129,8 @@ fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_
             )?;
             let before = random;
             frame.advance_unbound_passengers(
+                Some(&cpu),
+                &mut crate::application::frame_pipeline::FrameWait::Offline,
                 presentation.movement_animations(),
                 now as f32,
                 &mut random,
@@ -245,6 +248,8 @@ fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_
             &mut random,
         )?;
         frame.advance_unbound_passengers(
+            Some(&cpu),
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             presentation.movement_animations(),
             arrival as f32,
             &mut random,
@@ -294,6 +299,10 @@ fn unloaded_passenger_uses_current_parent_bones_and_keeps_travel_when_its_model_
         );
         assert!(!controller.needs_advance(end - 1));
         assert!(controller.needs_advance(end));
+        assert!(
+            frame.scene_poses.palette_jobs > 0,
+            "unloaded passengers consume worker seat palettes"
+        );
     }
     Ok(())
 }

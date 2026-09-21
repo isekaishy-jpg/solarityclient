@@ -102,7 +102,7 @@ impl M2Frame {
                 let mut observed = admission
                     .work
                     .resume_placement(pending.as_ref().map(|(_, state)| *state));
-                let selected = if let Some((selected, _)) = pending {
+                let mut selected = if let Some((selected, _)) = pending {
                     selected
                 } else {
                     let Some(placement_index) = self.frame_work.next() else {
@@ -464,40 +464,6 @@ impl M2Frame {
                                 .unit_pose
                                 .map(|pose| pose.body)
                         });
-                    let bone_transforms = body_pose
-                        .as_ref()
-                        .map_or(&[][..], |pose| pose.bone_transforms());
-                    for expired in advance.expired_variations {
-                        self.bone_demand.clear();
-                        self.bone_demand
-                            .events(&source.model, owner, expired.event_window);
-                        self.bone_samples_scratch.recompose(
-                            source.model.animations(),
-                            expired.clock,
-                            camera.view() * placement.transform,
-                            M2BonePoseOverrides {
-                                model_oriented_billboard_bones: &source
-                                    .model_oriented_billboard_bones,
-                                bone_transforms,
-                                bone_sequences: &expired.bone_sequences,
-                                ..Default::default()
-                            },
-                            self.bone_demand.bones(),
-                        )?;
-                        let first_event = self.triggered_events.len();
-                        append_triggered_events(
-                            &mut self.triggered_events,
-                            &source.model,
-                            placement.owner,
-                            placement.transform,
-                            &placement.sound_lifetime,
-                            &self.bone_samples_scratch,
-                            expired.event_window,
-                        )?;
-                        if let Some(effect) = &placement.unit_effect {
-                            effect.bind_sound_events(&mut self.triggered_events[first_event..]);
-                        }
-                    }
                     let clock = advance.clock;
                     let bone_sequences = playback.bone_sequence_clocks(
                         &source.model,
@@ -584,6 +550,9 @@ impl M2Frame {
                     observed.primary_shadow = shadow_admitted;
                     observed.palette = needs_palette;
                     SelectedPlacement {
+                        expired: advance.expired_variations,
+                        expired_next: 0,
+                        expired_started: false,
                         placement_index,
                         environment_maps,
                         publishes_lights,
@@ -624,6 +593,88 @@ impl M2Frame {
                 let source = self.sources[placement.source_index]
                     .as_ref()
                     .unwrap_or_else(|| unreachable!("selected placement retains source"));
+                if !selected.expired.is_empty() {
+                    if !selected.expired_started {
+                        for (ordinal, expired) in selected.expired.iter().enumerate() {
+                            self.bone_demand.clear();
+                            self.bone_demand.events(
+                                &source.model,
+                                placement.owner,
+                                expired.event_window,
+                            );
+                            self.event_poses.seed(
+                                cpu,
+                                ordinal,
+                                source,
+                                expired.clock,
+                                model_view,
+                                M2BonePoseOverrides {
+                                    model_oriented_billboard_bones: &source
+                                        .model_oriented_billboard_bones,
+                                    bone_transforms: selected
+                                        .body_pose
+                                        .as_ref()
+                                        .map_or(&[], |pose| pose.bone_transforms()),
+                                    bone_sequences: &expired.bone_sequences,
+                                    ..Default::default()
+                                },
+                                self.bone_demand.bones(),
+                            )?;
+                        }
+                        self.event_poses.start(cpu)?;
+                        selected.expired_started = true;
+                    }
+                    while selected.expired_next < selected.expired.len() {
+                        let ordinal = selected.expired_next;
+                        if !self.event_poses.is_ready(ordinal)? {
+                            admission.pending = Some((selected, observed.pause()));
+                            return Ok(false);
+                        }
+                        let expired = &selected.expired[ordinal];
+                        self.bone_demand.clear();
+                        self.bone_demand.events(
+                            &source.model,
+                            placement.owner,
+                            expired.event_window,
+                        );
+                        let samples = self.event_poses.sample(
+                            Some(cpu),
+                            &mut crate::application::frame_pipeline::FrameWait::Offline,
+                            ordinal,
+                            source,
+                            expired.clock,
+                            model_view,
+                            M2BonePoseOverrides {
+                                model_oriented_billboard_bones: &source
+                                    .model_oriented_billboard_bones,
+                                bone_transforms: selected
+                                    .body_pose
+                                    .as_ref()
+                                    .map_or(&[], |pose| pose.bone_transforms()),
+                                bone_sequences: &expired.bone_sequences,
+                                ..Default::default()
+                            },
+                            self.bone_demand.bones(),
+                        )?;
+                        let first_event = self.triggered_events.len();
+                        append_triggered_events(
+                            &mut self.triggered_events,
+                            &source.model,
+                            placement.owner,
+                            placement.transform,
+                            &placement.sound_lifetime,
+                            samples,
+                            expired.event_window,
+                        )?;
+                        if let Some(effect) = &placement.unit_effect {
+                            effect.bind_sound_events(&mut self.triggered_events[first_event..]);
+                        }
+                        selected.expired_next += 1;
+                    }
+                    self.event_poses
+                        .finish(&mut crate::application::frame_pipeline::FrameWait::Offline)?;
+                    selected.expired.clear();
+                }
                 let overrides = M2BonePoseOverrides {
                     model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
                     finger_pose,

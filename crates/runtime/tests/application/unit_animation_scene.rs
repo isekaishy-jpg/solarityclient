@@ -784,6 +784,7 @@ fn unit_completion_precedes_culling_and_survives_gpu_placement_replacement()
         let pending = frame.begin_visible_draws_with_unit_effects(
             &renderer,
             &cpu,
+            &mut crate::application::frame_pipeline::FrameWait::Offline,
             WorldFrustum::new(camera, WorldScreenWindow::FULL)?,
             camera,
             solarity_rendering::M2TransparentPass::One,

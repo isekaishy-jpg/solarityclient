@@ -249,8 +249,12 @@ impl PendingM2Frame<'_> {
             .unwrap_or_else(|| unreachable!("pending frame retains its owner"));
         match self.stage {
             FrameStage::Admission => {
-                if self.admission.pending.is_some() {
-                    frame.late_pose.wait(wait)?;
+                if let Some((selected, _)) = &self.admission.pending {
+                    if selected.expired_next < selected.expired.len() {
+                        frame.event_poses.wait_for(selected.expired_next, wait)?;
+                    } else {
+                        frame.late_pose.wait(wait)?;
+                    }
                 } else if let Some(index) = frame.frame_work.next_index() {
                     frame.spatial_batch.wait_for(index, wait)?;
                     frame.pose_batch.wait_for_root(index, wait)?;

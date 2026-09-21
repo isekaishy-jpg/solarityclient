@@ -9,6 +9,7 @@ use crate::application::unit_animation::{
 fn vehicle_ride_owner_survives_passenger_model_arrival_and_shared_seat_departure()
 -> Result<(), Box<dyn Error>> {
     let _sdl_guard = SDL_TEST_LOCK.lock().map_err(|_| "SDL test lock poisoned")?;
+    let cpu = crate::frame_cpu_support::executor()?;
     let fixture = crate::test_support::unit_models::fixture_with_vehicle_ride_animation(115, 4)?;
     let platform = SdlPlatform::start(WindowConfiguration::new(128, 128, WindowMode::Windowed))?;
     let mut renderer = renderer(&platform)?;
@@ -116,6 +117,8 @@ fn vehicle_ride_owner_survives_passenger_model_arrival_and_shared_seat_departure
                 .map_err(|error| format!("replace mounted={mounted} now={now}: {error}"))?;
             frame
                 .advance_unbound_passengers(
+                    Some(&cpu),
+                    &mut crate::application::frame_pipeline::FrameWait::Offline,
                     presentation.movement_animations(),
                     now as f32,
                     &mut random,

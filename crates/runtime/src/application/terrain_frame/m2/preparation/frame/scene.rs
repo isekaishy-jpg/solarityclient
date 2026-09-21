@@ -12,6 +12,7 @@ impl M2Frame {
     pub(super) fn prepare_frame_scene(
         &mut self,
         cpu: &solarity_cpu::CpuExecutor,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         frustum: WorldFrustum,
         camera: WorldCameraFrame,
         animation_time_ms: f32,
@@ -26,6 +27,8 @@ impl M2Frame {
         >,
     ) -> Result<(), RuntimeTerrainFrameError> {
         let mut frame_profile = solarity_profiling::profile!("m2.scene_admission");
+        self.scene_poses
+            .retain_layouts(self.placements.as_slice(), &self.sources);
         let frame_seconds = ((animation_time_ms - self.unit_scene_time_ms) * 0.001).max(0.0);
         self.unit_scene_time_ms = animation_time_ms;
         if let Some(terrain) = terrain.as_mut() {
@@ -87,6 +90,11 @@ impl M2Frame {
         )?;
         frame_profile.mark("residency and topology");
         self.vehicle_passengers.prepare_timing(
+            &mut super::super::poses::ScenePoseExecution {
+                cpu: Some(cpu),
+                wait,
+                poses: &mut self.scene_poses,
+            },
             self.placements.as_mut_slice(),
             &self.sources,
             &self.placement_visibility,
@@ -146,6 +154,11 @@ impl M2Frame {
             }
         }
         self.vehicle_passengers.prepare(
+            &mut super::super::poses::ScenePoseExecution {
+                cpu: Some(cpu),
+                wait,
+                poses: &mut self.scene_poses,
+            },
             self.placements.as_mut_slice(),
             &self.sources,
             &self.placement_visibility,
@@ -156,7 +169,16 @@ impl M2Frame {
         )?;
         self.placement_visibility
             .set_vehicle_parents(self.vehicle_passengers.parents());
-        self.advance_unit_callbacks(camera, animation_time_ms, random, unit_effect_callback)?;
+        self.seed_callback_poses(cpu, camera, animation_time_ms)?;
+        self.advance_unit_callbacks(
+            Some(cpu),
+            wait,
+            camera,
+            animation_time_ms,
+            random,
+            unit_effect_callback,
+        )?;
+        self.scene_poses.finish(wait)?;
         self.rider_transforms.clear();
         self.rider_transforms.reserve(self.mounted_guids.len());
         self.item_transforms.clear();

@@ -56,6 +56,124 @@ enum SeatPosePurpose {
 }
 
 impl M2VehiclePassengers {
+    /// Queue independent parent skeletons before ordered seat publication. A parent's
+    /// own passenger transform is a dependency and remains on the exact-query path.
+    #[allow(clippy::too_many_arguments)]
+    fn seed_parents(
+        &self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
+        placements: &[M2GpuPlacement],
+        sources: &[Option<M2GpuSource>],
+        visibility: &M2PlacementVisibility,
+        requested_items: &ItemRequests,
+        view: Mat4,
+        now: f32,
+        initial: bool,
+    ) -> Result<(), RuntimeTerrainFrameError> {
+        let Some(cpu) = execution.cpu else {
+            return Ok(());
+        };
+        for &index in visibility.dynamic_indices() {
+            let Some(owner) = unit_owner(&placements[index]) else {
+                continue;
+            };
+            if model_index(visibility, placements, owner.identity()) != Some(index)
+                || owner.passenger_input().is_none()
+            {
+                continue;
+            }
+            if initial
+                && (!owner.passenger_needs_advance(now as u32)
+                    || !matches!(owner.passenger_phase(), Phase::Entering | Phase::EnterDelay))
+            {
+                continue;
+            }
+            for input in [
+                owner.passenger_input(),
+                (!initial).then(|| owner.passenger_pose_input()).flatten(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !input.parent_live {
+                    continue;
+                }
+                let Some((seat, parent)) =
+                    input
+                        .seat
+                        .zip(model_index(visibility, placements, input.parent))
+                else {
+                    continue;
+                };
+                if execution.poses.seeded(parent) {
+                    continue;
+                }
+                let placement = &placements[parent];
+                if !initial
+                    && unit_owner(placement).is_some_and(|owner| owner.passenger_input().is_some())
+                {
+                    continue;
+                }
+                let Some(source) = &sources[placement.source_index] else {
+                    continue;
+                };
+                if vehicle_seat_attachment(seat.attachment_id())
+                    .and_then(|id| source.model.attachment(id))
+                    .is_none()
+                {
+                    continue;
+                }
+                let Some(playback) = &placement.playback else {
+                    continue;
+                };
+                let clock = playback.borrow().sample_clock(now as u32);
+                let body = placement
+                    .unit_animation
+                    .as_ref()
+                    .map(|owner| owner.body_pose());
+                let sequences = placement
+                    .unit_animation
+                    .as_ref()
+                    .and_then(|owner| owner.bone_sequences(clock, now as u32));
+                let fingers =
+                    held_item_finger_pose(requested_items, placement.owner).and_then(|hands| {
+                        let sequence = source.model.animations().sequence_for_variation(15, 0)?;
+                        Some((
+                            M2AnimationClock::new_with_global_tick(
+                                sequence,
+                                0.,
+                                playback.borrow().global_tick(now as u32),
+                            ),
+                            hands,
+                        ))
+                    });
+                let transform = if initial {
+                    unit_owner(placement)
+                        .and_then(|owner| owner.passenger_last_transform())
+                        .unwrap_or(placement.transform)
+                } else {
+                    placement.transform
+                };
+                execution.poses.seed_palette(
+                    cpu,
+                    parent,
+                    source,
+                    clock,
+                    view * transform,
+                    M2BonePoseOverrides {
+                        model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+                        bone_transforms: body.as_ref().map_or(&[], |body| body.bone_transforms()),
+                        bone_sequences: sequences
+                            .as_ref()
+                            .map_or(&[], |sequences| sequences.as_slice()),
+                        finger_pose: fingers,
+                    },
+                )?;
+            }
+        }
+        execution.poses.start(cpu)
+    }
+
     pub fn invalidate(&mut self) {
         self.palettes.clear();
     }
@@ -77,6 +195,7 @@ impl M2VehiclePassengers {
     #[allow(clippy::too_many_arguments)]
     pub fn refresh_callback_pose(
         &mut self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
         index: usize,
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
@@ -98,6 +217,7 @@ impl M2VehiclePassengers {
             palette.clock = None;
         }
         self.resolve(
+            execution,
             index,
             placements,
             sources,
@@ -111,8 +231,10 @@ impl M2VehiclePassengers {
 
     /// F60 belongs to the unit even while its body is waiting for model data.
     /// Read the resident parent's bones before initializing that unit's travel.
+    #[allow(clippy::too_many_arguments)]
     pub fn advance_unbound(
         &mut self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
         scene: &UnitAnimationScene,
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
@@ -140,6 +262,7 @@ impl M2VehiclePassengers {
                 && let Some(seat) = request.parent.seat
                 && let Some(parent) = resident_model_index(placements, request.parent.parent)
                 && let Some(pose) = self.parent_seat_pose(
+                    execution,
                     parent,
                     request.parent,
                     SeatPosePurpose::InitialTarget,
@@ -184,6 +307,7 @@ impl M2VehiclePassengers {
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_timing(
         &mut self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
         visibility: &M2PlacementVisibility,
@@ -200,6 +324,16 @@ impl M2VehiclePassengers {
         for palette in self.palettes.values_mut() {
             palette.clock = None;
         }
+        self.seed_parents(
+            execution,
+            placements,
+            sources,
+            visibility,
+            requested_items,
+            view,
+            now,
+            true,
+        )?;
         for &index in visibility.dynamic_indices() {
             let Some(owner) = unit_owner(&placements[index]).cloned() else {
                 continue;
@@ -215,6 +349,7 @@ impl M2VehiclePassengers {
             let fallback = placements[index].local_transform.w_axis.truncate();
             let target = if matches!(owner.passenger_phase(), Phase::Entering | Phase::EnterDelay) {
                 self.seat_pose(
+                    execution,
                     index,
                     input,
                     SeatPosePurpose::InitialTarget,
@@ -242,12 +377,14 @@ impl M2VehiclePassengers {
                 )?;
             }
         }
+        execution.poses.finish(execution.wait)?;
         Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
         visibility: &M2PlacementVisibility,
@@ -266,6 +403,16 @@ impl M2VehiclePassengers {
         for palette in self.palettes.values_mut() {
             palette.clock = None;
         }
+        self.seed_parents(
+            execution,
+            placements,
+            sources,
+            visibility,
+            requested_items,
+            view,
+            now,
+            false,
+        )?;
         for &index in visibility.dynamic_indices() {
             let Some(owner) = unit_owner(&placements[index]) else {
                 continue;
@@ -287,6 +434,7 @@ impl M2VehiclePassengers {
                 }
                 if expanded {
                     self.resolve(
+                        execution,
                         next,
                         placements,
                         sources,
@@ -328,12 +476,14 @@ impl M2VehiclePassengers {
                 }
             }
         }
+        execution.poses.finish(execution.wait)?;
         Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     fn resolve(
         &mut self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
         index: usize,
         placements: &mut [M2GpuPlacement],
         sources: &[Option<M2GpuSource>],
@@ -356,6 +506,7 @@ impl M2VehiclePassengers {
         let fallback = placements[index].local_transform.w_axis.truncate();
         let target = if matches!(owner.passenger_phase(), Phase::EnterDelay | Phase::Entering) {
             self.seat_pose(
+                execution,
                 index,
                 input,
                 SeatPosePurpose::CurrentTarget,
@@ -373,6 +524,7 @@ impl M2VehiclePassengers {
         };
         let pose = if let Some(input) = owner.passenger_pose_input() {
             self.seat_pose(
+                execution,
                 index,
                 input,
                 SeatPosePurpose::Attached,
@@ -402,6 +554,7 @@ impl M2VehiclePassengers {
     #[allow(clippy::too_many_arguments)]
     fn seat_pose(
         &mut self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
         index: usize,
         input: UnitPassengerModelInput,
         purpose: SeatPosePurpose,
@@ -431,6 +584,7 @@ impl M2VehiclePassengers {
             return Ok(Some(placements[index].local_transform));
         };
         let Some(parent_pose) = self.parent_seat_pose(
+            execution,
             parent,
             input,
             purpose,
@@ -487,6 +641,7 @@ impl M2VehiclePassengers {
     #[allow(clippy::too_many_arguments)]
     fn parent_seat_pose(
         &mut self,
+        execution: &mut super::preparation::poses::ScenePoseExecution<'_, '_>,
         parent: usize,
         input: UnitPassengerModelInput,
         purpose: SeatPosePurpose,
@@ -547,19 +702,33 @@ impl M2VehiclePassengers {
                             hands,
                         ))
                     });
-                palette.bones.recompose_with_overrides(
-                    source.model.animations(),
-                    clock,
-                    view * parent_transform,
-                    M2BonePoseOverrides {
-                        model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
-                        bone_transforms: body.as_ref().map_or(&[], |body| body.bone_transforms()),
-                        bone_sequences: sequences
-                            .as_ref()
-                            .map_or(&[], |sequences| sequences.as_slice()),
-                        finger_pose: fingers,
-                    },
-                )?;
+                let overrides = M2BonePoseOverrides {
+                    model_oriented_billboard_bones: &source.model_oriented_billboard_bones,
+                    bone_transforms: body.as_ref().map_or(&[], |body| body.bone_transforms()),
+                    bone_sequences: sequences
+                        .as_ref()
+                        .map_or(&[], |sequences| sequences.as_slice()),
+                    finger_pose: fingers,
+                };
+                if let Some(cpu) = execution.cpu {
+                    execution.poses.palette(
+                        cpu,
+                        execution.wait,
+                        parent,
+                        source,
+                        clock,
+                        view * parent_transform,
+                        overrides,
+                        &mut palette.bones,
+                    )?;
+                } else {
+                    palette.bones.recompose_with_overrides(
+                        source.model.animations(),
+                        clock,
+                        view * parent_transform,
+                        overrides,
+                    )?;
+                }
                 palette.clock = Some(clock);
             }
             let Some(clock) = palette.clock else {

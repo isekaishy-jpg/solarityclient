@@ -528,6 +528,8 @@ pub(in crate::application) struct M2Frame {
     bone_demand: preparation::demand::CpuBoneDemand,
     pose_batch: preparation::poses::PoseBatch,
     late_pose: preparation::poses::LatePose,
+    scene_poses: preparation::poses::ScenePoses,
+    event_poses: preparation::poses::ScenePoses,
     spatial_batch: preparation::spatial::SpatialBatch,
     receiver_frame: preparation::receivers::ReceiverFrame,
     /// Reused only between shadow and ordinary draws of the current placement.
@@ -663,6 +665,8 @@ impl M2Frame {
             bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
             late_pose: preparation::poses::LatePose::default(),
+            scene_poses: preparation::poses::ScenePoses::default(),
+            event_poses: preparation::poses::ScenePoses::default(),
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),
@@ -820,6 +824,8 @@ impl M2Frame {
             bone_demand: preparation::demand::CpuBoneDemand::default(),
             pose_batch: preparation::poses::PoseBatch::default(),
             late_pose: preparation::poses::LatePose::default(),
+            scene_poses: preparation::poses::ScenePoses::default(),
+            event_poses: preparation::poses::ScenePoses::default(),
             spatial_batch: preparation::spatial::SpatialBatch::default(),
             receiver_frame: preparation::receivers::ReceiverFrame::default(),
             material_pose_scratch: Vec::new(),
@@ -1186,18 +1192,28 @@ impl M2Frame {
     /// Returns elapsed time on this resident generation's local animation clock.
     pub(in crate::application) fn advance_unbound_passengers(
         &mut self,
+        cpu: Option<&solarity_cpu::CpuExecutor>,
+        wait: &mut crate::application::frame_pipeline::FrameWait<'_>,
         scene: &crate::application::unit_animation::UnitAnimationScene,
         now: f32,
         random: &mut CrtRand,
     ) -> Result<(), RuntimeTerrainFrameError> {
-        self.vehicle_passengers.advance_unbound(
+        let result = self.vehicle_passengers.advance_unbound(
+            &mut preparation::poses::ScenePoseExecution {
+                cpu,
+                wait,
+                poses: &mut self.scene_poses,
+            },
             scene,
             self.placements.as_mut_slice(),
             &self.sources,
             &self.requested_items,
             now,
             random,
-        )
+        );
+        let retirement = self.scene_poses.finish(wait);
+        result?;
+        retirement
     }
 
     pub(in crate::application) fn animation_time_ms(&self) -> f32 {

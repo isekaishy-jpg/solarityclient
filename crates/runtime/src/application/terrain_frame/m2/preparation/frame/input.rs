@@ -43,6 +43,9 @@ impl FrameAdmission {
 
 /// Ordered selection survives a bone dependency without ticking or consuming events twice.
 pub(super) struct SelectedPlacement {
+    pub(super) expired: Vec<crate::application::model_playback::M2ExpiredVariation>,
+    pub(super) expired_next: usize,
+    pub(super) expired_started: bool,
     pub(super) placement_index: usize,
     pub(super) environment_maps: u8,
     pub(super) publishes_lights: bool,
