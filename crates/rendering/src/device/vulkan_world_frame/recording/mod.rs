@@ -5,6 +5,7 @@ mod capture;
 mod encode;
 mod execution;
 mod pools;
+pub(super) mod scene;
 mod types;
 
 pub(super) use batch::ShadowRecording;

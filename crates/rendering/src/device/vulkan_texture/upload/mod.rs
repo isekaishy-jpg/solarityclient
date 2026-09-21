@@ -308,18 +308,6 @@ impl<'a> TextureTransfer<'a> {
             })
     }
 
-    /// Submits and synchronously retires the transfer source.
-    fn submit_and_wait(&self, command_buffer: vk::CommandBuffer) -> Result<(), VulkanError> {
-        self.submit(command_buffer)?;
-        // SAFETY: The fence belongs to this exact submitted work.
-        unsafe {
-            self.context
-                .device
-                .wait_for_fences(&[self.fence], true, u64::MAX)
-        }
-        .map_err(|source| VulkanError::operation("wait for BLP texture transfer", source))
-    }
-
     /// Queues the transfer without stalling the host presentation thread.
     fn submit(&self, command_buffer: vk::CommandBuffer) -> Result<(), VulkanError> {
         let command_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
@@ -541,7 +529,7 @@ pub(super) fn upload_textures_deferred(
 /// Uploads stock's opaque 8x8 green WMO placeholder without transfer conversion.
 pub(super) fn upload_stock_world_model_green(
     context: TextureUploadContext<'_>,
-) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+) -> Result<(GpuBlpTexture, DeferredTextureTransfer), BlpTextureUploadError> {
     upload_stock_solid_texture(
         context,
         [0, 255, 0, 255],
@@ -554,7 +542,7 @@ pub(super) fn upload_stock_world_model_green(
 /// Uploads stock's opaque 8x8 white image for an empty M2 filename.
 pub(super) fn upload_stock_m2_white(
     context: TextureUploadContext<'_>,
-) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+) -> Result<(GpuBlpTexture, DeferredTextureTransfer), BlpTextureUploadError> {
     upload_stock_solid_texture(
         context,
         [255, 255, 255, 255],
@@ -567,7 +555,7 @@ pub(super) fn upload_stock_m2_white(
 /// Uploads stock's opaque 8x8 green image for a failed M2 texture request.
 pub(super) fn upload_stock_m2_failure(
     context: TextureUploadContext<'_>,
-) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+) -> Result<(GpuBlpTexture, DeferredTextureTransfer), BlpTextureUploadError> {
     upload_stock_solid_texture(
         context,
         [0, 255, 0, 255],
@@ -584,7 +572,7 @@ fn upload_stock_solid_texture(
     identity: &str,
     source_kind: BlpTextureSourceKind,
     color_space: BlpColorSpace,
-) -> Result<GpuBlpTexture, BlpTextureUploadError> {
+) -> Result<(GpuBlpTexture, DeferredTextureTransfer), BlpTextureUploadError> {
     const EXTENT: (u32, u32) = (8, 8);
     const BYTE_COUNT: usize = EXTENT.0 as usize * EXTENT.1 as usize * 4;
 
@@ -592,7 +580,6 @@ fn upload_stock_solid_texture(
     for texel in bytes.as_chunks_mut::<4>().0 {
         texel.copy_from_slice(&pixel);
     }
-    let image = upload_rgba8_image_with_color_space(context, EXTENT, &bytes, color_space)?;
     let path = solarity_asset::AssetPath::new(identity)?;
     let info = BlpTextureResourceInfo::new(
         path,
@@ -603,7 +590,15 @@ fn upload_stock_solid_texture(
         1,
         bytes.len(),
     );
-    Ok(GpuBlpTexture { image, info })
+    // Validate metadata before submission; the registry pins staging until the fence completes.
+    let mips = [UploadMip {
+        offset: 0,
+        width: EXTENT.0,
+        height: EXTENT.1,
+    }];
+    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
+    let (image, transfer) = upload_sampled_image_deferred(context, format, EXTENT, &bytes, &mips)?;
+    Ok((GpuBlpTexture { image, info }, transfer))
 }
 
 /// Queues a linear RGBA8 image while retaining its borrowed pixels only for staging.
@@ -703,22 +698,6 @@ fn pack_rgba8_mips(source_mips: &[Rgba8MipUpload<'_>]) -> Result<PackedRgba8Mips
     })
 }
 
-fn upload_rgba8_image_with_color_space(
-    context: TextureUploadContext<'_>,
-    extent: (u32, u32),
-    bytes: &[u8],
-    color_space: BlpColorSpace,
-) -> Result<GpuSampledImage, VulkanError> {
-    validate_rgba8_image(extent, bytes)?;
-    let mips = [UploadMip {
-        offset: 0,
-        width: extent.0,
-        height: extent.1,
-    }];
-    let format = texture_format(BlpTextureStorage::Rgba8, color_space);
-    upload_sampled_image(context, format, extent, bytes, &mips)
-}
-
 /// Rejects incomplete pixels before any synchronous or deferred allocation.
 fn validate_rgba8_image(extent: (u32, u32), bytes: &[u8]) -> Result<(), VulkanError> {
     let expected = u64::from(extent.0)
@@ -738,56 +717,6 @@ fn validate_rgba8_image(extent: (u32, u32), bytes: &[u8]) -> Result<(), VulkanEr
         ));
     }
     Ok(())
-}
-
-fn upload_sampled_image(
-    context: TextureUploadContext<'_>,
-    format: vk::Format,
-    extent: (u32, u32),
-    bytes: &[u8],
-    mips: &[UploadMip],
-) -> Result<GpuSampledImage, VulkanError> {
-    let mip_levels = u32::try_from(mips.len())
-        .map_err(|source| VulkanError::operation("convert sampled image mip count", source))?;
-    if mip_levels == 0 || bytes.is_empty() {
-        return Err(VulkanError::operation(
-            "validate sampled image",
-            "image has no mip pixels",
-        ));
-    }
-    let image = allocate_sampled_image(context, format, extent, mip_levels)?;
-    let mut guard = TextureGuard {
-        device: context.device,
-        allocator: context.allocator,
-        texture: Some(image),
-    };
-    let transfer = TextureTransfer::create(context, bytes)?;
-    let command_buffer = transfer.command_buffer()?;
-    let image_handle = guard
-        .texture
-        .as_ref()
-        .ok_or_else(|| {
-            VulkanError::operation("record sampled image upload", "image is unavailable")
-        })?
-        .image;
-    let upload = ImageUpload {
-        image: image_handle,
-        mip_levels,
-        mips,
-    };
-    record_uploads(
-        context.device,
-        command_buffer,
-        transfer.staging_buffer,
-        &[upload],
-    )?;
-    transfer.submit_and_wait(command_buffer)?;
-    let view = create_sampled_image_view(context.device, image_handle, format, mip_levels)?;
-    let sampled_image = guard.texture.as_mut().ok_or_else(|| {
-        VulkanError::operation("retain sampled image view", "image is unavailable")
-    })?;
-    sampled_image.view = view;
-    guard.finish()
 }
 
 fn upload_sampled_image_deferred(

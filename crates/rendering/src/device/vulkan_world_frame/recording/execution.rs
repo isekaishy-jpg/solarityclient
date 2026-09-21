@@ -1,6 +1,5 @@
 //! Explicit CPU execution and main-thread servicing at the required submission boundary.
 
-use super::types::ShadowJob;
 use crate::VulkanError;
 use solarity_cpu::{CpuExecutor, FrameBatch};
 
@@ -44,19 +43,33 @@ impl WorldFrameExecution for &CpuExecutor {
 
 /// Readiness-only view; it cannot submit, reset, mutate or steal a recorded command buffer.
 pub struct WorldRecordingCompletion<'a> {
-    pub(super) batch: &'a FrameBatch<ShadowJob>,
+    pub(super) batch: &'a dyn RecordingReadiness,
 }
 
 impl WorldRecordingCompletion<'_> {
     /// True only after terminal publication and phase admission release.
     pub fn is_ready(&self) -> bool {
-        self.batch.is_finished()
+        self.batch.is_ready()
     }
 
     /// Waits without native servicing for an explicitly offline renderer.
     /// # Errors
     /// Returns CPU readiness or invalid worker-consumption errors.
     pub fn wait(&self) -> Result<(), VulkanError> {
-        Ok(self.batch.wait_until_finished()?)
+        self.batch.wait()
+    }
+}
+
+/// Erases only readiness, keeping typed job payloads private to their recording owner.
+pub(super) trait RecordingReadiness {
+    fn is_ready(&self) -> bool;
+    fn wait(&self) -> Result<(), VulkanError>;
+}
+impl<T: Send + 'static> RecordingReadiness for FrameBatch<T> {
+    fn is_ready(&self) -> bool {
+        self.is_finished()
+    }
+    fn wait(&self) -> Result<(), VulkanError> {
+        Ok(self.wait_until_finished()?)
     }
 }

@@ -189,8 +189,11 @@ pub(super) struct WorldFrameSlot {
     depth_allocation: Option<vk_mem::Allocation>,
     depth_view: vk::ImageView,
     pub(super) recording_pools: super::recording::RecordingPools,
+    pub(super) scene_pools: super::recording::scene::ScenePools,
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
+    /// Main records the compositor while scene workers still own their secondary pools.
+    post_command_buffer: vk::CommandBuffer,
     image_available: vk::Semaphore,
     fence: vk::Fence,
 }
@@ -228,6 +231,11 @@ impl WorldFrameSlot {
 
     pub(super) const fn command_buffer(&self) -> vk::CommandBuffer {
         self.command_buffer
+    }
+
+    /// Shares the main-only pool and the same submission fence as the world primary.
+    pub(super) const fn post_command_buffer(&self) -> vk::CommandBuffer {
+        self.post_command_buffer
     }
 
     pub(super) const fn descriptor_sets(&self) -> [vk::DescriptorSet; DESCRIPTOR_SET_COUNT] {
@@ -286,6 +294,7 @@ impl WorldFrameSlot {
                 })?;
         }
         self.recording_pools.reset(device)?;
+        self.scene_pools.reset(device)?;
         Ok(waited)
     }
 
@@ -545,15 +554,17 @@ impl WorldFrameSlot {
         let info = vk::CommandBufferAllocateInfo::default()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
+            .command_buffer_count(2);
         // SAFETY: The pool is live and uniquely owned by this slot.
-        self.command_buffer = unsafe { context.device.allocate_command_buffers(&info) }
-            .map_err(|source| {
+        let commands =
+            unsafe { context.device.allocate_command_buffers(&info) }.map_err(|source| {
                 VulkanError::operation("allocate world frame command buffer", source)
-            })?
-            .first()
-            .copied()
-            .ok_or(VulkanError::WorldFrameCapacity)?;
+            })?;
+        let [world, post] = commands.as_slice() else {
+            return Err(VulkanError::WorldFrameCapacity);
+        };
+        self.command_buffer = *world;
+        self.post_command_buffer = *post;
         Ok(())
     }
 
@@ -572,6 +583,7 @@ impl WorldFrameSlot {
 
     fn destroy(&mut self, device: &Device, allocator: &vk_mem::Allocator) {
         self.recording_pools.destroy(device);
+        self.scene_pools.destroy(device);
         self.gpu_timestamps.destroy(device);
         self.shadows.destroy(device, allocator);
         self.liquids.destroy(device, allocator);
@@ -599,6 +611,7 @@ impl WorldFrameSlot {
                 device.destroy_command_pool(self.command_pool, None);
                 self.command_pool = vk::CommandPool::null();
                 self.command_buffer = vk::CommandBuffer::null();
+                self.post_command_buffer = vk::CommandBuffer::null();
             }
             if self.depth_view != vk::ImageView::null() {
                 device.destroy_image_view(self.depth_view, None);
@@ -642,8 +655,10 @@ impl WorldFrameSlot {
             depth_allocation: None,
             depth_view: vk::ImageView::null(),
             recording_pools: super::recording::RecordingPools::default(),
+            scene_pools: super::recording::scene::ScenePools::default(),
             command_pool: vk::CommandPool::null(),
             command_buffer: vk::CommandBuffer::null(),
+            post_command_buffer: vk::CommandBuffer::null(),
             image_available: vk::Semaphore::null(),
             fence: vk::Fence::null(),
         }

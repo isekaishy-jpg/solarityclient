@@ -5,21 +5,41 @@
 use crate::VulkanError;
 use ash::{Device, vk};
 
-/// Primary and three environment passes never record through the same pool.
-#[derive(Default)]
-pub(in super::super) struct RecordingPools {
-    pools: [vk::CommandPool; 4],
-    commands: [vk::CommandBuffer; 4],
+/// Each independent recording range owns an exclusive pool, retired by its world slot.
+pub(in super::super) struct RecordingPools<const N: usize = 4, const SECONDARY: bool = false> {
+    pools: [vk::CommandPool; N],
+    commands: [vk::CommandBuffer; N],
 }
 
-impl RecordingPools {
+impl<const N: usize, const SECONDARY: bool> Default for RecordingPools<N, SECONDARY> {
+    fn default() -> Self {
+        Self {
+            pools: [vk::CommandPool::null(); N],
+            commands: [vk::CommandBuffer::null(); N],
+        }
+    }
+}
+impl<const N: usize, const SECONDARY: bool> RecordingPools<N, SECONDARY> {
     /// Creates the bounded pass storage after this slot's previous GPU use retires.
     pub(in super::super) fn ensure(
         &mut self,
         device: &Device,
         family: u32,
     ) -> Result<(), VulkanError> {
-        for index in 0..self.pools.len() {
+        self.ensure_count(device, family, N)
+    }
+
+    /// Creates only pools reachable by the configured parallel phase, retaining them across frames.
+    pub(in super::super) fn ensure_count(
+        &mut self,
+        device: &Device,
+        family: u32,
+        count: usize,
+    ) -> Result<(), VulkanError> {
+        if count > N {
+            return Err(VulkanError::WorldFrameCapacity);
+        }
+        for index in 0..count {
             if self.commands[index] != vk::CommandBuffer::null() {
                 continue;
             }
@@ -30,18 +50,20 @@ impl RecordingPools {
                 // SAFETY: This graphics family belongs to the live device; this slot owns the pool.
                 self.pools[index] =
                     unsafe { device.create_command_pool(&info, None) }.map_err(|error| {
-                        VulkanError::operation("create shadow recording pool", error)
+                        VulkanError::operation("create world recording pool", error)
                     })?;
             }
             let info = vk::CommandBufferAllocateInfo::default()
                 .command_pool(self.pools[index])
-                .level(vk::CommandBufferLevel::PRIMARY)
+                .level(if SECONDARY {
+                    vk::CommandBufferLevel::SECONDARY
+                } else {
+                    vk::CommandBufferLevel::PRIMARY
+                })
                 .command_buffer_count(1);
             // SAFETY: No worker or GPU use exists during this exclusive slot operation.
             self.commands[index] = unsafe { device.allocate_command_buffers(&info) }
-                .map_err(|error| {
-                    VulkanError::operation("allocate shadow recording command", error)
-                })?
+                .map_err(|error| VulkanError::operation("allocate world recording command", error))?
                 .first()
                 .copied()
                 .ok_or(VulkanError::WorldFrameCapacity)?;
@@ -49,7 +71,7 @@ impl RecordingPools {
         Ok(())
     }
 
-    pub(in super::super) fn commands(&self) -> [vk::CommandBuffer; 4] {
+    pub(in super::super) fn commands(&self) -> [vk::CommandBuffer; N] {
         self.commands
     }
 
@@ -61,7 +83,7 @@ impl RecordingPools {
             }
             // SAFETY: No command in the owning slot is recording or pending on the GPU.
             unsafe { device.reset_command_pool(pool, vk::CommandPoolResetFlags::empty()) }
-                .map_err(|error| VulkanError::operation("reset shadow recording pool", error))?;
+                .map_err(|error| VulkanError::operation("reset world recording pool", error))?;
         }
         Ok(())
     }

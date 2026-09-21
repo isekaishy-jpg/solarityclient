@@ -4,6 +4,7 @@ use ash::vk;
 
 use crate::VulkanError;
 
+use super::super::recording::scene::SceneCommand;
 use super::{RecordContext, WorldCommandBindings};
 
 /// Records admitted chunks with the shared terrain light/fog descriptor.
@@ -25,9 +26,6 @@ pub(super) fn record_ground_detail(
             .ground_detail_registry
             .get(draw)
             .ok_or(VulkanError::WorldFrameCapacity)?;
-        bindings.bind_pipeline(context, pipeline);
-        bindings.bind_vertex(context, mesh.vertex_buffer());
-        bindings.bind_index(context, mesh.index_buffer(), vk::IndexType::UINT16);
         let mut pushes = [0_u8; 32];
         // 7984A0 subtracts the camera before rotating the chunk translation.
         let chunk_origin = glam::Vec3::from_array(draw.plan().origin());
@@ -46,36 +44,32 @@ pub(super) fn record_ground_detail(
         {
             *target = value.to_le_bytes();
         }
-        // SAFETY: The prepared pipeline owns this 32-byte ABI; every submitted
-        // slot pins the immutable vertex/index bank until its fence completes.
-        unsafe {
-            context.device.cmd_push_constants(
-                context.command_buffer,
-                layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                0,
-                &pushes,
-            );
-            for (batch, set) in draw.plan().batches().iter().zip(mesh.sets()) {
-                let sets = [
-                    context.frame_sets[0],
-                    set,
-                    context.shadow_resources.receiver_set(),
-                ];
-                let set_count = if has_primary_shadow { 3 } else { 2 };
-                context.device.cmd_bind_descriptor_sets(
-                    context.command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
+        for (batch, set) in draw.plan().batches().iter().zip(mesh.sets()) {
+            let sets = [
+                context.frame_sets[0],
+                set,
+                context.shadow_resources.receiver_set(),
+            ];
+            let [first, count] = batch.index_range();
+            let (index, offset) = mesh.index_buffer();
+            bindings.draw(
+                context,
+                SceneCommand {
+                    pipeline,
                     layout,
-                    0,
-                    &sets[..set_count],
+                    vertex: mesh.vertex_buffer(),
+                    index: Some((index, offset, vk::IndexType::UINT16)),
+                    count,
+                    first,
+                    ..Default::default()
+                }
+                .parameters(
+                    &sets[..if has_primary_shadow { 3 } else { 2 }],
                     &[],
-                );
-                let [first, count] = batch.index_range();
-                context
-                    .device
-                    .cmd_draw_indexed(context.command_buffer, count, 1, first, 0, 0);
-            }
+                    &pushes,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                ),
+            )?;
         }
     }
     Ok(())

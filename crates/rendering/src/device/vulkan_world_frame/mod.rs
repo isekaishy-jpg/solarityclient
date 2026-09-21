@@ -117,6 +117,7 @@ pub(in crate::device) struct WorldFrameWindow {
 pub(in crate::device) struct WorldFrameRenderer {
     submission_fog: fog::SubmissionFog,
     shadow_recording: recording::ShadowRecording,
+    scene_recording: recording::scene::SceneRecording,
     shadows: crate::device::vulkan_shadow::ShadowPipelines,
     environment_shadows: crate::device::vulkan_shadow::EnvironmentShadowImages,
     resources: WorldFrameResources,
@@ -558,6 +559,15 @@ impl WorldFrameRenderer {
             slot.recording_pools
                 .ensure(context.device, context.graphics_queue_family)?;
         }
+        slot.scene_pools.ensure_count(
+            context.device,
+            context.graphics_queue_family,
+            2 + execution
+                .executor()
+                .worker_count()
+                .saturating_mul(2)
+                .min(32),
+        )?;
         let record_started = profile_enabled.then(std::time::Instant::now);
         let gpu_queries = if gpu_sample {
             Some(slot.gpu_timestamps.ensure(context.device)?)
@@ -565,6 +575,8 @@ impl WorldFrameRenderer {
             None
         };
         let record_context = RecordContext {
+            color_format: context.color_format,
+            depth_format: context.depth_format,
             gpu_queries,
             scene,
             submission_fog: self.submission_fog,
@@ -576,6 +588,7 @@ impl WorldFrameRenderer {
             device: context.device,
             capture: context.capture,
             command_buffer: slot.command_buffer(),
+            post_command_buffer: slot.post_command_buffer(),
             image,
             image_view,
             depth_image: slot.depth_image(),
@@ -644,7 +657,7 @@ impl WorldFrameRenderer {
             ribbon_vertex_buffer: slot.ribbon_vertex_buffer(),
             ui: ui.map(|ui| UiOverlayRecordContext {
                 device: context.device,
-                command_buffer: slot.command_buffer(),
+                command_buffer: slot.post_command_buffer(),
                 image_view,
                 extent: context.extent,
                 logical_extent: ui.logical_extent,
@@ -662,7 +675,13 @@ impl WorldFrameRenderer {
             &record_context,
             &slot.recording_pools,
         )?;
-        let scene_recording = record(&record_context, pending.has_shadows());
+        let scene_recording = record(
+            &record_context,
+            pending.has_shadows(),
+            &mut self.scene_recording,
+            &slot.scene_pools,
+            execution,
+        );
         let shadows = pending.finish(execution)?;
         let (low_detail_draw_count, submission_fog) = scene_recording?;
         let record_elapsed = record_started

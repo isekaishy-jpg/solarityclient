@@ -204,14 +204,19 @@ impl BlpTextureRegistry {
         &mut self,
         context: TextureUploadContext<'_>,
         key: BlpTextureKey,
-        upload: fn(TextureUploadContext<'_>) -> Result<GpuBlpTexture, BlpTextureUploadError>,
+        upload: fn(
+            TextureUploadContext<'_>,
+        )
+            -> Result<(GpuBlpTexture, DeferredTextureTransfer), BlpTextureUploadError>,
     ) -> Result<BlpTextureHandle, BlpTextureUploadError> {
         if let Some(handle) = self.handles.get(&key) {
             return Ok(*handle);
         }
         let slot = u32::try_from(self.resources.len())
             .map_err(|_source| crate::device::VulkanError::BlpTextureCapacity)?;
-        let resource = upload(context)?;
+        self.retire_completed_transfers(context)?;
+        let (resource, transfer) = upload(context)?;
+        self.pending_transfers.push(transfer);
         let handle = BlpTextureHandle {
             registry_id: self.registry_id,
             slot,
