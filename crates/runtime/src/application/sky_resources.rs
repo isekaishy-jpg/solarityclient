@@ -1,6 +1,10 @@
 //! Process-retained authored celestial texture requests.
 
 mod skybox;
+mod sources;
+
+use solarity_cpu::CpuExecutor;
+use sources::{CelestialRequest, ModelRequest};
 
 #[cfg(test)]
 #[path = "../../tests/application/sky_resources.rs"]
@@ -10,8 +14,8 @@ use super::terrain_coordinator::m2_residency::ResidentM2Source;
 use super::terrain_frame::RuntimeTerrainFrameError;
 use super::terrain_frame::m2::sky::{SkyM2Model, sky_scene};
 use solarity_asset::{
-    AssetError, AssetPath, AssetStoreHandle, BlpTextureCache, BlpTextureSource, LightCatalog,
-    LightSkybox, M2ModelCache,
+    ArchiveCatalog, AssetError, AssetPath, BlpTextureCache, BlpTextureSource, LightCatalog,
+    LightSkybox,
 };
 use solarity_rendering::{
     BlpColorSpace, BlpTextureHandle, M2PreparedDraw, VulkanRenderer, WorldSkyModelBatch,
@@ -26,13 +30,13 @@ pub(super) struct RuntimeSkyResources {
     lighting: solarity_rendering::WorldCelestialLighting,
     stars: Option<SkyM2Model>,
     animations: Arc<solarity_asset::AnimationDataCatalog>,
-    store: AssetStoreHandle,
+    catalog: ArchiveCatalog,
+    celestial_request: CelestialRequest,
+    stars_request: ModelRequest,
     definitions: HashMap<u32, LightSkybox>,
     skyboxes: Vec<CachedSkybox>,
     /// Raw authored names resolve once; aliases share the canonical model cache.
     names: HashMap<String, Option<usize>>,
-    model_cache: M2ModelCache,
-    texture_cache: BlpTextureCache,
     bones: Vec<glam::Mat4>,
     skybox_draws: [Vec<M2PreparedDraw>; 4],
 }
@@ -42,6 +46,7 @@ struct CachedSkybox {
     path: AssetPath,
     phase: skybox::SkyboxPhase,
     model: Option<SkyM2Model>,
+    request: ModelRequest,
 }
 
 #[derive(Clone, Copy)]
@@ -66,59 +71,29 @@ pub(super) struct RuntimeCelestialResources {
 impl RuntimeSkyResources {
     /// Requests the stock celestial names and retains their process lifetime.
     pub(super) fn load(
-        store: AssetStoreHandle,
+        catalog: ArchiveCatalog,
         lights: &LightCatalog,
         animations: Arc<solarity_asset::AnimationDataCatalog>,
     ) -> Result<Self, AssetError> {
-        let handle = store.clone();
-        let mut assets = store.borrow_mut();
-        let store = &mut *assets;
-        let mut sources = [None, None, None, None, None];
-        for (slot, path) in sources.iter_mut().zip([
-            "Textures/sunCenter.blp",
-            "Textures/moon.blp",
-            "Textures/moon02.blp",
-            "Textures/sunGlare.blp",
-            "Textures/moonGlare.blp",
-        ]) {
-            let path = AssetPath::new(path)?;
-            *slot = match BlpTextureSource::load(store, &path) {
-                Ok(source) => Some(source),
-                Err(error) => {
-                    tracing::warn!(texture = %path, %error,
-                        "celestial texture request failed; using stock green texture");
-                    None
-                }
-            };
-        }
-        let path = AssetPath::new("Environments/Stars/stars.mdl")?;
-        let stars = match ResidentM2Source::load(
-            &path,
-            &mut Default::default(),
-            &mut Default::default(),
-            store,
-        ) {
-            Ok(resident) => Some(SkyM2Model::new(resident, sdl3::timer::ticks() as u32)),
-            Err(error) => {
-                tracing::warn!(model = %path, %error, "stars model request failed");
-                None
-            }
-        };
         Ok(Self {
-            sources,
-            stars,
+            sources: Default::default(),
+            stars: None,
+            stars_request: ModelRequest::new(
+                AssetPath::new("Environments/Stars/stars.mdl")?,
+                sdl3::timer::ticks() as u32,
+                false,
+            ),
+            celestial_request: CelestialRequest::Deferred,
             animations,
             textures: [None; 5],
             lighting: Default::default(),
-            store: handle,
+            catalog,
             definitions: lights
                 .skyboxes()
                 .map(|row| (row.id(), row.clone()))
                 .collect(),
             skyboxes: Vec::new(),
             names: HashMap::new(),
-            model_cache: M2ModelCache::new(),
-            texture_cache: BlpTextureCache::new(),
             bones: Vec::new(),
             skybox_draws: std::array::from_fn(|_| Vec::new()),
         })
@@ -128,6 +103,7 @@ impl RuntimeSkyResources {
     /// Combines current environment slots with camera-root sky admission.
     pub(super) fn prepare_models(
         &mut self,
+        cpu: &CpuExecutor,
         renderer: &mut VulkanRenderer,
         camera: solarity_rendering::WorldCameraFrame,
         time_ms: u32,
@@ -138,6 +114,7 @@ impl RuntimeSkyResources {
         random: &mut crate::random::CrtRand,
     ) -> Result<(bool, solarity_rendering::WorldSkyModelFrame<'_>), RuntimeTerrainFrameError> {
         self.prepare_model_input(
+            cpu,
             renderer,
             camera,
             time_ms,
@@ -164,6 +141,7 @@ impl RuntimeSkyResources {
     /// Resolves requests before the native gate, then advances the visible scene.
     fn prepare_model_input(
         &mut self,
+        cpu: &CpuExecutor,
         renderer: &mut VulkanRenderer,
         camera: solarity_rendering::WorldCameraFrame,
         time_ms: u32,
@@ -171,27 +149,8 @@ impl RuntimeSkyResources {
         world_bone_count: usize,
         random: &mut crate::random::CrtRand,
     ) -> Result<(bool, solarity_rendering::WorldSkyModelFrame<'_>), RuntimeTerrainFrameError> {
-        // 7F3230 resolves the global override before its three ordinary requests.
-        // An alias therefore inherits the flags of whichever request came first.
-        let global = if let Some((id, weight)) = input.global_skybox {
-            self.resolve_skybox(id, time_ms)?.map_or_else(
-                skybox::SkyboxSlot::default,
-                |(model, _)| skybox::SkyboxSlot {
-                    model,
-                    weight,
-                    flags: 0,
-                },
-            )
-        } else {
-            skybox::SkyboxSlot::default()
-        };
-        let mut slots = skybox::select_slots::<RuntimeTerrainFrameError>(input.skyboxes, |id| {
-            self.resolve_skybox(id, time_ms)
-        })?;
-        if let Some((path, weight)) = input.world_model {
-            let model = self.resolve_name(path, 0, time_ms)?;
-            skybox::replace_world_model(&mut slots, model, weight);
-        }
+        let (global, slots) = self.resolve_slots(input, time_ms)?;
+        self.service_models(cpu)?;
         // 7EF6E0 checks owner presence and weight, independently of model readiness,
         // replacement flags and the window used to draw authored sky geometry.
         let glare_suppression = if global.model.is_some() && global.weight > 0. {
@@ -294,6 +253,36 @@ impl RuntimeSkyResources {
         ))
     }
 
+    /// Owner order and first-request flags are independent of worker readiness.
+    fn resolve_slots(
+        &mut self,
+        input: SkyModelInput<'_>,
+        time_ms: u32,
+    ) -> Result<(skybox::SkyboxSlot, [skybox::SkyboxSlot; 3]), RuntimeTerrainFrameError> {
+        // 7F3230 resolves the global override before its three ordinary requests.
+        // An alias therefore inherits the flags of whichever request came first.
+        let global = if let Some((id, weight)) = input.global_skybox {
+            self.resolve_skybox(id, time_ms)?.map_or_else(
+                skybox::SkyboxSlot::default,
+                |(model, _)| skybox::SkyboxSlot {
+                    model,
+                    weight,
+                    flags: 0,
+                },
+            )
+        } else {
+            skybox::SkyboxSlot::default()
+        };
+        let mut slots = skybox::select_slots::<RuntimeTerrainFrameError>(input.skyboxes, |id| {
+            self.resolve_skybox(id, time_ms)
+        })?;
+        if let Some((path, weight)) = input.world_model {
+            let model = self.resolve_name(path, 0, time_ms)?;
+            skybox::replace_world_model(&mut slots, model, weight);
+        }
+        Ok((global, slots))
+    }
+
     /// Resolves a LightSkybox row while preserving its slot and phase flags.
     fn resolve_skybox(
         &mut self,
@@ -338,50 +327,11 @@ impl RuntimeSkyResources {
             self.names.insert(name.to_owned(), Some(index));
             return Ok(Some(index));
         }
-        let mut store = self.store.borrow_mut();
-        let resident = self
-            .model_cache
-            .load(&mut store, &path)
-            .map_err(super::terrain_coordinator::RuntimeTerrainError::from)
-            .and_then(|model| {
-                let directional = model
-                    .animations()
-                    .lights()
-                    .iter()
-                    .any(|light| light.kind() == solarity_asset::M2LightKind::Directional);
-                let points = model
-                    .animations()
-                    .lights()
-                    .iter()
-                    .filter(|light| light.kind() == solarity_asset::M2LightKind::Point)
-                    .count();
-                let count = match (usize::from(directional) + points).min(4) {
-                    0 => solarity_rendering::M2LocalLightCount::Zero,
-                    1 => solarity_rendering::M2LocalLightCount::One,
-                    2 => solarity_rendering::M2LocalLightCount::Two,
-                    3 => solarity_rendering::M2LocalLightCount::Three,
-                    _ => solarity_rendering::M2LocalLightCount::Four,
-                };
-                ResidentM2Source::load_with_lights(
-                    &path,
-                    &mut self.model_cache,
-                    &mut self.texture_cache,
-                    &mut store,
-                    count,
-                )
-                .map(|resident| SkyM2Model::with_lights(resident, time_ms, count))
-            });
-        let model = match resident {
-            Ok(model) => Some(model),
-            Err(error) => {
-                tracing::warn!(model = %path, %error, "authored skybox request failed");
-                None
-            }
-        };
         let index = self.skyboxes.len();
         self.skyboxes.push(CachedSkybox {
+            request: ModelRequest::new(path.clone(), time_ms, true),
             path,
-            model,
+            model: None,
             phase: skybox::SkyboxPhase {
                 flags,
                 ..Default::default()
@@ -394,9 +344,11 @@ impl RuntimeSkyResources {
     /// Uploads once; all world generations keep the renderer-owned handles.
     pub(super) fn prepare(
         &mut self,
+        cpu: &CpuExecutor,
         renderer: &mut VulkanRenderer,
         environment: super::environment_coordinator::RuntimeWorldEnvironmentFrame,
     ) -> Result<RuntimeCelestialResources, RuntimeTerrainFrameError> {
+        self.service_textures(cpu)?;
         for (slot, source) in self.textures.iter_mut().zip(&self.sources) {
             if slot.is_none() {
                 *slot = Some(match source {

@@ -19,6 +19,22 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+Sky models now join the namespace M2 authority in resumable worker tasks, including
+stars and WMO-selected skies. The ordered main owner resolves aliases, first phase
+flags and request timestamps without archive access; queue saturation retains the
+request for later admission. Shared source waits release the worker, while model
+textures and shader preparation run after readiness. Celestial textures decode
+one per worker turn and publish as one bank. Glue servicing begins these process
+resources before world presentation. Sky animation, RNG and GPU publication retain
+their ordered main owner.
+
+The sky source and rendering suite passes nine tests (four existing installed-data
+tests ignored), including single-worker suspension/cancellation, shared generation
+identity, capacity retry, alias flags, WMO replacement and hidden-scene clocks.
+Formatting and runtime Clippy with warnings denied pass. The first test compile
+exhausted disk space; clearing stale compiler intermediates allowed the rerun to
+finish. Logs are in ignored `target/sky-cutover-{check,test,lint}.log`.
+
 Appearance loading now carries player/NPC attachments, item visual children,
 mounts and Glue pets through the namespace-wide shared M2 authority. One admitted
 resumable task retains the archive bank and source leases across discovered
@@ -935,7 +951,8 @@ an operation has a context parameter. The requirements below remain in scope.
   local/NPC/remote-player primary M2s. Terrain MDDF/MODD/ground detail and GameObject WMO sources are now connected.
   Glue attachments/pets and population attachments/mounts/item visuals now join
   the same namespace source authority through resumable appearance tasks.
-  Effects and sky sources still require the remaining shared-source connection.
+  Sky models and stars now join the same authority through resumable source tasks.
+  Effects still require their remaining shared-source connection.
   Other source domains still need shared pending authority, cross-resource I/O
   dependencies and the remaining domain-wide shared result leases. WMO requests
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
