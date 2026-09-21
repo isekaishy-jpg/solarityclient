@@ -1,5 +1,6 @@
 //! Persistent ownership of the built-in login and character UI.
 
+mod preparation;
 mod publication;
 mod refresh;
 mod scrolling;
@@ -35,30 +36,18 @@ use crate::{
 /// the bundle-owned Lua 5.1 state.
 pub struct GlueManager {
     runtime: UiScriptRuntime,
+    native: preparation::UiNativeState,
     scripts: UiScriptPlan,
     templates: UiRuntimeTemplatePlan,
-    fonts: FontCatalog,
     frames: UiFrameStatePlan,
     regions: UiRegionStatePlan,
-    live: UiRuntimeObjectPlan,
-    geometry: UiRegionGeometryPlan,
-    scroll_frames: UiScrollFramePlan,
-    glyphs: UiGlyphAtlasPlan,
-    presentation: UiPresentationPlan,
-    render_plan: UiRenderPlan,
     textures: UiTexturePlan,
     texture_states: UiTextureStatePlan,
-    backdrops: UiBackdropStatePlan,
-    objects: Vec<GlueObject>,
-    child_indices: Vec<usize>,
-    pointer: UiPointerPlan,
     pointer_capture: Option<(usize, UiPointerButton)>,
     edit_box_pointer_anchor: Option<usize>,
     pointer_hover: Option<usize>,
     deferred_scroll_refresh: Vec<(usize, u32)>,
     deferred_presentation: transaction::DeferredPresentation,
-    visual_indices: Vec<usize>,
-    visual_work: Vec<usize>,
     incremental_visual_updates: bool,
     glyph_logical_height: u32,
     report: GlueStartupReport,
@@ -283,20 +272,23 @@ impl GlueManager {
     /// Returns persistent global font definitions.
     #[must_use]
     pub const fn fonts(&self) -> &FontCatalog {
-        &self.fonts
+        &self.native.fonts
     }
 
     /// Returns compact live-object identity and ownership state.
     #[must_use]
     pub fn objects(&self) -> &[GlueObject] {
-        &self.objects
+        &self.native.objects
     }
 
     /// Returns direct children for one object in stock construction order.
     #[must_use]
     pub fn children(&self, object_index: usize) -> Option<&[usize]> {
-        let object = self.objects.get(object_index)?;
-        Some(&self.child_indices[object.first_child()..object.first_child() + object.child_count()])
+        let object = self.native.objects.get(object_index)?;
+        Some(
+            &self.native.child_indices
+                [object.first_child()..object.first_child() + object.child_count()],
+        )
     }
 
     /// Returns resolved frame ordering and interaction properties.
@@ -314,25 +306,25 @@ impl GlueManager {
     /// Returns live rectangles resolved after startup Lua has run.
     #[must_use]
     pub const fn geometry(&self) -> &UiRegionGeometryPlan {
-        &self.geometry
+        &self.native.geometry
     }
 
     /// Returns live ScrollFrame offsets and ranges parallel to Glue objects.
     #[must_use]
     pub const fn scroll_frames(&self) -> &UiScrollFramePlan {
-        &self.scroll_frames
+        &self.native.scroll_frames
     }
 
     /// Returns the immutable archive-font atlas retained across Glue screens.
     #[must_use]
     pub const fn glyphs(&self) -> &UiGlyphAtlasPlan {
-        &self.glyphs
+        &self.native.glyphs
     }
 
     /// Returns post-Lua texture packets in deterministic stock draw order.
     #[must_use]
     pub const fn presentation(&self) -> &UiPresentationPlan {
-        &self.presentation
+        &self.native.presentation
     }
 
     /// Returns one minimap's current widget settings and resolved viewport.
@@ -341,13 +333,17 @@ impl GlueManager {
         &self,
         object_index: usize,
     ) -> Option<crate::UiMinimapPresentation> {
-        UiPresentationPlan::configured_minimap(&self.live, &self.geometry, object_index)
+        UiPresentationPlan::configured_minimap(
+            &self.native.live,
+            &self.native.geometry,
+            object_index,
+        )
     }
 
     /// Returns the upload-ready mesh rebuilt after each delivered Glue event.
     #[must_use]
     pub const fn render_plan(&self) -> &UiRenderPlan {
-        &self.render_plan
+        &self.native.render_plan
     }
 
     /// Returns the model source retained by a named live Model widget, even
@@ -392,6 +388,7 @@ impl GlueManager {
         object_name: &str,
     ) -> Result<Option<crate::UiModelPresentation>, crate::UiScriptError> {
         let Some(object_index) = self
+            .native
             .objects
             .iter()
             .position(|object| object.name() == Some(object_name))
@@ -401,7 +398,7 @@ impl GlueManager {
         let live = self.runtime.snapshot_objects(&self.bundle)?;
         Ok(crate::UiPresentationPlan::configured_model(
             &live,
-            &self.geometry,
+            &self.native.geometry,
             object_index,
         ))
     }
@@ -422,7 +419,8 @@ impl GlueManager {
         &self,
         cache: &mut BlpTextureCache,
     ) -> Result<UiTextureAssetBindings, crate::UiRenderError> {
-        self.render_plan
+        self.native
+            .render_plan
             .texture_assets()
             .load_blocking(&mut self.assets.borrow_mut(), cache)
     }
@@ -614,7 +612,7 @@ impl GlueManager {
                 paths.push(path.clone());
             }
         };
-        for object in self.live.objects() {
+        for object in self.native.live.objects() {
             if let Some(path) = object
                 .texture
                 .as_ref()
@@ -623,8 +621,8 @@ impl GlueManager {
                 push(path);
             }
         }
-        for object_index in 0..self.backdrops.state_count() {
-            let Some(backdrop) = self.backdrops.state(object_index) else {
+        for object_index in 0..self.native.backdrops.state_count() {
+            let Some(backdrop) = self.native.backdrops.state(object_index) else {
                 continue;
             };
             if let Some(path) = backdrop.background() {
@@ -646,7 +644,7 @@ impl GlueManager {
     /// Returns declaration-resolved native frame backdrops.
     #[must_use]
     pub const fn backdrops(&self) -> &UiBackdropStatePlan {
-        &self.backdrops
+        &self.native.backdrops
     }
 
     /// Returns compiled event and handler functions retained in Lua.
@@ -745,15 +743,15 @@ impl GlueManager {
     /// [`Self::take_callback_failure`].
     pub fn update(&mut self, elapsed_seconds: f64) -> Result<bool, UiEventError> {
         let _profile_scope = solarity_profiling::profile!("ui.glue.c_glue_mgr.mod.update");
-        let update = self
-            .runtime
-            .dispatch_updates(&self.bundle, &self.live, elapsed_seconds)?;
+        let update =
+            self.runtime
+                .dispatch_updates(&self.bundle, &self.native.live, elapsed_seconds)?;
         let _handler_count = update.handler_count;
         if !self.retained_object_topology_matches_runtime() {
             self.refresh_live_state()?;
         } else if update.targeted_objects {
             self.runtime
-                .apply_animation_transforms(&mut self.live, &update.animation_updates);
+                .apply_animation_transforms(&mut self.native.live, &update.animation_updates);
             if update.texture_vertex_colors_only() {
                 self.refresh_texture_vertex_colors(&update.dirty_objects, &update.visual_objects)?;
             } else {
@@ -762,11 +760,11 @@ impl GlueManager {
             }
         } else if update.targeted_visual && self.incremental_visual_updates {
             self.runtime
-                .apply_animation_transforms(&mut self.live, &update.animation_updates);
+                .apply_animation_transforms(&mut self.native.live, &update.animation_updates);
             self.refresh_targeted_visual_objects(&update.visual_objects)?;
         } else if update.visual_only {
             self.runtime
-                .refresh_visual_transforms(&self.bundle, &mut self.live)?;
+                .refresh_visual_transforms(&self.bundle, &mut self.native.live)?;
             self.rebuild_visual_transform_state()?;
         } else if update.changed {
             self.refresh_live_state()?;
@@ -820,7 +818,7 @@ impl GlueManager {
     /// property write was otherwise journaled, so it must select the atomic full
     /// snapshot path before any old dense plan is consulted.
     fn retained_object_topology_matches_runtime(&self) -> bool {
-        self.live.objects().len() == self.runtime.registered_object_count()
+        self.native.live.objects().len() == self.runtime.registered_object_count()
     }
 
     /// Publishes stock Texture color animation as an object-local retained
@@ -836,19 +834,25 @@ impl GlueManager {
         if !visual_objects.is_empty() {
             self.refresh_targeted_visual_objects(visual_objects)?;
         }
-        let text_objects =
-            self.runtime
-                .refresh_dirty_objects(&self.bundle, &mut self.live, dirty_objects)?;
+        let text_objects = self.runtime.refresh_dirty_objects(
+            &self.bundle,
+            &mut self.native.live,
+            dirty_objects,
+        )?;
         debug_assert!(text_objects.is_empty());
-        let mut retained = true;
-        for &(object_index, _) in dirty_objects {
-            retained &= self
-                .presentation
-                .refresh_texture_vertex_colors(&self.live, object_index);
-            retained &= self
-                .render_plan
-                .refresh_texture_vertex_colors(&self.presentation, object_index)?;
-        }
+        let dirty = dirty_objects.to_vec();
+        let retained = self.prepare_native(move |state, _, _| {
+            let mut retained = true;
+            for &(object_index, _) in &dirty {
+                retained &= state
+                    .presentation
+                    .refresh_texture_vertex_colors(&state.live, object_index);
+                retained &= state
+                    .render_plan
+                    .refresh_texture_vertex_colors(&state.presentation, object_index)?;
+            }
+            Ok::<_, UiEventError>(retained)
+        })??;
         if !retained {
             return self
                 .refresh_targeted_objects(dirty_objects, visual_objects)
@@ -948,8 +952,14 @@ impl GlueManager {
         modifiers: UiKeyboardModifiers,
     ) -> Result<UiPointerDispatch, UiEventError> {
         let _button_context = self.mouse_button_scope(Some(button));
-        let hover_hit = self.pointer.hover_hit_test(&self.geometry, position);
-        let hit = self.pointer.hit_test(&self.geometry, position);
+        let hover_hit = self
+            .native
+            .pointer
+            .hover_hit_test(&self.native.geometry, position);
+        let hit = self
+            .native
+            .pointer
+            .hit_test(&self.native.geometry, position);
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hover_hit);
         let mut hover = self.update_pointer_hover(hover_hit)?;
@@ -973,17 +983,18 @@ impl GlueManager {
         if pressed {
             self.pointer_capture = Some((object_index, button));
         }
-        let kind = self
-            .pointer
-            .kind(object_index)
-            .ok_or_else(|| crate::UiScriptError::Plan {
-                message: format!("pointer target {object_index} lost its live frame state"),
-            })?;
+        let kind =
+            self.native
+                .pointer
+                .kind(object_index)
+                .ok_or_else(|| crate::UiScriptError::Plan {
+                    message: format!("pointer target {object_index} lost its live frame state"),
+                })?;
         let mut button_dispatch = None;
         let click_activated = match kind {
             UiObjectKind::Button | UiObjectKind::CheckButton => {
                 let activate = (!pressed && hit == Some(object_index) || pressed)
-                    && self.pointer.activates(object_index, button, pressed);
+                    && self.native.pointer.activates(object_index, button, pressed);
                 button_dispatch = Some(self.runtime.dispatch_button_pointer(
                     &self.bundle,
                     object_index,
@@ -996,12 +1007,14 @@ impl GlueManager {
             }
             UiObjectKind::EditBox => {
                 if pressed && button == UiPointerButton::Left {
-                    if let Some(cursor) =
-                        self.glyphs
-                            .edit_box_cursor_at(&self.geometry, object_index, position)
-                    {
+                    if let Some(cursor) = self.native.glyphs.edit_box_cursor_at(
+                        &self.native.geometry,
+                        object_index,
+                        position,
+                    ) {
                         let anchor = if modifiers.shift() {
-                            self.glyphs
+                            self.native
+                                .glyphs
                                 .edit_box_selection_anchor(object_index)
                                 .unwrap_or(cursor)
                         } else {
@@ -1027,9 +1040,11 @@ impl GlueManager {
             }
             UiObjectKind::Slider => {
                 if button == UiPointerButton::Left
-                    && let Some(value) =
-                        self.pointer
-                            .slider_value_at(&self.geometry, object_index, position)
+                    && let Some(value) = self.native.pointer.slider_value_at(
+                        &self.native.geometry,
+                        object_index,
+                        position,
+                    )
                 {
                     self.runtime
                         .dispatch_slider_value(&self.bundle, object_index, value)?;
@@ -1099,7 +1114,10 @@ impl GlueManager {
         position: (f64, f64),
         defer_slider_refresh: bool,
     ) -> Result<Option<usize>, UiEventError> {
-        let hit = self.pointer.hover_hit_test(&self.geometry, position);
+        let hit = self
+            .native
+            .pointer
+            .hover_hit_test(&self.native.geometry, position);
         self.update_cursor_position(position);
         self.environment.mouse_focus().set(hit);
         let previous_hover = self.pointer_hover;
@@ -1111,12 +1129,14 @@ impl GlueManager {
             }
             return Ok(None);
         };
-        match self.pointer.kind(object_index) {
+        match self.native.pointer.kind(object_index) {
             Some(UiObjectKind::EditBox) => {
                 if let Some(anchor) = self.edit_box_pointer_anchor
-                    && let Some(cursor) =
-                        self.glyphs
-                            .edit_box_cursor_at(&self.geometry, object_index, position)
+                    && let Some(cursor) = self.native.glyphs.edit_box_cursor_at(
+                        &self.native.geometry,
+                        object_index,
+                        position,
+                    )
                 {
                     self.runtime.set_edit_box_pointer_selection(
                         &self.bundle,
@@ -1138,9 +1158,10 @@ impl GlueManager {
                 return Ok(Some(object_index));
             }
         }
-        let Some(value) = self
-            .pointer
-            .slider_value_at(&self.geometry, object_index, position)
+        let Some(value) =
+            self.native
+                .pointer
+                .slider_value_at(&self.native.geometry, object_index, position)
         else {
             if hover.changed {
                 self.refresh_live_state()?;
@@ -1250,196 +1271,115 @@ impl GlueManager {
         button_owners.dedup();
         self.runtime.refresh_button_highlights(
             &self.bundle,
-            &mut self.live,
+            &mut self.native.live,
             button_owners.iter().copied(),
         )?;
         ui_profile.mark("highlights");
         let (button_text_layout_changes, button_text_color_changes) =
             self.runtime.refresh_button_texts(
                 &self.bundle,
-                &mut self.live,
+                &mut self.native.live,
                 update.font_buttons.into_iter().flatten(),
             )?;
         ui_profile.mark("button_text");
         if !update.dirty_objects.is_empty() {
             self.refresh_targeted_objects(&update.dirty_objects, &update.visual_objects)?;
         } else if !update.visual_objects.is_empty() && self.incremental_visual_updates {
-            self.runtime.refresh_visual_objects(
-                &self.bundle,
-                &mut self.live,
-                &update.visual_objects,
-            )?;
-            self.collect_visual_subtrees(&update.visual_objects);
-            let changes = self
-                .geometry
-                .refresh_visual_regions(&self.live, &self.visual_indices);
-            if !self.current_visual_slots_are_resident() {
-                self.rebuild_visual_topology_from_live()?;
-            } else {
-                for change in &changes {
-                    self.presentation.refresh_visual_object(
-                        &self.live,
-                        &self.geometry,
-                        change.object_index,
-                        change.translation,
-                    );
-                }
-                self.render_plan.refresh_visual_objects(
-                    &changes,
-                    &self.geometry,
-                    &self.presentation,
-                    &self.scroll_frames,
-                    &self.live,
-                    &self.glyphs,
-                )?;
-            }
-            // Visual-only mutations cannot change pointer ownership or input
-            // metadata; hit testing reads their current geometry directly.
+            self.refresh_targeted_visual_objects(&update.visual_objects)?;
         }
         ui_profile.mark("visuals");
-        let changed_opacities = self.presentation.refresh_button_state_opacities(
-            &self.live,
-            &self.geometry,
-            Some(&button_owners),
-        );
-        self.render_plan
-            .refresh_object_opacities(&self.presentation, &changed_opacities)?;
-        ui_profile.mark("opacities");
-        let mut rebuilt_text_topology = false;
-        if !button_text_layout_changes.is_empty() {
-            let retained_fonts = self.glyphs.supports_live_text_objects(
-                &self.live,
-                self.glyph_logical_height,
-                button_text_layout_changes.iter().copied(),
+        let html = self.runtime.simple_html().clone();
+        let height = self.glyph_logical_height;
+        self.prepare_native(move |state, fonts, assets| {
+            let changed_opacities = state.presentation.refresh_button_state_opacities(
+                &state.live,
+                &state.geometry,
+                Some(&button_owners),
             );
-            ui_profile.mark("text_support");
-            if retained_fonts {
-                self.glyphs.refresh_live_text_objects(
-                    &self.live,
-                    &self.geometry,
-                    self.glyph_logical_height,
-                    &button_text_layout_changes,
-                )?;
-                ui_profile.mark("text_layout");
-                let retained_slots = self.render_plan.refresh_glyph_objects(
-                    &self.glyphs,
-                    &self.live,
-                    &self.geometry,
-                    &self.scroll_frames,
-                    &button_text_layout_changes,
-                )?;
+            state
+                .render_plan
+                .refresh_object_opacities(&state.presentation, &changed_opacities)?;
+            let mut rebuilt_text_topology = false;
+            if !button_text_layout_changes.is_empty() {
+                let retained_fonts = state.glyphs.supports_live_text_objects(
+                    &state.live,
+                    height,
+                    button_text_layout_changes.iter().copied(),
+                );
+                if retained_fonts {
+                    state.glyphs.refresh_live_text_objects(
+                        &state.live,
+                        &state.geometry,
+                        height,
+                        &button_text_layout_changes,
+                    )?;
+                    let retained_slots = state.render_plan.refresh_glyph_objects(
+                        &state.glyphs,
+                        &state.live,
+                        &state.geometry,
+                        &state.scroll_frames,
+                        &button_text_layout_changes,
+                    )?;
 
-                if !retained_slots {
-                    self.rebuild_live_text_topology()?;
+                    if !retained_slots {
+                        state.rebuild_live_text_topology(&html, height, fonts, assets)?;
+                        rebuilt_text_topology = true;
+                    }
+                } else {
+                    state.rebuild_live_text_topology(&html, height, fonts, assets)?;
                     rebuilt_text_topology = true;
                 }
-            } else {
-                self.rebuild_live_text_topology()?;
-                rebuilt_text_topology = true;
             }
-        }
-        if !rebuilt_text_topology && !button_text_color_changes.is_empty() {
-            self.glyphs
-                .refresh_live_text_colors(&button_text_color_changes);
-            for change in button_text_color_changes {
-                let colors = self.glyphs.retained_object_colors(
-                    change.object_index,
-                    &self.geometry,
-                    &self.scroll_frames,
-                );
-                if !self
-                    .render_plan
-                    .refresh_glyph_colors(change.object_index, &colors)?
-                {
-                    self.rebuild_live_text_topology()?;
-                    break;
+            if !rebuilt_text_topology && !button_text_color_changes.is_empty() {
+                state
+                    .glyphs
+                    .refresh_live_text_colors(&button_text_color_changes);
+                for change in button_text_color_changes {
+                    let colors = state.glyphs.retained_object_colors(
+                        change.object_index,
+                        &state.geometry,
+                        &state.scroll_frames,
+                    );
+                    if !state
+                        .render_plan
+                        .refresh_glyph_colors(change.object_index, &colors)?
+                    {
+                        state.rebuild_live_text_topology(&html, height, fonts, assets)?;
+                        break;
+                    }
                 }
             }
-        }
 
-        Ok(())
-    }
-
-    /// Reports whether the currently visible targeted subtree owns retained draw slots.
-    fn current_visual_slots_are_resident(&self) -> bool {
-        self.visual_indices.iter().all(|&object_index| {
-            let Some(object) = self.live.objects().get(object_index) else {
-                return true;
-            };
-            let presented = self.geometry.region(object_index).is_some_and(|region| {
-                region.effectively_shown()
-                    && (region.effective_alpha() > 0.0 || region.animation_active())
-            });
-            if !presented {
-                return true;
-            }
-            let owns_quad = object.minimap.is_some()
-                || object
-                    .texture
-                    .as_ref()
-                    .is_some_and(|texture| texture.file.is_some() || texture.solid_color.is_some())
-                || object
-                    .text
-                    .as_ref()
-                    .is_some_and(|text| !text.content.is_empty())
-                || self.backdrops.state(object_index).is_some();
-            (!owns_quad || self.render_plan.mesh().contains_object(object_index))
-                && (object.model.is_none() || self.presentation.contains_model(object_index))
-        })
+            Ok(())
+        })?
     }
 
     /// Materializes a newly revealed subtree from the already patched live arena.
     /// Subsequent hide/show transitions retain and only toggle those slots.
     fn rebuild_visual_topology_from_live(&mut self) -> Result<(), UiEventError> {
-        let mut ui_profile =
-            solarity_profiling::profile!("ui.mod.rebuild_visual_topology_from_live");
-        // The visual journal changes only visibility, alpha, and animation
-        // transforms. Glyphs retain local bounds for hidden owners as well as
-        // visible ones; mesh resolution applies their current presentation
-        // transform and clip. Content/layout journals refresh those glyphs at
-        // their own boundary. Re-laying out every hidden screen here would
-        // make the first reveal pay for unrelated legal and credits text.
-        self.presentation =
-            UiPresentationPlan::resolve(&self.live, &self.geometry, &self.backdrops);
-        ui_profile.mark("presentation");
-        self.render_plan = UiRenderPlan::prepare_with_glyphs(
-            &self.presentation,
-            &self.glyphs,
-            &self.geometry,
-            &self.scroll_frames,
-            self.geometry.ui_extent(),
-        )?;
-        self.pointer = UiPointerPlan::from_live(&self.live);
-
-        Ok(())
-    }
-
-    /// Re-lays out native button labels without copying the complete Lua arena.
-    fn rebuild_live_text_topology(&mut self) -> Result<(), UiEventError> {
-        if self
-            .glyphs
-            .supports_live_text(&self.live, self.glyph_logical_height)
-        {
-            self.glyphs
-                .refresh_live_text(&self.live, &self.geometry, self.glyph_logical_height)?;
-        } else {
-            self.glyphs.rebuild_live_ui(
-                self.runtime.simple_html(),
-                &self.live,
-                &self.geometry,
-                &self.fonts,
-                &mut self.assets.borrow_mut(),
-                self.glyph_logical_height,
+        self.prepare_native(move |state, _, _| {
+            let mut ui_profile =
+                solarity_profiling::profile!("ui.mod.rebuild_visual_topology_from_live");
+            // The visual journal changes only visibility, alpha, and animation
+            // transforms. Glyphs retain local bounds for hidden owners as well as
+            // visible ones; mesh resolution applies their current presentation
+            // transform and clip. Content/layout journals refresh those glyphs at
+            // their own boundary. Re-laying out every hidden screen here would
+            // make the first reveal pay for unrelated legal and credits text.
+            state.presentation =
+                UiPresentationPlan::resolve(&state.live, &state.geometry, &state.backdrops);
+            ui_profile.mark("presentation");
+            state.render_plan = UiRenderPlan::prepare_with_glyphs(
+                &state.presentation,
+                &state.glyphs,
+                &state.geometry,
+                &state.scroll_frames,
+                state.geometry.ui_extent(),
             )?;
-        }
-        self.render_plan = UiRenderPlan::prepare_with_glyphs(
-            &self.presentation,
-            &self.glyphs,
-            &self.geometry,
-            &self.scroll_frames,
-            self.geometry.ui_extent(),
-        )?;
-        Ok(())
+            state.pointer = UiPointerPlan::from_live(&state.live);
+
+            Ok(())
+        })?
     }
 
     fn update_cursor_position(&self, position: (f64, f64)) {
@@ -1454,7 +1394,7 @@ impl GlueManager {
     /// Returns the live object index of the focused visible EditBox.
     #[must_use]
     pub fn focused_edit_box(&self) -> Option<usize> {
-        self.pointer.focused_edit_box(&self.geometry)
+        self.native.pointer.focused_edit_box(&self.native.geometry)
     }
 
     /// Delivers committed platform text to the focused stock EditBox.
@@ -1504,7 +1444,7 @@ impl GlueManager {
     ) -> Result<Option<usize>, UiEventError> {
         let target = self
             .focused_edit_box()
-            .or_else(|| self.pointer.keyboard_target(&self.geometry));
+            .or_else(|| self.native.pointer.keyboard_target(&self.native.geometry));
         let Some(object_index) = target else {
             return Ok(None);
         };
@@ -1531,7 +1471,11 @@ impl GlueManager {
         delta: f64,
     ) -> Result<Option<usize>, UiEventError> {
         self.update_cursor_position(position);
-        let Some(object_index) = self.pointer.wheel_hit_test(&self.geometry, position) else {
+        let Some(object_index) = self
+            .native
+            .pointer
+            .wheel_hit_test(&self.native.geometry, position)
+        else {
             return Ok(None);
         };
         let dispatch = self
@@ -1553,37 +1497,49 @@ impl GlueManager {
     /// proves that text, HTML, hierarchy, material state, and pointer admission
     /// are otherwise unchanged, so none of those expensive plans need rebuilt.
     fn refresh_scroll_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
-        self.render_plan.refresh_scroll_transforms(
-            &self.live,
-            &live,
-            &mut self.geometry,
-            &mut self.presentation,
-        );
-        self.scroll_frames = UiScrollFramePlan::from_live(&live);
-        self.live = live;
-        Ok(())
+        self.prepare_native(move |state, _, _| {
+            state.render_plan.refresh_scroll_transforms(
+                &state.live,
+                &live,
+                &mut state.geometry,
+                &mut state.presentation,
+            );
+            state.scroll_frames = UiScrollFramePlan::from_live(&live);
+            state.live = live;
+            Ok(())
+        })?
     }
 
     /// Selects retained Button skins without rebuilding any immutable UI plan.
     fn refresh_button_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
-        let changed_opacities =
-            self.presentation
-                .refresh_button_state_opacities(&live, &self.geometry, None);
-        self.render_plan
-            .refresh_object_opacities(&self.presentation, &changed_opacities)?;
-        self.live = live;
-        Ok(())
+        self.prepare_native(move |state, _, _| {
+            let changed_opacities =
+                state
+                    .presentation
+                    .refresh_button_state_opacities(&live, &state.geometry, None);
+            state
+                .render_plan
+                .refresh_object_opacities(&state.presentation, &changed_opacities)?;
+            state.live = live;
+            Ok(())
+        })?
     }
 
     /// Reports whether every newly revealed renderable already owns a lazy
     /// retained slot from an earlier visible generation.
     fn visibility_slots_are_resident(
-        &self,
-        live: &UiRuntimeObjectPlan,
+        &mut self,
+        live: &mut UiRuntimeObjectPlan,
     ) -> Result<bool, UiEventError> {
-        let geometry = UiRegionGeometryPlan::resolve(live, self.geometry.ui_extent())?;
+        let extent = self.native.geometry.ui_extent();
+        let geometry = self.runtime.font_system().prepare(
+            &mut self.assets.borrow_mut(),
+            live,
+            move |live, _, _| UiRegionGeometryPlan::resolve(live, extent),
+        )??;
         for (object_index, object) in live.objects().iter().enumerate() {
             let was_visible = self
+                .native
                 .geometry
                 .region(object_index)
                 .is_some_and(crate::UiRegionGeometry::effectively_shown);
@@ -1598,11 +1554,11 @@ impl GlueManager {
                     .text
                     .as_ref()
                     .is_some_and(|text| !text.content.is_empty())
-                || self.backdrops.state(object_index).is_some();
-            if owns_quad && !self.render_plan.mesh().contains_object(object_index) {
+                || self.native.backdrops.state(object_index).is_some();
+            if owns_quad && !self.native.render_plan.mesh().contains_object(object_index) {
                 return Ok(false);
             }
-            if object.model.is_some() && !self.presentation.contains_model(object_index) {
+            if object.model.is_some() && !self.native.presentation.contains_model(object_index) {
                 return Ok(false);
             }
         }
@@ -1611,28 +1567,42 @@ impl GlueManager {
 
     /// Retains geometry, glyph coverage, materials, and pointer topology for a
     /// pure hide/show transition and patches only visible draw state.
-    fn refresh_visibility_state(&mut self, live: UiRuntimeObjectPlan) -> Result<(), UiEventError> {
-        let geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
-        self.runtime
-            .publish_changed_resolved_geometry(&self.bundle, &self.geometry, &geometry)?;
-        self.presentation
-            .refresh_visibility_opacities(&live, &geometry);
-        if !self.render_plan.refresh_visual_states(
-            &self.geometry,
+    fn refresh_visibility_state(
+        &mut self,
+        mut live: UiRuntimeObjectPlan,
+    ) -> Result<(), UiEventError> {
+        let extent = self.native.geometry.ui_extent();
+        let geometry = self.runtime.font_system().prepare(
+            &mut self.assets.borrow_mut(),
+            &mut live,
+            move |live, _, _| UiRegionGeometryPlan::resolve(live, extent),
+        )??;
+        self.runtime.publish_changed_resolved_geometry(
+            &self.bundle,
+            &self.native.geometry,
             &geometry,
-            &self.presentation,
-            &self.scroll_frames,
-            &self.glyphs,
-        )? {
-            return Err(crate::UiScriptError::Plan {
-                message: "visibility-only refresh changed immutable UI geometry".to_owned(),
+        )?;
+        self.prepare_native(move |state, _, _| {
+            state
+                .presentation
+                .refresh_visibility_opacities(&live, &geometry);
+            if !state.render_plan.refresh_visual_states(
+                &state.geometry,
+                &geometry,
+                &state.presentation,
+                &state.scroll_frames,
+                &state.glyphs,
+            )? {
+                return Err(crate::UiScriptError::Plan {
+                    message: "visibility-only refresh changed immutable UI geometry".to_owned(),
+                }
+                .into());
             }
-            .into());
-        }
-        self.live = live;
-        self.geometry = geometry;
-        self.pointer = UiPointerPlan::from_live(&self.live);
-        Ok(())
+            state.live = live;
+            state.geometry = geometry;
+            state.pointer = UiPointerPlan::from_live(&state.live);
+            Ok(())
+        })?
     }
 
     /// Rebuilds only the plans whose values include animated alpha or translation.
@@ -1640,31 +1610,34 @@ impl GlueManager {
         &mut self,
         live: UiRuntimeObjectPlan,
     ) -> Result<(), UiEventError> {
-        self.live = live;
+        self.native.live = live;
         self.rebuild_visual_transform_state()
     }
 
     fn rebuild_visual_transform_state(&mut self) -> Result<(), UiEventError> {
-        let geometry = UiRegionGeometryPlan::resolve(&self.live, self.geometry.ui_extent())?;
-        let presentation = UiPresentationPlan::resolve(&self.live, &geometry, &self.backdrops);
-        if !self.render_plan.refresh_visual_states(
-            &self.geometry,
-            &geometry,
-            &presentation,
-            &self.scroll_frames,
-            &self.glyphs,
-        )? {
-            self.render_plan = UiRenderPlan::prepare_with_glyphs(
-                &presentation,
-                &self.glyphs,
+        self.prepare_native(move |state, _, _| {
+            let geometry = UiRegionGeometryPlan::resolve(&state.live, state.geometry.ui_extent())?;
+            let presentation =
+                UiPresentationPlan::resolve(&state.live, &geometry, &state.backdrops);
+            if !state.render_plan.refresh_visual_states(
+                &state.geometry,
                 &geometry,
-                &self.scroll_frames,
-                geometry.ui_extent(),
-            )?;
-        }
-        self.geometry = geometry;
-        self.presentation = presentation;
-        Ok(())
+                &presentation,
+                &state.scroll_frames,
+                &state.glyphs,
+            )? {
+                state.render_plan = UiRenderPlan::prepare_with_glyphs(
+                    &presentation,
+                    &state.glyphs,
+                    &geometry,
+                    &state.scroll_frames,
+                    geometry.ui_extent(),
+                )?;
+            }
+            state.geometry = geometry;
+            state.presentation = presentation;
+            Ok(())
+        })?
     }
 }
 

@@ -29,7 +29,10 @@ impl FontGlyphRequest {
     }
 }
 
+type Preparation = Box<dyn FnOnce(&mut super::FontSystem, &mut AssetStore) + Send>;
+
 pub(super) enum Request {
+    Preparation(Preparation),
     Glyph(FontGlyphRequest),
     Glyphs(Vec<FontGlyphRequest>),
     Advances {
@@ -51,6 +54,7 @@ pub(super) enum Request {
 }
 
 pub(super) enum Reply {
+    Prepared,
     Glyph(RasterizedGlyph),
     Glyphs(Vec<Result<RasterizedGlyph, FontError>>),
     Advances(Vec<i64>),
@@ -64,6 +68,7 @@ impl Request {
         store: &mut AssetStore,
     ) -> Result<Reply, FontError> {
         match self {
+            Self::Preparation(_) => unreachable!("preparation owns a worker-local font system"),
             Self::Glyph(key) => state
                 .rasterize(store, &key.face, key.height, key.character, key.mode)
                 .map(Reply::Glyph),
@@ -97,8 +102,8 @@ impl Request {
     }
 }
 
-/// Main-only host admission and native-wait policy for an owned font request.
-/// Implementations submit to the application CPU service and reclaim before returning.
+/// Main-only host admission and native waits for fonts and retained UI preparation.
+/// Implementations must reclaim submitted work before returning or unwinding.
 pub trait FontWorkExecutor {
     /// Executes the request without running Lua or publishing UI state on a worker.
     /// # Errors
@@ -130,6 +135,15 @@ impl FontWork {
         let mut cache = self.cache.lock().map_err(|_| unavailable())?;
         let mut state = FontSystemState::new()?;
         state.cache = std::mem::take(&mut *cache);
+        if let Request::Preparation(operation) = self.request {
+            let local = std::rc::Rc::new(std::cell::RefCell::new(state));
+            let mut fonts = super::FontSystem {
+                owner: super::Owner::Local(local.clone()),
+            };
+            operation(&mut fonts, store);
+            *cache = std::mem::take(&mut local.borrow_mut().cache);
+            return Ok(FontWorkOutput(Reply::Prepared));
+        }
         let result = self.request.run(&mut state, store);
         *cache = state.cache;
         result.map(FontWorkOutput)

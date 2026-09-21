@@ -119,6 +119,7 @@ impl UiBackdropState {
 }
 
 /// Compact optional backdrop states indexed by the complete object arena.
+#[derive(Default)]
 pub struct UiBackdropStatePlan {
     node_states: Vec<Option<u32>>,
     states: Vec<UiBackdropState>,

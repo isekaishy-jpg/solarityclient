@@ -18,6 +18,11 @@ mod widget;
 mod world;
 mod xml;
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/stock_seed/support/mod.rs"]
+pub(crate) mod test_support;
+
 pub use addon::{
     AddonCatalog, AddonCatalogError, AddonCompatibility, AddonDefinition, STANDARD_ADDON_CRC,
     STOCK_INTERFACE_VERSION, UiAddonLoadState, UiSavedVariableState,

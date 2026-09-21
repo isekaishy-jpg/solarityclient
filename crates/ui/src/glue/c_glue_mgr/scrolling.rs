@@ -24,31 +24,35 @@ impl GlueManager {
     ) -> Result<(), UiEventError> {
         let _profile_scope =
             solarity_profiling::profile!("ui.glue.c_glue_mgr.scrolling.refresh_scroll_objects");
-        let previous = self
-            .runtime
-            .refresh_scroll_objects(&self.bundle, &mut self.live, dirty)?;
-        for (index, old) in &previous {
-            let new = &self.live.objects()[*index];
-            let thumb = self
-                .children(*index)
-                .into_iter()
-                .flatten()
-                .copied()
-                .find(|&child| {
-                    let candidate = &self.live.objects()[child];
-                    candidate.role == UiObjectRole::ThumbTexture
-                        && self.live.anchors_for(candidate).is_empty()
-                });
-            self.render_plan.refresh_scroll_object(
-                *index,
-                (old, new),
-                thumb,
-                &mut self.geometry,
-                &mut self.presentation,
-            );
-        }
-        self.scroll_frames
-            .refresh_objects(&self.live, dirty.iter().map(|(index, _)| *index));
-        Ok(())
+        let previous =
+            self.runtime
+                .refresh_scroll_objects(&self.bundle, &mut self.native.live, dirty)?;
+        let dirty = dirty.to_vec();
+        self.prepare_native(move |state, _, _| {
+            for (index, old) in &previous {
+                let new = &state.live.objects()[*index];
+                let thumb = state
+                    .children(*index)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .find(|&child| {
+                        let candidate = &state.live.objects()[child];
+                        candidate.role == UiObjectRole::ThumbTexture
+                            && state.live.anchors_for(candidate).is_empty()
+                    });
+                state.render_plan.refresh_scroll_object(
+                    *index,
+                    (old, new),
+                    thumb,
+                    &mut state.geometry,
+                    &mut state.presentation,
+                );
+            }
+            state
+                .scroll_frames
+                .refresh_objects(&state.live, dirty.iter().map(|(index, _)| *index));
+            Ok(())
+        })?
     }
 }

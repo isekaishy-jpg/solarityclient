@@ -1,4 +1,4 @@
-//! Main-owned font host; required workers own every archive read and FreeType call.
+//! Main-owned UI host; required workers own native preparation and font misses.
 
 use crate::platform::{NativeInputHandle, PlatformError};
 use solarity_asset::{ArchiveCatalog, AssetError, AssetReadBudget, AssetStore};
@@ -39,7 +39,7 @@ impl FontWorkExecutor for RuntimeFontPreparation {
                 let budget =
                     AssetReadBudget::for_service(self.cpu.storage().clone(), CpuService::Required);
                 move |context: &solarity_cpu::JobContext<'_>| {
-                    context.diagnostic_value("ui.font.required_request", 1);
+                    context.diagnostic_value("ui.preparation.required_request", 1);
                     if context.is_cancelled() {
                         return Err(AssetError::from(CpuError::JobCancelled).into());
                     }

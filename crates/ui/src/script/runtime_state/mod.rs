@@ -195,7 +195,7 @@ pub(crate) struct UiRuntimeTexture {
 }
 
 /// Flat post-bootstrap object arena and its anchor records.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct UiRuntimeObjectPlan {
     objects: Vec<UiRuntimeObject>,
     anchors: Vec<UiRuntimeAnchor>,

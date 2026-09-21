@@ -237,13 +237,13 @@ impl UiSimpleHtmlNode {
 /// Arena-aligned static state for every authored `SimpleHTML` object.
 #[derive(Clone, Debug)]
 pub struct UiSimpleHtmlPlan {
-    nodes: Vec<Option<UiSimpleHtmlNode>>,
+    nodes: std::sync::Arc<Vec<Option<UiSimpleHtmlNode>>>,
 }
 
 impl UiSimpleHtmlPlan {
     pub(crate) fn empty(object_count: usize) -> Self {
         Self {
-            nodes: vec![None; object_count],
+            nodes: std::sync::Arc::new(vec![None; object_count]),
         }
     }
 
@@ -349,7 +349,9 @@ impl UiSimpleHtmlPlan {
                 label,
             }));
         }
-        Ok(Self { nodes })
+        Ok(Self {
+            nodes: std::sync::Arc::new(nodes),
+        })
     }
 
     /// Returns the state aligned with one object-arena index.
@@ -374,12 +376,15 @@ impl UiSimpleHtmlPlan {
         font: (u32, FontSystem),
     ) -> Result<Option<(f32, Option<usize>)>, UiSimpleHtmlError> {
         let (logical_height, mut font_system) = font;
-        let Some(node) = self.nodes.get_mut(object_index).and_then(Option::as_mut) else {
+        let Some(node) = self.nodes.get(object_index).and_then(Option::as_ref) else {
             return Ok(None);
         };
         if node.dynamic_text.as_deref() == text {
             return Ok(None);
         }
+        let node = std::sync::Arc::make_mut(&mut self.nodes)[object_index]
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("existing HTML node"));
 
         let dynamic_blocks = text
             .map(|text| {

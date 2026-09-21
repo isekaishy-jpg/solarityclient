@@ -224,6 +224,7 @@ impl FontDefinition {
 }
 
 /// Globally named fonts constructed in built-in XML load order.
+#[derive(Default)]
 pub struct FontCatalog {
     definitions: Vec<FontDefinition>,
     by_name: HashMap<String, usize>,

@@ -8,7 +8,7 @@ use crate::{
 };
 
 impl GlueManager {
-    /// Ordinary live updates complete without allocating or parking a task.
+    /// Ordinary live updates keep callbacks ordered around admitted native preparation.
     pub(super) fn refresh_live_state(&mut self) -> Result<(), UiEventError> {
         complete_unyielding(self.refresh_live_state_cooperatively(None))
     }
@@ -35,24 +35,29 @@ impl GlueManager {
         if let Some(profile) = &mut profile {
             profile.mark("first_snapshot");
         }
-        if live == self.live {
+        if live == self.native.live {
             return Ok(());
         }
-        if live.is_scroll_only_update_from(&self.live) {
+        if live.is_scroll_only_update_from(&self.native.live) {
             return self.refresh_scroll_state(live);
         }
-        if live.is_visual_transform_only_update_from(&self.live) {
+        if live.is_visual_transform_only_update_from(&self.native.live) {
             return self.refresh_visual_transform_state(live);
         }
-        if live.is_visibility_only_update_from(&self.live)
-            && self.visibility_slots_are_resident(&live)?
+        if live.is_visibility_only_update_from(&self.native.live)
+            && self.visibility_slots_are_resident(&mut live)?
         {
             return self.refresh_visibility_state(live);
         }
-        if live.is_button_state_only_update_from(&self.live) {
+        if live.is_button_state_only_update_from(&self.native.live) {
             return self.refresh_button_state(live);
         }
-        let mut geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+        let extent = self.native.geometry.ui_extent();
+        let mut geometry = self.runtime.font_system().prepare(
+            &mut self.assets.borrow_mut(),
+            &mut live,
+            move |live, _, _| UiRegionGeometryPlan::resolve(live, extent),
+        )??;
         if let Some(budget) = budget {
             budget.checkpoint().await;
         }
@@ -63,7 +68,7 @@ impl GlueManager {
             &self.bundle,
             &live,
             &geometry,
-            &self.fonts,
+            &self.native.fonts,
             &mut self.assets.borrow_mut(),
             self.glyph_logical_height,
         )?;
@@ -76,7 +81,11 @@ impl GlueManager {
                 }
                 None => self.runtime.snapshot_objects(&self.bundle)?,
             };
-            geometry = UiRegionGeometryPlan::resolve(&live, self.geometry.ui_extent())?;
+            geometry = self.runtime.font_system().prepare(
+                &mut self.assets.borrow_mut(),
+                &mut live,
+                move |live, _, _| UiRegionGeometryPlan::resolve(live, extent),
+            )??;
         }
         if let Some(budget) = budget {
             budget.checkpoint().await;
@@ -86,88 +95,65 @@ impl GlueManager {
         if let Some(profile) = &mut profile {
             profile.mark("published");
         }
-        synchronize_resolved_dimensions(&mut live, &geometry);
-        let scroll_frames = UiScrollFramePlan::from_live(&live);
-        if let Some(budget) = budget {
-            budget.checkpoint().await;
-        }
-        if let Some(profile) = &mut profile {
-            profile.mark("scroll");
-        }
-        let text_changes = (!html_changed)
-            .then(|| live.text_layout_changes_from(&self.live))
-            .flatten();
+        let html = self.runtime.simple_html().clone();
+        let height = self.glyph_logical_height;
+        self.prepare_native(move |state, fonts, assets| {
+            synchronize_resolved_dimensions(&mut live, &geometry);
+            let scroll_frames = UiScrollFramePlan::from_live(&live);
+            let text_changes = (!html_changed)
+                .then(|| live.text_layout_changes_from(&state.live))
+                .flatten();
 
-        if let Some(text_changes) = text_changes.as_ref()
-            && self.glyphs.supports_live_text_objects(
-                &live,
-                self.glyph_logical_height,
-                text_changes.iter().copied(),
-            )
-        {
-            self.glyphs.refresh_live_text_objects(
-                &live,
+            if let Some(text_changes) = text_changes.as_ref()
+                && state.glyphs.supports_live_text_objects(
+                    &live,
+                    height,
+                    text_changes.iter().copied(),
+                )
+            {
+                state
+                    .glyphs
+                    .refresh_live_text_objects(&live, &geometry, height, text_changes)?;
+            } else if !html_changed && state.glyphs.supports_live_text(&live, height) {
+                state.glyphs.refresh_live_text(&live, &geometry, height)?;
+            } else {
+                state.glyphs.rebuild_live_ui(
+                    &html,
+                    &live,
+                    &geometry,
+                    &state.fonts,
+                    assets,
+                    fonts,
+                    height,
+                )?;
+            }
+            let presentation = UiPresentationPlan::resolve(&live, &geometry, &state.backdrops);
+            let render_plan = UiRenderPlan::prepare_with_glyphs(
+                &presentation,
+                &state.glyphs,
                 &geometry,
-                self.glyph_logical_height,
-                text_changes,
+                &scroll_frames,
+                geometry.ui_extent(),
             )?;
-        } else if !html_changed
-            && self
-                .glyphs
-                .supports_live_text(&live, self.glyph_logical_height)
-        {
-            self.glyphs
-                .refresh_live_text(&live, &geometry, self.glyph_logical_height)?;
-        } else {
-            self.glyphs.rebuild_live_ui(
-                self.runtime.simple_html(),
-                &live,
-                &geometry,
-                &self.fonts,
-                &mut self.assets.borrow_mut(),
-                self.glyph_logical_height,
-            )?;
-        }
-        if let Some(budget) = budget {
-            budget.checkpoint().await;
-        }
-        if let Some(profile) = &mut profile {
-            profile.mark("glyph");
-        }
-        let presentation = UiPresentationPlan::resolve(&live, &geometry, &self.backdrops);
-        if let Some(budget) = budget {
-            budget.checkpoint().await;
-        }
-        if let Some(profile) = &mut profile {
-            profile.mark("presentation");
-        }
-        let render_plan = UiRenderPlan::prepare_with_glyphs(
-            &presentation,
-            &self.glyphs,
-            &geometry,
-            &scroll_frames,
-            geometry.ui_extent(),
-        )?;
-        if let Some(budget) = budget {
-            budget.checkpoint().await;
-        }
-        if let Some(profile) = &mut profile {
-            profile.mark("render");
-        }
-        let (objects, child_indices) = build_live_hierarchy(&live)?;
-        let pointer = UiPointerPlan::from_live(&live);
-        if let Some(profile) = &mut profile {
-            profile.mark("plans");
-        }
-        self.live = live;
-        self.geometry = geometry;
-        self.scroll_frames = scroll_frames;
-        self.presentation = presentation;
-        self.render_plan = render_plan;
-        self.objects = objects;
-        self.child_indices = child_indices;
-        self.pointer = pointer;
+            let (objects, child_indices) = build_live_hierarchy(&live)?;
+            let pointer = UiPointerPlan::from_live(&live);
+            state.live = live;
+            state.geometry = geometry;
+            state.scroll_frames = scroll_frames;
+            state.presentation = presentation;
+            state.render_plan = render_plan;
+            state.objects = objects;
+            state.child_indices = child_indices;
+            state.pointer = pointer;
 
+            Ok::<_, UiEventError>(())
+        })??;
+        if let Some(budget) = budget {
+            budget.checkpoint().await;
+        }
+        if let Some(profile) = &mut profile {
+            profile.mark("prepared");
+        }
         Ok(())
     }
 }

@@ -96,7 +96,7 @@ impl UiGlyphQuad {
 }
 
 /// Stable coverage pages and retained text-owner geometry.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct UiGlyphAtlasPlan {
     identity: u64,
     pages: Vec<UiGlyphAtlasPage>,
@@ -109,7 +109,6 @@ pub struct UiGlyphAtlasPlan {
     glyphs: HashMap<GlyphKey, RasterizedGlyph>,
     placements: HashMap<GlyphKey, AtlasPlacement>,
     metrics: HashMap<LineFontKey, FontMetrics>,
-    font_system: FontSystem,
 }
 
 /// One archive-backed font and material contract for native text overlays.
@@ -329,7 +328,6 @@ impl UiGlyphAtlasPlan {
             glyphs,
             placements,
             metrics,
-            font_system: system,
         })
     }
 

@@ -29,6 +29,7 @@ impl UiGlyphAtlasPlan {
         &mut self,
         live: &UiRuntimeObjectPlan,
         assets: &mut AssetStore,
+        system: &mut crate::FontSystem,
         logical_height: u32,
         indices: impl IntoIterator<Item = usize>,
     ) -> Result<(), FontError> {
@@ -42,13 +43,13 @@ impl UiGlyphAtlasPlan {
                 continue;
             };
             let font = runtime_font_key(text, scale)?;
-            self.ensure_font(assets, &font)?;
+            self.ensure_font(assets, system, &font)?;
             for character in presented_characters(text)
                 .into_iter()
                 .map(|value| value.character)
                 .filter(|value| !value.is_control())
             {
-                self.ensure_glyph(assets, GlyphKey::new(&font, character))?;
+                self.ensure_glyph(assets, system, GlyphKey::new(&font, character))?;
             }
         }
         Ok(())
@@ -56,6 +57,7 @@ impl UiGlyphAtlasPlan {
 
     /// A document/topology change relays out current owners while keeping the
     /// common coverage bank. No previous glyph image generation is recreated.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn rebuild_live_ui(
         &mut self,
         html: &UiSimpleHtmlPlan,
@@ -63,9 +65,16 @@ impl UiGlyphAtlasPlan {
         geometry: &UiRegionGeometryPlan,
         fonts: &FontCatalog,
         assets: &mut AssetStore,
+        system: &mut crate::FontSystem,
         logical_height: u32,
     ) -> Result<(), FontError> {
-        self.ensure_live_text_objects(live, assets, logical_height, 0..live.objects().len())?;
+        self.ensure_live_text_objects(
+            live,
+            assets,
+            system,
+            logical_height,
+            0..live.objects().len(),
+        )?;
         let scale = f64::from(logical_height) / 768.0;
         for index in 0..geometry.region_count() {
             let Some(node) = html.node(index) else {
@@ -73,9 +82,9 @@ impl UiGlyphAtlasPlan {
             };
             for line in node.lines() {
                 let font = font_key(font_definition(fonts, line.font_object())?, scale)?;
-                self.ensure_font(assets, &font)?;
+                self.ensure_font(assets, system, &font)?;
                 for character in line.text().chars() {
-                    self.ensure_glyph(assets, GlyphKey::new(&font, character))?;
+                    self.ensure_glyph(assets, system, GlyphKey::new(&font, character))?;
                 }
             }
         }
@@ -87,7 +96,7 @@ impl UiGlyphAtlasPlan {
             fonts,
             assets,
             scale,
-            &mut self.font_system,
+            system,
             &self.glyphs,
             &self.placements,
             extent,
@@ -101,16 +110,15 @@ impl UiGlyphAtlasPlan {
     fn ensure_font(
         &mut self,
         assets: &mut AssetStore,
+        system: &mut crate::FontSystem,
         font: &LineFontKey,
     ) -> Result<(), FontError> {
         if self.metrics.contains_key(font) {
             return Ok(());
         }
-        let ascender_26_6 =
-            self.font_system
-                .ascender_26_6(assets, &font.face, font.pixel_height)?;
+        let ascender_26_6 = system.ascender_26_6(assets, &font.face, font.pixel_height)?;
         let characters = (0x20..=0xff).filter_map(char::from_u32).collect::<Vec<_>>();
-        let glyphs = self.font_system.rasterize_batch(
+        let glyphs = system.rasterize_batch(
             assets,
             characters
                 .iter()
@@ -139,11 +147,16 @@ impl UiGlyphAtlasPlan {
     }
 
     /// Publishes a newly cached bitmap into unused page texels exactly once.
-    fn ensure_glyph(&mut self, assets: &mut AssetStore, key: GlyphKey) -> Result<(), FontError> {
+    fn ensure_glyph(
+        &mut self,
+        assets: &mut AssetStore,
+        system: &mut crate::FontSystem,
+        key: GlyphKey,
+    ) -> Result<(), FontError> {
         if self.glyphs.contains_key(&key) {
             return Ok(());
         }
-        let glyph = self.font_system.rasterize(
+        let glyph = system.rasterize(
             assets,
             &key.face,
             key.pixel_height,

@@ -1,6 +1,7 @@
 //! Shared font cache; production cache misses execute through the CPU host.
 
 mod bitmap;
+mod preparation;
 mod state;
 mod work;
 pub use work::{FontGlyphRequest, FontWork, FontWorkExecutor, FontWorkOutput};

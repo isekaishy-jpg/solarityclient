@@ -214,53 +214,63 @@ impl GlueManager {
         budget.checkpoint().await;
         let geometry = {
             let _profile = solarity_profiling::profile!("ui.startup.geometry");
-            UiRegionGeometryPlan::resolve(&live, ui_extent)?
+            runtime.font_system().prepare(
+                &mut assets.borrow_mut(),
+                &mut live,
+                move |live, _, _| UiRegionGeometryPlan::resolve(live, ui_extent),
+            )??
         };
         budget.checkpoint().await;
         runtime.publish_resolved_geometry(&bundle, &geometry)?;
-        synchronize_resolved_dimensions(&mut live, &geometry);
-        let scroll_frames = UiScrollFramePlan::from_live(&live);
-        budget.checkpoint().await;
-        let glyphs = {
-            let _profile = solarity_profiling::profile!("ui.startup.glyphs");
-            UiGlyphAtlasPlan::from_live_ui(
-                runtime.simple_html(),
-                &live,
-                &geometry,
-                &fonts,
-                &mut assets.borrow_mut(),
-                logical_extent.1,
-                runtime.font_system(),
-            )?
+        let mut native = super::preparation::UiNativeState {
+            fonts,
+            live,
+            geometry,
+            backdrops,
+            ..Default::default()
         };
+        let html = runtime.simple_html().clone();
+        runtime.font_system().prepare(
+            &mut assets.borrow_mut(),
+            &mut native,
+            move |state, fonts, assets| {
+                synchronize_resolved_dimensions(&mut state.live, &state.geometry);
+                state.scroll_frames = UiScrollFramePlan::from_live(&state.live);
+                state.glyphs = UiGlyphAtlasPlan::from_live_ui(
+                    &html,
+                    &state.live,
+                    &state.geometry,
+                    &state.fonts,
+                    assets,
+                    logical_extent.1,
+                    fonts.clone(),
+                )?;
+                state.presentation =
+                    UiPresentationPlan::resolve(&state.live, &state.geometry, &state.backdrops);
+                state.render_plan = UiRenderPlan::prepare_with_glyphs(
+                    &state.presentation,
+                    &state.glyphs,
+                    &state.geometry,
+                    &state.scroll_frames,
+                    ui_extent,
+                )?;
+                (state.objects, state.child_indices) = build_live_hierarchy(&state.live)?;
+                state.pointer = UiPointerPlan::from_live(&state.live);
+                Ok::<_, GlueError>(())
+            },
+        )??;
         budget.checkpoint().await;
-        let presentation = {
-            let _profile = solarity_profiling::profile!("ui.startup.presentation");
-            UiPresentationPlan::resolve(&live, &geometry, &backdrops)
-        };
-        budget.checkpoint().await;
-        let render_plan = {
-            let _profile = solarity_profiling::profile!("ui.startup.render_plan");
-            UiRenderPlan::prepare_with_glyphs(
-                &presentation,
-                &glyphs,
-                &geometry,
-                &scroll_frames,
-                ui_extent,
-            )?
-        };
-        let (objects, child_indices) = build_live_hierarchy(&live)?;
-        let pointer = UiPointerPlan::from_live(&live);
         let report = GlueStartupReport::new(
             bundle.resources().len(),
             bundle.actions().len(),
-            objects.len(),
-            objects
+            native.objects.len(),
+            native
+                .objects
                 .iter()
                 .filter(|object| object.name().is_some())
                 .count(),
             frames.state_count(),
-            geometry.region_count(),
+            native.geometry.region_count(),
             textures.layer_count(),
             runtime.executed_chunk_count(),
             runtime.executed_load_handler_count(),
@@ -268,30 +278,18 @@ impl GlueManager {
 
         Ok(Self {
             runtime,
+            native,
             scripts,
             templates,
-            fonts,
             frames,
             regions,
-            live,
-            geometry,
-            scroll_frames,
-            glyphs,
-            presentation,
-            render_plan,
             textures,
             texture_states,
-            backdrops,
-            objects,
-            child_indices,
-            pointer,
             pointer_capture: None,
             edit_box_pointer_anchor: None,
             pointer_hover: None,
             deferred_scroll_refresh: Vec::new(),
             deferred_presentation: transaction::DeferredPresentation::default(),
-            visual_indices: Vec::new(),
-            visual_work: Vec::new(),
             incremental_visual_updates: std::env::var_os("SOLARITY_UI_FULL_VISUAL_REFRESH")
                 .is_none(),
             glyph_logical_height: logical_extent.1,

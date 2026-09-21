@@ -1,9 +1,7 @@
 //! Cancellation releases real partial Lua owners and their native sound guard.
 
 // The shared archive fixture also serves loose-file integration tests.
-#[allow(dead_code)]
-#[path = "../stock_seed/support/mod.rs"]
-mod support;
+use crate::test_support as support;
 
 use crate::{AddonCatalog, FrameManager, FrameUiSources, UiGlueMediaAction, UiScriptEnvironment};
 use solarity_asset::{ArchiveCatalog, AssetStore, AssetStoreHandle, ClientDataRoot, Locale};

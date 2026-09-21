@@ -196,6 +196,48 @@ owners, shutdown and encoded-byte reclamation. Logs are
 `target/font-worker-clippy.log`, `target/font-worker-tests.log` and
 `target/font-worker-stock.log`. No client package or FPS comparison was run.
 
+The subsequent native-UI batch removes the font owner from `UiGlyphAtlasPlan`
+and groups the retained live snapshot, geometry, atlas, presentation, draw plan,
+font declarations, backdrops, hierarchy, pointer facts and subtree scratch into
+sendable state. The existing required UI/font host lends that state exclusively
+to one worker operation and reclaims it before main resumes. No atlas or mesh
+deep copy is needed for the transfer. An RAII loan restores the original buffers
+on admission rejection, domain error, native servicing failure and unwind; worker
+panic preserves returned native state while poisoning the unusable font cache.
+
+Startup and full refresh now prepare geometry before the original main-thread
+geometry writeback, then prepare scroll state, glyph layout/packing, presentation,
+mesh, hierarchy and pointer facts on workers. General targeted publication keeps
+the same geometry-writeback boundary. Retained content, tooltip, edit-box, visual,
+scroll, button-hover and texture-color paths also execute their native patches on
+the shared CPU service. Font calls nested inside these operations use one local
+FreeType owner and the common cache, without submitting child tasks. Lua execution,
+dirty-snapshot reads, authored callbacks and geometry publication remain on main.
+SimpleHTML plans share immutable document arenas for worker handoff; a document
+mutation copies only when another snapshot still pins the previous image.
+
+These are bulk ownership boundaries, not calibrated finite steps or qualified
+performance results. Declaration-to-runtime construction and Lua-coupled SimpleHTML
+layout still need a source-level eligibility audit; complete nested allocation,
+retention/trim policy, warmed loan/admission storage and full cutover qualification
+remain outstanding. This implementation allocates task/loan metadata and temporary
+empty retained-state placeholders; it does not claim allocation-free UI publication.
+Build 176 remains installed; no additional client package is produced.
+
+Native-UI validation passes formatting and final all-target/all-feature UI/runtime
+Clippy with warnings denied. The grouped suite passes 793 tests with 32 ignores;
+the stock font parity check then passes from that runtime executable (794 distinct
+passes, 31 remaining ignores). After the final shared-SimpleHTML change, all 200
+UI tests pass again with one existing ignore. The expanded live fixture compares
+serial and worker snapshots, geometry, atlas pixels and mesh vertices/indices
+through text, HTML, anchors, visibility, strata, dynamic topology and scale changes.
+It also checks main-thread callbacks, shared/frozen HTML images and a single worker
+with a single task slot. A separate controlled fixture preserves buffer identity
+across admission rejection, domain error, native failure, host unwind and worker
+panic. Evidence is `target/ui-preparation-tests.log`,
+`target/ui-preparation-stock.log`, `target/ui-preparation-clippy-final.log` and
+`target/ui-preparation-ui-final.log`. No FPS comparison was performed.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases
