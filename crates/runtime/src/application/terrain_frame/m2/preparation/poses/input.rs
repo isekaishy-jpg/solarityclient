@@ -5,7 +5,8 @@ use glam::Mat4;
 use solarity_asset::DecodedM2Model;
 use solarity_asset::ResourceLease;
 use solarity_rendering::{
-    M2AnimationClock, M2BonePose, M2BonePoseError, M2BonePoseOverrides, M2FingerPoseHands,
+    M2AnimationClock, M2BonePose, M2BonePoseError, M2BonePoseOverrides, M2BoneSamples,
+    M2FingerPoseHands,
 };
 
 /// Reusable current-frame sampling inputs and a single-consumer palette.
@@ -21,6 +22,9 @@ pub(super) struct PoseJob {
     transforms: Vec<(u16, Mat4)>,
     sequences: Vec<(u16, M2AnimationClock)>,
     pose: M2BonePose,
+    samples: M2BoneSamples,
+    requested: solarity_cpu::CpuBuffer<usize>,
+    sparse: bool,
     result: Option<Result<(), M2BonePoseError>>,
 }
 
@@ -30,8 +34,31 @@ impl PoseJob {
         &mut self,
         cpu: &solarity_cpu::CpuExecutor,
     ) -> Result<(), solarity_cpu::CpuError> {
-        self.pose
-            .reserve_cpu_storage(cpu.storage(), self.model.animations().bones().len())
+        if self.sparse {
+            self.samples
+                .reserve_cpu_storage(cpu.storage(), self.model.animations().bones().len())
+        } else {
+            self.pose
+                .reserve_cpu_storage(cpu.storage(), self.model.animations().bones().len())
+        }
+    }
+
+    /// Offscreen CPU consumers retain only their named demand across the worker turn.
+    pub(super) fn request_samples(
+        &mut self,
+        bones: &[usize],
+        budget: &solarity_cpu::CpuStorageBudget,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        self.requested.clear();
+        self.requested.reserve(
+            budget,
+            solarity_cpu::CpuStorageClass::Frame,
+            solarity_cpu::CpuStorageKind::Metadata,
+            bones.len(),
+        )?;
+        self.requested.extend_from_slice(bones)?;
+        self.sparse = true;
+        Ok(())
     }
 
     /// Required frame sampling completes even after consumer withdrawal; errors
@@ -44,6 +71,7 @@ impl PoseJob {
             "m2.pose.bones",
             self.model.animations().bones().len() as u64,
         );
+        context.diagnostic_value("m2.pose.named_only", u64::from(self.sparse));
         self.sample();
         solarity_cpu::JobOutcome::Succeeded
     }
@@ -67,6 +95,9 @@ impl PoseJob {
             transforms: Vec::new(),
             sequences: Vec::new(),
             pose: M2BonePose::default(),
+            samples: M2BoneSamples::default(),
+            requested: solarity_cpu::CpuBuffer::default(),
+            sparse: false,
             result: None,
         }
     }
@@ -101,6 +132,8 @@ impl PoseJob {
         self.transforms.extend_from_slice(transforms);
         self.sequences = sequences;
         self.result = None;
+        self.sparse = false;
+        self.requested.clear();
     }
 
     /// Computes pure skeletal work without publishing errors or scene state.
@@ -112,17 +145,28 @@ impl PoseJob {
             "runtime.application.terrain_frame.m2.preparation.poses.input.sample"
         );
         _profile_scope.trace_owner(self.placement as u64 + 1, 0);
-        self.result = Some(self.pose.recompose_with_overrides(
-            self.model.animations(),
-            self.clock,
-            self.view,
-            M2BonePoseOverrides {
-                model_oriented_billboard_bones: &self.orientation,
-                finger_pose: self.fingers,
-                bone_transforms: &self.transforms,
-                bone_sequences: &self.sequences,
-            },
-        ));
+        let overrides = M2BonePoseOverrides {
+            model_oriented_billboard_bones: &self.orientation,
+            finger_pose: self.fingers,
+            bone_transforms: &self.transforms,
+            bone_sequences: &self.sequences,
+        };
+        self.result = Some(if self.sparse {
+            self.samples.recompose(
+                self.model.animations(),
+                self.clock,
+                self.view,
+                overrides,
+                &self.requested,
+            )
+        } else {
+            self.pose.recompose_with_overrides(
+                self.model.animations(),
+                self.clock,
+                self.view,
+                overrides,
+            )
+        });
         if self.result.as_ref().is_some_and(Result::is_ok) {
             self.measurement.finish(started);
         }
@@ -140,14 +184,7 @@ impl PoseJob {
         // Attachments or later owner changes can alter a preselected input.
         // Exact validity includes the camera and every semantic override; a
         // stale palette is never published merely because its owner is unchanged.
-        if !ResourceLease::ptr_eq(&self.model, model)
-            || self.clock != clock
-            || self.view != view
-            || self.fingers != overrides.finger_pose
-            || self.orientation != overrides.model_oriented_billboard_bones
-            || self.transforms != overrides.bone_transforms
-            || self.sequences != overrides.bone_sequences
-        {
+        if self.sparse || !self.matches(model, clock, view, overrides) {
             return Ok(false);
         }
         let Some(result) = self.result.take() else {
@@ -157,6 +194,46 @@ impl PoseJob {
         self.trace.link("m2.pose.consume");
         std::mem::swap(&mut self.pose, output);
         Ok(true)
+    }
+
+    /// Sparse output cannot become a render palette or satisfy changed callback demand.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn take_samples(
+        &mut self,
+        model: &ResourceLease<DecodedM2Model>,
+        clock: M2AnimationClock,
+        view: Mat4,
+        overrides: M2BonePoseOverrides<'_>,
+        bones: &[usize],
+        output: &mut M2BoneSamples,
+    ) -> Result<bool, RuntimeTerrainFrameError> {
+        if !self.sparse || &*self.requested != bones || !self.matches(model, clock, view, overrides)
+        {
+            return Ok(false);
+        }
+        let Some(result) = self.result.take() else {
+            return Ok(false);
+        };
+        result?;
+        self.trace.link("m2.pose.consume_samples");
+        std::mem::swap(&mut self.samples, output);
+        Ok(true)
+    }
+
+    fn matches(
+        &self,
+        model: &ResourceLease<DecodedM2Model>,
+        clock: M2AnimationClock,
+        view: Mat4,
+        overrides: M2BonePoseOverrides<'_>,
+    ) -> bool {
+        ResourceLease::ptr_eq(&self.model, model)
+            && self.clock == clock
+            && self.view == view
+            && self.fingers == overrides.finger_pose
+            && self.orientation == overrides.model_oriented_billboard_bones
+            && self.transforms == overrides.bone_transforms
+            && self.sequences == overrides.bone_sequences
     }
 }
 

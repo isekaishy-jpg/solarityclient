@@ -30,6 +30,7 @@ pub(super) enum ConfiguredGlueTexturePrewarmJob {
 pub(super) fn prepare_configured_glue_textures(
     catalog: ArchiveCatalog,
     paths: Vec<AssetPath>,
+    budget: solarity_asset::AssetReadBudget,
 ) -> impl FnMut() -> ControlFlow<Result<ConfiguredGlueTexturePrewarm, AssetError>> {
     let mut paths = paths.into_iter();
     let mut cache = BlpTextureCache::new();
@@ -42,7 +43,7 @@ pub(super) fn prepare_configured_glue_textures(
                 failures: std::mem::take(&mut failures),
             }));
         };
-        if let Err(error) = cache.load(store, &path) {
+        if let Err(error) = store.with_read_budget(&budget, |store| cache.load(store, &path)) {
             failures.push(format!("failed to prewarm Glue texture {path}: {error}"));
         }
         ControlFlow::Continue(())
@@ -79,7 +80,14 @@ impl ClientServices {
                         let task = permit.submit_steps_with_context(
                             crate::application::archive_job::contextual(
                                 "glue.texture.source_step",
-                                prepare_configured_glue_textures(catalog, paths),
+                                prepare_configured_glue_textures(
+                                    catalog,
+                                    paths,
+                                    solarity_asset::AssetReadBudget::for_service(
+                                        self.cpu.storage().clone(),
+                                        solarity_cpu::CpuService::Speculative,
+                                    ),
+                                ),
                             ),
                         );
                         self.pending_glue_texture_prewarm =

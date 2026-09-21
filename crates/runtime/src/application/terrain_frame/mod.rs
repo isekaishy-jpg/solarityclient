@@ -47,6 +47,9 @@ pub enum RuntimeTerrainFrameError {
     /// A bounded detail preparation task failed at its executor boundary.
     #[error(transparent)]
     Cpu(#[from] solarity_cpu::CpuError),
+    /// An asynchronous authored sky source failed outside its missing-asset policy.
+    #[error(transparent)]
+    SkySource(#[from] solarity_asset::M2LoadError),
     /// The shared sampler setting is outside its native closed integer domain.
     #[error("invalid file texture sampling cvar {0}")]
     InvalidTextureSamplingCvar(&'static str),

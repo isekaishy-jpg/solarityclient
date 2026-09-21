@@ -142,6 +142,10 @@ impl RuntimePlayerPresentation {
                                 key: inputs,
                                 level: self.component_texture_level,
                                 model_path: desired.path.clone(),
+                    sources: crate::application::player_coordinator::worker_presentation::AppearanceSources::Player {
+                        attachments: desired.attachment_plan.clone(),
+                        mount: desired.mount_key.as_ref().map(|key| key.path.clone()),
+                    },
                             },
                             catalog,
                             catalogs,

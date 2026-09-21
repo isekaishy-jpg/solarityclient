@@ -4,7 +4,10 @@ use crate::font::{FontError, RasterizedGlyph};
 use freetype::{Face, bitmap::PixelMode};
 use solarity_asset::AssetPath;
 
-pub(super) fn glyph_from_slot(path: &AssetPath, face: &Face) -> Result<RasterizedGlyph, FontError> {
+pub(super) fn glyph_from_slot(
+    path: &AssetPath,
+    face: &Face<solarity_asset::AssetBytes>,
+) -> Result<RasterizedGlyph, FontError> {
     let slot = face.glyph();
     let bitmap = slot.bitmap();
     let width = u32::try_from(bitmap.width()).map_err(|error| bitmap_error(path, error))?;

@@ -86,6 +86,10 @@ impl RuntimeSoundLoader {
         match self.requests.start(&front.key, cpu, || {
             let request = front.request.clone();
             let assets = Arc::clone(assets);
+            let budget = solarity_asset::AssetReadBudget::for_service(
+                cpu.storage().clone(),
+                solarity_cpu::CpuService::Required,
+            );
             move || {
                 let _profile = solarity_profiling::profile!("audio.archive.worker");
                 assets
@@ -93,7 +97,7 @@ impl RuntimeSoundLoader {
                     .map_err(|_| RuntimeSoundError::LoaderUnavailable {
                         message: "sound archive owner is poisoned".to_owned(),
                     })?
-                    .read(&request)
+                    .read(&request, &budget)
             }
         }) {
             Ok(_) | Err(CpuError::AtCapacity { .. }) => {}

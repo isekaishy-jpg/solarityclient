@@ -138,6 +138,7 @@ impl RuntimePlayerPresentation {
             catalogs: self.shared_catalogs(),
             level: self.component_texture_level,
             model_path,
+            sources: super::super::worker_presentation::AppearanceSources::Glue(requested.clone()),
         };
         let withdrawn = Arc::new(AtomicBool::new(false));
         let worker_withdrawn = Arc::clone(&withdrawn);

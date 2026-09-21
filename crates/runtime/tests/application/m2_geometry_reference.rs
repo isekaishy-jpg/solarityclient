@@ -192,6 +192,7 @@ impl M2Frame {
                 scenery_shadows,
                 self.environment_detail,
             ),
+            world_lighting.is_some(),
             animation_time_ms as u32,
         )?;
         frame_profile.mark("unit pose batch");

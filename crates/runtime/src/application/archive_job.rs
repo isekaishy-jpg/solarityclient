@@ -40,6 +40,29 @@ pub(super) fn prepare_archive<T, E>(
 where
     E: From<AssetError>,
 {
+    let mut operation = prepare_archive_resumable(catalog, move |store| match prepare(store) {
+        ControlFlow::Continue(()) => solarity_cpu::CpuTaskStep::Continue,
+        ControlFlow::Break(result) => solarity_cpu::CpuTaskStep::Complete(result),
+    });
+    move || match operation() {
+        solarity_cpu::CpuTaskStep::Continue => ControlFlow::Continue(()),
+        solarity_cpu::CpuTaskStep::Complete(result) => ControlFlow::Break(result),
+        solarity_cpu::CpuTaskStep::Wait(_) => {
+            unreachable!("finite archive adapter never declares dependencies")
+        }
+    }
+}
+
+/// Retains the mounted reader across a domain's discovered readiness dependency.
+/// The scheduler releases the worker; publication, cancellation and result policy
+/// remain with the domain operation. No archive or cache lock crosses suspension.
+pub(super) fn prepare_archive_resumable<T, E>(
+    catalog: ArchiveCatalog,
+    mut prepare: impl FnMut(&mut AssetStore) -> solarity_cpu::CpuTaskStep<Result<T, E>>,
+) -> impl FnMut() -> solarity_cpu::CpuTaskStep<Result<T, E>>
+where
+    E: From<AssetError>,
+{
     let mut stage = Some(Stage::Unopened(catalog));
     move || {
         let current = stage
@@ -48,18 +71,24 @@ where
         match current {
             Stage::Unopened(catalog) => match AssetStore::begin_mount(catalog) {
                 Ok(mount) => stage = Some(Stage::Mounting(mount)),
-                Err(error) => return ControlFlow::Break(Err(error.into())),
+                Err(error) => return solarity_cpu::CpuTaskStep::Complete(Err(error.into())),
             },
             Stage::Mounting(mount) => match mount.advance() {
                 Ok(ControlFlow::Continue(mount)) => stage = Some(Stage::Mounting(mount)),
                 Ok(ControlFlow::Break(store)) => stage = Some(Stage::Ready(store)),
-                Err(error) => return ControlFlow::Break(Err(error.into())),
+                Err(error) => return solarity_cpu::CpuTaskStep::Complete(Err(error.into())),
             },
             Stage::Ready(mut store) => match prepare(&mut store) {
-                ControlFlow::Continue(()) => stage = Some(Stage::Ready(store)),
-                ControlFlow::Break(result) => return ControlFlow::Break(result),
+                solarity_cpu::CpuTaskStep::Continue => stage = Some(Stage::Ready(store)),
+                solarity_cpu::CpuTaskStep::Wait(edge) => {
+                    stage = Some(Stage::Ready(store));
+                    return solarity_cpu::CpuTaskStep::Wait(edge);
+                }
+                solarity_cpu::CpuTaskStep::Complete(result) => {
+                    return solarity_cpu::CpuTaskStep::Complete(result);
+                }
             },
         }
-        ControlFlow::Continue(())
+        solarity_cpu::CpuTaskStep::Continue
     }
 }

@@ -52,6 +52,7 @@ impl AssetStore {
         let archives = Vec::with_capacity(descriptors.len());
         Ok(AssetMount {
             store: Self {
+                read_budget: None,
                 identity,
                 namespace,
                 model_cache_service,

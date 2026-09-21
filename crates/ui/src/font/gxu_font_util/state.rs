@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 /// A mounted face owns all scalar coverage and native metric results for its sizes.
 struct CachedFace {
-    face: Face,
+    face: Face<solarity_asset::AssetBytes>,
     glyphs: HashMap<(u32, FontRasterization, char), RasterizedGlyph>,
     advances: HashMap<(u32, FontRasterization, char), i64>,
     ascenders: HashMap<u32, i64>,
@@ -349,7 +349,7 @@ impl FontSystemState {
         let bytes = store.read(path)?.into_bytes();
         let face = self
             .library
-            .new_memory_face(bytes, 0)
+            .new_memory_face2(bytes, 0)
             .map_err(|error| FontError::Face {
                 path: path.clone(),
                 message: error.to_string(),

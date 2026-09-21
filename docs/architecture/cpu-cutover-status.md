@@ -19,6 +19,74 @@ The complete requirements remain in the [frame-job design](cpu-frame-job-design.
 
 ## Connected source changes
 
+Encoded source admission now follows archive-returned byte ownership through
+model decoders, retained database tables, sound buffers, FreeType faces and UTF-8
+Lua source. Connected worker readers reserve declared input storage before reads
+and reconcile returned capacity before publication. Terrain, appearance,
+GameObject M2, sound, world UI, sky, unit-effect and speculative Glue source paths
+use the CPU budget. Shared WMO retirement retains its budget and live service
+priority. Five real archive admission/ownership tests pass; formatting and full
+workspace Clippy pass. The full workspace suite passes 1,692 tests with 33
+existing ignored tests and no failures or compiler/linker warnings. This does not account
+for all decoded caches, codec scratch or main-owned startup reads, and establishes
+no live FPS gain. See [source ownership and limits](asset-read-admission.md).
+
+Combined validation exposed a startup stack overflow despite successful
+compilation and Clippy. The process service owner now returns and remains boxed,
+removing large by-value transfers through outer startup/caller frames. The exact
+previously failing startup/shutdown test passes without increasing the stack
+limit. See [startup ownership evidence](cpu-startup-stack.md).
+
+The root pose batch now also admits mount clocks already selected by ordered
+callbacks and named-bone requests from offscreen units. Attachment, event and
+light consumers receive typed `M2BoneSamples` from workers; visible and shadow
+consumers retain full palettes. Request records and sparse output working storage
+carry frame reservations. Publication checks the source generation, clock, view,
+overrides and exact named demand before swapping the result into the ordered
+owner. Sampling an event window leaves its consumption cursor untouched. The
+offscreen equipped-NPC and moving-camera serial comparisons exercise this path;
+attached-parent dependencies and callback-time sampling remain to be connected.
+Formatting, runtime Clippy with warnings denied, and all 468 runtime tests pass
+(27 existing ignored). The three offscreen mount populations consume worker
+samples while retaining callback/RNG behavior. Validation is recorded in ignored
+`target/named-pose-final.log`; this source has no measured FPS result yet.
+
+Sky models now join the namespace M2 authority in resumable worker tasks, including
+stars and WMO-selected skies. The ordered main owner resolves aliases, first phase
+flags and request timestamps without archive access; queue saturation retains the
+request for later admission. Shared source waits release the worker, while model
+textures and shader preparation run after readiness. Celestial textures decode
+one per worker turn and publish as one bank. Glue servicing begins these process
+resources before world presentation. Sky animation, RNG and GPU publication retain
+their ordered main owner.
+
+The sky source and rendering suite passes nine tests (four existing installed-data
+tests ignored), including single-worker suspension/cancellation, shared generation
+identity, capacity retry, alias flags, WMO replacement and hidden-scene clocks.
+Formatting and runtime Clippy with warnings denied pass. The first test compile
+exhausted disk space; clearing stale compiler intermediates allowed the rerun to
+finish. Logs are in ignored `target/sky-cutover-{check,test,lint}.log`.
+
+Appearance loading now carries player/NPC attachments, item visual children,
+mounts and Glue pets through the namespace-wide shared M2 authority. One admitted
+resumable task retains the archive bank and source leases across discovered
+pending dependencies; a waiting consumer releases its worker and withdrawal
+returns its bank without cancelling other source consumers. An already claimed
+primary producer completes before cancellation is returned. Nested source records
+and result pins use the Required storage budget. Derived construction runs once
+after source readiness and consumes those shared generations without inserting
+a second local retained copy. Missing authored attachment links still omit their
+visual source. This replaces the separate primary-only loading-batch adapter;
+whole-payload accounting, requested animation loading, and the remaining frame
+cutover requirements below remain open.
+
+Appearance validation passes formatting, workspace Clippy with warnings denied,
+and 1,682 workspace unit/integration tests (33 ignored). The final priority
+regression passes the 464-test runtime rerun, and workspace doc tests pass after
+rebuilding missing shared-target artifacts. Logs are in ignored
+`target/appearance-cutover-{final,priority-final}.log`. This source is not yet
+installed and has no measured FPS result.
+
 After Build 174, geometry working-set preparation moves from ordered M2 traversal
 into the owned worker turn. Main still admits the request records, copied pose
 inputs and shared sorting lanes. The worker then admits its palette, packet and
@@ -895,7 +963,8 @@ an operation has a context parameter. The requirements below remain in scope.
   result-page accounting now exist; model output, override buffers and retained
   geometry job records, final frame streams and owned full skeletal palettes now
   adopt it. Dispatched live effect simulation and named CPU bone samples now carry
-  reservations as well. Other resident effect owners, ordinary asset buffers
+  reservations as well. Encoded buffers now carry admission in connected worker
+  readers. Other resident effect owners, remaining source readers, decoded buffers
   and caches still require adoption,
   connected working-set admission, explicit trimming and maintenance policy.
 - Extend native servicing to loading dependencies, remaining GPU upload waits
@@ -913,14 +982,17 @@ an operation has a context parameter. The requirements below remain in scope.
 - Extend pending-request authority beyond runtime audio, Glue backdrops and
   creation/selection primary M2s, asynchronous top-level GameObject M2s and
   local/NPC/remote-player primary M2s. Terrain MDDF/MODD/ground detail and GameObject WMO sources are now connected.
-  Glue attachments and pets, population attachments/mounts, effects
-  and sky sources still use their existing local decode caches.
+  Glue attachments/pets and population attachments/mounts/item visuals now join
+  the same namespace source authority through resumable appearance tasks.
+  Sky models and stars now join the same authority through resumable source tasks.
+  Effects still require their remaining shared-source connection.
   Other source domains still need shared pending authority, cross-resource I/O
   dependencies and the remaining domain-wide shared result leases. WMO requests
   now share one root/group producer, yielding between independently resolved groups. M2/WMO sources
   already have external leases and coalesced final-release delivery.
   Ready request pins are not the complete retained-cache/external-lease lifecycle.
-  Request metadata and encoded payload budgets still need admission/accounting.
+  Request metadata and remaining encoded source paths still need admission/accounting;
+  connected worker source buffers now retain reservations through ownership transfer.
   Stock-evidenced animation demand and
   retention, derived cache invalidation, byte-budgeted residency and GPU retirement
   from the resource design.

@@ -40,6 +40,7 @@ pub(super) struct PopulationRequest<K> {
     pub(super) key: K,
     pub(super) level: CharacterComponentTextureLevel,
     pub(super) model_path: AssetPath,
+    pub(super) sources: super::worker_presentation::AppearanceSources,
 }
 
 /// CPU completion precedes incremental driver admission and atomic placement publication.

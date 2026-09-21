@@ -3,9 +3,9 @@
 use crate::archive::{ArchiveDescriptor, AssetError, AssetPath, Locale, MountedArchive};
 
 /// Bytes returned with the exact archive selected by stock precedence.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AssetRead {
-    bytes: Vec<u8>,
+    bytes: crate::AssetBytes,
     source: ArchiveDescriptor,
 }
 
@@ -18,7 +18,7 @@ impl AssetRead {
 
     /// Transfers ownership of the decoded bytes.
     #[must_use]
-    pub fn into_bytes(self) -> Vec<u8> {
+    pub fn into_bytes(self) -> crate::AssetBytes {
         self.bytes
     }
 
@@ -31,11 +31,11 @@ impl AssetRead {
 
 /// The owner of mounted client archives and serialized archive read handles.
 ///
-/// The stack performs at most one MPQ hash lookup per mounted archive. This
-/// avoids both a coarse synchronization primitive and an eager index containing
-/// millions of filenames. Runtime loading can later give this owner a dedicated
-/// asset thread without changing the public archive model.
+/// Lookup probes the mounted MPQs without an eager filename index or a shared
+/// reader lock. Admitted reads inspect entry size before allocation, then preserve
+/// the backend's path-based read and encryption-key selection.
 pub struct AssetStore {
+    pub(in crate::file_stack) read_budget: Option<crate::AssetReadBudget>,
     pub(super) identity: u64,
     pub(super) model_cache_service: crate::M2CacheService,
     pub(super) world_model_cache_service: crate::WmoCacheService,
@@ -47,6 +47,21 @@ pub struct AssetStore {
 }
 
 impl AssetStore {
+    /// Applies input admission only during this operation. Returned byte owners
+    /// retain their own charges after the operation or the mounted reader ends.
+    /// Nested operations restore the previous policy on success, error and unwind.
+    pub fn with_read_budget<T>(
+        &mut self,
+        budget: &crate::AssetReadBudget,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let previous = self.read_budget.replace(budget.clone());
+        let scope = ReadScope {
+            store: self,
+            previous,
+        };
+        operation(&mut *scope.store)
+    }
     /// Joins maintenance without sharing mutable archive-reader state.
     pub fn model_cache_service(&self) -> &crate::M2CacheService {
         &self.model_cache_service
@@ -114,7 +129,7 @@ impl AssetStore {
         let _profile_scope =
             solarity_profiling::profile!("asset.file_stack.filestack_streaming.read");
         for archive in &mut self.archives {
-            let Some(bytes) = archive.read_if_present(path)? else {
+            let Some(bytes) = archive.read_if_present(path, self.read_budget.as_ref())? else {
                 continue;
             };
 
@@ -125,5 +140,17 @@ impl AssetStore {
         }
 
         Err(AssetError::AssetNotFound { path: path.clone() })
+    }
+}
+
+/// A decoder unwind cannot leak a caller's byte policy into later operations.
+struct ReadScope<'a> {
+    store: &'a mut AssetStore,
+    previous: Option<crate::AssetReadBudget>,
+}
+
+impl Drop for ReadScope<'_> {
+    fn drop(&mut self) {
+        self.store.read_budget = self.previous.take();
     }
 }

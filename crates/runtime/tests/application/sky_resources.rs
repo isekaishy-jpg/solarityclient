@@ -22,17 +22,16 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         .lock()
         .map_err(|_| "SDL lock poisoned")?;
     let root = std::env::var_os("SOLARITY_STOCK_DATA_ROOT").ok_or("stock data root")?;
-    let mut store = solarity_asset::AssetStore::mount(ArchiveCatalog::discover(
-        ClientDataRoot::new(root)?,
-        Locale::EnUs,
-    )?)?;
+    let catalog = ArchiveCatalog::discover(ClientDataRoot::new(root)?, Locale::EnUs)?;
+    let mut store = solarity_asset::AssetStore::mount(catalog.clone())?;
     let lights = LightCatalog::load(&mut store)?;
     let animations = Arc::new(solarity_asset::AnimationDataCatalog::load(&mut store)?);
     let mut definitions = lights.skyboxes().cloned().collect::<Vec<_>>();
     definitions.sort_by_key(LightSkybox::id);
     let mut unique = std::collections::HashSet::new();
     definitions.retain(|row| unique.insert(row.model_path().to_uppercase()));
-    let mut sky = RuntimeSkyResources::load(AssetStoreHandle::new(store), &lights, animations)?;
+    let mut sky = RuntimeSkyResources::load(catalog.clone(), &lights, animations)?;
+    sky.settle_sources(&recording_cpu, None)?;
     assert!(
         sky.sources.iter().all(Option::is_some),
         "all five stock celestial textures must decode, including sunGlare's 0x88 alpha flag"
@@ -75,8 +74,16 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
                 visible: true,
             };
             let prefix = if case == 0 { 7 } else { 19 };
-            let (default_sky, frame) =
-                sky.prepare_model_input(&mut renderer, camera, time, input, prefix, &mut random)?;
+            sky.settle_sources(&recording_cpu, Some((input, time)))?;
+            let (default_sky, frame) = sky.prepare_model_input(
+                &recording_cpu,
+                &mut renderer,
+                camera,
+                time,
+                input,
+                prefix,
+                &mut random,
+            )?;
             assert_eq!(
                 default_sky,
                 opacity <= 0.99 || row.flags() & 2 != 0,
@@ -173,8 +180,16 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
             world_model: None,
             visible: true,
         };
-        let (default_sky, frame) =
-            sky.prepare_model_input(&mut renderer, camera, 200000, input, 5, &mut random)?;
+        sky.settle_sources(&recording_cpu, Some((input, 200000)))?;
+        let (default_sky, frame) = sky.prepare_model_input(
+            &recording_cpu,
+            &mut renderer,
+            camera,
+            200000,
+            input,
+            5,
+            &mut random,
+        )?;
         assert_eq!(default_sky, expected_default);
         assert_eq!(
             frame.glare_suppression(),
@@ -209,8 +224,16 @@ fn installed_skyboxes_render_retain_flags_and_ignore_camera_translation()
         world_model: None,
         visible: true,
     };
-    let (_, frame) =
-        sky.prepare_model_input(&mut renderer, camera, 201000, input, 0, &mut random)?;
+    sky.settle_sources(&recording_cpu, Some((input, 201000)))?;
+    let (_, frame) = sky.prepare_model_input(
+        &recording_cpu,
+        &mut renderer,
+        camera,
+        201000,
+        input,
+        0,
+        &mut random,
+    )?;
     renderer.request_frame_capture()?;
     renderer.present_world_frame(
         &mut &recording_cpu,

@@ -12,6 +12,16 @@ use std::time::Instant;
 
 // Test inspection stays outside production implementations.
 impl super::super::PoseBatch {
+    pub(in crate::application::terrain_frame::m2) fn named_consumption(&self) -> (usize, usize) {
+        (
+            self.jobs.iter().filter(|job| job.sparse).count(),
+            self.jobs
+                .iter()
+                .filter(|job| job.sparse && job.result.is_none())
+                .count(),
+        )
+    }
+
     pub(in crate::application::terrain_frame::m2) fn consumption(&self) -> (usize, usize) {
         (
             self.jobs.len(),
@@ -230,6 +240,53 @@ fn prepared_unit_pose_rejects_every_changed_dependency() -> Result<(), Box<dyn E
         )
         .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn worker_named_bones_match_serial_and_reject_changed_demand() -> Result<(), Box<dyn Error>> {
+    use solarity_rendering::M2BoneTransforms;
+    let model = model()?;
+    let cpu = executor()?;
+    let mut jobs: Vec<_> = (0..16)
+        .map(|_| PoseJob::new(ResourceLease::clone(&model)))
+        .collect();
+    let mut serial = M2BoneSamples::default();
+    let mut output = M2BoneSamples::default();
+    let mut palette = M2BonePose::default();
+    for frame in 0..8 {
+        for (index, job) in jobs.iter_mut().enumerate() {
+            let tick = (frame * 31 + index * 7) as f32;
+            job.clock = M2AnimationClock::new(0, tick, tick);
+            job.view = Mat4::from_rotation_y(tick * 0.001);
+            job.transforms = vec![(0, Mat4::from_translation(Vec3::Y * frame as f32))];
+            job.request_samples(&[0], cpu.storage())?;
+            job.admit(&cpu)?;
+        }
+        let mut batch = solarity_cpu::FrameBatch::with_context(PoseJob::execute);
+        batch.start(&cpu, &mut jobs)?;
+        batch.reclaim(&mut jobs)?;
+        for job in &mut jobs {
+            let transforms = job.transforms.clone();
+            let input = M2BonePoseOverrides {
+                bone_transforms: &transforms,
+                ..Default::default()
+            };
+            serial.recompose(model.animations(), job.clock, job.view, input, &[0])?;
+            assert!(
+                !job.take(&model, job.clock, job.view, input, &mut palette)?,
+                "named output cannot become a render palette"
+            );
+            assert!(
+                !job.take_samples(&model, job.clock, job.view, input, &[], &mut output)?,
+                "changed callback demand rejects the prepared result"
+            );
+            assert!(!job.take_samples(&model, job.clock, Mat4::ZERO, input, &[0], &mut output)?);
+            assert!(job.take_samples(&model, job.clock, job.view, input, &[0], &mut output)?);
+            assert_eq!(output.bone_transform(0), serial.bone_transform(0));
+            assert!(!job.take_samples(&model, job.clock, job.view, input, &[0], &mut output)?);
+        }
+    }
     Ok(())
 }
 

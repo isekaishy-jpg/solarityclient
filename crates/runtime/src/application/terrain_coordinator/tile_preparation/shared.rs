@@ -23,6 +23,7 @@ pub(in crate::application) enum PendingWorldModel {
         // Source demand is additive to the containing terrain job and ends at publication.
         priority: solarity_cpu::CpuServiceScope,
         demand: solarity_asset::WmoLoadRequest,
+        budget: CpuStorageBudget,
     },
 }
 
@@ -39,16 +40,24 @@ impl PendingWorldModel {
             mut producer,
             priority,
             demand,
+            budget,
         }) = pending.take()
         else {
             return true;
         };
-        match producer.step(store) {
+        match store.with_read_budget(
+            &solarity_asset::AssetReadBudget::for_service(
+                budget.clone(),
+                priority.control().service(),
+            ),
+            |store| producer.step(store),
+        ) {
             Ok(None) => {
                 *pending = Some(Self::Loading {
                     producer,
                     priority,
                     demand,
+                    budget,
                 });
                 false
             }
@@ -58,6 +67,10 @@ impl PendingWorldModel {
 }
 
 impl SharedTerrainSources {
+    /// Samples the job's current effective demand before each finite source turn.
+    pub(in crate::application) fn read_budget(&self) -> solarity_asset::AssetReadBudget {
+        solarity_asset::AssetReadBudget::for_service(self.budget.clone(), self.service.service())
+    }
     /// Joins one namespace model. A new producer decodes in this admitted bulk
     /// turn; an existing producer supplies a readiness edge instead of a worker wait.
     pub(in crate::application) fn model(
@@ -78,7 +91,13 @@ impl SharedTerrainSources {
             .request_for(&key, self.service.service())?
         {
             M2Load::Ready(model) => Ok(ControlFlow::Break(model)),
-            M2Load::Producer(producer) => Ok(ControlFlow::Break(producer.load(store)?)),
+            M2Load::Producer(producer) => Ok(ControlFlow::Break(producer.load_admitted(
+                store,
+                &solarity_asset::AssetReadBudget::for_service(
+                    self.budget.clone(),
+                    self.service.service(),
+                ),
+            )?)),
             M2Load::Pending(request) => {
                 let dependency = request.dependency(&self.budget, CpuStorageClass::Required)?;
                 let suspension = dependency.task_dependency()?;
@@ -109,13 +128,21 @@ impl SharedTerrainSources {
                     mut producer,
                     priority,
                     demand,
-                } => match producer.step(store)? {
+                    budget,
+                } => match store.with_read_budget(
+                    &solarity_asset::AssetReadBudget::for_service(
+                        budget.clone(),
+                        priority.control().service(),
+                    ),
+                    |store| producer.step(store),
+                )? {
                     Some(model) => Ok(ControlFlow::Break(model)),
                     None => {
                         *pending = Some(PendingWorldModel::Loading {
                             producer,
                             priority,
                             demand,
+                            budget,
                         });
                         Ok(ControlFlow::Continue(None))
                     }
@@ -152,6 +179,7 @@ impl SharedTerrainSources {
                     producer,
                     priority,
                     demand,
+                    budget: self.budget.clone(),
                 });
                 Ok(ControlFlow::Continue(None))
             }

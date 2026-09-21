@@ -566,7 +566,7 @@ impl ClientServices {
             .ok_or(WorldBenchmarkError::State("missing FrameXML"))?;
         let celestial_resources = self
             .sky_resources
-            .prepare(&mut self.renderer, environment)
+            .prepare(&self.cpu, &mut self.renderer, environment)
             .map_err(ApplicationError::from)?;
         frame
             .set_environment_detail(ui.cvar_number("environmentDetail"))

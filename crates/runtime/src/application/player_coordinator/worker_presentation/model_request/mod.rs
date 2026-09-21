@@ -2,9 +2,11 @@
 
 mod admission;
 mod pending;
+mod sources;
 mod work;
 
 pub(in crate::application::player_coordinator) use pending::AppearanceTask;
+pub(in crate::application::player_coordinator) use sources::AppearanceSources;
 
 use super::super::RuntimePlayerSharedCatalogs;
 use solarity_asset::{ArchiveCatalog, AssetPath};
@@ -16,4 +18,5 @@ pub(in crate::application::player_coordinator) struct AppearanceRequest {
     pub catalogs: RuntimePlayerSharedCatalogs,
     pub level: CharacterComponentTextureLevel,
     pub model_path: AssetPath,
+    pub sources: AppearanceSources,
 }

@@ -66,3 +66,47 @@ fn failed_archive_preparation_skips_the_domain_operation() -> Result<(), Box<dyn
     );
     Ok(())
 }
+
+/// A discovered dependency releases the physical worker while the same mounted
+/// reader survives until the next domain turn.
+#[test]
+fn archive_dependency_suspension_retains_reader_and_releases_the_worker()
+-> Result<(), Box<dyn Error>> {
+    use solarity_cpu::{
+        CpuExecutionPlan, CpuExecutor, CpuPoolConfig, CpuStorageClass, CpuStoragePlan,
+        CpuTaskDependency, CpuTaskStep, SharedProduct,
+    };
+    use std::{num::NonZeroUsize, sync::mpsc, time::Duration};
+
+    let fixture = ClientFixture::with_common_files(&[("test.txt", b"payload")])?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut cpu = CpuExecutor::new(CpuPoolConfig::new(
+        CpuExecutionPlan::new(0, 1, 1, 1)?,
+        NonZeroUsize::new(3).ok_or("capacity")?,
+        CpuStoragePlan::new(64 << 20, 64 << 20, 16 << 20),
+    ))?;
+    let (producer, product) =
+        SharedProduct::<(), ()>::new(1, cpu.storage(), CpuStorageClass::Required)?;
+    let mut edge = Some(CpuTaskDependency::new(&product.readiness())?);
+    let (notice, observed) = mpsc::channel();
+    let path = AssetPath::new("test.txt")?;
+    let mut identity = None;
+    let mut operation = super::prepare_archive_resumable(catalog, move |store| {
+        assert_eq!(*identity.get_or_insert(store.identity()), store.identity());
+        if let Some(edge) = edge.take() {
+            let _ = notice.send(());
+            return CpuTaskStep::Wait(edge);
+        }
+        CpuTaskStep::Complete(store.read(&path).map(|read| read.into_bytes()))
+    });
+    let task = cpu
+        .try_reserve()?
+        .submit_resumable_with_context(move |_| operation());
+    observed.recv_timeout(Duration::from_secs(5))?;
+    assert_eq!(cpu.try_submit(|| 41)?.join()?, 41);
+    producer.publish(Ok(()));
+    assert_eq!(task.join()??, b"payload");
+    cpu.shutdown()?;
+    Ok(())
+}

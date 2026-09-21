@@ -75,10 +75,13 @@ impl M2ModelCache {
         path: &AssetPath,
     ) -> Result<ResourceLease<DecodedM2Model>, AssetError> {
         let canonical_path = Self::canonical_path(path)?;
+        let key = AssetResourceKey::new(store.namespace(), canonical_path.clone());
+        if let Some(model) = store.model_cache_service().ready(&key)? {
+            return Ok(model);
+        }
         if self.namespaces.insert(store.namespace()) {
             store.model_cache_service().register(&self.core);
         }
-        let key = AssetResourceKey::new(store.namespace(), canonical_path.clone());
         if let Some(model) = self.core.lock().get(&key)? {
             return Ok(model);
         }

@@ -399,6 +399,7 @@ impl TerrainFrame {
             .then(|| terrain.world_model_skybox())
             .flatten();
         let (default_sky, sky_models) = sky_resources.prepare_models(
+            cpu,
             renderer,
             camera,
             liquid_time_ms,

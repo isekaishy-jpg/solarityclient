@@ -215,7 +215,7 @@ impl ClientServices {
     pub(super) fn start(
         configuration: &RuntimeConfiguration,
         visibility: StartupVisibility,
-    ) -> Result<(Self, usize, usize), ApplicationError> {
+    ) -> Result<(Box<Self>, usize, usize), ApplicationError> {
         let instrumentation = super::frame_profile::RuntimeInstrumentation::new(configuration);
         let _profile = solarity_profiling::profile!("application.startup");
         let mut startup_profile = StartupProfile::load(configuration.profile_root())?;
@@ -231,6 +231,7 @@ impl ClientServices {
             catalog.world_model_cache_service(),
         );
         let archive_count = catalog.descriptors().len();
+        let sky_catalog = catalog.clone();
         let sound_catalog = catalog.clone();
         let backdrop_catalog = catalog.clone();
         let ui_texture_catalog = catalog.clone();
@@ -337,7 +338,7 @@ impl ClientServices {
         )?;
         let assets = AssetStoreHandle::new(assets);
         let sky_resources = super::sky_resources::RuntimeSkyResources::load(
-            assets.clone(),
+            sky_catalog,
             &lights,
             Arc::clone(&animations),
         )?;
@@ -483,6 +484,10 @@ impl ClientServices {
                         prepare_configured_glue_textures(
                             ui_texture_catalog,
                             configured_texture_paths,
+                            solarity_asset::AssetReadBudget::for_service(
+                                cpu.storage().clone(),
+                                solarity_cpu::CpuService::Speculative,
+                            ),
                         ),
                     )),
                 )),
@@ -558,7 +563,7 @@ impl ClientServices {
         let world = RuntimeWorldCoordinator::new();
         let terrain_specular = glue.cvar_boolean("specular");
         Ok((
-            Self {
+            Box::new(Self {
                 instrumentation,
                 renderer,
                 screenshots: super::screenshot::RuntimeScreenshots::new(
@@ -674,7 +679,7 @@ impl ClientServices {
                 login_failures: VecDeque::new(),
                 world_failures: VecDeque::new(),
                 network_shutdown_timeout: configuration.network_shutdown_timeout(),
-            },
+            }),
             archive_count,
             addon_count,
         ))
@@ -1444,9 +1449,9 @@ impl ClientServices {
             global_animation_time_ms * 0.001,
         )?;
         let ripples = self.water_ripples.frame(camera, footstep_bias)?;
-        let celestial_resources = self
-            .sky_resources
-            .prepare(&mut self.renderer, environment)?;
+        let celestial_resources =
+            self.sky_resources
+                .prepare(&self.cpu, &mut self.renderer, environment)?;
         let underwater_particles =
             self.underwater_particles
                 .frame(camera, &self.liquids, environment.fog())?;
@@ -1762,6 +1767,8 @@ impl ClientServices {
         }
         self.unit_effects
             .service_sources(&self.cpu, &mut self.renderer)?;
+        self.sky_resources.service_textures(&self.cpu)?;
+        self.sky_resources.service_models(&self.cpu)?;
         let Some(network) = self.network.as_ref() else {
             return Ok(());
         };

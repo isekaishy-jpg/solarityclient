@@ -126,6 +126,11 @@ fn mount_jump_and_landing_callbacks_reach_all_offscreen_unit_paths() -> Result<(
             draws.draws.is_empty(),
             "callbacks must execute before culling"
         );
+        assert_eq!(
+            frame.pose_batch.named_consumption(),
+            (3, 3),
+            "all three offscreen mount roots publish rider samples from workers"
+        );
         for (mount, body) in [
             (
                 M2GpuPlacementOwner::PlayerMount { guid: 7 },

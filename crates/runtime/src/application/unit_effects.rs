@@ -82,14 +82,19 @@ impl RuntimeUnitEffects {
                     match cpu.try_reserve() {
                         Ok(permit) => {
                             let environmental = Arc::clone(&self.environmental);
+                            let budget = solarity_asset::AssetReadBudget::for_service(
+                                cpu.storage().clone(),
+                                solarity_cpu::CpuService::Required,
+                            );
                             Sources::Running(permit.submit_steps_with_context(
                                 super::archive_job::contextual(
                                     "unit_effects.source_step",
                                     super::archive_job::prepare_archive(catalog, move |store| {
-                                        ControlFlow::Break(ResidentUnitEffect::load(
-                                            store,
-                                            &environmental,
-                                        ))
+                                        ControlFlow::Break(
+                                            store.with_read_budget(&budget, |store| {
+                                                ResidentUnitEffect::load(store, &environmental)
+                                            }),
+                                        )
                                     }),
                                 ),
                             ))

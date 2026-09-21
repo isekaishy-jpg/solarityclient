@@ -1,15 +1,15 @@
-//! Primary-source demand is registered before transferring any appearance cache.
+//! Shared source demand is registered before transferring any appearance cache.
 
 use super::super::super::{RuntimePlayerError, RuntimePlayerPresentation};
 use super::super::AppearanceWorkerCache;
 use super::work::{AppearanceBank, ModelInput};
 use super::{AppearanceRequest, AppearanceTask};
 use solarity_asset::{AssetResourceKey, DecodedM2Model, M2Load, ResourceLease};
-use solarity_cpu::{CpuError, CpuExecutor, CpuService};
+use solarity_cpu::{CpuError, CpuExecutor, CpuService, CpuStorageClass};
 
 impl<T: Send + 'static> AppearanceTask<T> {
-    /// Pending sources gate the appearance without a worker wait. Capacity refusal
-    /// returns None with the original cache bank still owned by the coordinator.
+    /// Register existing demand before CPU admission so saturation cannot prevent
+    /// promotion. Refusal leaves the caller's exclusive bank in place.
     pub(in crate::application::player_coordinator) fn submit(
         cpu: &CpuExecutor,
         request: AppearanceRequest,
@@ -21,19 +21,34 @@ impl<T: Send + 'static> AppearanceTask<T> {
         + Send
         + 'static,
     ) -> Result<Option<Self>, RuntimePlayerError> {
-        let source_key = AssetResourceKey::new(request.catalog.namespace(), request.model_path);
+        let key = AssetResourceKey::new(request.catalog.namespace(), request.model_path);
         let service = request.catalog.model_cache_service();
-        let (permit, model) =
-            if let Some(waiting) = service.join_pending(&source_key, CpuService::Required)? {
-                (None, M2Load::Pending(waiting))
-            } else {
-                let permit = match cpu.try_reserve() {
-                    Ok(permit) => permit,
-                    Err(CpuError::AtCapacity { .. }) => return Ok(None),
-                    Err(error) => return Err(error.into()),
-                };
-                (Some(permit), service.request(&source_key)?)
-            };
+        let waiting = service.join_pending(&key, CpuService::Required)?;
+        let permit = match cpu.try_reserve() {
+            Ok(permit) => permit,
+            Err(CpuError::AtCapacity { .. }) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let load = match waiting {
+            Some(request) => M2Load::Pending(request),
+            None => service.request(&key)?,
+        };
+        let control = permit.service_control();
+        let (model, demand) = match load {
+            M2Load::Ready(model) => (ModelInput::Ready(model), None),
+            M2Load::Producer(producer) => {
+                let demand = producer.subscribe();
+                assert!(
+                    demand.bind_service(control.clone()),
+                    "one producer binds each source task"
+                );
+                (ModelInput::Producer(producer), Some(demand))
+            }
+            M2Load::Pending(demand) => {
+                let dependency = demand.dependency(cpu.storage(), CpuStorageClass::Required)?;
+                (ModelInput::Pending(dependency), Some(demand))
+            }
+        };
         let bank = AppearanceBank {
             catalog: request.catalog,
             catalogs: request.catalogs,
@@ -42,52 +57,13 @@ impl<T: Send + 'static> AppearanceTask<T> {
                 .take()
                 .ok_or(RuntimePlayerError::MissingGlueCharacterWorkerResult)?,
         };
-        let prepare = Box::new(prepare);
-        let task = match model {
-            M2Load::Pending(demand) => {
-                drop(permit);
-                let mut bank = Some(bank);
-                match Self::dependent(cpu, &mut bank, demand, prepare) {
-                    Ok(task) => task,
-                    Err(error) => {
-                        *cache = Some(
-                            bank.take()
-                                .unwrap_or_else(|| {
-                                    unreachable!("refused appearance retains its bank")
-                                })
-                                .cache,
-                        );
-                        return match error {
-                            CpuError::AtCapacity { .. } => Ok(None),
-                            error => Err(error.into()),
-                        };
-                    }
-                }
-            }
-            ready => {
-                let (model, demand) = match ready {
-                    M2Load::Ready(model) => (ModelInput::Ready(model), None),
-                    M2Load::Producer(producer) => {
-                        let demand = producer.subscribe();
-                        (ModelInput::Producer(producer), Some(demand))
-                    }
-                    M2Load::Pending(_) => unreachable!("pending sources use dependency admission"),
-                };
-                let task = permit
-                    .unwrap_or_else(|| unreachable!("new or ready sources reserve execution"))
-                    .submit_with_context(move |context| {
-                        context.diagnostic_value("appearance.prepare.direct", 1);
-                        bank.prepare(model, prepare)
-                    });
-                if let Some(demand) = &demand {
-                    assert!(
-                        demand.bind_service(task.service_control()),
-                        "one producer binds each source task"
-                    );
-                }
-                Self::Direct { task, demand }
-            }
-        };
-        Ok(Some(task))
+        let task = permit.submit_resumable_with_context(bank.operation(
+            model,
+            request.sources,
+            Box::new(prepare),
+            cpu.storage().clone(),
+            control,
+        ));
+        Ok(Some(Self::Direct { task, demand }))
     }
 }

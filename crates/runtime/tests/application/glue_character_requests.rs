@@ -26,6 +26,10 @@ use std::{
 
 /// Public UI projection supplies complete stock selection inputs without a window.
 fn selection(guid: u64) -> UiCharacterSelectionPreview {
+    selection_with_pet(guid, UiCharacterPetPreview::default())
+}
+
+fn selection_with_pet(guid: u64, pet: UiCharacterPetPreview) -> UiCharacterSelectionPreview {
     UiCharacterDirectory::new(
         vec![UiCharacterInfo::new(
             guid,
@@ -41,7 +45,7 @@ fn selection(guid: u64) -> UiCharacterSelectionPreview {
             0,
             [0; 5],
             [UiCharacterEquipment::default(); 23],
-            UiCharacterPetPreview::default(),
+            pet,
             0,
             0,
         )],
@@ -361,5 +365,53 @@ fn glue_ready_source_is_shared_and_withdrawal_removes_resident_immediately()
     assert!(first.glue_character.is_none());
     assert!(!first.synchronize_character_selection_async(None, &cpu)?);
     assert!(second.glue_character.is_some());
+    Ok(())
+}
+
+#[test]
+fn glue_pet_joins_pending_source_and_keeps_publication_transactional() -> Result<(), Box<dyn Error>>
+{
+    let fixture = unit_models::fixture_with_mount_scale()?;
+    let catalog = catalog(&fixture)?;
+    let mut current = presentation(&catalog)?;
+    let requested = selection_with_pet(1, UiCharacterPetPreview::new(102, 80, 0));
+    let pet_path = current.creatures.resolve_model(102)?.model_path().clone();
+    let key = AssetResourceKey::new(catalog.namespace(), pet_path);
+    let M2Load::Producer(producer) = catalog.model_cache_service().request(&key)? else {
+        return Err("pending pet producer".into());
+    };
+    let observer = producer.subscribe();
+    let (cpu, notifications) = executor(8)?;
+    current.synchronize_character_selection_async(Some(&requested), &cpu)?;
+    assert!(
+        current.glue_character.is_none(),
+        "body publication waits for its required pet"
+    );
+    assert_eq!(cpu.try_submit(|| 23)?.join()?, 23);
+    current.synchronize_character_selection_async(None, &cpu)?;
+    wait(&current, &notifications)?;
+    current.synchronize_character_selection_async(None, &cpu)?;
+    assert!(current.pending_glue_character.is_none());
+    assert!(current.glue_worker_cache.is_some());
+    assert!(
+        observer.poll().is_none(),
+        "withdrawal does not fail the shared pet producer"
+    );
+    current.synchronize_character_selection_async(Some(&requested), &cpu)?;
+    let pet_model = producer.load(&mut AssetStore::mount(catalog.clone())?)?;
+    wait(&current, &notifications)?;
+    current.synchronize_character_selection_async(Some(&requested), &cpu)?;
+    let resident = current
+        .glue_character
+        .as_ref()
+        .ok_or("complete selected appearance")?;
+    let pet = resident.pet.as_ref().ok_or("selected pet")?;
+    assert!(ResourceLease::ptr_eq(&pet.model, &pet_model));
+    let mut serial = presentation(&catalog)?;
+    serial.synchronize_character_selection(Some(&requested))?;
+    let reference = serial.glue_character.as_ref().ok_or("serial appearance")?;
+    assert_eq!(resident.atlas.mips(), reference.atlas.mips());
+    assert_eq!(resident.geosets, reference.geosets);
+    assert!(current.glue_worker_cache.is_some());
     Ok(())
 }

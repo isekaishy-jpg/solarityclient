@@ -136,7 +136,7 @@ impl UiManifest {
 /// An owned Lua 5.1 source file awaiting stock API registration and execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LuaSource {
-    source: String,
+    source: std::sync::Arc<solarity_asset::AssetText>,
 }
 
 impl LuaSource {
@@ -397,7 +397,7 @@ impl<'a> UiBundleLoader<'a> {
         }
     }
 
-    fn read_source(&mut self, path: &AssetPath) -> Result<Vec<u8>, UiLoadError> {
+    fn read_source(&mut self, path: &AssetPath) -> Result<solarity_asset::AssetBytes, UiLoadError> {
         if self.addon_source && path.as_str().starts_with("INTERFACE\\ADDONS\\") {
             Ok(self.store.read_addon_file(path)?)
         } else {
@@ -412,7 +412,9 @@ impl<'a> UiBundleLoader<'a> {
         let resource_index = self.resources.len();
         self.resources.push(UiResource {
             path: path.clone(),
-            content: UiResourceContent::Lua(LuaSource { source }),
+            content: UiResourceContent::Lua(LuaSource {
+                source: std::sync::Arc::new(source),
+            }),
         });
         self.actions
             .push(UiLoadAction::LuaResource { resource_index });
@@ -639,11 +641,16 @@ fn directive_error(path: &AssetPath, message: impl Into<String>) -> UiLoadError 
     }
 }
 
-fn decode_text(path: &AssetPath, bytes: Vec<u8>) -> Result<String, UiLoadError> {
-    String::from_utf8(bytes).map_err(|error| UiLoadError::TextEncoding {
-        path: path.clone(),
-        message: error.to_string(),
-    })
+fn decode_text(
+    path: &AssetPath,
+    bytes: solarity_asset::AssetBytes,
+) -> Result<solarity_asset::AssetText, UiLoadError> {
+    bytes
+        .into_text()
+        .map_err(|error| UiLoadError::TextEncoding {
+            path: path.clone(),
+            message: error.to_string(),
+        })
 }
 
 fn manifest_entry_error(path: &AssetPath, line: usize, value: &str) -> UiLoadError {

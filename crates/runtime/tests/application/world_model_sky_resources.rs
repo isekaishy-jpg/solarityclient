@@ -34,14 +34,12 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
         ("C.m2", &model),
         ("C00.skin", &skin),
     ])?;
-    let mut store = solarity_asset::AssetStore::mount(ArchiveCatalog::discover(
-        ClientDataRoot::new(fixture.data_root())?,
-        Locale::EnUs,
-    )?)?;
+    let catalog =
+        ArchiveCatalog::discover(ClientDataRoot::new(fixture.data_root())?, Locale::EnUs)?;
+    let mut store = solarity_asset::AssetStore::mount(catalog.clone())?;
     let lights = LightCatalog::load(&mut store)?;
     let animations = Arc::new(solarity_asset::AnimationDataCatalog::load(&mut store)?);
-    let store = AssetStoreHandle::new(store);
-    let mut sky = RuntimeSkyResources::load(store.clone(), &lights, Arc::clone(&animations))?;
+    let mut sky = RuntimeSkyResources::load(catalog.clone(), &lights, Arc::clone(&animations))?;
     let _lock = crate::test_support::SDL_TEST_LOCK
         .lock()
         .map_err(|_| "SDL lock poisoned")?;
@@ -82,8 +80,16 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
             global_skybox: None,
             visible,
         };
-        let (default_sky, frame) =
-            sky.prepare_model_input(&mut renderer, camera, step * 1000, input, 0, &mut random)?;
+        sky.settle_sources(&recording_cpu, Some((input, step * 1000)))?;
+        let (default_sky, frame) = sky.prepare_model_input(
+            &recording_cpu,
+            &mut renderer,
+            camera,
+            step * 1000,
+            input,
+            0,
+            &mut random,
+        )?;
         assert_eq!(default_sky, visible && (!wmo || opacity <= 0.99));
         assert_eq!(
             frame.draw_count(),
@@ -171,7 +177,7 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
     }
     // A fresh process resolves the global B alias before the ordinary B request.
     // It owns flag one, even though the ordinary row carries flag three.
-    let mut sky = RuntimeSkyResources::load(store, &lights, animations)?;
+    let mut sky = RuntimeSkyResources::load(catalog.clone(), &lights, animations)?;
     for (step, global, visible, expected_draws, expected_default) in [
         (0, Some((5, 1.)), false, 0, false),
         (1, Some((5, 0.5)), true, 4, true),
@@ -191,7 +197,9 @@ fn world_model_skybox_preserves_cached_phase_and_pauses_hidden_scene() -> Result
             visible,
         };
         let prefix = if step & 1 == 0 { 7 } else { 19 };
+        sky.settle_sources(&recording_cpu, Some((input, step * 1000)))?;
         let (default_sky, frame) = sky.prepare_model_input(
+            &recording_cpu,
             &mut renderer,
             camera,
             step * 1000,

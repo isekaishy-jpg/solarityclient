@@ -12,6 +12,7 @@ impl M2Frame {
         &mut self,
         cpu: Option<&CpuExecutor>,
         admission: super::PoseAdmission<'_>,
+        world_lighting: bool,
         now: u32,
     ) -> Result<(), RuntimeTerrainFrameError> {
         self.pose_batch
@@ -24,35 +25,63 @@ impl M2Frame {
         let mut active = 0;
         for &index in self.placement_visibility.dynamic_indices() {
             let placement = &self.placements[index];
-            let Some(animation) = &placement.unit_animation else {
-                continue;
-            };
-            let Some(clock) = animation.prepared_scene_clock() else {
+            let animation = placement.unit_animation.as_ref();
+            let Some(clock) = animation
+                .and_then(|animation| animation.prepared_scene_clock())
+                .or_else(|| {
+                    placement
+                        .passenger_playback_advance
+                        .as_ref()
+                        .map(|advance| advance.clock)
+                })
+            else {
                 continue;
             };
             let Some(source) = &self.sources[placement.source_index] else {
                 continue;
             };
-            // Attached transforms are finalized during ordered traversal. Hidden
-            // roots have no render consumers; other roots use the same camera
-            // and independent shadow demands as final packet preparation.
+            // Attached transforms remain with ordered traversal. Independent roots
+            // supply render palettes or only the bones their CPU consumers request.
             if !placement.placement_valid
                 || self.placement_visibility.light_parent(index).is_some()
                 || self.vehicle_passengers.hidden(index)
-                || placement
-                    .entity_opacity
-                    .as_ref()
-                    .is_some_and(|owner| owner.hidden())
             {
                 continue;
             }
-            if !admission.allows(source, placement)? {
-                continue;
-            }
+            let palette = !placement
+                .entity_opacity
+                .as_ref()
+                .is_some_and(|owner| owner.hidden())
+                && admission.allows(source, placement)?;
             let Some(playback) = &placement.playback else {
                 continue;
             };
             let playback = playback.borrow();
+            if !palette {
+                // The independent offline reference samples these bones during
+                // its serial traversal instead of using the worker extension.
+                if cpu.is_none() {
+                    continue;
+                }
+                let window = animation
+                    .and_then(|animation| animation.prepared_scene_event_window())
+                    .unwrap_or_else(|| playback.sample_event_window(now as f32));
+                self.bone_demand
+                    .model(super::super::demand::CpuModelInputs {
+                        placement,
+                        model: &source.model,
+                        window,
+                        items: &self.requested_items,
+                        visuals: &self.requested_visuals,
+                        glue_ids: &self.glue_attachment_ids,
+                        effects: &self.unit_effects,
+                        publishes_lights: world_lighting
+                            && self.placement_visibility.has_lights(index),
+                    });
+                if self.bone_demand.bones().is_empty() {
+                    continue;
+                }
+            }
             let hands = placement
                 .retirement
                 .as_ref()
@@ -84,18 +113,30 @@ impl M2Frame {
                     .jobs
                     .push(PoseJob::new(ResourceLease::clone(&source.model)));
             }
+            let body_pose = animation.map(|animation| animation.body_pose());
             batch.jobs[active].prepare(
                 index,
                 source,
                 clock,
                 admission.view * placement.transform,
                 finger_pose,
-                animation.body_pose().bone_transforms(),
+                body_pose
+                    .as_ref()
+                    .map_or(&[], |pose| pose.bone_transforms()),
                 playback.bone_sequence_clocks(&source.model, clock, now),
             );
-            batch.jobs[active].measurement = batch
-                .calibration
-                .prepare(source.model.animations().bones().len());
+            if !palette {
+                batch.jobs[active].request_samples(
+                    self.bone_demand.bones(),
+                    cpu.unwrap_or_else(|| unreachable!("named requests require an executor"))
+                        .storage(),
+                )?;
+            }
+            batch.jobs[active].measurement = batch.calibration.prepare(if palette {
+                source.model.animations().bones().len()
+            } else {
+                self.bone_demand.bones().len()
+            });
             batch.indices[index] = Some(active);
             active += 1;
         }
