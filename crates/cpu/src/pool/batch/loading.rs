@@ -99,9 +99,8 @@ impl<T: Send + 'static> LoadBatch<T> {
             return Err(CpuError::BatchInactive);
         }
         let state = self.batch.core.lock();
-        let dispatch = state.dispatch.as_ref().ok_or(CpuError::BatchInactive)?;
         let service = state.service.as_ref().ok_or(CpuError::BatchInactive)?;
-        Ok(CpuServiceControl::new(dispatch, Arc::clone(service)))
+        Ok(CpuServiceControl::new(Arc::clone(service)))
     }
 
     /// Withdraws this consumer without cancelling shared prerequisite producers.

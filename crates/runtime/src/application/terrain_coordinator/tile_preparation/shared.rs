@@ -18,7 +18,12 @@ pub(in crate::application) struct SharedTerrainSources {
 /// An ordered WMO consumer retains either another producer's edge or its own decode cursor.
 pub(in crate::application) enum PendingWorldModel {
     Waiting(solarity_asset::WmoLoadDependency),
-    Loading(solarity_asset::WmoLoadProducer),
+    Loading {
+        producer: solarity_asset::WmoLoadProducer,
+        // Source demand is additive to the containing terrain job and ends at publication.
+        priority: solarity_cpu::CpuServiceScope,
+        demand: solarity_asset::WmoLoadRequest,
+    },
 }
 
 impl PendingWorldModel {
@@ -30,12 +35,21 @@ impl PendingWorldModel {
         pending: &mut Option<Self>,
         store: &mut AssetStore,
     ) -> bool {
-        let Some(Self::Loading(mut producer)) = pending.take() else {
+        let Some(Self::Loading {
+            mut producer,
+            priority,
+            demand,
+        }) = pending.take()
+        else {
             return true;
         };
         match producer.step(store) {
             Ok(None) => {
-                *pending = Some(Self::Loading(producer));
+                *pending = Some(Self::Loading {
+                    producer,
+                    priority,
+                    demand,
+                });
                 false
             }
             Ok(Some(_)) | Err(_) => true,
@@ -91,10 +105,18 @@ impl SharedTerrainSources {
                         || unreachable!("WMO consumption follows readiness"),
                     )?))
                 }
-                PendingWorldModel::Loading(mut producer) => match producer.step(store)? {
+                PendingWorldModel::Loading {
+                    mut producer,
+                    priority,
+                    demand,
+                } => match producer.step(store)? {
                     Some(model) => Ok(ControlFlow::Break(model)),
                     None => {
-                        *pending = Some(PendingWorldModel::Loading(producer));
+                        *pending = Some(PendingWorldModel::Loading {
+                            producer,
+                            priority,
+                            demand,
+                        });
                         Ok(ControlFlow::Continue(None))
                     }
                 },
@@ -107,7 +129,30 @@ impl SharedTerrainSources {
         {
             solarity_asset::WmoLoad::Ready(model) => Ok(ControlFlow::Break(model)),
             solarity_asset::WmoLoad::Producer(producer) => {
-                *pending = Some(PendingWorldModel::Loading(producer));
+                // Parent demand already follows this admitted job. This source's
+                // own pin adds only speculative demand; other consumers may promote
+                // it without owning or demoting unrelated terrain stages.
+                let priority = match self
+                    .service
+                    .scoped_demand(solarity_cpu::CpuService::Speculative)
+                {
+                    Ok(priority) => priority,
+                    Err(error) => {
+                        let error = solarity_asset::WmoLoadError::Cpu(std::sync::Arc::new(error));
+                        producer.fail(error.clone());
+                        return Err(error.into());
+                    }
+                };
+                let demand = producer.subscribe_for(solarity_cpu::CpuService::Speculative);
+                assert!(
+                    demand.bind_service(priority.control()),
+                    "one admitted WMO producer binds its source demand"
+                );
+                *pending = Some(PendingWorldModel::Loading {
+                    producer,
+                    priority,
+                    demand,
+                });
                 Ok(ControlFlow::Continue(None))
             }
             solarity_asset::WmoLoad::Pending(request) => {
@@ -119,3 +164,7 @@ impl SharedTerrainSources {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/application/shared_world_source_priority.rs"]
+mod tests;

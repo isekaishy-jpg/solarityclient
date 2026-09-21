@@ -29,7 +29,7 @@ impl<T: Send + 'static> PrioritySink for Core<T> {
         drop(state);
         let work: Arc<dyn ReadyWork> = self;
         if let Some(service) = service {
-            dispatch.reclassify(&service, crate::CpuService::Required);
+            crate::CpuServiceControl::new(service).set_service(crate::CpuService::Required);
         } else {
             dispatch.promote(&work);
         }
