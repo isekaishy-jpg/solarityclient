@@ -110,9 +110,12 @@ fn worker_unit_poses_match_serial_during_camera_and_override_changes() -> Result
             job.clock = M2AnimationClock::new(0, tick, tick);
             job.view = Mat4::from_rotation_y(tick * 0.001)
                 * Mat4::from_translation(Vec3::X * index as f32);
-            job.transforms = vec![(0, Mat4::from_translation(Vec3::Y * frame as f32))];
-            job.sequences = vec![(0, M2AnimationClock::new(1, tick * 0.5, tick))];
-            job.orientation = vec![frame % 2 == 0];
+            job.prepare_inputs(
+                cpu.storage(),
+                &[frame % 2 == 0],
+                &[(0, Mat4::from_translation(Vec3::Y * frame as f32))],
+                [(0, M2AnimationClock::new(1, tick * 0.5, tick))].into_iter(),
+            )?;
         }
         {
             let mut batch = solarity_cpu::FrameBatch::new(PoseJob::sample);
@@ -142,9 +145,9 @@ fn worker_unit_poses_match_serial_during_camera_and_override_changes() -> Result
                 overrides(job),
             )?;
             assert_eq!(job.pose.transforms(), serial.transforms());
-            let orientation = job.orientation.clone();
-            let transforms = job.transforms.clone();
-            let sequences = job.sequences.clone();
+            let orientation = job.orientation.to_vec();
+            let transforms = job.transforms.to_vec();
+            let sequences = job.sequences.to_vec();
             let input = M2BonePoseOverrides {
                 model_oriented_billboard_bones: &orientation,
                 bone_transforms: &transforms,
@@ -259,7 +262,12 @@ fn worker_named_bones_match_serial_and_reject_changed_demand() -> Result<(), Box
             let tick = (frame * 31 + index * 7) as f32;
             job.clock = M2AnimationClock::new(0, tick, tick);
             job.view = Mat4::from_rotation_y(tick * 0.001);
-            job.transforms = vec![(0, Mat4::from_translation(Vec3::Y * frame as f32))];
+            job.prepare_inputs(
+                cpu.storage(),
+                &[],
+                &[(0, Mat4::from_translation(Vec3::Y * frame as f32))],
+                std::iter::empty(),
+            )?;
             job.request_samples(&[0], cpu.storage())?;
             job.admit(&cpu)?;
         }
@@ -267,7 +275,7 @@ fn worker_named_bones_match_serial_and_reject_changed_demand() -> Result<(), Box
         batch.start(&cpu, &mut jobs)?;
         batch.reclaim(&mut jobs)?;
         for job in &mut jobs {
-            let transforms = job.transforms.clone();
+            let transforms = job.transforms.to_vec();
             let input = M2BonePoseOverrides {
                 bone_transforms: &transforms,
                 ..Default::default()
@@ -377,5 +385,91 @@ fn benchmark_moving_unit_pose_batch() -> Result<(), Box<dyn Error>> {
         totals[1].as_secs_f64() * 1000. / 280.,
         totals[0].as_secs_f64() / totals[1].as_secs_f64()
     );
+    Ok(())
+}
+
+#[test]
+fn pose_input_admission_preserves_prior_values_and_warm_allocations() -> Result<(), Box<dyn Error>>
+{
+    use solarity_cpu::CpuStoragePlan;
+    let model = model()?;
+    let bytes = 1 + 2 * size_of::<(u16, Mat4)>() + 2 * size_of::<(u16, M2AnimationClock)>();
+    let denied = CpuStorageBudget::new(CpuStoragePlan::new(bytes - 1, 0, 0));
+    let mut job = PoseJob::new(model);
+    let transforms = [(0, Mat4::IDENTITY), (1, Mat4::from_translation(Vec3::X))];
+    let sequences = [
+        (0, M2AnimationClock::new(0, 1., 1.)),
+        (1, M2AnimationClock::new(0, 2., 2.)),
+    ];
+    assert!(
+        job.prepare_inputs(&denied, &[true], &transforms, sequences.into_iter())
+            .is_err()
+    );
+    assert_eq!(job.orientation.capacity(), 0);
+    assert_eq!(job.transforms.capacity(), 0);
+    assert_eq!(job.sequences.capacity(), 0);
+    assert_eq!(denied.snapshot().used(Class::Frame), 0);
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(bytes, 0, 0));
+    job.prepare_inputs(&budget, &[true], &transforms, sequences.into_iter())?;
+    let addresses = (
+        job.orientation.as_ptr(),
+        job.transforms.as_ptr(),
+        job.sequences.as_ptr(),
+    );
+    assert!(
+        job.prepare_inputs(&budget, &[false, false], &[], std::iter::empty())
+            .is_err()
+    );
+    assert_eq!(&*job.orientation, &[true]);
+    assert_eq!(&*job.transforms, &transforms);
+    assert_eq!(&*job.sequences, &sequences);
+    for _ in 0..1000 {
+        job.prepare_inputs(&budget, &[false], &transforms, sequences.into_iter())?;
+    }
+    assert_eq!(
+        addresses,
+        (
+            job.orientation.as_ptr(),
+            job.transforms.as_ptr(),
+            job.sequences.as_ptr()
+        )
+    );
+    assert_eq!(budget.snapshot().used(Class::Frame), bytes);
+    drop(job);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
+    Ok(())
+}
+
+#[test]
+fn pose_phase_admission_protects_full_and_named_outputs_together() -> Result<(), Box<dyn Error>> {
+    use solarity_cpu::CpuStoragePlan;
+    let model = model()?;
+    let full = PoseJob::new(model.clone());
+    let mut named = PoseJob::new(model);
+    named.sparse = true;
+    let probe = CpuStorageBudget::new(CpuStoragePlan::new(0, 0, 0));
+    let mut plan = CpuStorageWorkingSet::default();
+    full.include_output(&probe, &mut plan)?;
+    named.include_output(&probe, &mut plan)?;
+    let outputs = plan.bytes();
+    let staging = 2 * size_of::<PoseJob>();
+    let budget = CpuStorageBudget::new(CpuStoragePlan::new(staging + outputs, 0, 0));
+    let mut batch = super::super::PoseBatch::default();
+    batch.jobs.reserve(&budget, Class::Frame, Kind::Result, 2)?;
+    batch.jobs.push(full)?;
+    batch.jobs.push(named)?;
+    let pressure = budget.reserve(Class::Frame, Kind::Scratch, 1)?;
+    assert!(batch.admit_outputs(&budget).is_err());
+    assert_eq!(batch.jobs[0].pose.allocated_bytes(), 0);
+    assert_eq!(batch.jobs[1].samples.allocated_bytes(), 0);
+    assert_eq!(budget.snapshot().used(Class::Frame), staging + 1);
+    drop(pressure);
+    batch.admit_outputs(&budget)?;
+    assert_eq!(budget.snapshot().used(Class::Frame), staging + outputs);
+    let full_address = batch.jobs[0].pose.transforms().as_ptr();
+    batch.admit_outputs(&budget)?;
+    assert_eq!(batch.jobs[0].pose.transforms().as_ptr(), full_address);
+    drop(batch);
+    assert_eq!(budget.snapshot().used(Class::Frame), 0);
     Ok(())
 }

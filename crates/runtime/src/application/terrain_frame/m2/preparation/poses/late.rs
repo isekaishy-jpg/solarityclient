@@ -61,8 +61,9 @@ impl LatePose {
             view,
             overrides.finger_pose,
             overrides.bone_transforms,
-            overrides.bone_sequences.to_vec(),
-        );
+            overrides.bone_sequences.iter().copied(),
+            cpu.storage(),
+        )?;
         if !palette {
             job.request_samples(bones, cpu.storage())?;
         }

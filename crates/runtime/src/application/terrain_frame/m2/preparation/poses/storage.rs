@@ -35,6 +35,18 @@ pub(super) fn capacity<T>(buffer: &CpuBuffer<T>, needed: usize) -> Result<usize,
 }
 
 impl super::PoseBatch {
+    pub(super) fn admit_outputs(&mut self, budget: &CpuStorageBudget) -> Result<(), CpuError> {
+        let mut plan = CpuStorageWorkingSet::default();
+        for job in self.jobs.iter() {
+            job.include_output(budget, &mut plan)?;
+        }
+        let mut fund = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+        for job in self.jobs.iter_mut() {
+            job.admit_output(&mut fund)?;
+        }
+        Ok(())
+    }
+
     pub(in crate::application::terrain_frame::m2) fn prepare_storage(
         &mut self,
         budget: &CpuStorageBudget,

@@ -596,6 +596,33 @@ denied, formatting and diff checks pass. Logs are
 `target/pose-receiver-cpu-tests.log`, `target/pose-receiver-runtime-final.log`
 and `target/pose-receiver-clippy.log`.
 
+The following skeletal batch admits each pose's billboard flags, transform
+overrides and sequence clocks as one copied-input working set. These buffers retain
+charges across callback/late/root job reuse. Root preparation consumes the model's
+bounded sequence-clock iterator directly, eliminating its temporary sequence Vec;
+callback and late poses copy borrowed sequence slices into the admitted writer.
+The iterator preserves the existing parent/blend selection and timer order.
+
+Root-pose and seeded callback batches now plan all known full-palette and named-bone
+outputs before growing any output buffer or starting workers. Sparse sample storage
+exposes the same connected planning/funding boundary as full poses, covering its
+ancestor mask and nested skeletal scratch in allocation order. A single discovered
+late dependency uses that same funded path. Scheduler admission still precedes
+input transfer, and native waits and exact-input result matching remain unchanged.
+This closes copied pose-input storage and these batch-output reservations; caller
+playback/body-pose scratch, remaining domain allocation accounting, scheduler/domain
+working-set integration and aggregate geometry/simulation admission remain open.
+The user requested a fresh Testing package after this batch and startup of the
+local playerbots server; package evidence is recorded separately.
+
+Grouped rendering/runtime library validation passes 564 tests (30 existing
+ignores), including connected input refusal, warm allocation reuse and collective
+full/named output refusal before any allocation. Runtime library validation was
+repeated after releasing unused callback reservation headroom before scheduler
+admission. All-target/all-feature Clippy with warnings denied, formatting and
+diff checks pass. Logs are `target/pose-inputs-tests.log`,
+`target/pose-inputs-runtime-final.log` and `target/pose-inputs-clippy.log`.
+
 Character creation/selection, local and remote players, NPC appearances, their
 body/replacement/equipment/mount/pet textures, and login backdrops now join shared
 BLP readiness on admitted workers. Frozen appearance inputs and nested M2 leases

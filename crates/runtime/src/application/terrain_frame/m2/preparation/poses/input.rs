@@ -4,6 +4,10 @@ use super::super::super::{M2GpuSource, RuntimeTerrainFrameError};
 use glam::Mat4;
 use solarity_asset::DecodedM2Model;
 use solarity_asset::ResourceLease;
+use solarity_cpu::{
+    CpuBuffer, CpuError, CpuStorageBudget, CpuStorageClass as Class, CpuStorageKind as Kind,
+    CpuStorageReservation, CpuStorageWorkingSet,
+};
 use solarity_rendering::{
     M2AnimationClock, M2BonePose, M2BonePoseError, M2BonePoseOverrides, M2BoneSamples,
     M2FingerPoseHands,
@@ -16,12 +20,12 @@ pub(super) struct PoseJob {
     trace: solarity_profiling::TraceContext,
     model: Option<ResourceLease<DecodedM2Model>>,
     layout: solarity_asset::ResourceWeak<DecodedM2Model>,
-    orientation: Vec<bool>,
+    orientation: CpuBuffer<bool>,
     clock: M2AnimationClock,
     view: Mat4,
     fingers: Option<(M2AnimationClock, M2FingerPoseHands)>,
-    transforms: Vec<(u16, Mat4)>,
-    sequences: Vec<(u16, M2AnimationClock)>,
+    transforms: CpuBuffer<(u16, Mat4)>,
+    sequences: CpuBuffer<(u16, M2AnimationClock)>,
     pose: M2BonePose,
     samples: M2BoneSamples,
     requested: solarity_cpu::CpuBuffer<usize>,
@@ -30,32 +34,97 @@ pub(super) struct PoseJob {
 }
 
 impl PoseJob {
-    /// Skeletal output and scratch are charged before any worker receives input.
-    pub(super) fn admit(
-        &mut self,
-        cpu: &solarity_cpu::CpuExecutor,
-    ) -> Result<(), solarity_cpu::CpuError> {
+    /// A single discovered dependency uses the same reservation as batch output admission.
+    pub(super) fn admit(&mut self, cpu: &solarity_cpu::CpuExecutor) -> Result<(), CpuError> {
+        let mut plan = CpuStorageWorkingSet::default();
+        self.include_output(cpu.storage(), &mut plan)?;
+        let mut fund = cpu
+            .storage()
+            .reserve_working_set(Class::Frame, plan.bytes())?;
+        self.admit_output(&mut fund)
+    }
+
+    pub(super) fn include_output(
+        &self,
+        budget: &CpuStorageBudget,
+        plan: &mut CpuStorageWorkingSet,
+    ) -> Result<(), CpuError> {
+        let bones = self
+            .model
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("prepared pose retains model"))
+            .animations()
+            .bones()
+            .len();
         if self.sparse {
-            self.samples.reserve_cpu_storage(
-                cpu.storage(),
-                self.model
-                    .as_ref()
-                    .unwrap_or_else(|| unreachable!("prepared pose retains model"))
-                    .animations()
-                    .bones()
-                    .len(),
-            )
+            self.samples.include_cpu_storage(budget, bones, plan)
         } else {
-            self.pose.reserve_cpu_storage(
-                cpu.storage(),
-                self.model
-                    .as_ref()
-                    .unwrap_or_else(|| unreachable!("prepared pose retains model"))
-                    .animations()
-                    .bones()
-                    .len(),
-            )
+            self.pose.include_cpu_storage(budget, bones, plan)
         }
+    }
+
+    pub(super) fn admit_output(
+        &mut self,
+        fund: &mut CpuStorageReservation,
+    ) -> Result<(), CpuError> {
+        let bones = self
+            .model
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("prepared pose retains model"))
+            .animations()
+            .bones()
+            .len();
+        if self.sparse {
+            self.samples.reserve_cpu_storage_reserved(fund, bones)
+        } else {
+            self.pose.reserve_cpu_storage_reserved(fund, bones)
+        }
+    }
+
+    /// Complete copied input storage is admitted before replacing any prior input values.
+    fn prepare_inputs(
+        &mut self,
+        budget: &CpuStorageBudget,
+        orientation: &[bool],
+        transforms: &[(u16, Mat4)],
+        sequences: impl Iterator<Item = (u16, M2AnimationClock)>,
+    ) -> Result<(), CpuError> {
+        let count = sequences
+            .size_hint()
+            .1
+            .ok_or(CpuError::StorageSizeOverflow)?;
+        let mut plan = CpuStorageWorkingSet::default();
+        plan.include(
+            self.orientation
+                .reservation_bytes(budget, Class::Frame, orientation.len())?,
+            self.orientation.replacement_credit(orientation.len()),
+        )?;
+        plan.include(
+            self.transforms
+                .reservation_bytes(budget, Class::Frame, transforms.len())?,
+            self.transforms.replacement_credit(transforms.len()),
+        )?;
+        plan.include(
+            self.sequences
+                .reservation_bytes(budget, Class::Frame, count)?,
+            self.sequences.replacement_credit(count),
+        )?;
+        let mut fund = budget.reserve_working_set(Class::Frame, plan.bytes())?;
+        self.orientation
+            .reserve_reserved(&mut fund, Kind::Scratch, orientation.len())?;
+        self.transforms
+            .reserve_reserved(&mut fund, Kind::Scratch, transforms.len())?;
+        self.sequences
+            .reserve_reserved(&mut fund, Kind::Scratch, count)?;
+        self.orientation.clear();
+        self.orientation.extend_from_slice(orientation)?;
+        self.transforms.clear();
+        self.transforms.extend_from_slice(transforms)?;
+        self.sequences.clear();
+        for value in sequences {
+            self.sequences.push(value)?;
+        }
+        Ok(())
     }
 
     /// Offscreen CPU consumers retain only their named demand across the worker turn.
@@ -64,13 +133,13 @@ impl PoseJob {
         bones: &[usize],
         budget: &solarity_cpu::CpuStorageBudget,
     ) -> Result<(), solarity_cpu::CpuError> {
-        self.requested.clear();
         self.requested.reserve(
             budget,
             solarity_cpu::CpuStorageClass::Frame,
             solarity_cpu::CpuStorageKind::Metadata,
             bones.len(),
         )?;
+        self.requested.clear();
         self.requested.extend_from_slice(bones)?;
         self.sparse = true;
         Ok(())
@@ -109,12 +178,12 @@ impl PoseJob {
             trace: solarity_profiling::TraceContext::default(),
             layout: ResourceLease::downgrade(&model),
             model: Some(model),
-            orientation: Vec::new(),
+            orientation: CpuBuffer::default(),
             clock: M2AnimationClock::new(0, 0., 0.),
             view: Mat4::IDENTITY,
             fingers: None,
-            transforms: Vec::new(),
-            sequences: Vec::new(),
+            transforms: CpuBuffer::default(),
+            sequences: CpuBuffer::default(),
             pose: M2BonePose::default(),
             samples: M2BoneSamples::default(),
             requested: solarity_cpu::CpuBuffer::default(),
@@ -146,15 +215,21 @@ impl PoseJob {
         view: Mat4,
         fingers: Option<(M2AnimationClock, M2FingerPoseHands)>,
         transforms: &[(u16, Mat4)],
-        sequences: Vec<(u16, M2AnimationClock)>,
-    ) {
+        sequences: impl Iterator<Item = (u16, M2AnimationClock)>,
+        budget: &CpuStorageBudget,
+    ) -> Result<(), CpuError> {
+        self.prepare_inputs(
+            budget,
+            &source.model_oriented_billboard_bones,
+            transforms,
+            sequences,
+        )?;
         self.placement = placement;
         self.trace = solarity_profiling::TraceContext::capture().fork("m2.pose.request");
         if !self.retains_layout(source) {
             self.pose = M2BonePose::default();
             self.samples = M2BoneSamples::default();
             self.requested = solarity_cpu::CpuBuffer::default();
-            self.orientation = Vec::new();
             self.layout = ResourceLease::downgrade(&source.model);
         }
         if self
@@ -164,17 +239,13 @@ impl PoseJob {
         {
             self.model = Some(ResourceLease::clone(&source.model));
         }
-        self.orientation
-            .clone_from(&source.model_oriented_billboard_bones);
         self.clock = clock;
         self.view = view;
         self.fingers = fingers;
-        self.transforms.clear();
-        self.transforms.extend_from_slice(transforms);
-        self.sequences = sequences;
         self.result = None;
         self.sparse = false;
         self.requested.clear();
+        Ok(())
     }
 
     /// Computes pure skeletal work without publishing errors or scene state.
@@ -329,9 +400,9 @@ impl PoseJob {
             && self.clock == clock
             && self.view == view
             && self.fingers == overrides.finger_pose
-            && self.orientation == overrides.model_oriented_billboard_bones
-            && self.transforms == overrides.bone_transforms
-            && self.sequences == overrides.bone_sequences
+            && &*self.orientation == overrides.model_oriented_billboard_bones
+            && &*self.transforms == overrides.bone_transforms
+            && &*self.sequences == overrides.bone_sequences
     }
 }
 

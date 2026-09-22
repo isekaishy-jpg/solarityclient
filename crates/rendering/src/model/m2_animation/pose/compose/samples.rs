@@ -31,12 +31,26 @@ impl M2BoneSamples {
         budget: &solarity_cpu::CpuStorageBudget,
         bones: usize,
     ) -> Result<(), solarity_cpu::CpuError> {
-        use solarity_cpu::{CpuError, CpuStorageClass, CpuStorageKind, CpuStorageWorkingSet};
+        let mut working_set = solarity_cpu::CpuStorageWorkingSet::default();
+        self.include_cpu_storage(budget, bones, &mut working_set)?;
+        let mut reservation = budget
+            .reserve_working_set(solarity_cpu::CpuStorageClass::Frame, working_set.bytes())?;
+        self.reserve_cpu_storage_reserved(&mut reservation, bones)
+    }
+
+    /// Includes ancestor selection and nested pose scratch in a phase working set.
+    /// # Errors
+    /// Reports size overflow without modifying sampled values or allocation ownership.
+    pub fn include_cpu_storage(
+        &self,
+        budget: &solarity_cpu::CpuStorageBudget,
+        bones: usize,
+        working_set: &mut solarity_cpu::CpuStorageWorkingSet,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        use solarity_cpu::{CpuError, CpuStorageClass};
         let class = CpuStorageClass::Frame;
-        let kind = CpuStorageKind::Scratch;
-        let mut working_set = CpuStorageWorkingSet::default();
         self.scratch
-            .include_cpu_storage(budget, bones, &mut working_set)?;
+            .include_cpu_storage(budget, bones, working_set)?;
         let adoption = self
             .memory
             .as_ref()
@@ -54,11 +68,23 @@ impl M2BoneSamples {
                 .ok_or(CpuError::StorageSizeOverflow)?,
             retired,
         )?;
-        let mut reservation = budget.reserve_working_set(class, working_set.bytes())?;
+        Ok(())
+    }
+
+    /// Funds every sparse-sampling allocation from the phase's protected reservation.
+    /// # Errors
+    /// Reports insufficient reserved capacity or allocation failure before sampling.
+    pub fn reserve_cpu_storage_reserved(
+        &mut self,
+        reservation: &mut solarity_cpu::CpuStorageReservation,
+        bones: usize,
+    ) -> Result<(), solarity_cpu::CpuError> {
+        use solarity_cpu::{CpuError, CpuStorageKind};
+        let kind = CpuStorageKind::Scratch;
         self.scratch
-            .reserve_cpu_storage_reserved(&mut reservation, bones)?;
+            .reserve_cpu_storage_reserved(reservation, bones)?;
         if let Some(memory) = &mut self.memory {
-            memory.transfer_reserved(&mut reservation, kind)?;
+            memory.transfer_reserved(reservation, kind)?;
         } else {
             self.memory = Some(reservation.reserve(kind, self.required.capacity())?);
         }
@@ -69,7 +95,7 @@ impl M2BoneSamples {
                 .try_reserve_exact(bones)
                 .map_err(|_| CpuError::StorageAllocation)?;
             required.extend_from_slice(&self.required);
-            memory.resize_reserved(&mut reservation, required.capacity())?;
+            memory.resize_reserved(reservation, required.capacity())?;
             self.required = required;
             if let Some(retired) = self.memory.replace(memory) {
                 reservation.recycle(retired)?;

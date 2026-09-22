@@ -139,8 +139,9 @@ impl M2Frame {
                 body_pose
                     .as_ref()
                     .map_or(&[], |pose| pose.bone_transforms()),
-                playback.bone_sequence_clocks(&source.model, clock, now),
-            );
+                playback.bone_sequence_clock_iter(&source.model, clock, now),
+                &budget,
+            )?;
             if !palette {
                 batch.jobs[active].request_samples(
                     self.bone_demand.bones(),
@@ -161,9 +162,7 @@ impl M2Frame {
         // Sampling owns its inputs. Main can continue WMO admission and ordered
         // traversal; a palette consumer waits for only its own model result.
         if let Some(cpu) = cpu {
-            for job in batch.jobs.iter_mut() {
-                job.admit(cpu)?;
-            }
+            batch.admit_outputs(cpu.storage())?;
             batch.costs.clear();
             for job in batch.jobs.iter() {
                 batch.costs.push(job.measurement.cost())?;

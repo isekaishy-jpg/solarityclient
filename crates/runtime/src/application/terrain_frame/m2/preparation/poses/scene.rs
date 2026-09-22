@@ -179,8 +179,9 @@ impl ScenePoses {
             view,
             overrides.finger_pose,
             overrides.bone_transforms,
-            overrides.bone_sequences.to_vec(),
-        );
+            overrides.bone_sequences.iter().copied(),
+            cpu.storage(),
+        )?;
         job.admit(cpu)?;
         self.late_jobs.push(Some(job))?;
         self.late.start_graph(
@@ -268,12 +269,12 @@ impl ScenePoses {
             view,
             overrides.finger_pose,
             overrides.bone_transforms,
-            overrides.bone_sequences.to_vec(),
-        );
+            overrides.bone_sequences.iter().copied(),
+            cpu.storage(),
+        )?;
         if let Some(bones) = bones {
             job.request_samples(bones, cpu.storage())?;
         }
-        job.admit(cpu)?;
         self.indices[index] = Some(self.jobs.len());
         self.jobs.push(Some(job))?;
         Ok(())
@@ -287,6 +288,17 @@ impl ScenePoses {
         if count == 0 {
             return Ok(());
         }
+        let mut plan = CpuStorageWorkingSet::default();
+        for job in self.jobs.iter().flatten() {
+            job.include_output(cpu.storage(), &mut plan)?;
+        }
+        let mut fund = cpu
+            .storage()
+            .reserve_working_set(Class::Frame, plan.bytes())?;
+        for job in self.jobs.iter_mut().flatten() {
+            job.admit_output(&mut fund)?;
+        }
+        drop(fund);
         self.pending.start_costed_graph(
             cpu,
             &FrameGraphTemplate::independent(self.jobs.len())
@@ -373,8 +385,9 @@ impl ScenePoses {
                 view,
                 overrides.finger_pose,
                 overrides.bone_transforms,
-                overrides.bone_sequences.to_vec(),
-            );
+                overrides.bone_sequences.iter().copied(),
+                &budget,
+            )?;
             if let Some(cpu) = cpu {
                 job.request_samples(bones, cpu.storage())?;
                 job.admit(cpu)?;

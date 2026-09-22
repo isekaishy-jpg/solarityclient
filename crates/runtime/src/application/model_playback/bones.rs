@@ -247,33 +247,41 @@ impl M2Playback {
         root_clock: M2AnimationClock,
         now: u32,
     ) -> Vec<(u16, M2AnimationClock)> {
-        self.bone_playback
-            .iter()
-            .filter_map(|slot| {
-                let playback = &slot.playback;
-                if playback.script_timer.is_some() {
-                    return Some((slot.key, playback.sample_clock(now)));
-                }
-                let blend = playback
-                    .script_blend
-                    .filter(|blend| blend.weight(now) > 0.)?;
-                let mut base = root_clock;
-                let mut parent = model.animations().bones()[usize::from(slot.bone)].parent();
-                while let Some(bone) = parent {
-                    if let Some(ancestor) = self.bone_playback.iter().find(|candidate| {
-                        candidate.bone == bone && candidate.playback.script_timer.is_some()
-                    }) {
-                        base = ancestor.playback.sample_clock(now);
-                        break;
-                    }
-                    parent = model.animations().bones()[usize::from(bone)].parent();
-                }
-                Some((
-                    slot.key,
-                    blend.apply_to_clock(base.without_secondary_sequence(), now),
-                ))
-            })
+        self.bone_sequence_clock_iter(model, root_clock, now)
             .collect()
+    }
+
+    /// The iterator preserves timer order and exposes a finite bound without allocating.
+    pub(in crate::application) fn bone_sequence_clock_iter<'a>(
+        &'a self,
+        model: &'a DecodedM2Model,
+        root_clock: M2AnimationClock,
+        now: u32,
+    ) -> impl Iterator<Item = (u16, M2AnimationClock)> + 'a {
+        self.bone_playback.iter().filter_map(move |slot| {
+            let playback = &slot.playback;
+            if playback.script_timer.is_some() {
+                return Some((slot.key, playback.sample_clock(now)));
+            }
+            let blend = playback
+                .script_blend
+                .filter(|blend| blend.weight(now) > 0.)?;
+            let mut base = root_clock;
+            let mut parent = model.animations().bones()[usize::from(slot.bone)].parent();
+            while let Some(bone) = parent {
+                if let Some(ancestor) = self.bone_playback.iter().find(|candidate| {
+                    candidate.bone == bone && candidate.playback.script_timer.is_some()
+                }) {
+                    base = ancestor.playback.sample_clock(now);
+                    break;
+                }
+                parent = model.animations().bones()[usize::from(bone)].parent();
+            }
+            Some((
+                slot.key,
+                blend.apply_to_clock(base.without_secondary_sequence(), now),
+            ))
+        })
     }
 
     fn callback_slot(&self, bone: u16) -> Option<M2CallbackSlot> {
